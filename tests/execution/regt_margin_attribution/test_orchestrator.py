@@ -13,14 +13,16 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
+from alphamind._kernel.money import money
 from alphamind.execution.regt_margin_attribution import (
     IvShockMultipliers,
     RegTMarginAttributionConfig,
     ShockParameters,
     compute_attribution,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    RegTMarginAttribution,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -36,6 +38,9 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     IvQuote,
     IvSurfaceEntry,
     MarketInputs,
+)
+from alphamind.state.records import (
+    RegTMarginAttribution,
 )
 
 # ---------------------------------------------------------------------------
@@ -94,7 +99,7 @@ def _equity_position(
 ) -> PositionRecord:
     is_short = direction == Direction.SHORT
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=100.0,
         borrow_rate_pct=0.05 if is_short else None,
@@ -103,7 +108,7 @@ def _equity_position(
     )
     history = (_fill(),) if status == PositionStatus.OPEN else ()
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=status,
@@ -184,7 +189,7 @@ def test_empty_pre_and_post_positions_produces_zero_record() -> None:
 def test_no_change_fill_produces_zero_marginal_consumption() -> None:
     """Pre and post position sets identical → all four marginal fields 0.0."""
     cfg = _config()
-    pos = _equity_position(position_id="p1", ticker="NVDA", share_count=100.0)
+    pos = _equity_position(position_id=PositionId("p1"), ticker=Symbol("NVDA"), share_count=100.0)
     market = _market(underlying_prices={"NVDA": _SPOT_NVDA})
 
     result = compute_attribution(
@@ -205,7 +210,7 @@ def test_no_change_fill_produces_zero_marginal_consumption() -> None:
 def test_buy_long_equity_opens_position_increases_both_requirements() -> None:
     """Pre empty; post: long 100 NVDA at $500 → both margins post > 0; both marginal > 0."""
     cfg = _config(per_symbol_overrides={"NVDA": 0.20})
-    post = _equity_position(position_id="p1", ticker="NVDA", share_count=100.0)
+    post = _equity_position(position_id=PositionId("p1"), ticker=Symbol("NVDA"), share_count=100.0)
     market = _market(underlying_prices={"NVDA": _SPOT_NVDA})
 
     result = compute_attribution(
@@ -230,7 +235,7 @@ def test_close_long_equity_releases_both_requirements() -> None:
     marginal deltas.
     """
     cfg = _config(per_symbol_overrides={"NVDA": 0.20})
-    pre = _equity_position(position_id="p1", ticker="NVDA", share_count=100.0)
+    pre = _equity_position(position_id=PositionId("p1"), ticker=Symbol("NVDA"), share_count=100.0)
     market = _market(underlying_prices={"NVDA": _SPOT_NVDA})
 
     result = compute_attribution(
@@ -252,8 +257,8 @@ def test_close_long_equity_releases_both_requirements() -> None:
 def test_regt_excess_over_pm_equals_regt_minus_pm_marginal() -> None:
     """Algebraic invariant on a non-trivial buy fill (50 → 150 NVDA shares)."""
     cfg = _config(per_symbol_overrides={"NVDA": 0.20})
-    pre = _equity_position(position_id="p1", ticker="NVDA", share_count=50.0)
-    post = _equity_position(position_id="p1", ticker="NVDA", share_count=150.0)
+    pre = _equity_position(position_id=PositionId("p1"), ticker=Symbol("NVDA"), share_count=50.0)
+    post = _equity_position(position_id=PositionId("p1"), ticker=Symbol("NVDA"), share_count=150.0)
     market = _market(underlying_prices={"NVDA": _SPOT_NVDA})
 
     result = compute_attribution(
@@ -279,8 +284,8 @@ def test_regt_excess_over_pm_equals_regt_minus_pm_marginal() -> None:
 def test_pm_model_version_propagates_from_config() -> None:
     """``result.pm_model_version`` matches ``config.pm_model_version`` verbatim."""
     cfg = _config(pm_model_version="ibkr_mirror_v1_2026Q2")
-    pre = _equity_position(position_id="p1", ticker="NVDA", share_count=10.0)
-    post = _equity_position(position_id="p1", ticker="NVDA", share_count=20.0)
+    pre = _equity_position(position_id=PositionId("p1"), ticker=Symbol("NVDA"), share_count=10.0)
+    post = _equity_position(position_id=PositionId("p1"), ticker=Symbol("NVDA"), share_count=20.0)
     market = _market(underlying_prices={"NVDA": _SPOT_NVDA})
 
     result = compute_attribution(
@@ -306,14 +311,14 @@ def test_record_is_frozen() -> None:
     )
 
     with pytest.raises(ValueError, match="frozen"):
-        result.regt_excess_over_pm = 99.0
+        result.regt_excess_over_pm = money(99.0)
 
 
 def test_finite_fields_when_inputs_are_finite() -> None:
     """All seven dollar fields are finite (not nan/inf) when inputs are finite."""
     cfg = _config(per_symbol_overrides={"NVDA": 0.20})
-    pre = _equity_position(position_id="p1", ticker="NVDA", share_count=50.0)
-    post = _equity_position(position_id="p1", ticker="NVDA", share_count=150.0)
+    pre = _equity_position(position_id=PositionId("p1"), ticker=Symbol("NVDA"), share_count=50.0)
+    post = _equity_position(position_id=PositionId("p1"), ticker=Symbol("NVDA"), share_count=150.0)
     market = _market(underlying_prices={"NVDA": _SPOT_NVDA})
 
     result = compute_attribution(
@@ -338,7 +343,7 @@ def test_finite_fields_when_inputs_are_finite() -> None:
 def test_unknown_underlying_propagates_key_error() -> None:
     """A position symbol missing from ``market_inputs.underlying_prices`` raises KeyError."""
     cfg = _config()
-    pre = _equity_position(position_id="p1", ticker="ZZZZ", share_count=10.0)
+    pre = _equity_position(position_id=PositionId("p1"), ticker=Symbol("ZZZZ"), share_count=10.0)
     market = _market(underlying_prices={})
 
     with pytest.raises(KeyError):
@@ -361,10 +366,12 @@ def test_batched_fills_pre_state_threading_documented() -> None:
     market = _market(underlying_prices={"NVDA": _SPOT_NVDA, "AAPL": 100.0})
 
     empty_book: tuple[PositionRecord, ...] = ()
-    nvda_only = (_equity_position(position_id="p1", ticker="NVDA", share_count=100.0),)
+    nvda_only = (
+        _equity_position(position_id=PositionId("p1"), ticker=Symbol("NVDA"), share_count=100.0),
+    )
     nvda_and_aapl = (
-        _equity_position(position_id="p1", ticker="NVDA", share_count=100.0),
-        _equity_position(position_id="p2", ticker="AAPL", share_count=50.0),
+        _equity_position(position_id=PositionId("p1"), ticker=Symbol("NVDA"), share_count=100.0),
+        _equity_position(position_id=PositionId("p2"), ticker=Symbol("AAPL"), share_count=50.0),
     )
 
     fill1 = compute_attribution(

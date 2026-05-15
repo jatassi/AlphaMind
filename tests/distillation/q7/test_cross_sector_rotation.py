@@ -15,8 +15,9 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.output import OutputAudience
-from alphamind.distillation.q7_cross_asset import compute_cross_sector_rotation
+from alphamind.distillation.q7 import compute_cross_sector_rotation
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,
@@ -128,12 +129,12 @@ class TestCrossSectorRotationVelocity:
         ]
         # SMH/XLF/XLE: flat path so they share the same start/end ratio.
         flat = [100.0] * 21
-        _seed_etf_path(session, ticker="XLK", closes=xlk_path, start_day=start_day)
-        _seed_etf_path(session, ticker="SMH", closes=flat, start_day=start_day)
-        _seed_etf_path(session, ticker="XLF", closes=flat, start_day=start_day)
-        _seed_etf_path(session, ticker="XLE", closes=flat, start_day=start_day)
-        _seed_etf_path(session, ticker="IWM", closes=flat, start_day=start_day)
-        _seed_etf_path(session, ticker="SPY", closes=flat, start_day=start_day)
+        _seed_etf_path(session, ticker=Symbol("XLK"), closes=xlk_path, start_day=start_day)
+        _seed_etf_path(session, ticker=Symbol("SMH"), closes=flat, start_day=start_day)
+        _seed_etf_path(session, ticker=Symbol("XLF"), closes=flat, start_day=start_day)
+        _seed_etf_path(session, ticker=Symbol("XLE"), closes=flat, start_day=start_day)
+        _seed_etf_path(session, ticker=Symbol("IWM"), closes=flat, start_day=start_day)
+        _seed_etf_path(session, ticker=Symbol("SPY"), closes=flat, start_day=start_day)
         session.commit()
 
         blocks = compute_cross_sector_rotation(
@@ -164,12 +165,12 @@ class TestCrossSectorRotationVelocity:
         xlf_path = [*flat, 108.5]  # last day +8.5%
         smh_path = [100.0] * 21
 
-        _seed_etf_path(session, ticker="XLK", closes=xlk_path, start_day=start_day)
-        _seed_etf_path(session, ticker="SMH", closes=smh_path, start_day=start_day)
-        _seed_etf_path(session, ticker="XLF", closes=xlf_path, start_day=start_day)
-        _seed_etf_path(session, ticker="XLE", closes=xle_path, start_day=start_day)
-        _seed_etf_path(session, ticker="IWM", closes=smh_path, start_day=start_day)
-        _seed_etf_path(session, ticker="SPY", closes=smh_path, start_day=start_day)
+        _seed_etf_path(session, ticker=Symbol("XLK"), closes=xlk_path, start_day=start_day)
+        _seed_etf_path(session, ticker=Symbol("SMH"), closes=smh_path, start_day=start_day)
+        _seed_etf_path(session, ticker=Symbol("XLF"), closes=xlf_path, start_day=start_day)
+        _seed_etf_path(session, ticker=Symbol("XLE"), closes=xle_path, start_day=start_day)
+        _seed_etf_path(session, ticker=Symbol("IWM"), closes=smh_path, start_day=start_day)
+        _seed_etf_path(session, ticker=Symbol("SPY"), closes=smh_path, start_day=start_day)
         session.commit()
 
         blocks = compute_cross_sector_rotation(

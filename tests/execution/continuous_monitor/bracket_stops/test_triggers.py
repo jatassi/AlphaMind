@@ -6,6 +6,11 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    BracketId,
+    PositionId,
+    Symbol,
+)
 from alphamind.execution.continuous_monitor.bracket_stops.triggers import (
     evaluate_pl_target_trigger,
     evaluate_price_based_trigger,
@@ -55,14 +60,14 @@ def _options_position(
         refresh_failed=False,
     )
     return PositionRecord(
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         thesis_id=None,
-        bracket_id="brk-1",
+        bracket_id=BracketId("brk-1"),
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_NOW,
         details=OptionsPositionDetails(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             strike_price=strike,
             expiration_date=expiration,
             contract_type=contract_type,
@@ -98,7 +103,7 @@ def _price_stop_leg(
         leg_type=BracketLegType.PRICE_STOP,
         order_id=None,
         trigger=PriceTrigger(
-            underlying_ticker=underlying_ticker,
+            underlying_ticker=Symbol(underlying_ticker),
             threshold_usd=threshold_usd,
             direction=direction,  # type: ignore[arg-type]
         ),
@@ -117,7 +122,7 @@ def _pl_target_leg(
         leg_type=BracketLegType.TAKE_PROFIT,
         order_id=None,
         trigger=PriceTrigger(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             threshold_usd=actual_entry_price * (1.0 + target_pct),
             direction="GTE",
         ),
@@ -143,7 +148,7 @@ def _pl_stop_leg(
         leg_type=BracketLegType.PRICE_STOP,
         order_id=None,
         trigger=PriceTrigger(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             threshold_usd=actual_entry_price * (1.0 - stop_pct),
             direction="LTE",
         ),
@@ -321,7 +326,7 @@ class TestPlTargetTrigger:
             leg_type=BracketLegType.TAKE_PROFIT,
             order_id=None,
             trigger=PriceTrigger(
-                underlying_ticker="NVDA",
+                underlying_ticker=Symbol("NVDA"),
                 threshold_usd=7.05,
                 direction="LTE",
             ),

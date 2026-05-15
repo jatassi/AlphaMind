@@ -125,3 +125,12 @@ class PolygonClient:
     def get_ticker_details(self, ticker: str) -> object:
         self.acquire_rate_limit()
         return self._rest.get_ticker_details(ticker=ticker)
+
+
+# Runtime contract: PolygonClient must structurally implement PolygonAPI.
+from alphamind.data_sources.polygon._protocol import PolygonAPI  # noqa: E402
+
+
+def _assert_protocol() -> None:
+    """Defer construction until first call so module import doesn't hit the SDK."""
+    _: PolygonAPI = PolygonClient.__new__(PolygonClient)

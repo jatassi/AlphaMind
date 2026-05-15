@@ -6,8 +6,8 @@ market prices and the computation modules, and seals the snapshot.
 
 Assembly sequence (16 steps — see function body for inline step labels):
 
-  1.  Fetch invocation metadata and prior context (concurrent).
-  2.  Fetch all raw OMS records (concurrent).
+  1.  Fetch invocation metadata and prior context.
+  2.  Fetch all raw OMS records (14 sequential reads — see step 2 note).
   3.  Fetch brackets for known positions.
   4.  Fetch position-modification trail.
   5.  Fetch current prices for all positions.
@@ -32,13 +32,16 @@ Known limitation — option pricing (Steps 5/6):
 
 from __future__ import annotations
 
-import asyncio
+import dataclasses
 import logging
+from dataclasses import dataclass
 from datetime import datetime
-from typing import cast
 
 from alphamind.execution.regt_margin_attribution.aggregates import RegTExcessAggregates
 from alphamind.portfolio_state import PortfolioStateConfig
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.computations.exposure import (
     SectorResolver,
     compute_directional_exposure,
@@ -77,12 +80,7 @@ from alphamind.portfolio_state.freshness import (
 )
 from alphamind.portfolio_state.pricing import CurrentPriceProvider, PriceQuote
 from alphamind.portfolio_state.records.activity_log import ActivityLogEntry
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    CashLedger,
-    DrawdownState,
-    RiskBudgetConsumption,
-)
+from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import BracketRecord, OrderRecord
 from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
@@ -221,33 +219,24 @@ def _resolve_pricing_tickers(
     return tuple(seen)
 
 
+@dataclass(frozen=True, slots=True)
 class _PriceFields:
     """Value object carrying the five price-derived fields for one position."""
 
-    __slots__ = (
-        "cost_basis",
-        "current_market_value_usd",
-        "current_price_usd",
-        "delta_adjusted_exposure_usd",
-        "notional_exposure_usd",
-    )
-
-    def __init__(
-        self,
-        current_market_value_usd: float,
-        notional_exposure_usd: float,
-        delta_adjusted_exposure_usd: float,
-        cost_basis: float,
-        current_price_usd: float,
-    ) -> None:
-        self.current_market_value_usd = current_market_value_usd
-        self.notional_exposure_usd = notional_exposure_usd
-        self.delta_adjusted_exposure_usd = delta_adjusted_exposure_usd
-        self.cost_basis = cost_basis
-        self.current_price_usd = current_price_usd
+    current_market_value_usd: float
+    notional_exposure_usd: float
+    delta_adjusted_exposure_usd: float
+    cost_basis: float
+    current_price_usd: float
 
 
-_ZERO_PRICE_FIELDS = _PriceFields(0.0, 0.0, 0.0, 0.0, 0.0)
+_ZERO_PRICE_FIELDS = _PriceFields(
+    current_market_value_usd=0.0,
+    notional_exposure_usd=0.0,
+    delta_adjusted_exposure_usd=0.0,
+    cost_basis=0.0,
+    current_price_usd=0.0,
+)
 
 
 def _price_fields_equity(
@@ -295,7 +284,7 @@ def _price_fields_options(
     if raw_underlying.is_stale:
         return _ZERO_PRICE_FIELDS
     premium = details.premium_paid_per_contract
-    mv_quote = raw_underlying.model_copy(update={"price_usd": premium})
+    mv_quote = dataclasses.replace(raw_underlying, price_usd=premium)
     cost_basis = details.contract_count * details.contract_multiplier * premium
     return _PriceFields(
         current_market_value_usd=compute_market_value_usd(position, mv_quote),
@@ -327,8 +316,8 @@ def _price_fields_strategy(
         leg_prices[leg.leg_id] = raw_leg
 
     premium_prices: dict[str, PriceQuote] = {
-        leg.leg_id: leg_prices[leg.leg_id].model_copy(
-            update={"price_usd": leg.options.premium_paid_per_contract}
+        leg.leg_id: dataclasses.replace(
+            leg_prices[leg.leg_id], price_usd=leg.options.premium_paid_per_contract
         )
         for leg in details.legs
     }
@@ -415,7 +404,7 @@ def _enrich_position_first_pass(
 # ---------------------------------------------------------------------------
 
 
-async def assemble_snapshot(
+def assemble_snapshot(
     *,
     repository: PortfolioStateRepository,
     price_provider: CurrentPriceProvider,
@@ -436,61 +425,52 @@ async def assemble_snapshot(
         ValueError: from computation modules.
     """
     # ------------------------------------------------------------------
-    # Step 1 — Fetch invocation metadata and prior context (concurrent)
+    # Step 1 — Fetch invocation metadata and prior context
     # ------------------------------------------------------------------
-    metadata, prior_context = await asyncio.gather(
-        repository.get_current_invocation_metadata(),
-        repository.get_prior_invocation_context(),
-    )
+    metadata = repository.get_current_invocation_metadata()
+    prior_context = repository.get_prior_invocation_context()
 
     # ------------------------------------------------------------------
-    # Step 2 — Fetch raw OMS records (concurrent, 14 calls)
+    # Step 2 — Fetch raw OMS records (14 sequential reads)
+    #
+    # Per ALP-454 Pre-resolved decision (C): the prior ``asyncio.gather``
+    # over 14 reads collapsed to a sequential loop since SQLite serializes
+    # access anyway; concurrency over a single-writer DB delivers no real
+    # parallelism.
     # ------------------------------------------------------------------
-    _step2 = await asyncio.gather(
-        repository.get_open_positions(),
-        repository.get_pending_positions(),
-        repository.get_drawdown_state(),
-        repository.get_portfolio_pnl_inputs(),
-        repository.get_active_theses(),
+    open_positions_raw: tuple[PositionRecord, ...] = repository.get_open_positions()
+    pending_positions_raw: tuple[PositionRecord, ...] = repository.get_pending_positions()
+    drawdown_state_raw: DrawdownState = repository.get_drawdown_state()
+    portfolio_pnl_inputs: PortfolioPnLInputs = repository.get_portfolio_pnl_inputs()
+    active_theses: tuple[ThesisRecord, ...] = repository.get_active_theses()
+    recent_thesis_resolutions: tuple[RecentThesisResolution, ...] = (
         repository.get_recent_thesis_resolutions(
             lookback_trading_days=config.thesis_resolutions_lookback_trading_days
-        ),
-        repository.get_cash_ledger(),
-        repository.get_pending_orders(),
-        repository.get_risk_budget_consumption(),
-        repository.get_active_risk_parameters(),
-        repository.get_intra_invocation_changelog(invocation_id=metadata.invocation_id),
-        repository.get_recent_pm_decision_log(
-            sliding_window_invocations=config.pm_decision_log_sliding_window_invocations
-        ),
-        repository.get_thesis_quality_aggregates(),
-        repository.get_regt_excess_aggregates(now),
+        )
     )
-    open_positions_raw = cast(tuple[PositionRecord, ...], _step2[0])
-    pending_positions_raw = cast(tuple[PositionRecord, ...], _step2[1])
-    drawdown_state_raw = cast(DrawdownState, _step2[2])
-    portfolio_pnl_inputs = cast(PortfolioPnLInputs, _step2[3])
-    active_theses = cast(tuple[ThesisRecord, ...], _step2[4])
-    recent_thesis_resolutions = cast(tuple[RecentThesisResolution, ...], _step2[5])
-    cash_ledger_raw = cast(CashLedger, _step2[6])
-    pending_orders_raw = cast(tuple[OrderRecord, ...], _step2[7])
-    risk_budget = cast(RiskBudgetConsumption, _step2[8])
-    active_risk_parameters_raw = cast(ActiveRiskParameterSet, _step2[9])
-    intra_invocation_changelog = cast(tuple[ActivityLogEntry, ...], _step2[10])
-    recent_pm_decision_log = cast(tuple[ActivityLogEntry, ...], _step2[11])
-    thesis_quality_aggregates = cast(ThesisQualityAggregate, _step2[12])
-    regt_excess_aggregates = cast(RegTExcessAggregates, _step2[13])
+    cash_ledger_raw: CashLedger = repository.get_cash_ledger()
+    pending_orders_raw: tuple[OrderRecord, ...] = repository.get_pending_orders()
+    risk_budget: RiskBudgetConsumption = repository.get_risk_budget_consumption()
+    active_risk_parameters_raw: ActiveRiskParameterSet = repository.get_active_risk_parameters()
+    intra_invocation_changelog: tuple[ActivityLogEntry, ...] = (
+        repository.get_intra_invocation_changelog(invocation_id=metadata.invocation_id)
+    )
+    recent_pm_decision_log: tuple[ActivityLogEntry, ...] = repository.get_recent_pm_decision_log(
+        sliding_window_invocations=config.pm_decision_log_sliding_window_invocations
+    )
+    thesis_quality_aggregates: ThesisQualityAggregate = repository.get_thesis_quality_aggregates()
+    regt_excess_aggregates: RegTExcessAggregates = repository.get_regt_excess_aggregates(now)
 
     # ------------------------------------------------------------------
     # Step 3 — Fetch brackets for known positions
     # ------------------------------------------------------------------
     position_ids = tuple(p.position_id for p in (*open_positions_raw, *pending_positions_raw))
-    brackets_tuple = await repository.get_brackets_for_positions(position_ids=position_ids)
+    brackets_tuple = repository.get_brackets_for_positions(position_ids=position_ids)
 
     # ------------------------------------------------------------------
     # Step 4 — Fetch position-modification trail
     # ------------------------------------------------------------------
-    position_modification_trail = await repository.get_position_modification_trail(
+    position_modification_trail = repository.get_position_modification_trail(
         position_ids=position_ids
     )
 
@@ -499,7 +479,7 @@ async def assemble_snapshot(
     # ------------------------------------------------------------------
     all_positions: tuple[PositionRecord, ...] = (*open_positions_raw, *pending_positions_raw)
     pricing_tickers = _resolve_pricing_tickers(all_positions)
-    price_map = await price_provider.get_quotes(
+    price_map = price_provider.get_quotes(
         tickers=pricing_tickers,
         freshness_threshold_seconds=config.snapshot_freshness_max_price_age_seconds,
     )
@@ -552,12 +532,11 @@ async def assemble_snapshot(
     # ------------------------------------------------------------------
     final_open: list[PositionView] = sorted(
         (
-            view.model_copy(
-                update={
-                    "position_weight_pct": compute_position_weight_pct(
-                        view.current_market_value_usd, total_portfolio_value
-                    )
-                }
+            dataclasses.replace(
+                view,
+                position_weight_pct=compute_position_weight_pct(
+                    view.current_market_value_usd, total_portfolio_value
+                ),
             )
             for view in enriched_open
         ),
@@ -566,12 +545,11 @@ async def assemble_snapshot(
 
     final_pending: list[PositionView] = sorted(
         (
-            view.model_copy(
-                update={
-                    "position_weight_pct": compute_position_weight_pct(
-                        view.current_market_value_usd, total_portfolio_value
-                    )
-                }
+            dataclasses.replace(
+                view,
+                position_weight_pct=compute_position_weight_pct(
+                    view.current_market_value_usd, total_portfolio_value
+                ),
             )
             for view in enriched_pending
         ),
@@ -583,8 +561,8 @@ async def assemble_snapshot(
     # ------------------------------------------------------------------
     enriched_orders: list[OrderRecord] = sorted(
         (
-            order.model_copy(
-                update={"age_hours": compute_order_age_hours(order.submission_timestamp, now)}
+            dataclasses.replace(
+                order, age_hours=compute_order_age_hours(order.submission_timestamp, now)
             )
             for order in pending_orders_raw
         ),
@@ -614,17 +592,16 @@ async def assemble_snapshot(
     # across calendar-day-anchored windows; see
     # ``regt-margin-attribution.md § Aggregation and delivery``).
     true_deployable = compute_true_deployable_capital_usd(cash_ledger_raw)
-    enriched_cash: CashLedger = cash_ledger_raw.model_copy(
-        update={
-            "cash_pct_of_portfolio": compute_cash_pct_of_portfolio(
-                cash_ledger_raw.current_cash_usd, total_portfolio_value
-            ),
-            "true_deployable_capital_usd": true_deployable,
-            "available_buying_power_usd": true_deployable,
-            "regt_excess_trailing_30d_usd": regt_excess_aggregates.trailing_30d_usd,
-            "regt_excess_trailing_90d_usd": regt_excess_aggregates.trailing_90d_usd,
-            "regt_excess_lifetime_usd": regt_excess_aggregates.lifetime_usd,
-        }
+    enriched_cash: CashLedger = dataclasses.replace(
+        cash_ledger_raw,
+        cash_pct_of_portfolio=compute_cash_pct_of_portfolio(
+            cash_ledger_raw.current_cash_usd, total_portfolio_value
+        ),
+        true_deployable_capital_usd=true_deployable,
+        available_buying_power_usd=true_deployable,
+        regt_excess_trailing_30d_usd=regt_excess_aggregates.trailing_30d_usd,
+        regt_excess_trailing_90d_usd=regt_excess_aggregates.trailing_90d_usd,
+        regt_excess_lifetime_usd=regt_excess_aggregates.lifetime_usd,
     )
 
     # ------------------------------------------------------------------
@@ -635,13 +612,12 @@ async def assemble_snapshot(
         drawdown_state_raw.drawdown_by_source_pct == {}
         and drawdown_state_raw.current_drawdown_pct > 0
     ):
-        enriched_drawdown = drawdown_state_raw.model_copy(
-            update={
-                "drawdown_by_source_pct": compute_drawdown_by_source_pct(
-                    open_positions=tuple(final_open),
-                    current_drawdown_pct=drawdown_state_raw.current_drawdown_pct,
-                )
-            }
+        enriched_drawdown = dataclasses.replace(
+            drawdown_state_raw,
+            drawdown_by_source_pct=compute_drawdown_by_source_pct(
+                open_positions=tuple(final_open),
+                current_drawdown_pct=drawdown_state_raw.current_drawdown_pct,
+            ),
         )
     else:
         enriched_drawdown = drawdown_state_raw
@@ -662,13 +638,12 @@ async def assemble_snapshot(
     # ------------------------------------------------------------------
     # Step 14 — Compute parameter change flag
     # ------------------------------------------------------------------
-    enriched_risk_parameters = active_risk_parameters_raw.model_copy(
-        update={
-            "parameter_change_flag": compute_parameter_change_flag(
-                current=active_risk_parameters_raw,
-                prior=prior_context.prior_active_risk_parameters,
-            )
-        }
+    enriched_risk_parameters = dataclasses.replace(
+        active_risk_parameters_raw,
+        parameter_change_flag=compute_parameter_change_flag(
+            current=active_risk_parameters_raw,
+            prior=prior_context.prior_active_risk_parameters,
+        ),
     )
 
     # ------------------------------------------------------------------

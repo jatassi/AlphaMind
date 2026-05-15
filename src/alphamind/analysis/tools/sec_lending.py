@@ -11,12 +11,13 @@ rather than raising — aggregate quality reflects the worst-case across rows.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from datetime import datetime
 
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.clock import Clock, RealClock
 from alphamind.analysis.tools._envelope import ToolEnvelope, ToolQuality, parse_iso
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -222,8 +223,8 @@ def _build_ticker_row(
     )
 
 
-def _query_sec_lending(session: Session, inp: SecLendingInput) -> SecLendingOutput:
-    now = datetime.now(UTC)
+def _query_sec_lending(session: Session, inp: SecLendingInput, clock: Clock) -> SecLendingOutput:
+    now = clock.now()
 
     if not inp.tickers:
         return SecLendingOutput(per_ticker=(), data_freshness=now, quality=ToolQuality.UNAVAILABLE)
@@ -251,10 +252,19 @@ def _query_sec_lending(session: Session, inp: SecLendingInput) -> SecLendingOutp
     )
 
 
-def sec_lending_factory(session: Session) -> Callable[[SecLendingInput], SecLendingOutput]:
-    """Return a callable suitable for the Claude Agent SDK tool registry."""
+def sec_lending_factory(
+    session: Session,
+    *,
+    clock: Clock | None = None,
+) -> Callable[[SecLendingInput], SecLendingOutput]:
+    """Return a callable suitable for the Claude Agent SDK tool registry.
+
+    ``clock`` defaults to :class:`RealClock`; tests pass a fake to control
+    the timestamp deterministically (ALP-474).
+    """
+    resolved_clock: Clock = clock if clock is not None else RealClock()
 
     def _call(inp: SecLendingInput) -> SecLendingOutput:
-        return _query_sec_lending(session, inp)
+        return _query_sec_lending(session, inp, resolved_clock)
 
     return _call

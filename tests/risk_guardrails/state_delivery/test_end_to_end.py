@@ -11,6 +11,7 @@ spec; the tests confirm renderer output matches those files line-for-line.
 
 from __future__ import annotations
 
+import dataclasses
 import pathlib
 from datetime import UTC, date, datetime
 from itertools import pairwise
@@ -18,7 +19,30 @@ from types import MappingProxyType
 
 import pytest
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+)
+from alphamind._kernel.money import money, signed_money
+from alphamind._kernel.regime import (
+    DrawdownTier,
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.consumers.analyst import (
     AnalystAbandonedOpening,
@@ -39,17 +63,6 @@ from alphamind.portfolio_state.records.activity_log import (
     EventType,
     PositionClosedDetail,
     PositionExitMethod,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownState,
-    DrawdownTier,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
 )
 from alphamind.portfolio_state.records.orders import (
     EquityInstrumentSpec,
@@ -465,23 +478,28 @@ def _make_drawdown_with_tier(tier: DrawdownTier) -> DrawdownState:
 
 def _make_pnl() -> PortfolioPnL:
     return PortfolioPnL(
-        total_unrealized_pnl_usd=-200.0,
+        total_unrealized_pnl_usd=signed_money(-200.0),
         total_unrealized_pnl_pct_of_portfolio=-0.4,
-        daily_realized_pnl_usd=-50.0,
-        daily_total_pnl_usd=-250.0,
-        cumulative_realized_pnl_usd=1_000.0,
-        rolling_realized_pnl={"1d": -50.0, "3d": 100.0, "5d": 200.0, "20d": 500.0},
+        daily_realized_pnl_usd=signed_money(-50.0),
+        daily_total_pnl_usd=signed_money(-250.0),
+        cumulative_realized_pnl_usd=money(1_000.0),
+        rolling_realized_pnl={
+            "1d": signed_money(-50.0),
+            "3d": money(100.0),
+            "5d": money(200.0),
+            "20d": money(500.0),
+        },
         win_rate_pct=55.0,
-        average_win_size_usd=200.0,
-        average_loss_size_usd=150.0,
+        average_win_size_usd=money(200.0),
+        average_loss_size_usd=money(150.0),
         profit_factor=1.4,
     )
 
 
 def _make_directional() -> DirectionalExposure:
     return DirectionalExposure(
-        total_long_delta_adjusted_usd=21_000.0,
-        total_short_delta_adjusted_usd=5_000.0,
+        total_long_delta_adjusted_usd=money(21_000.0),
+        total_short_delta_adjusted_usd=money(5_000.0),
         net_directional_pct_of_portfolio=32.0,
         gross_pct_of_portfolio=78.0,
     )
@@ -546,7 +564,7 @@ def _build_equity_position(
     if is_short:
         market_value = -market_value
     equity = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=10.0,
         average_cost_basis_per_share=100.0,
         borrow_rate_pct=0.5 if is_short else None,
@@ -561,7 +579,7 @@ def _build_equity_position(
         fees=1.0,
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -598,7 +616,7 @@ def _build_option_position(
 ) -> PositionView:
     market_value = weight_pct * _TOTAL_PORTFOLIO_VALUE_USD / 100.0
     options = OptionsPositionDetails(
-        underlying_ticker=ticker,
+        underlying_ticker=Symbol(ticker),
         strike_price=100.0,
         expiration_date=date(2026, 6, 19),
         contract_type=OptionContractType.CALL,
@@ -615,7 +633,7 @@ def _build_option_position(
         fees=1.0,
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -720,7 +738,7 @@ def _build_abandoned_opening() -> AnalystAbandonedOpening:
     return AnalystAbandonedOpening(
         envelope_id="ENV-REC-1",
         direction=Direction.LONG,
-        ticker="GOOG",
+        ticker=Symbol("GOOG"),
         instrument_type=InstrumentType.EQUITY,
         size_pct=3.0,
         abandoned_at=_ABANDONED_TIMESTAMP,
@@ -733,7 +751,7 @@ def _build_abandoned_actions() -> tuple[StrategistAbandonedAction, ...]:
         StrategistAbandonedAction(
             envelope_id="ENV-SA-1",
             command_type="ADD",
-            position_id="POS-NVDA-001",
+            position_id=PositionId("POS-NVDA-001"),
             order_id=None,
             abandoned_at=datetime(2026, 4, 28, 13, 35, 0, tzinfo=UTC),
             failure_reason="insufficient buying power",
@@ -741,7 +759,7 @@ def _build_abandoned_actions() -> tuple[StrategistAbandonedAction, ...]:
         StrategistAbandonedAction(
             envelope_id="ENV-SA-2",
             command_type="ADJUST",
-            position_id="POS-AAPL-002",
+            position_id=PositionId("POS-AAPL-002"),
             order_id=None,
             abandoned_at=datetime(2026, 4, 28, 13, 36, 0, tzinfo=UTC),
             failure_reason="market closed",
@@ -749,7 +767,7 @@ def _build_abandoned_actions() -> tuple[StrategistAbandonedAction, ...]:
         StrategistAbandonedAction(
             envelope_id="ENV-SA-3",
             command_type="CLOSE",
-            position_id="POS-AMD-004",
+            position_id=PositionId("POS-AMD-004"),
             order_id=None,
             abandoned_at=datetime(2026, 4, 28, 13, 37, 0, tzinfo=UTC),
             failure_reason="route timeout",
@@ -758,7 +776,7 @@ def _build_abandoned_actions() -> tuple[StrategistAbandonedAction, ...]:
             envelope_id="ENV-SA-ORD-4",
             command_type="CANCEL",
             position_id=None,
-            order_id="ORD-9001",
+            order_id=OrderId("ORD-9001"),
             abandoned_at=datetime(2026, 4, 28, 13, 38, 0, tzinfo=UTC),
             failure_reason="order already filled",
         ),
@@ -772,14 +790,14 @@ def _build_engine_action_entry() -> ActivityLogEntry:
         timestamp=datetime(2026, 4, 28, 14, 0, 0, tzinfo=UTC),
         event_type=EventType.POSITION_CLOSED,
         event_group=EventGroup.POSITION_LIFECYCLE,
-        position_id="POS-LEGACY-001",
+        position_id=PositionId("POS-LEGACY-001"),
         order_id=None,
         thesis_id=None,
         source=EventSource.GUARDRAIL_LAYER,
         detail=PositionClosedDetail(
             exit_method=PositionExitMethod.STOP_TRIGGERED,
-            exit_price=120.0,
-            realized_pnl_usd=-310.0,
+            exit_price=money("120.0"),
+            realized_pnl_usd=signed_money("-310.0"),
             thesis_resolution_category="position_level_max_loss",
         ),
     )
@@ -931,7 +949,7 @@ def _render_normal_strategist_header(
 ) -> str:
     view = _build_strategist_view()
     if drawdown is not None:
-        view = view.model_copy(update={"drawdown": drawdown})
+        view = dataclasses.replace(view, drawdown=drawdown)
     return render_strategist_header(
         strategist_view=view,
         invocation_id=_INVOCATION_ID,
@@ -957,7 +975,7 @@ def _render_normal_pm_header(
 ) -> str:
     view = _build_pm_view()
     if drawdown is not None:
-        view = view.model_copy(update={"drawdown": drawdown})
+        view = dataclasses.replace(view, drawdown=drawdown)
     return render_pm_header(
         pm_view=view,
         invocation_id=_INVOCATION_ID,
@@ -992,11 +1010,11 @@ def _make_halt_state() -> HaltState:
 
 
 def _build_pending_order() -> OrderRecord:
-    spec = EquityInstrumentSpec(ticker="NVDA")
+    spec = EquityInstrumentSpec(ticker=Symbol("NVDA"))
     return OrderRecord(
-        order_id="ORD-PENDING-1",
-        position_id="POS-NVDA-001",
-        bracket_id="BRK-PENDING-1",
+        order_id=OrderId("ORD-PENDING-1"),
+        position_id=PositionId("POS-NVDA-001"),
+        bracket_id=BracketId("BRK-PENDING-1"),
         role=OrderRole.ENTRY,
         instrument_spec=spec,
         direction=OrderDirection.BUY,
@@ -1005,8 +1023,8 @@ def _build_pending_order() -> OrderRecord:
         quantity=10.0,
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
-        alpaca_order_id="alp-1",
-        alpaca_order_id_chain=("alp-1",),
+        alpaca_order_id=AlpacaOrderId("alp-1"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-1"),),
         submission_timestamp=_ENTRY_TIMESTAMP,
         last_update_timestamp=_ENTRY_TIMESTAMP,
         filled_quantity=0.0,
@@ -1097,7 +1115,7 @@ def _build_market() -> MarketInputs:
     iv_provider = FixtureIvProvider(
         surface={
             "AAPL": IvSurfaceEntry(
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 quotes=(
                     IvQuote(
                         strike=100.0,
@@ -1187,7 +1205,7 @@ def _equity_request(
 def _option_request() -> ValidationRequest:
     return ValidationRequest(
         instrument=ValidationInstrument(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             asset_type=InstrumentType.OPTIONS,
             direction=Direction.LONG,
             strike=100.0,
@@ -1355,7 +1373,7 @@ class TestNormalHeaderRendering:
         row text across both renderers.
         """
         per_pos_max = RegimeTransitionBreach(
-            position_id="POS-NVDA-001",
+            position_id=PositionId("POS-NVDA-001"),
             rule_id="position_max_size_pct",
             rule_label="Per-position max size",
             current_value=4.2,
@@ -1364,7 +1382,7 @@ class TestNormalHeaderRendering:
             unit="% of portfolio",
         )
         per_pos_other = RegimeTransitionBreach(
-            position_id="POS-AMD-004",
+            position_id=PositionId("POS-AMD-004"),
             rule_id="single_short_max_pct",
             rule_label="Single short max size",
             current_value=3.2,
@@ -1400,7 +1418,7 @@ class TestNormalHeaderRendering:
     def test_pm_and_strategist_reject_non_percent_unit_breach(self) -> None:
         """The unit invariant must trip when a breach uses a non-percentage unit."""
         bad_breach = RegimeTransitionBreach(
-            position_id="POS-NVDA-001",
+            position_id=PositionId("POS-NVDA-001"),
             rule_id="position_max_size_pct",
             rule_label="Per-position max size",
             current_value=4.2,
@@ -1697,7 +1715,7 @@ class TestValidationTool:
         )
         state = state.model_copy(update={"starting_snapshot": snapshot, "library_config": relaxed})
         # Propose a 5K tech equity (10% of portfolio) — pushes tech 22% → 32%.
-        request = _equity_request(ticker="AAPL", dollar_value=5_000.0)
+        request = _equity_request(ticker=Symbol("AAPL"), dollar_value=5_000.0)
         result = validate_guardrail(request=request, state=state)
         assert result.overall == "FAIL"
         assert result.failure_guidance is not None
@@ -1756,7 +1774,7 @@ class TestValidationTool:
             sector_resolver=_sector_for_ticker,
         )
         # Each 1K request is 2% of the 50K portfolio.
-        request1 = _equity_request(ticker="AAPL", dollar_value=1_000.0)
+        request1 = _equity_request(ticker=Symbol("AAPL"), dollar_value=1_000.0)
         result1 = validate_guardrail(request=request1, state=state)
         assert result1.overall == "PASS"
         delta1 = ProjectedDelta(
@@ -1770,7 +1788,7 @@ class TestValidationTool:
         )
         state = state.with_accepted_proposal(delta1)
 
-        request2 = _equity_request(ticker="NVDA", dollar_value=1_000.0)
+        request2 = _equity_request(ticker=Symbol("NVDA"), dollar_value=1_000.0)
         result2 = validate_guardrail(request=request2, state=state)
         assert result2.overall == "PASS"
         delta2 = ProjectedDelta(
@@ -1786,7 +1804,7 @@ class TestValidationTool:
         assert len(state.accumulated_deltas) == 2
 
         # Third proposal: 5% (2_500 USD) → cumulative 30 + 2 + 2 + 5 = 39 > 35
-        request3 = _equity_request(ticker="GOOG", dollar_value=2_500.0)
+        request3 = _equity_request(ticker=Symbol("GOOG"), dollar_value=2_500.0)
         result3 = validate_guardrail(request=request3, state=state)
         assert result3.overall == "FAIL"
 

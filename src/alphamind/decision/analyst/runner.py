@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict
 
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
@@ -34,11 +34,9 @@ from alphamind.decision.analyst.input_bundle import (
     assemble_input_bundle_normal,
 )
 from alphamind.decision.analyst.models import AnalystOutput
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.consumers.analyst import AnalystView
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RiskBudgetConsumption,
-)
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
     FeatureFlagsView,
@@ -83,10 +81,9 @@ ANALYST_TOOL_NAMES: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 
-class AnalystResult(BaseModel):
+@dataclass(frozen=True, slots=True)
+class AnalystResult:
     """Runner return type — the parsed analyst output plus invocation metadata."""
-
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     output: AnalystOutput
     retry_count: int

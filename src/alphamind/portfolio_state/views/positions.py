@@ -12,10 +12,9 @@ instances. Consumers receive views and must not construct them directly.
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated
-
-from pydantic import BaseModel, ConfigDict, Field
 
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -26,11 +25,22 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
 )
 
-_FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
-_NonNegFiniteFloat = Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
+
+def _check_finite(value: float, field_name: str) -> None:
+    if not math.isfinite(value):
+        msg = f"{field_name} must be finite; got {value}"
+        raise ValueError(msg)
 
 
-class PositionView(BaseModel):
+def _check_non_negative_finite(value: float, field_name: str) -> None:
+    _check_finite(value, field_name)
+    if value < 0:
+        msg = f"{field_name} must be >= 0; got {value}"
+        raise ValueError(msg)
+
+
+@dataclass(frozen=True, slots=True)
+class PositionView:
     """Delivery-time projection of a PositionRecord with computed enrichments.
 
     Constructed by the snapshot assembler at each invocation. Computed fields
@@ -62,19 +72,26 @@ class PositionView(BaseModel):
         option delta. Any finite float is accepted.
     """
 
-    model_config = ConfigDict(frozen=True)
-
     record: PositionRecord
-    current_market_value_usd: _FiniteFloat
-    unrealized_pnl_usd: _FiniteFloat
-    unrealized_pnl_pct: _FiniteFloat
-    position_weight_pct: _FiniteFloat
-    position_age_hours: _NonNegFiniteFloat
-    notional_exposure_usd: _NonNegFiniteFloat
-    delta_adjusted_exposure_usd: _FiniteFloat
+    current_market_value_usd: float
+    unrealized_pnl_usd: float
+    unrealized_pnl_pct: float
+    position_weight_pct: float
+    position_age_hours: float
+    notional_exposure_usd: float
+    delta_adjusted_exposure_usd: float
     distance_to_target_usd: float | None
     distance_to_stop_usd: float | None
     risk_reward_at_current: float | None
+
+    def __post_init__(self) -> None:
+        _check_finite(self.current_market_value_usd, "current_market_value_usd")
+        _check_finite(self.unrealized_pnl_usd, "unrealized_pnl_usd")
+        _check_finite(self.unrealized_pnl_pct, "unrealized_pnl_pct")
+        _check_finite(self.position_weight_pct, "position_weight_pct")
+        _check_non_negative_finite(self.position_age_hours, "position_age_hours")
+        _check_non_negative_finite(self.notional_exposure_usd, "notional_exposure_usd")
+        _check_finite(self.delta_adjusted_exposure_usd, "delta_adjusted_exposure_usd")
 
     # ------------------------------------------------------------------
     # Convenience pass-through properties — mirror persistent record fields

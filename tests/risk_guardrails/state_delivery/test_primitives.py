@@ -6,13 +6,15 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
+from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
-    RiskBudgetEntry,
     RiskZone,
+)
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetEntry
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
 )
 from alphamind.risk_guardrails.state_delivery.primitives import (
     format_dollar,

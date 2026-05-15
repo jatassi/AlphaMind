@@ -6,19 +6,21 @@ import datetime
 
 import pytest
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.computations.risk_budget import (
     compute_cash_pct_of_portfolio,
     compute_order_age_hours,
     compute_parameter_change_flag,
     compute_true_deployable_capital_usd,
 )
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    CashLedger,
-    RegimeLabel,
-    RegimeTransitionState,
-)
+from alphamind.portfolio_state.records.cash import CashLedger
 
 # ---------------------------------------------------------------------------
 # Helpers

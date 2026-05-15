@@ -11,6 +11,7 @@ but exercise the wedge-specific behaviour: per-fill attribution presence,
 quarantined-fill nullability, deterministic batched-fill threading, and the
 required-MarketInputs surface.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -22,38 +23,14 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-    InvocationHandle,
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    Symbol,
 )
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.brackets import BracketRow
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
-from alphamind.execution.state_persistence.tables.orders_codec import (
-    record_to_row as order_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.write_paths.fill_persistence import (
+from alphamind._kernel.money import money, price, signed_money
+from alphamind._kernel.regime import RiskZone
+from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    FillProcessingStatus,
-    FillRecord,
-    RegTMarginAttribution,
 )
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
@@ -85,7 +62,36 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
     MarketInputs,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+    InvocationHandle,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.records import (
+    FillProcessingStatus,
+    FillRecord,
+    RegTMarginAttribution,
+)
+from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
+)
+from alphamind.state.tables.fill_records import FillRecordRow
+from alphamind.state.tables.orders_codec import (
+    record_to_row as order_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -111,7 +117,7 @@ async def db(
     db_path = tmp_path / "alphamind.db"
 
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -189,32 +195,30 @@ def _make_pending_entry_order(
     """Order with ``position_id`` already set so the wedge resolves the
     position directly (skipping the bracket lookup that the entry-fill
     happy-path normally walks)."""
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": position_id,
-            "bracket_id": _BRACKET_ID,
-            "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=ticker),
-            "direction": direction,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": quantity,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": quantity,
-            "modification_count": 0,
-            "originating_thesis_id": None,
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=_BRACKET_ID,
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
+        direction=direction,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=quantity,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=quantity,
+        modification_count=0,
+        originating_thesis_id=None,
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -226,59 +230,53 @@ def _make_pending_position(
     """Pending position with ``bracket_id=None`` — the wedge skips bracket
     transitions entirely when the position carries no bracket_id."""
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=0.0,
         average_cost_basis_per_share=0.0,
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": PositionStatus.PENDING,
-            "direction": Direction.LONG,
-            "entry_timestamp": None,
-            "details": details,
-            "execution_history": (),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.PENDING,
+        direction=Direction.LONG,
+        entry_timestamp=None,
+        details=details,
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
 def _make_cash_ledger(current_cash_usd: float = 100_000.0) -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": current_cash_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=current_cash_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _make_drawdown_state() -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": 100_000.0,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=100_000.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -297,12 +295,12 @@ def _make_unprocessed_fill(
         fill_id=fill_id,
         order_id=order_id,
         fill_timestamp=ts,
-        fill_price=fill_price,
+        fill_price=price(fill_price),
         fill_quantity=fill_quantity,
         remaining_quantity_after=remaining_quantity_after,
         order_status_after=order_status_after,
-        slippage_usd=0.0,
-        fees_usd=0.0,
+        slippage_usd=signed_money(0.0),
+        fees_usd=money(0.0),
         execution_venue="NASDAQ",
         gateway_reference=f"alp-{fill_id}",
         persistence_timestamp=ts + timedelta(seconds=1),
@@ -450,7 +448,7 @@ async def test_processed_fill_carries_populated_attribution(
     eight-field RegTMarginAttribution with all numeric fields finite."""
     import math
 
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -497,7 +495,7 @@ async def test_quarantined_fill_retains_null_attribution(
 ) -> None:
     """A fill rejected by ``_quarantine_invalid`` (e.g., negative quantity)
     is excluded from integration and its ``regt_attribution_json`` stays NULL."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -540,7 +538,7 @@ async def test_batched_fills_have_threaded_pre_state(
     ``regt_margin_after`` — the wedge re-snapshots positions per fill so
     later fills see the cumulative effect of earlier ones.
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -612,7 +610,7 @@ async def test_phase1_summary_unchanged(
 ) -> None:
     """The wedge does not alter ``Phase1Summary`` — the four count fields are
     still populated and remain the function's only return surface."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         Phase1Summary,
         process_unprocessed_fills,
     )
@@ -661,7 +659,7 @@ async def test_missing_market_inputs_for_underlying_propagates_key_error(
     Phase 1. Surfacing the gap as a hard error prevents silent attribution
     misreporting.
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 

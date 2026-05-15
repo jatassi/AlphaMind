@@ -15,6 +15,10 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.config.models.guardrails import BreachResponse
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -204,14 +208,14 @@ def _short_position(
 ) -> PositionView:
     fill_ts = datetime(2026, 4, 28, 14, 0, tzinfo=UTC)
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.SHORT,
         entry_timestamp=fill_ts,
         details=EquityPositionDetails(
-            ticker=ticker,
+            ticker=Symbol(ticker),
             share_count=100.0,
             average_cost_basis_per_share=market_value_usd / 100.0,
             borrow_rate_pct=2.5,
@@ -256,14 +260,14 @@ def _long_position(
 ) -> PositionView:
     fill_ts = datetime(2026, 4, 28, 14, 0, tzinfo=UTC)
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=fill_ts,
         details=EquityPositionDetails(
-            ticker=ticker,
+            ticker=Symbol(ticker),
             share_count=100.0,
             average_cost_basis_per_share=market_value_usd / 100.0,
         ),
@@ -335,20 +339,20 @@ def a7_positions() -> tuple[PositionView, ...]:
     """A7 fixture: 3 short positions COIN 8% / SQ 7% / HOOD 7% on $98K portfolio."""
     return (
         _short_position(
-            position_id="POS-COIN-001",
-            ticker="COIN",
+            position_id=PositionId("POS-COIN-001"),
+            ticker=Symbol("COIN"),
             weight_pct=8.0,
             market_value_usd=7840.0,
         ),
         _short_position(
-            position_id="POS-SQ-001",
-            ticker="SQ",
+            position_id=PositionId("POS-SQ-001"),
+            ticker=Symbol("SQ"),
             weight_pct=7.0,
             market_value_usd=6860.0,
         ),
         _short_position(
-            position_id="POS-HOOD-001",
-            ticker="HOOD",
+            position_id=PositionId("POS-HOOD-001"),
+            ticker=Symbol("HOOD"),
             weight_pct=7.0,
             market_value_usd=6860.0,
         ),
@@ -358,9 +362,9 @@ def a7_positions() -> tuple[PositionView, ...]:
 @pytest.fixture
 def a7_liquidity() -> tuple[PositionLiquidity, ...]:
     return (
-        PositionLiquidity(position_id="POS-COIN-001", adv_to_position_size_ratio=10.0),
-        PositionLiquidity(position_id="POS-SQ-001", adv_to_position_size_ratio=5.0),
-        PositionLiquidity(position_id="POS-HOOD-001", adv_to_position_size_ratio=5.0),
+        PositionLiquidity(position_id=PositionId("POS-COIN-001"), adv_to_position_size_ratio=10.0),
+        PositionLiquidity(position_id=PositionId("POS-SQ-001"), adv_to_position_size_ratio=5.0),
+        PositionLiquidity(position_id=PositionId("POS-HOOD-001"), adv_to_position_size_ratio=5.0),
     )
 
 
@@ -368,9 +372,9 @@ def a7_liquidity() -> tuple[PositionLiquidity, ...]:
 def a7_risk_reward() -> tuple[PositionRiskReward, ...]:
     """COIN has the worst R/R (lowest ratio)."""
     return (
-        PositionRiskReward(position_id="POS-COIN-001", risk_reward_ratio=0.2),
-        PositionRiskReward(position_id="POS-SQ-001", risk_reward_ratio=0.5),
-        PositionRiskReward(position_id="POS-HOOD-001", risk_reward_ratio=0.7),
+        PositionRiskReward(position_id=PositionId("POS-COIN-001"), risk_reward_ratio=0.2),
+        PositionRiskReward(position_id=PositionId("POS-SQ-001"), risk_reward_ratio=0.5),
+        PositionRiskReward(position_id=PositionId("POS-HOOD-001"), risk_reward_ratio=0.7),
     )
 
 
@@ -856,28 +860,32 @@ def test_search_for_alternate_position_directional_filters_to_same_side(
     """For directional breaches, candidates restricted to same-side positions."""
     portfolio_value = 100_000.0
     primary = _short_position(
-        position_id="POS-PRIMARY-SHORT",
-        ticker="AAA",
+        position_id=PositionId("POS-PRIMARY-SHORT"),
+        ticker=Symbol("AAA"),
         weight_pct=8.0,
         market_value_usd=8_000.0,
     )
     other_short = _short_position(
-        position_id="POS-OTHER-SHORT",
-        ticker="BBB",
+        position_id=PositionId("POS-OTHER-SHORT"),
+        ticker=Symbol("BBB"),
         weight_pct=7.0,
         market_value_usd=7_000.0,
     )
     a_long = _long_position(
-        position_id="POS-LONG-001",
-        ticker="LLL",
+        position_id=PositionId("POS-LONG-001"),
+        ticker=Symbol("LLL"),
         weight_pct=10.0,
         market_value_usd=10_000.0,
     )
     open_positions = (primary, other_short, a_long)
     liquidity = (
-        PositionLiquidity(position_id="POS-PRIMARY-SHORT", adv_to_position_size_ratio=1.0),
-        PositionLiquidity(position_id="POS-OTHER-SHORT", adv_to_position_size_ratio=1.0),
-        PositionLiquidity(position_id="POS-LONG-001", adv_to_position_size_ratio=1.0),
+        PositionLiquidity(
+            position_id=PositionId("POS-PRIMARY-SHORT"), adv_to_position_size_ratio=1.0
+        ),
+        PositionLiquidity(
+            position_id=PositionId("POS-OTHER-SHORT"), adv_to_position_size_ratio=1.0
+        ),
+        PositionLiquidity(position_id=PositionId("POS-LONG-001"), adv_to_position_size_ratio=1.0),
     )
     primary_selection = _full_close_selection_on(primary.position_id)
 
@@ -1385,8 +1393,8 @@ def test_orchestrate_breach_cascade_rejects_empty_positions(
     default_context: CascadeContext,
 ) -> None:
     primary_close = ProposedClose(
-        position_id="POS-FAKE",
-        ticker="X",
+        position_id=PositionId("POS-FAKE"),
+        ticker=Symbol("X"),
         asset_type="equity",
         direction="long",
         pre_close_size_pct_of_portfolio=5.0,
@@ -1421,8 +1429,8 @@ def test_orchestrate_margin_call_cascade_rejects_incomplete_liquidity(
 ) -> None:
     """Liquidity covers only 2 of 3 positions → ValueError."""
     incomplete_liquidity = (
-        PositionLiquidity(position_id="POS-COIN-001", adv_to_position_size_ratio=10.0),
-        PositionLiquidity(position_id="POS-SQ-001", adv_to_position_size_ratio=5.0),
+        PositionLiquidity(position_id=PositionId("POS-COIN-001"), adv_to_position_size_ratio=10.0),
+        PositionLiquidity(position_id=PositionId("POS-SQ-001"), adv_to_position_size_ratio=5.0),
     )
     library = _ScriptedLibrary(outputs=[_StubLibraryOutput(per_rule=())])
     with pytest.raises(ValueError, match="liquidity"):
@@ -1487,7 +1495,6 @@ def test_returned_envelopes_are_frozen(
     a7_liquidity: tuple[PositionLiquidity, ...],
     a7_risk_reward: tuple[PositionRiskReward, ...],
 ) -> None:
-    from pydantic import ValidationError
 
     baseline = _StubLibraryOutput(per_rule=(_proj("total_short_pct", "FAIL"),))
     post = _StubLibraryOutput(per_rule=(_proj("total_short_pct", "PASS"),))
@@ -1510,5 +1517,5 @@ def test_returned_envelopes_are_frozen(
         evaluate_proposals=library,
     )
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         envelopes[0].envelope_id = "MON.x.99"

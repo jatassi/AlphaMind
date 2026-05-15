@@ -26,15 +26,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.config.models.run_types import RunType
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.portfolio_state.events.activity_log import (
     EmergencyInvocationRequestedDetail,
     EventType,
+    decode_detail,
 )
 from alphamind.scheduler.orchestrator import run_invocation
 from alphamind.scheduler.run_context import RunInvocationContext
 from alphamind.scheduler.session import PipelineSession
+from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.invocations import InvocationRow
 
 __all__ = ["run_emergency_receiver_task"]
 
@@ -176,10 +177,26 @@ async def _process_one_entry(
     surrounding poll loop continues per parent decision (H).
     """
     try:
-        detail = EmergencyInvocationRequestedDetail.model_validate_json(row.detail_json)
-    except Exception:
-        log.exception("emergency entry_id=%s detail parse failed", row.entry_id)
+        decoded = decode_detail(row.detail_json, EmergencyInvocationRequestedDetail)
+    except (ValueError, TypeError) as exc:
+        # ``decode_detail`` raises ``json.JSONDecodeError`` (a ``ValueError``)
+        # for malformed JSON and ``TypeError`` for shape mismatches. Other
+        # exceptions surface naturally — they would indicate a bug in the
+        # decoder rather than a malformed payload.
+        log.warning(
+            "emergency entry_id=%s detail parse failed",
+            row.entry_id,
+            exc_info=exc,
+        )
         return
+    if not isinstance(decoded, EmergencyInvocationRequestedDetail):
+        log.error(
+            "emergency entry_id=%s decoded to unexpected type %s",
+            row.entry_id,
+            type(decoded).__name__,
+        )
+        return
+    detail = decoded
 
     if detail.trigger_type != "margin_call":
         most_recent = await _most_recent_completed_emergency_at(context.session_factory)
@@ -207,6 +224,10 @@ async def _process_one_entry(
             now=datetime.now(UTC),
         )
     except Exception:
+        # Per-iteration supervisor per runtime §G1: any unhandled error from
+        # ``run_invocation`` is logged so the receiver task keeps polling per
+        # parent decision (H). ``BaseException`` (``CancelledError``) propagates
+        # so external interruption bubbles to the supervisor.
         log.exception("emergency invocation entry_id=%s failed", row.entry_id)
         return
 

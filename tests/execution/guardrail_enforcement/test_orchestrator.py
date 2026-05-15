@@ -8,19 +8,18 @@ no hard-coded numerics in test bodies.
 
 from __future__ import annotations
 
-import pydantic
+import dataclasses
+
 import pytest
 
+from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.config.models.regimes import Regime
 from alphamind.execution.guardrail_enforcement import (
     Phase1EnforcementResult,
     compose_active_risk_parameters,
     compose_phase_1_enforcement,
 )
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RegimeTransitionState,
-)
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.risk_guardrails.breach_behavior import DrawdownTier
 from alphamind.risk_guardrails.regime_adaptation import (
     RegimeAdaptationOutput,
@@ -221,7 +220,7 @@ def test_inputs_are_unchanged_by_invocation() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Frozen Pydantic invariant on the result type
+# Frozen invariant on the result type (ALP-476 — Pydantic→frozen dataclass)
 # ---------------------------------------------------------------------------
 
 
@@ -237,8 +236,8 @@ def test_phase_1_enforcement_result_is_frozen() -> None:
         progressive_tiers=TIERS,
     )
 
-    with pytest.raises(pydantic.ValidationError):
-        result.drawdown_tier = DrawdownTier.CONSTRAINED
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        result.drawdown_tier = DrawdownTier.CONSTRAINED  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

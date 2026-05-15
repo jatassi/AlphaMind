@@ -6,63 +6,30 @@ Exercises the cash-merger and stock-merger handlers via the public
 credited). Stock mergers swap to the acquirer's symbol/qty/basis and flag
 the position for strategist re-evaluation.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price
+from alphamind._kernel.regime import RiskZone
 from alphamind.execution.broker_adapter.queries import PositionSnapshot
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.tables.brackets import BracketRow
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger import (
-    CASH_LEDGER_SINGLETON_ID,
-    CashLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.corporate_action_integration_ledger import (
-    CorporateActionIntegrationLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.orders_codec import (
-    record_to_row as order_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
-from alphamind.execution.state_persistence.tables.theses import ThesisRow
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    CorporateActionLedgerStatus,
-)
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -114,7 +81,51 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+    InvocationHandle,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.records import (
+    CorporateActionLedgerStatus,
+)
+from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger import (
+    CASH_LEDGER_SINGLETON_ID,
+    CashLedgerRow,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.corporate_action_integration_ledger import (
+    CorporateActionIntegrationLedgerRow,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
+)
+from alphamind.state.tables.orders_codec import (
+    record_to_row as order_record_to_row,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
+)
+from alphamind.state.tables.theses import ThesisRow
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
+)
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-merger-2026-05-08T12:00:00Z"
@@ -134,7 +145,7 @@ async def db(
     """Yield (async_engine, session_factory) over a fresh on-disk SQLite DB."""
     db_path = tmp_path / "alphamind_merger.db"
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401 — side-effect import
+    import alphamind.state.tables  # noqa: F401 — side-effect import
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -207,7 +218,7 @@ def _make_open_equity_position(
     average_cost_basis_per_share: float = 50.0,
 ) -> PositionRecord:
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=average_cost_basis_per_share,
     )
@@ -220,21 +231,19 @@ def _make_open_equity_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -250,7 +259,7 @@ def _make_open_options_position(
     strike_price: float = 60.0,
 ) -> PositionRecord:
     details = OptionsPositionDetails(
-        underlying_ticker=underlying_ticker,
+        underlying_ticker=Symbol(underlying_ticker),
         strike_price=strike_price,
         expiration_date=date(2026, 12, 18),
         contract_type=OptionContractType.CALL,
@@ -268,21 +277,19 @@ def _make_open_options_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -297,7 +304,7 @@ def _make_open_strategy_position(
         leg_id="leg-long",
         direction=Direction.LONG,
         options=OptionsPositionDetails(
-            underlying_ticker=underlying_ticker,
+            underlying_ticker=Symbol(underlying_ticker),
             strike_price=55.0,
             expiration_date=date(2026, 12, 18),
             contract_type=OptionContractType.CALL,
@@ -311,7 +318,7 @@ def _make_open_strategy_position(
         leg_id="leg-short",
         direction=Direction.SHORT,
         options=OptionsPositionDetails(
-            underlying_ticker=underlying_ticker,
+            underlying_ticker=Symbol(underlying_ticker),
             strike_price=65.0,
             expiration_date=date(2026, 12, 18),
             contract_type=OptionContractType.CALL,
@@ -346,21 +353,19 @@ def _make_open_strategy_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -370,32 +375,30 @@ def _make_pending_entry_order(
     position_id: str = "pos-1",
     ticker: str = "TGT",
 ) -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": position_id,
-            "bracket_id": bracket_id,
-            "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=ticker),
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": 100.0,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 100.0,
-            "modification_count": 0,
-            "originating_thesis_id": "thesis-1",
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=bracket_id,
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=100.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=100.0,
+        modification_count=0,
+        originating_thesis_id=ThesisId("thesis-1"),
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -409,16 +412,16 @@ def _make_active_bracket(
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker=ticker, threshold_usd=45.0, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(underlying_ticker=Symbol(ticker), threshold_usd=45.0, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id=entry_order_id,
+        entry_order_id=OrderId(entry_order_id),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -430,7 +433,7 @@ def _make_active_thesis(thesis_id: str = "thesis-1", position_id: str = "pos-1")
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -449,8 +452,8 @@ def _make_active_thesis(thesis_id: str = "thesis-1", position_id: str = "pos-1")
     )
     generation_at = _NOW - timedelta(hours=4)
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="TGT momentum",
         key_catalyst="Acquisition rumor",
         position_size_rationale="Sized at 5%",
@@ -468,36 +471,32 @@ def _make_active_thesis(thesis_id: str = "thesis-1", position_id: str = "pos-1")
 
 
 def _make_cash_ledger(current_cash_usd: float = 100_000.0) -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": current_cash_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=current_cash_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _make_drawdown_state() -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": 100_000.0,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=100_000.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -521,12 +520,12 @@ def _equity_snapshot(symbol: str, qty: float, avg_entry_price: float) -> Positio
         symbol=symbol,
         asset_class="us_equity",
         qty=qty,
-        avg_entry_price=avg_entry_price,
-        market_value=qty * avg_entry_price,
-        cost_basis=qty * avg_entry_price,
-        unrealized_pl=0.0,
+        avg_entry_price=price(avg_entry_price),
+        market_value=money(qty * avg_entry_price),
+        cost_basis=money(qty * avg_entry_price),
+        unrealized_pl=money(0.0),
         unrealized_plpc=0.0,
-        current_price=avg_entry_price,
+        current_price=price(avg_entry_price),
         side="long",
     )
 
@@ -536,12 +535,12 @@ def _option_snapshot(symbol: str, qty: float, avg_entry_price: float) -> Positio
         symbol=symbol,
         asset_class="us_option",
         qty=qty,
-        avg_entry_price=avg_entry_price,
-        market_value=qty * avg_entry_price * 100.0,
-        cost_basis=qty * avg_entry_price * 100.0,
-        unrealized_pl=0.0,
+        avg_entry_price=price(avg_entry_price),
+        market_value=money(qty * avg_entry_price * 100.0),
+        cost_basis=money(qty * avg_entry_price * 100.0),
+        unrealized_pl=money(0.0),
         unrealized_plpc=0.0,
-        current_price=avg_entry_price,
+        current_price=price(avg_entry_price),
         side="long",
     )
 
@@ -566,7 +565,7 @@ async def _seed_position_cluster(
     thesis: ThesisRecord | None,
     bracket: BracketRecord,
 ) -> None:
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     bracket_row, leg_rows = bracket_record_to_rows(bracket)
 
@@ -649,10 +648,10 @@ async def test_cash_merger_equity_zeros_quantity_and_closes_position(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-merger-equity-1",
         action_type=CorporateActionType.CASH_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker=None,
         ratio_or_amount=75.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=7500.0,
         transaction_time=_TXN_TIME,
     )
@@ -697,10 +696,10 @@ async def test_cash_merger_equity_emits_position_closed_and_cash_credited(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-merger-events-1",
         action_type=CorporateActionType.CASH_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker=None,
         ratio_or_amount=75.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=7500.0,
         transaction_time=_TXN_TIME,
     )
@@ -735,8 +734,9 @@ async def test_cash_merger_equity_emits_position_closed_and_cash_credited(
         closed_detail = json.loads(closed_rows[0].detail_json)
         assert closed_detail["exit_method"] == PositionExitMethod.CORPORATE_ACTION_CASH_MERGER.value
         # Deal price per share = signed_cash_impact_usd / pre_qty = 7500 / 100 = 75.
-        assert closed_detail["exit_price"] == pytest.approx(75.0)
-        assert closed_detail["realized_pnl_usd"] == pytest.approx(2500.0)
+        # ALP-463: Money/Price fields serialize to their Decimal-exact string repr.
+        assert Decimal(closed_detail["exit_price"]) == Decimal(75)
+        assert Decimal(closed_detail["realized_pnl_usd"]) == Decimal(2500)
         # Cash merger carries a CA-specific resolution category so operators
         # can distinguish CA-driven closes from PM-driven ones in the audit.
         assert closed_detail["thesis_resolution_category"] == "corporate_action_cash_merger"
@@ -746,7 +746,7 @@ async def test_cash_merger_equity_emits_position_closed_and_cash_credited(
         assert len(credit_rows) == 1
         credit_detail = json.loads(credit_rows[0].detail_json)
         assert credit_detail["reason"] == CashCreditReason.CASH_MERGER_PROCEEDS.value
-        assert credit_detail["amount_usd"] == pytest.approx(7500.0)
+        assert Decimal(credit_detail["amount_usd"]) == Decimal(7500)
 
         # Cash ledger balance bumped by the deal proceeds.
         cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
@@ -765,9 +765,9 @@ async def test_cash_merger_resolves_linked_thesis(
     await _seed_invocation_substrate(factory)
     await _seed_position_cluster(
         factory,
-        _make_open_equity_position(thesis_id="thesis-1"),
+        _make_open_equity_position(thesis_id=ThesisId("thesis-1")),
         _make_pending_entry_order(),
-        _make_active_thesis(thesis_id="thesis-1"),
+        _make_active_thesis(thesis_id=ThesisId("thesis-1")),
         _make_active_bracket(),
     )
     await _seed_cash_ledger(factory)
@@ -776,10 +776,10 @@ async def test_cash_merger_resolves_linked_thesis(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-merger-thesis-1",
         action_type=CorporateActionType.CASH_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker=None,
         ratio_or_amount=75.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=7500.0,
         transaction_time=_TXN_TIME,
     )
@@ -817,10 +817,10 @@ async def test_cash_merger_no_thesis_does_not_raise(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-merger-no-thesis-1",
         action_type=CorporateActionType.CASH_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker=None,
         ratio_or_amount=75.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=7500.0,
         transaction_time=_TXN_TIME,
     )
@@ -852,10 +852,10 @@ async def test_cash_merger_writes_ledger_dedup_anchor(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-merger-ledger-1",
         action_type=CorporateActionType.CASH_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker=None,
         ratio_or_amount=75.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=7500.0,
         transaction_time=_TXN_TIME,
     )
@@ -892,10 +892,10 @@ async def test_cash_merger_missing_position_raises_value_error(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-merger-missing-1",
         action_type=CorporateActionType.CASH_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker=None,
         ratio_or_amount=75.0,
-        position_id="pos-missing",
+        position_id=PositionId("pos-missing"),
         signed_cash_impact_usd=7500.0,
         transaction_time=_TXN_TIME,
     )
@@ -925,9 +925,15 @@ async def test_cash_merger_options_zeros_contract_count_and_closes_position(
         _make_open_options_position(
             contract_count=5.0, premium_paid_per_contract=2.5, contract_multiplier=100.0
         ),
-        _make_pending_entry_order(position_id="pos-opt-1", bracket_id="brk-opt-1"),
-        _make_active_thesis(thesis_id="thesis-opt-1", position_id="pos-opt-1"),
-        _make_active_bracket(bracket_id="brk-opt-1", position_id="pos-opt-1"),
+        _make_pending_entry_order(
+            position_id=PositionId("pos-opt-1"), bracket_id=BracketId("brk-opt-1")
+        ),
+        _make_active_thesis(
+            thesis_id=ThesisId("thesis-opt-1"), position_id=PositionId("pos-opt-1")
+        ),
+        _make_active_bracket(
+            bracket_id=BracketId("brk-opt-1"), position_id=PositionId("pos-opt-1")
+        ),
     )
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
@@ -937,10 +943,10 @@ async def test_cash_merger_options_zeros_contract_count_and_closes_position(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-merger-options-1",
         action_type=CorporateActionType.CASH_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker=None,
         ratio_or_amount=1.5,
-        position_id="pos-opt-1",
+        position_id=PositionId("pos-opt-1"),
         signed_cash_impact_usd=750.0,
         transaction_time=_TXN_TIME,
     )
@@ -978,9 +984,15 @@ async def test_cash_merger_strategy_closes_all_legs_and_aggregates_pnl(
     await _seed_position_cluster(
         factory,
         _make_open_strategy_position(),
-        _make_pending_entry_order(position_id="pos-stg-1", bracket_id="brk-stg-1"),
-        _make_active_thesis(thesis_id="thesis-stg-1", position_id="pos-stg-1"),
-        _make_active_bracket(bracket_id="brk-stg-1", position_id="pos-stg-1"),
+        _make_pending_entry_order(
+            position_id=PositionId("pos-stg-1"), bracket_id=BracketId("brk-stg-1")
+        ),
+        _make_active_thesis(
+            thesis_id=ThesisId("thesis-stg-1"), position_id=PositionId("pos-stg-1")
+        ),
+        _make_active_bracket(
+            bracket_id=BracketId("brk-stg-1"), position_id=PositionId("pos-stg-1")
+        ),
     )
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
@@ -990,10 +1002,10 @@ async def test_cash_merger_strategy_closes_all_legs_and_aggregates_pnl(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-merger-strategy-1",
         action_type=CorporateActionType.CASH_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker=None,
         ratio_or_amount=1.5,
-        position_id="pos-stg-1",
+        position_id=PositionId("pos-stg-1"),
         signed_cash_impact_usd=300.0,
         transaction_time=_TXN_TIME,
     )
@@ -1045,10 +1057,10 @@ async def test_stock_merger_equity_swaps_ticker_qty_basis_from_lookup(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-stock-merger-equity-1",
         action_type=CorporateActionType.STOCK_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker="ACQ",
         ratio_or_amount=0.6,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=_TXN_TIME,
     )
@@ -1094,10 +1106,10 @@ async def test_stock_merger_emits_corporate_action_applied_with_new_ticker(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-stock-merger-events-1",
         action_type=CorporateActionType.STOCK_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker="ACQ",
         ratio_or_amount=0.6,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=_TXN_TIME,
     )
@@ -1154,10 +1166,10 @@ async def test_stock_merger_partial_cash_credits_via_cash_credited_event(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-stock-merger-mix-1",
         action_type=CorporateActionType.STOCK_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker="ACQ",
         ratio_or_amount=0.4,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=1200.0,
         transaction_time=_TXN_TIME,
     )
@@ -1184,7 +1196,7 @@ async def test_stock_merger_partial_cash_credits_via_cash_credited_event(
 
         credit_detail = json.loads(credit_rows[0].detail_json)
         assert credit_detail["reason"] == CashCreditReason.CASH_MERGER_PROCEEDS.value
-        assert credit_detail["amount_usd"] == pytest.approx(1200.0)
+        assert Decimal(credit_detail["amount_usd"]) == Decimal(1200)
 
         cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
         assert cash_row is not None
@@ -1215,10 +1227,10 @@ async def test_stock_merger_no_partial_cash_skips_cash_credited(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-stock-merger-pure-1",
         action_type=CorporateActionType.STOCK_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker="ACQ",
         ratio_or_amount=0.6,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=_TXN_TIME,
     )
@@ -1267,10 +1279,10 @@ async def test_stock_merger_cancels_bracket_and_writes_ledger(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-stock-merger-bracket-1",
         action_type=CorporateActionType.STOCK_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker="ACQ",
         ratio_or_amount=0.6,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=_TXN_TIME,
     )
@@ -1321,10 +1333,10 @@ async def test_stock_merger_missing_lookup_position_raises(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-stock-merger-no-lookup-1",
         action_type=CorporateActionType.STOCK_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker="ACQ",
         ratio_or_amount=0.6,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=_TXN_TIME,
     )
@@ -1357,10 +1369,10 @@ async def test_stock_merger_missing_lookup_argument_raises(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-stock-merger-none-lookup-1",
         action_type=CorporateActionType.STOCK_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker="ACQ",
         ratio_or_amount=0.6,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=_TXN_TIME,
     )
@@ -1393,9 +1405,15 @@ async def test_stock_merger_options_projects_post_adjustment_state_with_none_gre
             contract_multiplier=100.0,
             strike_price=60.0,
         ),
-        _make_pending_entry_order(position_id="pos-opt-1", bracket_id="brk-opt-1"),
-        _make_active_thesis(thesis_id="thesis-opt-1", position_id="pos-opt-1"),
-        _make_active_bracket(bracket_id="brk-opt-1", position_id="pos-opt-1"),
+        _make_pending_entry_order(
+            position_id=PositionId("pos-opt-1"), bracket_id=BracketId("brk-opt-1")
+        ),
+        _make_active_thesis(
+            thesis_id=ThesisId("thesis-opt-1"), position_id=PositionId("pos-opt-1")
+        ),
+        _make_active_bracket(
+            bracket_id=BracketId("brk-opt-1"), position_id=PositionId("pos-opt-1")
+        ),
     )
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
@@ -1409,10 +1427,10 @@ async def test_stock_merger_options_projects_post_adjustment_state_with_none_gre
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-stock-merger-options-1",
         action_type=CorporateActionType.STOCK_MERGER,
-        ticker="TGT",
+        ticker=Symbol("TGT"),
         new_ticker=new_symbol,
         ratio_or_amount=0.6,
-        position_id="pos-opt-1",
+        position_id=PositionId("pos-opt-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=_TXN_TIME,
     )

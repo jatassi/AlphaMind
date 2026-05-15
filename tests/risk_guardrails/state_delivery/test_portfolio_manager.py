@@ -2,11 +2,32 @@
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from itertools import pairwise
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
+from alphamind._kernel.money import money, signed_money
+from alphamind._kernel.regime import (
+    DrawdownTier,
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
 from alphamind.portfolio_state.records.activity_log import (
@@ -17,17 +38,6 @@ from alphamind.portfolio_state.records.activity_log import (
     PositionClosedDetail,
     PositionExitMethod,
     PositionReducedDetail,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownState,
-    DrawdownTier,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -153,12 +163,17 @@ def _make_drawdown_state(
 
 def _make_pnl(*, daily_total_pnl_usd: float = 2_500.0) -> PortfolioPnL:
     return PortfolioPnL(
-        total_unrealized_pnl_usd=10_000.0,
+        total_unrealized_pnl_usd=money(10_000.0),
         total_unrealized_pnl_pct_of_portfolio=2.0,
-        daily_realized_pnl_usd=500.0,
-        daily_total_pnl_usd=daily_total_pnl_usd,
-        cumulative_realized_pnl_usd=20_000.0,
-        rolling_realized_pnl={"1d": 500.0, "3d": 1_500.0, "5d": 2_000.0, "20d": 8_000.0},
+        daily_realized_pnl_usd=money(500.0),
+        daily_total_pnl_usd=signed_money(daily_total_pnl_usd),
+        cumulative_realized_pnl_usd=money(20_000.0),
+        rolling_realized_pnl={
+            "1d": money(500.0),
+            "3d": money(1_500.0),
+            "5d": money(2_000.0),
+            "20d": money(8_000.0),
+        },
         win_rate_pct=None,
         average_win_size_usd=None,
         average_loss_size_usd=None,
@@ -168,8 +183,8 @@ def _make_pnl(*, daily_total_pnl_usd: float = 2_500.0) -> PortfolioPnL:
 
 def _make_directional_exposure() -> DirectionalExposure:
     return DirectionalExposure(
-        total_long_delta_adjusted_usd=300_000.0,
-        total_short_delta_adjusted_usd=80_000.0,
+        total_long_delta_adjusted_usd=money(300_000.0),
+        total_short_delta_adjusted_usd=money(80_000.0),
         net_directional_pct_of_portfolio=42.0,
         gross_pct_of_portfolio=78.0,
     )
@@ -201,7 +216,7 @@ def _make_position(
 ) -> PositionView:
     is_short = direction == Direction.SHORT
     equity = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=100.0,
         average_cost_basis_per_share=150.0,
         borrow_rate_pct=0.5 if is_short else None,
@@ -216,7 +231,7 @@ def _make_position(
         fees=1.0,
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -459,15 +474,15 @@ def test_render_pm_header_renders_sector_and_directional_headroom_blocks() -> No
 def test_render_pm_header_renders_position_level_constraint_proximity_block() -> None:
     positions = (
         _make_position(
-            position_id="POS-NVDA-001",
-            ticker="NVDA",
+            position_id=PositionId("POS-NVDA-001"),
+            ticker=Symbol("NVDA"),
             sector="tech",
             weight_pct=4.2,
             unrealized_pnl_pct=-18.0,
         ),
         _make_position(
-            position_id="POS-AMD-002",
-            ticker="AMD",
+            position_id=PositionId("POS-AMD-002"),
+            ticker=Symbol("AMD"),
             sector="tech",
             weight_pct=2.1,
             unrealized_pnl_pct=5.0,
@@ -505,22 +520,22 @@ def test_render_pm_header_renders_position_level_constraint_proximity_block() ->
 def test_render_pm_header_renders_sector_exposure_breakdown_per_position() -> None:
     positions = (
         _make_position(
-            position_id="POS-NVDA-001",
-            ticker="NVDA",
+            position_id=PositionId("POS-NVDA-001"),
+            ticker=Symbol("NVDA"),
             sector="tech",
             weight_pct=4.2,
             unrealized_pnl_pct=-1.0,
         ),
         _make_position(
-            position_id="POS-AAPL-002",
-            ticker="AAPL",
+            position_id=PositionId("POS-AAPL-002"),
+            ticker=Symbol("AAPL"),
             sector="tech",
             weight_pct=3.1,
             unrealized_pnl_pct=2.0,
         ),
         _make_position(
-            position_id="POS-MU-003",
-            ticker="MU",
+            position_id=PositionId("POS-MU-003"),
+            ticker=Symbol("MU"),
             sector="semis",
             weight_pct=2.5,
             unrealized_pnl_pct=4.0,
@@ -826,7 +841,7 @@ def test_render_pm_header_regime_transition_breaches_block_present_when_breaches
         available_capital_after_usd=300_000.0,
     )
     breach = RegimeTransitionBreach(
-        position_id="POS-NVDA-001",
+        position_id=PositionId("POS-NVDA-001"),
         rule_id="position_max_size_pct",
         rule_label="Per-position max size",
         current_value=4.2,
@@ -899,8 +914,8 @@ def _engine_close_entry(
         source=EventSource.GUARDRAIL_LAYER,
         detail=PositionClosedDetail(
             exit_method=PositionExitMethod.STOP_TRIGGERED,
-            exit_price=120.0,
-            realized_pnl_usd=realized_pnl_usd,
+            exit_price=money("120.0"),
+            realized_pnl_usd=signed_money(realized_pnl_usd),
             thesis_resolution_category="position_level_max_loss",
         ),
     )
@@ -924,7 +939,7 @@ def _engine_reduce_entry(
         source=EventSource.GUARDRAIL_LAYER,
         detail=PositionReducedDetail(
             reduced_quantity=20.0,
-            partial_realized_pnl_usd=-100.0,
+            partial_realized_pnl_usd=signed_money("-100.0"),
             close_rationale_classification="single_short_size_limit",
         ),
     )
@@ -1094,9 +1109,18 @@ def test_render_pm_header_active_regime_overrides_block_without_expiry_no_suffix
 
 def _three_position_view() -> PortfolioManagerView:
     positions = (
-        _make_position(position_id="POS-NVDA-001", ticker="NVDA", weight_pct=4.2),
-        _make_position(position_id="POS-AAPL-002", ticker="AAPL", weight_pct=3.1),
-        _make_position(position_id="POS-MU-003", ticker="MU", sector="semis", weight_pct=2.5),
+        _make_position(
+            position_id=PositionId("POS-NVDA-001"), ticker=Symbol("NVDA"), weight_pct=4.2
+        ),
+        _make_position(
+            position_id=PositionId("POS-AAPL-002"), ticker=Symbol("AAPL"), weight_pct=3.1
+        ),
+        _make_position(
+            position_id=PositionId("POS-MU-003"),
+            ticker=Symbol("MU"),
+            sector="semis",
+            weight_pct=2.5,
+        ),
     )
     return _make_pm_view(positions=positions)
 
@@ -1130,8 +1154,12 @@ def test_render_pm_header_correlation_state_block_omitted_when_state_is_none() -
 def test_render_pm_header_correlation_state_block_omitted_when_below_position_threshold() -> None:
     view = _make_pm_view(
         positions=(
-            _make_position(position_id="POS-NVDA-001", ticker="NVDA", weight_pct=4.2),
-            _make_position(position_id="POS-AAPL-002", ticker="AAPL", weight_pct=3.1),
+            _make_position(
+                position_id=PositionId("POS-NVDA-001"), ticker=Symbol("NVDA"), weight_pct=4.2
+            ),
+            _make_position(
+                position_id=PositionId("POS-AAPL-002"), ticker=Symbol("AAPL"), weight_pct=3.1
+            ),
         ),
     )
     impact = CrossConstraintImpact(
@@ -1237,8 +1265,12 @@ def test_render_pm_header_dependency_risk_flag_block_omitted_when_none_or_below_
     )
     two_position_view = _make_pm_view(
         positions=(
-            _make_position(position_id="POS-NVDA-001", ticker="NVDA", weight_pct=4.2),
-            _make_position(position_id="POS-AAPL-002", ticker="AAPL", weight_pct=3.1),
+            _make_position(
+                position_id=PositionId("POS-NVDA-001"), ticker=Symbol("NVDA"), weight_pct=4.2
+            ),
+            _make_position(
+                position_id=PositionId("POS-AAPL-002"), ticker=Symbol("AAPL"), weight_pct=3.1
+            ),
         ),
     )
     rendered_below = render_pm_header(
@@ -1696,11 +1728,25 @@ def test_render_pm_header_full_system_fixture_full_render() -> None:
     correlation in WARNING, dependency-risk in NORMAL.
     """
     positions = (
-        _make_position(position_id="POS-NVDA-001", ticker="NVDA", weight_pct=4.2),
-        _make_position(position_id="POS-AAPL-002", ticker="AAPL", weight_pct=3.5),
-        _make_position(position_id="POS-AMD-003", ticker="AMD", weight_pct=2.1),
-        _make_position(position_id="POS-AVGO-004", ticker="AVGO", sector="semis", weight_pct=3.0),
-        _make_position(position_id="POS-MU-005", ticker="MU", sector="semis", weight_pct=2.5),
+        _make_position(
+            position_id=PositionId("POS-NVDA-001"), ticker=Symbol("NVDA"), weight_pct=4.2
+        ),
+        _make_position(
+            position_id=PositionId("POS-AAPL-002"), ticker=Symbol("AAPL"), weight_pct=3.5
+        ),
+        _make_position(position_id=PositionId("POS-AMD-003"), ticker=Symbol("AMD"), weight_pct=2.1),
+        _make_position(
+            position_id=PositionId("POS-AVGO-004"),
+            ticker=Symbol("AVGO"),
+            sector="semis",
+            weight_pct=3.0,
+        ),
+        _make_position(
+            position_id=PositionId("POS-MU-005"),
+            ticker=Symbol("MU"),
+            sector="semis",
+            weight_pct=2.5,
+        ),
     )
     full_risk_budget = RiskBudgetConsumption(
         entries=(
@@ -1883,6 +1929,88 @@ def test_render_pm_header_full_system_fixture_full_render() -> None:
         ]
     )
     assert rendered == expected
+
+
+# ---------------------------------------------------------------------------
+# Frozen-dataclass shape (story 10e — ALP-478)
+#
+# The 5 PM-header parameter-bag types are pure internal containers — they
+# never cross HTTP/MCP/file/DB boundaries — so they are stdlib
+# ``@dataclass(frozen=True, slots=True)`` rather than Pydantic ``BaseModel``.
+# Each test below pins that shape: dataclass marker present, slots present,
+# mutation raises ``FrozenInstanceError``. Render-output equivalence is
+# already exercised by the suite above.
+# ---------------------------------------------------------------------------
+
+
+def test_cross_constraint_impact_per_rule_is_frozen_slotted_dataclass() -> None:
+    rule = CrossConstraintImpactPerRule(
+        rule_id="net_long_pct",
+        rule_label="Net long",
+        current=42.0,
+        projected_after=45.0,
+        limit=60.0,
+        unit="% of portfolio",
+    )
+    assert dataclasses.is_dataclass(rule)
+    assert hasattr(CrossConstraintImpactPerRule, "__slots__")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        rule.rule_id = "other"  # type: ignore[misc]
+
+
+def test_cross_constraint_impact_is_frozen_slotted_dataclass() -> None:
+    impact = CrossConstraintImpact(
+        per_rule=(),
+        flagged_rule_ids=(),
+        available_capital_before_usd=5_000.0,
+        available_capital_after_usd=3_500.0,
+    )
+    assert dataclasses.is_dataclass(impact)
+    assert hasattr(CrossConstraintImpact, "__slots__")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        impact.flagged_rule_ids = ("x",)  # type: ignore[misc]
+
+
+def test_regime_override_is_frozen_slotted_dataclass() -> None:
+    override = RegimeOverride(
+        overlay_name="pre_event",
+        description="FOMC tightening",
+        expires_at=None,
+    )
+    assert dataclasses.is_dataclass(override)
+    assert hasattr(RegimeOverride, "__slots__")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        override.overlay_name = "other"  # type: ignore[misc]
+
+
+def test_correlation_state_is_frozen_slotted_dataclass() -> None:
+    state = CorrelationState(
+        weighted_avg_correlation=0.45,
+        correlation_limit=0.60,
+        zone=RiskZone.NORMAL,
+        highest_pairwise_position_a="POS-NVDA-001",
+        highest_pairwise_position_b="POS-AAPL-002",
+        highest_pairwise_value=0.78,
+    )
+    assert dataclasses.is_dataclass(state)
+    assert hasattr(CorrelationState, "__slots__")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        state.weighted_avg_correlation = 0.99  # type: ignore[misc]
+
+
+def test_dependency_risk_flag_is_frozen_slotted_dataclass() -> None:
+    flag = DependencyRiskFlag(
+        max_catalyst_failure_exposure_pct=12.0,
+        catalyst_failure_limit_pct=20.0,
+        zone=RiskZone.NORMAL,
+        effective_independent_thesis_count=8,
+        worst_shared_catalyst_label="Q2 earnings",
+        worst_shared_catalyst_position_ids=("POS-NVDA-001", "POS-AAPL-002"),
+    )
+    assert dataclasses.is_dataclass(flag)
+    assert hasattr(DependencyRiskFlag, "__slots__")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        flag.effective_independent_thesis_count = 99  # type: ignore[misc]
 
 
 def test_render_pm_header_has_no_double_blank_lines_and_no_trailing_blank() -> None:

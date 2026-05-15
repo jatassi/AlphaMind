@@ -314,6 +314,10 @@ def main(argv: list[str] | None = None) -> int:
     except (_CliError, AggregationInputError) as exc:
         return _emit_error(str(exc))
     except Exception as exc:
+        # CLI outermost supervisor per runtime §G1: emit the error to stdout
+        # so the operator sees a structured failure, log the full traceback,
+        # and return a non-zero exit code. ``BaseException``
+        # (``KeyboardInterrupt``) propagates so the operator's Ctrl-C surfaces.
         logger.exception("replay failure")
         return _emit_error(str(exc))
 

@@ -18,8 +18,9 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.output import OutputAudience
-from alphamind.distillation.q7_cross_asset import compute_intermarket_regime
+from alphamind.distillation.q7 import compute_intermarket_regime
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,
@@ -143,12 +144,12 @@ class TestIntermarketStocksVsBonds:
         for r in returns:
             spy_closes.append(spy_closes[-1] * (1.0 + r))
             tlt_closes.append(tlt_closes[-1] * (1.0 - r))  # opposite direction
-        _seed_path(session, ticker="SPY", closes=spy_closes, start_day=start_day)
-        _seed_path(session, ticker="TLT", closes=tlt_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("SPY"), closes=spy_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("TLT"), closes=tlt_closes, start_day=start_day)
         # Add stub series for the other intermarket relationships so the
         # block builds.
-        _seed_path(session, ticker="GLD", closes=[180.0] * 61, start_day=start_day)
-        _seed_path(session, ticker="XLE", closes=[80.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("GLD"), closes=[180.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("XLE"), closes=[80.0] * 61, start_day=start_day)
         _seed_macro(
             session,
             series_id="DFII10",
@@ -195,10 +196,10 @@ class TestIntermarketStocksVsBonds:
         for r in returns:
             spy_closes.append(spy_closes[-1] * (1.0 + r))
             tlt_closes.append(tlt_closes[-1] * (1.0 + r))
-        _seed_path(session, ticker="SPY", closes=spy_closes, start_day=start_day)
-        _seed_path(session, ticker="TLT", closes=tlt_closes, start_day=start_day)
-        _seed_path(session, ticker="GLD", closes=[180.0] * 61, start_day=start_day)
-        _seed_path(session, ticker="XLE", closes=[80.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("SPY"), closes=spy_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("TLT"), closes=tlt_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("GLD"), closes=[180.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("XLE"), closes=[80.0] * 61, start_day=start_day)
         _seed_macro(
             session,
             series_id="DFII10",
@@ -255,10 +256,10 @@ class TestIntermarketGoldVsRealYields:
         for gld_delta, dfii_delta in deltas[:60]:
             gld_closes.append(gld_closes[-1] * (1.0 + gld_delta))
             dfii10_values.append(dfii10_values[-1] + dfii_delta)
-        _seed_path(session, ticker="GLD", closes=gld_closes, start_day=start_day)
-        _seed_path(session, ticker="SPY", closes=[400.0] * 61, start_day=start_day)
-        _seed_path(session, ticker="TLT", closes=[100.0] * 61, start_day=start_day)
-        _seed_path(session, ticker="XLE", closes=[80.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("GLD"), closes=gld_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("SPY"), closes=[400.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("TLT"), closes=[100.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("XLE"), closes=[80.0] * 61, start_day=start_day)
         _seed_macro(
             session,
             series_id="DFII10",
@@ -330,10 +331,10 @@ class TestIntermarketOilVsXLEBeta:
             start_day=start_day,
             source="EIA",
         )
-        _seed_path(session, ticker="XLE", closes=xle_closes, start_day=start_day)
-        _seed_path(session, ticker="SPY", closes=[400.0] * 61, start_day=start_day)
-        _seed_path(session, ticker="TLT", closes=[100.0] * 61, start_day=start_day)
-        _seed_path(session, ticker="GLD", closes=[180.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("XLE"), closes=xle_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("SPY"), closes=[400.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("TLT"), closes=[100.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("GLD"), closes=[180.0] * 61, start_day=start_day)
         _seed_macro(session, series_id="DFII10", values=[1.5] * 61, start_day=start_day)
         _seed_macro(session, series_id="VIXCLS", values=[15.0] * 61, start_day=start_day)
         session.commit()
@@ -372,16 +373,16 @@ class TestIntermarketVixVsSpy:
         for spy_delta, vix_delta in deltas[:60]:
             spy_closes.append(spy_closes[-1] * (1.0 + spy_delta))
             vix_values.append(vix_values[-1] + vix_delta)
-        _seed_path(session, ticker="SPY", closes=spy_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("SPY"), closes=spy_closes, start_day=start_day)
         _seed_macro(
             session,
             series_id="VIXCLS",
             values=vix_values,
             start_day=start_day,
         )
-        _seed_path(session, ticker="TLT", closes=[100.0] * 61, start_day=start_day)
-        _seed_path(session, ticker="GLD", closes=[180.0] * 61, start_day=start_day)
-        _seed_path(session, ticker="XLE", closes=[80.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("TLT"), closes=[100.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("GLD"), closes=[180.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("XLE"), closes=[80.0] * 61, start_day=start_day)
         _seed_macro(session, series_id="DFII10", values=[1.5] * 61, start_day=start_day)
         _seed_macro(
             session,

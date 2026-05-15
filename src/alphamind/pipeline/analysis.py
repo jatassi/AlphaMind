@@ -6,8 +6,8 @@ distillation through synthesizer in one shot. Sequences:
 1. :func:`run_external_distillation` — produces :class:`DistillationOutputs`.
 2. :func:`run_domain_researchers` (three sectors fan out internally) and
    :func:`run_qualitative_researcher` — independent inputs, run in parallel
-   under :func:`asyncio.gather` with ``return_exceptions=False`` per the
-   fail-closed policy in ``docs/design/llm-agent-failure-handling.md``.
+   under :class:`asyncio.TaskGroup` per the fail-closed policy in
+   ``docs/design/llm-agent-failure-handling.md``.
 3. :func:`run_adaptive_researcher` — consumes the typed sector / qualitative
    / correlation-regime briefs and the universal regime label.
 4. :func:`run_synthesizer` — reads every upstream brief and produces the
@@ -131,13 +131,18 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
     :func:`run_synthesizer` as its ``agent_config`` argument.
 
     Per the fail-closed policy in ``docs/design/llm-agent-failure-handling.md``,
-    any failure in any stage propagates immediately. ``asyncio.gather``
-    with ``return_exceptions=False`` cancels the in-flight sibling when
-    one of the parallel branches raises.
+    any failure in any stage propagates immediately. The parallel stage
+    runs under :class:`asyncio.TaskGroup`, which cancels the in-flight
+    sibling when one of the parallel branches raises and re-raises the
+    failures inside a ``BaseExceptionGroup``; we unwrap the first child so
+    callers see the same exception type they did under ``asyncio.gather``.
     """
+    # Project the Pydantic ``DistillationConfig`` boundary type onto its
+    # frozen-dataclass mirror (ALP-471) before the orchestrator runs — the
+    # orchestrator's compute path consumes the dataclass form.
     distillation_outputs = await run_external_distillation(
         session,
-        distillation_config,
+        distillation_config.to_domain(),
         ticker_scope,
         as_of,
         invocation_id,
@@ -145,28 +150,40 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
         provenance_root=provenance_root,
     )
 
-    domain_researchers_output, qualitative_result = await asyncio.gather(
-        run_domain_researchers(
-            invocation_id=invocation_id,
-            as_of=as_of,
-            distillation_outputs=distillation_outputs,
-            session=session,
-            agents_config=agents_config,
-            sectors_config=sectors_config,
-            archive_root=archive_root,
-        ),
-        run_qualitative_researcher(
-            invocation_id,
-            as_of,
-            last_invocation_time,
-            session=session,
-            universal_regime_label=distillation_outputs.universal_regime_label,
-            universe=universe,
-            agents_config=agents_config,
-            archive_root=archive_root,
-        ),
-        return_exceptions=False,
-    )
+    try:
+        async with asyncio.TaskGroup() as tg:
+            domain_task = tg.create_task(
+                run_domain_researchers(
+                    invocation_id=invocation_id,
+                    as_of=as_of,
+                    distillation_outputs=distillation_outputs,
+                    session=session,
+                    agents_config=agents_config,
+                    sectors_config=sectors_config,
+                    archive_root=archive_root,
+                )
+            )
+            qualitative_task = tg.create_task(
+                run_qualitative_researcher(
+                    invocation_id,
+                    as_of,
+                    last_invocation_time,
+                    session=session,
+                    universal_regime_label=distillation_outputs.universal_regime_label,
+                    universe=universe,
+                    agents_config=agents_config,
+                    archive_root=archive_root,
+                )
+            )
+    except BaseExceptionGroup as eg:
+        # Preserve the prior ``asyncio.gather`` API: callers see the first
+        # failure unchanged. The group is attached as ``__cause__`` so
+        # concurrent failures remain visible in diagnostics.
+        first = eg.exceptions[0]
+        raise first from eg
+
+    domain_researchers_output = domain_task.result()
+    qualitative_result = qualitative_task.result()
 
     sector_briefs: tuple[SectorBrief, ...] = (
         domain_researchers_output.tech_semis.brief,

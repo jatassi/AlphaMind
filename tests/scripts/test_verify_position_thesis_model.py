@@ -28,6 +28,15 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -171,8 +180,8 @@ def test_wave2_thesis_record_float_time_expectation() -> None:
     components = _make_three_components(now)
     # float should parse
     r = ThesisRecord(
-        thesis_id="t1",
-        position_id="p1",
+        thesis_id=ThesisId("t1"),
+        position_id=PositionId("p1"),
         summary="test",
         key_catalyst="cat",
         components=components,
@@ -208,7 +217,7 @@ def test_wave2_position_weight_pct_negative() -> None:
 
     now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
     details = EquityPositionDetails(
-        ticker="AAPL", share_count=100.0, average_cost_basis_per_share=150.0
+        ticker=Symbol("AAPL"), share_count=100.0, average_cost_basis_per_share=150.0
     )
     fill = PositionFill(
         fill_timestamp=now,
@@ -218,7 +227,7 @@ def test_wave2_position_weight_pct_negative() -> None:
         fees=0.0,
     )
     record = PositionRecord(
-        position_id="pos1",
+        position_id=PositionId("pos1"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -265,20 +274,16 @@ def test_wave2_option_greeks_zero_iv_rejected() -> None:
     """01f: iv_used=0.0 must be rejected."""
     from datetime import datetime
 
-    from pydantic import ValidationError
-
     from alphamind.portfolio_state.records.positions import OptionGreeks
 
     now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         OptionGreeks(delta=0.4, gamma=0.02, theta=-0.05, vega=0.1, as_of_timestamp=now, iv_used=0.0)
 
 
 def test_wave2_position_fill_live_estimate() -> None:
     """01g: PositionFill with live_execution_estimate passes; negative fees rejected."""
     from datetime import datetime
-
-    from pydantic import ValidationError
 
     from alphamind.portfolio_state.records.positions import LiveExecutionEstimate, PositionFill
 
@@ -299,7 +304,7 @@ def test_wave2_position_fill_live_estimate() -> None:
     )
     assert fill.live_execution_estimate == est
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         PositionFill(
             fill_timestamp=now,
             fill_price=150.0,
@@ -313,18 +318,14 @@ def test_wave2_bracket_record_deadline_naive_rejected() -> None:
     """01h: naive entry_window_deadline is rejected."""
     from datetime import datetime
 
-    from pydantic import ValidationError
-
     naive_dt = datetime(2026, 5, 2, 12, 0, 0)  # noqa: DTZ001 — intentionally naive to test rejection
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_bracket_record(entry_window_deadline=naive_dt)
 
 
 def test_wave2_order_record_mleg_with_equity_rejected() -> None:
     """01i: MLEG order with EQUITY instrument_spec must be rejected."""
     from datetime import datetime
-
-    from pydantic import ValidationError
 
     from alphamind.portfolio_state.records.orders import (
         EquityInstrumentSpec,
@@ -339,13 +340,13 @@ def test_wave2_order_record_mleg_with_equity_rejected() -> None:
     )
 
     now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         OrderRecord(
-            order_id="ord1",
-            position_id="pos1",
-            bracket_id="brk1",
+            order_id=OrderId("ord1"),
+            position_id=PositionId("pos1"),
+            bracket_id=BracketId("brk1"),
             role=OrderRole.ENTRY,
-            instrument_spec=EquityInstrumentSpec(ticker="AAPL"),
+            instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
             direction=OrderDirection.BUY,
             order_type=OrderType.MARKET,
             order_class=OrderClass.MLEG,
@@ -353,8 +354,8 @@ def test_wave2_order_record_mleg_with_equity_rejected() -> None:
             quantity=100.0,
             duration=OrderDuration.DAY,
             status=OrderStatus.PENDING,
-            alpaca_order_id="alp1",
-            alpaca_order_id_chain=("alp1",),
+            alpaca_order_id=AlpacaOrderId("alp1"),
+            alpaca_order_id_chain=(AlpacaOrderId("alp1"),),
             submission_timestamp=now,
             last_update_timestamp=now,
             filled_quantity=0.0,
@@ -371,8 +372,6 @@ def test_wave2_thesis_position_size_rationale_empty_rejected() -> None:
     """01j: empty position_size_rationale must be rejected."""
     from datetime import datetime, timedelta
 
-    from pydantic import ValidationError
-
     from alphamind.portfolio_state.records.theses import (
         ThesisRecord,
         ThesisRecordStatus,
@@ -380,10 +379,10 @@ def test_wave2_thesis_position_size_rationale_empty_rejected() -> None:
 
     now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
     components = _make_three_components(now)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         ThesisRecord(
-            thesis_id="t1",
-            position_id="p1",
+            thesis_id=ThesisId("t1"),
+            position_id=PositionId("p1"),
             summary="test",
             key_catalyst="cat",
             position_size_rationale="",
@@ -413,13 +412,13 @@ def test_wave3_boundary_fix_returns_2_0() -> None:
 
 
 def test_wave3_regime_label_import_from_risk_guardrails() -> None:
-    from alphamind.risk_guardrails.regime_adaptation.types import RegimeLabel
+    from alphamind._kernel.regime import RegimeLabel
 
     assert RegimeLabel is not None
 
 
 def test_wave3_regime_label_identity() -> None:
-    from alphamind.portfolio_state.records.capital import RegimeLabel as A
+    from alphamind._kernel.regime import RegimeLabel as A
     from alphamind.risk_guardrails.regime_adaptation.types import RegimeLabel as B
 
     assert A is B
@@ -449,8 +448,10 @@ def test_wave4_price_trigger_on_price_stop_passes() -> None:
     leg = BracketLeg(
         leg_id="leg1",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id="ord1",
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=800.0, direction="LTE"),
+        order_id=OrderId("ord1"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=800.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
@@ -461,8 +462,6 @@ def test_wave4_price_trigger_on_price_stop_passes() -> None:
 def test_wave4_time_trigger_on_price_stop_rejected() -> None:
     from datetime import datetime
 
-    from pydantic import ValidationError
-
     from alphamind.portfolio_state.records.orders import (
         BracketLeg,
         BracketLegEnforcement,
@@ -472,11 +471,11 @@ def test_wave4_time_trigger_on_price_stop_rejected() -> None:
     )
 
     now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         BracketLeg(
             leg_id="leg1",
             leg_type=BracketLegType.PRICE_STOP,
-            order_id="ord1",
+            order_id=OrderId("ord1"),
             trigger=TimeTrigger(deadline=now),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
@@ -496,8 +495,10 @@ def test_wave4_pl_anchor_on_take_profit_passes() -> None:
     leg = BracketLeg(
         leg_id="leg1",
         leg_type=BracketLegType.TAKE_PROFIT,
-        order_id="ord1",
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=900.0, direction="GTE"),
+        order_id=OrderId("ord1"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=900.0, direction="GTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
         pl_anchor=PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=18.50),
@@ -509,8 +510,6 @@ def test_wave4_pl_anchor_on_take_profit_passes() -> None:
 def test_wave4_pl_anchor_on_time_expiration_rejected() -> None:
     from datetime import datetime
 
-    from pydantic import ValidationError
-
     from alphamind.portfolio_state.records.orders import (
         BracketLeg,
         BracketLegEnforcement,
@@ -521,7 +520,7 @@ def test_wave4_pl_anchor_on_time_expiration_rejected() -> None:
     )
 
     now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         BracketLeg(
             leg_id="leg1",
             leg_type=BracketLegType.TIME_EXPIRATION,
@@ -565,25 +564,14 @@ def test_wave5_activity_log_backward_compat_shim() -> None:
 
 
 def test_wave5_discriminated_union_bogus_instrument_type_rejected() -> None:
-    from pydantic import ValidationError
+    """Post-ALP-477: dict-payload discriminator parsing lives in the codec
+    layer, not the dataclass constructor. Verify the codec raises on a bogus
+    discriminator.
+    """
+    from alphamind.state.tables.positions_codec import _details_from_dict
 
-    from alphamind.portfolio_state.records.positions import PositionRecord
-
-    with pytest.raises(ValidationError):
-        PositionRecord(
-            position_id="pos1",
-            thesis_id=None,
-            bracket_id=None,
-            status="PENDING",  # type: ignore[arg-type]
-            direction="LONG",  # type: ignore[arg-type]
-            entry_timestamp=None,
-            details={"instrument_type": "BOGUS"},  # type: ignore[arg-type]
-            execution_history=(),
-            realized_pnl_to_date_usd=None,
-            corporate_action_adjustment_needed=False,
-            parent_position_id=None,
-            origin=None,
-        )
+    with pytest.raises((ValueError, TypeError)):
+        _details_from_dict({"instrument_type": "BOGUS"})
 
 
 # ---------------------------------------------------------------------------
@@ -599,15 +587,21 @@ def test_wave6_architectural_returns_4_0() -> None:
 
 
 def test_wave6_position_record_no_market_value_field() -> None:
+    import dataclasses as _dc
+
     from alphamind.portfolio_state.records.positions import PositionRecord
 
-    assert "current_market_value_usd" not in PositionRecord.model_fields
+    field_names = {f.name for f in _dc.fields(PositionRecord)}
+    assert "current_market_value_usd" not in field_names
 
 
 def test_wave6_position_view_has_market_value_field() -> None:
+    import dataclasses as _dc
+
     from alphamind.portfolio_state.views.positions import PositionView
 
-    assert "current_market_value_usd" in PositionView.model_fields
+    field_names = {f.name for f in _dc.fields(PositionView)}
+    assert "current_market_value_usd" in field_names
 
 
 def test_wave6_base_position_protocol_isinstance() -> None:
@@ -624,7 +618,7 @@ def test_wave6_base_position_protocol_isinstance() -> None:
 
     now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
     details = EquityPositionDetails(
-        ticker="AAPL", share_count=100.0, average_cost_basis_per_share=150.0
+        ticker=Symbol("AAPL"), share_count=100.0, average_cost_basis_per_share=150.0
     )
     fill = PositionFill(
         fill_timestamp=now,
@@ -634,7 +628,7 @@ def test_wave6_base_position_protocol_isinstance() -> None:
         fees=0.0,
     )
     record = PositionRecord(
-        position_id="pos1",
+        position_id=PositionId("pos1"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -652,9 +646,12 @@ def test_wave6_base_position_protocol_isinstance() -> None:
 
 def test_wave6_thesis_component_no_supporting_signals() -> None:
     """05c: ThesisComponent no longer carries supporting_signals field."""
+    import dataclasses as _dc
+
     from alphamind.portfolio_state.records.theses import ThesisComponent
 
-    assert "supporting_signals" not in ThesisComponent.model_fields
+    field_names = {f.name for f in _dc.fields(ThesisComponent)}
+    assert "supporting_signals" not in field_names
 
 
 def test_wave6_thesis_health_snapshot_works() -> None:
@@ -679,7 +676,7 @@ def test_wave6_thesis_health_snapshot_works() -> None:
         ),
     )
     snapshot = ThesisHealthSnapshot(
-        thesis_id="t1",
+        thesis_id=ThesisId("t1"),
         invocation_id="inv1",
         snapshot_timestamp=now,
         health_status=ThesisStatus.ON_TRACK,
@@ -766,7 +763,7 @@ def _make_three_components(now: object) -> tuple[Any, ...]:
     return (
         ThesisComponent(
             component_id="c1",
-            thesis_id="t1",
+            thesis_id=ThesisId("t1"),
             component_type=ThesisComponentType.ENTRY_RATIONALE,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -779,7 +776,7 @@ def _make_three_components(now: object) -> tuple[Any, ...]:
         ),
         ThesisComponent(
             component_id="c2",
-            thesis_id="t1",
+            thesis_id=ThesisId("t1"),
             component_type=ThesisComponentType.TARGET_RATIONALE,
             linked_bracket_leg_type=BracketLegType.TAKE_PROFIT,
             linked_bracket_leg_id="leg_tp",
@@ -792,7 +789,7 @@ def _make_three_components(now: object) -> tuple[Any, ...]:
         ),
         ThesisComponent(
             component_id="c3",
-            thesis_id="t1",
+            thesis_id=ThesisId("t1"),
             component_type=ThesisComponentType.INVALIDATION_RATIONALE,
             linked_bracket_leg_type=BracketLegType.PRICE_STOP,
             linked_bracket_leg_id="leg_ps",
@@ -828,33 +825,37 @@ def _make_bracket_record(
         BracketLeg(
             leg_id="leg_tp",
             leg_type=BracketLegType.TAKE_PROFIT,
-            order_id="ord1",
-            trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=200.0, direction="GTE"),
+            order_id=OrderId("ord1"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("AAPL"), threshold_usd=200.0, direction="GTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
         ),
         BracketLeg(
             leg_id="leg_ps",
             leg_type=BracketLegType.PRICE_STOP,
-            order_id="ord2",
-            trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+            order_id=OrderId("ord2"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
         ),
         BracketLeg(
             leg_id="leg_te",
             leg_type=BracketLegType.TIME_EXPIRATION,
-            order_id="ord3",
+            order_id=OrderId("ord3"),
             trigger=TimeTrigger(deadline=now_tz),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
         ),
     )
     return BracketRecord(
-        bracket_id="brk1",
-        position_id="pos1",
+        bracket_id=BracketId("brk1"),
+        position_id=PositionId("pos1"),
         status=BracketStatus.PENDING_ENTRY,
-        entry_order_id="entry1",
+        entry_order_id=OrderId("entry1"),
         protective_legs=legs,
         modification_history=(),
         corporate_action_cancellation_reason=None,

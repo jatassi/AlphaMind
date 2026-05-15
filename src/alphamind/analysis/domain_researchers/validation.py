@@ -13,8 +13,7 @@ first error in the corrective-retry message per the fail-fast, fail-once policy.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-
-from pydantic import BaseModel
+from dataclasses import dataclass
 
 from alphamind.analysis.domain_researchers.models import SECTOR_PREFIX, SectorBrief
 
@@ -30,7 +29,8 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-class ValidationError(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class ValidationError:
     """A single structural violation found in a :class:`SectorBrief`.
 
     Mirrors the error-record shape produced by the JSON Schema validator so
@@ -44,7 +44,8 @@ class ValidationError(BaseModel, frozen=True):
     message: str
 
 
-class ValidationResult(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class ValidationResult:
     """Aggregate outcome of running :func:`validate_brief`."""
 
     is_valid: bool

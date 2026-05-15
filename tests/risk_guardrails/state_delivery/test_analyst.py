@@ -7,20 +7,25 @@ from itertools import pairwise
 
 import pytest
 
+from alphamind._kernel.ids import PositionId, Symbol
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.consumers.analyst import (
     AnalystAbandonedOpening,
     AnalystAvailableCapital,
     AnalystHeldPosition,
     AnalystView,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
 )
 from alphamind.portfolio_state.records.positions import Direction, InstrumentType
 from alphamind.risk_guardrails.state_delivery import render_analyst_header
@@ -320,19 +325,36 @@ def test_render_analyst_header_renders_regime_line_after_envelope() -> None:
 
 def test_render_analyst_header_micro_profile_full_fixture() -> None:
     held_positions = (
-        _make_held_position(position_id="POS-NVDA-001", ticker="NVDA", sector="tech", size_pct=4.2),
-        _make_held_position(position_id="POS-MU-002", ticker="MU", sector="semis", size_pct=2.5),
-        _make_held_position(position_id="POS-AMD-003", ticker="AMD", sector="tech", size_pct=2.1),
         _make_held_position(
-            position_id="POS-AVGO-004", ticker="AVGO", sector="semis", size_pct=3.0
+            position_id=PositionId("POS-NVDA-001"),
+            ticker=Symbol("NVDA"),
+            sector="tech",
+            size_pct=4.2,
         ),
-        _make_held_position(position_id="POS-AAPL-005", ticker="AAPL", sector="tech", size_pct=3.5),
+        _make_held_position(
+            position_id=PositionId("POS-MU-002"), ticker=Symbol("MU"), sector="semis", size_pct=2.5
+        ),
+        _make_held_position(
+            position_id=PositionId("POS-AMD-003"), ticker=Symbol("AMD"), sector="tech", size_pct=2.1
+        ),
+        _make_held_position(
+            position_id=PositionId("POS-AVGO-004"),
+            ticker=Symbol("AVGO"),
+            sector="semis",
+            size_pct=3.0,
+        ),
+        _make_held_position(
+            position_id=PositionId("POS-AAPL-005"),
+            ticker=Symbol("AAPL"),
+            sector="tech",
+            size_pct=3.5,
+        ),
     )
     abandoned = (
         _make_abandoned_opening(
             envelope_id="ENV-REC-1",
             direction=Direction.LONG,
-            ticker="MSFT",
+            ticker=Symbol("MSFT"),
             instrument_type=InstrumentType.EQUITY,
             size_pct=3.0,
             abandoned_at=datetime(2026, 4, 28, 13, 30, 0, tzinfo=UTC),

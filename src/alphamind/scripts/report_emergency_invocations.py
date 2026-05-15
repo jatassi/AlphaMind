@@ -28,11 +28,6 @@ from enum import StrEnum
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from alphamind.execution.state_persistence.invocation_context.activity_log import (
-    activity_log_entry_from_row,
-)
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.persistence.models import DistillationRegimeState
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.portfolio_state.events.activity_log import (
@@ -42,6 +37,11 @@ from alphamind.portfolio_state.events.activity_log import (
     PMDecisionDetail,
     PMVerdict,
 )
+from alphamind.state.invocation_context.activity_log import (
+    activity_log_entry_from_row,
+)
+from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.invocations import InvocationRow
 
 DEFAULT_WINDOW_DAYS = 90
 """Default window per story 15 — one quarter, the operator-driven cadence."""

@@ -234,7 +234,7 @@ async def _evaluate_bracket_legs(  # noqa: PLR0913 — fans out the cycle's per-
         key = (bracket.bracket_id, leg.leg_id)
         if key in fired_legs:
             continue
-        if not await _leg_should_fire(
+        if not _leg_should_fire(
             position=position,
             leg=leg,
             spot=spot,
@@ -259,7 +259,7 @@ async def _evaluate_bracket_legs(  # noqa: PLR0913 — fans out the cycle's per-
         )
 
 
-async def _leg_should_fire(
+def _leg_should_fire(
     *,
     position: PositionRecord,
     leg: BracketLeg,
@@ -333,9 +333,11 @@ async def _fire_leg(  # noqa: PLR0913 — fan-out parameters for the closer call
             realized_pnl_usd=realized_pnl_usd,
         )
     except Exception:
-        # The submission raised — keep the leg marked fired (already added to
-        # fired_legs above) to avoid re-fire storms. NSSM's restart policy and
-        # the operator's monitor log surface the failure for recovery.
+        # Per-submission supervisor per runtime §G1: the submission raised —
+        # keep the leg marked fired (already added to fired_legs above) to
+        # avoid re-fire storms. NSSM's restart policy and the operator's
+        # monitor log surface the failure for recovery. ``BaseException``
+        # (``CancelledError``) propagates so supervisor shutdown bubbles up.
         log.exception(
             "bracket_stops: close submission failed for bracket %s leg %s position %s",
             bracket.bracket_id,
@@ -397,9 +399,12 @@ async def run_options_bracket_watcher(  # noqa: PLR0913 — orchestrator surface
         except asyncio.CancelledError:
             raise
         except Exception:
-            # The cycle should not raise — each per-position branch handles
-            # its own failures. A raise here indicates a programming bug;
-            # log and continue so the loop survives transient consistency
-            # issues.
+            # Per-cycle supervisor per runtime §G1: the cycle should not raise
+            # — each per-position branch handles its own failures. A raise
+            # here indicates a programming bug; log and continue so the loop
+            # survives transient consistency issues. ``BaseException``
+            # (``CancelledError``) re-raised above; other ``BaseException``
+            # subclasses propagate through this branch as it catches only
+            # ``Exception``.
             log.exception("bracket_stops cycle raised; continuing after sleep")
         await sleep(float(config.bracket_stop_evaluation_cadence_seconds))

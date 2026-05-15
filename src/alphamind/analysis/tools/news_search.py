@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.clock import Clock, RealClock
 from alphamind.analysis.tools._envelope import ToolEnvelope, ToolQuality, format_iso, parse_iso
 from alphamind.persistence.models import NewsArticles, NewsArticleTickers
 
@@ -129,8 +130,8 @@ def _read_body_excerpt(body_path: str | None) -> str | None:
         return None
 
 
-def _search_news(session: Session, inp: NewsSearchInput) -> NewsSearchOutput:
-    now = datetime.now(UTC)
+def _search_news(session: Session, inp: NewsSearchInput, clock: Clock) -> NewsSearchOutput:
+    now = clock.now()
 
     if not inp.query and not inp.tickers:
         return NewsSearchOutput(articles=(), data_freshness=now, quality=ToolQuality.UNAVAILABLE)
@@ -235,10 +236,17 @@ def _search_news(session: Session, inp: NewsSearchInput) -> NewsSearchOutput:
     return NewsSearchOutput(articles=articles, data_freshness=freshness, quality=quality)
 
 
-def news_search_factory(session: Session) -> Callable[[NewsSearchInput], NewsSearchOutput]:
-    """Return a callable suitable for the Claude Agent SDK tool registry."""
+def news_search_factory(
+    session: Session, *, clock: Clock | None = None
+) -> Callable[[NewsSearchInput], NewsSearchOutput]:
+    """Return a callable suitable for the Claude Agent SDK tool registry.
+
+    ``clock`` defaults to :class:`RealClock`; tests pass a fake to control
+    the timestamp deterministically (ALP-474).
+    """
+    resolved_clock: Clock = clock if clock is not None else RealClock()
 
     def _call(inp: NewsSearchInput) -> NewsSearchOutput:
-        return _search_news(session, inp)
+        return _search_news(session, inp, resolved_clock)
 
     return _call

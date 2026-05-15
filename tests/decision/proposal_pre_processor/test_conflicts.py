@@ -9,6 +9,14 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Literal
 
+from alphamind._kernel.ids import (
+    OrderId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.decision.analyst.models import (
     EntryOrder,
     GuardrailValidationResult,
@@ -59,21 +67,27 @@ def _equity_recommendation(
 ) -> Recommendation:
     """Build a minimal valid analyst Recommendation for an equity entry."""
     return Recommendation(
-        recommendation_id=rec_id,
-        instrument=InstrumentEquity(asset_type="equity", ticker=underlying, direction=direction),
-        underlying=underlying,
+        recommendation_id=RecommendationId(rec_id),
+        instrument=InstrumentEquity(
+            asset_type="equity", ticker=Symbol(underlying), direction=direction
+        ),
+        underlying=Symbol(underlying),
         sector="tech",
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=10.0, dollar_value=1000.0, pct_of_portfolio=1.0),
-        target=Target(target_type="absolute_price", price=200.0, dollar_pl_target=500.0),
+        position_size=PositionSize(quantity=10.0, dollar_value=money(1000.0), pct_of_portfolio=1.0),
+        target=Target(
+            target_type="absolute_price", price=price(200.0), dollar_pl_target=money(500.0)
+        ),
         invalidation_legs=(
             InvalidationLeg(
                 leg_id="INV-1",
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger=underlying, comparator="<=", trigger_price=90.0
+                    underlying_trigger=Symbol(underlying),
+                    comparator="<=",
+                    trigger_price=price(90.0),
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             ),
@@ -97,28 +111,32 @@ def _option_recommendation(
 ) -> Recommendation:
     """Build a minimal valid analyst Recommendation for an option entry."""
     return Recommendation(
-        recommendation_id=rec_id,
+        recommendation_id=RecommendationId(rec_id),
         instrument=InstrumentOption(
             asset_type="option",
-            underlying=underlying,
-            strike=100.0,
+            underlying=Symbol(underlying),
+            strike=price(100.0),
             expiration=date(2026, 6, 19),
             contract_type="call",
             direction=direction,
         ),
-        underlying=underlying,
+        underlying=Symbol(underlying),
         sector="tech",
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=10.0, dollar_value=1000.0, pct_of_portfolio=1.0),
-        target=Target(target_type="absolute_price", price=200.0, dollar_pl_target=500.0),
+        position_size=PositionSize(quantity=10.0, dollar_value=money(1000.0), pct_of_portfolio=1.0),
+        target=Target(
+            target_type="absolute_price", price=price(200.0), dollar_pl_target=money(500.0)
+        ),
         invalidation_legs=(
             InvalidationLeg(
                 leg_id="INV-1",
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger=underlying, comparator="<=", trigger_price=90.0
+                    underlying_trigger=Symbol(underlying),
+                    comparator="<=",
+                    trigger_price=price(90.0),
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             ),
@@ -137,10 +155,10 @@ def _option_recommendation(
 
 def _hold_assessment(assessment_id: str, underlying: str) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=assessment_id,
-        position_id=f"POS-{assessment_id[3:]}",
-        thesis_id=f"THESIS-{assessment_id[3:]}",
-        underlying=underlying,
+        assessment_id=RecommendationId(assessment_id),
+        position_id=PositionId(f"POS-{assessment_id[3:]}"),
+        thesis_id=ThesisId(f"THESIS-{assessment_id[3:]}"),
+        underlying=Symbol(underlying),
         sector="tech",
         thesis_status="on-track",
         recommended_action="hold",
@@ -151,21 +169,21 @@ def _hold_assessment(assessment_id: str, underlying: str) -> PositionAssessment:
 
 def _add_assessment(assessment_id: str, underlying: str) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=assessment_id,
-        position_id=f"POS-{assessment_id[3:]}",
-        thesis_id=f"THESIS-{assessment_id[3:]}",
-        underlying=underlying,
+        assessment_id=RecommendationId(assessment_id),
+        position_id=PositionId(f"POS-{assessment_id[3:]}"),
+        thesis_id=ThesisId(f"THESIS-{assessment_id[3:]}"),
+        underlying=Symbol(underlying),
         sector="tech",
         thesis_status="on-track",
         recommended_action="add",
         action_parameters=AddParameters(
             action="add",
             additional_quantity=5.0,
-            additional_dollar_value=500.0,
+            additional_dollar_value=money(500.0),
             entry_order=StratEntryOrder(type="market"),
         ),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=0.5, net_directional_impact=0.5
+            sector_delta_adjusted_change=money(0.5), net_directional_impact=money(0.5)
         ),
         guardrail_validation_result=StratGuardrailValidationResult(
             overall="PASS", per_rule=(), checked_at=_NOW
@@ -178,16 +196,17 @@ def _add_assessment(assessment_id: str, underlying: str) -> PositionAssessment:
 
 def _reduce_assessment(assessment_id: str, underlying: str) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=assessment_id,
-        position_id=f"POS-{assessment_id[3:]}",
-        thesis_id=f"THESIS-{assessment_id[3:]}",
-        underlying=underlying,
+        assessment_id=RecommendationId(assessment_id),
+        position_id=PositionId(f"POS-{assessment_id[3:]}"),
+        thesis_id=ThesisId(f"THESIS-{assessment_id[3:]}"),
+        underlying=Symbol(underlying),
         sector="tech",
         thesis_status="partially-realized",
         recommended_action="reduce",
         action_parameters=ReduceParameters(action="reduce", quantity=5.0, order_type="market"),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=-0.5, net_directional_impact=-0.5
+            sector_delta_adjusted_change=signed_money(-0.5),
+            net_directional_impact=signed_money(-0.5),
         ),
         status_rationale="thesis half done",
         action_rationale="trim",
@@ -197,16 +216,18 @@ def _reduce_assessment(assessment_id: str, underlying: str) -> PositionAssessmen
 
 def _adjust_bracket_assessment(assessment_id: str, underlying: str) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=assessment_id,
-        position_id=f"POS-{assessment_id[3:]}",
-        thesis_id=f"THESIS-{assessment_id[3:]}",
-        underlying=underlying,
+        assessment_id=RecommendationId(assessment_id),
+        position_id=PositionId(f"POS-{assessment_id[3:]}"),
+        thesis_id=ThesisId(f"THESIS-{assessment_id[3:]}"),
+        underlying=Symbol(underlying),
         sector="tech",
         thesis_status="on-track",
         recommended_action="adjust-bracket",
         action_parameters=AdjustBracketParameters(
             action="adjust-bracket",
-            new_stop_level=BracketAdjustNewStopLevel(trigger_price=95.0, order_type="market"),
+            new_stop_level=BracketAdjustNewStopLevel(
+                trigger_price=price(95.0), order_type="market"
+            ),
         ),
         status_rationale="thesis intact",
         action_rationale="trail stop",
@@ -216,10 +237,10 @@ def _adjust_bracket_assessment(assessment_id: str, underlying: str) -> PositionA
 
 def _close_assessment(assessment_id: str, underlying: str) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=assessment_id,
-        position_id=f"POS-{assessment_id[3:]}",
-        thesis_id=f"THESIS-{assessment_id[3:]}",
-        underlying=underlying,
+        assessment_id=RecommendationId(assessment_id),
+        position_id=PositionId(f"POS-{assessment_id[3:]}"),
+        thesis_id=ThesisId(f"THESIS-{assessment_id[3:]}"),
+        underlying=Symbol(underlying),
         sector="tech",
         thesis_status="invalidated",
         recommended_action="close",
@@ -230,7 +251,8 @@ def _close_assessment(assessment_id: str, underlying: str) -> PositionAssessment
             close_rationale_type="thesis_invalidated",
         ),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+            sector_delta_adjusted_change=signed_money(-1.0),
+            net_directional_impact=signed_money(-1.0),
         ),
         status_rationale="invalidated",
         action_rationale="closing",
@@ -249,18 +271,22 @@ def _entry_pending_order(
     pointing at one of the supplied position_assessments.
     """
     modification_parameters = (
-        ModificationParameters(new_limit_price=99.0) if recommended_action == "modify" else None
+        ModificationParameters(new_limit_price=price(99.0))
+        if recommended_action == "modify"
+        else None
     )
     return PendingOrderAssessment(
-        pending_order_assessment_id=pending_id,
-        order_id=f"ORD-{pending_id[7:]}",
-        position_id=f"POS-{pending_id[7:]}",
+        pending_order_assessment_id=RecommendationId(pending_id),
+        order_id=OrderId(f"ORD-{pending_id[7:]}"),
+        position_id=PositionId(f"POS-{pending_id[7:]}"),
         order_type=order_type,
         order_age_hours=2.0,
         fill_probability_assessment="plausible",
         recommended_action=recommended_action,
         modification_parameters=modification_parameters,
-        linked_position_assessment_id=linked_assessment_id,
+        linked_position_assessment_id=RecommendationId(linked_assessment_id)
+        if linked_assessment_id is not None
+        else None,
         drift_rationale="drift",
         action_rationale="action",
     )
@@ -271,14 +297,16 @@ def _bracket_leg_pending_order(
 ) -> PendingOrderAssessment:
     """Build a bracket-leg pending order, optionally linked to a position assessment."""
     return PendingOrderAssessment(
-        pending_order_assessment_id=pending_id,
-        order_id=f"ORD-{pending_id[7:]}",
-        position_id=f"POS-{pending_id[7:]}",
+        pending_order_assessment_id=RecommendationId(pending_id),
+        order_id=OrderId(f"ORD-{pending_id[7:]}"),
+        position_id=PositionId(f"POS-{pending_id[7:]}"),
         order_type="bracket_price_stop",
         order_age_hours=2.0,
         fill_probability_assessment="unlikely",
         recommended_action="maintain",
-        linked_position_assessment_id=linked_assessment_id,
+        linked_position_assessment_id=RecommendationId(linked_assessment_id)
+        if linked_assessment_id is not None
+        else None,
         drift_rationale="drift",
         action_rationale="action",
     )

@@ -6,12 +6,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
 
-from alphamind.portfolio_state.records.capital import (
+from alphamind._kernel.regime import RiskZone
+from alphamind.portfolio_state.aggregates.risk_budget import (
     RiskBudgetConsumption,
     RiskBudgetEntry,
-    RiskZone,
 )
 from alphamind.risk_guardrails.breach_behavior import (
     BreachBehaviorConfig,
@@ -732,7 +731,7 @@ def test_composer_returned_context_is_frozen() -> None:
     }
     result = evaluate_emergency_invocation(**kwargs)
     assert isinstance(result, EmergencyContext)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         result.trigger_detail = "tampered"
 
 

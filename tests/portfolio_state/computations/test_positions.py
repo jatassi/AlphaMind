@@ -6,6 +6,12 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+)
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.computations.positions import (
     MissingLegPriceError,
@@ -83,7 +89,7 @@ def _equity_position(
 ) -> PositionRecord:
     is_short = direction == Direction.SHORT
     equity_details = EquityPositionDetails(
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         share_count=share_count,
         average_cost_basis_per_share=avg_cost,
         borrow_rate_pct=0.5 if is_short else None,
@@ -91,7 +97,7 @@ def _equity_position(
         margin_held_usd=500.0 if is_short else None,
     )
     return PositionRecord(
-        position_id="pos-001",
+        position_id=PositionId("pos-001"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -117,7 +123,7 @@ def _options_details(
     contract_type: OptionContractType = OptionContractType.CALL,
 ) -> OptionsPositionDetails:
     return OptionsPositionDetails(
-        underlying_ticker="AAPL",
+        underlying_ticker=Symbol("AAPL"),
         strike_price=150.0,
         expiration_date=date(2025, 3, 21),
         contract_type=contract_type,
@@ -136,7 +142,7 @@ def _options_position(
     direction: Direction = Direction.LONG,
 ) -> PositionRecord:
     return PositionRecord(
-        position_id="pos-002",
+        position_id=PositionId("pos-002"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -173,7 +179,7 @@ def _strategy_position(
         for leg_id, cc, mult, delta in legs
     )
     return PositionRecord(
-        position_id="pos-003",
+        position_id=PositionId("pos-003"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -222,13 +228,13 @@ def _bracket(
         trigger: PriceTrigger | TimeTrigger | EventTrigger
         if leg_type == BracketLegType.TAKE_PROFIT:
             trigger = PriceTrigger(
-                underlying_ticker="AAPL",
+                underlying_ticker=Symbol("AAPL"),
                 threshold_usd=float(trigger_value),
                 direction="GTE",
             )
         elif leg_type == BracketLegType.PRICE_STOP:
             trigger = PriceTrigger(
-                underlying_ticker="AAPL",
+                underlying_ticker=Symbol("AAPL"),
                 threshold_usd=float(trigger_value),
                 direction="LTE",
             )
@@ -240,17 +246,19 @@ def _bracket(
             BracketLeg(
                 leg_id=f"leg-{i}",
                 leg_type=leg_type,
-                order_id=None if leg_type == BracketLegType.EVENT_INVALIDATION else "ord-001",
+                order_id=None
+                if leg_type == BracketLegType.EVENT_INVALIDATION
+                else OrderId("ord-001"),
                 trigger=trigger,
                 enforcement=enforcement,
                 status=BracketLegStatus.ACTIVE,
             )
         )
     return BracketRecord(
-        bracket_id="brk-001",
-        position_id="pos-001",
+        bracket_id=BracketId("brk-001"),
+        position_id=PositionId("pos-001"),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-000",
+        entry_order_id=OrderId("ord-000"),
         protective_legs=tuple(bracket_legs),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -277,7 +285,7 @@ class TestComputeMarketValueUsd:
 
     def test_options_market_value_uses_option_price(self) -> None:
         pos = _options_position(contract_count=2.0)
-        option_price = _price(8.0, ticker="AAPL")
+        option_price = _price(8.0, ticker=Symbol("AAPL"))
         result = compute_market_value_usd(pos, option_price)
         # 2 contracts * 100 multiplier * $8 = $1600
         assert result == pytest.approx(1600.0)
@@ -298,8 +306,8 @@ class TestComputeStrategyMarketValueUsd:
     def test_sums_across_legs(self) -> None:
         pos = _strategy_position([("leg-A", 1.0, 100.0, 0.5), ("leg-B", 2.0, 50.0, -0.3)])
         leg_prices = {
-            "leg-A": _price(10.0, ticker="leg-A"),
-            "leg-B": _price(5.0, ticker="leg-B"),
+            "leg-A": _price(10.0, ticker=Symbol("leg-A")),
+            "leg-B": _price(5.0, ticker=Symbol("leg-B")),
         }
         result = compute_strategy_market_value_usd(pos, leg_prices)
         # leg-A: 1 * 100 * 10 = 1000; leg-B: 2 * 50 * 5 = 500; total = 1500
@@ -307,7 +315,7 @@ class TestComputeStrategyMarketValueUsd:
 
     def test_missing_leg_id_raises_missing_leg_price_error(self) -> None:
         pos = _strategy_position([("leg-A", 1.0, 100.0, 0.5), ("leg-B", 2.0, 50.0, -0.3)])
-        leg_prices = {"leg-A": _price(10.0, ticker="leg-A")}  # leg-B missing
+        leg_prices = {"leg-A": _price(10.0, ticker=Symbol("leg-A"))}  # leg-B missing
         with pytest.raises(MissingLegPriceError):
             compute_strategy_market_value_usd(pos, leg_prices)
 
@@ -561,7 +569,9 @@ class TestComputeNotionalExposureUsd:
 
     def test_options_uses_underlying_price(self) -> None:
         pos = _options_position(contract_count=2.0)
-        underlying_price = _price(200.0, ticker="AAPL")  # underlying price, not option premium
+        underlying_price = _price(
+            200.0, ticker=Symbol("AAPL")
+        )  # underlying price, not option premium
         result = compute_notional_exposure_usd(pos, underlying_price)
         # 2 * 100 * 200 = 40000
         assert result == pytest.approx(40000.0)
@@ -582,8 +592,8 @@ class TestComputeStrategyNotionalExposureUsd:
     def test_sums_leg_notionals(self) -> None:
         pos = _strategy_position([("leg-A", 1.0, 100.0, 0.5), ("leg-B", 2.0, 50.0, -0.3)])
         leg_underlying_prices = {
-            "leg-A": _price(200.0, ticker="leg-A"),
-            "leg-B": _price(100.0, ticker="leg-B"),
+            "leg-A": _price(200.0, ticker=Symbol("leg-A")),
+            "leg-B": _price(100.0, ticker=Symbol("leg-B")),
         }
         result = compute_strategy_notional_exposure_usd(pos, leg_underlying_prices)
         # leg-A: 1 * 100 * 200 = 20000; leg-B: 2 * 50 * 100 = 10000; total = 30000
@@ -592,7 +602,9 @@ class TestComputeStrategyNotionalExposureUsd:
     def test_missing_leg_raises_missing_leg_price_error(self) -> None:
         pos = _strategy_position([("leg-A", 1.0, 100.0, 0.5), ("leg-B", 2.0, 50.0, -0.3)])
         with pytest.raises(MissingLegPriceError):
-            compute_strategy_notional_exposure_usd(pos, {"leg-A": _price(200.0, ticker="leg-A")})
+            compute_strategy_notional_exposure_usd(
+                pos, {"leg-A": _price(200.0, ticker=Symbol("leg-A"))}
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -653,8 +665,8 @@ class TestComputeStrategyDeltaAdjustedExposureUsd:
             strategy_delta=0.3,
         )
         leg_underlying_prices = {
-            "leg-A": _price(200.0, ticker="leg-A"),
-            "leg-B": _price(100.0, ticker="leg-B"),
+            "leg-A": _price(200.0, ticker=Symbol("leg-A")),
+            "leg-B": _price(100.0, ticker=Symbol("leg-B")),
         }
         result = compute_strategy_delta_adjusted_exposure_usd(pos, leg_underlying_prices)
         # sum notionals: leg-A: 1*100*200=20000, leg-B: 2*50*100=10000 => 30000
@@ -666,7 +678,7 @@ class TestComputeStrategyDeltaAdjustedExposureUsd:
         pos = _strategy_position([("leg-A", 1.0, 100.0, 0.5), ("leg-B", 2.0, 50.0, -0.3)])
         with pytest.raises(MissingLegPriceError):
             compute_strategy_delta_adjusted_exposure_usd(
-                pos, {"leg-A": _price(200.0, ticker="leg-A")}
+                pos, {"leg-A": _price(200.0, ticker=Symbol("leg-A"))}
             )
 
 

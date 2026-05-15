@@ -12,12 +12,13 @@ The supported indicator set lives in _SUPPORTED_INDICATORS (fail-closed).
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.clock import Clock, RealClock
 from alphamind.analysis.tools._envelope import ToolEnvelope, ToolQuality, parse_iso
 from alphamind.persistence.models import MacroObservations, TreasuryAuctions
 
@@ -211,8 +212,8 @@ def _query_treasury(
     return dated, full_year, ingested_at
 
 
-def _get_macro_data(session: Session, inp: MacroDataInput) -> MacroDataOutput:
-    now = datetime.now(UTC)
+def _get_macro_data(session: Session, inp: MacroDataInput, clock: Clock) -> MacroDataOutput:
+    now = clock.now()
     indicator = inp.indicator.strip().lower()
 
     if not indicator or indicator not in _SUPPORTED_INDICATORS:
@@ -251,10 +252,19 @@ def _get_macro_data(session: Session, inp: MacroDataInput) -> MacroDataOutput:
     )
 
 
-def macro_data_factory(session: Session) -> Callable[[MacroDataInput], MacroDataOutput]:
-    """Return a callable suitable for the Claude Agent SDK tool registry."""
+def macro_data_factory(
+    session: Session,
+    *,
+    clock: Clock | None = None,
+) -> Callable[[MacroDataInput], MacroDataOutput]:
+    """Return a callable suitable for the Claude Agent SDK tool registry.
+
+    ``clock`` defaults to :class:`RealClock`; tests pass a fake to control
+    the timestamp deterministically (ALP-474).
+    """
+    resolved_clock: Clock = clock if clock is not None else RealClock()
 
     def _call(inp: MacroDataInput) -> MacroDataOutput:
-        return _get_macro_data(session, inp)
+        return _get_macro_data(session, inp, resolved_clock)
 
     return _call

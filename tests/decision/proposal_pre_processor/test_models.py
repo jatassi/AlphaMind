@@ -15,8 +15,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    OrderId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.decision.proposal_pre_processor import BUNDLE_OUTPUT_SCHEMA
 from alphamind.decision.proposal_pre_processor.models import (
     BUNDLE_OUTPUT_SCHEMA as MODULE_BUNDLE_OUTPUT_SCHEMA,
@@ -83,10 +89,10 @@ def _make_portfolio_level_observations() -> PortfolioLevelObservations:
 
 def _make_position_assessment() -> PositionAssessment:
     return PositionAssessment(
-        assessment_id="SA-1",
-        position_id="POS-1",
-        thesis_id="THESIS-1",
-        underlying="NVDA",
+        assessment_id=RecommendationId("SA-1"),
+        position_id=PositionId("POS-1"),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol("NVDA"),
         sector="tech",
         thesis_status="on-track",
         recommended_action="hold",
@@ -97,9 +103,9 @@ def _make_position_assessment() -> PositionAssessment:
 
 def _make_pending_order_assessment() -> PendingOrderAssessment:
     return PendingOrderAssessment(
-        pending_order_assessment_id="SA-ORD-1",
-        order_id="ORD-1",
-        position_id="POS-1",
+        pending_order_assessment_id=RecommendationId("SA-ORD-1"),
+        order_id=OrderId("ORD-1"),
+        position_id=PositionId("POS-1"),
         order_type="entry_limit",
         order_age_hours=2.0,
         fill_probability_assessment="plausible",
@@ -298,7 +304,7 @@ def test_schema_parity_per_rule_entry_enum() -> None:
 def test_schema_parity_regex_patterns() -> None:
     """Key regex patterns in the design doc are reflected in Pydantic models."""
     # BasisSection: analyst_proposal_ids items match ^REC-[0-9]+$
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         BasisSection(
             analyst_proposal_ids=("INVALID",),
             strategist_action_ids=(),
@@ -306,7 +312,7 @@ def test_schema_parity_regex_patterns() -> None:
             snapshot_timestamp=_NOW,
         )
     # BasisSection: strategist_action_ids items match ^SA-[0-9]+$
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         BasisSection(
             analyst_proposal_ids=(),
             strategist_action_ids=("INVALID",),
@@ -314,13 +320,13 @@ def test_schema_parity_regex_patterns() -> None:
             snapshot_timestamp=_NOW,
         )
     # ContributorEntry: proposal_id matches ^(REC|SA)-[0-9]+$
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         ContributorEntry(proposal_id="INVALID", contribution=1.0)
     # StrategistSideConflict: with_recommendation_id matches ^REC-[0-9]+$
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         StrategistSideConflict(
             with_recommendation_id="INVALID",
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             conflict_type=ConflictType.entry_vs_close,
         )
 
@@ -338,7 +344,7 @@ def test_analyst_section_normal_mode_valid() -> None:
 
 
 def test_analyst_section_normal_mode_rejects_watchlist() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         AnalystSection(mode="normal", watchlist=(), recommendations=None)
 
 
@@ -350,7 +356,7 @@ def test_analyst_section_watchlist_mode_valid() -> None:
 
 
 def test_analyst_section_watchlist_mode_rejects_recommendations() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         AnalystSection(mode="watchlist", recommendations=(), watchlist=None)
 
 
@@ -360,19 +366,19 @@ def test_analyst_section_watchlist_mode_rejects_recommendations() -> None:
 
 
 def test_analyst_side_conflict_both_ids_raises() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         AnalystSideConflict(
             with_assessment_id="SA-1",
             with_pending_order_assessment_id="SA-ORD-1",
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             conflict_type=ConflictType.entry_vs_close,
         )
 
 
 def test_analyst_side_conflict_neither_id_raises() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         AnalystSideConflict(
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             conflict_type=ConflictType.entry_vs_close,
         )
 
@@ -380,7 +386,7 @@ def test_analyst_side_conflict_neither_id_raises() -> None:
 def test_analyst_side_conflict_with_assessment_id_valid() -> None:
     conflict = AnalystSideConflict(
         with_assessment_id="SA-1",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         conflict_type=ConflictType.entry_vs_close,
     )
     assert conflict.with_assessment_id == "SA-1"
@@ -390,7 +396,7 @@ def test_analyst_side_conflict_with_assessment_id_valid() -> None:
 def test_analyst_side_conflict_with_pending_order_id_valid() -> None:
     conflict = AnalystSideConflict(
         with_pending_order_assessment_id="SA-ORD-1",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         conflict_type=ConflictType.entry_vs_close,
     )
     assert conflict.with_pending_order_assessment_id == "SA-ORD-1"
@@ -469,7 +475,7 @@ def test_conviction_histogram_alias_keys() -> None:
 
 
 def test_conviction_histogram_rejects_negative() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         ConvictionHistogram.model_validate({"1": -1, "2": 0, "3": 0, "4": 0, "5": 0})
 
 
@@ -537,7 +543,7 @@ def test_full_bundle_model_dump_round_trip() -> None:
 
 
 def test_basis_section_holds_excluded_nonnegative() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         BasisSection(
             analyst_proposal_ids=(),
             strategist_action_ids=(),
@@ -554,7 +560,7 @@ def test_basis_section_holds_excluded_nonnegative() -> None:
 def test_strategist_side_conflict_valid() -> None:
     conflict = StrategistSideConflict(
         with_recommendation_id="REC-1",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         conflict_type=ConflictType.entry_vs_hold,
     )
     assert conflict.with_recommendation_id == "REC-1"

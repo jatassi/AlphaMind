@@ -1,17 +1,22 @@
 """Tests for portfolio P/L and drawdown rollup computations (story 05b)."""
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    Symbol,
+)
 from alphamind.portfolio_state.computations.pnl import (
     compute_drawdown_by_source_pct,
     compute_portfolio_pnl,
     compute_total_portfolio_value_usd,
 )
-from alphamind.portfolio_state.records.capital import CashLedger
+from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -36,12 +41,12 @@ _FILL = PositionFill(
     fees=0.0,
 )
 _LONG_EQUITY = EquityPositionDetails(
-    ticker="AAPL",
+    ticker=Symbol("AAPL"),
     share_count=10.0,
     average_cost_basis_per_share=100.0,
 )
 _SHORT_EQUITY = EquityPositionDetails(
-    ticker="TSLA",
+    ticker=Symbol("TSLA"),
     share_count=5.0,
     average_cost_basis_per_share=200.0,
     borrow_rate_pct=0.5,
@@ -57,21 +62,19 @@ def _make_open_position(
     direction: Direction = Direction.LONG,
 ) -> PositionView:
     equity = _LONG_EQUITY if direction == Direction.LONG else _SHORT_EQUITY
-    record = PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": "OPEN",
-            "direction": direction,
-            "entry_timestamp": _NOW,
-            "details": equity.model_dump(),
-            "execution_history": [_FILL.model_dump()],
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    record = PositionRecord(
+        position_id=position_id,
+        thesis_id=None,
+        bracket_id=None,
+        status="OPEN",
+        direction=direction,
+        entry_timestamp=_NOW,
+        details=dataclasses.asdict(equity),
+        execution_history=[dataclasses.asdict(_FILL)],
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
     return PositionView(
         record=record,
@@ -92,21 +95,19 @@ def _make_pending_position(
     position_id: str,
     current_market_value_usd: float = 500.0,
 ) -> PositionView:
-    record = PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": "PENDING",
-            "direction": "LONG",
-            "entry_timestamp": None,
-            "details": _LONG_EQUITY.model_dump(),
-            "execution_history": [],
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    record = PositionRecord(
+        position_id=position_id,
+        thesis_id=None,
+        bracket_id=None,
+        status="PENDING",
+        direction="LONG",
+        entry_timestamp=None,
+        details=dataclasses.asdict(_LONG_EQUITY),
+        execution_history=[],
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
     return PositionView(
         record=record,
@@ -124,20 +125,18 @@ def _make_pending_position(
 
 
 def _make_cash_ledger(current_cash_usd: float = 5000.0) -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": current_cash_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": [],
-            "cash_pct_of_portfolio": 50.0,
-            "true_deployable_capital_usd": current_cash_usd,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=current_cash_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=[],
+        cash_pct_of_portfolio=50.0,
+        true_deployable_capital_usd=current_cash_usd,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
@@ -152,7 +151,7 @@ def _make_pnl_inputs(**overrides: object) -> PortfolioPnLInputs:
         "profit_factor": 1.5,
     }
     base.update(overrides)
-    return PortfolioPnLInputs.model_validate(base)
+    return PortfolioPnLInputs(**base)
 
 
 # ---------------------------------------------------------------------------

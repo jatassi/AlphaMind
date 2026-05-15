@@ -23,6 +23,15 @@ import traceback
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+
 # ---------------------------------------------------------------------------
 # Result helpers
 # ---------------------------------------------------------------------------
@@ -37,10 +46,19 @@ def _fail(label: str) -> dict[str, Any]:
 
 
 def _expect_raises(label: str, exc_type: type[Exception], fn: Any) -> dict[str, Any]:
+    from pydantic import ValidationError
+
     try:
         fn()
     except exc_type:
         return _ok(label)
+    except (ValueError, TypeError):
+        # Post-ALP-477: frozen-dataclass records raise ValueError/TypeError
+        # instead of Pydantic ``ValidationError``. Accept the swap so verify
+        # scripts don't need a per-case rewrite.
+        if exc_type is ValidationError:
+            return _ok(label)
+        return _fail(label)
     except Exception:
         return _fail(label)
     no_raise_msg = f"Expected {exc_type.__name__} but no exception was raised"
@@ -76,7 +94,7 @@ def _make_three_components(thesis_id: str = "t1") -> tuple[Any, ...]:
     return (
         ThesisComponent(
             component_id="c1",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ThesisComponentType.ENTRY_RATIONALE,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -89,7 +107,7 @@ def _make_three_components(thesis_id: str = "t1") -> tuple[Any, ...]:
         ),
         ThesisComponent(
             component_id="c2",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ThesisComponentType.TARGET_RATIONALE,
             linked_bracket_leg_type=BracketLegType.TAKE_PROFIT,
             linked_bracket_leg_id="leg_tp",
@@ -102,7 +120,7 @@ def _make_three_components(thesis_id: str = "t1") -> tuple[Any, ...]:
         ),
         ThesisComponent(
             component_id="c3",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ThesisComponentType.INVALIDATION_RATIONALE,
             linked_bracket_leg_type=BracketLegType.PRICE_STOP,
             linked_bracket_leg_id="leg_ps",
@@ -141,33 +159,37 @@ def _make_covered_bracket_and_thesis() -> tuple[Any, Any]:
         BracketLeg(
             leg_id="leg_tp",
             leg_type=BracketLegType.TAKE_PROFIT,
-            order_id="ord_tp",
-            trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=200.0, direction="GTE"),
+            order_id=OrderId("ord_tp"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("AAPL"), threshold_usd=200.0, direction="GTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
         ),
         BracketLeg(
             leg_id="leg_ps",
             leg_type=BracketLegType.PRICE_STOP,
-            order_id="ord_ps",
-            trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+            order_id=OrderId("ord_ps"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
         ),
         BracketLeg(
             leg_id="leg_te",
             leg_type=BracketLegType.TIME_EXPIRATION,
-            order_id="ord_te",
+            order_id=OrderId("ord_te"),
             trigger=TimeTrigger(deadline=now),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
         ),
     )
     bracket = BracketRecord(
-        bracket_id="brk1",
-        position_id="pos1",
+        bracket_id=BracketId("brk1"),
+        position_id=PositionId("pos1"),
         status=BracketStatus.PENDING_ENTRY,
-        entry_order_id="entry1",
+        entry_order_id=OrderId("entry1"),
         protective_legs=legs,
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -175,7 +197,7 @@ def _make_covered_bracket_and_thesis() -> tuple[Any, Any]:
     components = (
         ThesisComponent(
             component_id="c_entry",
-            thesis_id="t1",
+            thesis_id=ThesisId("t1"),
             component_type=ThesisComponentType.ENTRY_RATIONALE,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -188,7 +210,7 @@ def _make_covered_bracket_and_thesis() -> tuple[Any, Any]:
         ),
         ThesisComponent(
             component_id="c_tp",
-            thesis_id="t1",
+            thesis_id=ThesisId("t1"),
             component_type=ThesisComponentType.TARGET_RATIONALE,
             linked_bracket_leg_type=BracketLegType.TAKE_PROFIT,
             linked_bracket_leg_id="leg_tp",
@@ -201,7 +223,7 @@ def _make_covered_bracket_and_thesis() -> tuple[Any, Any]:
         ),
         ThesisComponent(
             component_id="c_ps",
-            thesis_id="t1",
+            thesis_id=ThesisId("t1"),
             component_type=ThesisComponentType.INVALIDATION_RATIONALE,
             linked_bracket_leg_type=BracketLegType.PRICE_STOP,
             linked_bracket_leg_id="leg_ps",
@@ -214,7 +236,7 @@ def _make_covered_bracket_and_thesis() -> tuple[Any, Any]:
         ),
         ThesisComponent(
             component_id="c_te",
-            thesis_id="t1",
+            thesis_id=ThesisId("t1"),
             component_type=ThesisComponentType.INVALIDATION_RATIONALE,
             linked_bracket_leg_type=BracketLegType.TIME_EXPIRATION,
             linked_bracket_leg_id="leg_te",
@@ -227,8 +249,8 @@ def _make_covered_bracket_and_thesis() -> tuple[Any, Any]:
         ),
     )
     thesis = ThesisRecord(
-        thesis_id="t1",
-        position_id="pos1",
+        thesis_id=ThesisId("t1"),
+        position_id=PositionId("pos1"),
         summary="AAPL earnings play",
         key_catalyst="Q2 earnings beat",
         components=components,
@@ -270,33 +292,37 @@ def _make_uncovered_bracket_and_thesis() -> tuple[Any, Any]:
         BracketLeg(
             leg_id="leg_tp",
             leg_type=BracketLegType.TAKE_PROFIT,
-            order_id="ord_tp",
-            trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=200.0, direction="GTE"),
+            order_id=OrderId("ord_tp"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("AAPL"), threshold_usd=200.0, direction="GTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
         ),
         BracketLeg(
             leg_id="leg_ps",
             leg_type=BracketLegType.PRICE_STOP,
-            order_id="ord_ps",
-            trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+            order_id=OrderId("ord_ps"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
         ),
         BracketLeg(
             leg_id="leg_te",
             leg_type=BracketLegType.TIME_EXPIRATION,
-            order_id="ord_te",
+            order_id=OrderId("ord_te"),
             trigger=TimeTrigger(deadline=now),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
         ),
     )
     bracket = BracketRecord(
-        bracket_id="brk1",
-        position_id="pos1",
+        bracket_id=BracketId("brk1"),
+        position_id=PositionId("pos1"),
         status=BracketStatus.PENDING_ENTRY,
-        entry_order_id="entry1",
+        entry_order_id=OrderId("entry1"),
         protective_legs=legs,
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -305,7 +331,7 @@ def _make_uncovered_bracket_and_thesis() -> tuple[Any, Any]:
     components = (
         ThesisComponent(
             component_id="c_entry",
-            thesis_id="t1",
+            thesis_id=ThesisId("t1"),
             component_type=ThesisComponentType.ENTRY_RATIONALE,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -318,7 +344,7 @@ def _make_uncovered_bracket_and_thesis() -> tuple[Any, Any]:
         ),
         ThesisComponent(
             component_id="c_tp",
-            thesis_id="t1",
+            thesis_id=ThesisId("t1"),
             component_type=ThesisComponentType.TARGET_RATIONALE,
             linked_bracket_leg_type=BracketLegType.TAKE_PROFIT,
             linked_bracket_leg_id="leg_tp",
@@ -332,7 +358,7 @@ def _make_uncovered_bracket_and_thesis() -> tuple[Any, Any]:
         # MISSING: invalidation rationale for leg_ps and leg_te
         ThesisComponent(
             component_id="c_te_wrong",
-            thesis_id="t1",
+            thesis_id=ThesisId("t1"),
             component_type=ThesisComponentType.INVALIDATION_RATIONALE,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,  # Not linked to any leg
@@ -345,8 +371,8 @@ def _make_uncovered_bracket_and_thesis() -> tuple[Any, Any]:
         ),
     )
     thesis = ThesisRecord(
-        thesis_id="t1",
-        position_id="pos1",
+        thesis_id=ThesisId("t1"),
+        position_id=PositionId("pos1"),
         summary="AAPL earnings play",
         key_catalyst="Q2 earnings beat",
         components=components,
@@ -440,7 +466,7 @@ def _make_strategy_leg(
     if exp_date is None:
         exp_date = date(2026, 6, 20)
     opt = OptionsPositionDetails(
-        underlying_ticker="SPY",
+        underlying_ticker=Symbol("SPY"),
         strike_price=strike,
         expiration_date=exp_date,
         contract_type=OptionContractType(contract_type),
@@ -678,8 +704,8 @@ def _wave2_01d_time_expectation(now: datetime) -> list[dict[str, Any]]:
 
     def _check_float_parses() -> None:
         r = ThesisRecord(
-            thesis_id="t1",
-            position_id="p1",
+            thesis_id=ThesisId("t1"),
+            position_id=PositionId("p1"),
             summary="test summary",
             key_catalyst="key catalyst",
             components=components,
@@ -699,8 +725,8 @@ def _wave2_01d_time_expectation(now: datetime) -> list[dict[str, Any]]:
     def _check_negative_hours_rejected() -> None:
         with _raises(ValidationError):
             ThesisRecord(
-                thesis_id="t1",
-                position_id="p1",
+                thesis_id=ThesisId("t1"),
+                position_id=PositionId("p1"),
                 summary="test summary",
                 key_catalyst="key catalyst",
                 components=components,
@@ -735,13 +761,13 @@ def _wave2_01e_position_weight(now: datetime) -> list[dict[str, Any]]:
     from alphamind.portfolio_state.views.positions import PositionView
 
     details = EquityPositionDetails(
-        ticker="AAPL", share_count=100.0, average_cost_basis_per_share=150.0
+        ticker=Symbol("AAPL"), share_count=100.0, average_cost_basis_per_share=150.0
     )
     fill = PositionFill(
         fill_timestamp=now, fill_price=150.0, fill_quantity=100.0, slippage=0.0, fees=0.0
     )
     record = PositionRecord(
-        position_id="pos1",
+        position_id=PositionId("pos1"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -874,9 +900,9 @@ def _wave2_01h_bracket_deadline(now: datetime) -> list[dict[str, Any]]:
             BracketLeg(
                 leg_id="leg_tp",
                 leg_type=BracketLegType.TAKE_PROFIT,
-                order_id="ord1",
+                order_id=OrderId("ord1"),
                 trigger=PriceTrigger(
-                    underlying_ticker="AAPL", threshold_usd=200.0, direction="GTE"
+                    underlying_ticker=Symbol("AAPL"), threshold_usd=200.0, direction="GTE"
                 ),
                 enforcement=BracketLegEnforcement.MECHANICAL,
                 status=BracketLegStatus.PENDING_ACTIVATION,
@@ -884,9 +910,9 @@ def _wave2_01h_bracket_deadline(now: datetime) -> list[dict[str, Any]]:
             BracketLeg(
                 leg_id="leg_ps",
                 leg_type=BracketLegType.PRICE_STOP,
-                order_id="ord2",
+                order_id=OrderId("ord2"),
                 trigger=PriceTrigger(
-                    underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"
+                    underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
                 ),
                 enforcement=BracketLegEnforcement.MECHANICAL,
                 status=BracketLegStatus.PENDING_ACTIVATION,
@@ -894,7 +920,7 @@ def _wave2_01h_bracket_deadline(now: datetime) -> list[dict[str, Any]]:
             BracketLeg(
                 leg_id="leg_te",
                 leg_type=BracketLegType.TIME_EXPIRATION,
-                order_id="ord3",
+                order_id=OrderId("ord3"),
                 trigger=TimeTrigger(deadline=now),
                 enforcement=BracketLegEnforcement.MECHANICAL,
                 status=BracketLegStatus.PENDING_ACTIVATION,
@@ -903,10 +929,10 @@ def _wave2_01h_bracket_deadline(now: datetime) -> list[dict[str, Any]]:
 
     def _check_deadline_tz_aware() -> None:
         br = BracketRecord(
-            bracket_id="brk1",
-            position_id="pos1",
+            bracket_id=BracketId("brk1"),
+            position_id=PositionId("pos1"),
             status=BracketStatus.PENDING_ENTRY,
-            entry_order_id="entry1",
+            entry_order_id=OrderId("entry1"),
             protective_legs=_make_three_legs(),
             modification_history=(),
             corporate_action_cancellation_reason=None,
@@ -918,10 +944,10 @@ def _wave2_01h_bracket_deadline(now: datetime) -> list[dict[str, Any]]:
         naive_dt = datetime(2026, 5, 2, 12, 0, 0)  # noqa: DTZ001 — intentionally naive to test rejection
         with _raises(ValidationError):
             BracketRecord(
-                bracket_id="brk1",
-                position_id="pos1",
+                bracket_id=BracketId("brk1"),
+                position_id=PositionId("pos1"),
                 status=BracketStatus.PENDING_ENTRY,
-                entry_order_id="entry1",
+                entry_order_id=OrderId("entry1"),
                 protective_legs=_make_three_legs(),
                 modification_history=(),
                 corporate_action_cancellation_reason=None,
@@ -959,16 +985,16 @@ def _wave2_01ij_order_and_rationale(now: datetime) -> list[dict[str, Any]]:
 
     def _check_mleg_strategy_valid() -> None:
         opt_spec = OptionsInstrumentSpec(
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             strike=500.0,
             expiration=date(2026, 6, 20),
             contract_type=OptionContractType.CALL,
             contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
         )
         OrderRecord(
-            order_id="ord1",
-            position_id="pos1",
-            bracket_id="brk1",
+            order_id=OrderId("ord1"),
+            position_id=PositionId("pos1"),
+            bracket_id=BracketId("brk1"),
             role=OrderRole.ENTRY,
             instrument_spec=StrategyInstrumentSpec(legs=(opt_spec,)),
             direction=OrderDirection.BUY_TO_OPEN,
@@ -978,8 +1004,8 @@ def _wave2_01ij_order_and_rationale(now: datetime) -> list[dict[str, Any]]:
             quantity=1.0,
             duration=OrderDuration.DAY,
             status=OrderStatus.PENDING,
-            alpaca_order_id="alp1",
-            alpaca_order_id_chain=("alp1",),
+            alpaca_order_id=AlpacaOrderId("alp1"),
+            alpaca_order_id_chain=(AlpacaOrderId("alp1"),),
             submission_timestamp=now,
             last_update_timestamp=now,
             filled_quantity=0.0,
@@ -994,11 +1020,11 @@ def _wave2_01ij_order_and_rationale(now: datetime) -> list[dict[str, Any]]:
     def _check_mleg_equity_rejected() -> None:
         with _raises(ValidationError):
             OrderRecord(
-                order_id="ord1",
-                position_id="pos1",
-                bracket_id="brk1",
+                order_id=OrderId("ord1"),
+                position_id=PositionId("pos1"),
+                bracket_id=BracketId("brk1"),
                 role=OrderRole.ENTRY,
-                instrument_spec=EquityInstrumentSpec(ticker="AAPL"),
+                instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
                 direction=OrderDirection.BUY,
                 order_type=OrderType.MARKET,
                 order_class=OrderClass.MLEG,
@@ -1006,8 +1032,8 @@ def _wave2_01ij_order_and_rationale(now: datetime) -> list[dict[str, Any]]:
                 quantity=100.0,
                 duration=OrderDuration.DAY,
                 status=OrderStatus.PENDING,
-                alpaca_order_id="alp1",
-                alpaca_order_id_chain=("alp1",),
+                alpaca_order_id=AlpacaOrderId("alp1"),
+                alpaca_order_id_chain=(AlpacaOrderId("alp1"),),
                 submission_timestamp=now,
                 last_update_timestamp=now,
                 filled_quantity=0.0,
@@ -1021,8 +1047,8 @@ def _wave2_01ij_order_and_rationale(now: datetime) -> list[dict[str, Any]]:
 
     def _check_rationale_valid() -> None:
         r = ThesisRecord(
-            thesis_id="t1",
-            position_id="p1",
+            thesis_id=ThesisId("t1"),
+            position_id=PositionId("p1"),
             summary="test summary",
             key_catalyst="key catalyst",
             position_size_rationale="Sized at 2% because high conviction on catalyst",
@@ -1042,8 +1068,8 @@ def _wave2_01ij_order_and_rationale(now: datetime) -> list[dict[str, Any]]:
     def _check_rationale_empty_rejected() -> None:
         with _raises(ValidationError):
             ThesisRecord(
-                thesis_id="t1",
-                position_id="p1",
+                thesis_id=ThesisId("t1"),
+                position_id=PositionId("p1"),
                 summary="test summary",
                 key_catalyst="key catalyst",
                 position_size_rationale="",
@@ -1096,7 +1122,15 @@ def wave2_additive_fields(verbose: bool = False) -> tuple[int, int, list[dict[st
 
 
 def _raises(exc_type: type[Exception]) -> Any:
-    """Context manager for asserting an exception is raised in a wave case."""
+    """Context manager for asserting an exception is raised in a wave case.
+
+    Post-ALP-477 the portfolio_state records are frozen dataclasses that raise
+    ``ValueError``/``TypeError`` from ``__post_init__`` instead of Pydantic's
+    ``ValidationError``. Treat any of those as a successful catch when
+    ``exc_type`` is ``ValidationError`` so the verify-script invariants don't
+    need to be rewritten per case.
+    """
+    from pydantic import ValidationError
 
     class _CM:
         def __enter__(self) -> _CM:
@@ -1106,6 +1140,8 @@ def _raises(exc_type: type[Exception]) -> Any:
             if exc_type_ is None:
                 msg = f"Expected {exc_type.__name__} to be raised, but no exception was raised"
                 raise AssertionError(msg)
+            if exc_type is ValidationError and issubclass(exc_type_, (ValueError, TypeError)):
+                return True
             return issubclass(exc_type_, exc_type)
 
     return _CM()
@@ -1133,10 +1169,10 @@ def wave3_boundary_fix(verbose: bool = False) -> tuple[int, int, list[dict[str, 
     )
 
     def _check_identity() -> None:
-        from alphamind.portfolio_state.records.capital import RegimeLabel as A
+        from alphamind._kernel.regime import RegimeLabel as A
         from alphamind.risk_guardrails.regime_adaptation.types import RegimeLabel as B
 
-        assert A is B, "RegimeLabel identity check failed: capital.py exports different object"
+        assert A is B, "RegimeLabel identity check failed: _kernel and risk_guardrails diverge"
 
     results.append(_run_case("02-regime_label_identity_across_import_paths", _check_identity))
 
@@ -1177,8 +1213,10 @@ def wave4_typed_payloads(verbose: bool = False) -> tuple[int, int, list[dict[str
         leg = BracketLeg(
             leg_id="leg1",
             leg_type=BracketLegType.PRICE_STOP,
-            order_id="ord1",
-            trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=800.0, direction="LTE"),
+            order_id=OrderId("ord1"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("NVDA"), threshold_usd=800.0, direction="LTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
         )
@@ -1194,7 +1232,7 @@ def wave4_typed_payloads(verbose: bool = False) -> tuple[int, int, list[dict[str
             BracketLeg(
                 leg_id="leg1",
                 leg_type=BracketLegType.PRICE_STOP,
-                order_id="ord1",
+                order_id=OrderId("ord1"),
                 trigger=TimeTrigger(deadline=now),
                 enforcement=BracketLegEnforcement.MECHANICAL,
                 status=BracketLegStatus.PENDING_ACTIVATION,
@@ -1211,8 +1249,10 @@ def wave4_typed_payloads(verbose: bool = False) -> tuple[int, int, list[dict[str
         leg = BracketLeg(
             leg_id="leg1",
             leg_type=BracketLegType.TAKE_PROFIT,
-            order_id="ord1",
-            trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=900.0, direction="GTE"),
+            order_id=OrderId("ord1"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("NVDA"), threshold_usd=900.0, direction="GTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
             pl_anchor=PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=18.50),
@@ -1287,23 +1327,16 @@ def wave5_structural(verbose: bool = False) -> tuple[int, int, list[dict[str, An
     results.append(_run_case("04a-activity_log_backward_compat_shim", _check_backward_compat_shim))
 
     def _check_discriminated_union_bogus_rejected() -> None:
-        with _raises(ValidationError):
-            from alphamind.portfolio_state.records.positions import PositionRecord
+        # Post-ALP-477: dict-payload discriminator parsing lives in the codec
+        # layer (``state/tables/positions_codec.py``), not in the dataclass
+        # constructor. The dataclass stores whatever ``details`` value the
+        # caller passes; the codec raises on bogus discriminators at row
+        # rehydration time. Document the boundary so the case stays green
+        # without claiming a behavior that no longer exists.
+        from alphamind.state.tables.positions_codec import _details_from_dict
 
-            PositionRecord(
-                position_id="pos1",
-                thesis_id=None,
-                bracket_id=None,
-                status="PENDING",  # type: ignore[arg-type]
-                direction="LONG",  # type: ignore[arg-type]
-                entry_timestamp=None,
-                details={"instrument_type": "BOGUS"},  # type: ignore[arg-type]
-                execution_history=(),
-                realized_pnl_to_date_usd=None,
-                corporate_action_adjustment_needed=False,
-                parent_position_id=None,
-                origin=None,
-            )
+        with _raises(ValidationError):
+            _details_from_dict({"instrument_type": "BOGUS"})
 
     results.append(
         _run_case(
@@ -1335,9 +1368,12 @@ def wave6_architectural(verbose: bool = False) -> tuple[int, int, list[dict[str,
     now = _now_utc()
 
     def _check_position_record_no_market_value() -> None:
+        import dataclasses as _dc
+
         from alphamind.portfolio_state.records.positions import PositionRecord
 
-        assert "current_market_value_usd" not in PositionRecord.model_fields, (
+        field_names = {f.name for f in _dc.fields(PositionRecord)}
+        assert "current_market_value_usd" not in field_names, (
             "PositionRecord still carries current_market_value_usd — 05a split not applied"
         )
 
@@ -1349,9 +1385,12 @@ def wave6_architectural(verbose: bool = False) -> tuple[int, int, list[dict[str,
     )
 
     def _check_position_view_has_market_value() -> None:
+        import dataclasses as _dc
+
         from alphamind.portfolio_state.views.positions import PositionView
 
-        assert "current_market_value_usd" in PositionView.model_fields, (
+        field_names = {f.name for f in _dc.fields(PositionView)}
+        assert "current_market_value_usd" in field_names, (
             "PositionView is missing current_market_value_usd — 05a split not applied correctly"
         )
 
@@ -1372,7 +1411,7 @@ def wave6_architectural(verbose: bool = False) -> tuple[int, int, list[dict[str,
         )
 
         details = EquityPositionDetails(
-            ticker="AAPL", share_count=100.0, average_cost_basis_per_share=150.0
+            ticker=Symbol("AAPL"), share_count=100.0, average_cost_basis_per_share=150.0
         )
         fill = PositionFill(
             fill_timestamp=now,
@@ -1382,7 +1421,7 @@ def wave6_architectural(verbose: bool = False) -> tuple[int, int, list[dict[str,
             fees=0.0,
         )
         record = PositionRecord(
-            position_id="pos1",
+            position_id=PositionId("pos1"),
             thesis_id=None,
             bracket_id=None,
             status=PositionStatus.OPEN,
@@ -1407,6 +1446,9 @@ def wave6_architectural(verbose: bool = False) -> tuple[int, int, list[dict[str,
     )
 
     def _check_thesis_health_snapshot() -> None:
+        # 05c: ThesisComponent no longer carries supporting_signals
+        import dataclasses as _dc
+
         from alphamind.portfolio_state.records.theses import (
             SupportingSignal,
             SupportingSignalStatus,
@@ -1418,8 +1460,8 @@ def wave6_architectural(verbose: bool = False) -> tuple[int, int, list[dict[str,
             ThesisHealthSnapshot,
         )
 
-        # 05c: ThesisComponent no longer carries supporting_signals
-        assert "supporting_signals" not in ThesisComponent.model_fields, (
+        component_field_names = {f.name for f in _dc.fields(ThesisComponent)}
+        assert "supporting_signals" not in component_field_names, (
             "ThesisComponent still carries supporting_signals — 05c lifecycle split not applied"
         )
 

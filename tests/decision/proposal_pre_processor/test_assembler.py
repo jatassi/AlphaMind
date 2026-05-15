@@ -12,6 +12,14 @@ from typing import Any, Literal
 
 import pytest
 
+from alphamind._kernel.ids import (
+    InvocationId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.decision.analyst.models import (
     AnalystOutput,
     EntryOrder,
@@ -130,7 +138,7 @@ def _analyst_output_normal(
     recommendations: tuple[Recommendation, ...] = (),
 ) -> AnalystOutput:
     return AnalystOutput(
-        invocation_id=invocation_id,
+        invocation_id=InvocationId(invocation_id),
         timestamp=_NOW,
         mode="normal",
         recommendations=recommendations,
@@ -143,13 +151,13 @@ def _analyst_output_watchlist(
     watchlist: tuple[WatchlistEntry, ...] = (),
 ) -> AnalystOutput:
     return AnalystOutput(
-        invocation_id=invocation_id,
+        invocation_id=InvocationId(invocation_id),
         timestamp=_NOW,
         mode="watchlist",
         watchlist=watchlist
         or (
             WatchlistEntry(
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 sector="tech",
                 thesis_summary="watch.",
                 estimated_conviction=3,
@@ -166,7 +174,7 @@ def _strategist_output(
     pending_order_assessments: tuple[PendingOrderAssessment, ...] = (),
 ) -> StrategistOutput:
     return StrategistOutput(
-        invocation_id=invocation_id,
+        invocation_id=InvocationId(invocation_id),
         timestamp=_NOW,
         mode=mode,
         position_assessments=position_assessments,
@@ -179,21 +187,27 @@ def _strategist_output(
 
 def _equity_recommendation(rec_id: str = "REC-1", underlying: str = "NVDA") -> Recommendation:
     return Recommendation(
-        recommendation_id=rec_id,
-        instrument=InstrumentEquity(asset_type="equity", ticker=underlying, direction="long"),
-        underlying=underlying,
+        recommendation_id=RecommendationId(rec_id),
+        instrument=InstrumentEquity(
+            asset_type="equity", ticker=Symbol(underlying), direction="long"
+        ),
+        underlying=Symbol(underlying),
         sector="tech",
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=10.0, dollar_value=1000.0, pct_of_portfolio=1.0),
-        target=Target(target_type="absolute_price", price=200.0, dollar_pl_target=500.0),
+        position_size=PositionSize(quantity=10.0, dollar_value=money(1000.0), pct_of_portfolio=1.0),
+        target=Target(
+            target_type="absolute_price", price=price(200.0), dollar_pl_target=money(500.0)
+        ),
         invalidation_legs=(
             InvalidationLeg(
                 leg_id="INV-1",
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger=underlying, comparator="<=", trigger_price=90.0
+                    underlying_trigger=Symbol(underlying),
+                    comparator="<=",
+                    trigger_price=price(90.0),
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             ),
@@ -214,10 +228,10 @@ def _close_assessment(
     sa_id: str = "SA-1", position_id: str = "POS-1", underlying: str = "NVDA"
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id=f"THESIS-{position_id[4:]}",
-        underlying=underlying,
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THESIS-{position_id[4:]}"),
+        underlying=Symbol(underlying),
         sector="tech",
         thesis_status="invalidated",
         recommended_action="close",
@@ -228,7 +242,8 @@ def _close_assessment(
             close_rationale_type="thesis_invalidated",
         ),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+            sector_delta_adjusted_change=signed_money(-1.0),
+            net_directional_impact=signed_money(-1.0),
         ),
         status_rationale="invalidated",
         action_rationale="closing",
@@ -305,7 +320,13 @@ def test_invocation_id_mismatch_raises() -> None:
 
 def test_held_direction_resolver_resolves_long() -> None:
     snap = _snapshot_with_positions(
-        {"POS-LONG": _existing(position_id="POS-LONG", underlying="AAPL", direction=Direction.LONG)}
+        {
+            "POS-LONG": _existing(
+                position_id=PositionId("POS-LONG"),
+                underlying=Symbol("AAPL"),
+                direction=Direction.LONG,
+            )
+        }
     )
     resolver = build_held_direction_resolver(snap)
     assert resolver("POS-LONG") == "long"
@@ -313,7 +334,13 @@ def test_held_direction_resolver_resolves_long() -> None:
 
 def test_held_direction_resolver_resolves_short() -> None:
     snap = _snapshot_with_positions(
-        {"POS-S": _existing(position_id="POS-S", underlying="AAPL", direction=Direction.SHORT)}
+        {
+            "POS-S": _existing(
+                position_id=PositionId("POS-S"),
+                underlying=Symbol("AAPL"),
+                direction=Direction.SHORT,
+            )
+        }
     )
     resolver = build_held_direction_resolver(snap)
     assert resolver("POS-S") == "short"
@@ -325,8 +352,12 @@ def test_held_direction_resolver_resolves_short() -> None:
 
 
 def test_strategist_section_preserves_order_and_passes_through_observations() -> None:
-    sa1 = _close_assessment(sa_id="SA-1", position_id="POS-1", underlying="AAPL")
-    sa2 = _close_assessment(sa_id="SA-2", position_id="POS-2", underlying="MSFT")
+    sa1 = _close_assessment(
+        sa_id="SA-1", position_id=PositionId("POS-1"), underlying=Symbol("AAPL")
+    )
+    sa2 = _close_assessment(
+        sa_id="SA-2", position_id=PositionId("POS-2"), underlying=Symbol("MSFT")
+    )
     output = _strategist_output(position_assessments=(sa1, sa2))
 
     section = build_strategist_section(output, _empty_conflicts())
@@ -346,7 +377,7 @@ def test_strategist_section_threads_provided_conflicts() -> None:
 
     conflict = StrategistSideConflict(
         with_recommendation_id="REC-7",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         conflict_type=ConflictType.entry_vs_close,
     )
     conflicts = ConflictDetectionResult(
@@ -386,7 +417,7 @@ def test_analyst_section_normal_threads_conflicts() -> None:
 
     conflict = AnalystSideConflict(
         with_assessment_id="SA-9",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         conflict_type=ConflictType.entry_vs_close,
     )
     conflicts = ConflictDetectionResult(
@@ -402,7 +433,7 @@ def test_analyst_section_normal_threads_conflicts() -> None:
 
 def test_analyst_section_watchlist_passes_watchlist_through() -> None:
     entry = WatchlistEntry(
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         sector="tech",
         thesis_summary="watch.",
         estimated_conviction=3,
@@ -419,7 +450,7 @@ def test_analyst_section_watchlist_passes_watchlist_through() -> None:
 def test_analyst_section_watchlist_ignores_conflicts() -> None:
     """Watchlist mode never wraps records, so any conflicts arg is moot."""
     entry = WatchlistEntry(
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         sector="tech",
         thesis_summary="watch.",
         estimated_conviction=3,
@@ -431,7 +462,7 @@ def test_analyst_section_watchlist_ignores_conflicts() -> None:
         "REC-1": (
             AnalystSideConflict(
                 with_assessment_id="SA-1",
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 conflict_type=ConflictType.entry_vs_close,
             ),
         )

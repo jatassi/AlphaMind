@@ -3,6 +3,7 @@
 Tests cover field-by-field derivation rules from §2 and the existing_positions
 map construction from §3 of the story spec.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -12,18 +13,27 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from alphamind.portfolio_state.library_snapshot import to_library_snapshot
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    CashLedger,
-    DrawdownState,
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
+from alphamind._kernel.money import money
+from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
     RiskZone,
 )
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
+from alphamind.portfolio_state.library_snapshot import to_library_snapshot
+from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -91,8 +101,8 @@ def _make_pydantic_snapshot(
     """Build a minimal PortfolioStateSnapshot for testing."""
     if directional_exposure is None:
         directional_exposure = DirectionalExposure(
-            total_long_delta_adjusted_usd=0.0,
-            total_short_delta_adjusted_usd=0.0,
+            total_long_delta_adjusted_usd=money(0.0),
+            total_short_delta_adjusted_usd=money(0.0),
             net_directional_pct_of_portfolio=0.0,
             gross_pct_of_portfolio=0.0,
         )
@@ -132,12 +142,17 @@ def _make_pydantic_snapshot(
         )
 
     pnl = PortfolioPnL(
-        total_unrealized_pnl_usd=0.0,
+        total_unrealized_pnl_usd=money(0.0),
         total_unrealized_pnl_pct_of_portfolio=0.0,
-        daily_realized_pnl_usd=0.0,
-        daily_total_pnl_usd=0.0,
-        cumulative_realized_pnl_usd=0.0,
-        rolling_realized_pnl={"1d": 0.0, "3d": 0.0, "5d": 0.0, "20d": 0.0},
+        daily_realized_pnl_usd=money(0.0),
+        daily_total_pnl_usd=money(0.0),
+        cumulative_realized_pnl_usd=money(0.0),
+        rolling_realized_pnl={
+            "1d": money(0.0),
+            "3d": money(0.0),
+            "5d": money(0.0),
+            "20d": money(0.0),
+        },
         win_rate_pct=None,
         average_win_size_usd=None,
         average_loss_size_usd=None,
@@ -169,19 +184,17 @@ def _make_pydantic_snapshot(
             ),
         ),
     )
-    thesis_quality = ThesisQualityAggregate.model_validate(
-        {
-            "as_of_timestamp": _NOW,
-            "resolution_counts_by_window": [],
-            "duration_stats_by_window": [],
-            "invalidation_timing_stats_by_window": [],
-            "signal_hit_rates": [],
-            "signal_to_thesis_conversions": [],
-            "conviction_calibration": [],
-            "conviction_sizing_deviation_by_window": [],
-            "performance_attribution": [],
-            "alpha_beta_decomposition_by_window": [],
-        }
+    thesis_quality = ThesisQualityAggregate(
+        as_of_timestamp=_NOW,
+        resolution_counts_by_window=[],
+        duration_stats_by_window=[],
+        invalidation_timing_stats_by_window=[],
+        signal_hit_rates=[],
+        signal_to_thesis_conversions=[],
+        conviction_calibration=[],
+        conviction_sizing_deviation_by_window=[],
+        performance_attribution=[],
+        alpha_beta_decomposition_by_window=[],
     )
     return PortfolioStateSnapshot(
         invocation_id=_INV_ID,
@@ -228,7 +241,7 @@ def _make_equity_position_view(
     if direction == Direction.SHORT:
         # Short positions require borrow fields
         details: EquityPositionDetails = EquityPositionDetails(
-            ticker=ticker,
+            ticker=Symbol(ticker),
             share_count=share_count,
             average_cost_basis_per_share=market_value_usd / max(share_count, 1),
             borrow_rate_pct=borrow_rate_pct if borrow_rate_pct is not None else 0.5,
@@ -237,7 +250,7 @@ def _make_equity_position_view(
         )
     else:
         details = EquityPositionDetails(
-            ticker=ticker,
+            ticker=Symbol(ticker),
             share_count=share_count,
             average_cost_basis_per_share=market_value_usd / max(share_count, 1),
         )
@@ -260,7 +273,7 @@ def _make_equity_position_view(
         resolved_history = execution_history
 
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=status,
@@ -315,7 +328,7 @@ def _make_options_position_view(
         iv_used=0.30,
     )
     details_opt = OptionsPositionDetails(
-        underlying_ticker=underlying,
+        underlying_ticker=Symbol(underlying),
         strike_price=100.0,
         expiration_date=_OPTION_EXPIRY,
         contract_type=OptionContractType.CALL,
@@ -338,7 +351,7 @@ def _make_options_position_view(
         else ()
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=status,
@@ -432,16 +445,16 @@ def test_sector_exposure_pct_gross() -> None:
     sector_entries = [
         SectorExposureEntry(
             sector="tech",
-            long_delta_adjusted_usd=8_000.0,
-            short_delta_adjusted_usd=0.0,
+            long_delta_adjusted_usd=money(8_000.0),
+            short_delta_adjusted_usd=money(0.0),
             long_pct_of_portfolio=8.0,
             short_pct_of_portfolio=0.0,
             long_short_ratio=None,
         ),
         SectorExposureEntry(
             sector="energy",
-            long_delta_adjusted_usd=0.0,
-            short_delta_adjusted_usd=3_000.0,
+            long_delta_adjusted_usd=money(0.0),
+            short_delta_adjusted_usd=money(3_000.0),
             long_pct_of_portfolio=0.0,
             short_pct_of_portfolio=3.0,
             long_short_ratio=None,
@@ -463,8 +476,8 @@ def test_net_long_pct_net_short_pct() -> None:
     """AC: net_long_pct and net_short_pct non-negative; difference = directional_net."""
     # net short scenario: net_directional = -12.0
     dir_exp = DirectionalExposure(
-        total_long_delta_adjusted_usd=5_000.0,
-        total_short_delta_adjusted_usd=17_000.0,
+        total_long_delta_adjusted_usd=money(5_000.0),
+        total_short_delta_adjusted_usd=money(17_000.0),
         net_directional_pct_of_portfolio=-12.0,
         gross_pct_of_portfolio=22.0,
     )
@@ -478,8 +491,8 @@ def test_net_long_pct_net_short_pct() -> None:
 
     # net long scenario
     dir_exp_long = DirectionalExposure(
-        total_long_delta_adjusted_usd=15_000.0,
-        total_short_delta_adjusted_usd=3_000.0,
+        total_long_delta_adjusted_usd=money(15_000.0),
+        total_short_delta_adjusted_usd=money(3_000.0),
         net_directional_pct_of_portfolio=12.0,
         gross_pct_of_portfolio=18.0,
     )
@@ -499,8 +512,8 @@ def test_net_long_pct_net_short_pct() -> None:
 def test_gross_pct_passthrough() -> None:
     """AC: gross_pct = directional_exposure.gross_pct_of_portfolio."""
     dir_exp = DirectionalExposure(
-        total_long_delta_adjusted_usd=20_000.0,
-        total_short_delta_adjusted_usd=5_000.0,
+        total_long_delta_adjusted_usd=money(20_000.0),
+        total_short_delta_adjusted_usd=money(5_000.0),
         net_directional_pct_of_portfolio=15.0,
         gross_pct_of_portfolio=25.0,
     )
@@ -739,16 +752,16 @@ def test_total_short_pct_and_single_short_max_pct() -> None:
     sector_entries = [
         SectorExposureEntry(
             sector="energy",
-            long_delta_adjusted_usd=0.0,
-            short_delta_adjusted_usd=5_500.0,
+            long_delta_adjusted_usd=money(0.0),
+            short_delta_adjusted_usd=money(5_500.0),
             long_pct_of_portfolio=0.0,
             short_pct_of_portfolio=5.5,
             long_short_ratio=None,
         ),
         SectorExposureEntry(
             sector="financials",
-            long_delta_adjusted_usd=0.0,
-            short_delta_adjusted_usd=5_000.0,
+            long_delta_adjusted_usd=money(0.0),
+            short_delta_adjusted_usd=money(5_000.0),
             long_pct_of_portfolio=0.0,
             short_pct_of_portfolio=2.0,
             long_short_ratio=None,
@@ -788,7 +801,7 @@ def test_unresolvable_position_skipped_with_warning(caplog: pytest.LogCaptureFix
         ),
     )
     record = PositionRecord(
-        position_id="POS-STRATEGY-EMPTY",
+        position_id=PositionId("POS-STRATEGY-EMPTY"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -951,32 +964,32 @@ def test_full_normal_scenario() -> None:
         regt_excess_lifetime_usd=0.0,
     )
     dir_exp = DirectionalExposure(
-        total_long_delta_adjusted_usd=18_200.0,
-        total_short_delta_adjusted_usd=5_500.0,
+        total_long_delta_adjusted_usd=money(18_200.0),
+        total_short_delta_adjusted_usd=money(5_500.0),
         net_directional_pct_of_portfolio=12.7,
         gross_pct_of_portfolio=23.7,
     )
     sector_entries = [
         SectorExposureEntry(
             sector="tech",
-            long_delta_adjusted_usd=17_500.0,
-            short_delta_adjusted_usd=0.0,
+            long_delta_adjusted_usd=money(17_500.0),
+            short_delta_adjusted_usd=money(0.0),
             long_pct_of_portfolio=18.45,
             short_pct_of_portfolio=0.0,
             long_short_ratio=None,
         ),
         SectorExposureEntry(
             sector="energy",
-            long_delta_adjusted_usd=0.0,
-            short_delta_adjusted_usd=5_500.0,
+            long_delta_adjusted_usd=money(0.0),
+            short_delta_adjusted_usd=money(5_500.0),
             long_pct_of_portfolio=0.0,
             short_pct_of_portfolio=5.79,
             long_short_ratio=None,
         ),
         SectorExposureEntry(
             sector="semis",
-            long_delta_adjusted_usd=700.0,
-            short_delta_adjusted_usd=0.0,
+            long_delta_adjusted_usd=money(700.0),
+            short_delta_adjusted_usd=money(0.0),
             long_pct_of_portfolio=0.74,
             short_pct_of_portfolio=0.0,
             long_short_ratio=None,
@@ -1106,7 +1119,7 @@ def test_pending_positions_included() -> None:
 def test_strategy_position_ticker_and_greeks() -> None:
     """AC: Strategy position ticker from first leg; current_greeks from strategy_greeks."""
     leg_options = OptionsPositionDetails(
-        underlying_ticker="NVDA",
+        underlying_ticker=Symbol("NVDA"),
         strike_price=100.0,
         expiration_date=_OPTION_EXPIRY,
         contract_type=OptionContractType.CALL,
@@ -1133,7 +1146,7 @@ def test_strategy_position_ticker_and_greeks() -> None:
         strategy_greeks=strategy_greeks,
     )
     record = PositionRecord(
-        position_id="POS-STRAT",
+        position_id=PositionId("POS-STRAT"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,

@@ -6,7 +6,7 @@ The run-forever task composes three existing primitives:
   yields ``FillReport`` per websocket event;
 * :func:`alphamind.execution.broker_adapter.recover_missed_fills_since` —
   the GET-based recovery routine called on startup + disconnect;
-* :func:`alphamind.execution.state_persistence.write_paths.append_fill_record` —
+* :func:`alphamind.execution.write_paths.append_fill_record` —
   durable, idempotent append-only write.
 
 Tests inject fakes for the trading stream + trading client + session factory
@@ -20,6 +20,7 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -37,13 +38,14 @@ from alpaca.trading.models import Order, TradeUpdate
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import BracketId, OrderId, PositionId, ThesisId
+from alphamind._kernel.money import money, price
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.broker_adapter import OrderSnapshot
 from alphamind.execution.continuous_monitor.fill_stream_consumer import (
     run_fill_stream_consumer,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
-from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -51,7 +53,8 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
-from tests.execution.state_persistence._fk_substrate import seed_position_cluster
+from alphamind.state.tables.fill_records import FillRecordRow
+from tests.state._fk_substrate import seed_position_cluster
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -151,7 +154,7 @@ def _order_snapshot(
         filled_at=fa,
         canceled_at=None,
         expired_at=None,
-        filled_avg_price=filled_avg_price,
+        filled_avg_price=price(filled_avg_price),
         replaced_by=None,
         replaces=None,
         legs=None,
@@ -224,19 +227,19 @@ async def session_factory(
     connection.
     """
     db_path = tmp_path / "alphamind.db"
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
-    # Seed the order_id="order-1" cluster so the fill_records.order_id FK
+    # Seed the order_id=OrderId("order-1") cluster so the fill_records.order_id FK
     # is satisfied; tests reuse this id for every injected fill.
     with make_session_factory(sync_engine)() as sess:
         seed_position_cluster(
             sess,
-            position_id="pos-1",
-            thesis_id="thesis-1",
-            bracket_id="bracket-1",
-            entry_order_id="order-1",
+            position_id=PositionId("pos-1"),
+            thesis_id=ThesisId("thesis-1"),
+            bracket_id=BracketId("bracket-1"),
+            entry_order_id=OrderId("order-1"),
         )
         sess.commit()
     sync_engine.dispose()
@@ -343,7 +346,9 @@ class TestHappyPath:
         assert len(rows) == 1
         (row,) = rows
         assert row.order_id == "order-1"
-        assert row.fill_price == pytest.approx(189.42)
+        # ALP-462 — the fill_price column is ``Numeric`` (Decimal); compare
+        # against the canonical ``Decimal('189.42')`` representation.
+        assert row.fill_price == Decimal("189.42")
         assert row.fill_quantity == pytest.approx(1.0)
         assert row.processing_status == "unprocessed"
 
@@ -386,7 +391,7 @@ class TestStartupRecovery:
         queries = _FakeAccountStateQueries(
             snapshots=[
                 _order_snapshot(
-                    order_id="alp-recovery-1",
+                    order_id=OrderId("alp-recovery-1"),
                     client_order_id="order-1",
                     filled_avg_price=99.0,
                     filled_qty=1.0,
@@ -638,25 +643,25 @@ async def _seed_prior_fill(
     fill_timestamp: datetime,
 ) -> None:
     """Insert one fill_records row so the startup-recovery path activates."""
-    from alphamind.execution.state_persistence.tables.fill_records_codec import (
-        record_to_row,
-    )
-    from alphamind.execution.state_persistence.write_paths.records import (
+    from alphamind.portfolio_state.records.orders import OrderStatus
+    from alphamind.state.records import (
         FillProcessingStatus,
         FillRecord,
     )
-    from alphamind.portfolio_state.records.orders import OrderStatus
+    from alphamind.state.tables.fill_records_codec import (
+        record_to_row,
+    )
 
     record = FillRecord(
         fill_id="prior-fill-1",
-        order_id="order-1",
+        order_id=OrderId("order-1"),
         fill_timestamp=fill_timestamp,
-        fill_price=100.0,
+        fill_price=price(100.0),
         fill_quantity=1.0,
         remaining_quantity_after=0.0,
         order_status_after=OrderStatus.FILLED,
         slippage_usd=None,
-        fees_usd=0.0,
+        fees_usd=money(0.0),
         execution_venue=None,
         gateway_reference="alp-prior",
         persistence_timestamp=fill_timestamp,

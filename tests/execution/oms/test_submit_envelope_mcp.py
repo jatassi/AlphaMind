@@ -5,6 +5,7 @@ Layer-2/3 validation (story 06b), then re-runs validate_guardrail per embedded
 command against cumulative state. Mirrors the analyst-side
 test_validation_tool_mcp.py shape.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -17,8 +18,31 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    OrderId,
+    PositionId,
+    Symbol,
+)
+from alphamind._kernel.money import money, price
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+)
 from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
+from alphamind.commands.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+)
+from alphamind.commands.command_models import (
+    ThesisComponent as OMSThesisComponent,
+)
 from alphamind.decision.portfolio_manager.models import (
     AddCommand,
     CancelCommand,
@@ -48,26 +72,9 @@ from alphamind.decision.proposal_pre_processor.models import (
     WrappedPositionAssessment,
     WrappedRecommendation,
 )
-from alphamind.execution.oms.command_models import (
-    BracketOrderParameters,
-    EntryOrder,
-    EquityInstrument,
-    PositionSize,
-    PriceCondition,
-    PriceLeg,
-    Target,
-    Thesis,
-)
-from alphamind.execution.oms.command_models import (
-    ThesisComponent as OMSThesisComponent,
-)
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-)
 from alphamind.risk_guardrails.guardrail_evaluation import (
     ContractType,
     EscalationZones,
@@ -95,6 +102,37 @@ _DEFAULT_ACTIVE_SECTORS = frozenset({"tech", "semis", "financials", "energy"})
 # ---------------------------------------------------------------------------
 # Fixture builders — guardrail-side primitives
 # ---------------------------------------------------------------------------
+
+
+# Bypass-init helpers — replace Pydantic ``model_construct``. The dataclass __init__
+# enforces all fields; these helpers skip validation so tests can inject sparse fixtures.
+
+
+def _bypass_init_PortfolioManagerView(**kwargs):  # noqa: N802
+    from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
+
+    obj = object.__new__(PortfolioManagerView)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
+
+
+def _bypass_init_StrategistPositionView(**kwargs):  # noqa: N802
+    from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
+
+    obj = object.__new__(StrategistPositionView)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
+
+
+def _bypass_init_PositionRecord(**kwargs):  # noqa: N802
+    from alphamind.portfolio_state.records.positions import PositionRecord
+
+    obj = object.__new__(PositionRecord)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
 
 
 def _zones() -> EscalationZones:
@@ -172,7 +210,7 @@ def _atm_provider() -> FixtureIvProvider:
     return FixtureIvProvider(
         surface={
             "AAPL": IvSurfaceEntry(
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 quotes=(
                     IvQuote(
                         strike=100.0,
@@ -285,10 +323,10 @@ def _open_command(
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker=underlying, direction="long"),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-        position_size=PositionSize(quantity=quantity, dollar_value=dollar_value),
+        position_size=PositionSize(quantity=quantity, dollar_value=money(dollar_value)),
         target=Target(
             target_type="absolute_price",
-            price=950.0,
+            price=price(950.0),
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",
@@ -300,7 +338,7 @@ def _open_command(
                 condition=PriceCondition(
                     underlying_trigger=underlying,
                     comparator="<=",
-                    trigger_price=750.0,
+                    trigger_price=price(750.0),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),
@@ -324,9 +362,9 @@ def _add_command(position_id: str = "POS-NVDA-001") -> AddCommand:
     """Build a canonical ADD command (no embedded instrument)."""
     return AddCommand(
         command_type="add",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         additional_quantity=5.0,
-        additional_dollar_value=5_000.0,
+        additional_dollar_value=money(5_000.0),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
         thesis_addition_component=OMSThesisComponent(
             component_type="entry_rationale",
@@ -361,7 +399,7 @@ def _close_command(
 
 
 def _cancel_command(order_id: str = "ORD-1") -> CancelCommand:
-    return CancelCommand(command_type="cancel", order_id=order_id, cancel_reason="stale")
+    return CancelCommand(command_type="cancel", order_id=OrderId(order_id), cancel_reason="stale")
 
 
 def _make_analyst_envelope(**overrides: Any) -> PMAnalystEnvelope:
@@ -508,7 +546,7 @@ def _make_bundle(
 
 
 def _make_pm_view(positions: tuple[Any, ...] = ()) -> PortfolioManagerView:
-    return PortfolioManagerView.model_construct(
+    return _bypass_init_PortfolioManagerView(
         positions=positions,
         recent_thesis_resolutions=(),
         portfolio_pnl=None,
@@ -527,11 +565,9 @@ def _make_pm_view(positions: tuple[Any, ...] = ()) -> PortfolioManagerView:
 
 
 def _position_view(position_id: str) -> Any:
-    from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
-    from alphamind.portfolio_state.records.positions import PositionRecord
 
-    return StrategistPositionView.model_construct(
-        position=PositionRecord.model_construct(position_id=position_id),
+    return _bypass_init_StrategistPositionView(
+        position=_bypass_init_PositionRecord(position_id=position_id),
         thesis=None,
         bracket=None,
         pending_orders=(),
@@ -582,13 +618,16 @@ def _build_state_and_server(
 ) -> tuple[Any, Any, Any]:
     """Construct a SubmitEnvelopeState + factory output for tests.
 
-    Returns ``(state, mcp_server_instance, allowed_tools)``.
+    Returns ``(get_state, mcp_server_instance, allowed_tools)``. Post-ALP-476
+    the state cell is frozen; the closure rebinds the captured cell on each
+    invocation, so callers must read the latest state via ``get_state()``
+    rather than retaining a reference to the initial instance.
 
     Routes the bundle / pm_view based on the supplied envelope. ``ENV-REC-N``
     auto-populates an analyst recommendation; ``ENV-SA-N`` an analyst-side
     position assessment; ``ENV-SA-ORD-N`` a pending-order assessment.
     """
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         build_initial_submit_envelope_state,
         build_submit_envelope_mcp_server,
     )
@@ -641,7 +680,7 @@ def _build_state_and_server(
         starting_validation_state=validation_state,
     )
 
-    mcp_servers, allowed_tools = build_submit_envelope_mcp_server(
+    mcp_servers, allowed_tools, get_state = build_submit_envelope_mcp_server(
         state,
         retrieval_store=retrieval,
         pre_processor_bundle=bundle,
@@ -653,7 +692,7 @@ def _build_state_and_server(
         library_market=_market(),
     )
     server = mcp_servers["alphamind_execution_oms_submit"]["instance"]
-    return state, server, allowed_tools
+    return get_state, server, allowed_tools
 
 
 # ===========================================================================
@@ -667,9 +706,9 @@ def _build_state_and_server(
 
 
 def test_factory_returns_mcp_server_and_allowed_tools() -> None:
-    """The factory returns a ``(mcp_servers, allowed_tools)`` pair with the
-    canonical server name and a single registered tool."""
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    """The factory returns a ``(mcp_servers, allowed_tools, get_state)`` triple
+    with the canonical server name and a single registered tool."""
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         build_initial_submit_envelope_state,
         build_submit_envelope_mcp_server,
     )
@@ -680,7 +719,7 @@ def test_factory_returns_mcp_server_and_allowed_tools() -> None:
         invocation_id="inv-2026-05-05",
         starting_validation_state=validation_state,
     )
-    mcp_servers, allowed_tools = build_submit_envelope_mcp_server(
+    mcp_servers, allowed_tools, _get_state = build_submit_envelope_mcp_server(
         state,
         retrieval_store=_retrieval_store(),
         pre_processor_bundle=_make_bundle(),
@@ -711,7 +750,7 @@ async def test_accepts_well_formed_envelope() -> None:
     accepted; the response carries one submission_result with status=accepted
     and the cumulative-state cell is updated to count the proposal."""
     envelope = _make_analyst_envelope()
-    state, server, _ = _build_state_and_server(envelope_for_routing=envelope)
+    get_state, server, _ = _build_state_and_server(envelope_for_routing=envelope)
 
     text, is_error = await _invoke_mcp_tool(
         server, "submit_envelope", envelope.model_dump(mode="json")
@@ -728,7 +767,7 @@ async def test_accepts_well_formed_envelope() -> None:
     assert result["rejection_payload"] is None
 
     # Cumulative state advanced — the next call would see proposal #2.
-    assert len(state.validation_state.accumulated_deltas) == 1
+    assert len(get_state().validation_state.accumulated_deltas) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -748,7 +787,7 @@ async def test_rejects_envelope_with_layer_2_violation() -> None:
         envelope_id="ENV-REC-1",
         source_recommendation_id="REC-2",
     )
-    state, server, _ = _build_state_and_server(envelope_for_routing=envelope)
+    get_state, server, _ = _build_state_and_server(envelope_for_routing=envelope)
 
     text, is_error = await _invoke_mcp_tool(
         server, "submit_envelope", envelope.model_dump(mode="json")
@@ -765,9 +804,9 @@ async def test_rejects_envelope_with_layer_2_violation() -> None:
     assert rejection["rules_breached"][0]["rule"] == "schema_invariant"
 
     # State cell unchanged.
-    assert len(state.validation_state.accumulated_deltas) == 0
+    assert len(get_state().validation_state.accumulated_deltas) == 0
     # Submission log captures the call.
-    assert len(state.submission_log) == 1
+    assert len(get_state().submission_log) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -791,7 +830,7 @@ async def test_rejects_command_breaching_sector_concentration() -> None:
         }
     )
     envelope = _make_analyst_envelope()
-    state, server, _ = _build_state_and_server(
+    get_state, server, _ = _build_state_and_server(
         envelope_for_routing=envelope,
         config=cfg,
         snapshot=snapshot,
@@ -817,7 +856,7 @@ async def test_rejects_command_breaching_sector_concentration() -> None:
     assert breach["overage"] > 0
 
     # State cell unchanged.
-    assert len(state.validation_state.accumulated_deltas) == 0
+    assert len(get_state().validation_state.accumulated_deltas) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -842,15 +881,15 @@ async def test_processes_multiple_commands_with_partial_rejection() -> None:
     # Command 1: tech OPEN — projected after = 6.5 + 1.0 = 7.5%, PASS.
     # Command 2: tech OPEN — would push to 8.5%, FAIL on sector_concentration.
     # Command 3: energy OPEN — XOM → energy sector at 0% baseline → PASS.
-    cmd1 = _open_command(underlying="ABC")
-    cmd2 = _open_command(underlying="ABC")
-    cmd3 = _open_command(underlying="XOM")
+    cmd1 = _open_command(underlying=Symbol("ABC"))
+    cmd2 = _open_command(underlying=Symbol("ABC"))
+    cmd3 = _open_command(underlying=Symbol("XOM"))
 
     envelope = _make_strategist_envelope(
         verdict="approve",
         commands=(cmd1, cmd2, cmd3),
     )
-    state, server, _ = _build_state_and_server(
+    get_state, server, _ = _build_state_and_server(
         envelope_for_routing=envelope,
         config=cfg,
         snapshot=snapshot,
@@ -871,7 +910,7 @@ async def test_processes_multiple_commands_with_partial_rejection() -> None:
 
     # State cell advanced exactly twice — once per accepted constructive
     # command (cmd1 + cmd3).
-    assert len(state.validation_state.accumulated_deltas) == 2
+    assert len(get_state().validation_state.accumulated_deltas) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -899,7 +938,7 @@ async def test_close_commands_skip_validation_pass_through() -> None:
         verdict="approve",
         commands=(_close_command(), _cancel_command()),
     )
-    state, server, _ = _build_state_and_server(
+    get_state, server, _ = _build_state_and_server(
         envelope_for_routing=envelope,
         config=cfg,
         snapshot=snapshot,
@@ -915,7 +954,7 @@ async def test_close_commands_skip_validation_pass_through() -> None:
     assert len(results) == 2
     assert all(r["status"] == "accepted" for r in results)
     # No cumulative-state advancement (CLOSE/CANCEL produce no projected delta).
-    assert len(state.validation_state.accumulated_deltas) == 0
+    assert len(get_state().validation_state.accumulated_deltas) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -929,7 +968,7 @@ async def test_halt_mode_rejects_open_command() -> None:
     the halt-mode invariant in :func:`validate_pm_envelope`; the response is
     a single envelope-level rejection with rule=schema_invariant."""
     envelope = _make_analyst_envelope()
-    state, server, _ = _build_state_and_server(
+    get_state, server, _ = _build_state_and_server(
         envelope_for_routing=envelope,
         halt_mode=True,
     )
@@ -946,7 +985,7 @@ async def test_halt_mode_rejects_open_command() -> None:
     assert results[0]["rejection_payload"]["rules_breached"][0]["rule"] == "schema_invariant"
     assert "halt_mode" in results[0]["rejection_payload"]["suggested_modification"].lower()
     # No state-cell advancement.
-    assert len(state.validation_state.accumulated_deltas) == 0
+    assert len(get_state().validation_state.accumulated_deltas) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -958,12 +997,12 @@ async def test_halt_mode_rejects_open_command() -> None:
 async def test_submission_log_captures_every_call() -> None:
     """Calling submit_envelope twice — once accepted, once rejected — appends
     two entries to ``state.submission_log`` in call order."""
-    from alphamind.execution.oms.submit_envelope_mcp import get_submission_log
+    from alphamind.decision.portfolio_manager.submit_envelope import get_submission_log
 
     cfg = _config()
 
     # Build state once and reuse for two calls.
-    state, server, _ = _build_state_and_server(
+    get_state, server, _ = _build_state_and_server(
         config=cfg,
         # Pre-route both envelopes' provenance.
         extra_recommendations=(
@@ -989,7 +1028,7 @@ async def test_submission_log_captures_every_call() -> None:
     payload2 = json.loads(text2)
     assert payload2["submission_results"][0]["status"] == "rejected"
 
-    log = get_submission_log(state)
+    log = get_submission_log(get_state())
     assert len(log) == 2
     assert log[0].envelope.envelope_id == "ENV-REC-1"
     assert log[1].envelope.envelope_id == "ENV-REC-2"
@@ -1007,17 +1046,17 @@ async def test_state_cell_isolation() -> None:
     not affect the other."""
     envelope = _make_analyst_envelope()
 
-    state_a, server_a, _ = _build_state_and_server(envelope_for_routing=envelope)
-    state_b, _server_b, _ = _build_state_and_server(envelope_for_routing=envelope)
+    get_state_a, server_a, _ = _build_state_and_server(envelope_for_routing=envelope)
+    get_state_b, _server_b, _ = _build_state_and_server(envelope_for_routing=envelope)
 
     text, _ = await _invoke_mcp_tool(server_a, "submit_envelope", envelope.model_dump(mode="json"))
     assert json.loads(text)["submission_results"][0]["status"] == "accepted"
 
     # State A advanced; state B untouched.
-    assert len(state_a.validation_state.accumulated_deltas) == 1
-    assert len(state_b.validation_state.accumulated_deltas) == 0
-    assert len(state_a.submission_log) == 1
-    assert len(state_b.submission_log) == 0
+    assert len(get_state_a().validation_state.accumulated_deltas) == 1
+    assert len(get_state_b().validation_state.accumulated_deltas) == 0
+    assert len(get_state_a().submission_log) == 1
+    assert len(get_state_b().submission_log) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1052,9 +1091,9 @@ async def test_layer_1_parse_failure_captured_in_failed_submission_log() -> None
     ``state.failed_submission_log`` — raw args, the formatted Pydantic error,
     and the synthetic command_id are all preserved for forensics. The parsed
     ``submission_log`` remains empty since no PMEnvelope was produced."""
-    from alphamind.execution.oms.submit_envelope_mcp import get_failed_submission_log
+    from alphamind.decision.portfolio_manager.submit_envelope import get_failed_submission_log
 
-    state, server, _ = _build_state_and_server()
+    get_state, server, _ = _build_state_and_server()
 
     # Missing the source_provenance discriminator — the discriminated-union
     # adapter cannot route the payload to either PMAnalystEnvelope or
@@ -1075,7 +1114,7 @@ async def test_layer_1_parse_failure_captured_in_failed_submission_log() -> None
     assert result["status"] == "rejected"
     assert result["rejection_payload"]["rules_breached"][0]["rule"] == "schema_invariant"
 
-    failed_log = get_failed_submission_log(state)
+    failed_log = get_failed_submission_log(get_state())
     assert len(failed_log) == 1
     entry = failed_log[0]
     assert entry.raw_args == bogus_args
@@ -1085,9 +1124,9 @@ async def test_layer_1_parse_failure_captured_in_failed_submission_log() -> None
         f"command_id {entry.command_id!r} does not match expected Layer-1 format"
     )
     # Parsed submission_log untouched — Layer-1 failures don't reach there.
-    assert len(state.submission_log) == 0
+    assert len(get_state().submission_log) == 0
     # State cell unchanged.
-    assert len(state.validation_state.accumulated_deltas) == 0
+    assert len(get_state().validation_state.accumulated_deltas) == 0
 
 
 @pytest.mark.asyncio
@@ -1095,9 +1134,9 @@ async def test_layer_1_failure_uses_fallback_envelope_id_when_missing() -> None:
     """When the raw payload omits ``envelope_id`` entirely, the rejection and
     the failed_submission_log both fall back to ``ENV-REC-INVALID`` so the
     synthetic command_id is still well-formed for downstream tooling."""
-    from alphamind.execution.oms.submit_envelope_mcp import get_failed_submission_log
+    from alphamind.decision.portfolio_manager.submit_envelope import get_failed_submission_log
 
-    state, server, _ = _build_state_and_server()
+    get_state, server, _ = _build_state_and_server()
 
     bogus_args: dict[str, Any] = {"garbage": "value"}
 
@@ -1105,7 +1144,7 @@ async def test_layer_1_failure_uses_fallback_envelope_id_when_missing() -> None:
     payload = json.loads(text)
     assert payload["envelope_id"] == "ENV-REC-INVALID"
 
-    failed_log = get_failed_submission_log(state)
+    failed_log = get_failed_submission_log(get_state())
     assert len(failed_log) == 1
     assert failed_log[0].raw_args == bogus_args
     assert failed_log[0].command_id.endswith(".ENV-REC-INVALID.0.0")
@@ -1126,21 +1165,10 @@ async def test_handle_submit_envelope_persists_layer1_failure_via_phase2(
     an OMS-tree change touching the wrapper trips here too."""
     from sqlalchemy import select as _select
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    import alphamind.state.tables  # noqa: F401
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
-    )
-    from alphamind.execution.state_persistence.invocation_context.context import (
-        InvocationContext,
-    )
-    from alphamind.execution.state_persistence.invocation_context.records import (
-        InvocationRecord,
-        ProcessLifetimeRecord,
-        process_lifetime_record_to_row,
-    )
-    from alphamind.execution.state_persistence.tables.activity_log import (
-        ActivityLogRow,
     )
     from alphamind.persistence.models import Base
     from alphamind.persistence.session import (
@@ -1149,6 +1177,17 @@ async def test_handle_submit_envelope_persists_layer1_failure_via_phase2(
         make_engine,
     )
     from alphamind.portfolio_state.events.activity_log import EventType
+    from alphamind.state.invocation_context.context import (
+        InvocationContext,
+    )
+    from alphamind.state.invocation_context.records import (
+        InvocationRecord,
+        ProcessLifetimeRecord,
+        process_lifetime_record_to_row,
+    )
+    from alphamind.state.tables.activity_log import (
+        ActivityLogRow,
+    )
 
     db_path = tmp_path / "test.db"
     sync_engine = make_engine(str(db_path))
@@ -1214,7 +1253,7 @@ async def test_handle_submit_envelope_persists_layer1_failure_via_phase2(
         )
 
         bogus_args: dict[str, Any] = {"envelope_id": "ENV-REC-99", "garbage": "value"}
-        await _handle_submit_envelope(
+        _response, state = await _handle_submit_envelope(
             bogus_args,
             state=state,
             retrieval_store=_retrieval_store(),
@@ -1253,28 +1292,10 @@ async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
     the Phase 2 writeback runs alongside the in-memory state-cell advance."""
     from sqlalchemy import select as _select
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    import alphamind.state.tables  # noqa: F401
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
-    )
-    from alphamind.execution.state_persistence.invocation_context.context import (
-        InvocationContext,
-    )
-    from alphamind.execution.state_persistence.invocation_context.records import (
-        InvocationRecord,
-        ProcessLifetimeRecord,
-        process_lifetime_record_to_row,
-    )
-    from alphamind.execution.state_persistence.tables.activity_log import (
-        ActivityLogRow,
-    )
-    from alphamind.execution.state_persistence.tables.cash_ledger import (
-        CASH_LEDGER_SINGLETON_ID,
-        CashLedgerRow,
-    )
-    from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-        cash_ledger_record_to_row,
     )
     from alphamind.persistence.models import Base
     from alphamind.persistence.session import (
@@ -1284,6 +1305,24 @@ async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
     )
     from alphamind.portfolio_state.events.activity_log import EventType
     from alphamind.portfolio_state.records.cash import CashLedger
+    from alphamind.state.invocation_context.context import (
+        InvocationContext,
+    )
+    from alphamind.state.invocation_context.records import (
+        InvocationRecord,
+        ProcessLifetimeRecord,
+        process_lifetime_record_to_row,
+    )
+    from alphamind.state.tables.activity_log import (
+        ActivityLogRow,
+    )
+    from alphamind.state.tables.cash_ledger import (
+        CASH_LEDGER_SINGLETON_ID,
+        CashLedgerRow,
+    )
+    from alphamind.state.tables.cash_ledger_codec import (
+        cash_ledger_record_to_row,
+    )
 
     db_path = tmp_path / "test.db"
     sync_engine = make_engine(str(db_path))
@@ -1310,20 +1349,18 @@ async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
             claude_agent_sdk_version="0.1.69",
             os_release="Linux-6.5.0",
         )
-        cash = CashLedger.model_validate(
-            {
-                "current_cash_usd": 100_000.0,
-                "settled_cash_usd": 100_000.0,
-                "reserved_capital_usd": 0.0,
-                "available_buying_power_usd": 100_000.0,
-                "margin_held_usd": 0.0,
-                "unsettled_proceeds": (),
-                "cash_pct_of_portfolio": 0.0,
-                "true_deployable_capital_usd": 0.0,
-                "regt_excess_trailing_30d_usd": 0.0,
-                "regt_excess_trailing_90d_usd": 0.0,
-                "regt_excess_lifetime_usd": 0.0,
-            }
+        cash = CashLedger(
+            current_cash_usd=100_000.0,
+            settled_cash_usd=100_000.0,
+            reserved_capital_usd=0.0,
+            available_buying_power_usd=100_000.0,
+            margin_held_usd=0.0,
+            unsettled_proceeds=(),
+            cash_pct_of_portfolio=0.0,
+            true_deployable_capital_usd=0.0,
+            regt_excess_trailing_30d_usd=0.0,
+            regt_excess_trailing_90d_usd=0.0,
+            regt_excess_lifetime_usd=0.0,
         )
         async with factory() as sess:
             sess.add(process_lifetime_record_to_row(proc))
@@ -1366,7 +1403,7 @@ async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
         )
         bundle = _make_bundle(recommendations=(_recommendation_stub("REC-1"),))
 
-        await _handle_submit_envelope(
+        _response, _state = await _handle_submit_envelope(
             envelope.model_dump(mode="json"),
             state=state,
             retrieval_store=_retrieval_store(),
@@ -1412,7 +1449,7 @@ def test_submit_envelope_state_rejects_empty_invocation_id() -> None:
     """An empty ``invocation_id`` would propagate into ``derive_pm_command_id``
     and produce malformed IDs like ``inv-.{envelope_id}.0.0``; the constructor
     must reject it so the constraint is enforced at the type system."""
-    from alphamind.execution.oms.submit_envelope_mcp import SubmitEnvelopeState
+    from alphamind.decision.portfolio_manager.submit_envelope import SubmitEnvelopeState
 
     cfg = _config()
     validation_state = _make_validation_state(config=cfg)
@@ -1425,7 +1462,7 @@ def test_build_initial_submit_envelope_state_rejects_empty_invocation_id() -> No
     """The public assembler must propagate the empty-string rejection so
     composition pipelines that forget to thread the invocation id fail loudly
     at construction rather than silently producing malformed command IDs."""
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         build_initial_submit_envelope_state,
     )
 
@@ -1437,3 +1474,74 @@ def test_build_initial_submit_envelope_state_rejects_empty_invocation_id() -> No
             invocation_id="",
             starting_validation_state=validation_state,
         )
+
+
+# ---------------------------------------------------------------------------
+# 15. ALP-476 — frozen-dataclass invariants on the state cell + log entries
+# ---------------------------------------------------------------------------
+
+
+def test_submit_envelope_state_is_frozen() -> None:
+    """``SubmitEnvelopeState`` is a frozen dataclass; attribute assignment raises."""
+    import dataclasses
+
+    from alphamind.decision.portfolio_manager.submit_envelope import SubmitEnvelopeState
+
+    cfg = _config()
+    validation_state = _make_validation_state(config=cfg)
+    state = SubmitEnvelopeState(validation_state=validation_state, invocation_id="inv-1")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        state.submission_log = ()  # type: ignore[misc]
+
+
+def test_submit_envelope_state_replace_produces_new_instance_with_field_changed() -> None:
+    """``dataclasses.replace(state, submission_log=new_log)`` yields a new
+    instance with the updated field; the input state is unchanged."""
+    import dataclasses
+
+    from alphamind.decision.portfolio_manager.submit_envelope import (
+        SubmissionLogEntry,
+        SubmitEnvelopeState,
+    )
+
+    cfg = _config()
+    validation_state = _make_validation_state(config=cfg)
+    state = SubmitEnvelopeState(validation_state=validation_state, invocation_id="inv-1")
+
+    envelope = _make_analyst_envelope()
+    entry = SubmissionLogEntry(envelope=envelope, submission_results=())
+    new_state = dataclasses.replace(state, submission_log=(entry,))
+
+    assert new_state is not state
+    assert new_state.submission_log == (entry,)
+    assert state.submission_log == ()
+    # Other fields preserved.
+    assert new_state.invocation_id == state.invocation_id
+    assert new_state.validation_state is state.validation_state
+
+
+def test_submission_log_entry_is_frozen() -> None:
+    """``SubmissionLogEntry`` is a frozen, slotted dataclass."""
+    import dataclasses
+
+    from alphamind.decision.portfolio_manager.submit_envelope import SubmissionLogEntry
+
+    envelope = _make_analyst_envelope()
+    entry = SubmissionLogEntry(envelope=envelope, submission_results=())
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        entry.submission_results = ()  # type: ignore[misc]
+
+
+def test_failed_submission_entry_is_frozen() -> None:
+    """``FailedSubmissionEntry`` is a frozen, slotted dataclass."""
+    import dataclasses
+
+    from alphamind.decision.portfolio_manager.submit_envelope import FailedSubmissionEntry
+
+    entry = FailedSubmissionEntry(
+        raw_args={"k": "v"},
+        validation_error_repr="err",
+        command_id="inv-1.ENV-REC-1.0.0",
+    )
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        entry.command_id = "new"  # type: ignore[misc]

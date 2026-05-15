@@ -61,7 +61,12 @@ def _resolve_path(path: str | None) -> str:
                 return _PERCENT_VAR_PATTERN.sub(
                     lambda m: os.environ.get(m.group(1), m.group(0)), db_path
                 )
-    except Exception:
+    except (yaml.YAMLError, OSError, ImportError):
+        # Schema bugs in ``main.yaml`` (or yaml unavailable) shouldn't masquerade
+        # as "DB not configured" — but we still fall through to the RuntimeError
+        # below so the caller sees an actionable message. ``TypeError`` /
+        # ``AttributeError`` (e.g., cfg returning the wrong shape) surface
+        # naturally so a config-schema bug is not hidden as connectivity loss.
         pass
     raise RuntimeError(
         "AlphaMind database path is not configured. "

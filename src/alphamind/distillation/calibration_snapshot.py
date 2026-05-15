@@ -19,18 +19,18 @@ mid-write process death does not leave a torn JSON document on disk.
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from alphamind.distillation.calibration import CALIBRATION_STATE_VALUES, CalibrationState
-from alphamind.distillation.output import OutputBlock
-from alphamind.execution.state_persistence.invocation_paths import (
+from alphamind._kernel.atomic_io import atomic_write_text
+from alphamind._kernel.invocations import (
     CALIBRATION_SNAPSHOT_FILENAME,
     INVOCATIONS_DIRNAME,
 )
+from alphamind.distillation.calibration import CALIBRATION_STATE_VALUES, CalibrationState
+from alphamind.distillation.output import OutputBlock
 
 if TYPE_CHECKING:
     from alphamind.distillation.orchestrator import DistillationOutputs
@@ -149,24 +149,6 @@ def _serialize(snapshot: dict[str, Any]) -> str:
     return json.dumps(snapshot, sort_keys=True, indent=len(_JSON_INDENT_UNIT)) + "\n"
 
 
-def _atomic_write(path: Path, contents: str) -> None:
-    """Write ``contents`` to ``path`` atomically.
-
-    Writes to ``<path>.tmp``, fsyncs the file descriptor, then ``Path.replace``
-    to the final name. ``Path.replace`` is OS-level atomic on macOS, Linux,
-    and Windows for paths on the same filesystem, so a process crash mid-write
-    cannot leave a half-written snapshot.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    encoded = contents.encode("utf-8")
-    with tmp_path.open("wb") as handle:
-        handle.write(encoded)
-        handle.flush()
-        os.fsync(handle.fileno())
-    tmp_path.replace(path)
-
-
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -210,7 +192,7 @@ def write_calibration_state_snapshot(
     }
 
     target_path = base_path / INVOCATIONS_DIRNAME / invocation_id / CALIBRATION_SNAPSHOT_FILENAME
-    _atomic_write(target_path, _serialize(snapshot))
+    atomic_write_text(target_path, _serialize(snapshot))
     return target_path
 
 

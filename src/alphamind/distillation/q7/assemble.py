@@ -11,7 +11,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from alphamind.config.models.distillation import DistillationConfig
+from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation.output import OutputBlock
 from alphamind.distillation.q7._helpers import (
     _correlation_matrix,
@@ -112,7 +112,7 @@ def compute_pair_correlations(
 def assemble_q7_blocks(
     session: Session,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     as_of: datetime,
     ticker_scope: Sequence[str] | None = None,
 ) -> list[OutputBlock]:

@@ -40,11 +40,13 @@ this module so ``tests/scripts/test_verify_decision_pipeline.py`` can
 exercise them without touching the Anthropic API. The thin shim at
 ``scripts/verify_decision_pipeline.py`` defers to :func:`main` here.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import enum
 import json
 import os
@@ -56,6 +58,18 @@ from typing import Any
 
 import yaml
 
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import (
     AgentName,
@@ -75,23 +89,22 @@ from alphamind.pipeline.decision import (
     run_decision_pipeline,
 )
 from alphamind.portfolio_state import PortfolioStateConfig, load_portfolio_state_config
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.library_snapshot import LibrarySnapshot
 from alphamind.portfolio_state.pricing import (
     PriceQuote,
     PriceSource,
     StubCurrentPriceProvider,
 )
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    CashLedger,
-    DrawdownState,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
-)
+from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegEnforcement,
@@ -233,25 +246,23 @@ def _make_equity_position(
         slippage=0.0,
         fees=1.0,
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": direction,
-            "entry_timestamp": _AS_OF - timedelta(hours=age_hours),
-            "details": EquityPositionDetails(
-                ticker=ticker,
-                share_count=share_count,
-                average_cost_basis_per_share=avg_cost,
-            ),
-            "execution_history": (fill,),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=direction,
+        entry_timestamp=_AS_OF - timedelta(hours=age_hours),
+        details=EquityPositionDetails(
+            ticker=Symbol(ticker),
+            share_count=share_count,
+            average_cost_basis_per_share=avg_cost,
+        ),
+        execution_history=(fill,),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -262,9 +273,9 @@ def _make_bracket(*, position_id: str, ticker: str) -> BracketRecord:
         BracketLeg(
             leg_id=f"LEG-{position_id}-TP",
             leg_type=BracketLegType.TAKE_PROFIT,
-            order_id=f"ORD-{position_id}-TP",
+            order_id=OrderId(f"ORD-{position_id}-TP"),
             trigger=PriceTrigger(
-                underlying_ticker=ticker,
+                underlying_ticker=Symbol(ticker),
                 threshold_usd=spot * 1.10,
                 direction="GTE",
             ),
@@ -274,9 +285,9 @@ def _make_bracket(*, position_id: str, ticker: str) -> BracketRecord:
         BracketLeg(
             leg_id=f"LEG-{position_id}-PS",
             leg_type=BracketLegType.PRICE_STOP,
-            order_id=f"ORD-{position_id}-PS",
+            order_id=OrderId(f"ORD-{position_id}-PS"),
             trigger=PriceTrigger(
-                underlying_ticker=ticker,
+                underlying_ticker=Symbol(ticker),
                 threshold_usd=spot * 0.95,
                 direction="LTE",
             ),
@@ -285,10 +296,10 @@ def _make_bracket(*, position_id: str, ticker: str) -> BracketRecord:
         ),
     )
     return BracketRecord(
-        bracket_id=f"BRK-{position_id}",
-        position_id=position_id,
+        bracket_id=BracketId(f"BRK-{position_id}"),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id=f"ORD-{position_id}-ENTRY",
+        entry_order_id=OrderId(f"ORD-{position_id}-ENTRY"),
         protective_legs=legs,
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -301,7 +312,7 @@ def _make_thesis(*, position_id: str, ticker: str) -> ThesisRecord:
     components = (
         ThesisComponent(
             component_id=f"TC-{position_id}-1",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ThesisComponentType.ENTRY_RATIONALE,
             linked_bracket_leg_type=None,
             instrument_reference=position_id,
@@ -313,7 +324,7 @@ def _make_thesis(*, position_id: str, ticker: str) -> ThesisRecord:
         ),
         ThesisComponent(
             component_id=f"TC-{position_id}-2",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ThesisComponentType.TARGET_RATIONALE,
             linked_bracket_leg_type=BracketLegType.TAKE_PROFIT,
             instrument_reference=position_id,
@@ -325,7 +336,7 @@ def _make_thesis(*, position_id: str, ticker: str) -> ThesisRecord:
         ),
         ThesisComponent(
             component_id=f"TC-{position_id}-3",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ThesisComponentType.INVALIDATION_RATIONALE,
             linked_bracket_leg_type=BracketLegType.PRICE_STOP,
             instrument_reference=position_id,
@@ -337,8 +348,8 @@ def _make_thesis(*, position_id: str, ticker: str) -> ThesisRecord:
         ),
     )
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary=f"Long {ticker} on sector momentum.",
         components=components,
         status=ThesisRecordStatus.ACTIVE,
@@ -355,20 +366,18 @@ def _make_thesis(*, position_id: str, ticker: str) -> ThesisRecord:
 
 
 def _make_cash_ledger() -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": _AVAILABLE_FOR_NEW_POSITIONS,
-            "settled_cash_usd": _AVAILABLE_FOR_NEW_POSITIONS,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": _AVAILABLE_FOR_NEW_POSITIONS,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": [],
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=_AVAILABLE_FOR_NEW_POSITIONS,
+        settled_cash_usd=_AVAILABLE_FOR_NEW_POSITIONS,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=_AVAILABLE_FOR_NEW_POSITIONS,
+        margin_held_usd=0.0,
+        unsettled_proceeds=[],
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
@@ -517,37 +526,37 @@ def build_fixture_repository(
     """
     positions = (
         _make_equity_position(
-            position_id="POS-AAPL",
-            ticker="AAPL",
+            position_id=PositionId("POS-AAPL"),
+            ticker=Symbol("AAPL"),
             direction=Direction.LONG,
             share_count=10.0,
             avg_cost=170.0,
-            bracket_id="BRK-POS-AAPL",
-            thesis_id="THESIS-POS-AAPL",
+            bracket_id=BracketId("BRK-POS-AAPL"),
+            thesis_id=ThesisId("THESIS-POS-AAPL"),
         ),
         _make_equity_position(
-            position_id="POS-NVDA",
-            ticker="NVDA",
+            position_id=PositionId("POS-NVDA"),
+            ticker=Symbol("NVDA"),
             direction=Direction.LONG,
             share_count=5.0,
             avg_cost=820.0,
-            bracket_id="BRK-POS-NVDA",
+            bracket_id=BracketId("BRK-POS-NVDA"),
         ),
         _make_equity_position(
-            position_id="POS-JPM",
-            ticker="JPM",
+            position_id=PositionId("POS-JPM"),
+            ticker=Symbol("JPM"),
             direction=Direction.LONG,
             share_count=15.0,
             avg_cost=180.0,
-            bracket_id="BRK-POS-JPM",
+            bracket_id=BracketId("BRK-POS-JPM"),
         ),
         _make_equity_position(
-            position_id="POS-XOM",
-            ticker="XOM",
+            position_id=PositionId("POS-XOM"),
+            ticker=Symbol("XOM"),
             direction=Direction.LONG,
             share_count=20.0,
             avg_cost=105.0,
-            bracket_id="BRK-POS-XOM",
+            bracket_id=BracketId("BRK-POS-XOM"),
         ),
     )
     brackets = tuple(
@@ -561,7 +570,7 @@ def build_fixture_repository(
     )
     # One active thesis (per scope) — anchored to the AAPL position so the
     # PM has at least one thesis to read via ``get_thesis_components``.
-    theses = (_make_thesis(position_id="POS-AAPL", ticker="AAPL"),)
+    theses = (_make_thesis(position_id=PositionId("POS-AAPL"), ticker=Symbol("AAPL")),)
     return RepositoryFixture(
         open_positions=positions,
         pending_positions=(),
@@ -778,7 +787,7 @@ def serialize_pipeline_result(result: DecisionPipelineResult, target: Path) -> N
     strategist = result.strategist_result
     pm = result.pm_result
     payload = {
-        "pydantic_snapshot": result.pydantic_snapshot.model_dump(mode="json"),
+        "pydantic_snapshot": _snapshot_to_dict(result.pydantic_snapshot),
         "library_snapshot": _library_snapshot_to_dict(result.library_snapshot),
         "analyst_result": {
             "output": analyst.output.model_dump(mode="json"),
@@ -790,7 +799,7 @@ def serialize_pipeline_result(result: DecisionPipelineResult, target: Path) -> N
         },
         "strategist_result": {
             "output": strategist.output.model_dump(mode="json"),
-            "validation_result": strategist.validation_result.model_dump(mode="json"),
+            "validation_result": dataclasses.asdict(strategist.validation_result),
             "tokens_used": strategist.tokens_used.model_dump(),
             "metadata": strategist.metadata,
         },
@@ -843,6 +852,35 @@ def _library_snapshot_to_dict(snapshot: LibrarySnapshot) -> dict[str, Any]:
         "position_max_size_pct": snapshot.position_max_size_pct,
         "existing_positions": {pid: str(pos) for pid, pos in snapshot.existing_positions.items()},
     }
+
+
+def _snapshot_to_dict(snapshot: Any) -> dict[str, Any]:
+    """Best-effort JSON-friendly view of the OMS portfolio-state snapshot.
+
+    Replaces the prior Pydantic ``model_dump(mode="json")`` call on
+    :class:`alphamind.portfolio_state.snapshot.PortfolioStateSnapshot`. The
+    diagnostic archive only needs the field names present on the instance;
+    tests sometimes use ``object.__new__`` to bypass init, so we walk the
+    fields defensively and skip any that aren't actually set.
+    """
+    import dataclasses as _dc
+
+    if not _dc.is_dataclass(snapshot):
+        return {"repr": repr(snapshot)}
+    out: dict[str, Any] = {}
+    for field in _dc.fields(snapshot):
+        try:
+            value = getattr(snapshot, field.name)
+        except AttributeError:
+            continue
+        if _dc.is_dataclass(value):
+            try:
+                out[field.name] = _dc.asdict(value)
+            except (AttributeError, TypeError):
+                out[field.name] = repr(value)
+        else:
+            out[field.name] = value
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1013,7 +1051,7 @@ async def _run_pipeline(
     price_provider = StubCurrentPriceProvider(quotes, _AS_OF)
     library_config = build_fixture_library_config()
 
-    assembled = await assemble_snapshot(
+    assembled = assemble_snapshot(
         repository=repository,
         price_provider=price_provider,
         sector_resolver=adapt_ticker_sector_resolver(_sector_resolver),

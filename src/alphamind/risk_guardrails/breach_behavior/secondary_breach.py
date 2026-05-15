@@ -245,6 +245,11 @@ def _invoke_library(
             delta_buffer_factor=delta_buffer_factor,
         )
     except Exception as exc:
+        # Context-wrap per runtime §G1: the library's exception hierarchy is
+        # not contracted, so we accept any ``Exception`` subclass and rewrap
+        # with the phase tag for triage. ``raise ... from exc`` preserves the
+        # original traceback. ``BaseException`` (``CancelledError``) propagates
+        # so cooperative cancellation isn't swallowed.
         msg = f"secondary-breach check failed during {phase} evaluation: {exc}"
         raise ValueError(msg) from exc
 

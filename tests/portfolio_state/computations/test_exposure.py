@@ -1,4 +1,5 @@
 """Tests for sector and directional exposure rollup (story 05c)."""
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -6,6 +7,9 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    Symbol,
+)
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.computations.exposure import (
     SectorResolver,
@@ -55,25 +59,23 @@ def _make_long_equity(
     delta_adjusted_exposure_usd: float,
     notional: float = 10_000.0,
 ) -> PositionView:
-    record = PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW,
-            "details": EquityPositionDetails(
-                ticker=ticker,
-                share_count=100.0,
-                average_cost_basis_per_share=notional / 100.0,
-            ),
-            "execution_history": (_FILL,),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    record = PositionRecord(
+        position_id=position_id,
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW,
+        details=EquityPositionDetails(
+            ticker=Symbol(ticker),
+            share_count=100.0,
+            average_cost_basis_per_share=notional / 100.0,
+        ),
+        execution_history=(_FILL,),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
     return PositionView(
         record=record,
@@ -96,28 +98,26 @@ def _make_short_equity(
     delta_adjusted_exposure_usd: float,
     notional: float = 5_000.0,
 ) -> PositionView:
-    record = PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.SHORT,
-            "entry_timestamp": _NOW,
-            "details": EquityPositionDetails(
-                ticker=ticker,
-                share_count=100.0,
-                average_cost_basis_per_share=notional / 100.0,
-                borrow_rate_pct=0.5,
-                locate_status=LocateStatus.LOCATED,
-                margin_held_usd=1_000.0,
-            ),
-            "execution_history": (_FILL,),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    record = PositionRecord(
+        position_id=position_id,
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.SHORT,
+        entry_timestamp=_NOW,
+        details=EquityPositionDetails(
+            ticker=Symbol(ticker),
+            share_count=100.0,
+            average_cost_basis_per_share=notional / 100.0,
+            borrow_rate_pct=0.5,
+            locate_status=LocateStatus.LOCATED,
+            margin_held_usd=1_000.0,
+        ),
+        execution_history=(_FILL,),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
     return PositionView(
         record=record,
@@ -143,7 +143,7 @@ def _make_long_option(
     """Build a long put (negative delta) for testing sign-based bucket assignment."""
     greeks = OptionGreeks(delta=delta, gamma=0.05, theta=-0.01, vega=0.3)
     options_details = OptionsPositionDetails(
-        underlying_ticker=ticker,
+        underlying_ticker=Symbol(ticker),
         strike_price=200.0,
         expiration_date=date(2025, 12, 31),
         contract_type=OptionContractType.PUT,
@@ -152,21 +152,19 @@ def _make_long_option(
         premium_paid_per_contract=5.0,
         greeks=greeks,
     )
-    record = PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW,
-            "details": options_details,
-            "execution_history": (_FILL,),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    record = PositionRecord(
+        position_id=position_id,
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW,
+        details=options_details,
+        execution_history=(_FILL,),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
     return PositionView(
         record=record,
@@ -305,8 +303,9 @@ class TestComputeSectorExposureNegativeTotal:
 class TestComputeSectorExposureUnenriched:
     def test_none_delta_adjusted_raises_with_position_id(self) -> None:
         pos = _make_long_equity("POS-UNENRICHED", "NVDA", 0.0)
-        # Bypass pydantic to inject None
-        unenriched = pos.model_copy(update={"delta_adjusted_exposure_usd": None})
+        # Bypass the frozen dataclass __setattr__ to inject None.
+        unenriched = pos
+        object.__setattr__(unenriched, "delta_adjusted_exposure_usd", None)
         resolver: SectorResolver = _resolve_tech
         with pytest.raises(ValueError, match="POS-UNENRICHED"):
             compute_sector_exposure((unenriched,), resolver, 100_000.0)
@@ -422,7 +421,8 @@ class TestComputeDirectionalExposureNegativeTotal:
 class TestComputeDirectionalExposureUnenriched:
     def test_none_delta_adjusted_raises_with_position_id(self) -> None:
         pos = _make_long_equity("POS-UNENRICHED", "NVDA", 0.0)
-        unenriched = pos.model_copy(update={"delta_adjusted_exposure_usd": None})
+        unenriched = pos
+        object.__setattr__(unenriched, "delta_adjusted_exposure_usd", None)
         with pytest.raises(ValueError, match="POS-UNENRICHED"):
             compute_directional_exposure((unenriched,), 100_000.0)
 

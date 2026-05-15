@@ -15,10 +15,8 @@ Sections:
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Coroutine
 from datetime import UTC, datetime, timedelta
-from typing import Any, NoReturn
+from typing import NoReturn
 
 import pytest
 
@@ -64,23 +62,17 @@ _FixtureInputs = tuple[
 # ---------------------------------------------------------------------------
 
 
-def _run(coro: Coroutine[Any, Any, AssembledSnapshot]) -> AssembledSnapshot:
-    return asyncio.run(coro)
-
-
 def _assemble(fixture_inputs: _FixtureInputs) -> AssembledSnapshot:
     """Construct stubs from fixture tuple and call assemble_snapshot."""
     repo_fixture, quotes, sector_resolver, config, now = fixture_inputs
     repo = StubPortfolioStateRepository(repo_fixture)
     price_provider = StubCurrentPriceProvider(quotes, now)
-    return _run(
-        assemble_snapshot(
-            repository=repo,
-            price_provider=price_provider,
-            sector_resolver=sector_resolver,
-            config=config,
-            now=now,
-        )
+    return assemble_snapshot(
+        repository=repo,
+        price_provider=price_provider,
+        sector_resolver=sector_resolver,
+        config=config,
+        now=now,
     )
 
 
@@ -312,8 +304,15 @@ class TestSectionCAssemblerCorrectness:
         assert abs(pos.unrealized_pnl_usd - expected) < 1e-9
 
     def test_portfolio_total_unrealized_pnl_is_sum_of_positions(self) -> None:
+        # ALP-462 — ``portfolio_pnl.total_unrealized_pnl_usd`` is ``Money``
+        # (Decimal); positions still expose float ``unrealized_pnl_usd``.
+        # Compare in Decimal space.
+        from decimal import Decimal
+
         pos_pnl = sum(p.unrealized_pnl_usd for p in self._snapshot.open_positions)
-        assert abs(self._snapshot.portfolio_pnl.total_unrealized_pnl_usd - pos_pnl) < 1e-9
+        assert abs(
+            self._snapshot.portfolio_pnl.total_unrealized_pnl_usd - Decimal(str(pos_pnl))
+        ) < Decimal("1e-9")
 
     def test_position_weights_are_abs_mv_over_total(self) -> None:
         total_value = (
@@ -421,14 +420,12 @@ class TestSectionDFreshness:
         config = _make_config()
         repo = StubPortfolioStateRepository(fixture)
         price_provider = StubCurrentPriceProvider({}, now)
-        result = _run(
-            assemble_snapshot(
-                repository=repo,
-                price_provider=price_provider,
-                sector_resolver=_make_sector_resolver({}),
-                config=config,
-                now=now,
-            )
+        result = assemble_snapshot(
+            repository=repo,
+            price_provider=price_provider,
+            sector_resolver=_make_sector_resolver({}),
+            config=config,
+            now=now,
         )
         assert abs(result.freshness.phase1_to_snapshot_seconds - 2.0) < 1e-9
         assert result.freshness.phase1_to_snapshot_within_threshold is True
@@ -449,14 +446,12 @@ class TestSectionDFreshness:
         )
         repo = StubPortfolioStateRepository(fixture)
         price_provider = StubCurrentPriceProvider({}, now)
-        result = _run(
-            assemble_snapshot(
-                repository=repo,
-                price_provider=price_provider,
-                sector_resolver=_make_sector_resolver({}),
-                config=config,
-                now=now,
-            )
+        result = assemble_snapshot(
+            repository=repo,
+            price_provider=price_provider,
+            sector_resolver=_make_sector_resolver({}),
+            config=config,
+            now=now,
         )
         assert result.freshness.phase1_to_snapshot_within_threshold is True
 
@@ -476,14 +471,12 @@ class TestSectionDFreshness:
         )
         repo = StubPortfolioStateRepository(fixture)
         price_provider = StubCurrentPriceProvider({}, now)
-        result = _run(
-            assemble_snapshot(
-                repository=repo,
-                price_provider=price_provider,
-                sector_resolver=_make_sector_resolver({}),
-                config=config,
-                now=now,
-            )
+        result = assemble_snapshot(
+            repository=repo,
+            price_provider=price_provider,
+            sector_resolver=_make_sector_resolver({}),
+            config=config,
+            now=now,
         )
         assert result.freshness.phase1_to_snapshot_within_threshold is False
 
@@ -624,118 +617,118 @@ class TestSectionFEdgeCases:
 class _RaisingRepositoryReadError:
     """Raises RepositoryReadError on every method call."""
 
-    async def get_open_positions(self) -> NoReturn:
+    def get_open_positions(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_pending_positions(self) -> NoReturn:
+    def get_pending_positions(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_drawdown_state(self) -> NoReturn:
+    def get_drawdown_state(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_portfolio_pnl_inputs(self) -> NoReturn:
+    def get_portfolio_pnl_inputs(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_active_theses(self) -> NoReturn:
+    def get_active_theses(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_recent_thesis_resolutions(self, *, lookback_trading_days: int) -> NoReturn:
+    def get_recent_thesis_resolutions(self, *, lookback_trading_days: int) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_cash_ledger(self) -> NoReturn:
+    def get_cash_ledger(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_regt_excess_aggregates(self, now: datetime) -> NoReturn:
+    def get_regt_excess_aggregates(self, now: datetime) -> NoReturn:
         del now
         raise RepositoryReadError("simulated DB error")
 
-    async def get_pending_orders(self) -> NoReturn:
+    def get_pending_orders(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_risk_budget_consumption(self) -> NoReturn:
+    def get_risk_budget_consumption(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_active_risk_parameters(self) -> NoReturn:
+    def get_active_risk_parameters(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_intra_invocation_changelog(self, *, invocation_id: str) -> NoReturn:
+    def get_intra_invocation_changelog(self, *, invocation_id: str) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_recent_pm_decision_log(self, *, sliding_window_invocations: int) -> NoReturn:
+    def get_recent_pm_decision_log(self, *, sliding_window_invocations: int) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_position_modification_trail(self, *, position_ids: tuple[str, ...]) -> NoReturn:
+    def get_position_modification_trail(self, *, position_ids: tuple[str, ...]) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_thesis_quality_aggregates(self) -> NoReturn:
+    def get_thesis_quality_aggregates(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_brackets_for_positions(self, *, position_ids: tuple[str, ...]) -> NoReturn:
+    def get_brackets_for_positions(self, *, position_ids: tuple[str, ...]) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_current_invocation_metadata(self) -> NoReturn:
+    def get_current_invocation_metadata(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_prior_invocation_context(self) -> NoReturn:
+    def get_prior_invocation_context(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
 
 class _RaisingRepositoryConsistencyError:
     """Raises RepositoryConsistencyError on every method call."""
 
-    async def get_open_positions(self) -> NoReturn:
+    def get_open_positions(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_pending_positions(self) -> NoReturn:
+    def get_pending_positions(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_drawdown_state(self) -> NoReturn:
+    def get_drawdown_state(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_portfolio_pnl_inputs(self) -> NoReturn:
+    def get_portfolio_pnl_inputs(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_active_theses(self) -> NoReturn:
+    def get_active_theses(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_recent_thesis_resolutions(self, *, lookback_trading_days: int) -> NoReturn:
+    def get_recent_thesis_resolutions(self, *, lookback_trading_days: int) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_cash_ledger(self) -> NoReturn:
+    def get_cash_ledger(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_regt_excess_aggregates(self, now: datetime) -> NoReturn:
+    def get_regt_excess_aggregates(self, now: datetime) -> NoReturn:
         del now
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_pending_orders(self) -> NoReturn:
+    def get_pending_orders(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_risk_budget_consumption(self) -> NoReturn:
+    def get_risk_budget_consumption(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_active_risk_parameters(self) -> NoReturn:
+    def get_active_risk_parameters(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_intra_invocation_changelog(self, *, invocation_id: str) -> NoReturn:
+    def get_intra_invocation_changelog(self, *, invocation_id: str) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_recent_pm_decision_log(self, *, sliding_window_invocations: int) -> NoReturn:
+    def get_recent_pm_decision_log(self, *, sliding_window_invocations: int) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_position_modification_trail(self, *, position_ids: tuple[str, ...]) -> NoReturn:
+    def get_position_modification_trail(self, *, position_ids: tuple[str, ...]) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_thesis_quality_aggregates(self) -> NoReturn:
+    def get_thesis_quality_aggregates(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_brackets_for_positions(self, *, position_ids: tuple[str, ...]) -> NoReturn:
+    def get_brackets_for_positions(self, *, position_ids: tuple[str, ...]) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_current_invocation_metadata(self) -> NoReturn:
+    def get_current_invocation_metadata(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_prior_invocation_context(self) -> NoReturn:
+    def get_prior_invocation_context(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
 
@@ -748,14 +741,12 @@ class TestSectionGRepositoryErrors:
     ) -> AssembledSnapshot:
         config = _make_config()
         price_provider = StubCurrentPriceProvider({}, datetime(2025, 6, 1, 9, 30, 0, tzinfo=UTC))
-        return _run(
-            assemble_snapshot(
-                repository=repo,
-                price_provider=price_provider,
-                sector_resolver=_make_sector_resolver({}),
-                config=config,
-                now=datetime(2025, 6, 1, 9, 30, 0, tzinfo=UTC),
-            )
+        return assemble_snapshot(
+            repository=repo,
+            price_provider=price_provider,
+            sector_resolver=_make_sector_resolver({}),
+            config=config,
+            now=datetime(2025, 6, 1, 9, 30, 0, tzinfo=UTC),
         )
 
     def test_repository_read_error_propagates(self) -> None:

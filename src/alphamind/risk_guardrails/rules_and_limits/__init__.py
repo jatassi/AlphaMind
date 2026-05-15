@@ -1,5 +1,11 @@
 """Public surface for the rules-and-limits subpackage."""
 
+from alphamind.config.control_handlers.profile_switch import (
+    ProfileNotFoundError,
+    ProfileSwitchOutcome,
+    build_profile_switch_activity_log_entry,
+    switch_active_profile,
+)
 from alphamind.risk_guardrails.rules_and_limits.min_position_size import (
     MinPositionSizeResult,
     MinPositionSizeStatus,
@@ -9,12 +15,6 @@ from alphamind.risk_guardrails.rules_and_limits.profile_boundary import (
     ProfileBoundaryEvaluation,
     ProfileBoundaryStatus,
     evaluate_profile_boundary,
-)
-from alphamind.risk_guardrails.rules_and_limits.profile_switch import (
-    ProfileNotFoundError,
-    ProfileSwitchOutcome,
-    build_profile_switch_activity_log_entry,
-    switch_active_profile,
 )
 from alphamind.risk_guardrails.rules_and_limits.registry import (
     ResolvedRule,

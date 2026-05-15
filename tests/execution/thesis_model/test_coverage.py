@@ -6,6 +6,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegEnforcement,
@@ -35,9 +42,9 @@ NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 def _trigger_for(leg_type: BracketLegType) -> PriceTrigger | TimeTrigger | EventTrigger:
     if leg_type == BracketLegType.TAKE_PROFIT:
-        return PriceTrigger(underlying_ticker="AAPL", threshold_usd=200.0, direction="GTE")
+        return PriceTrigger(underlying_ticker=Symbol("AAPL"), threshold_usd=200.0, direction="GTE")
     if leg_type == BracketLegType.PRICE_STOP:
-        return PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE")
+        return PriceTrigger(underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE")
     if leg_type == BracketLegType.TIME_EXPIRATION:
         return TimeTrigger(deadline=NOW + timedelta(hours=24))
     return EventTrigger(description="thesis invalidated")
@@ -49,11 +56,11 @@ def _make_leg(
     enforcement: BracketLegEnforcement = BracketLegEnforcement.MECHANICAL,
     status: BracketLegStatus = BracketLegStatus.ACTIVE,
 ) -> BracketLeg:
-    order_id = None if leg_type == BracketLegType.EVENT_INVALIDATION else "ord-1"
+    order_id_raw = None if leg_type == BracketLegType.EVENT_INVALIDATION else "ord-1"
     return BracketLeg(
         leg_id=leg_id,
         leg_type=leg_type,
-        order_id=order_id,
+        order_id=OrderId(order_id_raw) if order_id_raw is not None else None,
         trigger=_trigger_for(leg_type),
         enforcement=enforcement,
         status=status,
@@ -63,10 +70,10 @@ def _make_leg(
 def _make_bracket(legs: tuple[BracketLeg, ...]) -> BracketRecord:
     """Build a minimal valid BracketRecord with given legs."""
     return BracketRecord(
-        bracket_id="brkt-1",
-        position_id="pos-1",
+        bracket_id=BracketId("brkt-1"),
+        position_id=PositionId("pos-1"),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-entry",
+        entry_order_id=OrderId("ord-entry"),
         protective_legs=legs,
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -81,7 +88,7 @@ def _make_component(
 ) -> ThesisComponent:
     return ThesisComponent(
         component_id=component_id,
-        thesis_id="thesis-1",
+        thesis_id=ThesisId("thesis-1"),
         component_type=component_type,
         linked_bracket_leg_type=linked_bracket_leg_type,
         linked_bracket_leg_id=linked_bracket_leg_id,
@@ -106,8 +113,8 @@ def _make_thesis(
     must pass status=ThesisRecordStatus.CANCELLED to bypass the within-record rule.
     """
     return ThesisRecord(
-        thesis_id="thesis-1",
-        position_id="pos-1",
+        thesis_id=ThesisId("thesis-1"),
+        position_id=PositionId("pos-1"),
         summary="Test thesis",
         components=components,
         status=status,
@@ -154,7 +161,10 @@ def _full_covered_thesis(
 
 def test_linked_bracket_leg_id_field_exists() -> None:
     """ThesisComponent must have linked_bracket_leg_id field defaulting to None."""
-    assert "linked_bracket_leg_id" in ThesisComponent.model_fields
+    import dataclasses as _dc
+
+    field_names = {f.name for f in _dc.fields(ThesisComponent)}
+    assert "linked_bracket_leg_id" in field_names
     comp = _make_component("c1", ThesisComponentType.ENTRY_RATIONALE)
     assert comp.linked_bracket_leg_id is None
 
@@ -168,7 +178,7 @@ def test_thesis_component_without_linked_bracket_leg_id_is_valid() -> None:
     """Constructing ThesisComponent without linked_bracket_leg_id must not raise."""
     comp = ThesisComponent(
         component_id="c1",
-        thesis_id="t1",
+        thesis_id=ThesisId("t1"),
         component_type=ThesisComponentType.ENTRY_RATIONALE,
         linked_bracket_leg_type=None,
         instrument_reference="SPY",
@@ -334,8 +344,8 @@ def test_coverage_fail_missing_entry_rationale() -> None:
 
     # CANCELLED bypasses ThesisRecord._check_mandatory_coverage so we can omit ENTRY_RATIONALE.
     thesis = ThesisRecord(
-        thesis_id="thesis-1",
-        position_id="pos-1",
+        thesis_id=ThesisId("thesis-1"),
+        position_id=PositionId("pos-1"),
         summary="cancelled",
         components=(
             _make_component(

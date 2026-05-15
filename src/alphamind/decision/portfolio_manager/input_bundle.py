@@ -21,6 +21,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 
+from alphamind._kernel.money import Money
 from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
@@ -124,8 +125,8 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_pm_header
     active_sectors: tuple[str, ...],
     state_delivery_config: StateDeliveryConfig,
     sector_resolver: Callable[[PositionRecord], str | None],
-    total_portfolio_value_usd: float,
-    available_for_new_positions_usd: float,
+    total_portfolio_value_usd: Money,
+    available_for_new_positions_usd: Money,
     cross_constraint_impact: CrossConstraintImpact,
     tool_names: tuple[str, ...],
     sector_label_display: dict[str, str] | None = None,
@@ -139,6 +140,8 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_pm_header
 
     *prior_health_snapshots* — see strategist input bundle counterpart.
     """
+    # ALP-462 — render_pm_header still takes float; cast at the boundary
+    # (risk_guardrails/state_delivery/portfolio_manager is outside ALP-462).
     header = render_pm_header(
         pm_view=pm_view,
         invocation_id=invocation_id,
@@ -148,8 +151,8 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_pm_header
         active_sectors=active_sectors,
         config=state_delivery_config,
         sector_resolver=sector_resolver,
-        total_portfolio_value_usd=total_portfolio_value_usd,
-        available_for_new_positions_usd=available_for_new_positions_usd,
+        total_portfolio_value_usd=float(total_portfolio_value_usd),
+        available_for_new_positions_usd=float(available_for_new_positions_usd),
         cross_constraint_impact=cross_constraint_impact,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,
@@ -182,8 +185,8 @@ def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_pm_header_ha
     active_sectors: tuple[str, ...],
     state_delivery_config: StateDeliveryConfig,
     sector_resolver: Callable[[PositionRecord], str | None],
-    total_portfolio_value_usd: float,
-    available_for_new_positions_usd: float,
+    total_portfolio_value_usd: Money,
+    available_for_new_positions_usd: Money,
     cross_constraint_impact: CrossConstraintImpact,
     tool_names: tuple[str, ...],
     sector_label_display: dict[str, str] | None = None,
@@ -197,6 +200,7 @@ def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_pm_header_ha
 
     *prior_health_snapshots* — see :func:`assemble_input_bundle_normal`.
     """
+    # ALP-462 — render_pm_header_halt_mode still takes float; cast at boundary.
     header = render_pm_header_halt_mode(
         halt_state=halt_state,
         pm_view=pm_view,
@@ -207,8 +211,8 @@ def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_pm_header_ha
         active_sectors=active_sectors,
         config=state_delivery_config,
         sector_resolver=sector_resolver,
-        total_portfolio_value_usd=total_portfolio_value_usd,
-        available_for_new_positions_usd=available_for_new_positions_usd,
+        total_portfolio_value_usd=float(total_portfolio_value_usd),
+        available_for_new_positions_usd=float(available_for_new_positions_usd),
         cross_constraint_impact=cross_constraint_impact,
         pending_orders=pending_orders,
         current_price_lookup=current_price_lookup,

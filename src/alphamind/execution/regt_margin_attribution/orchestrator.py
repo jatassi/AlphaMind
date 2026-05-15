@@ -11,16 +11,17 @@ global mutation, no caching.
 
 from __future__ import annotations
 
+from alphamind._kernel.money import signed_money
 from alphamind.execution.regt_margin_attribution.config import RegTMarginAttributionConfig
 from alphamind.execution.regt_margin_attribution.pm_equivalent import (
     compute_pm_equivalent_margin,
 )
 from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
-from alphamind.execution.state_persistence.write_paths.records import (
-    RegTMarginAttribution,
-)
 from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.risk_guardrails.guardrail_evaluation.types import MarketInputs
+from alphamind.state.records import (
+    RegTMarginAttribution,
+)
 
 
 def compute_attribution(
@@ -63,13 +64,16 @@ def compute_attribution(
     regt_marginal_consumption = regt_margin_after - regt_margin_before
     pm_marginal_consumption = pm_equivalent_after - pm_equivalent_before
     regt_excess_over_pm = regt_marginal_consumption - pm_marginal_consumption
+    # ALP-462 — RegTMarginAttribution fields carry ``Money``; the upstream
+    # compute functions still produce float, so wrap via ``signed_money`` so
+    # the durability layer round-trips Decimal-exact values.
     return RegTMarginAttribution(
-        regt_margin_before=regt_margin_before,
-        regt_margin_after=regt_margin_after,
-        regt_marginal_consumption=regt_marginal_consumption,
-        pm_equivalent_before=pm_equivalent_before,
-        pm_equivalent_after=pm_equivalent_after,
-        pm_marginal_consumption=pm_marginal_consumption,
-        regt_excess_over_pm=regt_excess_over_pm,
+        regt_margin_before=signed_money(str(regt_margin_before)),
+        regt_margin_after=signed_money(str(regt_margin_after)),
+        regt_marginal_consumption=signed_money(str(regt_marginal_consumption)),
+        pm_equivalent_before=signed_money(str(pm_equivalent_before)),
+        pm_equivalent_after=signed_money(str(pm_equivalent_after)),
+        pm_marginal_consumption=signed_money(str(pm_marginal_consumption)),
+        regt_excess_over_pm=signed_money(str(regt_excess_over_pm)),
         pm_model_version=config.pm_model_version,
     )

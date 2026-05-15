@@ -33,9 +33,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
 from alphamind.analysis.adaptive_research.models import AdaptiveBrief
 from alphamind.analysis.domain_researchers.models import SectorBrief
 from alphamind.analysis.qualitative_research.models import QualitativeBrief
+from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
@@ -46,7 +48,6 @@ from alphamind.distillation.output import (
     OutputBlock,
 )
 from alphamind.distillation.sector_assembly import SectorOutput
-from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 
 __all__ = [
     "ADAPTIVE_BRIEF_FILENAME",
@@ -452,13 +453,19 @@ def load_adaptive_brief(stage_dir: Path) -> AdaptiveBrief:
 def dump_retrieval_store(store: RetrievalStore, stage_dir: Path) -> Path:
     """Write *store* to ``retrieval_store.json`` under *stage_dir*.
 
-    ``RetrievalStore`` is a Pydantic ``BaseModel`` so the dump goes through
-    ``model_dump_json``; the ``BriefSource`` keys in
-    ``freshness_by_source`` round-trip via Pydantic's enum-key handling.
+    ``RetrievalStore`` is now a frozen dataclass (ALP-474); the JSON
+    encoder explicitly handles ``BriefSource`` keys and ``datetime``
+    values in ``freshness_by_source``.
     """
     path = stage_dir / RETRIEVAL_STORE_FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(store.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    payload = {
+        "entries": store.entries,
+        "freshness_by_source": {
+            source.value: ts.isoformat() for source, ts in store.freshness_by_source.items()
+        },
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return path
 
 
@@ -468,4 +475,11 @@ def load_retrieval_store(stage_dir: Path) -> RetrievalStore:
         stage_dir / RETRIEVAL_STORE_FILENAME,
         producer_script="verify_synthesizer.py",
     )
-    return RetrievalStore.model_validate_json(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return RetrievalStore(
+        entries=dict(payload["entries"]),
+        freshness_by_source={
+            BriefSource(source): datetime.fromisoformat(ts)
+            for source, ts in payload["freshness_by_source"].items()
+        },
+    )

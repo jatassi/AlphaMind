@@ -23,6 +23,7 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.baselines import refresh_event_history
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.persistence.models import (
@@ -119,7 +120,7 @@ class TestRefreshEventHistoryDetection:
         # Day 1: typical bar, close at 100.
         _add_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-24T00:00:00Z",
             open_=99.0,
             high=101.0,
@@ -131,7 +132,7 @@ class TestRefreshEventHistoryDetection:
         # the 1.5x detection threshold.
         _add_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T00:00:00Z",
             open_=105.0,
             high=106.0,
@@ -178,7 +179,7 @@ class TestRefreshEventHistoryOutcomeResolution:
         # Day 0: typical bar.
         _add_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-23T00:00:00Z",
             open_=99.0,
             high=101.0,
@@ -188,7 +189,7 @@ class TestRefreshEventHistoryOutcomeResolution:
         # Day 1: gap up — opens at 105, but range covers prior close (filled).
         _add_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-24T00:00:00Z",
             open_=105.0,
             high=106.0,
@@ -198,7 +199,7 @@ class TestRefreshEventHistoryOutcomeResolution:
         # Day 2: bar fully inside post-gap range — outcome window closed.
         _add_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T00:00:00Z",
             open_=104.0,
             high=106.0,
@@ -256,7 +257,7 @@ class TestRefreshEventHistoryIdempotent:
         _add_ticker(session, "AAPL")
         _add_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-24T00:00:00Z",
             open_=99.0,
             high=101.0,
@@ -265,7 +266,7 @@ class TestRefreshEventHistoryIdempotent:
         )
         _add_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T00:00:00Z",
             open_=105.0,
             high=106.0,

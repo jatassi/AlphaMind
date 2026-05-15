@@ -43,6 +43,7 @@ from typing import Any
 import yaml
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
 from alphamind.analysis._shared import Sector
 from alphamind.analysis.domain_researchers.orchestrator import (
     DomainResearchersOutput,
@@ -56,7 +57,6 @@ from alphamind.distillation.orchestrator import (
     _default_archive_root,
     run_external_distillation,
 )
-from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.scripts._artifact_io import (
     dump_sector_briefs,
@@ -647,10 +647,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             ticker_scope = load_universe_scope()
             distillation_config = load_distillation_config()
+            # Project the Pydantic ``DistillationConfig`` boundary type onto
+            # its frozen-dataclass mirror (ALP-471) — the orchestrator's
+            # compute path consumes the dataclass form.
             distillation_outputs = asyncio.run(
                 run_external_distillation(
                     session=session,
-                    config=distillation_config,
+                    config=distillation_config.to_domain(),
                     ticker_scope=ticker_scope,
                     as_of=now,
                     invocation_id=invocation_id,

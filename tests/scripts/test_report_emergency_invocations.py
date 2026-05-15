@@ -37,15 +37,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from alphamind.execution.state_persistence.invocation_context.activity_log import (
-    activity_log_entry_to_row,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    invocation_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.process_lifetimes import (
-    ProcessLifetimeRow,
-)
+from alphamind._kernel.money import money, signed_money
 from alphamind.persistence.models import Base, DistillationRegimeState
 from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
@@ -67,6 +59,15 @@ from alphamind.scripts.report_emergency_invocations import (
     format_report_text,
     main,
 )
+from alphamind.state.invocation_context.activity_log import (
+    activity_log_entry_to_row,
+)
+from alphamind.state.invocation_context.records import (
+    invocation_record_to_row,
+)
+from alphamind.state.tables.process_lifetimes import (
+    ProcessLifetimeRow,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures and builders
@@ -80,7 +81,7 @@ _PROC_ID = "proc-1"
 def engine() -> Iterator[Engine]:
     """In-memory SQLite engine with state-persistence tables registered."""
     # Registers ActivityLogRow / InvocationRow / ProcessLifetimeRow on Base.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     eng = create_engine(
         "sqlite:///:memory:",
@@ -142,7 +143,7 @@ def _add_invocation(
     trigger_source: str = "continuous_monitor",
 ) -> None:
     """Insert one ``invocations`` row using the typed-record adapter."""
-    from alphamind.execution.state_persistence.invocation_context.records import (
+    from alphamind.state.invocation_context.records import (
         InvocationRecord,
     )
 
@@ -215,8 +216,8 @@ def _add_position_closed(
 ) -> None:
     detail = PositionClosedDetail(
         exit_method=PositionExitMethod.PM_DECISION,
-        exit_price=100.0,
-        realized_pnl_usd=-50.0,
+        exit_price=money("100.0"),
+        realized_pnl_usd=signed_money("-50.0"),
         thesis_resolution_category="risk_management",
     )
     entry = ActivityLogEntry(

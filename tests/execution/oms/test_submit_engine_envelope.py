@@ -6,6 +6,7 @@ issued from a guardrail trigger. Mirrors the PM-side
 ``submit_envelope_mcp`` envelope-level validation + per-command writeback
 shape but operates on engine-originated envelopes.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -21,37 +22,21 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 # Import portfolio_manager.models first to break the latent cycle between
 # alphamind.execution.oms (engine-stub MCP) and alphamind.decision.portfolio_manager.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
-from alphamind.execution.oms.command_models import CloseCommand
-from alphamind.execution.oms.engine_envelope import (
+from alphamind._kernel.ids import (
+    BracketId,
+    CommandId,
+    EnvelopeId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind.commands.command_models import CloseCommand
+from alphamind.commands.engine_envelope import (
     BreachDetails,
     EngineEnvelope,
     GuardrailTriggerRecord,
     SecondaryBreachCheckResult,
-)
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.orders import OrderRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
 )
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
@@ -83,6 +68,31 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+    InvocationHandle,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.orders import OrderRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
+)
 
 _NOW = datetime(2026, 5, 9, 14, 30, 0, tzinfo=UTC)
 _TRIGGER_TS = datetime(2026, 5, 9, 14, 30, tzinfo=UTC)
@@ -104,7 +114,7 @@ async def db(
     db_path = tmp_path / "alphamind.db"
 
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -195,20 +205,18 @@ async def _seed_cash_ledger(
     current_cash_usd: float = 100_000.0,
     reserved_capital_usd: float = 0.0,
 ) -> None:
-    record = CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": reserved_capital_usd,
-            "available_buying_power_usd": current_cash_usd - reserved_capital_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    record = CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=reserved_capital_usd,
+        available_buying_power_usd=current_cash_usd - reserved_capital_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
     async with factory() as sess:
         sess.add(cash_ledger_record_to_row(record, last_updated_at=_NOW))
@@ -230,7 +238,7 @@ def _open_position(
     from alphamind.portfolio_state.records.positions import PositionFill
 
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=10.0,
         average_cost_basis_per_share=150.0,
     )
@@ -243,21 +251,19 @@ def _open_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -267,7 +273,7 @@ def _active_thesis(
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -287,8 +293,8 @@ def _active_thesis(
     generation_at = _NOW - timedelta(hours=4)
     time_expectation_hours = 24.0
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="NVDA momentum",
         key_catalyst="Earnings beat",
         position_size_rationale="5% sized.",
@@ -312,16 +318,18 @@ def _active_bracket(
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id=f"{bracket_id}-ord-entry",
+        entry_order_id=OrderId(f"{bracket_id}-ord-entry"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -336,7 +344,7 @@ async def _seed_position_cluster(
     bracket: BracketRecord,
 ) -> None:
     """Seed position + thesis + bracket in a single deferred-FK transaction."""
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     thesis_row, component_rows = thesis_record_to_rows(thesis)
     bracket_parent, leg_rows = bracket_record_to_rows(bracket)
@@ -383,9 +391,9 @@ def _engine_close_command(
     command_id: str | None = None,
 ) -> CloseCommand:
     return CloseCommand(
-        command_id=command_id,
+        command_id=CommandId(command_id) if command_id is not None else None,
         command_type="close",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         quantity="all",
         order_type="market",
         close_rationale_type="risk_management",
@@ -431,7 +439,7 @@ def _engine_envelope(
     if trigger_record is None:
         trigger_record = _trigger_record()
     return EngineEnvelope(
-        envelope_id=envelope_id,
+        envelope_id=EnvelopeId(envelope_id),
         invocation_id=None,
         trigger_timestamp=_TRIGGER_TS,
         source_provenance="engine_guardrail",
@@ -482,7 +490,7 @@ async def test_happy_path_persists_close_order_and_emits_activity_log(
     state = build_initial_submit_engine_envelope_state(monitor_session_id=_MONITOR_SESSION)
 
     ctx, handle = await _open_handle(factory)
-    result = await submit_engine_envelope(
+    result, _state = await submit_engine_envelope(
         _engine_envelope(),
         handle=handle,
         state=state,
@@ -537,7 +545,7 @@ async def test_derives_command_id_when_embedded_close_lacks_one(
     envelope = _engine_envelope(commands=(_engine_close_command(command_id=None),))
 
     ctx, handle = await _open_handle(factory)
-    result = await submit_engine_envelope(
+    result, _state = await submit_engine_envelope(
         envelope,
         handle=handle,
         state=state,
@@ -603,7 +611,7 @@ async def test_rejects_secondary_breach_deferred_to_pm(
     )
 
     ctx, handle = await _open_handle(factory)
-    result = await submit_engine_envelope(
+    result, _state = await submit_engine_envelope(
         deferred_envelope,
         handle=handle,
         state=state,
@@ -637,12 +645,12 @@ async def test_cascade_id_threads_through_to_activity_log(
     await _seed_position_cluster(
         factory,
         _open_position(
-            position_id="POS-NVDA-002",
-            thesis_id="THE-NVDA-2",
-            bracket_id="BRK-NVDA-2",
+            position_id=PositionId("POS-NVDA-002"),
+            thesis_id=ThesisId("THE-NVDA-2"),
+            bracket_id=BracketId("BRK-NVDA-2"),
         ),
-        _active_thesis(thesis_id="THE-NVDA-2", position_id="POS-NVDA-002"),
-        _active_bracket(bracket_id="BRK-NVDA-2", position_id="POS-NVDA-002"),
+        _active_thesis(thesis_id=ThesisId("THE-NVDA-2"), position_id=PositionId("POS-NVDA-002")),
+        _active_bracket(bracket_id=BracketId("BRK-NVDA-2"), position_id=PositionId("POS-NVDA-002")),
     )
 
     state = build_initial_submit_engine_envelope_state(monitor_session_id=_MONITOR_SESSION)
@@ -654,14 +662,14 @@ async def test_cascade_id_threads_through_to_activity_log(
     env2 = _engine_envelope(
         envelope_id="MON.session-abc.43",
         trigger_record=_trigger_record(cascade_id=cascade_id),
-        commands=(_engine_close_command(position_id="POS-NVDA-002"),),
+        commands=(_engine_close_command(position_id=PositionId("POS-NVDA-002")),),
     )
 
     ctx, handle = await _open_handle(factory)
-    await submit_engine_envelope(
+    _result1, state = await submit_engine_envelope(
         env1, handle=handle, state=state, config=_make_state_persistence_config()
     )
-    await submit_engine_envelope(
+    _result2, state = await submit_engine_envelope(
         env2, handle=handle, state=state, config=_make_state_persistence_config()
     )
     await ctx.__aexit__(None, None, None)
@@ -695,7 +703,7 @@ async def test_position_selection_rationale_threads_to_activity_log(
     )
 
     ctx, handle = await _open_handle(factory)
-    await submit_engine_envelope(
+    _result, _state = await submit_engine_envelope(
         envelope, handle=handle, state=state, config=_make_state_persistence_config()
     )
     await ctx.__aexit__(None, None, None)
@@ -725,7 +733,7 @@ async def test_duplicate_trigger_id_within_session_raises(
     envelope = _engine_envelope()
 
     ctx, handle = await _open_handle(factory)
-    await submit_engine_envelope(
+    _result, state = await submit_engine_envelope(
         envelope, handle=handle, state=state, config=_make_state_persistence_config()
     )
     # Second submission with the same envelope_id must raise.
@@ -809,7 +817,7 @@ async def test_engine_envelope_does_not_emit_pm_decision(
     envelope = _engine_envelope()
 
     ctx, handle = await _open_handle(factory)
-    await submit_engine_envelope(
+    _result, _state = await submit_engine_envelope(
         envelope, handle=handle, state=state, config=_make_state_persistence_config()
     )
     await ctx.__aexit__(None, None, None)
@@ -818,3 +826,36 @@ async def test_engine_envelope_does_not_emit_pm_decision(
     types = {r.event_type for r in rows}
     assert EventType.ORDER_SUBMITTED.value in types
     assert EventType.PM_DECISION.value not in types
+
+
+# ---------------------------------------------------------------------------
+# ALP-476 — frozen-dataclass invariants on the engine-envelope state cell
+# ---------------------------------------------------------------------------
+
+
+def test_submit_engine_envelope_state_is_frozen() -> None:
+    """``SubmitEngineEnvelopeState`` is a frozen dataclass; attribute assignment
+    raises (ALP-476 — Group C L8 mutable-dataclass conversion)."""
+    import dataclasses
+
+    from alphamind.execution.oms import build_initial_submit_engine_envelope_state
+
+    state = build_initial_submit_engine_envelope_state(monitor_session_id="session-frozen")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        state.seen_trigger_ids = frozenset({1})  # type: ignore[misc]
+
+
+def test_submit_engine_envelope_state_replace_extends_seen_trigger_ids() -> None:
+    """``dataclasses.replace(state, seen_trigger_ids=...)`` yields a new instance
+    with the updated dedup set; the input state is unchanged."""
+    import dataclasses
+
+    from alphamind.execution.oms import build_initial_submit_engine_envelope_state
+
+    state = build_initial_submit_engine_envelope_state(monitor_session_id="session-replace")
+    new_state = dataclasses.replace(state, seen_trigger_ids=frozenset({42}))
+
+    assert new_state is not state
+    assert new_state.seen_trigger_ids == frozenset({42})
+    assert state.seen_trigger_ids == frozenset()
+    assert new_state.monitor_session_id == state.monitor_session_id

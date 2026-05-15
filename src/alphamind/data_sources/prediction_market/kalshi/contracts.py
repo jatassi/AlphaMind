@@ -25,6 +25,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from alphamind.data_sources._common import default_session_factory, track_run
 from alphamind.data_sources.prediction_market.categories import derive_canonical_category
+from alphamind.data_sources.prediction_market.kalshi._protocol import KalshiAPI
 from alphamind.data_sources.prediction_market.kalshi.client import KalshiClient
 from alphamind.persistence.models import PredictionMarketContracts, PredictionMarketSnapshots
 
@@ -44,7 +45,7 @@ def _map_result(result: str | None) -> str | None:
 def collect_snapshots(
     since: str | None = None,
     *,
-    client: KalshiClient | None = None,
+    client: KalshiAPI | None = None,
     session_factory: Any = None,
     _repo: Any = None,
     _snapshot_ts: str | None = None,

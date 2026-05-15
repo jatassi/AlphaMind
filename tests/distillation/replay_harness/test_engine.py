@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
 from alphamind.distillation.orchestrator import DistillationOutputs
@@ -515,7 +516,7 @@ def test_extract_class_b_baselines_queries_each_state_table(tmp_path: Path) -> N
         session.add(
             AssetUniverse(
                 asset_id="asset-aapl",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 full_name="Apple",
                 asset_class="equity",
                 asset_role="universe",
@@ -528,7 +529,7 @@ def test_extract_class_b_baselines_queries_each_state_table(tmp_path: Path) -> N
         session.add(
             AssetUniverse(
                 asset_id="asset-msft",
-                ticker="MSFT",
+                ticker=Symbol("MSFT"),
                 full_name="Microsoft",
                 asset_class="equity",
                 asset_role="universe",
@@ -552,7 +553,7 @@ def test_extract_class_b_baselines_queries_each_state_table(tmp_path: Path) -> N
 
         session.add(
             DistillationTickerBaseline(
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 baseline_kind="volume",
                 as_of=as_of_iso,
                 mean=1_000_000.0,
@@ -588,7 +589,7 @@ def test_extract_class_b_baselines_queries_each_state_table(tmp_path: Path) -> N
         )
         session.add(
             DistillationEventHistory(
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 event_kind="gap",
                 event_ts=as_of_iso,
                 direction="up",

@@ -13,6 +13,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
 from alphamind.risk_guardrails.guardrail_evaluation import (
     ContractType,
     FixtureIvProvider,
@@ -69,7 +70,7 @@ def test_exact_strike_exact_expiration_returns_surface_hit() -> None:
     )
 
     result = provider.lookup_iv(
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         strike=100.0,
         expiration=date(2026, 6, 19),
         contract_type=ContractType.CALL,
@@ -98,7 +99,7 @@ def test_strike_interpolated_linearly_between_listed_strikes() -> None:
     )
 
     result = provider.lookup_iv(
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         strike=105.0,
         expiration=expiration,
         contract_type=ContractType.CALL,
@@ -123,12 +124,12 @@ def test_strike_outside_chain_falls_back_to_realized_vol() -> None:
     provider = FixtureIvProvider(
         surface={"AAPL": surface},
         realized_vol={
-            "AAPL": RealizedVolEntry(underlying="AAPL", trailing_30d_realized_vol=0.25),
+            "AAPL": RealizedVolEntry(underlying=Symbol("AAPL"), trailing_30d_realized_vol=0.25),
         },
     )
 
     result = provider.lookup_iv(
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         strike=80.0,
         expiration=expiration,
         contract_type=ContractType.CALL,
@@ -160,7 +161,7 @@ def test_expiration_interpolated_linearly_in_calendar_days() -> None:
     )
 
     result = provider.lookup_iv(
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         strike=100.0,
         expiration=target,
         contract_type=ContractType.CALL,
@@ -185,12 +186,12 @@ def test_expiration_beyond_longest_dated_falls_back_to_realized_vol() -> None:
     provider = FixtureIvProvider(
         surface={"AAPL": surface},
         realized_vol={
-            "AAPL": RealizedVolEntry(underlying="AAPL", trailing_30d_realized_vol=0.30),
+            "AAPL": RealizedVolEntry(underlying=Symbol("AAPL"), trailing_30d_realized_vol=0.30),
         },
     )
 
     result = provider.lookup_iv(
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         strike=100.0,
         expiration=date(2027, 1, 15),
         contract_type=ContractType.CALL,
@@ -211,12 +212,12 @@ def test_no_chain_with_realized_vol_returns_fallback() -> None:
     provider = FixtureIvProvider(
         surface={},
         realized_vol={
-            "TSLA": RealizedVolEntry(underlying="TSLA", trailing_30d_realized_vol=0.45),
+            "TSLA": RealizedVolEntry(underlying=Symbol("TSLA"), trailing_30d_realized_vol=0.45),
         },
     )
 
     result = provider.lookup_iv(
-        underlying="TSLA",
+        underlying=Symbol("TSLA"),
         strike=200.0,
         expiration=date(2026, 6, 19),
         contract_type=ContractType.CALL,
@@ -237,7 +238,7 @@ def test_no_chain_no_realized_vol_raises() -> None:
 
     with pytest.raises(IvLookupError, match="TSLA"):
         provider.lookup_iv(
-            underlying="TSLA",
+            underlying=Symbol("TSLA"),
             strike=200.0,
             expiration=date(2026, 6, 19),
             contract_type=ContractType.CALL,
@@ -261,12 +262,12 @@ def test_contract_type_mismatch_falls_back_to_realized_vol() -> None:
     provider = FixtureIvProvider(
         surface={"AAPL": surface},
         realized_vol={
-            "AAPL": RealizedVolEntry(underlying="AAPL", trailing_30d_realized_vol=0.25),
+            "AAPL": RealizedVolEntry(underlying=Symbol("AAPL"), trailing_30d_realized_vol=0.25),
         },
     )
 
     result = provider.lookup_iv(
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         strike=100.0,
         expiration=expiration,
         contract_type=ContractType.CALL,
@@ -295,8 +296,8 @@ def test_every_successful_lookup_returns_positive_iv() -> None:
     provider = FixtureIvProvider(
         surface={"AAPL": surface},
         realized_vol={
-            "AAPL": RealizedVolEntry(underlying="AAPL", trailing_30d_realized_vol=0.25),
-            "TSLA": RealizedVolEntry(underlying="TSLA", trailing_30d_realized_vol=0.45),
+            "AAPL": RealizedVolEntry(underlying=Symbol("AAPL"), trailing_30d_realized_vol=0.25),
+            "TSLA": RealizedVolEntry(underlying=Symbol("TSLA"), trailing_30d_realized_vol=0.45),
         },
     )
 

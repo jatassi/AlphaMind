@@ -12,9 +12,8 @@ the decision layer end-to-end. Sequences:
 4. ``project_*_view`` — produce per-consumer typed views for analyst,
    strategist, and PM.
 5. :func:`run_analyst` + :func:`run_strategist` — independent inputs, run
-   in parallel under :func:`asyncio.gather` with ``return_exceptions=False``
-   per the fail-closed policy in
-   ``docs/design/llm-agent-failure-handling.md``.
+   in parallel under :class:`asyncio.TaskGroup` per the fail-closed policy
+   in ``docs/design/llm-agent-failure-handling.md``.
 6. :func:`run_proposal_pre_processor` — derive the typed bundle from both
    agents' outputs.
 7. :func:`run_portfolio_manager` — read the bundle and the PM-side
@@ -35,12 +34,16 @@ NOT catch and degrade.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from alphamind._kernel.exception_group import first_non_cancelled
+from alphamind._kernel.mode import PipelineMode
+from alphamind._kernel.money import money
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
 from alphamind.config.models.guardrails import ProgressiveTier
 from alphamind.decision.analyst.runner import AnalystResult, run_analyst
@@ -129,21 +132,6 @@ class DecisionPipelineResult:
     pre_processor_bundle: ProposalPreProcessorBundle
     pm_result: PMResult
     drawdown_tier: DrawdownTier | None
-
-
-# ---------------------------------------------------------------------------
-# Mode-dispatch tables (avoid magic strings inline)
-# ---------------------------------------------------------------------------
-
-_ANALYST_MODE_FOR_PIPELINE: Mapping[str, Literal["normal", "watchlist"]] = {
-    "normal": "normal",
-    "halt": "watchlist",
-}
-
-_STRATEGIST_MODE_FOR_PIPELINE: Mapping[str, Literal["normal", "defensive_posture"]] = {
-    "normal": "normal",
-    "halt": "defensive_posture",
-}
 
 
 # ---------------------------------------------------------------------------
@@ -237,9 +225,12 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
 
     Per the fail-closed policy in
     ``docs/design/llm-agent-failure-handling.md``, any failure in any stage
-    propagates immediately. ``asyncio.gather(..., return_exceptions=False)``
-    on the analyst+strategist branch cancels the in-flight sibling when
-    one raises.
+    propagates immediately. The analyst+strategist branch runs under
+    :class:`asyncio.TaskGroup`, which cancels the in-flight sibling when
+    one of the parallel branches raises and re-raises the failures inside
+    a ``BaseExceptionGroup``; we unwrap the first non-``CancelledError``
+    child so callers see the same exception type they did under
+    ``asyncio.gather``.
 
     ``timestamp`` flows into each of the four agent runners as the
     per-invocation timestamp the agents stamp into their structured
@@ -276,7 +267,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     # The provider is awaited inline below so the same closure shape that
     # ``SqlPortfolioStateRepository`` consumes also feeds the snapshot
     # override — one canonical construction path.
-    phase1_regime, phase1_drawdown, phase1_tiers = await build_phase1_enforcement_inputs(
+    phase1_regime, phase1_drawdown, phase1_tiers = build_phase1_enforcement_inputs(
         repository=repository,
         regime_output=regime_output,
         progressive_tiers=progressive_tiers,
@@ -287,15 +278,15 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
         progressive_tiers=phase1_tiers,
     )
     active_risk_parameters_provider = make_active_risk_parameters_provider(phase1_result)
-    composed_active_risk_parameters = await active_risk_parameters_provider()
+    composed_active_risk_parameters = active_risk_parameters_provider()
 
     # 3. Pre-built snapshot threaded from the orchestrator. Re-write the
     # snapshot's ``active_risk_parameters`` with the composed Phase 1
     # output so every downstream agent and state-delivery renderer reads
     # the canonical post-override view.
     assembled = assembled_snapshot
-    pydantic_snapshot = assembled.snapshot.model_copy(
-        update={"active_risk_parameters": composed_active_risk_parameters}
+    pydantic_snapshot = dataclasses.replace(
+        assembled.snapshot, active_risk_parameters=composed_active_risk_parameters
     )
 
     # 3. Translate to library shape.
@@ -316,64 +307,82 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     pm_view = project_portfolio_manager_view(pydantic_snapshot)
     thesis_component_reader = SnapshotBackedThesisComponentReader(pydantic_snapshot)
 
-    # 5. Run analyst + strategist in parallel — fail-closed via gather.
-    analyst_mode = _ANALYST_MODE_FOR_PIPELINE[mode]
-    strategist_mode = _STRATEGIST_MODE_FOR_PIPELINE[mode]
+    # 5. Run analyst + strategist in parallel — fail-closed via TaskGroup.
+    pipeline_mode = PipelineMode(mode)
+    analyst_mode = pipeline_mode.to_analyst_pipeline_mode()
+    strategist_mode = pipeline_mode.to_strategist_pipeline_mode()
     available_capital_usd = pydantic_snapshot.cash_ledger.true_deployable_capital_usd
     current_price_lookup = _price_lookup_from_assembled(assembled)
-    analyst_result, strategist_result = await asyncio.gather(
-        run_analyst(
-            mode=analyst_mode,
-            synthesizer_text=synthesizer_text,
-            retrieval_store=retrieval_store,
-            analyst_view=analyst_view,
-            risk_budget=pydantic_snapshot.risk_budget,
-            active_risk_parameters=pydantic_snapshot.active_risk_parameters,
-            profile_feature_flags=profile_feature_flags,
-            library_config=library_config,
-            library_market=library_market,
-            sector_resolver=sector_resolver,
-            portfolio_state_snapshot=library_snapshot,
-            active_sectors=active_sectors,
-            invocation_id=invocation_id,
-            timestamp=timestamp,
-            state_delivery_config=state_delivery_config,
-            options_enabled=options_enabled,
-            short_selling_enabled=short_selling_enabled,
-            halt_state=halt_state,
-            archive_root=archive_root,
-            agent_config=resolved_agents.get(AgentName.analyst.value),
-            borrow_cost_resolver=borrow_cost_resolver,
-        ),
-        run_strategist(
-            invocation_id=invocation_id,
-            timestamp=timestamp,
-            mode=strategist_mode,
-            halt_state=halt_state,
-            strategist_view=strategist_view,
-            synthesizer_brief_text=synthesizer_text,
-            retrieval_store=retrieval_store,
-            options_enabled=options_enabled,
-            short_selling_enabled=short_selling_enabled,
-            active_sectors=tuple(sorted(active_sectors)),
-            state_delivery_config=state_delivery_config,
-            sector_resolver=sector_resolver,
-            total_portfolio_value_usd=library_snapshot.portfolio_value_usd,
-            available_for_new_positions_usd=available_capital_usd,
-            current_price_lookup=current_price_lookup,
-            profile_feature_flags=profile_feature_flags,
-            library_config=library_config,
-            library_market=library_market,
-            starting_snapshot=library_snapshot,
-            archive_root=archive_root,
-            agent_config=resolved_agents.get(AgentName.strategist.value),
-            sector_label_display=sector_label_display,
-            regime_transition_breaches=regime_transition_breaches,
-            borrow_cost_resolver=borrow_cost_resolver,
-            prior_health_snapshots=prior_health_snapshots,
-        ),
-        return_exceptions=False,
-    )
+    try:
+        async with asyncio.TaskGroup() as tg:
+            analyst_task = tg.create_task(
+                run_analyst(
+                    mode=analyst_mode,
+                    synthesizer_text=synthesizer_text,
+                    retrieval_store=retrieval_store,
+                    analyst_view=analyst_view,
+                    risk_budget=pydantic_snapshot.risk_budget,
+                    active_risk_parameters=pydantic_snapshot.active_risk_parameters,
+                    profile_feature_flags=profile_feature_flags,
+                    library_config=library_config,
+                    library_market=library_market,
+                    sector_resolver=sector_resolver,
+                    portfolio_state_snapshot=library_snapshot,
+                    active_sectors=active_sectors,
+                    invocation_id=invocation_id,
+                    timestamp=timestamp,
+                    state_delivery_config=state_delivery_config,
+                    options_enabled=options_enabled,
+                    short_selling_enabled=short_selling_enabled,
+                    halt_state=halt_state,
+                    archive_root=archive_root,
+                    agent_config=resolved_agents.get(AgentName.analyst.value),
+                    borrow_cost_resolver=borrow_cost_resolver,
+                )
+            )
+            strategist_task = tg.create_task(
+                run_strategist(
+                    invocation_id=invocation_id,
+                    timestamp=timestamp,
+                    mode=strategist_mode,
+                    halt_state=halt_state,
+                    strategist_view=strategist_view,
+                    synthesizer_brief_text=synthesizer_text,
+                    retrieval_store=retrieval_store,
+                    options_enabled=options_enabled,
+                    short_selling_enabled=short_selling_enabled,
+                    active_sectors=tuple(sorted(active_sectors)),
+                    state_delivery_config=state_delivery_config,
+                    sector_resolver=sector_resolver,
+                    total_portfolio_value_usd=library_snapshot.portfolio_value_usd,
+                    available_for_new_positions_usd=available_capital_usd,
+                    current_price_lookup=current_price_lookup,
+                    profile_feature_flags=profile_feature_flags,
+                    library_config=library_config,
+                    library_market=library_market,
+                    starting_snapshot=library_snapshot,
+                    archive_root=archive_root,
+                    agent_config=resolved_agents.get(AgentName.strategist.value),
+                    sector_label_display=sector_label_display,
+                    regime_transition_breaches=regime_transition_breaches,
+                    borrow_cost_resolver=borrow_cost_resolver,
+                    prior_health_snapshots=prior_health_snapshots,
+                )
+            )
+    except BaseExceptionGroup as eg:
+        # Preserve the prior ``asyncio.gather`` API: callers see the first
+        # non-``CancelledError`` failure unchanged. The group is attached as
+        # ``__cause__`` via ``raise ... from eg`` so diagnostics still
+        # surface every concurrent failure. ``first_non_cancelled`` returns
+        # ``None`` only when every child is ``CancelledError`` (external
+        # cancellation of the parent task) — re-raise the group in that case.
+        first = first_non_cancelled(eg)
+        if first is not None:
+            raise first from eg
+        raise
+
+    analyst_result = analyst_task.result()
+    strategist_result = strategist_task.result()
 
     # 6. Run proposal pre-processor — pure (no I/O, no clock reads).
     pre_processor_bundle = run_proposal_pre_processor(
@@ -411,8 +420,9 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
         state_delivery_config=state_delivery_config,
         options_enabled=options_enabled,
         short_selling_enabled=short_selling_enabled,
-        total_portfolio_value_usd=library_snapshot.portfolio_value_usd,
-        available_for_new_positions_usd=available_capital_usd,
+        # ALP-462 — wrap production-aggregation floats into ``Money`` at the PM runner boundary.
+        total_portfolio_value_usd=money(str(library_snapshot.portfolio_value_usd)),
+        available_for_new_positions_usd=money(str(available_capital_usd)),
         cross_constraint_impact=cross_constraint_impact,
         halt_state=halt_state,
         pending_orders=pydantic_snapshot.pending_orders,

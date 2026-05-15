@@ -22,6 +22,7 @@ from typing import Any, cast
 import pytest
 import yaml
 
+from alphamind._kernel.ids import PositionId, Symbol
 from alphamind.config.loaders import (
     load_modes,
     load_overlays,
@@ -313,7 +314,7 @@ def test_micro_long_only_book_passes_full_validation() -> None:
     proposals = (
         _equity_proposal(
             proposal_id="REC-1",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             sector="tech",
             direction=Direction.LONG,
             notional_usd=75.0,
@@ -321,7 +322,7 @@ def test_micro_long_only_book_passes_full_validation() -> None:
         ),
         _equity_proposal(
             proposal_id="REC-2",
-            underlying="MSFT",
+            underlying=Symbol("MSFT"),
             sector="tech",
             direction=Direction.LONG,
             notional_usd=75.0,
@@ -403,7 +404,7 @@ def test_medium_options_proposal_pass() -> None:
 
     proposal = ProposedDelta(
         id="REC-1",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         sector="semis",
         direction=Direction.LONG,
         asset_type=AssetType.OPTION,
@@ -496,7 +497,7 @@ def test_medium_options_proposal_fail_on_vega_under_elevated() -> None:
 
     proposal = ProposedDelta(
         id="REC-1",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.STRATEGY,
@@ -575,7 +576,7 @@ def test_crisis_regime_immediate_tightening_creates_breach() -> None:
 
     proposal = _equity_proposal(
         proposal_id="REC-1",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=Direction.LONG,
         notional_usd=500.0,
@@ -612,8 +613,8 @@ def test_short_proposal_with_borrow_cost() -> None:
     _, config = _load_library_config(profile=Profile.medium)
 
     existing_short = ExistingPosition(
-        position_id="POS-EXISTING-SHORT",
-        underlying="META",
+        position_id=PositionId("POS-EXISTING-SHORT"),
+        underlying=Symbol("META"),
         sector="tech",
         direction=Direction.SHORT,
         asset_type=AssetType.EQUITY,
@@ -638,7 +639,7 @@ def test_short_proposal_with_borrow_cost() -> None:
 
     proposal = _equity_proposal(
         proposal_id="REC-1",
-        underlying="TSLA",
+        underlying=Symbol("TSLA"),
         sector="tech",
         direction=Direction.SHORT,
         notional_usd=2_000.0,
@@ -699,7 +700,7 @@ def test_strategy_long_call_spread_aggregates_correctly() -> None:
 
     spread_proposal = ProposedDelta(
         id="REC-1",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         sector="semis",
         direction=Direction.LONG,
         asset_type=AssetType.STRATEGY,
@@ -727,7 +728,7 @@ def test_strategy_long_call_spread_aggregates_correctly() -> None:
     # smaller in magnitude than a single long call's per-share leg result.
     long_only_proposal = ProposedDelta(
         id="REC-LONG-ONLY",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         sector="semis",
         direction=Direction.LONG,
         asset_type=AssetType.OPTION,
@@ -801,8 +802,8 @@ def test_close_releases_capital_and_reduces_gross() -> None:
     position_notional_usd = 1_000.0  # 2% of $50K — fits the 5% per-position cap.
 
     existing = ExistingPosition(
-        position_id="POS-1",
-        underlying="AAPL",
+        position_id=PositionId("POS-1"),
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,
@@ -824,7 +825,7 @@ def test_close_releases_capital_and_reduces_gross() -> None:
 
     proposal = _equity_proposal(
         proposal_id="REC-1",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=Direction.LONG,
         notional_usd=position_notional_usd,
@@ -882,7 +883,7 @@ def test_determinism_against_shipped_config() -> None:
     )
     proposal = _equity_proposal(
         proposal_id="REC-1",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=Direction.LONG,
         notional_usd=1_500.0,
@@ -1012,7 +1013,7 @@ def test_pre_processor_breaches_extraction() -> None:
     proposals = (
         _equity_proposal(
             proposal_id="REC-1",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             sector="tech",
             direction=Direction.LONG,
             notional_usd=2_000.0,
@@ -1020,7 +1021,7 @@ def test_pre_processor_breaches_extraction() -> None:
         ),
         _equity_proposal(
             proposal_id="REC-2",
-            underlying="MSFT",
+            underlying=Symbol("MSFT"),
             sector="tech",
             direction=Direction.LONG,
             notional_usd=1_000.0,
@@ -1028,7 +1029,7 @@ def test_pre_processor_breaches_extraction() -> None:
         ),
         _equity_proposal(
             proposal_id="REC-3",
-            underlying="META",
+            underlying=Symbol("META"),
             sector="tech",
             direction=Direction.LONG,
             notional_usd=500.0,

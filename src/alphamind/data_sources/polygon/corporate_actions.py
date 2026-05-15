@@ -10,8 +10,12 @@ bootstrap_corporate_actions(...)
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
+
+import httpx
+from polygon.exceptions import BadResponse
 
 from alphamind.data_sources._common import (
     RetryShape,
@@ -23,6 +27,8 @@ from alphamind.data_sources._common import (
 )
 from alphamind.data_sources.polygon.client import PolygonClient
 from alphamind.persistence.models import CorporateActions
+
+logger = logging.getLogger(__name__)
 
 _BOOTSTRAP_DAYS = 252
 
@@ -82,9 +88,14 @@ def collect_corporate_actions(
         for ticker in ticker_scope:
             try:
                 dividends = _fetch_dividends(ticker)
-            except Exception:
+            except (BadResponse, httpx.HTTPError) as exc:
                 if single:
                     raise
+                logger.warning(
+                    "polygon list_dividends failed for %s",
+                    ticker,
+                    exc_info=exc,
+                )
                 continue
 
             splits = _fetch_splits(ticker)

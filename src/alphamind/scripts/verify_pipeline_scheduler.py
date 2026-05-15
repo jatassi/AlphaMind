@@ -36,28 +36,32 @@ import argparse
 import asyncio
 import json
 import os
+import subprocess
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import yaml
+from pydantic import ValidationError
 from sqlalchemy import Connection, inspect
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alphamind.config.models.main import ExecutionMode
-from alphamind.config.models.run_types import RunType
-from alphamind.config.models.venue import VenueConfig
-from alphamind.execution.state_persistence.invocation_paths import (
+from alphamind._kernel.invocations import (
     INVOCATIONS_DIRNAME,
     RESOLVED_CONFIG_FILENAME,
 )
-from alphamind.execution.state_persistence.process_lifetime import (
-    record_process_lifetime,
-)
+from alphamind.config.models.main import ExecutionMode
+from alphamind.config.models.run_types import RunType
+from alphamind.config.models.venue import VenueConfig
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.risk_guardrails.breach_behavior.config import load_breach_behavior_config
+from alphamind.state.process_lifetime import (
+    record_process_lifetime,
+)
 
 __all__ = [
     "CheckResult",
@@ -248,9 +252,12 @@ async def check_process_lifetime_row(
             process_role="pipeline",
             archive_root=archive_root,
         )
-    except Exception as exc:
-        # The writer's failure modes are intentionally varied (git missing,
-        # DB unwritable, pip-freeze fails); surface the raw message.
+    except (subprocess.CalledProcessError, OSError, SQLAlchemyError) as exc:
+        # Verify-script per-check narrowed catch per runtime §G1: the writer's
+        # documented failure modes are ``CalledProcessError`` (git/pip-freeze
+        # missing or returning non-zero), ``OSError`` (DB unwritable), and
+        # ``SQLAlchemyError`` (DB schema mismatch). Other exceptions surface
+        # naturally so a real writer bug isn't hidden.
         return (
             CheckResult(
                 label="process_lifetime",
@@ -489,9 +496,11 @@ def _verify_emergency_yaml(config_dir: Path) -> str | None:
         from alphamind.config.models.run_types import RunTypeConfig
 
         RunTypeConfig.model_validate(read_yaml_file(emergency_yaml))
-    except Exception as exc:
-        # Surface the validator's message verbatim — the Pydantic error
-        # names the offending field/value.
+    except (yaml.YAMLError, ValidationError, OSError) as exc:
+        # Verify-script per-check narrowed catch per runtime §G1: surface the
+        # parser / validator / read-error message verbatim — the Pydantic
+        # error names the offending field/value. Other exceptions surface
+        # naturally so a real config-schema or import bug isn't hidden.
         return f"emergency.yaml failed to parse: {exc}"
     return None
 
@@ -501,7 +510,10 @@ def _verify_breach_cooldown(config_dir: Path) -> str | None:
     breach_yaml = config_dir / "breach_behavior.yaml"
     try:
         breach_cfg = load_breach_behavior_config(breach_yaml)
-    except Exception as exc:
+    except (yaml.YAMLError, ValidationError, OSError) as exc:
+        # Verify-script per-check narrowed catch per runtime §G1: surface the
+        # loader / validator message verbatim. Other exceptions surface
+        # naturally so a real schema bug isn't hidden as a load failure.
         return f"breach_behavior.yaml failed to load: {exc}"
     expected_cooldown = 30
     actual_cooldown = breach_cfg.emergency_invocation_cooldown_minutes
@@ -669,8 +681,10 @@ def _run_once_invocation(
             )
         )
     except Exception as exc:
-        # Any orchestrator failure is a FAIL for this check; the exception's
-        # type + message names the failing layer for triage.
+        # Verify-script per-check supervisor per runtime §G1: any orchestrator
+        # failure is a FAIL for this check; the exception's type + message
+        # names the failing layer for triage. ``BaseException``
+        # (``KeyboardInterrupt``) propagates.
         return (
             CheckResult(
                 label="once_invocation",

@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind.analysis._shared import Sector
 from alphamind.analysis.synthesizer.models import (
@@ -81,7 +80,7 @@ def test_briefbundle_default_prefixes() -> None:
 
 def test_briefbundle_rejects_foreign_prefixes() -> None:
     """prefixes containing a value outside SOURCE_PREFIXES[source] fails validation."""
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         BriefBundle(
             source=BriefSource.SA_TECH,
             text="brief body",
@@ -93,7 +92,7 @@ def test_briefbundle_rejects_foreign_prefixes() -> None:
 
 def test_briefbundle_rejects_naive_freshness() -> None:
     """A naive datetime (no tzinfo) fails validation."""
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         BriefBundle(
             source=BriefSource.QR,
             text="brief body",

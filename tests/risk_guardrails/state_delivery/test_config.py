@@ -3,7 +3,6 @@ from typing import Any
 
 import pytest
 import yaml
-from pydantic import ValidationError
 
 from alphamind.risk_guardrails.state_delivery.config import (
     StateDeliveryConfig,
@@ -42,7 +41,7 @@ def test_non_positive_value_fails_with_field_path(field: str, value: int) -> Non
         "abandoned_window_lookback_invocations": 1,
     }
     valid[field] = value
-    with pytest.raises(ValidationError) as exc_info:
+    with pytest.raises((ValueError, TypeError)) as exc_info:
         StateDeliveryConfig.model_validate(valid)
     assert field in str(exc_info.value)
 

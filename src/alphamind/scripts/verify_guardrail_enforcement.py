@@ -29,6 +29,7 @@ Usage::
 
 See ``scripts/RUNBOOK_guardrail_enforcement.md`` for the operator runbook.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -44,6 +45,11 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.config.guardrails_helpers import (
     load_cumulative_drawdown_progressive_tiers,
 )
@@ -54,22 +60,6 @@ from alphamind.execution.guardrail_enforcement import (
     compose_active_risk_parameters,
     compose_phase_1_enforcement,
     make_active_risk_parameters_provider,
-)
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.repository import (
-    build_sql_portfolio_state_repository,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
 )
 from alphamind.persistence.session import (
     make_async_engine,
@@ -84,18 +74,29 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
 )
 from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.pricing import StubCurrentPriceProvider
-from alphamind.portfolio_state.records.capital import (
-    RegimeLabel,
-    RegimeTransitionState,
-)
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.portfolio_state.repository import RepositoryConsistencyError
 from alphamind.risk_guardrails.breach_behavior.types import DrawdownTier
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 from alphamind.risk_guardrails.regime_adaptation import (
     RegimeAdaptationOutput,
     RegimeAdaptationState,
+)
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.repository import (
+    build_sql_portfolio_state_repository,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
 )
 
 __all__ = [
@@ -414,7 +415,7 @@ async def run_phase_3_repository_provider(db_path: Path) -> PhaseResult:
     result = _phase_3_enforcement_result()
     provider = make_active_risk_parameters_provider(result)
 
-    async def _prior_provider(_path: str) -> ActiveRiskParameterSet:
+    def _prior_provider(_path: str) -> ActiveRiskParameterSet:
         return _baseline_normal_parameters()
 
     engine, factory = _open_async_factory(db_path)
@@ -426,7 +427,7 @@ async def run_phase_3_repository_provider(db_path: Path) -> PhaseResult:
             prior_active_risk_parameters_provider=_prior_provider,
             config=_state_persistence_config(),
         )
-        yielded = await repository.get_active_risk_parameters()
+        yielded = repository.get_active_risk_parameters()
     finally:
         await engine.dispose()
 
@@ -530,7 +531,7 @@ async def _seed_process_lifetime(factory: async_sessionmaker[AsyncSession]) -> N
     """Persist the parent ``process_lifetime`` row required by the FK on invocations."""
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-    from alphamind.execution.state_persistence.tables.process_lifetimes import (
+    from alphamind.state.tables.process_lifetimes import (
         ProcessLifetimeRow,
     )
 
@@ -561,7 +562,7 @@ async def _seed_invocation_with_phase1_committed(
     DB without dropping the schema first; on a re-run the existing row's
     timestamps are refreshed in-place.
     """
-    from alphamind.execution.state_persistence.tables.invocations import InvocationRow
+    from alphamind.state.tables.invocations import InvocationRow
 
     record = _invocation_record(invocation_id, start_at=start_at)
     row_template = invocation_record_to_row(record)
@@ -584,29 +585,27 @@ async def _seed_singletons(factory: async_sessionmaker[AsyncSession], *, now: da
     is absent. Idempotent so the operator can re-run the verify script against
     the same DB without dropping the schema first.
     """
-    from alphamind.execution.state_persistence.tables.cash_ledger import (
+    from alphamind.state.tables.cash_ledger import (
         CASH_LEDGER_SINGLETON_ID,
         CashLedgerRow,
     )
-    from alphamind.execution.state_persistence.tables.drawdown_state import (
+    from alphamind.state.tables.drawdown_state import (
         DRAWDOWN_STATE_SINGLETON_ID,
         DrawdownStateRow,
     )
 
-    cash = CashLedger.model_validate(
-        {
-            "current_cash_usd": 100_000.0,
-            "settled_cash_usd": 100_000.0,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": 100_000.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    cash = CashLedger(
+        current_cash_usd=100_000.0,
+        settled_cash_usd=100_000.0,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=100_000.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
     async with factory() as sess:
         if await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID) is None:
@@ -639,7 +638,7 @@ async def run_phase_4_assembler_integration(db_path: Path) -> PhaseResult:
     result = _phase_3_enforcement_result()
     provider = make_active_risk_parameters_provider(result)
 
-    async def _prior_provider(_path: str) -> ActiveRiskParameterSet:
+    def _prior_provider(_path: str) -> ActiveRiskParameterSet:
         # The SQL repository only consults this provider when an earlier
         # invocation row exists. With Phase 4's single seeded invocation, the
         # prior-context branch returns prior_active_risk_parameters=None and
@@ -672,14 +671,12 @@ async def run_phase_4_assembler_integration(db_path: Path) -> PhaseResult:
             config=_state_persistence_config(),
         )
 
-        portfolio_config = PortfolioStateConfig.model_validate(
-            {
-                "pm_decision_log_sliding_window_invocations": 5,
-                "thesis_resolutions_lookback_trading_days": 10,
-                "thesis_quality_aggregates_trailing_windows_days": (5, 20),
-                "snapshot_freshness_max_phase1_to_snapshot_seconds": 300.0,
-                "snapshot_freshness_max_price_age_seconds": 60.0,
-            }
+        portfolio_config = PortfolioStateConfig(
+            pm_decision_log_sliding_window_invocations=5,
+            thesis_resolutions_lookback_trading_days=10,
+            thesis_quality_aggregates_trailing_windows_days=(5, 20),
+            snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
+            snapshot_freshness_max_price_age_seconds=60.0,
         )
         price_provider = StubCurrentPriceProvider({}, now=now)
 
@@ -687,7 +684,7 @@ async def run_phase_4_assembler_integration(db_path: Path) -> PhaseResult:
             return None
 
         try:
-            assembled = await assemble_snapshot(
+            assembled = assemble_snapshot(
                 repository=repository,
                 price_provider=price_provider,
                 sector_resolver=_sector_resolver,

@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience, OutputBlock
 from alphamind.distillation.qualitative_derived import (
@@ -160,7 +161,7 @@ class TestNewsPriceDivergencePricedIn:
             _add_news(
                 session,
                 article_id=f"art-neg-{i}",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 published_at=f"2026-04-25T{14 + (i % 6):02d}:00:00Z",
                 label="negative",
             )
@@ -168,21 +169,21 @@ class TestNewsPriceDivergencePricedIn:
             _add_news(
                 session,
                 article_id=f"art-pos-{i}",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 published_at=f"2026-04-25T{16 + i:02d}:00:00Z",
                 label="positive",
             )
         # Price rises across the window: open=100, close=105 → +5
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T14:00:00Z",
             open_=100.0,
             close=101.0,
         )
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T22:00:00Z",
             open_=104.0,
             close=105.0,
@@ -220,7 +221,7 @@ class TestNewsPriceDivergencePricedIn:
             _add_news(
                 session,
                 article_id=f"art-pos-{i}",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 published_at=f"2026-04-25T{14 + (i % 6):02d}:00:00Z",
                 label="positive",
             )
@@ -228,28 +229,28 @@ class TestNewsPriceDivergencePricedIn:
             _add_news(
                 session,
                 article_id=f"art-neg-{i}",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 published_at=f"2026-04-25T{16 + i:02d}:00:00Z",
                 label="negative",
             )
         _add_news(
             session,
             article_id="art-neu-0",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             published_at="2026-04-25T18:00:00Z",
             label="neutral",
         )
         # Price falls: open=100, close=95
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T14:00:00Z",
             open_=100.0,
             close=99.0,
         )
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T22:00:00Z",
             open_=96.0,
             close=95.0,
@@ -280,7 +281,7 @@ class TestNewsPriceDivergencePricedIn:
             _add_news(
                 session,
                 article_id=f"art-neg-{i}",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 published_at=f"2026-04-25T{14 + (i % 6):02d}:00:00Z",
                 label="negative",
             )
@@ -288,21 +289,21 @@ class TestNewsPriceDivergencePricedIn:
             _add_news(
                 session,
                 article_id=f"art-pos-{i}",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 published_at=f"2026-04-25T{16 + i:02d}:00:00Z",
                 label="positive",
             )
         # First-bar open and last-bar close are identical → price_change == 0.0
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T14:00:00Z",
             open_=100.0,
             close=101.0,
         )
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T22:00:00Z",
             open_=99.0,
             close=100.0,
@@ -333,21 +334,21 @@ class TestNewsPriceDivergenceAgreement:
             _add_news(
                 session,
                 article_id=f"art-{i}",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 published_at=f"2026-04-25T{14 + (i % 6):02d}:00:00Z",
                 label="negative",
             )
         # Price falls — agreement, no divergence
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T14:00:00Z",
             open_=100.0,
             close=99.0,
         )
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T22:00:00Z",
             open_=96.0,
             close=95.0,
@@ -370,20 +371,20 @@ class TestNewsPriceDivergenceAgreement:
             _add_news(
                 session,
                 article_id=f"art-{i}",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 published_at=f"2026-04-25T{14 + (i % 6):02d}:00:00Z",
                 label="positive",
             )
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T14:00:00Z",
             open_=100.0,
             close=101.0,
         )
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T22:00:00Z",
             open_=104.0,
             close=105.0,
@@ -422,21 +423,21 @@ class TestNewsPriceDivergenceCalibrationGating:
             _add_news(
                 session,
                 article_id=f"art-neg-{i}",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 published_at=f"2026-04-25T{14 + i:02d}:00:00Z",
                 label="negative",
             )
         # Rising price → divergence direction is priced_in.
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T14:00:00Z",
             open_=100.0,
             close=101.0,
         )
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T22:00:00Z",
             open_=104.0,
             close=105.0,
@@ -476,7 +477,7 @@ class TestDominantDirectionThreshold:
             _add_news(
                 session,
                 article_id=f"art-neg-{i:03d}",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 published_at=f"2026-04-25T{14 + (i % 6):02d}:{i % 60:02d}:00Z",
                 label="negative",
             )
@@ -484,21 +485,21 @@ class TestDominantDirectionThreshold:
             _add_news(
                 session,
                 article_id=f"art-pos-{i:03d}",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 published_at=f"2026-04-25T{14 + (i % 6):02d}:{i % 60:02d}:30Z",
                 label="positive",
             )
         # Rising price → divergence with dominant negative
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T14:00:00Z",
             open_=100.0,
             close=101.0,
         )
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T22:00:00Z",
             open_=104.0,
             close=105.0,
@@ -526,7 +527,7 @@ class TestDominantDirectionThreshold:
             _add_news(
                 session,
                 article_id=f"art-neg-{i:03d}",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 published_at=f"2026-04-25T{14 + (i % 6):02d}:{i % 60:02d}:00Z",
                 label="negative",
             )
@@ -534,20 +535,20 @@ class TestDominantDirectionThreshold:
             _add_news(
                 session,
                 article_id=f"art-pos-{i:03d}",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 published_at=f"2026-04-25T{14 + (i % 6):02d}:{i % 60:02d}:30Z",
                 label="positive",
             )
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T14:00:00Z",
             open_=100.0,
             close=101.0,
         )
         _add_hour_bar(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start="2026-04-25T22:00:00Z",
             open_=104.0,
             close=105.0,

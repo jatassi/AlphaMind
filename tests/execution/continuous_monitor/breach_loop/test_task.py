@@ -17,6 +17,7 @@ from typing import Any, cast
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.guardrails import BreachResponse, ProgressiveTier
 from alphamind.execution.continuous_monitor.breach_loop import (
@@ -268,16 +269,16 @@ class _StubRepository:
         self._index = 0
         self._active_risk_parameters = active_risk_parameters
 
-    async def get_drawdown_state(self) -> DrawdownState:
+    def get_drawdown_state(self) -> DrawdownState:
         idx = min(self._index, len(self._drawdowns) - 1)
         state = self._drawdowns[idx]
         self._index += 1
         return state
 
-    async def get_open_positions(self) -> tuple[Any, ...]:
+    def get_open_positions(self) -> tuple[Any, ...]:
         return ()
 
-    async def get_active_risk_parameters(self) -> ActiveRiskParameterSet:
+    def get_active_risk_parameters(self) -> ActiveRiskParameterSet:
         return self._active_risk_parameters
 
 
@@ -296,7 +297,7 @@ def _cache() -> UnderlyingPriceCache:
 def _populated_cache() -> UnderlyingPriceCache:
     cache = UnderlyingPriceCache()
     quote = UnderlyingQuote(
-        ticker="AAPL", price=150.0, as_of=datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+        ticker=Symbol("AAPL"), price=150.0, as_of=datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
     )
     asyncio.run(cache.update(quote))
     return cache

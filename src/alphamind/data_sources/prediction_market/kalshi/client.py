@@ -70,8 +70,17 @@ class KalshiClient:
         """Return *True* if the exchange status endpoint is reachable."""
         try:
             self.get("/exchange/status")
-        except Exception:
-            logger.exception("Kalshi connectivity check failed.")
+        except httpx.HTTPError as exc:
+            # ``HTTPError`` covers HTTP status errors plus network failures
+            # (timeout, refused, DNS). Other exceptions surface naturally
+            # so misconfiguration is not hidden as connectivity loss.
+            logger.warning("Kalshi connectivity check failed.", exc_info=exc)
             return False
         else:
             return True
+
+
+# Runtime contract: KalshiClient must structurally implement KalshiAPI.
+from alphamind.data_sources.prediction_market.kalshi._protocol import KalshiAPI  # noqa: E402
+
+_: KalshiAPI = KalshiClient()

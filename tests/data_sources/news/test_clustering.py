@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,
@@ -122,27 +123,27 @@ class TestClusteringConstants:
     """Every threshold encoded as a named module constant per § Headline clustering."""
 
     def test_stage_1_levenshtein_ratio_min_value(self) -> None:
-        from alphamind.data_sources.news import clustering
+        from alphamind.analysis.news_clustering import clustering
 
         assert clustering.STAGE_1_LEVENSHTEIN_RATIO_MIN == 0.90
 
     def test_stage_1_time_window_minutes_value(self) -> None:
-        from alphamind.data_sources.news import clustering
+        from alphamind.analysis.news_clustering import clustering
 
         assert clustering.STAGE_1_TIME_WINDOW_MINUTES == 30
 
     def test_stage_2_simhash_jaccard_min_value(self) -> None:
-        from alphamind.data_sources.news import clustering
+        from alphamind.analysis.news_clustering import clustering
 
         assert clustering.STAGE_2_SIMHASH_JACCARD_MIN == 0.60
 
     def test_stage_2_time_window_hours_value(self) -> None:
-        from alphamind.data_sources.news import clustering
+        from alphamind.analysis.news_clustering import clustering
 
         assert clustering.STAGE_2_TIME_WINDOW_HOURS == 6
 
     def test_cluster_seal_hours_value(self) -> None:
-        from alphamind.data_sources.news import clustering
+        from alphamind.analysis.news_clustering import clustering
 
         assert clustering.CLUSTER_SEAL_HOURS == 24
 
@@ -159,7 +160,7 @@ class TestStage1Canonicalization:
         one with ``UPDATE:``, one bare — collapse into a single source-
         canonical group keyed on the earliest ``article_id``.
         """
-        from alphamind.data_sources.news.clustering import canonicalize_syndication
+        from alphamind.analysis.news_clustering.clustering import canonicalize_syndication
 
         articles = [
             _article(
@@ -199,7 +200,7 @@ class TestStage1Canonicalization:
         with otherwise-identical text remain distinct source-canonicals,
         even though their Levenshtein ratio is 1.0.
         """
-        from alphamind.data_sources.news.clustering import canonicalize_syndication
+        from alphamind.analysis.news_clustering.clustering import canonicalize_syndication
 
         articles = [
             _article(
@@ -232,7 +233,7 @@ class TestStage2EventClustering:
         SimHash Jaccard ≥ 0.60 within 6 hours produces a single cluster
         identified by the earliest member's ``article_id``.
         """
-        from alphamind.data_sources.news.clustering import cluster_events
+        from alphamind.analysis.news_clustering.clustering import cluster_events
 
         articles = [
             _article(
@@ -269,7 +270,7 @@ class TestStage2EventClustering:
         share zero tickers, so Stage 2 leaves them in separate clusters
         regardless of how high their SimHash Jaccard climbs.
         """
-        from alphamind.data_sources.news.clustering import cluster_events
+        from alphamind.analysis.news_clustering.clustering import cluster_events
 
         articles = [
             _article(
@@ -306,7 +307,7 @@ class TestStage2EventClustering:
         only with other ticker-less headlines whose ``topic_tags`` intersect
         by at least one tag."
         """
-        from alphamind.data_sources.news.clustering import cluster_events
+        from alphamind.analysis.news_clustering.clustering import cluster_events
 
         articles = [
             _article(
@@ -335,7 +336,7 @@ class TestStage2EventClustering:
 
     def test_tickerless_without_topic_tag_overlap_does_not_cluster(self) -> None:
         """Ticker-less headlines without topic-tag overlap remain separate."""
-        from alphamind.data_sources.news.clustering import cluster_events
+        from alphamind.analysis.news_clustering.clustering import cluster_events
 
         articles = [
             _article(
@@ -374,7 +375,7 @@ class TestStage2EventClustering:
         absorb a candidate at ``T+0`` (8h from ``first_seen_at``), regardless
         of how similar that candidate is to the recent member.
         """
-        from alphamind.data_sources.news.clustering import cluster_events
+        from alphamind.analysis.news_clustering.clustering import cluster_events
 
         articles = [
             _article(
@@ -436,7 +437,7 @@ class TestStage2EventClustering:
         candidate must be independent of N — only the in-window anchor's lone
         member should be inspected.
         """
-        from alphamind.data_sources.news import clustering
+        from alphamind.analysis.news_clustering import clustering
 
         def _seeds(n_old: int) -> tuple[list[NewsArticles], dict[str, frozenset[str]]]:
             # n_old anchors spaced 30 minutes apart starting 22h before the
@@ -529,7 +530,7 @@ class TestRefreshNewsClusters:
         self, db_factory: sessionmaker[Session]
     ) -> None:
         """End-to-end: a single refresh writes cluster rows and stamps members."""
-        from alphamind.data_sources.news.clustering import refresh_news_clusters
+        from alphamind.analysis.news_clustering.clustering import refresh_news_clusters
 
         articles = [
             _article(
@@ -586,7 +587,7 @@ class TestRefreshNewsClusters:
 
     def test_idempotent_double_refresh(self, db_factory: sessionmaker[Session]) -> None:
         """Running the refresh twice on the same input does not duplicate or churn rows."""
-        from alphamind.data_sources.news.clustering import refresh_news_clusters
+        from alphamind.analysis.news_clustering.clustering import refresh_news_clusters
 
         articles = [
             _article(
@@ -643,7 +644,7 @@ class TestRefreshNewsClusters:
         the earliest existing member must not flip the cluster id — the id
         is anchored on the earliest *publication time*, not lexical id.
         """
-        from alphamind.data_sources.news.clustering import refresh_news_clusters
+        from alphamind.analysis.news_clustering.clustering import refresh_news_clusters
 
         first_pass = [
             _article(
@@ -697,7 +698,7 @@ class TestRefreshNewsClusters:
             sess.add(
                 NewsArticleTickers(
                     article_id="a-nvda-003",
-                    ticker="NVDA",
+                    ticker=Symbol("NVDA"),
                     is_primary=1,
                 )
             )
@@ -730,7 +731,7 @@ class TestRefreshNewsClusters:
 
     def test_unclustered_headlines_remain_null(self, db_factory: sessionmaker[Session]) -> None:
         """Singleton headlines (no peer matches) keep ``cross_ticker_cluster_id`` null."""
-        from alphamind.data_sources.news.clustering import refresh_news_clusters
+        from alphamind.analysis.news_clustering.clustering import refresh_news_clusters
 
         articles = [
             _article(

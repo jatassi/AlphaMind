@@ -16,8 +16,9 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.output import OutputAudience
-from alphamind.distillation.q7_cross_asset import (
+from alphamind.distillation.q7 import (
     NARRATIVE_LAG_REGIME_TAGS,
     CorrelationRegimeChangeConfig,
     compute_correlation_regime_change,
@@ -162,8 +163,8 @@ class TestCorrelationBreakdown:
             a_closes.append(a_closes[-1] * (1.0 + r))
         for r in b_returns:
             b_closes.append(b_closes[-1] * (1.0 + r))
-        _seed_path(session, ticker="A", closes=a_closes, start_day=start_day)
-        _seed_path(session, ticker="B", closes=b_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("A"), closes=a_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("B"), closes=b_closes, start_day=start_day)
         session.commit()
 
         blocks = compute_correlation_regime_change(
@@ -203,8 +204,8 @@ class TestCorrelationBreakdown:
             a_closes.append(a_closes[-1] * (1.0 + r))
         for r in base_returns_b:
             b_closes.append(b_closes[-1] * (1.0 + r))
-        _seed_path(session, ticker="A", closes=a_closes, start_day=start_day)
-        _seed_path(session, ticker="B", closes=b_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("A"), closes=a_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("B"), closes=b_closes, start_day=start_day)
         session.commit()
 
         blocks = compute_correlation_regime_change(
@@ -264,9 +265,9 @@ class TestDispersionShift:
         b_closes.append(b_closes[-1] * 0.90)  # -10%
         c_closes.append(c_closes[-1] * 1.005)
 
-        _seed_path(session, ticker="A", closes=a_closes, start_day=start_day)
-        _seed_path(session, ticker="B", closes=b_closes, start_day=start_day)
-        _seed_path(session, ticker="C", closes=c_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("A"), closes=a_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("B"), closes=b_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("C"), closes=c_closes, start_day=start_day)
         session.commit()
 
         blocks = compute_correlation_regime_change(
@@ -322,8 +323,8 @@ class TestNarrativeLagFlag:
             a_closes.append(a_closes[-1] * (1.0 + r))
         for r in b_returns:
             b_closes.append(b_closes[-1] * (1.0 + r))
-        _seed_path(session, ticker="A", closes=a_closes, start_day=start_day)
-        _seed_path(session, ticker="B", closes=b_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("A"), closes=a_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("B"), closes=b_closes, start_day=start_day)
         session.commit()
 
         blocks = compute_correlation_regime_change(
@@ -369,8 +370,8 @@ class TestNarrativeLagFlag:
             a_closes.append(a_closes[-1] * (1.0 + r))
         for r in b_returns:
             b_closes.append(b_closes[-1] * (1.0 + r))
-        _seed_path(session, ticker="A", closes=a_closes, start_day=start_day)
-        _seed_path(session, ticker="B", closes=b_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("A"), closes=a_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("B"), closes=b_closes, start_day=start_day)
         # Qualifying article — topic_tags includes a regime-relevant tag,
         # ticker A is in universe, published within the silence window.
         # Use a topic from the regime-relevant set, JSON-encoded as the
@@ -380,7 +381,7 @@ class TestNarrativeLagFlag:
             session,
             article_id="art-1",
             published_at=as_of - timedelta(hours=1),
-            ticker="A",
+            ticker=Symbol("A"),
             topic_tags=json.dumps([regime_tag.value]),
         )
         session.commit()
@@ -428,14 +429,14 @@ class TestNarrativeLagFlag:
             a_closes.append(a_closes[-1] * (1.0 + r))
         for r in b_returns:
             b_closes.append(b_closes[-1] * (1.0 + r))
-        _seed_path(session, ticker="A", closes=a_closes, start_day=start_day)
-        _seed_path(session, ticker="B", closes=b_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("A"), closes=a_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("B"), closes=b_closes, start_day=start_day)
         # Vendor-raw historical row: comma-separated free-form, not valid JSON.
         _add_article(
             session,
             article_id="art-malformed",
             published_at=as_of - timedelta(hours=1),
-            ticker="A",
+            ticker=Symbol("A"),
             topic_tags="macro_data,regulatory",
         )
         session.commit()

@@ -5,6 +5,7 @@ factored out so the three new handler test modules
 (``test_reverse_splits``, ``test_stock_dividends``, ``test_ticker_changes``)
 share the seed helpers without duplicating ~250 lines per file.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -12,35 +13,17 @@ from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price
+from alphamind._kernel.regime import RiskZone
 from alphamind.execution.broker_adapter.queries import PositionSnapshot
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.orders_codec import (
-    record_to_row as order_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
-)
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
@@ -80,7 +63,34 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+    InvocationHandle,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
+)
+from alphamind.state.tables.orders_codec import (
+    record_to_row as order_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
+)
 
 NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 INV_ID = "inv-ca-2026-05-08T12:00:00Z"
@@ -153,7 +163,7 @@ def make_open_equity_position(
     average_cost_basis_per_share: float = 150.0,
 ) -> PositionRecord:
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=average_cost_basis_per_share,
     )
@@ -166,21 +176,19 @@ def make_open_equity_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -193,7 +201,7 @@ def _make_options_details(
     premium_paid_per_contract: float = 250.0,
 ) -> OptionsPositionDetails:
     return OptionsPositionDetails(
-        underlying_ticker=underlying_ticker,
+        underlying_ticker=Symbol(underlying_ticker),
         strike_price=strike,
         expiration_date=date(2026, 9, 18),
         contract_type=OptionContractType.CALL,
@@ -231,21 +239,19 @@ def make_open_options_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -294,21 +300,19 @@ def make_open_strategy_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -317,32 +321,30 @@ def make_pending_entry_order(
     bracket_id: str = "brk-1",
     ticker: str = "AAPL",
 ) -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": "pos-1",
-            "bracket_id": bracket_id,
-            "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=ticker),
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": 10.0,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": NOW - timedelta(minutes=15),
-            "last_update_timestamp": NOW - timedelta(minutes=15),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": "thesis-1",
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=PositionId("pos-1"),
+        bracket_id=bracket_id,
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=NOW - timedelta(minutes=15),
+        last_update_timestamp=NOW - timedelta(minutes=15),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=ThesisId("thesis-1"),
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -354,16 +356,18 @@ def make_active_bracket(
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker=ticker, threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol(ticker), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-entry-1",
+        entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -375,7 +379,7 @@ def make_active_thesis(thesis_id: str = "thesis-1", position_id: str = "pos-1") 
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -394,8 +398,8 @@ def make_active_thesis(thesis_id: str = "thesis-1", position_id: str = "pos-1") 
     )
     generation_at = NOW - timedelta(hours=4)
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="AAPL momentum",
         key_catalyst="Q3 earnings beat",
         position_size_rationale="Sized at 5%",
@@ -413,36 +417,32 @@ def make_active_thesis(thesis_id: str = "thesis-1", position_id: str = "pos-1") 
 
 
 def make_cash_ledger(current_cash_usd: float = 100_000.0) -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": current_cash_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=current_cash_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def make_drawdown_state() -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": 100_000.0,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=100_000.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -466,7 +466,7 @@ async def seed_position_cluster(
     thesis: ThesisRecord,
     bracket: BracketRecord,
 ) -> None:
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     thesis_row, component_rows = thesis_record_to_rows(thesis)
     bracket_row, leg_rows = bracket_record_to_rows(bracket)
@@ -563,11 +563,11 @@ def make_options_position_snapshot(
         symbol=symbol,
         asset_class="us_option",
         qty=qty,
-        avg_entry_price=avg_entry_price,
-        market_value=qty * avg_entry_price * 100.0,
-        cost_basis=qty * avg_entry_price * 100.0,
-        unrealized_pl=0.0,
+        avg_entry_price=price(avg_entry_price),
+        market_value=money(qty * avg_entry_price * 100.0),
+        cost_basis=money(qty * avg_entry_price * 100.0),
+        unrealized_pl=money(0.0),
         unrealized_plpc=0.0,
-        current_price=avg_entry_price,
+        current_price=price(avg_entry_price),
         side="long",
     )

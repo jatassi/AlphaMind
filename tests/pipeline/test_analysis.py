@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -357,13 +358,13 @@ def _sectors_registry() -> dict[str, list[str]]:
 
 
 class _StubPortfolioReader:
-    async def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]:
+    def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]:
         return ()
 
-    async def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]:
+    def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]:
         return ()
 
-    async def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot:
+    def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot:
         return SynthesizerExposureSnapshot(
             sector_exposure_pct={},
             net_directional_pct=0.0,
@@ -475,7 +476,11 @@ def _drive(
             invocation_id=_INVOCATION_ID,
             as_of=_AS_OF,
             last_invocation_time=_LAST_INVOCATION_TIME,
-            distillation_config=None,  # type: ignore[arg-type]  # stub doesn't read config
+            # ``to_domain()`` is called once before the stubbed
+            # ``run_external_distillation`` runs (ALP-471 boundary→domain
+            # projection); the stub immediately replaces that runner so the
+            # projected value is never consumed.
+            distillation_config=MagicMock(),
             ticker_scope=("NVDA", "JPM", "XOM"),
             universe=frozenset({"NVDA", "JPM", "XOM"}),
             agents_config=agents_config or _agents_registry(),
@@ -668,7 +673,7 @@ def test_pipeline_runs_domain_and_qualitative_in_parallel(
                 invocation_id=_INVOCATION_ID,
                 as_of=_AS_OF,
                 last_invocation_time=_LAST_INVOCATION_TIME,
-                distillation_config=None,  # type: ignore[arg-type]
+                distillation_config=MagicMock(),
                 ticker_scope=("NVDA",),
                 universe=frozenset({"NVDA"}),
                 agents_config=_agents_registry(),
@@ -698,7 +703,7 @@ def test_pipeline_forwards_archive_root_and_provenance_root(
             invocation_id=_INVOCATION_ID,
             as_of=_AS_OF,
             last_invocation_time=_LAST_INVOCATION_TIME,
-            distillation_config=None,  # type: ignore[arg-type]
+            distillation_config=MagicMock(),
             ticker_scope=("NVDA",),
             universe=frozenset({"NVDA"}),
             agents_config=_agents_registry(),
@@ -785,6 +790,43 @@ def test_synthesizer_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None
     assert exc_info.value is failure
 
 
+def test_parallel_stage_double_failure_propagates_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Domain + qualitative both fail simultaneously → pipeline surfaces
+    a single ``SDKFailure`` (the first child of the underlying
+    ``BaseExceptionGroup``) rather than the group container.
+
+    Guards the TaskGroup migration: ``asyncio.TaskGroup`` always raises
+    ``BaseExceptionGroup``; without explicit unwrapping the caller would
+    suddenly receive a group container instead of an ``SDKFailure``.
+    """
+    log = _CallLog()
+    domain_failure = SDKFailure(
+        "domain stub failure",
+        agent_name=AgentName.tech_semis_researcher.value,
+        invocation_id=_INVOCATION_ID,
+    )
+    qualitative_failure = SDKFailure(
+        "qualitative stub failure",
+        agent_name=AgentName.qualitative_researcher.value,
+        invocation_id=_INVOCATION_ID,
+    )
+    _patch_runners(
+        monkeypatch,
+        log=log,
+        domain_raises=domain_failure,
+        qualitative_raises=qualitative_failure,
+    )
+    with pytest.raises(SDKFailure) as exc_info:
+        _drive()
+    assert exc_info.value in (domain_failure, qualitative_failure)
+    # Adaptive + synthesizer must NOT have run; the orchestrator aborted at
+    # the parallel stage.
+    assert "adaptive" not in log.order
+    assert "synthesizer" not in log.order
+
+
 # ---------------------------------------------------------------------------
 # Argument plumbing — qualitative + adaptive timing args
 # ---------------------------------------------------------------------------
@@ -848,7 +890,7 @@ def test_pipeline_forwards_sectors_config(monkeypatch: pytest.MonkeyPatch) -> No
             invocation_id=_INVOCATION_ID,
             as_of=_AS_OF,
             last_invocation_time=_LAST_INVOCATION_TIME,
-            distillation_config=None,  # type: ignore[arg-type]
+            distillation_config=MagicMock(),
             ticker_scope=("NVDA",),
             universe=frozenset({"NVDA"}),
             agents_config=_agents_registry(),

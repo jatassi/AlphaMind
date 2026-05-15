@@ -1,13 +1,31 @@
 """Tests for consumers/strategist.py — story 07."""
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import pytest
-from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price, signed_money
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.consumers.analyst import AnalystAbandonedOpening
 from alphamind.portfolio_state.consumers.strategist import (
     BetweenInvocationClosure,
@@ -28,15 +46,7 @@ from alphamind.portfolio_state.records.activity_log import (
     PositionOpenedDetail,
     PositionOpenMechanism,
 )
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    CashLedger,
-    DrawdownState,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskZone,
-)
+from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegEnforcement,
@@ -119,25 +129,23 @@ def _make_fill(price: float = 150.0) -> PositionFill:
 
 def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> PositionView:
     equity = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=100.0,
         average_cost_basis_per_share=150.0,
     )
-    record = PositionRecord.model_validate(
-        {
-            "position_id": pos_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _T0,
-            "details": equity,
-            "execution_history": (_make_fill(),),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    record = PositionRecord(
+        position_id=pos_id,
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_T0,
+        details=equity,
+        execution_history=(_make_fill(),),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
     return PositionView(
         record=record,
@@ -156,25 +164,23 @@ def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> Positi
 
 def _make_pending_position(pos_id: str = "POS-PEND") -> PositionView:
     equity = EquityPositionDetails(
-        ticker="GOOG",
+        ticker=Symbol("GOOG"),
         share_count=10.0,
         average_cost_basis_per_share=2800.0,
     )
-    record = PositionRecord.model_validate(
-        {
-            "position_id": pos_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": PositionStatus.PENDING,
-            "direction": Direction.LONG,
-            "entry_timestamp": None,
-            "details": equity,
-            "execution_history": (),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    record = PositionRecord(
+        position_id=pos_id,
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.PENDING,
+        direction=Direction.LONG,
+        entry_timestamp=None,
+        details=equity,
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
     return PositionView(
         record=record,
@@ -195,21 +201,21 @@ def _make_bracket(bracket_id: str = "BRK-001", position_id: str = "POS-001") -> 
     leg = BracketLeg(
         leg_id="leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id="ord-stop-1",
-        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId("ord-stop-1"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
-    return BracketRecord.model_validate(
-        {
-            "bracket_id": bracket_id,
-            "position_id": position_id,
-            "status": BracketStatus.PENDING_ENTRY,
-            "entry_order_id": "ord-entry-1",
-            "protective_legs": (leg,),
-            "modification_history": (),
-            "corporate_action_cancellation_reason": None,
-        }
+    return BracketRecord(
+        bracket_id=bracket_id,
+        position_id=position_id,
+        status=BracketStatus.PENDING_ENTRY,
+        entry_order_id=OrderId("ord-entry-1"),
+        protective_legs=(leg,),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
     )
 
 
@@ -217,32 +223,30 @@ def _make_pending_order(
     order_id: str = "ORD-001",
     position_id: str = "POS-001",
 ) -> OrderRecord:
-    spec = EquityInstrumentSpec(ticker="AAPL")
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": position_id,
-            "bracket_id": "BRK-001",
-            "role": OrderRole.ENTRY,
-            "instrument_spec": spec,
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "price_parameters": PriceParameters(limit_price=None, stop_trigger_price=None),
-            "quantity": 10.0,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": "alp-001",
-            "alpaca_order_id_chain": ("alp-001",),
-            "submission_timestamp": _T0,
-            "last_update_timestamp": _T0,
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": None,
-            "originating_pm_command_id": None,
-            "age_hours": 1.0,
-        }
+    spec = EquityInstrumentSpec(ticker=Symbol("AAPL"))
+    return OrderRecord(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=BracketId("BRK-001"),
+        role=OrderRole.ENTRY,
+        instrument_spec=spec,
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        price_parameters=PriceParameters(limit_price=None, stop_trigger_price=None),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId("alp-001"),
+        alpaca_order_id_chain=("alp-001",),
+        submission_timestamp=_T0,
+        last_update_timestamp=_T0,
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=None,
+        originating_pm_command_id=None,
+        age_hours=1.0,
     )
 
 
@@ -253,7 +257,7 @@ def _make_thesis(
     def _comp(ctype: ThesisComponentType, cid: str) -> ThesisComponent:
         return ThesisComponent(
             component_id=cid,
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ctype,
             linked_bracket_leg_type=None,
             instrument_reference="AAPL",
@@ -264,27 +268,25 @@ def _make_thesis(
             resolution_notes=None,
         )
 
-    return ThesisRecord.model_validate(
-        {
-            "thesis_id": thesis_id,
-            "position_id": position_id,
-            "summary": "Long AAPL on momentum.",
-            "components": (
-                _comp(ThesisComponentType.ENTRY_RATIONALE, "comp-1"),
-                _comp(ThesisComponentType.TARGET_RATIONALE, "comp-2"),
-                _comp(ThesisComponentType.INVALIDATION_RATIONALE, "comp-3"),
-            ),
-            "status": ThesisRecordStatus.ACTIVE,
-            "generation_timestamp": _T0,
-            "time_expectation_hours": 24.0,
-            "age_hours": 4.0,
-            "expected_resolution_at": _T0 + timedelta(hours=24),
-            "resolution_timestamp": None,
-            "resolution_category": None,
-            "resolution_pnl_usd": None,
-            "entry_fill_gap_usd": None,
-            "key_catalyst": "earnings beat",
-        }
+    return ThesisRecord(
+        thesis_id=thesis_id,
+        position_id=position_id,
+        summary="Long AAPL on momentum.",
+        components=(
+            _comp(ThesisComponentType.ENTRY_RATIONALE, "comp-1"),
+            _comp(ThesisComponentType.TARGET_RATIONALE, "comp-2"),
+            _comp(ThesisComponentType.INVALIDATION_RATIONALE, "comp-3"),
+        ),
+        status=ThesisRecordStatus.ACTIVE,
+        generation_timestamp=_T0,
+        time_expectation_hours=24.0,
+        age_hours=4.0,
+        expected_resolution_at=_T0 + timedelta(hours=24),
+        resolution_timestamp=None,
+        resolution_category=None,
+        resolution_pnl_usd=None,
+        entry_fill_gap_usd=None,
+        key_catalyst="earnings beat",
     )
 
 
@@ -344,9 +346,9 @@ def _make_changelog_entry(
     position_id: str | None = "POS-001",
 ) -> ActivityLogEntry:
     detail = PositionOpenedDetail(
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         direction="LONG",
-        fill_price=150.0,
+        fill_price=price("150.0"),
         quantity=100.0,
         thesis_id=None,
         bracket_id=None,
@@ -368,36 +370,32 @@ def _make_changelog_entry(
 
 
 def _make_cash_ledger() -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": 50000.0,
-            "settled_cash_usd": 48000.0,
-            "reserved_capital_usd": 2000.0,
-            "available_buying_power_usd": 46000.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 50.0,
-            "true_deployable_capital_usd": 44000.0,
-            "regt_excess_trailing_30d_usd": 1000.0,
-            "regt_excess_trailing_90d_usd": 3000.0,
-            "regt_excess_lifetime_usd": 10000.0,
-        }
+    return CashLedger(
+        current_cash_usd=50000.0,
+        settled_cash_usd=48000.0,
+        reserved_capital_usd=2000.0,
+        available_buying_power_usd=46000.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=50.0,
+        true_deployable_capital_usd=44000.0,
+        regt_excess_trailing_30d_usd=1000.0,
+        regt_excess_trailing_90d_usd=3000.0,
+        regt_excess_lifetime_usd=10000.0,
     )
 
 
 def _make_drawdown_state() -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 2.0,
-            "equity_high_water_mark_usd": 110000.0,
-            "drawdown_duration_hours": 8.0,
-            "lifetime_max_drawdown_pct": 5.0,
-            "intraday_drawdown_pct": 0.5,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=2.0,
+        equity_high_water_mark_usd=110000.0,
+        drawdown_duration_hours=8.0,
+        lifetime_max_drawdown_pct=5.0,
+        intraday_drawdown_pct=0.5,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -406,158 +404,127 @@ def _make_risk_budget() -> RiskBudgetConsumption:
 
 
 def _make_active_risk_params() -> ActiveRiskParameterSet:
-    return ActiveRiskParameterSet.model_validate(
-        {
-            "regime_label": RegimeLabel.NORMAL,
-            "transition_state": RegimeTransitionState.STABLE,
-            "transition_invocations_remaining": 0,
-            "parameter_change_flag": False,
-            "entries": (),
-            "active_overlays": (),
-        }
+    return ActiveRiskParameterSet(
+        regime_label=RegimeLabel.NORMAL,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        parameter_change_flag=False,
+        entries=(),
+        active_overlays=(),
     )
 
 
 def _make_thesis_quality() -> ThesisQualityAggregate:
-    rwc = ResolutionWindowCounts.model_validate(
-        {
-            "window": TrailingWindow.FIVE_DAYS,
-            "total_resolutions": 0,
-            "validated": 0,
-            "profitable_but_wrong": 0,
-            "invalidated_stopped_correctly": 0,
-            "invalidated_wrong_on_exit": 0,
-            "cancelled_never_entered": 0,
-        }
+    rwc = ResolutionWindowCounts(
+        window=TrailingWindow.FIVE_DAYS,
+        total_resolutions=0,
+        validated=0,
+        profitable_but_wrong=0,
+        invalidated_stopped_correctly=0,
+        invalidated_wrong_on_exit=0,
+        cancelled_never_entered=0,
     )
-    dur = ThesisDurationStat.model_validate(
-        {
-            "window": TrailingWindow.FIVE_DAYS,
-            "mean_actual_to_expected_ratio": 1.0,
-            "median_actual_to_expected_ratio": 1.0,
-            "count": 0,
-        }
+    dur = ThesisDurationStat(
+        window=TrailingWindow.FIVE_DAYS,
+        mean_actual_to_expected_ratio=1.0,
+        median_actual_to_expected_ratio=1.0,
+        count=0,
     )
-    inv_timing = InvalidationTimingStat.model_validate(
-        {
-            "window": TrailingWindow.FIVE_DAYS,
-            "class_distribution": {
-                InvalidationTimingClass.EARLY: 0,
-                InvalidationTimingClass.ON_TIME: 0,
-                InvalidationTimingClass.LATE: 0,
-            },
-            "mean_position_age_at_invalidation_hours": 0.0,
-        }
+    inv_timing = InvalidationTimingStat(
+        window=TrailingWindow.FIVE_DAYS,
+        class_distribution={
+            InvalidationTimingClass.EARLY: 0,
+            InvalidationTimingClass.ON_TIME: 0,
+            InvalidationTimingClass.LATE: 0,
+        },
+        mean_position_age_at_invalidation_hours=0.0,
     )
-    shr = SignalHitRate.model_validate(
-        {
-            "signal_type": "volume",
-            "window": TrailingWindow.FIVE_DAYS,
-            "cited_count": 0,
-            "validated_count": 0,
-        }
+    shr = SignalHitRate(
+        signal_type="volume", window=TrailingWindow.FIVE_DAYS, cited_count=0, validated_count=0
     )
-    stc = SignalToThesisConversion.model_validate(
-        {
-            "signal_type": "volume",
-            "window": TrailingWindow.FIVE_DAYS,
-            "signal_observed_count": 0,
-            "pm_approved_count": 0,
-        }
+    stc = SignalToThesisConversion(
+        signal_type="volume",
+        window=TrailingWindow.FIVE_DAYS,
+        signal_observed_count=0,
+        pm_approved_count=0,
     )
-    cc = ConvictionCalibrationEntry.model_validate(
-        {
-            "conviction_level": 1,
-            "window": TrailingWindow.FIVE_DAYS,
-            "count": 0,
-            "validation_rate": 0.0,
-            "mean_realized_pnl_pct": 0.0,
-        }
+    cc = ConvictionCalibrationEntry(
+        conviction_level=1,
+        window=TrailingWindow.FIVE_DAYS,
+        count=0,
+        validation_rate=0.0,
+        mean_realized_pnl_pct=0.0,
     )
-    csd = ConvictionSizingDeviation.model_validate(
-        {
-            "window": TrailingWindow.FIVE_DAYS,
-            "total_proposals": 0,
-            "pm_sized_above_advisory_count": 0,
-            "pm_sized_below_advisory_count": 0,
-            "pm_sized_within_advisory_count": 0,
-            "outcome_correlation_above": None,
-            "outcome_correlation_below": None,
-        }
+    csd = ConvictionSizingDeviation(
+        window=TrailingWindow.FIVE_DAYS,
+        total_proposals=0,
+        pm_sized_above_advisory_count=0,
+        pm_sized_below_advisory_count=0,
+        pm_sized_within_advisory_count=0,
+        outcome_correlation_above=None,
+        outcome_correlation_below=None,
     )
-    pa = PerformanceAttributionEntry.model_validate(
-        {
-            "dimension": AttributionDimension.SECTOR,
-            "key": "Technology",
-            "window": TrailingWindow.FIVE_DAYS,
-            "cumulative_realized_pnl_usd": 0.0,
-            "realized_pnl_pct_of_window_capital": 0.0,
-            "count": 0,
-        }
+    pa = PerformanceAttributionEntry(
+        dimension=AttributionDimension.SECTOR,
+        key="Technology",
+        window=TrailingWindow.FIVE_DAYS,
+        cumulative_realized_pnl_usd=0.0,
+        realized_pnl_pct_of_window_capital=0.0,
+        count=0,
     )
-    ab = AlphaBetaDecomposition.model_validate(
-        {
-            "window": TrailingWindow.FIVE_DAYS,
-            "total_realized_pnl_usd": 0.0,
-            "market_component_usd": 0.0,
-            "sector_component_usd": 0.0,
-            "alpha_component_usd": 0.0,
-        }
+    ab = AlphaBetaDecomposition(
+        window=TrailingWindow.FIVE_DAYS,
+        total_realized_pnl_usd=0.0,
+        market_component_usd=0.0,
+        sector_component_usd=0.0,
+        alpha_component_usd=0.0,
     )
-    return ThesisQualityAggregate.model_validate(
-        {
-            "as_of_timestamp": _T0,
-            "resolution_counts_by_window": (rwc,),
-            "duration_stats_by_window": (dur,),
-            "invalidation_timing_stats_by_window": (inv_timing,),
-            "signal_hit_rates": (shr,),
-            "signal_to_thesis_conversions": (stc,),
-            "conviction_calibration": (cc,),
-            "conviction_sizing_deviation_by_window": (csd,),
-            "performance_attribution": (pa,),
-            "alpha_beta_decomposition_by_window": (ab,),
-        }
+    return ThesisQualityAggregate(
+        as_of_timestamp=_T0,
+        resolution_counts_by_window=(rwc,),
+        duration_stats_by_window=(dur,),
+        invalidation_timing_stats_by_window=(inv_timing,),
+        signal_hit_rates=(shr,),
+        signal_to_thesis_conversions=(stc,),
+        conviction_calibration=(cc,),
+        conviction_sizing_deviation_by_window=(csd,),
+        performance_attribution=(pa,),
+        alpha_beta_decomposition_by_window=(ab,),
     )
 
 
 def _make_pnl() -> PortfolioPnL:
-    return PortfolioPnL.model_validate(
-        {
-            "total_unrealized_pnl_usd": 500.0,
-            "total_unrealized_pnl_pct_of_portfolio": 1.5,
-            "daily_realized_pnl_usd": 200.0,
-            "daily_total_pnl_usd": 700.0,
-            "cumulative_realized_pnl_usd": 10000.0,
-            "rolling_realized_pnl": {"1d": 200.0, "3d": 600.0, "5d": 1000.0, "20d": 3000.0},
-            "win_rate_pct": None,
-            "average_win_size_usd": None,
-            "average_loss_size_usd": None,
-            "profit_factor": None,
-        }
+    return PortfolioPnL(
+        total_unrealized_pnl_usd=500.0,
+        total_unrealized_pnl_pct_of_portfolio=1.5,
+        daily_realized_pnl_usd=200.0,
+        daily_total_pnl_usd=700.0,
+        cumulative_realized_pnl_usd=10000.0,
+        rolling_realized_pnl={"1d": 200.0, "3d": 600.0, "5d": 1000.0, "20d": 3000.0},
+        win_rate_pct=None,
+        average_win_size_usd=None,
+        average_loss_size_usd=None,
+        profit_factor=None,
     )
 
 
 def _make_directional() -> DirectionalExposure:
-    return DirectionalExposure.model_validate(
-        {
-            "total_long_delta_adjusted_usd": 50000.0,
-            "total_short_delta_adjusted_usd": 0.0,
-            "net_directional_pct_of_portfolio": 50.0,
-            "gross_pct_of_portfolio": 50.0,
-        }
+    return DirectionalExposure(
+        total_long_delta_adjusted_usd=50000.0,
+        total_short_delta_adjusted_usd=0.0,
+        net_directional_pct_of_portfolio=50.0,
+        gross_pct_of_portfolio=50.0,
     )
 
 
 def _make_sector_entry() -> SectorExposureEntry:
-    return SectorExposureEntry.model_validate(
-        {
-            "sector": "TECHNOLOGY",
-            "long_delta_adjusted_usd": 10000.0,
-            "short_delta_adjusted_usd": 0.0,
-            "long_pct_of_portfolio": 20.0,
-            "short_pct_of_portfolio": 0.0,
-            "long_short_ratio": None,
-        }
+    return SectorExposureEntry(
+        sector="TECHNOLOGY",
+        long_delta_adjusted_usd=10000.0,
+        short_delta_adjusted_usd=0.0,
+        long_pct_of_portfolio=20.0,
+        short_pct_of_portfolio=0.0,
+        long_short_ratio=None,
     )
 
 
@@ -595,34 +562,32 @@ def _make_snapshot(**overrides: object) -> PortfolioStateSnapshot:
         "brackets": (brk1, brk2),
     }
     base.update(overrides)
-    return PortfolioStateSnapshot.model_validate(base)
+    return PortfolioStateSnapshot(**base)
 
 
 def _make_empty_snapshot() -> PortfolioStateSnapshot:
-    return PortfolioStateSnapshot.model_validate(
-        {
-            "invocation_id": _INV_ID,
-            "phase1_committed_at": _T0,
-            "snapshot_assembled_at": _T1,
-            "pipeline_invocation_started_at": None,
-            "open_positions": (),
-            "pending_positions": (),
-            "sector_exposure": (),
-            "directional_exposure": _make_directional(),
-            "portfolio_pnl": _make_pnl(),
-            "drawdown": _make_drawdown_state(),
-            "active_theses": (),
-            "recent_thesis_resolutions": (),
-            "cash_ledger": _make_cash_ledger(),
-            "pending_orders": (),
-            "risk_budget": _make_risk_budget(),
-            "active_risk_parameters": _make_active_risk_params(),
-            "intra_invocation_changelog": (),
-            "recent_pm_decision_log": (),
-            "position_modification_trail": {},
-            "thesis_quality_aggregates": _make_thesis_quality(),
-            "brackets": (),
-        }
+    return PortfolioStateSnapshot(
+        invocation_id=_INV_ID,
+        phase1_committed_at=_T0,
+        snapshot_assembled_at=_T1,
+        pipeline_invocation_started_at=None,
+        open_positions=(),
+        pending_positions=(),
+        sector_exposure=(),
+        directional_exposure=_make_directional(),
+        portfolio_pnl=_make_pnl(),
+        drawdown=_make_drawdown_state(),
+        active_theses=(),
+        recent_thesis_resolutions=(),
+        cash_ledger=_make_cash_ledger(),
+        pending_orders=(),
+        risk_budget=_make_risk_budget(),
+        active_risk_parameters=_make_active_risk_params(),
+        intra_invocation_changelog=(),
+        recent_pm_decision_log=(),
+        position_modification_trail={},
+        thesis_quality_aggregates=_make_thesis_quality(),
+        brackets=(),
     )
 
 
@@ -641,25 +606,25 @@ class TestStrategistValueObjects:
             pending_orders=(),
             modification_trail=(),
         )
-        with pytest.raises(ValidationError):
+        with pytest.raises(FrozenInstanceError):
             view.thesis = None
 
     def test_abandoned_action_frozen(self) -> None:
         action = StrategistAbandonedAction(
             envelope_id="env-001",
             command_type="ADD",
-            position_id="POS-001",
+            position_id=PositionId("POS-001"),
             order_id=None,
             abandoned_at=_T0,
             failure_reason="blocked",
         )
-        with pytest.raises(ValidationError):
+        with pytest.raises(FrozenInstanceError):
             action.envelope_id = "other"
 
     def test_strategist_view_frozen(self) -> None:
         snapshot = _make_snapshot()
         view = project_strategist_view(snapshot)
-        with pytest.raises(ValidationError):
+        with pytest.raises(FrozenInstanceError):
             view.positions = ()
 
 
@@ -856,8 +821,8 @@ def _make_position_closed_entry(
         source=source,
         detail=PositionClosedDetail(
             exit_method=exit_method,
-            exit_price=exit_price,
-            realized_pnl_usd=realized_pnl_usd,
+            exit_price=money(exit_price),
+            realized_pnl_usd=signed_money(realized_pnl_usd),
             thesis_resolution_category="invalidated",
         ),
     )
@@ -868,11 +833,11 @@ class TestBetweenInvocationClosuresProjection:
         """BRACKET_MANAGER-sourced POSITION_CLOSED projects with origin='bracket_manager'."""
         entry = _make_position_closed_entry(
             entry_id="ENTRY-CLOSE-BRK",
-            position_id="POS-001",
+            position_id=PositionId("POS-001"),
             timestamp=_T0,
             source=EventSource.BRACKET_MANAGER,
             exit_method=PositionExitMethod.STOP_TRIGGERED,
-            order_id="ord-close-1",
+            order_id=OrderId("ord-close-1"),
         )
         snapshot = _make_snapshot(intra_invocation_changelog=(entry,))
         view = project_strategist_view(snapshot)
@@ -888,7 +853,7 @@ class TestBetweenInvocationClosuresProjection:
         """BRACKET_MANAGER + TARGET_REACHED projects with the matching exit_method."""
         entry = _make_position_closed_entry(
             entry_id="ENTRY-CLOSE-TGT",
-            position_id="POS-001",
+            position_id=PositionId("POS-001"),
             timestamp=_T0,
             source=EventSource.BRACKET_MANAGER,
             exit_method=PositionExitMethod.TARGET_REACHED,
@@ -902,7 +867,7 @@ class TestBetweenInvocationClosuresProjection:
         """MARGIN_MONITOR POSITION_CLOSED projects with origin='margin_monitor'."""
         entry = _make_position_closed_entry(
             entry_id="ENTRY-CLOSE-MGN",
-            position_id="POS-001",
+            position_id=PositionId("POS-001"),
             timestamp=_T0,
             source=EventSource.MARGIN_MONITOR,
             exit_method=PositionExitMethod.MARGIN_LIQUIDATION,
@@ -918,7 +883,7 @@ class TestBetweenInvocationClosuresProjection:
         """GUARDRAIL_LAYER-sourced POSITION_CLOSED projects with origin='guardrail_layer'."""
         entry = _make_position_closed_entry(
             entry_id="ENTRY-CLOSE-GR",
-            position_id="POS-001",
+            position_id=PositionId("POS-001"),
             timestamp=_T0,
             source=EventSource.GUARDRAIL_LAYER,
             exit_method=PositionExitMethod.PM_DECISION,
@@ -942,7 +907,7 @@ class TestBetweenInvocationClosuresProjection:
             timestamp=_T0,
             event_type=EventType.PM_DECISION,
             event_group=EventGroup.PM_DECISION,
-            position_id="POS-001",
+            position_id=PositionId("POS-001"),
             order_id=None,
             thesis_id=None,
             source=EventSource.COMMAND_EXECUTOR,
@@ -962,11 +927,11 @@ class TestBetweenInvocationClosuresProjection:
         )
         close_entry = _make_position_closed_entry(
             entry_id="ENTRY-CLOSE-EG",
-            position_id="POS-001",
+            position_id=PositionId("POS-001"),
             timestamp=_T1,
             source=EventSource.COMMAND_EXECUTOR,
             exit_method=PositionExitMethod.PM_DECISION,
-            order_id="MON.mon-001.1.0",
+            order_id=OrderId("MON.mon-001.1.0"),
         )
         snapshot = _make_snapshot(intra_invocation_changelog=(pm_entry, close_entry))
         view = project_strategist_view(snapshot)
@@ -979,7 +944,7 @@ class TestBetweenInvocationClosuresProjection:
         """Mix of bracket_manager and engine_guardrail closures returns in chronological order."""
         bracket_entry = _make_position_closed_entry(
             entry_id="ENTRY-CLOSE-1",
-            position_id="POS-001",
+            position_id=PositionId("POS-001"),
             timestamp=_T2,  # later
             source=EventSource.BRACKET_MANAGER,
             exit_method=PositionExitMethod.STOP_TRIGGERED,
@@ -990,7 +955,7 @@ class TestBetweenInvocationClosuresProjection:
             timestamp=_T0,
             event_type=EventType.PM_DECISION,
             event_group=EventGroup.PM_DECISION,
-            position_id="POS-002",
+            position_id=PositionId("POS-002"),
             order_id=None,
             thesis_id=None,
             source=EventSource.COMMAND_EXECUTOR,
@@ -1010,11 +975,11 @@ class TestBetweenInvocationClosuresProjection:
         )
         eg_close = _make_position_closed_entry(
             entry_id="ENTRY-CLOSE-EG-2",
-            position_id="POS-002",
+            position_id=PositionId("POS-002"),
             timestamp=_T1,  # earlier than bracket_entry
             source=EventSource.COMMAND_EXECUTOR,
             exit_method=PositionExitMethod.PM_DECISION,
-            order_id="MON.mon-001.2.0",
+            order_id=OrderId("MON.mon-001.2.0"),
         )
         snapshot = _make_snapshot(
             intra_invocation_changelog=(bracket_entry, pm_entry, eg_close),
@@ -1035,7 +1000,7 @@ class TestBetweenInvocationClosuresProjection:
         """FILL_PROCESSOR POSITION_CLOSED (normal PM-driven close) is NOT projected."""
         entry = _make_position_closed_entry(
             entry_id="ENTRY-CLOSE-FP",
-            position_id="POS-001",
+            position_id=PositionId("POS-001"),
             timestamp=_T0,
             source=EventSource.FILL_PROCESSOR,
             exit_method=PositionExitMethod.PM_DECISION,
@@ -1048,7 +1013,7 @@ class TestBetweenInvocationClosuresProjection:
         """BetweenInvocationClosure.ticker is resolved from the open-positions tuple."""
         entry = _make_position_closed_entry(
             entry_id="ENTRY-CLOSE-T",
-            position_id="POS-001",
+            position_id=PositionId("POS-001"),
             timestamp=_T0,
             source=EventSource.BRACKET_MANAGER,
             exit_method=PositionExitMethod.STOP_TRIGGERED,
@@ -1060,8 +1025,8 @@ class TestBetweenInvocationClosuresProjection:
 
     def test_between_invocation_closure_frozen(self) -> None:
         closure = BetweenInvocationClosure(
-            position_id="POS-001",
-            ticker="AAPL",
+            position_id=PositionId("POS-001"),
+            ticker=Symbol("AAPL"),
             instrument_type=InstrumentType.EQUITY,
             closed_at=_T0,
             closing_order_id="ord-1",
@@ -1069,7 +1034,7 @@ class TestBetweenInvocationClosuresProjection:
             origin="bracket_manager",
             rationale="price-based stop fired",
         )
-        with pytest.raises(ValidationError):
+        with pytest.raises(FrozenInstanceError):
             closure.position_id = "POS-002"
 
     def test_rationale_renders_em_dash_for_zero_exit_price(self) -> None:
@@ -1080,7 +1045,7 @@ class TestBetweenInvocationClosuresProjection:
         """
         entry = _make_position_closed_entry(
             entry_id="ENTRY-CLOSE-STRAT",
-            position_id="POS-001",
+            position_id=PositionId("POS-001"),
             timestamp=_T0,
             source=EventSource.BRACKET_MANAGER,
             exit_method=PositionExitMethod.STOP_TRIGGERED,
@@ -1099,7 +1064,7 @@ class TestBetweenInvocationClosuresProjection:
         """
         entry = _make_position_closed_entry(
             entry_id="ENTRY-CLOSE-OPT",
-            position_id="POS-001",
+            position_id=PositionId("POS-001"),
             timestamp=_T0,
             source=EventSource.BRACKET_MANAGER,
             exit_method=PositionExitMethod.STOP_TRIGGERED,

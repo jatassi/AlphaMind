@@ -20,6 +20,7 @@ import httpx
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
+from alphamind._kernel.ids import Symbol
 from alphamind.data_sources._common import (
     RateLimiter,
     RetryShape,
@@ -589,7 +590,10 @@ class TestRateLimiter:
         def advance(seconds: float) -> None:
             tick[0] += seconds
 
-        with patch("alphamind.data_sources._common.time.monotonic", side_effect=fake_time):
+        with patch(
+            "alphamind.data_sources._common.rate_limit.time.monotonic",
+            side_effect=fake_time,
+        ):
             # Drain all tokens (bucket starts full at capacity = rate_per_minute)
             # After drain, next acquire must wait
             for _ in range(6):
@@ -859,7 +863,7 @@ class TestActiveUniverseTickers:
                 [
                     AssetUniverse(
                         asset_id="1",
-                        ticker="AAPL",
+                        ticker=Symbol("AAPL"),
                         full_name="Apple",
                         asset_class="equity",
                         asset_role="universe",
@@ -870,7 +874,7 @@ class TestActiveUniverseTickers:
                     ),
                     AssetUniverse(
                         asset_id="2",
-                        ticker="SPY",
+                        ticker=Symbol("SPY"),
                         full_name="SPY",
                         asset_class="equity",
                         asset_role="broad_market",
@@ -881,7 +885,7 @@ class TestActiveUniverseTickers:
                     ),
                     AssetUniverse(
                         asset_id="3",
-                        ticker="DELISTED",
+                        ticker=Symbol("DELISTED"),
                         full_name="DELISTED",
                         asset_class="equity",
                         asset_role="universe",

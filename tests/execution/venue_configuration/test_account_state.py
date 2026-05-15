@@ -7,11 +7,11 @@ importable from alphamind.execution.venue_configuration.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind.execution.broker_adapter.queries import TradeAccountSnapshot
 from alphamind.execution.venue_configuration import (
@@ -287,9 +287,9 @@ def test_get_account_called_once_per_separate_invocation() -> None:
 
 
 def test_venue_account_state_is_frozen() -> None:
-    """VenueAccountState is a frozen Pydantic model — fields are immutable."""
+    """VenueAccountState is a frozen dataclass — fields are immutable."""
     snapshot = _make_snapshot()
     result = read_venue_account_state(_make_queries(snapshot))
 
-    with pytest.raises(ValidationError):
-        result.equity = 99_999.0
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        result.equity = 99_999.0  # type: ignore[misc]

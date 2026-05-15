@@ -17,6 +17,7 @@ filled event. Net cost basis follows the signed-sum-across-legs convention
 described in ``orders-and-brackets.md § Multi-leg strategies`` (positive =
 net debit / paid premium; negative = net credit / received premium).
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -28,55 +29,19 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price, signed_money
+from alphamind._kernel.regime import RiskZone
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.tables.brackets import BracketRow
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger import (
-    CASH_LEDGER_SINGLETON_ID,
-    CashLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
-from alphamind.execution.state_persistence.tables.orders import OrderRow
-from alphamind.execution.state_persistence.tables.orders_codec import (
-    record_to_row as order_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
-from alphamind.execution.state_persistence.tables.theses import ThesisRow
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
-)
-from alphamind.execution.state_persistence.write_paths.fill_persistence import (
+from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    FillProcessingStatus,
-    FillRecord,
 )
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
@@ -129,7 +94,52 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     MarketInputs,
     RealizedVolEntry,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+    InvocationHandle,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.records import (
+    FillProcessingStatus,
+    FillRecord,
+)
+from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger import (
+    CASH_LEDGER_SINGLETON_ID,
+    CashLedgerRow,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
+)
+from alphamind.state.tables.fill_records import FillRecordRow
+from alphamind.state.tables.orders import OrderRow
+from alphamind.state.tables.orders_codec import (
+    record_to_row as order_record_to_row,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
+)
+from alphamind.state.tables.theses import ThesisRow
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
+)
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-2026-05-08T12:00:00Z-strat"
@@ -151,7 +161,7 @@ async def db(
     db_path = tmp_path / "alphamind.db"
 
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -269,7 +279,7 @@ def _make_options_spec(
     contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
 ) -> OptionsInstrumentSpec:
     return OptionsInstrumentSpec(
-        underlying=_UNDERLYING,
+        underlying=Symbol(_UNDERLYING),
         strike=strike,
         expiration=_EXPIRATION,
         contract_type=contract_type,
@@ -286,7 +296,7 @@ def _make_options_details(
     contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
 ) -> OptionsPositionDetails:
     return OptionsPositionDetails(
-        underlying_ticker=_UNDERLYING,
+        underlying_ticker=Symbol(_UNDERLYING),
         strike_price=strike,
         expiration_date=_EXPIRATION,
         contract_type=contract_type,
@@ -373,21 +383,19 @@ def _make_pending_strategy_position(
     strategy_type_label: str = "iron-condor",
 ) -> PositionRecord:
     """Build a PENDING strategy position with no fills yet."""
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.PENDING,
-            "direction": Direction.LONG,
-            "entry_timestamp": None,
-            "details": _make_strategy_details(legs=legs, strategy_type_label=strategy_type_label),
-            "execution_history": (),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.PENDING,
+        direction=Direction.LONG,
+        entry_timestamp=None,
+        details=_make_strategy_details(legs=legs, strategy_type_label=strategy_type_label),
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -401,21 +409,19 @@ def _make_open_strategy_position(
     strategy_type_label: str = "iron-condor",
 ) -> PositionRecord:
     """Build an OPEN strategy position whose ``execution_history`` reflects entry fills."""
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": _make_strategy_details(legs=legs, strategy_type_label=strategy_type_label),
-            "execution_history": execution_history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=_make_strategy_details(legs=legs, strategy_type_label=strategy_type_label),
+        execution_history=execution_history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -445,32 +451,30 @@ def _make_strategy_parent_order(
             _make_options_spec(contract_type=OptionContractType.CALL, strike=430.0),
         )
     )
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": position_id,
-            "bracket_id": bracket_id,
-            "role": role,
-            "instrument_spec": StrategyInstrumentSpec(legs=spec_legs),
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.MLEG,
-            "price_parameters": PriceParameters(),
-            "quantity": quantity,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": quantity,
-            "modification_count": 0,
-            "originating_thesis_id": "thesis-strat-1",
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=bracket_id,
+        role=role,
+        instrument_spec=StrategyInstrumentSpec(legs=spec_legs),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.MLEG,
+        price_parameters=PriceParameters(),
+        quantity=quantity,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=quantity,
+        modification_count=0,
+        originating_thesis_id=ThesisId("thesis-strat-1"),
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -496,36 +500,34 @@ def _make_leg_order(
     a single-instrument identifier — the strategy-as-mleg structure lives on
     the parent order.
     """
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": position_id,
-            "bracket_id": bracket_id,
-            "role": role,
-            "instrument_spec": _make_options_spec(
-                contract_type=contract_type,
-                strike=strike,
-                contract_multiplier=contract_multiplier,
-            ),
-            "direction": direction,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": quantity,
-            "duration": OrderDuration.DAY,
-            "status": status,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": filled_quantity,
-            "avg_fill_price": avg_fill_price,
-            "remaining_quantity": max(quantity - filled_quantity, 0.0),
-            "modification_count": 0,
-            "originating_thesis_id": "thesis-strat-1",
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=bracket_id,
+        role=role,
+        instrument_spec=_make_options_spec(
+            contract_type=contract_type,
+            strike=strike,
+            contract_multiplier=contract_multiplier,
+        ),
+        direction=direction,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=quantity,
+        duration=OrderDuration.DAY,
+        status=status,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=filled_quantity,
+        avg_fill_price=avg_fill_price,
+        remaining_quantity=max(quantity - filled_quantity, 0.0),
+        modification_count=0,
+        originating_thesis_id=ThesisId("thesis-strat-1"),
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -573,15 +575,17 @@ def _make_pending_strategy_bracket(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
         order_id=None,
-        trigger=PriceTrigger(underlying_ticker=_UNDERLYING, threshold_usd=405.0, direction="LTE"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol(_UNDERLYING), threshold_usd=405.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.PENDING_ENTRY,
-        entry_order_id="ord-strat-parent",
+        entry_order_id=OrderId("ord-strat-parent"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -597,15 +601,17 @@ def _make_active_strategy_bracket(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
         order_id=None,
-        trigger=PriceTrigger(underlying_ticker=_UNDERLYING, threshold_usd=405.0, direction="LTE"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol(_UNDERLYING), threshold_usd=405.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-strat-parent",
+        entry_order_id=OrderId("ord-strat-parent"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -620,7 +626,7 @@ def _make_active_strategy_thesis(
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -640,8 +646,8 @@ def _make_active_strategy_thesis(
     generation_at = _NOW - timedelta(hours=4)
     time_expectation_hours = 24.0
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary=f"{_UNDERLYING} iron condor — defined-risk neutral",
         key_catalyst="Range-bound trade plan",
         position_size_rationale="Sized to max-loss budget",
@@ -670,7 +676,7 @@ def _make_strategy_thesis_with_resolved_components(
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -690,8 +696,8 @@ def _make_strategy_thesis_with_resolved_components(
     generation_at = _NOW - timedelta(hours=4)
     time_expectation_hours = 24.0
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary=f"{_UNDERLYING} iron condor",
         key_catalyst="Range-bound",
         position_size_rationale="Sized to max-loss budget",
@@ -709,38 +715,34 @@ def _make_strategy_thesis_with_resolved_components(
 
 
 def _make_cash_ledger(current_cash_usd: float = 100_000.0) -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": current_cash_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=current_cash_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _make_drawdown_state(
     equity_high_water_mark_usd: float = 100_000.0,
 ) -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": equity_high_water_mark_usd,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=equity_high_water_mark_usd,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -761,12 +763,12 @@ def _make_unprocessed_fill(
         fill_id=fill_id,
         order_id=order_id,
         fill_timestamp=ts,
-        fill_price=fill_price,
+        fill_price=price(fill_price),
         fill_quantity=fill_quantity,
         remaining_quantity_after=remaining_quantity_after,
         order_status_after=order_status_after,
-        slippage_usd=slippage_usd,
-        fees_usd=fees_usd,
+        slippage_usd=None if slippage_usd is None else signed_money(slippage_usd),
+        fees_usd=money(fees_usd),
         execution_venue="OPRA",
         gateway_reference=f"alp-{fill_id}",
         persistence_timestamp=ts + timedelta(seconds=1),
@@ -808,7 +810,7 @@ async def _seed_strategy_cluster(
     tests but persists every per-leg order as its own ``OrderRow`` so per-leg
     fills find their target in :func:`_read_order`.
     """
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     thesis_row, component_rows = thesis_record_to_rows(thesis)
     bracket_row, leg_rows = bracket_record_to_rows(bracket)
@@ -969,7 +971,7 @@ async def test_all_legs_filled_atomic_open_with_signed_net_cost_basis(
     """4-leg iron condor: all legs fill on the same timestamp; the position
     transitions PENDING → OPEN at the last leg's filled event with cost
     basis = signed sum across legs."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -998,13 +1000,13 @@ async def test_all_legs_filled_atomic_open_with_signed_net_cost_basis(
         ("leg-short-call", 3.50),
         ("leg-long-call", 1.50),
     )
-    for idx, (leg_order_id, price) in enumerate(fill_specs):
+    for idx, (leg_order_id, leg_price) in enumerate(fill_specs):
         await _append_fill(
             factory,
             _make_unprocessed_fill(
                 fill_id=f"fill-{leg_order_id}",
                 order_id=leg_order_id,
-                fill_price=price,
+                fill_price=leg_price,
                 fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
             ),
         )
@@ -1077,7 +1079,7 @@ async def test_long_call_spread_has_positive_net_debit(
 ) -> None:
     """Long call spread (long lower, short higher): net cost basis is positive
     (paid premium = net debit)."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1100,14 +1102,14 @@ async def test_long_call_spread_has_positive_net_debit(
     )
     leg_orders = (
         _make_leg_order(
-            order_id="leg-long-lower",
+            order_id=OrderId("leg-long-lower"),
             contract_type=OptionContractType.CALL,
             strike=420.0,
             direction=OrderDirection.BUY_TO_OPEN,
             quantity=2.0,
         ),
         _make_leg_order(
-            order_id="leg-short-upper",
+            order_id=OrderId("leg-short-upper"),
             contract_type=OptionContractType.CALL,
             strike=425.0,
             direction=OrderDirection.SELL_TO_OPEN,
@@ -1132,14 +1134,16 @@ async def test_long_call_spread_has_positive_net_debit(
     await _seed_drawdown_state(factory)
 
     # Long call @ $5.00, short call @ $2.00. Net debit = (5.00 - 2.00) * 2 * 100 = $600.
-    for idx, (leg_id, price) in enumerate((("leg-long-lower", 5.00), ("leg-short-upper", 2.00))):
+    for idx, (leg_id, leg_price) in enumerate(
+        (("leg-long-lower", 5.00), ("leg-short-upper", 2.00))
+    ):
         await _append_fill(
             factory,
             _make_unprocessed_fill(
                 fill_id=f"fill-{leg_id}",
                 order_id=leg_id,
                 fill_quantity=2.0,
-                fill_price=price,
+                fill_price=leg_price,
                 fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
             ),
         )
@@ -1176,7 +1180,7 @@ async def test_short_put_spread_has_negative_net_credit(
 ) -> None:
     """Short put spread (short higher, long lower): net cost basis is negative
     (received premium = net credit)."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1199,13 +1203,13 @@ async def test_short_put_spread_has_negative_net_credit(
     )
     leg_orders = (
         _make_leg_order(
-            order_id="leg-short-higher",
+            order_id=OrderId("leg-short-higher"),
             contract_type=OptionContractType.PUT,
             strike=415.0,
             direction=OrderDirection.SELL_TO_OPEN,
         ),
         _make_leg_order(
-            order_id="leg-long-lower",
+            order_id=OrderId("leg-long-lower"),
             contract_type=OptionContractType.PUT,
             strike=410.0,
             direction=OrderDirection.BUY_TO_OPEN,
@@ -1229,13 +1233,15 @@ async def test_short_put_spread_has_negative_net_credit(
     await _seed_drawdown_state(factory)
 
     # Short put @ $4.00, long put @ $1.50. Net credit = (4.00 - 1.50) * 1 * 100 = $250.
-    for idx, (leg_id, price) in enumerate((("leg-short-higher", 4.00), ("leg-long-lower", 1.50))):
+    for idx, (leg_id, leg_price) in enumerate(
+        (("leg-short-higher", 4.00), ("leg-long-lower", 1.50))
+    ):
         await _append_fill(
             factory,
             _make_unprocessed_fill(
                 fill_id=f"fill-{leg_id}",
                 order_id=leg_id,
-                fill_price=price,
+                fill_price=leg_price,
                 fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
             ),
         )
@@ -1273,7 +1279,7 @@ async def test_staggered_legs_only_open_at_last_filled_event(
 ) -> None:
     """3 legs filled on T1, 4th leg still PENDING → position stays PENDING.
     Once the 4th leg fills on T2 → position transitions OPEN."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1292,7 +1298,7 @@ async def test_staggered_legs_only_open_at_last_filled_event(
     await _seed_drawdown_state(factory)
 
     # T1 — 3 of 4 legs fill.
-    for idx, (leg_id, price) in enumerate(
+    for idx, (leg_id, leg_price) in enumerate(
         (
             ("leg-short-put", 4.20),
             ("leg-long-put", 1.80),
@@ -1304,7 +1310,7 @@ async def test_staggered_legs_only_open_at_last_filled_event(
             _make_unprocessed_fill(
                 fill_id=f"fill-t1-{leg_id}",
                 order_id=leg_id,
-                fill_price=price,
+                fill_price=leg_price,
                 fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
             ),
         )
@@ -1346,7 +1352,7 @@ async def test_staggered_legs_only_open_at_last_filled_event(
         factory,
         _make_unprocessed_fill(
             fill_id="fill-t2-leg-long-call",
-            order_id="leg-long-call",
+            order_id=OrderId("leg-long-call"),
             fill_price=1.50,
             fill_timestamp=_NOW - timedelta(minutes=5),
         ),
@@ -1391,7 +1397,7 @@ async def test_partial_leg_fill_position_stays_pending(
 ) -> None:
     """One leg arrives with a partial fill (order_status_after=PARTIALLY_FILLED);
     position stays PENDING and the bracket is not activated."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1414,14 +1420,14 @@ async def test_partial_leg_fill_position_stays_pending(
     )
     leg_orders = (
         _make_leg_order(
-            order_id="leg-long",
+            order_id=OrderId("leg-long"),
             contract_type=OptionContractType.CALL,
             strike=420.0,
             direction=OrderDirection.BUY_TO_OPEN,
             quantity=4.0,
         ),
         _make_leg_order(
-            order_id="leg-short",
+            order_id=OrderId("leg-short"),
             contract_type=OptionContractType.CALL,
             strike=425.0,
             direction=OrderDirection.SELL_TO_OPEN,
@@ -1450,7 +1456,7 @@ async def test_partial_leg_fill_position_stays_pending(
         factory,
         _make_unprocessed_fill(
             fill_id="fill-partial-long",
-            order_id="leg-long",
+            order_id=OrderId("leg-long"),
             fill_quantity=2.0,
             fill_price=5.00,
             order_status_after=OrderStatus.PARTIALLY_FILLED,
@@ -1501,7 +1507,7 @@ async def test_cancel_mid_fill_writes_bracket_incomplete_warning(
     """Cancel mid-fill with 2 of 4 legs filled: the position stays PENDING,
     a ``bracket_incomplete_warning`` activity-log entry is written naming the
     unfilled leg(s), and the bracket is dissolved."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1524,13 +1530,13 @@ async def test_cancel_mid_fill_writes_bracket_incomplete_warning(
     await _set_order_status(factory, "leg-long-call", OrderStatus.CANCELLED)
 
     # Per-leg fills for the 2 legs that did fill before cancel.
-    for idx, (leg_id, price) in enumerate((("leg-short-put", 4.20), ("leg-long-put", 1.80))):
+    for idx, (leg_id, leg_price) in enumerate((("leg-short-put", 4.20), ("leg-long-put", 1.80))):
         await _append_fill(
             factory,
             _make_unprocessed_fill(
                 fill_id=f"fill-{leg_id}",
                 order_id=leg_id,
-                fill_price=price,
+                fill_price=leg_price,
                 fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
             ),
         )
@@ -1587,10 +1593,10 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
 ) -> None:
     """All legs close-fill (atomic timing): OPEN → CLOSED transition happens
     when the last close fill arrives; net realized P/L computed across legs."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -1605,7 +1611,7 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
     # Close orders for each leg.
     close_leg_orders = (
         _make_leg_order(
-            order_id="close-leg-long-lower",
+            order_id=OrderId("close-leg-long-lower"),
             contract_type=OptionContractType.CALL,
             strike=420.0,
             direction=OrderDirection.SELL_TO_CLOSE,
@@ -1613,7 +1619,7 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
             role=OrderRole.CLOSE,
         ),
         _make_leg_order(
-            order_id="close-leg-short-upper",
+            order_id=OrderId("close-leg-short-upper"),
             contract_type=OptionContractType.CALL,
             strike=425.0,
             direction=OrderDirection.BUY_TO_CLOSE,
@@ -1623,10 +1629,10 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
     )
     parent_legs = _vertical_call_parent_legs()
     parent_close_order = _make_strategy_parent_order(
-        order_id="ord-strat-close",
+        order_id=OrderId("ord-strat-close"),
         quantity=2.0,
         legs=parent_legs,
-        position_id="pos-strat-1",
+        position_id=PositionId("pos-strat-1"),
         role=OrderRole.CLOSE,
     )
     parent_open_order = _make_strategy_parent_order(quantity=2.0, legs=parent_legs)
@@ -1671,7 +1677,7 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
     # short leg bought back at 3.00 (entry was 2.00, -1.00/contract). Realised
     # P/L = long(+2 * 2 contracts * multiplier 100 * sign +1) +
     # short(+1 * 2 contracts * multiplier 100 * sign -1) = +400 - 200 = +200.
-    for idx, (leg_id, price) in enumerate(
+    for idx, (leg_id, leg_price) in enumerate(
         (("close-leg-long-lower", 7.00), ("close-leg-short-upper", 3.00))
     ):
         await _append_fill(
@@ -1680,7 +1686,7 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
                 fill_id=f"fill-{leg_id}",
                 order_id=leg_id,
                 fill_quantity=2.0,
-                fill_price=price,
+                fill_price=leg_price,
                 fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
             ),
         )
@@ -1739,10 +1745,10 @@ async def test_strategy_add_recomputes_average_cost_basis(
     """ADD on an OPEN strategy: per-leg ratios scale by additional_quantity;
     new entry fills correlate to the addition; per-leg average cost basis
     recomputes as a weighted average of original and added contracts."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -1757,7 +1763,7 @@ async def test_strategy_add_recomputes_average_cost_basis(
     # ADD orders for each leg with additional_quantity=2 (scales each leg ratio by 2).
     add_leg_orders = (
         _make_leg_order(
-            order_id="add-leg-long-lower",
+            order_id=OrderId("add-leg-long-lower"),
             contract_type=OptionContractType.CALL,
             strike=420.0,
             direction=OrderDirection.BUY_TO_OPEN,
@@ -1765,7 +1771,7 @@ async def test_strategy_add_recomputes_average_cost_basis(
             role=OrderRole.ADD_ENTRY,
         ),
         _make_leg_order(
-            order_id="add-leg-short-upper",
+            order_id=OrderId("add-leg-short-upper"),
             contract_type=OptionContractType.CALL,
             strike=425.0,
             direction=OrderDirection.SELL_TO_OPEN,
@@ -1776,10 +1782,10 @@ async def test_strategy_add_recomputes_average_cost_basis(
     parent_legs = _vertical_call_parent_legs()
     parent_open_order = _make_strategy_parent_order(quantity=2.0, legs=parent_legs)
     parent_add_order = _make_strategy_parent_order(
-        order_id="ord-strat-add",
+        order_id=OrderId("ord-strat-add"),
         quantity=2.0,
         legs=parent_legs,
-        position_id="pos-strat-1",
+        position_id=PositionId("pos-strat-1"),
         role=OrderRole.ADD_ENTRY,
     )
 
@@ -1818,7 +1824,7 @@ async def test_strategy_add_recomputes_average_cost_basis(
     await _seed_drawdown_state(factory)
 
     # ADD fills: long @ $6.00, short @ $2.50 (different premium → weighted avg shift).
-    for idx, (leg_id, price) in enumerate(
+    for idx, (leg_id, leg_price) in enumerate(
         (("add-leg-long-lower", 6.00), ("add-leg-short-upper", 2.50))
     ):
         await _append_fill(
@@ -1827,7 +1833,7 @@ async def test_strategy_add_recomputes_average_cost_basis(
                 fill_id=f"fill-{leg_id}",
                 order_id=leg_id,
                 fill_quantity=2.0,
-                fill_price=price,
+                fill_price=leg_price,
                 fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
             ),
         )
@@ -1870,10 +1876,10 @@ async def test_strategy_fill_failure_rolls_back_all_state(
     """Failure mid-integration (close fill claiming more contracts than the
     leg holds) rolls back: per-leg fills stay unprocessed; cash unchanged;
     no activity-log entries persisted."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -1883,7 +1889,7 @@ async def test_strategy_fill_failure_rolls_back_all_state(
         strategy_type_label="long-call-vertical",
     )
     bad_close = _make_leg_order(
-        order_id="bad-close-long",
+        order_id=OrderId("bad-close-long"),
         contract_type=OptionContractType.CALL,
         strike=420.0,
         direction=OrderDirection.SELL_TO_CLOSE,
@@ -1919,7 +1925,7 @@ async def test_strategy_fill_failure_rolls_back_all_state(
         factory,
         _make_unprocessed_fill(
             fill_id="fill-bad-close",
-            order_id="bad-close-long",
+            order_id=OrderId("bad-close-long"),
             fill_quantity=10.0,
             fill_price=7.00,
         ),

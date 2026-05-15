@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from alphamind._kernel.money import signed_money
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine
 
@@ -34,7 +35,7 @@ def fresh_db(tmp_path: Path) -> Iterator[Path]:
     db_path = tmp_path / "alphamind.db"
 
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -99,12 +100,19 @@ async def test_run_verify_algebra_holds_per_fill(fresh_db: Path) -> None:
 
 async def test_run_verify_trailing_30d_equals_sum_of_per_fill_excess(fresh_db: Path) -> None:
     """The trailing-30d aggregate equals the sum of the per-fill regt_excess_over_pm."""
+    from decimal import Decimal
+
     from alphamind.scripts.verify_regt_margin_attribution import run_verify
 
     result = await run_verify(fresh_db, invocation_id="verify-regt-agg-001")
     assert result.ok, result.failures
-    expected = sum(row.attribution.regt_excess_over_pm for row in result.attributions)
-    assert abs(result.trailing_30d_usd - expected) < 1e-6
+    # ALP-462 — ``regt_excess_over_pm`` is ``Money``; sum in Decimal space and
+    # compare against the float trailing-30d aggregate via Decimal coercion.
+    expected = sum(
+        (row.attribution.regt_excess_over_pm for row in result.attributions),
+        start=Decimal(0),
+    )
+    assert abs(Decimal(str(result.trailing_30d_usd)) - expected) < Decimal("1e-6")
 
 
 async def test_run_verify_all_attribution_fields_finite(fresh_db: Path) -> None:
@@ -140,32 +148,32 @@ async def test_run_verify_all_attribution_fields_finite(fresh_db: Path) -> None:
 def test_collect_assertion_failures_returns_empty_on_clean_pass() -> None:
     """The pure assertion-collector returns ``()`` when fields are finite,
     algebra holds, and the trailing-30d aggregate equals the sum."""
-    from alphamind.execution.state_persistence.write_paths.records import (
-        RegTMarginAttribution,
-    )
     from alphamind.scripts.verify_regt_margin_attribution import (
         AttributionRow,
         _collect_assertion_failures,
     )
+    from alphamind.state.records import (
+        RegTMarginAttribution,
+    )
 
     attr_a = RegTMarginAttribution(
-        regt_margin_before=100.0,
-        regt_margin_after=150.0,
-        regt_marginal_consumption=50.0,
-        pm_equivalent_before=40.0,
-        pm_equivalent_after=60.0,
-        pm_marginal_consumption=20.0,
-        regt_excess_over_pm=30.0,
+        regt_margin_before=signed_money(100.0),
+        regt_margin_after=signed_money(150.0),
+        regt_marginal_consumption=signed_money(50.0),
+        pm_equivalent_before=signed_money(40.0),
+        pm_equivalent_after=signed_money(60.0),
+        pm_marginal_consumption=signed_money(20.0),
+        regt_excess_over_pm=signed_money(30.0),
         pm_model_version="ibkr_mirror_v1_2026Q2",
     )
     attr_b = RegTMarginAttribution(
-        regt_margin_before=200.0,
-        regt_margin_after=180.0,
-        regt_marginal_consumption=-20.0,
-        pm_equivalent_before=80.0,
-        pm_equivalent_after=70.0,
-        pm_marginal_consumption=-10.0,
-        regt_excess_over_pm=-10.0,
+        regt_margin_before=signed_money(200.0),
+        regt_margin_after=signed_money(180.0),
+        regt_marginal_consumption=signed_money(-20.0),
+        pm_equivalent_before=signed_money(80.0),
+        pm_equivalent_after=signed_money(70.0),
+        pm_marginal_consumption=signed_money(-10.0),
+        regt_excess_over_pm=signed_money(-10.0),
         pm_model_version="ibkr_mirror_v1_2026Q2",
     )
     rows = (
@@ -179,33 +187,33 @@ def test_collect_assertion_failures_returns_empty_on_clean_pass() -> None:
 def test_collect_assertion_failures_flags_algebra_violation() -> None:
     """A regt_excess_over_pm not equal to (regt_marginal - pm_marginal) surfaces a
     structured FAIL message in the runbook's vocabulary."""
-    from alphamind.execution.state_persistence.write_paths.records import (
-        RegTMarginAttribution,
-    )
     from alphamind.scripts.verify_regt_margin_attribution import (
         AttributionRow,
         _collect_assertion_failures,
     )
+    from alphamind.state.records import (
+        RegTMarginAttribution,
+    )
 
     broken = RegTMarginAttribution(
-        regt_margin_before=100.0,
-        regt_margin_after=150.0,
-        regt_marginal_consumption=50.0,
-        pm_equivalent_before=40.0,
-        pm_equivalent_after=60.0,
-        pm_marginal_consumption=20.0,
+        regt_margin_before=signed_money(100.0),
+        regt_margin_after=signed_money(150.0),
+        regt_marginal_consumption=signed_money(50.0),
+        pm_equivalent_before=signed_money(40.0),
+        pm_equivalent_after=signed_money(60.0),
+        pm_marginal_consumption=signed_money(20.0),
         # Algebra says this should be 30.0; we set 99.0 to force the assertion to fail.
-        regt_excess_over_pm=99.0,
+        regt_excess_over_pm=signed_money(99.0),
         pm_model_version="ibkr_mirror_v1_2026Q2",
     )
     sane = RegTMarginAttribution(
-        regt_margin_before=200.0,
-        regt_margin_after=180.0,
-        regt_marginal_consumption=-20.0,
-        pm_equivalent_before=80.0,
-        pm_equivalent_after=70.0,
-        pm_marginal_consumption=-10.0,
-        regt_excess_over_pm=-10.0,
+        regt_margin_before=signed_money(200.0),
+        regt_margin_after=signed_money(180.0),
+        regt_marginal_consumption=signed_money(-20.0),
+        pm_equivalent_before=signed_money(80.0),
+        pm_equivalent_after=signed_money(70.0),
+        pm_marginal_consumption=signed_money(-10.0),
+        regt_excess_over_pm=signed_money(-10.0),
         pm_model_version="ibkr_mirror_v1_2026Q2",
     )
     rows = (
@@ -220,22 +228,22 @@ def test_collect_assertion_failures_flags_algebra_violation() -> None:
 def test_collect_assertion_failures_flags_trailing_30d_mismatch() -> None:
     """A trailing-30d aggregate that disagrees with the sum of per-fill excess
     surfaces the runbook's 'trailing-30d aggregate mismatch' message."""
-    from alphamind.execution.state_persistence.write_paths.records import (
-        RegTMarginAttribution,
-    )
     from alphamind.scripts.verify_regt_margin_attribution import (
         AttributionRow,
         _collect_assertion_failures,
     )
+    from alphamind.state.records import (
+        RegTMarginAttribution,
+    )
 
     attr = RegTMarginAttribution(
-        regt_margin_before=100.0,
-        regt_margin_after=150.0,
-        regt_marginal_consumption=50.0,
-        pm_equivalent_before=40.0,
-        pm_equivalent_after=60.0,
-        pm_marginal_consumption=20.0,
-        regt_excess_over_pm=30.0,
+        regt_margin_before=signed_money(100.0),
+        regt_margin_after=signed_money(150.0),
+        regt_marginal_consumption=signed_money(50.0),
+        pm_equivalent_before=signed_money(40.0),
+        pm_equivalent_after=signed_money(60.0),
+        pm_marginal_consumption=signed_money(20.0),
+        regt_excess_over_pm=signed_money(30.0),
         pm_model_version="ibkr_mirror_v1_2026Q2",
     )
     rows = (

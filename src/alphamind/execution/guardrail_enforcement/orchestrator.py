@@ -14,23 +14,23 @@ Guardrail enforcement layer; ``docs/design/06-risk-guardrails/state-delivery.md`
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
-
-from pydantic import BaseModel, ConfigDict
 
 from alphamind.execution.guardrail_enforcement.composition import (
     compose_active_risk_parameters,
 )
-from alphamind.portfolio_state.records.capital import ActiveRiskParameterSet
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.risk_guardrails.breach_behavior.types import DrawdownTier
 
 if TYPE_CHECKING:
     from alphamind.config.models.guardrails import ProgressiveTier
-    from alphamind.portfolio_state.records.capital import DrawdownState
+    from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
     from alphamind.risk_guardrails.regime_adaptation.types import RegimeAdaptationOutput
 
 
-class Phase1EnforcementResult(BaseModel):
+@dataclass(frozen=True, slots=True)
+class Phase1EnforcementResult:
     """Per-invocation Phase 1 enforcement-layer output.
 
     Bundles the canonical ``ActiveRiskParameterSet`` (regime-resolved +
@@ -38,8 +38,6 @@ class Phase1EnforcementResult(BaseModel):
     validation tool, and the engine T3 check, plus the classified
     drawdown tier for downstream halt-mode and emergency-trigger logic.
     """
-
-    model_config = ConfigDict(frozen=True)
 
     active_risk_parameters: ActiveRiskParameterSet
     drawdown_tier: DrawdownTier | None

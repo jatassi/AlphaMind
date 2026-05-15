@@ -5,12 +5,19 @@ shared by every instrument type. Consumers reasoning generically about
 positions can annotate against the Protocol; per
 ``docs/design/05-execution-layer/position-model.md`` § Base position.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    Symbol,
+)
 from alphamind.portfolio_state.protocols.positions import BasePositionProtocol
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -34,7 +41,7 @@ _FILL = PositionFill(
     fees=1.0,
 )
 _LONG_EQUITY = EquityPositionDetails(
-    ticker="AAPL",
+    ticker=Symbol("AAPL"),
     share_count=100.0,
     average_cost_basis_per_share=150.0,
 )
@@ -56,7 +63,7 @@ def _make_record(**overrides: object) -> PositionRecord:
         "origin": None,
     }
     kwargs.update(overrides)
-    return PositionRecord.model_validate(kwargs)
+    return PositionRecord(**kwargs)
 
 
 def _make_view(**overrides: object) -> PositionView:
@@ -75,7 +82,7 @@ def _make_view(**overrides: object) -> PositionView:
         "risk_reward_at_current": None,
     }
     kwargs.update(overrides)
-    return PositionView.model_validate(kwargs)
+    return PositionView(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -123,11 +130,11 @@ def test_order_record_does_not_satisfy_base_protocol() -> None:
     )
 
     order = OrderRecord(
-        order_id="ORD-001",
+        order_id=OrderId("ORD-001"),
         position_id=None,
-        bracket_id="BR-001",
+        bracket_id=BracketId("BR-001"),
         role=OrderRole.ENTRY,
-        instrument_spec=EquityInstrumentSpec(ticker="AAPL"),
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
         direction=OrderDirection.BUY,
         order_type=OrderType.MARKET,
         order_class=OrderClass.SIMPLE,
@@ -135,8 +142,8 @@ def test_order_record_does_not_satisfy_base_protocol() -> None:
         quantity=100.0,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
-        alpaca_order_id="ALP-1",
-        alpaca_order_id_chain=("ALP-1",),
+        alpaca_order_id=AlpacaOrderId("ALP-1"),
+        alpaca_order_id_chain=(AlpacaOrderId("ALP-1"),),
         submission_timestamp=_NOW,
         last_update_timestamp=_NOW,
         filled_quantity=0.0,

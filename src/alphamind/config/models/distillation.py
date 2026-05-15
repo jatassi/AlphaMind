@@ -7,11 +7,31 @@ constraints, type checks, and cross-field invariants implement
 § Static configuration thresholds and § Validation invariants. The schema
 is the load-time gate — failure aborts the invocation per
 ``configuration-management.md`` § Validation.
+
+ALP-471 added the ``to_domain()`` methods that project each Pydantic class
+onto the matching frozen-dataclass mirror in
+:mod:`alphamind.distillation._config_domain`. The Pydantic surface stays at
+the YAML-load boundary; downstream distillation code consumes the dataclass
+form. The projection is mechanical — every field maps one-for-one.
 """
 
 import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from alphamind.distillation._config_domain import (
+    AnomalyDetectionDomainConfig,
+    DistillationDomainConfig,
+    LeadLagDomainConfig,
+    LeadLagPairDomainConfig,
+    NarrativeLagDomainConfig,
+    PersistenceWindowsDomainConfig,
+    PredictionMarketDomainConfig,
+    RegimeClassificationDomainConfig,
+    RegimeTransitionDomainConfig,
+    TrackedCategoryOverrideDomainConfig,
+    _freeze_tracked_categories,
+)
 
 
 class AnomalyDetection(BaseModel):
@@ -31,6 +51,24 @@ class AnomalyDetection(BaseModel):
     market_liquidity_alert_percentile: int = Field(ge=0, le=50)
     news_price_divergence_window_hours: int = Field(ge=1)
     news_price_divergence_min_articles: int = Field(ge=1)
+
+    def to_domain(self) -> AnomalyDetectionDomainConfig:
+        return AnomalyDetectionDomainConfig(
+            volume_anomaly_sigma=self.volume_anomaly_sigma,
+            price_move_atr_multiple=self.price_move_atr_multiple,
+            options_low_oi_volume_multiple=self.options_low_oi_volume_multiple,
+            block_trade_min_shares=self.block_trade_min_shares,
+            block_trade_min_notional_usd=self.block_trade_min_notional_usd,
+            dark_pool_one_sided_window_minutes=self.dark_pool_one_sided_window_minutes,
+            earnings_revision_cluster_count=self.earnings_revision_cluster_count,
+            earnings_revision_cluster_days=self.earnings_revision_cluster_days,
+            macro_surprise_percentile=self.macro_surprise_percentile,
+            funding_stress_component_alert_count=self.funding_stress_component_alert_count,
+            funding_stress_component_percentile=self.funding_stress_component_percentile,
+            market_liquidity_alert_percentile=self.market_liquidity_alert_percentile,
+            news_price_divergence_window_hours=self.news_price_divergence_window_hours,
+            news_price_divergence_min_articles=self.news_price_divergence_min_articles,
+        )
 
 
 class RegimeClassification(BaseModel):
@@ -88,6 +126,21 @@ class RegimeClassification(BaseModel):
             )
         return self
 
+    def to_domain(self) -> RegimeClassificationDomainConfig:
+        return RegimeClassificationDomainConfig(
+            regime_low_vol_vix_max=self.regime_low_vol_vix_max,
+            regime_normal_vix_min=self.regime_normal_vix_min,
+            regime_normal_vix_max=self.regime_normal_vix_max,
+            regime_elevated_vix_min=self.regime_elevated_vix_min,
+            regime_elevated_vix_max=self.regime_elevated_vix_max,
+            regime_crisis_vix_min=self.regime_crisis_vix_min,
+            regime_term_structure_backwardation_threshold=(
+                self.regime_term_structure_backwardation_threshold
+            ),
+            regime_vvix_high_percentile=self.regime_vvix_high_percentile,
+            regime_vvix_low_percentile=self.regime_vvix_low_percentile,
+        )
+
 
 class RegimeTransition(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -95,6 +148,15 @@ class RegimeTransition(BaseModel):
     regime_transition_confirmed_invocations: int = Field(ge=1)
     regime_transition_indicator_agreement_min: int = Field(ge=1)
     regime_skip_emergency_trigger: bool
+
+    def to_domain(self) -> RegimeTransitionDomainConfig:
+        return RegimeTransitionDomainConfig(
+            regime_transition_confirmed_invocations=self.regime_transition_confirmed_invocations,
+            regime_transition_indicator_agreement_min=(
+                self.regime_transition_indicator_agreement_min
+            ),
+            regime_skip_emergency_trigger=self.regime_skip_emergency_trigger,
+        )
 
 
 _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.]*$")
@@ -122,6 +184,9 @@ class LeadLagPair(BaseModel):
             raise ValueError(f"pair ticker {v!r} must match {_TICKER_RE.pattern}")
         return v
 
+    def to_domain(self) -> LeadLagPairDomainConfig:
+        return LeadLagPairDomainConfig(key=self.key, lead=self.lead, lag=self.lag)
+
 
 class LeadLag(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -142,6 +207,19 @@ class LeadLag(BaseModel):
             raise ValueError(f"pair keys must be unique; got {keys}")
         return v
 
+    def to_domain(self) -> LeadLagDomainConfig:
+        return LeadLagDomainConfig(
+            pairs=tuple(p.to_domain() for p in self.pairs),
+            lead_lag_funding_to_credit_max_days=self.lead_lag_funding_to_credit_max_days,
+            lead_lag_credit_to_equity_max_days=self.lead_lag_credit_to_equity_max_days,
+            lead_lag_semis_to_tech_max_days=self.lead_lag_semis_to_tech_max_days,
+            lead_lag_financials_to_market_max_days=self.lead_lag_financials_to_market_max_days,
+            lead_lag_commodity_to_energy_equity_max_days=(
+                self.lead_lag_commodity_to_energy_equity_max_days
+            ),
+            lead_lag_overdue_lead_sigma=self.lead_lag_overdue_lead_sigma,
+        )
+
 
 class NarrativeLag(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -149,6 +227,13 @@ class NarrativeLag(BaseModel):
     narrative_lag_correlation_shift_sigma: float = Field(ge=0)
     correlation_breakdown_sigma: float = Field(ge=0)
     narrative_lag_media_silence_hours: int = Field(ge=1)
+
+    def to_domain(self) -> NarrativeLagDomainConfig:
+        return NarrativeLagDomainConfig(
+            narrative_lag_correlation_shift_sigma=self.narrative_lag_correlation_shift_sigma,
+            correlation_breakdown_sigma=self.correlation_breakdown_sigma,
+            narrative_lag_media_silence_hours=self.narrative_lag_media_silence_hours,
+        )
 
 
 class PersistenceWindows(BaseModel):
@@ -185,6 +270,24 @@ class PersistenceWindows(BaseModel):
                 )
         return self
 
+    def to_domain(self) -> PersistenceWindowsDomainConfig:
+        return PersistenceWindowsDomainConfig(
+            volume_baseline_days=self.volume_baseline_days,
+            atr_baseline_days=self.atr_baseline_days,
+            spread_baseline_days=self.spread_baseline_days,
+            correlation_short_days=self.correlation_short_days,
+            correlation_long_days=self.correlation_long_days,
+            sentiment_baseline_days=self.sentiment_baseline_days,
+            sentiment_min_observations=self.sentiment_min_observations,
+            gap_fill_baseline_days=self.gap_fill_baseline_days,
+            gap_fill_min_events=self.gap_fill_min_events,
+            extended_hours_confirmation_days=self.extended_hours_confirmation_days,
+            extended_hours_min_events=self.extended_hours_min_events,
+            prediction_market_history_days=self.prediction_market_history_days,
+            funding_stress_baseline_days=self.funding_stress_baseline_days,
+            market_liquidity_baseline_days=self.market_liquidity_baseline_days,
+        )
+
 
 class TrackedCategoryOverride(BaseModel):
     """Optional per-category overrides for ``tracked_categories``.
@@ -197,6 +300,9 @@ class TrackedCategoryOverride(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     min_volume_24h_usd: int | None = Field(default=None, ge=0)
+
+    def to_domain(self) -> TrackedCategoryOverrideDomainConfig:
+        return TrackedCategoryOverrideDomainConfig(min_volume_24h_usd=self.min_volume_24h_usd)
 
 
 class PredictionMarket(BaseModel):
@@ -222,6 +328,18 @@ class PredictionMarket(BaseModel):
             )
         return v
 
+    def to_domain(self) -> PredictionMarketDomainConfig:
+        return PredictionMarketDomainConfig(
+            prediction_market_delta_pp_threshold=self.prediction_market_delta_pp_threshold,
+            prediction_market_low_liquidity_volume_min_usd=(
+                self.prediction_market_low_liquidity_volume_min_usd
+            ),
+            tracked_default_min_volume_24h_usd=self.tracked_default_min_volume_24h_usd,
+            tracked_categories=_freeze_tracked_categories(
+                {key: value.to_domain() for key, value in self.tracked_categories.items()}
+            ),
+        )
+
 
 class DistillationConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -233,3 +351,20 @@ class DistillationConfig(BaseModel):
     narrative_lag: NarrativeLag
     persistence_windows: PersistenceWindows
     prediction_market: PredictionMarket
+
+    def to_domain(self) -> DistillationDomainConfig:
+        """Project the Pydantic config onto its frozen-dataclass mirror.
+
+        Called once at the YAML-load boundary; downstream distillation code
+        consumes the dataclass form, never the Pydantic surface. ALP-471 pilot
+        for audit finding L7 — Pydantic config leak into compute code.
+        """
+        return DistillationDomainConfig(
+            anomaly_detection=self.anomaly_detection.to_domain(),
+            regime_classification=self.regime_classification.to_domain(),
+            regime_transition=self.regime_transition.to_domain(),
+            lead_lag=self.lead_lag.to_domain(),
+            narrative_lag=self.narrative_lag.to_domain(),
+            persistence_windows=self.persistence_windows.to_domain(),
+            prediction_market=self.prediction_market.to_domain(),
+        )

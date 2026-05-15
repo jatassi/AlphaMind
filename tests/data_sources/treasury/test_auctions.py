@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.persistence.models import Base, CollectionRuns, TreasuryAuctions
 from alphamind.persistence.session import make_engine, make_session_factory
+from tests.data_sources._fakes.treasury import FakeTreasuryAPI
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -92,6 +93,13 @@ def _make_api_page(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _client_returning(page: dict[str, Any]) -> FakeTreasuryAPI:
+    """Build a FakeTreasuryAPI that returns *page* for the auctions path."""
+    from alphamind.data_sources.treasury.auctions import _AUCTIONS_PATH
+
+    return FakeTreasuryAPI(responses={_AUCTIONS_PATH: page})
+
+
 def _auction_record(
     record_date: str = "2026-03-15",
     security_term: str = "10-Year",
@@ -137,17 +145,13 @@ class TestCollectAuctions:
             _auction_record(security_term="10-Year", record_date="2026-03-15"),
             _auction_record(security_term="30-Year", record_date="2026-03-20"),
         ]
-        page = _make_api_page(records)
 
-        with patch(
-            "alphamind.data_sources.treasury.auctions._client.get",
-            return_value=page,
-        ):
-            collect_auctions(
-                since=date(2026, 3, 1),
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        collect_auctions(
+            since=date(2026, 3, 1),
+            _client=_client_returning(_make_api_page(records)),
+            _session_factory=session_factory,
+            _repo=fake_repo,
+        )
 
         with session_factory() as sess:
             rows = sess.execute(select(TreasuryAuctions)).scalars().all()
@@ -164,15 +168,12 @@ class TestCollectAuctions:
 
         page = _make_api_page([_auction_record(record_date="2026-03-15", security_term="10-Year")])
 
-        with patch(
-            "alphamind.data_sources.treasury.auctions._client.get",
-            return_value=page,
-        ):
-            collect_auctions(
-                since=date(2026, 3, 1),
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        collect_auctions(
+            since=date(2026, 3, 1),
+            _client=_client_returning(page),
+            _session_factory=session_factory,
+            _repo=fake_repo,
+        )
 
         with session_factory() as sess:
             row = sess.get(TreasuryAuctions, "2026-03-15_10Y")
@@ -200,15 +201,12 @@ class TestCollectAuctions:
             ]
         )
 
-        with patch(
-            "alphamind.data_sources.treasury.auctions._client.get",
-            return_value=page,
-        ):
-            collect_auctions(
-                since=date(2026, 3, 1),
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        collect_auctions(
+            since=date(2026, 3, 1),
+            _client=_client_returning(page),
+            _session_factory=session_factory,
+            _repo=fake_repo,
+        )
 
         with session_factory() as sess:
             row = sess.get(TreasuryAuctions, "2026-03-15_10Y")
@@ -241,21 +239,20 @@ class TestIdempotency:
         from alphamind.data_sources.treasury.auctions import collect_auctions
 
         page = _make_api_page([_auction_record(record_date="2026-03-15", security_term="10-Year")])
+        client = _client_returning(page)
 
-        with patch(
-            "alphamind.data_sources.treasury.auctions._client.get",
-            return_value=page,
-        ):
-            collect_auctions(
-                since=date(2026, 3, 1),
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
-            collect_auctions(
-                since=date(2026, 3, 1),
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        collect_auctions(
+            since=date(2026, 3, 1),
+            _client=client,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+        )
+        collect_auctions(
+            since=date(2026, 3, 1),
+            _client=client,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+        )
 
         with session_factory() as sess:
             rows = sess.execute(select(TreasuryAuctions)).scalars().all()
@@ -277,15 +274,15 @@ class TestFailureHandling:
         """HTTP error marks collection_runs as failed and writes no auction rows."""
         from alphamind.data_sources.treasury.auctions import collect_auctions
 
-        with (
-            patch(
-                "alphamind.data_sources.treasury.auctions._client.get",
-                side_effect=Exception("API down"),
-            ),
-            pytest.raises(Exception, match="API down"),
-        ):
+        def boom(path: str, params: dict[str, Any] | None) -> dict[str, Any]:
+            raise RuntimeError("API down")
+
+        client = FakeTreasuryAPI(get_handler=boom)
+
+        with pytest.raises(RuntimeError, match="API down"):
             collect_auctions(
                 since=date(2026, 3, 1),
+                _client=client,
                 _session_factory=session_factory,
                 _repo=fake_repo,
             )
@@ -327,22 +324,21 @@ class TestPagination:
 
         call_count = 0
 
-        def fake_get(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        def paginated_get(path: str, params: dict[str, Any] | None) -> dict[str, Any]:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 return page1
             return page2
 
-        with patch(
-            "alphamind.data_sources.treasury.auctions._client.get",
-            side_effect=fake_get,
-        ):
-            collect_auctions(
-                since=date(2026, 3, 1),
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        client = FakeTreasuryAPI(get_handler=paginated_get)
+
+        collect_auctions(
+            since=date(2026, 3, 1),
+            _client=client,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+        )
 
         with session_factory() as sess:
             rows = sess.execute(select(TreasuryAuctions)).scalars().all()
@@ -364,17 +360,14 @@ class TestCollectAuctionsNoArgs:
     ) -> None:
         page = _make_api_page([])
 
-        with patch(
-            "alphamind.data_sources.treasury.auctions._client.get",
-            return_value=page,
-        ):
-            from alphamind.data_sources.treasury.auctions import collect_auctions
+        from alphamind.data_sources.treasury.auctions import collect_auctions
 
-            # No since — must not raise
-            collect_auctions(
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        # No since — must not raise
+        collect_auctions(
+            _client=_client_returning(page),
+            _session_factory=session_factory,
+            _repo=fake_repo,
+        )
 
 
 class TestBootstrapAuctions:
@@ -388,7 +381,12 @@ class TestBootstrapAuctions:
 
         captured_since: list[date] = []
 
-        def fake_collect(since: date, _session_factory: Any = None, _repo: Any = None) -> None:
+        def fake_collect(
+            since: date,
+            _client: Any = None,
+            _session_factory: Any = None,
+            _repo: Any = None,
+        ) -> None:
             captured_since.append(since)
 
         with patch.object(auctions, "collect_auctions", side_effect=fake_collect):

@@ -1,4 +1,5 @@
 """Tests for PortfolioStateSnapshot and its inline rollup types (story 04a)."""
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -6,8 +7,24 @@ import copy
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.records.activity_log import (
     ActivityLogEntry,
     EventGroup,
@@ -18,15 +35,7 @@ from alphamind.portfolio_state.records.activity_log import (
     PositionOpenedDetail,
     PositionOpenMechanism,
 )
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    CashLedger,
-    DrawdownState,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskZone,
-)
+from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegEnforcement,
@@ -108,25 +117,23 @@ def _make_fill(price: float = 150.0) -> PositionFill:
 
 def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> PositionView:
     equity = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=100.0,
         average_cost_basis_per_share=150.0,
     )
-    record = PositionRecord.model_validate(
-        {
-            "position_id": pos_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _T0,
-            "details": equity,
-            "execution_history": (_make_fill(),),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    record = PositionRecord(
+        position_id=pos_id,
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_T0,
+        details=equity,
+        execution_history=(_make_fill(),),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
     return PositionView(
         record=record,
@@ -145,25 +152,23 @@ def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> Positi
 
 def _make_pending_position(pos_id: str = "POS-003") -> PositionView:
     equity = EquityPositionDetails(
-        ticker="GOOG",
+        ticker=Symbol("GOOG"),
         share_count=10.0,
         average_cost_basis_per_share=2800.0,
     )
-    record = PositionRecord.model_validate(
-        {
-            "position_id": pos_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": PositionStatus.PENDING,
-            "direction": Direction.LONG,
-            "entry_timestamp": None,
-            "details": equity,
-            "execution_history": (),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    record = PositionRecord(
+        position_id=pos_id,
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.PENDING,
+        direction=Direction.LONG,
+        entry_timestamp=None,
+        details=equity,
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
     return PositionView(
         record=record,
@@ -184,21 +189,21 @@ def _make_bracket(bracket_id: str = "BRK-001", position_id: str = "POS-001") -> 
     mechanical_leg = BracketLeg(
         leg_id="leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id="ord-stop-1",
-        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId("ord-stop-1"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
-    return BracketRecord.model_validate(
-        {
-            "bracket_id": bracket_id,
-            "position_id": position_id,
-            "status": BracketStatus.PENDING_ENTRY,
-            "entry_order_id": "ord-entry-1",
-            "protective_legs": (mechanical_leg,),
-            "modification_history": (),
-            "corporate_action_cancellation_reason": None,
-        }
+    return BracketRecord(
+        bracket_id=bracket_id,
+        position_id=position_id,
+        status=BracketStatus.PENDING_ENTRY,
+        entry_order_id=OrderId("ord-entry-1"),
+        protective_legs=(mechanical_leg,),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
     )
 
 
@@ -207,32 +212,30 @@ def _make_pending_order(
     position_id: str = "POS-001",
     status: OrderStatus = OrderStatus.PENDING,
 ) -> OrderRecord:
-    spec = EquityInstrumentSpec(ticker="AAPL")
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": position_id,
-            "bracket_id": "BRK-001",
-            "role": OrderRole.ENTRY,
-            "instrument_spec": spec,
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "price_parameters": PriceParameters(limit_price=None, stop_trigger_price=None),
-            "quantity": 10.0,
-            "duration": OrderDuration.DAY,
-            "status": status,
-            "alpaca_order_id": "alp-001",
-            "alpaca_order_id_chain": ("alp-001",),
-            "submission_timestamp": _T0,
-            "last_update_timestamp": _T0,
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": None,
-            "originating_pm_command_id": None,
-            "age_hours": 1.0,
-        }
+    spec = EquityInstrumentSpec(ticker=Symbol("AAPL"))
+    return OrderRecord(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=BracketId("BRK-001"),
+        role=OrderRole.ENTRY,
+        instrument_spec=spec,
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        price_parameters=PriceParameters(limit_price=None, stop_trigger_price=None),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=status,
+        alpaca_order_id=AlpacaOrderId("alp-001"),
+        alpaca_order_id_chain=("alp-001",),
+        submission_timestamp=_T0,
+        last_update_timestamp=_T0,
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=None,
+        originating_pm_command_id=None,
+        age_hours=1.0,
     )
 
 
@@ -243,7 +246,7 @@ def _make_thesis(
     def _comp(ctype: ThesisComponentType, cid: str) -> ThesisComponent:
         return ThesisComponent(
             component_id=cid,
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ctype,
             linked_bracket_leg_type=None,
             instrument_reference="AAPL",
@@ -254,27 +257,25 @@ def _make_thesis(
             resolution_notes=None,
         )
 
-    return ThesisRecord.model_validate(
-        {
-            "thesis_id": thesis_id,
-            "position_id": position_id,
-            "summary": "Long AAPL on momentum breakout.",
-            "components": (
-                _comp(ThesisComponentType.ENTRY_RATIONALE, "comp-1"),
-                _comp(ThesisComponentType.TARGET_RATIONALE, "comp-2"),
-                _comp(ThesisComponentType.INVALIDATION_RATIONALE, "comp-3"),
-            ),
-            "status": ThesisRecordStatus.ACTIVE,
-            "generation_timestamp": _T0,
-            "time_expectation_hours": 24.0,
-            "age_hours": 4.0,
-            "expected_resolution_at": _T0 + timedelta(hours=24),
-            "resolution_timestamp": None,
-            "resolution_category": None,
-            "resolution_pnl_usd": None,
-            "entry_fill_gap_usd": None,
-            "key_catalyst": "earnings beat",
-        }
+    return ThesisRecord(
+        thesis_id=thesis_id,
+        position_id=position_id,
+        summary="Long AAPL on momentum breakout.",
+        components=(
+            _comp(ThesisComponentType.ENTRY_RATIONALE, "comp-1"),
+            _comp(ThesisComponentType.TARGET_RATIONALE, "comp-2"),
+            _comp(ThesisComponentType.INVALIDATION_RATIONALE, "comp-3"),
+        ),
+        status=ThesisRecordStatus.ACTIVE,
+        generation_timestamp=_T0,
+        time_expectation_hours=24.0,
+        age_hours=4.0,
+        expected_resolution_at=_T0 + timedelta(hours=24),
+        resolution_timestamp=None,
+        resolution_category=None,
+        resolution_pnl_usd=None,
+        entry_fill_gap_usd=None,
+        key_catalyst="earnings beat",
     )
 
 
@@ -288,9 +289,9 @@ def _make_activity_entry(
 ) -> ActivityLogEntry:
     if detail is None:
         detail = PositionOpenedDetail(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             direction="LONG",
-            fill_price=150.0,
+            fill_price=price("150.0"),
             quantity=100.0,
             thesis_id=None,
             bracket_id=None,
@@ -338,36 +339,32 @@ def _make_pm_decision_entry(
 
 
 def _make_cash_ledger() -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": 50000.0,
-            "settled_cash_usd": 48000.0,
-            "reserved_capital_usd": 2000.0,
-            "available_buying_power_usd": 46000.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 50.0,
-            "true_deployable_capital_usd": 44000.0,
-            "regt_excess_trailing_30d_usd": 1000.0,
-            "regt_excess_trailing_90d_usd": 3000.0,
-            "regt_excess_lifetime_usd": 10000.0,
-        }
+    return CashLedger(
+        current_cash_usd=50000.0,
+        settled_cash_usd=48000.0,
+        reserved_capital_usd=2000.0,
+        available_buying_power_usd=46000.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=50.0,
+        true_deployable_capital_usd=44000.0,
+        regt_excess_trailing_30d_usd=1000.0,
+        regt_excess_trailing_90d_usd=3000.0,
+        regt_excess_lifetime_usd=10000.0,
     )
 
 
 def _make_drawdown_state() -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 2.0,
-            "equity_high_water_mark_usd": 110000.0,
-            "drawdown_duration_hours": 8.0,
-            "lifetime_max_drawdown_pct": 5.0,
-            "intraday_drawdown_pct": 0.5,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=2.0,
+        equity_high_water_mark_usd=110000.0,
+        drawdown_duration_hours=8.0,
+        lifetime_max_drawdown_pct=5.0,
+        intraday_drawdown_pct=0.5,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -376,117 +373,95 @@ def _make_risk_budget() -> RiskBudgetConsumption:
 
 
 def _make_active_risk_params() -> ActiveRiskParameterSet:
-    return ActiveRiskParameterSet.model_validate(
-        {
-            "regime_label": RegimeLabel.NORMAL,
-            "transition_state": RegimeTransitionState.STABLE,
-            "transition_invocations_remaining": 0,
-            "parameter_change_flag": False,
-            "entries": (),
-            "active_overlays": (),
-        }
+    return ActiveRiskParameterSet(
+        regime_label=RegimeLabel.NORMAL,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        parameter_change_flag=False,
+        entries=(),
+        active_overlays=(),
     )
 
 
 def _make_thesis_quality() -> ThesisQualityAggregate:
-    rwc = ResolutionWindowCounts.model_validate(
-        {
-            "window": TrailingWindow.FIVE_DAYS,
-            "total_resolutions": 10,
-            "validated": 6,
-            "profitable_but_wrong": 1,
-            "invalidated_stopped_correctly": 2,
-            "invalidated_wrong_on_exit": 1,
-            "cancelled_never_entered": 0,
-        }
+    rwc = ResolutionWindowCounts(
+        window=TrailingWindow.FIVE_DAYS,
+        total_resolutions=10,
+        validated=6,
+        profitable_but_wrong=1,
+        invalidated_stopped_correctly=2,
+        invalidated_wrong_on_exit=1,
+        cancelled_never_entered=0,
     )
-    dur = ThesisDurationStat.model_validate(
-        {
-            "window": TrailingWindow.FIVE_DAYS,
-            "mean_actual_to_expected_ratio": 1.1,
-            "median_actual_to_expected_ratio": 1.0,
-            "count": 10,
-        }
+    dur = ThesisDurationStat(
+        window=TrailingWindow.FIVE_DAYS,
+        mean_actual_to_expected_ratio=1.1,
+        median_actual_to_expected_ratio=1.0,
+        count=10,
     )
-    inv_timing = InvalidationTimingStat.model_validate(
-        {
-            "window": TrailingWindow.FIVE_DAYS,
-            "class_distribution": {
-                InvalidationTimingClass.EARLY: 1,
-                InvalidationTimingClass.ON_TIME: 2,
-                InvalidationTimingClass.LATE: 0,
-            },
-            "mean_position_age_at_invalidation_hours": 5.0,
-        }
+    inv_timing = InvalidationTimingStat(
+        window=TrailingWindow.FIVE_DAYS,
+        class_distribution={
+            InvalidationTimingClass.EARLY: 1,
+            InvalidationTimingClass.ON_TIME: 2,
+            InvalidationTimingClass.LATE: 0,
+        },
+        mean_position_age_at_invalidation_hours=5.0,
     )
-    shr = SignalHitRate.model_validate(
-        {
-            "signal_type": "options_volume",
-            "window": TrailingWindow.FIVE_DAYS,
-            "cited_count": 5,
-            "validated_count": 3,
-        }
+    shr = SignalHitRate(
+        signal_type="options_volume",
+        window=TrailingWindow.FIVE_DAYS,
+        cited_count=5,
+        validated_count=3,
     )
-    stc = SignalToThesisConversion.model_validate(
-        {
-            "signal_type": "options_volume",
-            "window": TrailingWindow.FIVE_DAYS,
-            "signal_observed_count": 8,
-            "pm_approved_count": 5,
-        }
+    stc = SignalToThesisConversion(
+        signal_type="options_volume",
+        window=TrailingWindow.FIVE_DAYS,
+        signal_observed_count=8,
+        pm_approved_count=5,
     )
-    cc = ConvictionCalibrationEntry.model_validate(
-        {
-            "conviction_level": 3,
-            "window": TrailingWindow.FIVE_DAYS,
-            "count": 5,
-            "validation_rate": 0.6,
-            "mean_realized_pnl_pct": 2.5,
-        }
+    cc = ConvictionCalibrationEntry(
+        conviction_level=3,
+        window=TrailingWindow.FIVE_DAYS,
+        count=5,
+        validation_rate=0.6,
+        mean_realized_pnl_pct=2.5,
     )
-    csd = ConvictionSizingDeviation.model_validate(
-        {
-            "window": TrailingWindow.FIVE_DAYS,
-            "total_proposals": 5,
-            "pm_sized_above_advisory_count": 2,
-            "pm_sized_below_advisory_count": 1,
-            "pm_sized_within_advisory_count": 2,
-            "outcome_correlation_above": None,
-            "outcome_correlation_below": None,
-        }
+    csd = ConvictionSizingDeviation(
+        window=TrailingWindow.FIVE_DAYS,
+        total_proposals=5,
+        pm_sized_above_advisory_count=2,
+        pm_sized_below_advisory_count=1,
+        pm_sized_within_advisory_count=2,
+        outcome_correlation_above=None,
+        outcome_correlation_below=None,
     )
-    pa = PerformanceAttributionEntry.model_validate(
-        {
-            "dimension": AttributionDimension.SECTOR,
-            "key": "Technology",
-            "window": TrailingWindow.FIVE_DAYS,
-            "cumulative_realized_pnl_usd": 1200.0,
-            "realized_pnl_pct_of_window_capital": 1.2,
-            "count": 3,
-        }
+    pa = PerformanceAttributionEntry(
+        dimension=AttributionDimension.SECTOR,
+        key="Technology",
+        window=TrailingWindow.FIVE_DAYS,
+        cumulative_realized_pnl_usd=1200.0,
+        realized_pnl_pct_of_window_capital=1.2,
+        count=3,
     )
-    ab = AlphaBetaDecomposition.model_validate(
-        {
-            "window": TrailingWindow.FIVE_DAYS,
-            "total_realized_pnl_usd": 1200.0,
-            "market_component_usd": 400.0,
-            "sector_component_usd": 200.0,
-            "alpha_component_usd": 600.0,
-        }
+    ab = AlphaBetaDecomposition(
+        window=TrailingWindow.FIVE_DAYS,
+        total_realized_pnl_usd=1200.0,
+        market_component_usd=400.0,
+        sector_component_usd=200.0,
+        alpha_component_usd=600.0,
     )
-    return ThesisQualityAggregate.model_validate(
-        {
-            "as_of_timestamp": _T0,
-            "resolution_counts_by_window": (rwc,),
-            "duration_stats_by_window": (dur,),
-            "invalidation_timing_stats_by_window": (inv_timing,),
-            "signal_hit_rates": (shr,),
-            "signal_to_thesis_conversions": (stc,),
-            "conviction_calibration": (cc,),
-            "conviction_sizing_deviation_by_window": (csd,),
-            "performance_attribution": (pa,),
-            "alpha_beta_decomposition_by_window": (ab,),
-        }
+    return ThesisQualityAggregate(
+        as_of_timestamp=_T0,
+        resolution_counts_by_window=(rwc,),
+        duration_stats_by_window=(dur,),
+        invalidation_timing_stats_by_window=(inv_timing,),
+        signal_hit_rates=(shr,),
+        signal_to_thesis_conversions=(stc,),
+        conviction_calibration=(cc,),
+        conviction_sizing_deviation_by_window=(csd,),
+        performance_attribution=(pa,),
+        alpha_beta_decomposition_by_window=(ab,),
     )
 
 
@@ -504,7 +479,7 @@ def _make_pnl(**overrides: object) -> PortfolioPnL:
         "profit_factor": 2.0,
     }
     kwargs.update(overrides)
-    return PortfolioPnL.model_validate(kwargs)
+    return PortfolioPnL(**kwargs)
 
 
 def _make_directional(**overrides: object) -> DirectionalExposure:
@@ -515,7 +490,7 @@ def _make_directional(**overrides: object) -> DirectionalExposure:
         "gross_pct_of_portfolio": 70.0,
     }
     kwargs.update(overrides)
-    return DirectionalExposure.model_validate(kwargs)
+    return DirectionalExposure(**kwargs)
 
 
 def _make_sector_entry(**overrides: object) -> SectorExposureEntry:
@@ -528,7 +503,7 @@ def _make_sector_entry(**overrides: object) -> SectorExposureEntry:
         "long_short_ratio": 2.0,
     }
     kwargs.update(overrides)
-    return SectorExposureEntry.model_validate(kwargs)
+    return SectorExposureEntry(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -574,7 +549,7 @@ def _make_snapshot(**overrides: object) -> PortfolioStateSnapshot:
         "brackets": (brk1, brk2, brk3),
     }
     base.update(overrides)
-    return PortfolioStateSnapshot.model_validate(base)
+    return PortfolioStateSnapshot(**base)
 
 
 # ---------------------------------------------------------------------------
@@ -608,8 +583,8 @@ class TestPortfolioPnL:
 
     def test_frozen(self) -> None:
         pnl = _make_pnl()
-        with pytest.raises((ValidationError, AttributeError)):
-            pnl.total_unrealized_pnl_usd = 999.0
+        with pytest.raises((ValueError, TypeError, AttributeError)):
+            pnl.total_unrealized_pnl_usd = money(999.0)
 
 
 # ---------------------------------------------------------------------------
@@ -639,7 +614,7 @@ class TestSectorExposureEntry:
 
     def test_frozen(self) -> None:
         entry = _make_sector_entry()
-        with pytest.raises((ValidationError, AttributeError)):
+        with pytest.raises((ValueError, TypeError, AttributeError)):
             entry.sector = "OTHER"
 
 
@@ -664,12 +639,12 @@ class TestDirectionalExposure:
         assert de.gross_pct_of_portfolio == 0.0
 
     def test_negative_gross_raises(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_directional(gross_pct_of_portfolio=-1.0)
 
     def test_frozen(self) -> None:
         de = _make_directional()
-        with pytest.raises((ValidationError, AttributeError)):
+        with pytest.raises((ValueError, TypeError, AttributeError)):
             de.gross_pct_of_portfolio = 99.0
 
 
@@ -760,7 +735,7 @@ class TestOpenPositionStatusValidator:
 
     def test_open_position_wrong_status_raises(self) -> None:
         bad_pos = _make_pending_position("POS-BAD")
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_snapshot(open_positions=(bad_pos,))
 
 
@@ -776,7 +751,7 @@ class TestPendingPositionStatusValidator:
 
     def test_pending_position_wrong_status_raises(self) -> None:
         bad_pos = _make_open_position("POS-004")
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_snapshot(pending_positions=(bad_pos,))
 
 
@@ -787,63 +762,59 @@ class TestPendingPositionStatusValidator:
 
 class TestPendingOrderStatusValidator:
     def test_partially_filled_order_passes(self) -> None:
-        order = OrderRecord.model_validate(
-            {
-                "order_id": "ORD-002",
-                "position_id": "POS-001",
-                "bracket_id": "BRK-001",
-                "role": OrderRole.ENTRY,
-                "instrument_spec": EquityInstrumentSpec(ticker="AAPL"),
-                "direction": OrderDirection.BUY,
-                "order_type": OrderType.MARKET,
-                "price_parameters": PriceParameters(limit_price=None, stop_trigger_price=None),
-                "quantity": 10.0,
-                "duration": OrderDuration.DAY,
-                "status": OrderStatus.PARTIALLY_FILLED,
-                "alpaca_order_id": "alp-002",
-                "alpaca_order_id_chain": ("alp-002",),
-                "submission_timestamp": _T0,
-                "last_update_timestamp": _T0,
-                "filled_quantity": 5.0,
-                "avg_fill_price": 150.0,
-                "remaining_quantity": 5.0,
-                "modification_count": 0,
-                "originating_thesis_id": None,
-                "originating_pm_command_id": None,
-                "age_hours": 1.0,
-            }
+        order = OrderRecord(
+            order_id=OrderId("ORD-002"),
+            position_id=PositionId("POS-001"),
+            bracket_id=BracketId("BRK-001"),
+            role=OrderRole.ENTRY,
+            instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
+            direction=OrderDirection.BUY,
+            order_type=OrderType.MARKET,
+            price_parameters=PriceParameters(limit_price=None, stop_trigger_price=None),
+            quantity=10.0,
+            duration=OrderDuration.DAY,
+            status=OrderStatus.PARTIALLY_FILLED,
+            alpaca_order_id=AlpacaOrderId("alp-002"),
+            alpaca_order_id_chain=("alp-002",),
+            submission_timestamp=_T0,
+            last_update_timestamp=_T0,
+            filled_quantity=5.0,
+            avg_fill_price=150.0,
+            remaining_quantity=5.0,
+            modification_count=0,
+            originating_thesis_id=None,
+            originating_pm_command_id=None,
+            age_hours=1.0,
         )
         snap = _make_snapshot(pending_orders=(order,))
         assert snap.pending_orders[0].status == OrderStatus.PARTIALLY_FILLED
 
     def test_filled_order_in_pending_raises(self) -> None:
-        filled_order = OrderRecord.model_validate(
-            {
-                "order_id": "ORD-FILLED",
-                "position_id": "POS-001",
-                "bracket_id": "BRK-001",
-                "role": OrderRole.ENTRY,
-                "instrument_spec": EquityInstrumentSpec(ticker="AAPL"),
-                "direction": OrderDirection.BUY,
-                "order_type": OrderType.MARKET,
-                "price_parameters": PriceParameters(limit_price=None, stop_trigger_price=None),
-                "quantity": 10.0,
-                "duration": OrderDuration.DAY,
-                "status": OrderStatus.FILLED,
-                "alpaca_order_id": "alp-filled",
-                "alpaca_order_id_chain": ("alp-filled",),
-                "submission_timestamp": _T0,
-                "last_update_timestamp": _T0,
-                "filled_quantity": 10.0,
-                "avg_fill_price": 150.0,
-                "remaining_quantity": 0.0,
-                "modification_count": 0,
-                "originating_thesis_id": None,
-                "originating_pm_command_id": None,
-                "age_hours": 1.0,
-            }
+        filled_order = OrderRecord(
+            order_id=OrderId("ORD-FILLED"),
+            position_id=PositionId("POS-001"),
+            bracket_id=BracketId("BRK-001"),
+            role=OrderRole.ENTRY,
+            instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
+            direction=OrderDirection.BUY,
+            order_type=OrderType.MARKET,
+            price_parameters=PriceParameters(limit_price=None, stop_trigger_price=None),
+            quantity=10.0,
+            duration=OrderDuration.DAY,
+            status=OrderStatus.FILLED,
+            alpaca_order_id=AlpacaOrderId("alp-filled"),
+            alpaca_order_id_chain=("alp-filled",),
+            submission_timestamp=_T0,
+            last_update_timestamp=_T0,
+            filled_quantity=10.0,
+            avg_fill_price=150.0,
+            remaining_quantity=0.0,
+            modification_count=0,
+            originating_thesis_id=None,
+            originating_pm_command_id=None,
+            age_hours=1.0,
         )
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_snapshot(pending_orders=(filled_order,))
 
 
@@ -860,7 +831,7 @@ class TestOrphanBracketValidator:
 
     def test_orphan_bracket_raises(self) -> None:
         orphan = _make_bracket("BRK-ORPHAN", "POS-NONEXISTENT")
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_snapshot(brackets=(_make_bracket("BRK-001", "POS-001"), orphan))
 
 
@@ -876,7 +847,7 @@ class TestPositionModificationTrailValidator:
 
     def test_unresolvable_key_raises(self) -> None:
         entry = _make_activity_entry("ENTRY-X", _INV_ID, "POS-GHOST")
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_snapshot(position_modification_trail={"POS-GHOST": (entry,)})
 
 
@@ -892,7 +863,7 @@ class TestIntraInvocationChangelogValidator:
 
     def test_mismatched_invocation_id_raises(self) -> None:
         wrong_entry = _make_activity_entry("ENTRY-WRONG", "inv-other-999", "POS-001")
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_snapshot(intra_invocation_changelog=(wrong_entry,))
 
 
@@ -911,7 +882,7 @@ class TestTimestampOrderingValidator:
         assert snap.phase1_committed_at == snap.snapshot_assembled_at
 
     def test_phase1_after_assembled_raises(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_snapshot(phase1_committed_at=_T1, snapshot_assembled_at=_T0)
 
     def test_pipeline_start_after_assembled_passes(self) -> None:
@@ -927,7 +898,7 @@ class TestTimestampOrderingValidator:
         assert snap.pipeline_invocation_started_at is None
 
     def test_pipeline_start_before_assembled_raises(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_snapshot(
                 snapshot_assembled_at=_T1,
                 pipeline_invocation_started_at=_T0,
@@ -946,7 +917,7 @@ class TestPMDecisionLogValidator:
 
     def test_non_pm_decision_entry_raises(self) -> None:
         non_pm = _make_activity_entry("ENTRY-NON-PM", _INV_ID, "POS-001")
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_snapshot(recent_pm_decision_log=(non_pm,))
 
 
@@ -967,7 +938,7 @@ class TestPositionIdUniquenessValidator:
         pos_open = _make_open_position("POS-DUP")
         pos_pending = _make_pending_position("POS-DUP")
         brk = _make_bracket("BRK-DUP", "POS-DUP")
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_snapshot(
                 open_positions=(pos_open,),
                 pending_positions=(pos_pending,),
@@ -993,7 +964,7 @@ class TestBracketIdUniquenessValidator:
     def test_duplicate_bracket_id_raises(self) -> None:
         brk1 = _make_bracket("BRK-DUP", "POS-001")
         brk2 = _make_bracket("BRK-DUP", "POS-002")
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_snapshot(brackets=(brk1, brk2))
 
 
@@ -1017,7 +988,7 @@ class TestInvocationIdValidator:
         assert snap.invocation_id == new_inv
 
     def test_empty_invocation_id_raises(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_snapshot(invocation_id="")
 
 
@@ -1029,12 +1000,12 @@ class TestInvocationIdValidator:
 class TestTimestampTzAwarenessValidator:
     def test_naive_phase1_committed_at_raises(self) -> None:
         naive = _T0.replace(tzinfo=None)
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_snapshot(phase1_committed_at=naive)
 
     def test_naive_snapshot_assembled_at_raises(self) -> None:
         naive = _T1.replace(tzinfo=None)
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_snapshot(
                 phase1_committed_at=_T0,
                 snapshot_assembled_at=naive,
@@ -1042,7 +1013,7 @@ class TestTimestampTzAwarenessValidator:
 
     def test_naive_pipeline_started_at_raises(self) -> None:
         naive = _T2.replace(tzinfo=None)
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_snapshot(pipeline_invocation_started_at=naive)
 
 
@@ -1054,12 +1025,12 @@ class TestTimestampTzAwarenessValidator:
 class TestImmutability:
     def test_cannot_mutate_open_positions(self) -> None:
         snap = _make_snapshot()
-        with pytest.raises((ValidationError, AttributeError)):
+        with pytest.raises((ValueError, TypeError, AttributeError)):
             snap.open_positions = ()
 
     def test_cannot_mutate_invocation_id(self) -> None:
         snap = _make_snapshot()
-        with pytest.raises((ValidationError, AttributeError)):
+        with pytest.raises((ValueError, TypeError, AttributeError)):
             snap.invocation_id = "other"
 
 
@@ -1081,35 +1052,33 @@ class TestDeepCopyEquality:
 
 class TestEmptyPortfolio:
     def test_empty_portfolio_constructs_without_error(self) -> None:
-        snap = PortfolioStateSnapshot.model_validate(
-            {
-                "invocation_id": "inv-empty-001",
-                "phase1_committed_at": _T0,
-                "snapshot_assembled_at": _T1,
-                "pipeline_invocation_started_at": None,
-                "open_positions": (),
-                "pending_positions": (),
-                "sector_exposure": (),
-                "directional_exposure": _make_directional(
-                    total_long_delta_adjusted_usd=0.0,
-                    total_short_delta_adjusted_usd=0.0,
-                    net_directional_pct_of_portfolio=0.0,
-                    gross_pct_of_portfolio=0.0,
-                ),
-                "portfolio_pnl": _make_pnl(),
-                "drawdown": _make_drawdown_state(),
-                "active_theses": (),
-                "recent_thesis_resolutions": (),
-                "cash_ledger": _make_cash_ledger(),
-                "pending_orders": (),
-                "risk_budget": _make_risk_budget(),
-                "active_risk_parameters": _make_active_risk_params(),
-                "intra_invocation_changelog": (),
-                "recent_pm_decision_log": (),
-                "position_modification_trail": {},
-                "thesis_quality_aggregates": _make_thesis_quality(),
-                "brackets": (),
-            }
+        snap = PortfolioStateSnapshot(
+            invocation_id="inv-empty-001",
+            phase1_committed_at=_T0,
+            snapshot_assembled_at=_T1,
+            pipeline_invocation_started_at=None,
+            open_positions=(),
+            pending_positions=(),
+            sector_exposure=(),
+            directional_exposure=_make_directional(
+                total_long_delta_adjusted_usd=0.0,
+                total_short_delta_adjusted_usd=0.0,
+                net_directional_pct_of_portfolio=0.0,
+                gross_pct_of_portfolio=0.0,
+            ),
+            portfolio_pnl=_make_pnl(),
+            drawdown=_make_drawdown_state(),
+            active_theses=(),
+            recent_thesis_resolutions=(),
+            cash_ledger=_make_cash_ledger(),
+            pending_orders=(),
+            risk_budget=_make_risk_budget(),
+            active_risk_parameters=_make_active_risk_params(),
+            intra_invocation_changelog=(),
+            recent_pm_decision_log=(),
+            position_modification_trail={},
+            thesis_quality_aggregates=_make_thesis_quality(),
+            brackets=(),
         )
         assert snap.open_positions == ()
         assert snap.pending_positions == ()

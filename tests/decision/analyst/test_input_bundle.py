@@ -4,24 +4,29 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from alphamind._kernel.ids import PositionId, Symbol
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.decision.analyst.input_bundle import (
     assemble_input_bundle_halt,
     assemble_input_bundle_normal,
+)
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
 )
 from alphamind.portfolio_state.consumers.analyst import (
     AnalystAbandonedOpening,
     AnalystAvailableCapital,
     AnalystHeldPosition,
     AnalystView,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
 )
 from alphamind.portfolio_state.records.positions import Direction, InstrumentType
 from alphamind.risk_guardrails.breach_behavior import HaltState
@@ -135,7 +140,7 @@ def _make_abandoned_opening() -> AnalystAbandonedOpening:
     return AnalystAbandonedOpening(
         envelope_id="ENV-REC-1",
         direction=Direction.LONG,
-        ticker="MSFT",
+        ticker=Symbol("MSFT"),
         instrument_type=InstrumentType.EQUITY,
         size_pct=3.0,
         abandoned_at=datetime(2026, 5, 3, 13, 30, 0, tzinfo=UTC),
@@ -304,10 +309,10 @@ def test_normal_mode_empty_held_positions_renders_none_line() -> None:
 
 def test_normal_mode_populated_held_positions_appear() -> None:
     held = (
-        _make_held_position(position_id="POS-NVDA-001", ticker="NVDA"),
+        _make_held_position(position_id=PositionId("POS-NVDA-001"), ticker=Symbol("NVDA")),
         _make_held_position(
-            position_id="POS-MU-002",
-            ticker="MU",
+            position_id=PositionId("POS-MU-002"),
+            ticker=Symbol("MU"),
             sector="semis",
             size_pct=2.5,
         ),

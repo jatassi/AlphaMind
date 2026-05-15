@@ -21,15 +21,19 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict
 
+from alphamind._kernel.money import Money
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
+from alphamind.commands.pm_envelope import PMCompletionRecord
+from alphamind.commands.protocols import BrokerDispatch
+from alphamind.commands.submission_log import SubmissionLogEntry
 from alphamind.config.models.agents import (
     AgentName,
     AgentsConfig,
@@ -43,19 +47,15 @@ from alphamind.decision.portfolio_manager.input_bundle import (
     assemble_input_bundle_halt,
     assemble_input_bundle_normal,
 )
-from alphamind.decision.portfolio_manager.models import PMCompletionRecord
-from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
-from alphamind.execution.oms.submit_envelope_mcp import (
-    SubmissionLogEntry,
+from alphamind.decision.portfolio_manager.submit_envelope import (
     build_initial_submit_envelope_state,
 )
+from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     PortfolioManagerThesisComponentReader,
     PortfolioManagerView,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RiskBudgetConsumption,
 )
 from alphamind.portfolio_state.records.orders import OrderRecord
 from alphamind.portfolio_state.records.positions import (
@@ -120,7 +120,8 @@ PM_TOOL_NAMES: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 
-class PMResult(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PMResult:
     """Runner return type — the parsed PM completion sentinel plus invocation
     metadata and the engine-stub's per-envelope submission log.
 
@@ -130,8 +131,6 @@ class PMResult(BaseModel):
     ``submit_envelope`` tool calls captured in ``submission_log``; the
     structured ``output`` is the thin completion sentinel.
     """
-
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     output: PMCompletionRecord
     submission_log: tuple[SubmissionLogEntry, ...]
@@ -225,8 +224,8 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
     state_delivery_config: StateDeliveryConfig,
     options_enabled: bool,
     short_selling_enabled: bool,
-    total_portfolio_value_usd: float,
-    available_for_new_positions_usd: float,
+    total_portfolio_value_usd: Money,
+    available_for_new_positions_usd: Money,
     cross_constraint_impact: CrossConstraintImpact,
     halt_state: HaltState | None = None,
     pending_orders: tuple[OrderRecord, ...] = (),
@@ -242,6 +241,7 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
     agent_config: BaseAgentConfig | None = None,
     borrow_cost_resolver: Callable[[str], float] | None = None,
     prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
+    broker_dispatch: BrokerDispatch | None = None,
 ) -> PMResult:
     """Invoke the portfolio manager and return a :class:`PMResult`.
 
@@ -351,6 +351,7 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
         library_market=library_market,
         archive_root=archive_root,
         sdk_query_fn=sdk_query_fn,
+        broker_dispatch=broker_dispatch,
     )
     logger.info(
         "portfolio_manager harness invoked "
@@ -389,8 +390,8 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
     active_sectors_tuple: tuple[str, ...],
     state_delivery_config: StateDeliveryConfig,
     bundle_resolver: Callable[[PositionRecord], str | None],
-    total_portfolio_value_usd: float,
-    available_for_new_positions_usd: float,
+    total_portfolio_value_usd: Money,
+    available_for_new_positions_usd: Money,
     cross_constraint_impact: CrossConstraintImpact,
     sector_label_display: dict[str, str] | None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...],

@@ -11,7 +11,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind.risk_guardrails.breach_behavior import (
     RejectionRuleEntry,
@@ -637,7 +636,7 @@ def test_payload_is_frozen() -> None:
         library_output_after_hypothetical_compliance=after_compliance,
         suggested_modification="reduce size",
     )
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         payload.suggested_modification = "tampered"
 
 

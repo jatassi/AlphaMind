@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.ids import Symbol, ThesisId
 from alphamind.analysis._shared import Sector
 from alphamind.analysis.qualitative_research.loaders import (
     ActiveThesis,
@@ -155,15 +156,16 @@ def _make_inputs(
 
 def test_import_resolves() -> None:
     """assemble_input_bundle and InputBundle are importable from the module."""
+    import dataclasses
+
     from alphamind.analysis.qualitative_research.input_bundle import (
         InputBundle,
         assemble_input_bundle,
     )
 
     assert callable(assemble_input_bundle)
-    from pydantic import BaseModel
-
-    assert issubclass(InputBundle, BaseModel)
+    # ALP-474: InputBundle is now a frozen dataclass, not a Pydantic model.
+    assert dataclasses.is_dataclass(InputBundle)
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +226,9 @@ def test_non_empty_theses_formatted_rows() -> None:
         assemble_input_bundle,
     )
 
-    thesis = _make_thesis(thesis_id="TH-001", ticker="NVDA", summary="AI capex supercycle")
+    thesis = _make_thesis(
+        thesis_id=ThesisId("TH-001"), ticker=Symbol("NVDA"), summary="AI capex supercycle"
+    )
     bundle = assemble_input_bundle(
         invocation_id=_INVOCATION_ID,
         as_of=_AS_OF,
@@ -247,9 +251,9 @@ def test_sentiment_sorted_alphabetically() -> None:
         assemble_input_bundle,
     )
 
-    s_z = _make_sentiment(ticker="ZZZZ")
-    s_a = _make_sentiment(ticker="AAAA")
-    s_m = _make_sentiment(ticker="MMMM")
+    s_z = _make_sentiment(ticker=Symbol("ZZZZ"))
+    s_a = _make_sentiment(ticker=Symbol("AAAA"))
+    s_m = _make_sentiment(ticker=Symbol("MMMM"))
     bundle = assemble_input_bundle(
         invocation_id=_INVOCATION_ID,
         as_of=_AS_OF,
@@ -332,12 +336,12 @@ def test_determinism_identical_inputs() -> None:
 
     inputs = _make_inputs(
         sentiment=(
-            _make_sentiment(ticker="TSLA"),
-            _make_sentiment(ticker="AAPL"),
+            _make_sentiment(ticker=Symbol("TSLA")),
+            _make_sentiment(ticker=Symbol("AAPL")),
         ),
         prediction_markets=(_make_prediction_market(contract_id="PM-001"),),
         events=(_make_calendar_event(event_id="EVT-001"),),
-        theses=(_make_thesis(thesis_id="TH-001"),),
+        theses=(_make_thesis(thesis_id=ThesisId("TH-001")),),
     )
 
     bundle1 = assemble_input_bundle(
@@ -555,7 +559,7 @@ def test_sentiment_renders_pending_for_none_stub_fields() -> None:
     )
 
     s = _make_sentiment(
-        ticker="NVDA",
+        ticker=Symbol("NVDA"),
         rate_of_change=None,
         volume=None,
         divergence_flag=None,
@@ -579,7 +583,7 @@ def test_sentiment_renders_concrete_values_when_present() -> None:
     )
 
     s = _make_sentiment(
-        ticker="NVDA",
+        ticker=Symbol("NVDA"),
         rate_of_change=0.25,
         volume=42,
         divergence_flag=True,
@@ -623,16 +627,17 @@ def test_prediction_market_renders_delta_since_prior_label() -> None:
 
 
 def test_input_bundle_is_frozen() -> None:
-    """InputBundle is a frozen Pydantic model."""
-    from pydantic import BaseModel, ValidationError
+    """InputBundle is a frozen dataclass (ALP-474 — converted from Pydantic)."""
+    import dataclasses
 
     from alphamind.analysis.qualitative_research.input_bundle import (
         InputBundle,
         assemble_input_bundle,
     )
 
-    assert issubclass(InputBundle, BaseModel)
-    assert InputBundle.model_config.get("frozen") is True
+    assert dataclasses.is_dataclass(InputBundle)
+    # The frozen-ness assertion is captured by the mutation attempt below
+    # (FrozenInstanceError fires only when ``frozen=True``).
 
     bundle = assemble_input_bundle(
         invocation_id=_INVOCATION_ID,
@@ -641,7 +646,7 @@ def test_input_bundle_is_frozen() -> None:
         digest=_DIGEST,
         inputs=_make_inputs(),
     )
-    with pytest.raises(ValidationError):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         bundle.invocation_id = "mutated"  # type: ignore[misc]
 
 

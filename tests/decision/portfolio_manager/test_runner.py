@@ -11,6 +11,7 @@ Mirrors the structure of ``tests/decision/strategist/test_runner.py``.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -19,10 +20,18 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
+from alphamind._kernel.money import money
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AllowedModel, BaseAgentConfig
 from alphamind.decision.portfolio_manager.harness import (
     HarnessFailure,
+    HarnessSuccess,
     MalformedOutputFailure,
 )
 from alphamind.decision.portfolio_manager.models import PMCompletionRecord
@@ -45,19 +54,18 @@ from alphamind.decision.proposal_pre_processor.models import (
     ProposalPreProcessorBundle,
     StrategistSection,
 )
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     PortfolioManagerThesisComponentReader,
     PortfolioManagerView,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownState,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
 )
 from alphamind.portfolio_state.records.theses import ThesisComponent
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
@@ -161,7 +169,7 @@ def _market_inputs(underlyings: Sequence[str] = ("AAPL", "NVDA", "ABC")) -> Mark
         iv_provider=FixtureIvProvider(
             surface={
                 "AAPL": IvSurfaceEntry(
-                    underlying="AAPL",
+                    underlying=Symbol("AAPL"),
                     quotes=(
                         IvQuote(
                             strike=100.0,
@@ -288,15 +296,20 @@ def _retrieval_store() -> RetrievalStore:
 
 def _make_pnl() -> PortfolioPnL:
     return PortfolioPnL(
-        total_unrealized_pnl_usd=0.0,
+        total_unrealized_pnl_usd=money(0.0),
         total_unrealized_pnl_pct_of_portfolio=0.0,
-        daily_realized_pnl_usd=0.0,
-        daily_total_pnl_usd=0.0,
-        cumulative_realized_pnl_usd=0.0,
-        rolling_realized_pnl={"1d": 0.0, "3d": 0.0, "5d": 0.0, "20d": 0.0},
+        daily_realized_pnl_usd=money(0.0),
+        daily_total_pnl_usd=money(0.0),
+        cumulative_realized_pnl_usd=money(0.0),
+        rolling_realized_pnl={
+            "1d": money(0.0),
+            "3d": money(0.0),
+            "5d": money(0.0),
+            "20d": money(0.0),
+        },
         win_rate_pct=0.0,
-        average_win_size_usd=0.0,
-        average_loss_size_usd=0.0,
+        average_win_size_usd=money(0.0),
+        average_loss_size_usd=money(0.0),
         profit_factor=0.0,
     )
 
@@ -317,8 +330,8 @@ def _make_drawdown() -> DrawdownState:
 
 def _make_directional() -> DirectionalExposure:
     return DirectionalExposure(
-        total_long_delta_adjusted_usd=0.0,
-        total_short_delta_adjusted_usd=0.0,
+        total_long_delta_adjusted_usd=money(0.0),
+        total_short_delta_adjusted_usd=money(0.0),
         net_directional_pct_of_portfolio=0.0,
         gross_pct_of_portfolio=0.0,
     )
@@ -805,7 +818,7 @@ async def test_runner_returns_pmresult_with_submission_log(
     from alphamind.decision.portfolio_manager import models as pm_models
     from alphamind.decision.portfolio_manager import runner as runner_module
     from alphamind.decision.portfolio_manager.harness import HarnessSuccess
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         Acknowledgment,
         SubmissionLogEntry,
         SubmissionResult,
@@ -901,3 +914,54 @@ def test_module_lifecycle_imports() -> None:
     assert pm_pkg.PMResult is runner_module.PMResult
     assert pm_pkg.load_pm_agent_config is runner_module.load_pm_agent_config
     assert pm_pkg.PM_TOOL_NAMES is runner_module.PM_TOOL_NAMES
+
+
+# ---------------------------------------------------------------------------
+# Frozen-dataclass invariants (ALP-475: 10b conversion)
+# ---------------------------------------------------------------------------
+
+
+class TestPMResultIsFrozenDataclass:
+    def test_pm_result_is_frozen_dataclass(self) -> None:
+        from alphamind.analysis._shared import TokensUsed
+
+        completion_record = PMCompletionRecord.model_validate(_completion_payload())
+        result = PMResult(
+            output=completion_record,
+            submission_log=(),
+            retry_count=0,
+            tokens_used=TokensUsed(
+                input_tokens=0,
+                output_tokens=0,
+                cache_read_tokens=0,
+                cache_write_tokens=0,
+            ),
+            tool_calls_used=0,
+            wall_clock_seconds=1.0,
+            stop_reason="end_turn",
+        )
+        assert dataclasses.is_dataclass(PMResult)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.retry_count = 999  # type: ignore[misc]
+
+    def test_harness_success_is_frozen_dataclass(self) -> None:
+        from alphamind.analysis._shared import TokensUsed
+
+        completion_record = PMCompletionRecord.model_validate(_completion_payload())
+        success = HarnessSuccess(
+            output=completion_record,
+            retry_count=0,
+            tokens_used=TokensUsed(
+                input_tokens=0,
+                output_tokens=0,
+                cache_read_tokens=0,
+                cache_write_tokens=0,
+            ),
+            tool_calls_used=0,
+            wall_clock_seconds=1.0,
+            stop_reason="end_turn",
+            submission_log=(),
+        )
+        assert dataclasses.is_dataclass(HarnessSuccess)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            success.retry_count = 999  # type: ignore[misc]

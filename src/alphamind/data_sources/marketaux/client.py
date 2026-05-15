@@ -11,11 +11,14 @@ the 30-min cron cadence (48 fires/day x up to 2 requests/fire = 96 req/day).
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
 
 from alphamind.data_sources._common import RateLimiter, RetryShape, with_retries
+
+logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://api.marketaux.com"
 _PROVIDER = "marketaux"
@@ -59,9 +62,12 @@ class MarketauxClient:
                 params={"api_token": self._api_key, "limit": 1},
             )
             resp.raise_for_status()
-        except httpx.HTTPStatusError:
-            return False
-        except Exception:
+        except httpx.HTTPError as exc:
+            # ``HTTPError`` covers ``HTTPStatusError`` (401/403 auth, 4xx/5xx),
+            # ``TimeoutException``, and ``RequestError`` (connect / network).
+            # Other exception types (TypeError, AttributeError) surface
+            # naturally so misconfiguration is not hidden as connectivity loss.
+            logger.warning("Marketaux connectivity check failed.", exc_info=exc)
             return False
         else:
             return True
@@ -133,3 +139,9 @@ class MarketauxClient:
         resp.raise_for_status()
         data: list[dict[str, Any]] = resp.json().get("data", [])
         return data
+
+
+# Runtime contract: MarketauxClient must structurally implement MarketauxAPI.
+from alphamind.data_sources.marketaux._protocol import MarketauxAPI  # noqa: E402
+
+_: MarketauxAPI = MarketauxClient(api_key="<unused-for-typecheck>")

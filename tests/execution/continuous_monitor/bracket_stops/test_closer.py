@@ -7,6 +7,13 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     CloseSubmissionResult,
     submit_options_bracket_close,
@@ -54,14 +61,14 @@ def _const_str(value: str):  # type: ignore[no-untyped-def]
 
 def _options_position(*, position_id: str = "pos-1") -> PositionRecord:
     return PositionRecord(
-        position_id=position_id,
-        thesis_id="THESIS-1",
-        bracket_id="brk-1",
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-1"),
+        bracket_id=BracketId("brk-1"),
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW,
         details=OptionsPositionDetails(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             strike_price=850.0,
             expiration_date=date(2026, 6, 19),
             contract_type=OptionContractType.CALL,
@@ -95,7 +102,7 @@ def _options_position(*, position_id: str = "pos-1") -> PositionRecord:
 
 def _strategy_position(*, position_id: str = "pos-st") -> PositionRecord:
     leg_one = OptionsPositionDetails(
-        underlying_ticker="SPY",
+        underlying_ticker=Symbol("SPY"),
         strike_price=500.0,
         expiration_date=date(2026, 6, 19),
         contract_type=OptionContractType.CALL,
@@ -112,7 +119,7 @@ def _strategy_position(*, position_id: str = "pos-st") -> PositionRecord:
         ),
     )
     leg_two = OptionsPositionDetails(
-        underlying_ticker="SPY",
+        underlying_ticker=Symbol("SPY"),
         strike_price=510.0,
         expiration_date=date(2026, 6, 19),
         contract_type=OptionContractType.CALL,
@@ -129,9 +136,9 @@ def _strategy_position(*, position_id: str = "pos-st") -> PositionRecord:
         ),
     )
     return PositionRecord(
-        position_id=position_id,
-        thesis_id="THESIS-ST",
-        bracket_id="brk-st",
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-ST"),
+        bracket_id=BracketId("brk-st"),
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW,
@@ -175,15 +182,17 @@ def _bracket(*, position_id: str = "pos-1") -> BracketRecord:
         leg_id="leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
         order_id=None,
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=865.0, direction="LTE"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=865.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id="brk-1",
-        position_id=position_id,
+        bracket_id=BracketId("brk-1"),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-entry-1",
+        entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -352,7 +361,7 @@ class TestStrategyClose:
         log = FakeActivityLog()
         await submit_options_bracket_close(
             position=position,
-            bracket=_bracket(position_id="pos-st"),
+            bracket=_bracket(position_id=PositionId("pos-st")),
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
             activity_log=log.emit,
@@ -381,7 +390,7 @@ class TestStrategyClose:
         log = FakeActivityLog()
         await submit_options_bracket_close(
             position=position,
-            bracket=_bracket(position_id="pos-st"),
+            bracket=_bracket(position_id=PositionId("pos-st")),
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
             activity_log=log.emit,
@@ -407,14 +416,14 @@ class TestUnsupportedInstrument:
         from alphamind.portfolio_state.records.positions import EquityPositionDetails
 
         equity = PositionRecord(
-            position_id="pos-eq",
+            position_id=PositionId("pos-eq"),
             thesis_id=None,
-            bracket_id="brk-eq",
+            bracket_id=BracketId("brk-eq"),
             status=PositionStatus.OPEN,
             direction=Direction.LONG,
             entry_timestamp=_NOW,
             details=EquityPositionDetails(
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 share_count=100.0,
                 average_cost_basis_per_share=150.0,
             ),
@@ -437,7 +446,7 @@ class TestUnsupportedInstrument:
         with pytest.raises(TypeError):
             await submit_options_bracket_close(
                 position=equity,
-                bracket=_bracket(position_id="pos-eq"),
+                bracket=_bracket(position_id=PositionId("pos-eq")),
                 trigger_reason=PositionExitMethod.STOP_TRIGGERED,
                 submitter=submitter,
                 activity_log=log.emit,

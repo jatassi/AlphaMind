@@ -5,13 +5,15 @@ from __future__ import annotations
 import pytest
 
 import alphamind.risk_guardrails.regime_adaptation as regime_adaptation
-from alphamind.config.models.overlays import Overlay
-from alphamind.config.models.regimes import Regime
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
+from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
+)
+from alphamind.config.models.overlays import Overlay
+from alphamind.config.models.regimes import Regime
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
 )
 from alphamind.risk_guardrails.regime_adaptation import RuleMetadata
 from alphamind.risk_guardrails.regime_adaptation.parameter_set import (

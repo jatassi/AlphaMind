@@ -21,19 +21,12 @@ this case "messier" with no explicit spec); the handler raises
 
 from __future__ import annotations
 
+import dataclasses
 import uuid
 
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
-from alphamind.execution.state_persistence.write_paths.ca_integration_ledger import (
+from alphamind._kernel.ids import PositionId, Symbol
+from alphamind._kernel.money import price
+from alphamind.execution.write_paths.ca_integration_ledger import (
     mark_ca_activity_processed,
 )
 from alphamind.portfolio_state.events.activity_log import (
@@ -48,6 +41,16 @@ from alphamind.portfolio_state.records.positions import (
     PositionFill,
     PositionRecord,
     PositionStatus,
+)
+from alphamind.state.invocation_context.context import (
+    InvocationHandle,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
 )
 
 from ..types import AlpacaPositionLookup, CorporateActionActivity
@@ -88,7 +91,10 @@ def _require_lookup_position(
     if snapshot is None:
         msg = f"Alpaca lookup returned no {role} position for symbol={symbol!r}"
         raise ValueError(msg)
-    return snapshot.qty, snapshot.avg_entry_price
+    # ALP-462 — ``avg_entry_price`` is ``Price`` on the snapshot; cast to float
+    # because the helper's return shape and downstream PositionRecord fields
+    # still carry the legacy float surface.
+    return snapshot.qty, float(snapshot.avg_entry_price)
 
 
 def _build_spin_off_child(
@@ -114,12 +120,12 @@ def _build_spin_off_child(
         live_execution_estimate=None,
     )
     details = EquityPositionDetails(
-        ticker=child_ticker,
+        ticker=Symbol(child_ticker),
         share_count=child_qty,
         average_cost_basis_per_share=child_basis,
     )
     return PositionRecord(
-        position_id=uuid.uuid4().hex,
+        position_id=PositionId(uuid.uuid4().hex),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -128,8 +134,8 @@ def _build_spin_off_child(
         details=details,
         execution_history=(fill,),
         realized_pnl_to_date_usd=None,
-        corporate_action_adjustment_needed=True,
         parent_position_id=parent.position_id,
+        corporate_action_adjustment_needed=True,
         origin=f"spin_off_from_{parent.position_id}",
     )
 
@@ -178,14 +184,13 @@ async def handle_spin_off(
     _, post_basis = _require_lookup_position(lookup, activity.ticker, role="parent")
     child_qty, child_basis = _require_lookup_position(lookup, activity.new_ticker, role="child")
 
-    new_parent_details = parent_details.model_copy(
-        update={"average_cost_basis_per_share": post_basis}
+    new_parent_details = dataclasses.replace(
+        parent_details, average_cost_basis_per_share=post_basis
     )
-    updated_parent = parent.model_copy(
-        update={
-            "details": new_parent_details,
-            "corporate_action_adjustment_needed": True,
-        }
+    updated_parent = dataclasses.replace(
+        parent,
+        details=new_parent_details,
+        corporate_action_adjustment_needed=True,
     )
     _persist_position_update(pos_row, updated_parent)
 
@@ -208,7 +213,7 @@ async def handle_spin_off(
         post_basis=post_basis,
     )
     await _cancel_bracket_for_corporate_action(handle, parent.bracket_id, activity)
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.POSITION_OPENED,
         order_id=None,
@@ -218,7 +223,7 @@ async def handle_spin_off(
         detail=PositionOpenedDetail(
             ticker=activity.new_ticker,
             direction=Direction.LONG.value,
-            fill_price=child_basis,
+            fill_price=price(child_basis),
             quantity=child_qty,
             thesis_id=None,
             bracket_id=None,

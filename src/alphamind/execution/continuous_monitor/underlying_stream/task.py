@@ -37,6 +37,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
+from alphamind._kernel.exception_group import first_non_cancelled
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.session import MonitorMode, MonitorSession
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
@@ -183,6 +184,12 @@ async def run_underlying_stream(
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
+            # Reconnect-budget supervisor per runtime §G1: ``BaseException``
+            # (vs ``Exception``) is intentional — alpaca-py raises raw
+            # ``KeyboardInterrupt``-shaped failures in some websocket paths,
+            # and the supervisor cancellation envelope must still count down
+            # the reconnect budget. ``CancelledError`` re-raised above so
+            # shutdown is honored.
             attempts_remaining -= 1
             if attempts_remaining <= 0:
                 log.exception("underlying_stream reconnect budget exhausted; propagating")
@@ -238,45 +245,53 @@ async def _run_one_connection(
         stream.subscribe_quotes(_handler)
 
     # ``_run_forever`` is alpaca-py's documented async entry point — the
-    # underscore-prefixed name is the library's own convention, not a private
-    # method we should refrain from calling. See ``alpaca.data.live.stock``.
-    run_task: asyncio.Task[None] = asyncio.create_task(stream._run_forever())
-    diff_task: asyncio.Task[None] = asyncio.create_task(
-        _periodic_subscription_diff(
-            stream=stream,
-            handler=_handler,
-            repository=repository,
-            current=current,
-            cadence_seconds=config.subscription_refresh_seconds,
-        )
-    )
-
+    # underscore-prefixed name is the library's own convention, not a
+    # private method. See ``alpaca.data.live.stock``.
+    #
+    # Both sibling tasks live under an :class:`asyncio.TaskGroup` so the
+    # first failure cancels the other automatically and the reconnect
+    # decision flows back to ``run_underlying_stream``. ``run_task`` is
+    # the long-running websocket loop; ``diff_task`` is the periodic
+    # subscription refresher.
     try:
-        # If ``run_task`` raises, surface that exception to the outer loop so
-        # the reconnect budget can decrement. The diff task is a sibling we
-        # cancel before re-raising.
-        done, _pending = await asyncio.wait(
-            [run_task, diff_task], return_when=asyncio.FIRST_EXCEPTION
-        )
-        for task in done:
-            exc = task.exception()
-            if exc is not None:
-                raise exc
+        async with asyncio.TaskGroup() as tg:
+            run_task: asyncio.Task[None] = tg.create_task(stream._run_forever())
+            diff_task: asyncio.Task[None] = tg.create_task(
+                _periodic_subscription_diff(
+                    stream=stream,
+                    handler=_handler,
+                    repository=repository,
+                    current=current,
+                    cadence_seconds=config.subscription_refresh_seconds,
+                )
+            )
+            # When ``run_task`` exits we treat it as the canonical
+            # "connection ended" signal: cancel the diff sibling so the
+            # group exits promptly.
+            run_task.add_done_callback(lambda _t: diff_task.cancel())
     except asyncio.CancelledError:
-        # Supervisor shutdown — let alpaca-py close its socket cleanly.
+        # Supervisor shutdown (external cancellation) — Python 3.13's
+        # TaskGroup re-raises ``CancelledError`` bare rather than wrapping
+        # in ``BaseExceptionGroup``. Best-effort socket close so alpaca-py
+        # doesn't leak the connection; ``asyncio.shield`` over an
+        # intermediate task is required because ``await`` from a cancelled
+        # task re-raises immediately.
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await asyncio.shield(asyncio.ensure_future(_safe_stop_ws(stream)))
+        raise
+    except BaseExceptionGroup as eg:
+        run_task_exc = first_non_cancelled(eg)
         with contextlib.suppress(Exception):
             await stream.stop_ws()
-        raise
-    finally:
-        diff_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await diff_task
-        if not run_task.done():
-            with contextlib.suppress(Exception):
-                await stream.stop_ws()
-            run_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await run_task
+        if run_task_exc is not None:
+            raise run_task_exc from eg
+        # Pure-cancellation group — treat as supervisor shutdown.
+        raise asyncio.CancelledError from eg
+    else:
+        # Clean ``run_task`` exit — best-effort socket close to mirror the
+        # disconnect path; ``stop_ws`` is idempotent.
+        with contextlib.suppress(Exception):
+            await stream.stop_ws()
 
 
 async def _periodic_subscription_diff(
@@ -304,3 +319,9 @@ async def _periodic_subscription_diff(
         if removed:
             stream.unsubscribe_quotes(*sorted(removed))
         live = set(target)
+
+
+async def _safe_stop_ws(stream: StockDataStreamProtocol) -> None:
+    """Wrapper around ``stream.stop_ws()`` that swallows secondary errors."""
+    with contextlib.suppress(Exception):
+        await stream.stop_ws()

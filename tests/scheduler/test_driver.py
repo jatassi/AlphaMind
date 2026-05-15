@@ -39,18 +39,18 @@ from alphamind.config.models.venue import (
     SessionWindow,
     VenueConfig,
 )
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
     make_engine,
     make_session_factory,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
 )
 
 # ---------------------------------------------------------------------------
@@ -189,7 +189,7 @@ async def async_factory(
     db_path = tmp_path / "alphamind.db"
 
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     try:
@@ -276,7 +276,7 @@ def _patch_run_invocation(
     invocation_id: str = "inv-driver-1",
 ) -> dict[str, Any]:
     """Stub ``alphamind.scheduler.driver.run_invocation`` with a recording fake."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         Phase1Summary,
     )
     from alphamind.scheduler import driver as module

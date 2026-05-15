@@ -37,9 +37,10 @@ from alphamind.config.models.distillation import (
     RegimeClassification,
     RegimeTransition,
 )
+from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience, OutputBlock, format_block
-from alphamind.distillation.q7_cross_asset import (
+from alphamind.distillation.q7 import (
     assemble_q7_blocks,
     compute_pair_correlations,
 )
@@ -73,8 +74,13 @@ def session(engine: Engine) -> Iterator[Session]:
         yield sess
 
 
-def _build_config() -> DistillationConfig:
-    """Return a fully-populated :class:`DistillationConfig` for tests."""
+def _build_config() -> DistillationDomainConfig:
+    """Return a fully-populated :class:`DistillationDomainConfig` for tests.
+
+    Builds the Pydantic ``DistillationConfig`` (the boundary type) and
+    projects it onto the frozen-dataclass mirror that distillation
+    consumers take.
+    """
     return DistillationConfig(
         anomaly_detection=AnomalyDetection(
             volume_anomaly_sigma=2.0,
@@ -149,7 +155,7 @@ def _build_config() -> DistillationConfig:
             tracked_default_min_volume_24h_usd=5_000,
             tracked_categories={},
         ),
-    )
+    ).to_domain()
 
 
 # Universe roster: a sector-classified leg per AlphaMind sector plus the

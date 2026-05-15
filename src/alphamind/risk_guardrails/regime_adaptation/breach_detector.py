@@ -16,11 +16,11 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Literal
 
+from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.portfolio_state.records.positions import Direction
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.regime_adaptation.types import (
     RegimeTransitionBreach,
-    RegimeTransitionState,
     RuleMetadata,
 )
 
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     # at runtime would cycle through capital → regime_adaptation package init
     # → this module. The annotation-only usage is safe under
     # ``from __future__ import annotations``.
-    from alphamind.portfolio_state.records.capital import RiskBudgetConsumption
+    from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 
 # ---------------------------------------------------------------------------
 # Deferred-classification rule set (per breach-behavior.md § Per-rule breach

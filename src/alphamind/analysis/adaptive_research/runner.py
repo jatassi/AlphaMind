@@ -23,7 +23,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from alphamind.analysis._shared import TokensUsed
@@ -59,7 +58,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class AdaptiveResearcherResult(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class AdaptiveResearcherResult:
     """Runner return type — carries the brief and all invocation metadata."""
 
     brief: AdaptiveBrief

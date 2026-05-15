@@ -22,13 +22,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alphamind.execution.continuous_monitor.emergency_trigger.wiring import (
     make_invocation_id_provider,
 )
-from alphamind.execution.state_persistence.invocation_context import (
+from alphamind.persistence.models import Base
+from alphamind.persistence.session import make_async_engine, make_async_session_factory
+from alphamind.state.invocation_context import (
     ProcessLifetimeRecord,
     process_lifetime_record_to_row,
 )
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
-from alphamind.persistence.models import Base
-from alphamind.persistence.session import make_async_engine, make_async_session_factory
+from alphamind.state.tables.invocations import InvocationRow
 
 
 @pytest.fixture()

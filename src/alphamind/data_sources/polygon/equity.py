@@ -9,9 +9,13 @@ bootstrap_universe_bars(...)
 
 from __future__ import annotations
 
+import logging
 import zoneinfo
 from datetime import UTC, datetime, timedelta
 from typing import Any
+
+import httpx
+from polygon.exceptions import BadResponse
 
 from alphamind.data_sources._common import (
     RetryShape,
@@ -23,6 +27,8 @@ from alphamind.data_sources._common import (
 )
 from alphamind.data_sources.polygon.client import PolygonClient
 from alphamind.persistence.models import OhlcvBars
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -154,9 +160,15 @@ def collect_universe_bars(
                 try:
                     adj_bars = _fetch_aggs(ticker, mult, span, True)
                     unadj_bars = _fetch_aggs(ticker, mult, span, False)
-                except Exception:
+                except (BadResponse, httpx.HTTPError) as exc:
                     if single:
                         raise
+                    logger.warning(
+                        "polygon list_aggs failed for %s timeframe=%s",
+                        ticker,
+                        tf,
+                        exc_info=exc,
+                    )
                     continue
 
                 # Index unadjusted bars by timestamp for O(1) lookup

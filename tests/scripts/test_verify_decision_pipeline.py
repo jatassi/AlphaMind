@@ -16,9 +16,11 @@ in-process logic that is safe to exercise without the Anthropic API:
 The end-to-end live-SDK invocation is verified by an operator running
 the script after this PR lands.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,6 +28,13 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    InvocationId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.decision.analyst.runner import AnalystResult
@@ -48,6 +57,19 @@ from alphamind.scripts.verify_decision_pipeline import (
 # ---------------------------------------------------------------------------
 # Missing-auth pre-flight check
 # ---------------------------------------------------------------------------
+
+
+# Bypass-init helpers — replace Pydantic ``model_construct``. The dataclass __init__
+# enforces all fields; these helpers skip validation so tests can inject sparse fixtures.
+
+
+def _bypass_init_PortfolioStateSnapshot(**kwargs):  # noqa: N802
+    from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
+
+    obj = object.__new__(PortfolioStateSnapshot)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
 
 
 def test_missing_auth_renders_failure_report(
@@ -157,7 +179,6 @@ def _stub_pipeline_result(
         StrategistOutput,
     )
     from alphamind.decision.strategist.validation import ValidationResult
-    from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
     from alphamind.risk_guardrails.guardrail_evaluation import (
         PortfolioStateSnapshot as LibrarySnapshot,
     )
@@ -166,7 +187,7 @@ def _stub_pipeline_result(
     timestamp = datetime(2026, 5, 10, 14, 30, tzinfo=UTC)
 
     analyst_output = AnalystOutput(
-        invocation_id=inv_id,
+        invocation_id=InvocationId(inv_id),
         timestamp=timestamp,
         mode="normal",
         recommendations=() if has_recommendations else None,
@@ -188,10 +209,10 @@ def _stub_pipeline_result(
 
     assessments = tuple(
         PositionAssessment(
-            assessment_id=f"SA-{i}",
-            position_id=f"POS-{i}",
-            thesis_id=f"THESIS-{i}",
-            underlying="AAPL",
+            assessment_id=RecommendationId(f"SA-{i}"),
+            position_id=PositionId(f"POS-{i}"),
+            thesis_id=ThesisId(f"THESIS-{i}"),
+            underlying=Symbol("AAPL"),
             sector="tech",
             thesis_status="on-track",
             prior_status="on-track",
@@ -207,7 +228,7 @@ def _stub_pipeline_result(
     )
     strategist_result = StrategistResult(
         output=StrategistOutput(
-            invocation_id=inv_id,
+            invocation_id=InvocationId(inv_id),
             timestamp=timestamp,
             mode="normal",
             position_assessments=assessments,
@@ -279,12 +300,13 @@ def _stub_pipeline_result(
         ),
     )
 
-    # Use ``model_construct`` to bypass Pydantic's strict ``SubmissionLogEntry``
-    # type-check on ``submission_log`` — the predicate cares about length and
-    # presence, not about each entry being a real envelope-shaped dataclass.
-    pm_result = PMResult.model_construct(
+    # ``PMResult`` is a frozen dataclass — no Pydantic strict type-check at
+    # construction; the predicate cares about length and presence on
+    # ``submission_log``, not about each entry being a real envelope-shaped
+    # dataclass.
+    pm_result = PMResult(
         output=PMCompletionRecord(
-            invocation_id=inv_id,
+            invocation_id=InvocationId(inv_id),
             timestamp=timestamp,
             envelopes_submitted=envelopes_submitted,
             verdict_summary=VerdictSummary(
@@ -304,7 +326,7 @@ def _stub_pipeline_result(
         stop_reason="end_turn",
     )
 
-    pyd_snap = PortfolioStateSnapshot.model_construct()
+    pyd_snap = _bypass_init_PortfolioStateSnapshot()
     # Library snapshot is a frozen @dataclass with required fields; build a
     # zeroed-out instance so the test predicate has something to thread through.
     lib_snap = LibrarySnapshot(
@@ -415,14 +437,14 @@ def test_validate_pipeline_result_fails_on_analyst_mode_mismatch() -> None:
         recommendations=None,
         watchlist=(
             WatchlistEntry(
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 sector="tech",
                 thesis_summary="placeholder thesis",
                 estimated_conviction=2,
             ),
         ),
     )
-    drifted_analyst = result.analyst_result.model_copy(update={"output": watchlist_output})
+    drifted_analyst = dataclasses.replace(result.analyst_result, output=watchlist_output)
     drifted_result = DecisionPipelineResult(
         pydantic_snapshot=result.pydantic_snapshot,
         library_snapshot=result.library_snapshot,

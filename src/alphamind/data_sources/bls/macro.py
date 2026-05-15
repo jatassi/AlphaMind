@@ -83,6 +83,7 @@ def collect_series(
     since: date | None = None,
     api_key: str | None = None,
     session_factory: Any = None,
+    client: Any = None,
 ) -> int:
     """
     Fetch BLS series since ``since`` and persist to ``macro_observations``.
@@ -94,6 +95,8 @@ def collect_series(
     - ``since`` → first day of last calendar month (BLS series are monthly).
     - ``api_key`` → ``BLS_API_KEY`` env var.
     - ``session_factory`` → default engine targeting the configured DB path.
+    - ``client`` → :class:`BLSClient` constructed from ``api_key``; tests
+      inject :class:`FakeBLSAPI` here.
 
     Returns the number of new rows written.
     """
@@ -102,7 +105,9 @@ def collect_series(
     if since is None:
         today = datetime.now(UTC).date()
         since = (today.replace(day=1) - timedelta(days=1)).replace(day=1)
-    api_key = _resolve_api_key(api_key)
+    if client is None:
+        api_key = _resolve_api_key(api_key)
+        client = BLSClient(api_key=api_key)
     if session_factory is None:
         from alphamind.persistence.models import Base
 
@@ -115,8 +120,6 @@ def collect_series(
     end_year = str(now.year)
     ingested_at = now.isoformat()
     engine = session_factory.kw["bind"]
-
-    client = BLSClient(api_key=api_key)
 
     with track_run("bls.macro", _repo=_make_repo(engine)) as run:
         series_results = client.post_timeseries(
@@ -172,6 +175,7 @@ def bootstrap_series(
     *,
     api_key: str | None = None,
     session_factory: Any = None,
+    client: Any = None,
     _now: datetime | None = None,
 ) -> int:
     """Pull 24 months of history for all configured BLS series."""
@@ -181,6 +185,7 @@ def bootstrap_series(
         since=date(now.year - 2, 1, 1),
         api_key=api_key,
         session_factory=session_factory,
+        client=client,
     )
 
 

@@ -9,12 +9,11 @@ and the ``HaltState`` post-validator from
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
 
-from alphamind.portfolio_state.records.capital import (
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
-    DrawdownState,
 )
 from alphamind.risk_guardrails.breach_behavior import (
     DrawdownTier,
@@ -291,7 +290,7 @@ def test_returned_haltstate_is_frozen() -> None:
     result = compute_halt_state(drawdown_state=drawdown, active_risk_parameters=params)
 
     assert result is not None
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         result.daily_halt_active = False
 
 

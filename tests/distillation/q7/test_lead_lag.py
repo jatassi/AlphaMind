@@ -15,9 +15,10 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience
-from alphamind.distillation.q7_cross_asset import (
+from alphamind.distillation.q7 import (
     LeadLagPair,
     compute_lead_lag,
 )
@@ -146,8 +147,8 @@ class TestLeadLagOverdueFlag:
             smh_closes.append(smh_closes[-1] * (1.0 + r))
         for r in qqq_returns:
             qqq_closes.append(qqq_closes[-1] * (1.0 + r))
-        _seed_path(session, ticker="SMH", closes=smh_closes, start_day=start_day)
-        _seed_path(session, ticker="QQQ", closes=qqq_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("SMH"), closes=smh_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("QQQ"), closes=qqq_closes, start_day=start_day)
         _add_pair_lag_row(
             session,
             lead="SMH",
@@ -194,8 +195,8 @@ class TestLeadLagOverdueFlag:
             smh_closes.append(smh_closes[-1] * (1.0 + r))
         for r in qqq_returns:
             qqq_closes.append(qqq_closes[-1] * (1.0 + r))
-        _seed_path(session, ticker="SMH", closes=smh_closes, start_day=start_day)
-        _seed_path(session, ticker="QQQ", closes=qqq_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("SMH"), closes=smh_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("QQQ"), closes=qqq_closes, start_day=start_day)
         _add_pair_lag_row(
             session,
             lead="SMH",
@@ -241,8 +242,8 @@ class TestLeadLagOverdueFlag:
             smh_closes.append(smh_closes[-1] * (1.0 + r))
         for r in qqq_returns:
             qqq_closes.append(qqq_closes[-1] * (1.0 + r))
-        _seed_path(session, ticker="SMH", closes=smh_closes, start_day=start_day)
-        _seed_path(session, ticker="QQQ", closes=qqq_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("SMH"), closes=smh_closes, start_day=start_day)
+        _seed_path(session, ticker=Symbol("QQQ"), closes=qqq_closes, start_day=start_day)
         _add_pair_lag_row(
             session,
             lead="SMH",

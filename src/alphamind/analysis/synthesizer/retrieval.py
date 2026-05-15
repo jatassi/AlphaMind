@@ -11,9 +11,8 @@ side-effect for the contract and ``docs/design/testing/llm-output-validation.md`
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime
-
-from pydantic import BaseModel
 
 from alphamind.analysis.synthesizer.models import (
     BriefBundle,
@@ -86,7 +85,8 @@ class RetrievalAssemblyError(Exception):
         )
 
 
-class RetrievalStore(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class RetrievalStore:
     """The synthesizer's per-invocation lookup store.
 
     ``entries`` is keyed by full prefixed reference ID

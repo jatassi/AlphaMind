@@ -39,6 +39,7 @@ Architectural invariants (per parent issue ALP-123):
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from datetime import UTC, datetime
@@ -175,6 +176,11 @@ async def run_breach_loop(  # noqa: PLR0913 — fan-in is the seam, not incident
         except asyncio.CancelledError:
             raise
         except Exception:
+            # Per-tick supervisor per runtime §G1: one bad tick must not kill
+            # the loop. ``CancelledError`` re-raised above so supervisor
+            # shutdown propagates; ``BaseException`` (``KeyboardInterrupt`` /
+            # ``SystemExit``) also propagates as it falls through the
+            # ``Exception`` branch.
             log.exception("breach_loop tick raised; sleeping until next cycle")
 
         await asyncio.sleep(cadence_seconds)
@@ -199,7 +205,7 @@ async def _run_one_tick(  # noqa: PLR0913
     entry_id_factory: Callable[[int], str],
 ) -> None:
     """Execute one breach-loop tick."""
-    drawdown_state: DrawdownState = await repository.get_drawdown_state()
+    drawdown_state: DrawdownState = repository.get_drawdown_state()
     regime_output: RegimeAdaptationOutput = await regime_provider()
 
     phase1_result: Phase1EnforcementResult = compose_phase_1_enforcement(
@@ -243,8 +249,8 @@ async def _run_one_tick(  # noqa: PLR0913
     # tier from the current progressive_tiers; ``compute_halt_state`` reads
     # ``drawdown_state.cumulative_tier`` so we override it with the fresh value
     # to avoid relying on the repository's last-write classification.
-    classified_drawdown_state = drawdown_state.model_copy(
-        update={"cumulative_tier": phase1_result.drawdown_tier}
+    classified_drawdown_state = dataclasses.replace(
+        drawdown_state, cumulative_tier=phase1_result.drawdown_tier
     )
     halt_state: HaltState | None = compute_halt_state(
         drawdown_state=classified_drawdown_state,

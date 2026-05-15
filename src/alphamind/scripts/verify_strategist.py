@@ -32,6 +32,22 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    CommandId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
+from alphamind._kernel.money import money, signed_money
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
 from alphamind.decision.strategist.harness import (
@@ -44,7 +60,15 @@ from alphamind.decision.strategist.runner import (
     load_strategist_agent_config,
     run_strategist,
 )
-from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.consumers.strategist import (
     StrategistPositionView,
     StrategistView,
@@ -56,16 +80,6 @@ from alphamind.portfolio_state.records.activity_log import (
     EventType,
     PositionClosedDetail,
     PositionExitMethod,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownState,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
 )
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
@@ -302,14 +316,14 @@ def _make_equity_position(
     )
     notional = share_count * _current_price_lookup(ticker)
     record = PositionRecord(
-        position_id=position_id,
-        thesis_id=f"THESIS-{position_id}",
-        bracket_id=f"BRK-{position_id}",
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THESIS-{position_id}"),
+        bracket_id=BracketId(f"BRK-{position_id}"),
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_AS_OF - timedelta(hours=age_hours),
         details=EquityPositionDetails(
-            ticker=ticker,
+            ticker=Symbol(ticker),
             share_count=share_count,
             average_cost_basis_per_share=avg_cost,
         ),
@@ -343,7 +357,7 @@ def _make_thesis_record(
     components = (
         ThesisComponent(
             component_id=f"TC-{position_id}-1",
-            thesis_id=f"THESIS-{position_id}",
+            thesis_id=ThesisId(f"THESIS-{position_id}"),
             component_type=ThesisComponentType.ENTRY_RATIONALE,
             linked_bracket_leg_type=None,
             instrument_reference=position_id,
@@ -355,7 +369,7 @@ def _make_thesis_record(
         ),
         ThesisComponent(
             component_id=f"TC-{position_id}-2",
-            thesis_id=f"THESIS-{position_id}",
+            thesis_id=ThesisId(f"THESIS-{position_id}"),
             component_type=ThesisComponentType.TARGET_RATIONALE,
             linked_bracket_leg_type=BracketLegType.TAKE_PROFIT,
             instrument_reference=position_id,
@@ -367,7 +381,7 @@ def _make_thesis_record(
         ),
         ThesisComponent(
             component_id=f"TC-{position_id}-3",
-            thesis_id=f"THESIS-{position_id}",
+            thesis_id=ThesisId(f"THESIS-{position_id}"),
             component_type=ThesisComponentType.INVALIDATION_RATIONALE,
             linked_bracket_leg_type=BracketLegType.PRICE_STOP,
             instrument_reference=position_id,
@@ -379,8 +393,8 @@ def _make_thesis_record(
         ),
     )
     return ThesisRecord(
-        thesis_id=f"THESIS-{position_id}",
-        position_id=position_id,
+        thesis_id=ThesisId(f"THESIS-{position_id}"),
+        position_id=PositionId(position_id),
         summary=summary,
         components=components,
         status=ThesisRecordStatus.ACTIVE,
@@ -402,9 +416,9 @@ def _make_bracket(*, position_id: str) -> BracketRecord:
         BracketLeg(
             leg_id=f"LEG-{position_id}-TP",
             leg_type=BracketLegType.TAKE_PROFIT,
-            order_id=f"ORD-{position_id}-TP",
+            order_id=OrderId(f"ORD-{position_id}-TP"),
             trigger=PriceTrigger(
-                underlying_ticker="AAPL",
+                underlying_ticker=Symbol("AAPL"),
                 threshold_usd=200.0,
                 direction="GTE",
             ),
@@ -414,9 +428,9 @@ def _make_bracket(*, position_id: str) -> BracketRecord:
         BracketLeg(
             leg_id=f"LEG-{position_id}-PS",
             leg_type=BracketLegType.PRICE_STOP,
-            order_id=f"ORD-{position_id}-PS",
+            order_id=OrderId(f"ORD-{position_id}-PS"),
             trigger=PriceTrigger(
-                underlying_ticker="AAPL",
+                underlying_ticker=Symbol("AAPL"),
                 threshold_usd=150.0,
                 direction="LTE",
             ),
@@ -425,10 +439,10 @@ def _make_bracket(*, position_id: str) -> BracketRecord:
         ),
     )
     return BracketRecord(
-        bracket_id=f"BRK-{position_id}",
-        position_id=position_id,
+        bracket_id=BracketId(f"BRK-{position_id}"),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id=f"ORD-{position_id}-ENTRY",
+        entry_order_id=OrderId(f"ORD-{position_id}-ENTRY"),
         protective_legs=legs,
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -438,27 +452,27 @@ def _make_bracket(*, position_id: str) -> BracketRecord:
 def _make_pending_order(*, position_id: str, ticker: str) -> OrderRecord:
     """Build one pending limit order for the normal-scenario position."""
     return OrderRecord(
-        order_id=f"ORD-{position_id}-PEND",
-        position_id=position_id,
-        bracket_id=f"BRK-{position_id}",
+        order_id=OrderId(f"ORD-{position_id}-PEND"),
+        position_id=PositionId(position_id),
+        bracket_id=BracketId(f"BRK-{position_id}"),
         role=OrderRole.ADD_ENTRY,
-        instrument_spec=EquityInstrumentSpec(ticker=ticker),
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
         direction=OrderDirection.BUY,
         order_type=OrderType.LIMIT,
         price_parameters=PriceParameters(limit_price=_current_price_lookup(ticker) * 0.99),
         quantity=2.0,
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
-        alpaca_order_id="alp-001",
-        alpaca_order_id_chain=("alp-001",),
+        alpaca_order_id=AlpacaOrderId("alp-001"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-001"),),
         submission_timestamp=_AS_OF - timedelta(hours=2),
         last_update_timestamp=_AS_OF - timedelta(hours=2),
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=2.0,
         modification_count=0,
-        originating_thesis_id=f"THESIS-{position_id}",
-        originating_pm_command_id="cmd-001",
+        originating_thesis_id=ThesisId(f"THESIS-{position_id}"),
+        originating_pm_command_id=CommandId("cmd-001"),
         age_hours=2.0,
     )
 
@@ -603,16 +617,18 @@ def build_fixture_active_risk_parameters() -> ActiveRiskParameterSet:
 
 
 def _make_pnl() -> PortfolioPnL:
+    # ALP-462 — wrap fixture floats into Money at the PortfolioPnL boundary.
+    zero = money("0")
     return PortfolioPnL(
-        total_unrealized_pnl_usd=0.0,
+        total_unrealized_pnl_usd=zero,
         total_unrealized_pnl_pct_of_portfolio=0.0,
-        daily_realized_pnl_usd=0.0,
-        daily_total_pnl_usd=0.0,
-        cumulative_realized_pnl_usd=0.0,
-        rolling_realized_pnl={"1d": 0.0, "3d": 0.0, "5d": 0.0, "20d": 0.0},
+        daily_realized_pnl_usd=zero,
+        daily_total_pnl_usd=zero,
+        cumulative_realized_pnl_usd=zero,
+        rolling_realized_pnl={"1d": zero, "3d": zero, "5d": zero, "20d": zero},
         win_rate_pct=0.0,
-        average_win_size_usd=0.0,
-        average_loss_size_usd=0.0,
+        average_win_size_usd=zero,
+        average_loss_size_usd=zero,
         profit_factor=0.0,
     )
 
@@ -635,8 +651,8 @@ def _make_drawdown(
 
 def _make_directional() -> DirectionalExposure:
     return DirectionalExposure(
-        total_long_delta_adjusted_usd=20_000.0,
-        total_short_delta_adjusted_usd=0.0,
+        total_long_delta_adjusted_usd=money("20000"),
+        total_short_delta_adjusted_usd=money("0"),
         net_directional_pct_of_portfolio=20.0,
         gross_pct_of_portfolio=20.0,
     )
@@ -651,8 +667,8 @@ def build_fixture_normal_view() -> tuple[StrategistView, tuple[ThesisHealthSnaps
     """Normal scenario — 4 positions across 3 sectors, full thesis, 1 pending order."""
     paired = (
         _make_position_view(
-            position_id="POS-NVDA",
-            ticker="NVDA",
+            position_id=PositionId("POS-NVDA"),
+            ticker=Symbol("NVDA"),
             direction=Direction.LONG,
             share_count=5.0,
             avg_cost=820.0,
@@ -663,8 +679,8 @@ def build_fixture_normal_view() -> tuple[StrategistView, tuple[ThesisHealthSnaps
             pending_order=True,
         ),
         _make_position_view(
-            position_id="POS-JPM",
-            ticker="JPM",
+            position_id=PositionId("POS-JPM"),
+            ticker=Symbol("JPM"),
             direction=Direction.LONG,
             share_count=15.0,
             avg_cost=180.0,
@@ -674,8 +690,8 @@ def build_fixture_normal_view() -> tuple[StrategistView, tuple[ThesisHealthSnaps
             weight_pct=3.0,
         ),
         _make_position_view(
-            position_id="POS-XOM",
-            ticker="XOM",
+            position_id=PositionId("POS-XOM"),
+            ticker=Symbol("XOM"),
             direction=Direction.LONG,
             share_count=20.0,
             avg_cost=105.0,
@@ -685,8 +701,8 @@ def build_fixture_normal_view() -> tuple[StrategistView, tuple[ThesisHealthSnaps
             weight_pct=2.2,
         ),
         _make_position_view(
-            position_id="POS-AAPL",
-            ticker="AAPL",
+            position_id=PositionId("POS-AAPL"),
+            ticker=Symbol("AAPL"),
             direction=Direction.LONG,
             share_count=10.0,
             avg_cost=170.0,
@@ -729,8 +745,8 @@ def build_fixture_defensive_posture_view() -> tuple[
     """
     paired = (
         _make_position_view(
-            position_id="POS-NVDA",
-            ticker="NVDA",
+            position_id=PositionId("POS-NVDA"),
+            ticker=Symbol("NVDA"),
             direction=Direction.LONG,
             share_count=5.0,
             avg_cost=820.0,
@@ -740,8 +756,8 @@ def build_fixture_defensive_posture_view() -> tuple[
             weight_pct=4.3,
         ),
         _make_position_view(
-            position_id="POS-MSFT",
-            ticker="MSFT",
+            position_id=PositionId("POS-MSFT"),
+            ticker=Symbol("MSFT"),
             direction=Direction.LONG,
             share_count=8.0,
             avg_cost=410.0,
@@ -751,8 +767,8 @@ def build_fixture_defensive_posture_view() -> tuple[
             weight_pct=3.4,
         ),
         _make_position_view(
-            position_id="POS-GOOGL",
-            ticker="GOOGL",
+            position_id=PositionId("POS-GOOGL"),
+            ticker=Symbol("GOOGL"),
             direction=Direction.LONG,
             share_count=12.0,
             avg_cost=170.0,
@@ -762,8 +778,8 @@ def build_fixture_defensive_posture_view() -> tuple[
             weight_pct=2.1,
         ),
         _make_position_view(
-            position_id="POS-JPM",
-            ticker="JPM",
+            position_id=PositionId("POS-JPM"),
+            ticker=Symbol("JPM"),
             direction=Direction.LONG,
             share_count=15.0,
             avg_cost=180.0,
@@ -773,8 +789,8 @@ def build_fixture_defensive_posture_view() -> tuple[
             weight_pct=3.0,
         ),
         _make_position_view(
-            position_id="POS-XOM",
-            ticker="XOM",
+            position_id=PositionId("POS-XOM"),
+            ticker=Symbol("XOM"),
             direction=Direction.LONG,
             share_count=20.0,
             avg_cost=105.0,
@@ -784,8 +800,8 @@ def build_fixture_defensive_posture_view() -> tuple[
             weight_pct=2.2,
         ),
         _make_position_view(
-            position_id="POS-AAPL",
-            ticker="AAPL",
+            position_id=PositionId("POS-AAPL"),
+            ticker=Symbol("AAPL"),
             direction=Direction.LONG,
             share_count=10.0,
             avg_cost=170.0,
@@ -810,14 +826,14 @@ def build_fixture_defensive_posture_view() -> tuple[
         timestamp=_AS_OF - timedelta(minutes=15),
         event_type=EventType.POSITION_CLOSED,
         event_group=EventGroup.POSITION_LIFECYCLE,
-        position_id="POS-MSFT",
+        position_id=PositionId("POS-MSFT"),
         order_id=None,
-        thesis_id="THESIS-POS-MSFT",
+        thesis_id=ThesisId("THESIS-POS-MSFT"),
         source=EventSource.GUARDRAIL_LAYER,
         detail=PositionClosedDetail(
             exit_method=PositionExitMethod.PM_DECISION,
-            exit_price=400.0,
-            realized_pnl_usd=-80.0,
+            exit_price=money("400.0"),
+            realized_pnl_usd=signed_money("-80.0"),
             thesis_resolution_category="INVALIDATED_STOPPED_CORRECTLY",
         ),
     )
@@ -847,8 +863,8 @@ def build_fixture_emergency_view() -> tuple[StrategistView, tuple[ThesisHealthSn
     """
     paired = (
         _make_position_view(
-            position_id="POS-NVDA",
-            ticker="NVDA",
+            position_id=PositionId("POS-NVDA"),
+            ticker=Symbol("NVDA"),
             direction=Direction.LONG,
             share_count=5.0,
             avg_cost=820.0,
@@ -859,8 +875,8 @@ def build_fixture_emergency_view() -> tuple[StrategistView, tuple[ThesisHealthSn
             weight_pct=4.5,
         ),
         _make_position_view(
-            position_id="POS-JPM",
-            ticker="JPM",
+            position_id=PositionId("POS-JPM"),
+            ticker=Symbol("JPM"),
             direction=Direction.LONG,
             share_count=15.0,
             avg_cost=180.0,
@@ -870,8 +886,8 @@ def build_fixture_emergency_view() -> tuple[StrategistView, tuple[ThesisHealthSn
             weight_pct=3.0,
         ),
         _make_position_view(
-            position_id="POS-XOM",
-            ticker="XOM",
+            position_id=PositionId("POS-XOM"),
+            ticker=Symbol("XOM"),
             direction=Direction.LONG,
             share_count=20.0,
             avg_cost=105.0,
@@ -881,8 +897,8 @@ def build_fixture_emergency_view() -> tuple[StrategistView, tuple[ThesisHealthSn
             weight_pct=2.2,
         ),
         _make_position_view(
-            position_id="POS-AAPL",
-            ticker="AAPL",
+            position_id=PositionId("POS-AAPL"),
+            ticker=Symbol("AAPL"),
             direction=Direction.LONG,
             share_count=10.0,
             avg_cost=170.0,
@@ -921,7 +937,7 @@ def build_fixture_regime_transition_breach() -> RegimeTransitionBreach:
     ``position_max_size_pct`` to 3.5%; overage is 1.0 percentage points.
     """
     return RegimeTransitionBreach(
-        position_id="POS-NVDA",
+        position_id=PositionId("POS-NVDA"),
         rule_id="position_max_size_pct",
         rule_label="Per-position max size",
         current_value=4.5,
@@ -935,8 +951,8 @@ def _make_sector_exposure(weights_by_sector: dict[str, float]) -> tuple[SectorEx
     return tuple(
         SectorExposureEntry(
             sector=sector,
-            long_delta_adjusted_usd=pct * _PORTFOLIO_VALUE / 100.0,
-            short_delta_adjusted_usd=0.0,
+            long_delta_adjusted_usd=money(str(pct * _PORTFOLIO_VALUE / 100.0)),
+            short_delta_adjusted_usd=money("0"),
             long_pct_of_portfolio=pct,
             short_pct_of_portfolio=0.0,
             long_short_ratio=None,

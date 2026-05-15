@@ -40,6 +40,7 @@ Usage::
 
 See ``scripts/RUNBOOK_regt_margin_attribution.md`` for the operator runbook.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -51,53 +52,31 @@ import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price
+from alphamind._kernel.regime import RiskZone
 from alphamind.execution.regt_margin_attribution import (
     load_regt_margin_attribution_config,
 )
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
-from alphamind.execution.state_persistence.tables.orders_codec import (
-    record_to_row as order_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
-)
-from alphamind.execution.state_persistence.write_paths.fill_persistence import (
+from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
 )
-from alphamind.execution.state_persistence.write_paths.phase1 import (
+from alphamind.execution.write_paths.phase1 import (
     process_unprocessed_fills,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    FillProcessingStatus,
-    FillRecord,
-    RegTMarginAttribution,
 )
 from alphamind.persistence.session import (
     make_async_engine,
@@ -159,9 +138,39 @@ from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import (
     IvQuote,
     IvSurfaceEntry,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import (
-    ContractType,
-    RiskZone,
+from alphamind.risk_guardrails.guardrail_evaluation.types import ContractType
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.records import (
+    FillProcessingStatus,
+    FillRecord,
+    RegTMarginAttribution,
+)
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
+)
+from alphamind.state.tables.fill_records import FillRecordRow
+from alphamind.state.tables.orders_codec import (
+    record_to_row as order_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
 )
 
 __all__ = [
@@ -285,14 +294,12 @@ def _state_persistence_config() -> StatePersistenceConfig:
 
 
 def _portfolio_state_config() -> PortfolioStateConfig:
-    return PortfolioStateConfig.model_validate(
-        {
-            "pm_decision_log_sliding_window_invocations": 5,
-            "thesis_resolutions_lookback_trading_days": 10,
-            "thesis_quality_aggregates_trailing_windows_days": (5, 20),
-            "snapshot_freshness_max_phase1_to_snapshot_seconds": 300.0,
-            "snapshot_freshness_max_price_age_seconds": 60.0,
-        }
+    return PortfolioStateConfig(
+        pm_decision_log_sliding_window_invocations=5,
+        thesis_resolutions_lookback_trading_days=10,
+        thesis_quality_aggregates_trailing_windows_days=(5, 20),
+        snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
+        snapshot_freshness_max_price_age_seconds=60.0,
     )
 
 
@@ -374,14 +381,14 @@ def _execution_history_fill(
 def _seed_long_nvda_equity() -> PositionRecord:
     """OPEN long NVDA equity; contributes to the NVDA class-group margin."""
     return PositionRecord(
-        position_id=_SEED_NVDA_LONG_POS,
+        position_id=PositionId(_SEED_NVDA_LONG_POS),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW - timedelta(hours=48),
         details=EquityPositionDetails(
-            ticker=_NVDA,
+            ticker=Symbol(_NVDA),
             share_count=50.0,
             average_cost_basis_per_share=900.0,
         ),
@@ -402,14 +409,14 @@ def _seed_long_nvda_equity() -> PositionRecord:
 def _seed_short_amd_equity() -> PositionRecord:
     """OPEN short AMD equity; contributes to the AMD class-group margin."""
     return PositionRecord(
-        position_id=_SEED_AMD_SHORT_POS,
+        position_id=PositionId(_SEED_AMD_SHORT_POS),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.SHORT,
         entry_timestamp=_NOW - timedelta(hours=36),
         details=EquityPositionDetails(
-            ticker=_AMD,
+            ticker=Symbol(_AMD),
             share_count=100.0,
             average_cost_basis_per_share=150.0,
             borrow_rate_pct=0.04,
@@ -433,7 +440,7 @@ def _seed_short_amd_equity() -> PositionRecord:
 def _seed_long_spy_call() -> PositionRecord:
     """OPEN long SPY call; contributes to the SPY class-group margin."""
     details = OptionsPositionDetails(
-        underlying_ticker=_SPY,
+        underlying_ticker=Symbol(_SPY),
         strike_price=545.0,
         expiration_date=_SPY_CALL_EXPIRATION,
         contract_type=OptionContractType.CALL,
@@ -443,7 +450,7 @@ def _seed_long_spy_call() -> PositionRecord:
         greeks=_FIXTURE_GREEKS,
     )
     return PositionRecord(
-        position_id=_SEED_SPY_CALL_POS,
+        position_id=PositionId(_SEED_SPY_CALL_POS),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -467,7 +474,7 @@ def _seed_long_spy_call() -> PositionRecord:
 def _seed_nvda_bull_call_spread() -> PositionRecord:
     """OPEN NVDA bull call spread (long 900, short 950); contributes to NVDA class-group."""
     long_leg_details = OptionsPositionDetails(
-        underlying_ticker=_NVDA,
+        underlying_ticker=Symbol(_NVDA),
         strike_price=900.0,
         expiration_date=_SPREAD_EXPIRATION,
         contract_type=OptionContractType.CALL,
@@ -477,7 +484,7 @@ def _seed_nvda_bull_call_spread() -> PositionRecord:
         greeks=_FIXTURE_GREEKS,
     )
     short_leg_details = OptionsPositionDetails(
-        underlying_ticker=_NVDA,
+        underlying_ticker=Symbol(_NVDA),
         strike_price=950.0,
         expiration_date=_SPREAD_EXPIRATION,
         contract_type=OptionContractType.CALL,
@@ -499,7 +506,7 @@ def _seed_nvda_bull_call_spread() -> PositionRecord:
         strategy_greeks=_FIXTURE_GREEKS,
     )
     return PositionRecord(
-        position_id=_SEED_NVDA_SPREAD_POS,
+        position_id=PositionId(_SEED_NVDA_SPREAD_POS),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -537,14 +544,14 @@ def _seeded_portfolio() -> tuple[PositionRecord, ...]:
 def _buy_entry_position_pending() -> PositionRecord:
     """PENDING NVDA long equity awaiting the buy entry fill."""
     return PositionRecord(
-        position_id=_BUY_POSITION_ID,
-        thesis_id=_BUY_THESIS_ID,
-        bracket_id=_BUY_BRACKET_ID,
+        position_id=PositionId(_BUY_POSITION_ID),
+        thesis_id=ThesisId(_BUY_THESIS_ID),
+        bracket_id=BracketId(_BUY_BRACKET_ID),
         status=PositionStatus.PENDING,
         direction=Direction.LONG,
         entry_timestamp=None,
         details=EquityPositionDetails(
-            ticker=_NVDA,
+            ticker=Symbol(_NVDA),
             share_count=0.0,
             average_cost_basis_per_share=0.0,
         ),
@@ -557,63 +564,59 @@ def _buy_entry_position_pending() -> PositionRecord:
 
 
 def _buy_entry_order() -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": _BUY_ORDER_ID,
-            "position_id": None,
-            "bracket_id": _BUY_BRACKET_ID,
-            "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=_NVDA),
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": 10.0,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{_BUY_ORDER_ID}",
-            "alpaca_order_id_chain": (f"alp-{_BUY_ORDER_ID}",),
-            "submission_timestamp": _NOW - timedelta(minutes=20),
-            "last_update_timestamp": _NOW - timedelta(minutes=20),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": _BUY_THESIS_ID,
-            "originating_pm_command_id": None,
-            "age_hours": 0.33,
-        }
+    return OrderRecord(
+        order_id=_BUY_ORDER_ID,
+        position_id=None,
+        bracket_id=_BUY_BRACKET_ID,
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(_NVDA)),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{_BUY_ORDER_ID}"),
+        alpaca_order_id_chain=(f"alp-{_BUY_ORDER_ID}",),
+        submission_timestamp=_NOW - timedelta(minutes=20),
+        last_update_timestamp=_NOW - timedelta(minutes=20),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=_BUY_THESIS_ID,
+        originating_pm_command_id=None,
+        age_hours=0.33,
     )
 
 
 def _buy_entry_protective_stop_order() -> OrderRecord:
     stop_id = f"{_BUY_BRACKET_ID}-ord-stop"
-    return OrderRecord.model_validate(
-        {
-            "order_id": stop_id,
-            "position_id": None,
-            "bracket_id": _BUY_BRACKET_ID,
-            "role": OrderRole.PRICE_STOP,
-            "instrument_spec": EquityInstrumentSpec(ticker=_NVDA),
-            "direction": OrderDirection.SELL,
-            "order_type": OrderType.STOP,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(stop_trigger_price=850.0),
-            "quantity": 10.0,
-            "duration": OrderDuration.GTC,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{stop_id}",
-            "alpaca_order_id_chain": (f"alp-{stop_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=20),
-            "last_update_timestamp": _NOW - timedelta(minutes=20),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": _BUY_THESIS_ID,
-            "originating_pm_command_id": None,
-            "age_hours": 0.33,
-        }
+    return OrderRecord(
+        order_id=stop_id,
+        position_id=None,
+        bracket_id=_BUY_BRACKET_ID,
+        role=OrderRole.PRICE_STOP,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(_NVDA)),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(stop_trigger_price=850.0),
+        quantity=10.0,
+        duration=OrderDuration.GTC,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{stop_id}"),
+        alpaca_order_id_chain=(f"alp-{stop_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=20),
+        last_update_timestamp=_NOW - timedelta(minutes=20),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=_BUY_THESIS_ID,
+        originating_pm_command_id=None,
+        age_hours=0.33,
     )
 
 
@@ -621,16 +624,16 @@ def _buy_entry_bracket() -> BracketRecord:
     leg = BracketLeg(
         leg_id=f"{_BUY_BRACKET_ID}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{_BUY_BRACKET_ID}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker=_NVDA, threshold_usd=850.0, direction="LTE"),
+        order_id=OrderId(f"{_BUY_BRACKET_ID}-ord-stop"),
+        trigger=PriceTrigger(underlying_ticker=Symbol(_NVDA), threshold_usd=850.0, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
     return BracketRecord(
-        bracket_id=_BUY_BRACKET_ID,
-        position_id=_BUY_POSITION_ID,
+        bracket_id=BracketId(_BUY_BRACKET_ID),
+        position_id=PositionId(_BUY_POSITION_ID),
         status=BracketStatus.PENDING_ENTRY,
-        entry_order_id=_BUY_ORDER_ID,
+        entry_order_id=OrderId(_BUY_ORDER_ID),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -642,7 +645,7 @@ def _buy_entry_thesis() -> ThesisRecord:
     components = tuple(
         ThesisComponent(
             component_id=f"{_BUY_THESIS_ID}-{ct.value.lower()}",
-            thesis_id=_BUY_THESIS_ID,
+            thesis_id=ThesisId(_BUY_THESIS_ID),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -661,8 +664,8 @@ def _buy_entry_thesis() -> ThesisRecord:
     )
     gen = _NOW - timedelta(hours=2)
     return ThesisRecord(
-        thesis_id=_BUY_THESIS_ID,
-        position_id=_BUY_POSITION_ID,
+        thesis_id=ThesisId(_BUY_THESIS_ID),
+        position_id=PositionId(_BUY_POSITION_ID),
         summary="NVDA momentum",
         key_catalyst="GTC roadmap update",
         position_size_rationale="Sized at 1% conviction-3",
@@ -688,14 +691,14 @@ def _sell_exit_position_open() -> PositionRecord:
     rather than a ``SELL_TO_OPEN`` against the seeded AMD short.
     """
     return PositionRecord(
-        position_id=_SELL_POSITION_ID,
-        thesis_id=_SELL_THESIS_ID,
-        bracket_id=_SELL_BRACKET_ID,
+        position_id=PositionId(_SELL_POSITION_ID),
+        thesis_id=ThesisId(_SELL_THESIS_ID),
+        bracket_id=BracketId(_SELL_BRACKET_ID),
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW - timedelta(hours=8),
         details=EquityPositionDetails(
-            ticker=_AMD,
+            ticker=Symbol(_AMD),
             share_count=20.0,
             average_cost_basis_per_share=140.0,
         ),
@@ -717,62 +720,58 @@ def _sell_historical_entry_order() -> OrderRecord:
     """Filled-and-done AMD entry order kept so the bracket's ``entry_order_id``
     FK resolves. Not exercised by Phase 1 — the sell exit fill targets a
     separate order."""
-    return OrderRecord.model_validate(
-        {
-            "order_id": _SELL_HISTORICAL_ENTRY_ORDER_ID,
-            "position_id": _SELL_POSITION_ID,
-            "bracket_id": _SELL_BRACKET_ID,
-            "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=_AMD),
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": 20.0,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.FILLED,
-            "alpaca_order_id": f"alp-{_SELL_HISTORICAL_ENTRY_ORDER_ID}",
-            "alpaca_order_id_chain": (f"alp-{_SELL_HISTORICAL_ENTRY_ORDER_ID}",),
-            "submission_timestamp": _NOW - timedelta(hours=8),
-            "last_update_timestamp": _NOW - timedelta(hours=8),
-            "filled_quantity": 20.0,
-            "avg_fill_price": 140.0,
-            "remaining_quantity": 0.0,
-            "modification_count": 0,
-            "originating_thesis_id": _SELL_THESIS_ID,
-            "originating_pm_command_id": None,
-            "age_hours": 8.0,
-        }
+    return OrderRecord(
+        order_id=_SELL_HISTORICAL_ENTRY_ORDER_ID,
+        position_id=_SELL_POSITION_ID,
+        bracket_id=_SELL_BRACKET_ID,
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(_AMD)),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=20.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.FILLED,
+        alpaca_order_id=AlpacaOrderId(f"alp-{_SELL_HISTORICAL_ENTRY_ORDER_ID}"),
+        alpaca_order_id_chain=(f"alp-{_SELL_HISTORICAL_ENTRY_ORDER_ID}",),
+        submission_timestamp=_NOW - timedelta(hours=8),
+        last_update_timestamp=_NOW - timedelta(hours=8),
+        filled_quantity=20.0,
+        avg_fill_price=140.0,
+        remaining_quantity=0.0,
+        modification_count=0,
+        originating_thesis_id=_SELL_THESIS_ID,
+        originating_pm_command_id=None,
+        age_hours=8.0,
     )
 
 
 def _sell_exit_order() -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": _SELL_ORDER_ID,
-            "position_id": _SELL_POSITION_ID,
-            "bracket_id": _SELL_BRACKET_ID,
-            "role": OrderRole.TAKE_PROFIT,
-            "instrument_spec": EquityInstrumentSpec(ticker=_AMD),
-            "direction": OrderDirection.SELL,
-            "order_type": OrderType.LIMIT,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(limit_price=145.0),
-            "quantity": 10.0,
-            "duration": OrderDuration.GTC,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{_SELL_ORDER_ID}",
-            "alpaca_order_id_chain": (f"alp-{_SELL_ORDER_ID}",),
-            "submission_timestamp": _NOW - timedelta(minutes=10),
-            "last_update_timestamp": _NOW - timedelta(minutes=10),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": _SELL_THESIS_ID,
-            "originating_pm_command_id": None,
-            "age_hours": 0.17,
-        }
+    return OrderRecord(
+        order_id=_SELL_ORDER_ID,
+        position_id=_SELL_POSITION_ID,
+        bracket_id=_SELL_BRACKET_ID,
+        role=OrderRole.TAKE_PROFIT,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(_AMD)),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.LIMIT,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(limit_price=145.0),
+        quantity=10.0,
+        duration=OrderDuration.GTC,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{_SELL_ORDER_ID}"),
+        alpaca_order_id_chain=(f"alp-{_SELL_ORDER_ID}",),
+        submission_timestamp=_NOW - timedelta(minutes=10),
+        last_update_timestamp=_NOW - timedelta(minutes=10),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=_SELL_THESIS_ID,
+        originating_pm_command_id=None,
+        age_hours=0.17,
     )
 
 
@@ -780,16 +779,16 @@ def _sell_exit_bracket() -> BracketRecord:
     leg = BracketLeg(
         leg_id=f"{_SELL_BRACKET_ID}-leg-target",
         leg_type=BracketLegType.TAKE_PROFIT,
-        order_id=_SELL_ORDER_ID,
-        trigger=PriceTrigger(underlying_ticker=_AMD, threshold_usd=145.0, direction="GTE"),
+        order_id=OrderId(_SELL_ORDER_ID),
+        trigger=PriceTrigger(underlying_ticker=Symbol(_AMD), threshold_usd=145.0, direction="GTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=_SELL_BRACKET_ID,
-        position_id=_SELL_POSITION_ID,
+        bracket_id=BracketId(_SELL_BRACKET_ID),
+        position_id=PositionId(_SELL_POSITION_ID),
         status=BracketStatus.ACTIVE,
-        entry_order_id=_SELL_HISTORICAL_ENTRY_ORDER_ID,
+        entry_order_id=OrderId(_SELL_HISTORICAL_ENTRY_ORDER_ID),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -801,7 +800,7 @@ def _sell_exit_thesis() -> ThesisRecord:
     components = tuple(
         ThesisComponent(
             component_id=f"{_SELL_THESIS_ID}-{ct.value.lower()}",
-            thesis_id=_SELL_THESIS_ID,
+            thesis_id=ThesisId(_SELL_THESIS_ID),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -820,8 +819,8 @@ def _sell_exit_thesis() -> ThesisRecord:
     )
     gen = _NOW - timedelta(hours=6)
     return ThesisRecord(
-        thesis_id=_SELL_THESIS_ID,
-        position_id=_SELL_POSITION_ID,
+        thesis_id=ThesisId(_SELL_THESIS_ID),
+        position_id=PositionId(_SELL_POSITION_ID),
         summary="AMD partial trim",
         key_catalyst="Resistance at $145",
         position_size_rationale="Partial exit on technical level",
@@ -839,16 +838,17 @@ def _sell_exit_thesis() -> ThesisRecord:
 
 
 def _buy_fill_record() -> FillRecord:
+    # ALP-462 — wrap fixture floats at the FillRecord boundary.
     return FillRecord(
         fill_id=_BUY_FILL_ID,
         order_id=_BUY_ORDER_ID,
         fill_timestamp=_NOW - timedelta(minutes=12),
-        fill_price=920.0,
+        fill_price=price("920"),
         fill_quantity=10.0,
         remaining_quantity_after=0.0,
         order_status_after=OrderStatus.FILLED,
-        slippage_usd=0.0,
-        fees_usd=0.0,
+        slippage_usd=money("0"),
+        fees_usd=money("0"),
         execution_venue="NASDAQ",
         gateway_reference=f"alp-{_BUY_FILL_ID}",
         persistence_timestamp=_NOW - timedelta(minutes=12) + timedelta(seconds=1),
@@ -865,12 +865,12 @@ def _sell_fill_record() -> FillRecord:
         fill_id=_SELL_FILL_ID,
         order_id=_SELL_ORDER_ID,
         fill_timestamp=_NOW - timedelta(minutes=6),
-        fill_price=146.0,
+        fill_price=price("146"),
         fill_quantity=10.0,
         remaining_quantity_after=0.0,
         order_status_after=OrderStatus.FILLED,
-        slippage_usd=0.0,
-        fees_usd=0.0,
+        slippage_usd=money("0"),
+        fees_usd=money("0"),
         execution_venue="NASDAQ",
         gateway_reference=f"alp-{_SELL_FILL_ID}",
         persistence_timestamp=_NOW - timedelta(minutes=6) + timedelta(seconds=1),
@@ -888,36 +888,32 @@ def _sell_fill_record() -> FillRecord:
 
 
 def _cash_ledger() -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": 250_000.0,
-            "settled_cash_usd": 250_000.0,
-            "reserved_capital_usd": 9_500.0,  # entry-order reservation for the buy
-            "available_buying_power_usd": 240_500.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=250_000.0,
+        settled_cash_usd=250_000.0,
+        reserved_capital_usd=9_500.0,
+        available_buying_power_usd=240_500.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _drawdown_state() -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": 250_000.0,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=250_000.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -986,7 +982,7 @@ async def _seed_process_lifetime(factory: async_sessionmaker[AsyncSession]) -> N
     """Persist the parent process_lifetime row; idempotent."""
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-    from alphamind.execution.state_persistence.tables.process_lifetimes import (
+    from alphamind.state.tables.process_lifetimes import (
         ProcessLifetimeRow,
     )
 
@@ -1127,6 +1123,10 @@ async def _run_assembler_for_aggregates(
     repository and copies the three fields onto ``CashLedger`` — the same
     delivery surface the command-center consumes.
     """
+    from alphamind._kernel.regime import (
+        RegimeLabel,
+        RegimeTransitionState,
+    )
     from alphamind.config.guardrails_helpers import (
         load_cumulative_drawdown_progressive_tiers,
     )
@@ -1135,42 +1135,34 @@ async def _run_assembler_for_aggregates(
         compose_phase_1_enforcement,
         make_active_risk_parameters_provider,
     )
-    from alphamind.execution.state_persistence.repository import (
-        build_sql_portfolio_state_repository,
-    )
     from alphamind.portfolio_state.aggregates.risk_parameters import (
         ActiveRiskParameterEntry,
         ActiveRiskParameterSet,
-    )
-    from alphamind.portfolio_state.records.capital import (
-        RegimeLabel,
-        RegimeTransitionState,
     )
     from alphamind.risk_guardrails.regime_adaptation import (
         RegimeAdaptationOutput,
         RegimeAdaptationState,
     )
+    from alphamind.state.repository import (
+        build_sql_portfolio_state_repository,
+    )
 
-    parameters = ActiveRiskParameterSet.model_validate(
-        {
-            "regime_label": RegimeLabel.NORMAL,
-            "transition_state": RegimeTransitionState.STABLE,
-            "transition_invocations_remaining": 0,
-            "parameter_change_flag": False,
-            "entries": (
-                ActiveRiskParameterEntry.model_validate(
-                    {
-                        "rule_id": "max_position_size_usd",
-                        "rule_label": "Max position size (USD)",
-                        "value": 25_000.0,
-                        "unit": "USD",
-                        "regime_multiplier_applied": 1.0,
-                        "base_value": 25_000.0,
-                    }
-                ),
+    parameters = ActiveRiskParameterSet(
+        regime_label=RegimeLabel.NORMAL,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        parameter_change_flag=False,
+        entries=(
+            ActiveRiskParameterEntry(
+                rule_id="max_position_size_usd",
+                rule_label="Max position size (USD)",
+                value=25_000.0,
+                unit="USD",
+                regime_multiplier_applied=1.0,
+                base_value=25_000.0,
             ),
-            "active_overlays": (),
-        }
+        ),
+        active_overlays=(),
     )
     regime_state = RegimeAdaptationState(
         as_of=_NOW.isoformat().replace("+00:00", "Z"),
@@ -1204,7 +1196,7 @@ async def _run_assembler_for_aggregates(
     )
     provider = make_active_risk_parameters_provider(phase1_result)
 
-    async def _prior_provider(_path: str) -> ActiveRiskParameterSet:
+    def _prior_provider(_path: str) -> ActiveRiskParameterSet:
         return parameters
 
     repo = build_sql_portfolio_state_repository(
@@ -1233,7 +1225,7 @@ async def _run_assembler_for_aggregates(
     def _sector_resolver(_pos: PositionRecord) -> str | None:
         return "tech"
 
-    assembled = await assemble_snapshot(
+    assembled = assemble_snapshot(
         repository=repo,
         price_provider=price_provider,
         sector_resolver=_sector_resolver,
@@ -1291,13 +1283,21 @@ def _collect_assertion_failures(
                 f"{attr.regt_excess_over_pm} != {algebra} (tol={_TOL})"
             )
 
-    expected_sum = sum(row.attribution.regt_excess_over_pm for row in attributions)
+    # ALP-462 — ``regt_excess_over_pm`` is ``Money`` (Decimal); the aggregator
+    # trailing-window values are still float for now. Compare in Decimal space
+    # so the precision invariant holds across the Decimal sum.
+    expected_sum = sum(
+        (row.attribution.regt_excess_over_pm for row in attributions),
+        start=Decimal(0),
+    )
     for label, value in (
         ("trailing-30d", trailing_30d_usd),
         ("trailing-90d", trailing_90d_usd),
         ("lifetime", lifetime_usd),
     ):
-        if value is None or abs(value - expected_sum) <= _TOL:
+        if value is None:
+            continue
+        if abs(Decimal(str(value)) - expected_sum) <= Decimal(str(_TOL)):
             continue
         failures.append(
             f"{label} aggregate {value} does not equal sum of per-fill "
@@ -1446,7 +1446,7 @@ def _resolve_db_path(arg_db_path: Path | None) -> Path:
 
 def _migrate_db_to_head(db_path: Path) -> None:
     """Apply the state-persistence schema via ``Base.metadata.create_all``."""
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
     from alphamind.persistence.models import Base
 
     sync_engine = make_engine(str(db_path))

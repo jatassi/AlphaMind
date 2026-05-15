@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.analysis.tools import TOOLS, ToolQuality
 from alphamind.analysis.tools.earnings_commentary import (
     EarningsCommentaryInput,
@@ -139,12 +140,12 @@ def _add_revision(
 
 def test_earnings_commentary_complete_when_no_transcript_requested(session: Session) -> None:
     _add_ticker(session, "NVDA")
-    _add_earnings_event(session, event_id="ev-1", ticker="NVDA", reported_at=_RECENT_REPORT)
+    _add_earnings_event(session, event_id="ev-1", ticker=Symbol("NVDA"), reported_at=_RECENT_REPORT)
     session.commit()
 
     fn = TOOLS["earnings_commentary"].callable_factory(session)
     result: EarningsCommentaryOutput = fn(
-        EarningsCommentaryInput(ticker="NVDA", include_transcript_analysis=False)
+        EarningsCommentaryInput(ticker=Symbol("NVDA"), include_transcript_analysis=False)
     )
 
     assert result.quality == ToolQuality.COMPLETE
@@ -157,12 +158,12 @@ def test_earnings_commentary_partial_no_transcript_when_transcript_requested(
     session: Session,
 ) -> None:
     _add_ticker(session, "NVDA")
-    _add_earnings_event(session, event_id="ev-1", ticker="NVDA", reported_at=_RECENT_REPORT)
+    _add_earnings_event(session, event_id="ev-1", ticker=Symbol("NVDA"), reported_at=_RECENT_REPORT)
     session.commit()
 
     fn = TOOLS["earnings_commentary"].callable_factory(session)
     result: EarningsCommentaryOutput = fn(
-        EarningsCommentaryInput(ticker="NVDA", include_transcript_analysis=True)
+        EarningsCommentaryInput(ticker=Symbol("NVDA"), include_transcript_analysis=True)
     )
 
     assert result.quality == ToolQuality.PARTIAL_NO_TRANSCRIPT
@@ -175,7 +176,7 @@ def test_earnings_commentary_tier1_fields_populated(session: Session) -> None:
     _add_earnings_event(
         session,
         event_id="ev-1",
-        ticker="NVDA",
+        ticker=Symbol("NVDA"),
         reported_at=_RECENT_REPORT,
         eps_actual=2.0,
         eps_consensus=1.6,
@@ -186,7 +187,7 @@ def test_earnings_commentary_tier1_fields_populated(session: Session) -> None:
 
     fn = TOOLS["earnings_commentary"].callable_factory(session)
     result: EarningsCommentaryOutput = fn(
-        EarningsCommentaryInput(ticker="NVDA", include_transcript_analysis=False)
+        EarningsCommentaryInput(ticker=Symbol("NVDA"), include_transcript_analysis=False)
     )
 
     assert result.result.eps_actual == pytest.approx(2.0)
@@ -198,12 +199,12 @@ def test_earnings_commentary_tier1_fields_populated(session: Session) -> None:
 
 def test_earnings_commentary_carries_envelope_fields(session: Session) -> None:
     _add_ticker(session, "NVDA")
-    _add_earnings_event(session, event_id="ev-1", ticker="NVDA", reported_at=_RECENT_REPORT)
+    _add_earnings_event(session, event_id="ev-1", ticker=Symbol("NVDA"), reported_at=_RECENT_REPORT)
     session.commit()
 
     fn = TOOLS["earnings_commentary"].callable_factory(session)
     result: EarningsCommentaryOutput = fn(
-        EarningsCommentaryInput(ticker="NVDA", include_transcript_analysis=False)
+        EarningsCommentaryInput(ticker=Symbol("NVDA"), include_transcript_analysis=False)
     )
 
     assert isinstance(result.data_freshness, datetime)
@@ -212,12 +213,14 @@ def test_earnings_commentary_carries_envelope_fields(session: Session) -> None:
 
 def test_earnings_commentary_stale_quality_for_old_event(session: Session) -> None:
     _add_ticker(session, "AAPL")
-    _add_earnings_event(session, event_id="ev-old", ticker="AAPL", reported_at=_STALE_REPORT)
+    _add_earnings_event(
+        session, event_id="ev-old", ticker=Symbol("AAPL"), reported_at=_STALE_REPORT
+    )
     session.commit()
 
     fn = TOOLS["earnings_commentary"].callable_factory(session)
     result: EarningsCommentaryOutput = fn(
-        EarningsCommentaryInput(ticker="AAPL", include_transcript_analysis=False)
+        EarningsCommentaryInput(ticker=Symbol("AAPL"), include_transcript_analysis=False)
     )
 
     assert result.quality == ToolQuality.STALE
@@ -225,12 +228,12 @@ def test_earnings_commentary_stale_quality_for_old_event(session: Session) -> No
 
 def test_earnings_commentary_post_earnings_revision_count(session: Session) -> None:
     _add_ticker(session, "TSLA")
-    _add_earnings_event(session, event_id="ev-1", ticker="TSLA", reported_at=_RECENT_REPORT)
+    _add_earnings_event(session, event_id="ev-1", ticker=Symbol("TSLA"), reported_at=_RECENT_REPORT)
     # Two upward revisions after reporting
     after = _RECENT_REPORT + timedelta(days=3)
     _add_revision(
         session,
-        ticker="TSLA",
+        ticker=Symbol("TSLA"),
         revised_at=after,
         consensus_value=2.1,
         prior_consensus_value=2.0,
@@ -238,7 +241,7 @@ def test_earnings_commentary_post_earnings_revision_count(session: Session) -> N
     )
     _add_revision(
         session,
-        ticker="TSLA",
+        ticker=Symbol("TSLA"),
         revised_at=after + timedelta(days=1),
         consensus_value=2.2,
         prior_consensus_value=2.1,
@@ -248,7 +251,7 @@ def test_earnings_commentary_post_earnings_revision_count(session: Session) -> N
 
     fn = TOOLS["earnings_commentary"].callable_factory(session)
     result: EarningsCommentaryOutput = fn(
-        EarningsCommentaryInput(ticker="TSLA", include_transcript_analysis=False)
+        EarningsCommentaryInput(ticker=Symbol("TSLA"), include_transcript_analysis=False)
     )
 
     assert result.post_earnings_activity.estimate_revisions_since == 2
@@ -267,7 +270,7 @@ def test_earnings_commentary_unknown_ticker_returns_unavailable(session: Session
 
     fn = TOOLS["earnings_commentary"].callable_factory(session)
     result: EarningsCommentaryOutput = fn(
-        EarningsCommentaryInput(ticker="UNKNWN", include_transcript_analysis=False)
+        EarningsCommentaryInput(ticker=Symbol("UNKNWN"), include_transcript_analysis=False)
     )
 
     assert result.quality == ToolQuality.UNAVAILABLE
@@ -281,7 +284,7 @@ def test_earnings_commentary_no_earnings_event_returns_unavailable(session: Sess
 
     fn = TOOLS["earnings_commentary"].callable_factory(session)
     result: EarningsCommentaryOutput = fn(
-        EarningsCommentaryInput(ticker="MSFT", include_transcript_analysis=False)
+        EarningsCommentaryInput(ticker=Symbol("MSFT"), include_transcript_analysis=False)
     )
 
     assert result.quality == ToolQuality.UNAVAILABLE

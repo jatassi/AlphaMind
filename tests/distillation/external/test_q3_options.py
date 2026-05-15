@@ -29,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience
 from alphamind.persistence.models import (
@@ -189,16 +190,16 @@ class TestLowOiVolumeAnomaly:
     """Per-contract: ``volume_today >= 5x trailing-avg`` AND ``open_interest < 100``."""
 
     def test_fires_at_threshold(self, session: Session) -> None:
-        from alphamind.distillation.q3_options import detect_low_oi_volume_anomalies
+        from alphamind.distillation.q3 import detect_low_oi_volume_anomalies
 
         _add_ticker(session, "AAPL")
-        _add_contract(session, contract_ticker="O:AAPL260515C00100000", underlying="AAPL")
+        _add_contract(session, contract_ticker="O:AAPL260515C00100000", underlying=Symbol("AAPL"))
         # 20 trailing snapshots with volume = 100 each → 20-day avg = 100.
         for day in range(1, 21):
             _add_snapshot(
                 session,
                 contract_ticker="O:AAPL260515C00100000",
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 snapshot_ts=f"2026-04-{day:02d}T20:00:00Z",
                 open_interest=50,
                 volume_today=100,
@@ -207,7 +208,7 @@ class TestLowOiVolumeAnomaly:
         _add_snapshot(
             session,
             contract_ticker="O:AAPL260515C00100000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             snapshot_ts="2026-04-25T20:00:00Z",
             open_interest=50,
             volume_today=500,
@@ -232,15 +233,15 @@ class TestLowOiVolumeAnomaly:
 
     def test_suppressed_when_oi_at_threshold(self, session: Session) -> None:
         """OI >= 100 suppresses the anomaly even with 5x volume."""
-        from alphamind.distillation.q3_options import detect_low_oi_volume_anomalies
+        from alphamind.distillation.q3 import detect_low_oi_volume_anomalies
 
         _add_ticker(session, "AAPL")
-        _add_contract(session, contract_ticker="O:AAPL260515C00100000", underlying="AAPL")
+        _add_contract(session, contract_ticker="O:AAPL260515C00100000", underlying=Symbol("AAPL"))
         for day in range(1, 21):
             _add_snapshot(
                 session,
                 contract_ticker="O:AAPL260515C00100000",
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 snapshot_ts=f"2026-04-{day:02d}T20:00:00Z",
                 open_interest=100,  # AT threshold — the spec says "OI < 100"
                 volume_today=100,
@@ -248,7 +249,7 @@ class TestLowOiVolumeAnomaly:
         _add_snapshot(
             session,
             contract_ticker="O:AAPL260515C00100000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             snapshot_ts="2026-04-25T20:00:00Z",
             open_interest=100,
             volume_today=500,
@@ -265,15 +266,15 @@ class TestLowOiVolumeAnomaly:
         assert anomalies == []
 
     def test_suppressed_below_volume_multiple(self, session: Session) -> None:
-        from alphamind.distillation.q3_options import detect_low_oi_volume_anomalies
+        from alphamind.distillation.q3 import detect_low_oi_volume_anomalies
 
         _add_ticker(session, "AAPL")
-        _add_contract(session, contract_ticker="O:AAPL260515C00100000", underlying="AAPL")
+        _add_contract(session, contract_ticker="O:AAPL260515C00100000", underlying=Symbol("AAPL"))
         for day in range(1, 21):
             _add_snapshot(
                 session,
                 contract_ticker="O:AAPL260515C00100000",
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 snapshot_ts=f"2026-04-{day:02d}T20:00:00Z",
                 open_interest=50,
                 volume_today=100,
@@ -282,7 +283,7 @@ class TestLowOiVolumeAnomaly:
         _add_snapshot(
             session,
             contract_ticker="O:AAPL260515C00100000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             snapshot_ts="2026-04-25T20:00:00Z",
             open_interest=50,
             volume_today=400,
@@ -313,20 +314,20 @@ class TestBtoStoClassificationHeuristic:
     """
 
     def test_classifies_call_as_bto_when_oi_rises(self, session: Session) -> None:
-        from alphamind.distillation.q3_options import classify_options_flow
+        from alphamind.distillation.q3 import classify_options_flow
 
         _add_ticker(session, "AAPL")
         _add_contract(
             session,
             contract_ticker="O:AAPL260515C00100000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             contract_type="call",
         )
         # Prior snapshot: OI 100, no volume.
         _add_snapshot(
             session,
             contract_ticker="O:AAPL260515C00100000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             snapshot_ts="2026-04-24T20:00:00Z",
             open_interest=100,
             volume_today=0,
@@ -335,7 +336,7 @@ class TestBtoStoClassificationHeuristic:
         _add_snapshot(
             session,
             contract_ticker="O:AAPL260515C00100000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             snapshot_ts="2026-04-25T20:00:00Z",
             open_interest=200,
             volume_today=100,
@@ -358,13 +359,13 @@ class TestBtoStoClassificationHeuristic:
         assert per_ticker.put_sto_volume == 0
 
     def test_classifies_put_as_sto_when_oi_falls(self, session: Session) -> None:
-        from alphamind.distillation.q3_options import classify_options_flow
+        from alphamind.distillation.q3 import classify_options_flow
 
         _add_ticker(session, "AAPL")
         _add_contract(
             session,
             contract_ticker="O:AAPL260515P00090000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             contract_type="put",
             strike=90.0,
         )
@@ -372,7 +373,7 @@ class TestBtoStoClassificationHeuristic:
         _add_snapshot(
             session,
             contract_ticker="O:AAPL260515P00090000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             snapshot_ts="2026-04-24T20:00:00Z",
             open_interest=200,
             volume_today=0,
@@ -381,7 +382,7 @@ class TestBtoStoClassificationHeuristic:
         _add_snapshot(
             session,
             contract_ticker="O:AAPL260515P00090000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             snapshot_ts="2026-04-25T20:00:00Z",
             open_interest=150,
             volume_today=50,
@@ -400,7 +401,7 @@ class TestBtoStoClassificationHeuristic:
 
     def test_aggregates_across_strikes_per_ticker(self, session: Session) -> None:
         """Sum opening/closing volumes across all of a ticker's contracts."""
-        from alphamind.distillation.q3_options import classify_options_flow
+        from alphamind.distillation.q3 import classify_options_flow
 
         _add_ticker(session, "AAPL")
         # Two call contracts at different strikes.
@@ -411,14 +412,14 @@ class TestBtoStoClassificationHeuristic:
             _add_contract(
                 session,
                 contract_ticker=ticker,
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 contract_type="call",
                 strike=strike,
             )
             _add_snapshot(
                 session,
                 contract_ticker=ticker,
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 snapshot_ts="2026-04-24T20:00:00Z",
                 open_interest=100,
                 volume_today=0,
@@ -426,7 +427,7 @@ class TestBtoStoClassificationHeuristic:
             _add_snapshot(
                 session,
                 contract_ticker=ticker,
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 snapshot_ts="2026-04-25T20:00:00Z",
                 open_interest=200,
                 volume_today=100,
@@ -458,7 +459,7 @@ class TestProtectiveSpeculativeClassification:
     """Per-ticker put-flow classification based on system-held long shares."""
 
     def test_puts_tagged_protective_when_ticker_in_positions(self, session: Session) -> None:
-        from alphamind.distillation.q3_options import classify_put_flow_intent
+        from alphamind.distillation.q3 import classify_put_flow_intent
 
         _add_ticker(session, "AAPL", avg_daily_volume_shares=1_000_000)
         session.commit()
@@ -475,7 +476,7 @@ class TestProtectiveSpeculativeClassification:
         assert intent["AAPL"] == "protective"
 
     def test_puts_tagged_speculative_when_not_held(self, session: Session) -> None:
-        from alphamind.distillation.q3_options import classify_put_flow_intent
+        from alphamind.distillation.q3 import classify_put_flow_intent
 
         _add_ticker(session, "AAPL", avg_daily_volume_shares=1_000_000)
         session.commit()
@@ -491,7 +492,7 @@ class TestProtectiveSpeculativeClassification:
         assert intent["AAPL"] == "speculative"
 
     def test_puts_speculative_when_holding_below_threshold(self, session: Session) -> None:
-        from alphamind.distillation.q3_options import classify_put_flow_intent
+        from alphamind.distillation.q3 import classify_put_flow_intent
 
         _add_ticker(session, "AAPL", avg_daily_volume_shares=1_000_000)
         session.commit()
@@ -520,7 +521,7 @@ class TestPairTradeSignatureDetection:
     """
 
     def test_fires_on_correlated_opposite_direction_flow(self, session: Session) -> None:
-        from alphamind.distillation.q3_options import (
+        from alphamind.distillation.q3 import (
             FlowZScore,
             detect_pair_trade_signatures,
         )
@@ -542,7 +543,7 @@ class TestPairTradeSignatureDetection:
         assert sig.correlation == pytest.approx(0.75)
 
     def test_does_not_fire_below_correlation_threshold(self) -> None:
-        from alphamind.distillation.q3_options import (
+        from alphamind.distillation.q3 import (
             FlowZScore,
             detect_pair_trade_signatures,
         )
@@ -561,7 +562,7 @@ class TestPairTradeSignatureDetection:
         assert signatures == []
 
     def test_does_not_fire_below_sigma_threshold(self) -> None:
-        from alphamind.distillation.q3_options import (
+        from alphamind.distillation.q3 import (
             FlowZScore,
             detect_pair_trade_signatures,
         )
@@ -591,7 +592,7 @@ class TestSectorWideSweepDetection:
     """
 
     def test_fires_at_three_names(self, session: Session) -> None:
-        from alphamind.distillation.q3_options import (
+        from alphamind.distillation.q3 import (
             FlowZScore,
             detect_sector_wide_sweeps,
         )
@@ -619,7 +620,7 @@ class TestSectorWideSweepDetection:
         assert sorted(sweep.tickers) == ["AMD", "INTC", "NVDA"]
 
     def test_does_not_fire_at_two_names(self, session: Session) -> None:
-        from alphamind.distillation.q3_options import (
+        from alphamind.distillation.q3 import (
             FlowZScore,
             detect_sector_wide_sweeps,
         )
@@ -645,7 +646,7 @@ class TestSectorWideSweepDetection:
     def test_separate_sweeps_for_calls_and_puts(self, session: Session) -> None:
         """Same sector can emit two sweeps in different directions
         (e.g. macro hedging on calls and defensive puts simultaneously)."""
-        from alphamind.distillation.q3_options import (
+        from alphamind.distillation.q3 import (
             FlowZScore,
             detect_sector_wide_sweeps,
         )
@@ -698,7 +699,7 @@ class TestEtfIvDivergence:
     """
 
     def test_fires_at_one_sigma(self) -> None:
-        from alphamind.distillation.q3_options import compute_etf_iv_divergences
+        from alphamind.distillation.q3 import compute_etf_iv_divergences
 
         # Spread mean 0, stdev 0.05; observed spread 0.06 → z = 1.2.
         divergences = compute_etf_iv_divergences(
@@ -722,7 +723,7 @@ class TestEtfIvDivergence:
         assert div.direction == "etf_leading_names"
 
     def test_does_not_fire_below_one_sigma(self) -> None:
-        from alphamind.distillation.q3_options import compute_etf_iv_divergences
+        from alphamind.distillation.q3 import compute_etf_iv_divergences
 
         # Spread 0.04 / 0.05 = 0.8 z — under 1.0.
         divergences = compute_etf_iv_divergences(
@@ -743,7 +744,7 @@ class TestEtfIvDivergence:
     def test_negative_spread_marks_names_leading(self) -> None:
         """When single-name aggregate IV exceeds ETF IV by > 1sigma, the
         direction is ``names_leading_etf``."""
-        from alphamind.distillation.q3_options import compute_etf_iv_divergences
+        from alphamind.distillation.q3 import compute_etf_iv_divergences
 
         divergences = compute_etf_iv_divergences(
             sectors={
@@ -772,7 +773,7 @@ class TestIndexVsSectorClassification:
     """When SPY/QQQ put flow and sector-ETF put flow both spike: distinguish."""
 
     def test_macro_hedging_when_both_spike(self) -> None:
-        from alphamind.distillation.q3_options import (
+        from alphamind.distillation.q3 import (
             FlowZScore,
             classify_index_vs_sector_flow,
         )
@@ -795,7 +796,7 @@ class TestIndexVsSectorClassification:
         assert result.label == "macro_hedging"
 
     def test_sector_specific_concern_when_only_sector_spikes(self) -> None:
-        from alphamind.distillation.q3_options import (
+        from alphamind.distillation.q3 import (
             FlowZScore,
             classify_index_vs_sector_flow,
         )
@@ -817,7 +818,7 @@ class TestIndexVsSectorClassification:
         assert result.label == "sector_specific_concern"
 
     def test_index_hedging_no_sector_view_when_only_index_spikes(self) -> None:
-        from alphamind.distillation.q3_options import (
+        from alphamind.distillation.q3 import (
             FlowZScore,
             classify_index_vs_sector_flow,
         )
@@ -839,7 +840,7 @@ class TestIndexVsSectorClassification:
         assert result.label == "index_hedging_no_sector_view"
 
     def test_returns_none_when_neither_spikes(self) -> None:
-        from alphamind.distillation.q3_options import (
+        from alphamind.distillation.q3 import (
             FlowZScore,
             classify_index_vs_sector_flow,
         )
@@ -909,7 +910,7 @@ class TestAtmIvBaselineState:
         _add_ticker(session, "AAPL")
         session.add(
             DistillationTickerBaseline(
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 baseline_kind="atm_iv",
                 as_of="2026-04-25T20:00:00Z",
                 mean=0.30,
@@ -931,7 +932,7 @@ class TestAtmIvBaselineState:
         assert row.mean == pytest.approx(0.30)
 
     def test_refresh_writes_atm_iv_baseline_with_iv_rank(self, session: Session) -> None:
-        from alphamind.distillation.q3_options import refresh_atm_iv_baselines
+        from alphamind.distillation.q3 import refresh_atm_iv_baselines
 
         _add_ticker(session, "AAPL")
         session.commit()
@@ -940,7 +941,7 @@ class TestAtmIvBaselineState:
             iv = 0.20 + (day - 1) * (0.20 / 59)  # 0.20 .. 0.40
             _add_atm_iv_snapshot(
                 session,
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 snapshot_ts=_ts_for_day_offset(day),
                 implied_volatility=iv,
             )
@@ -963,7 +964,7 @@ class TestAtmIvBaselineState:
         assert cv.value["mean"] == pytest.approx(0.30, abs=0.02)
 
     def test_refresh_marks_bootstrap_below_min_observations(self, session: Session) -> None:
-        from alphamind.distillation.q3_options import refresh_atm_iv_baselines
+        from alphamind.distillation.q3 import refresh_atm_iv_baselines
 
         _add_ticker(session, "AAPL")
         session.commit()
@@ -971,7 +972,7 @@ class TestAtmIvBaselineState:
         for day in range(1, 11):
             _add_atm_iv_snapshot(
                 session,
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 snapshot_ts=_ts_for_day_offset(day),
                 implied_volatility=0.30,
             )
@@ -1021,7 +1022,7 @@ class TestBlockAssembly:
         ``{"per_ticker": {ticker: {...}, ...}}``; ``audience`` is the
         single sector.
         """
-        from alphamind.distillation.q3_options import (
+        from alphamind.distillation.q3 import (
             FlowClassificationInputs,
             assemble_q3_flow_classification_blocks,
         )
@@ -1083,7 +1084,7 @@ class TestBlockAssembly:
 
     def test_pair_trade_block_carries_multi_sector_audience(self) -> None:
         """A pair-trade signature spans both legs' sector audiences."""
-        from alphamind.distillation.q3_options import (
+        from alphamind.distillation.q3 import (
             PairTradeSignature,
             assemble_q3_pair_trade_blocks,
         )
@@ -1119,7 +1120,7 @@ class TestBlockAssembly:
 
     def test_index_vs_sector_block_carries_universal_audience(self) -> None:
         """Index-vs-sector spans every sector audience (universal cross-sector)."""
-        from alphamind.distillation.q3_options import (
+        from alphamind.distillation.q3 import (
             IndexVsSectorClassification,
             assemble_q3_index_vs_sector_block,
         )
@@ -1151,7 +1152,7 @@ class TestBlockAssembly:
 
     def test_sector_wide_sweep_block_per_sector(self) -> None:
         """One ``q3.sector_wide_sweep`` block per sweep, sector-scoped audience."""
-        from alphamind.distillation.q3_options import (
+        from alphamind.distillation.q3 import (
             SectorWideSweep,
             assemble_q3_sector_wide_sweep_blocks,
         )
@@ -1180,7 +1181,7 @@ class TestBlockAssembly:
 
     def test_etf_iv_divergence_block_per_sector(self) -> None:
         """One ``q3.etf_iv_divergence`` block per detected divergence."""
-        from alphamind.distillation.q3_options import (
+        from alphamind.distillation.q3 import (
             EtfIvDivergence,
             assemble_q3_etf_iv_divergence_blocks,
         )
@@ -1213,7 +1214,7 @@ class TestBlockAssembly:
     def test_iv_rank_block_per_sector(self) -> None:
         """One ``q3.iv_rank`` block per sector audience."""
         from alphamind.distillation.calibration import CalibratedValue, CalibrationState
-        from alphamind.distillation.q3_options import assemble_q3_iv_rank_blocks
+        from alphamind.distillation.q3 import assemble_q3_iv_rank_blocks
 
         per_ticker = {
             "AAPL": CalibratedValue(

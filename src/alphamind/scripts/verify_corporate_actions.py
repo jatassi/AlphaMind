@@ -22,6 +22,7 @@ Usage::
 
 See ``scripts/RUNBOOK_corporate_actions.md`` for the operator runbook.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -36,52 +37,23 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price
+from alphamind._kernel.regime import RiskZone
 from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
 )
 from alphamind.execution.corporate_actions.types import CorporateActionActivity
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.corporate_action_integration_ledger import (
-    CorporateActionIntegrationLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.orders_codec import (
-    record_to_row as order_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
-)
-from alphamind.execution.state_persistence.write_paths.phase1 import (
+from alphamind.execution.write_paths.phase1 import (
     process_unprocessed_fills,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    CorporateActionLedgerStatus,
 )
 from alphamind.persistence.session import (
     make_async_engine,
@@ -137,7 +109,45 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     MarketInputs,
     RealizedVolEntry,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.records import (
+    CorporateActionLedgerStatus,
+)
+from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.corporate_action_integration_ledger import (
+    CorporateActionIntegrationLedgerRow,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
+)
+from alphamind.state.tables.orders_codec import (
+    record_to_row as order_record_to_row,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
+)
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
+)
 
 __all__ = [
     "ActionRowResult",
@@ -356,36 +366,32 @@ def _market_inputs() -> MarketInputs:
 
 
 def _cash_ledger() -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": _INITIAL_CASH,
-            "settled_cash_usd": _INITIAL_CASH,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": _INITIAL_CASH,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=_INITIAL_CASH,
+        settled_cash_usd=_INITIAL_CASH,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=_INITIAL_CASH,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _drawdown_state() -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": _INITIAL_CASH,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=_INITIAL_CASH,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -399,7 +405,7 @@ def _equity_long_position(
     bracket_id: str,
 ) -> PositionRecord:
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=average_cost_basis_per_share,
     )
@@ -412,21 +418,19 @@ def _equity_long_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id),
+        bracket_id=BracketId(bracket_id),
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -440,7 +444,7 @@ def _equity_short_position(
     bracket_id: str,
 ) -> PositionRecord:
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=average_cost_basis_per_share,
         borrow_rate_pct=0.025,
@@ -456,21 +460,19 @@ def _equity_short_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.SHORT,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.SHORT,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -484,7 +486,7 @@ def _options_long_position(
     bracket_id: str,
 ) -> PositionRecord:
     details = OptionsPositionDetails(
-        underlying_ticker=underlying_ticker,
+        underlying_ticker=Symbol(underlying_ticker),
         strike_price=150.0,
         expiration_date=date(2026, 9, 18),
         contract_type=OptionContractType.CALL,
@@ -502,21 +504,19 @@ def _options_long_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -531,7 +531,7 @@ def _strategy_position(
         leg_id=f"{position_id}-leg-long",
         direction=Direction.LONG,
         options=OptionsPositionDetails(
-            underlying_ticker=underlying_ticker,
+            underlying_ticker=Symbol(underlying_ticker),
             strike_price=150.0,
             expiration_date=date(2026, 9, 18),
             contract_type=OptionContractType.CALL,
@@ -545,7 +545,7 @@ def _strategy_position(
         leg_id=f"{position_id}-leg-short",
         direction=Direction.SHORT,
         options=OptionsPositionDetails(
-            underlying_ticker=underlying_ticker,
+            underlying_ticker=Symbol(underlying_ticker),
             strike_price=160.0,
             expiration_date=date(2026, 9, 18),
             contract_type=OptionContractType.CALL,
@@ -573,51 +573,47 @@ def _strategy_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
 def _entry_order(order_id: str, *, bracket_id: str, position_id: str, ticker: str) -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": position_id,
-            "bracket_id": bracket_id,
-            "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=ticker),
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": 10.0,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": None,
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=bracket_id,
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=None,
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -627,32 +623,30 @@ def _stop_order(order_id: str, *, bracket_id: str, ticker: str) -> OrderRecord:
     The bracket leg's ``order_id`` points at this row; without it, the FK
     enforcement migration would reject the leg at COMMIT.
     """
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": None,
-            "bracket_id": bracket_id,
-            "role": OrderRole.PRICE_STOP,
-            "instrument_spec": EquityInstrumentSpec(ticker=ticker),
-            "direction": OrderDirection.SELL,
-            "order_type": OrderType.STOP,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(stop_trigger_price=0.01),
-            "quantity": 10.0,
-            "duration": OrderDuration.GTC,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": None,
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=None,
+        bracket_id=bracket_id,
+        role=OrderRole.PRICE_STOP,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(stop_trigger_price=0.01),
+        quantity=10.0,
+        duration=OrderDuration.GTC,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=None,
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -662,16 +656,16 @@ def _bracket(
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker=ticker, threshold_usd=0.01, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(underlying_ticker=Symbol(ticker), threshold_usd=0.01, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id=entry_order_id,
+        entry_order_id=OrderId(entry_order_id),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -683,7 +677,7 @@ def _thesis(thesis_id: str, *, position_id: str, ticker: str) -> ThesisRecord:
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -702,8 +696,8 @@ def _thesis(thesis_id: str, *, position_id: str, ticker: str) -> ThesisRecord:
     )
     generation_at = _NOW - timedelta(hours=4)
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary=f"{ticker} momentum",
         key_catalyst="Catalyst",
         position_size_rationale="Sized at 5%",
@@ -768,8 +762,8 @@ def _all_scenarios() -> tuple[_SeedScenario, ...]:
                 ticker=_TICKER_SPLIT,
                 share_count=_SPLIT_PRE_QTY,
                 average_cost_basis_per_share=_SPLIT_PRE_BASIS,
-                thesis_id=f"thesis-{_POS_SPLIT}",
-                bracket_id=f"brk-{_POS_SPLIT}",
+                thesis_id=ThesisId(f"thesis-{_POS_SPLIT}"),
+                bracket_id=BracketId(f"brk-{_POS_SPLIT}"),
             ),
         ),
         _build_scenario(
@@ -780,8 +774,8 @@ def _all_scenarios() -> tuple[_SeedScenario, ...]:
                 ticker=_TICKER_REV_SPLIT,
                 share_count=_REV_SPLIT_PRE_QTY,
                 average_cost_basis_per_share=_REV_SPLIT_PRE_BASIS,
-                thesis_id=f"thesis-{_POS_REV_SPLIT}",
-                bracket_id=f"brk-{_POS_REV_SPLIT}",
+                thesis_id=ThesisId(f"thesis-{_POS_REV_SPLIT}"),
+                bracket_id=BracketId(f"brk-{_POS_REV_SPLIT}"),
             ),
         ),
         _build_scenario(
@@ -792,8 +786,8 @@ def _all_scenarios() -> tuple[_SeedScenario, ...]:
                 ticker=_TICKER_STOCK_DIV,
                 share_count=_STOCK_DIV_PRE_QTY,
                 average_cost_basis_per_share=_STOCK_DIV_PRE_BASIS,
-                thesis_id=f"thesis-{_POS_STOCK_DIV}",
-                bracket_id=f"brk-{_POS_STOCK_DIV}",
+                thesis_id=ThesisId(f"thesis-{_POS_STOCK_DIV}"),
+                bracket_id=BracketId(f"brk-{_POS_STOCK_DIV}"),
             ),
         ),
         _build_scenario(
@@ -804,8 +798,8 @@ def _all_scenarios() -> tuple[_SeedScenario, ...]:
                 ticker=_TICKER_CD_LONG,
                 share_count=_CD_LONG_PRE_QTY,
                 average_cost_basis_per_share=_CD_LONG_PRE_BASIS,
-                thesis_id=f"thesis-{_POS_CD_LONG}",
-                bracket_id=f"brk-{_POS_CD_LONG}",
+                thesis_id=ThesisId(f"thesis-{_POS_CD_LONG}"),
+                bracket_id=BracketId(f"brk-{_POS_CD_LONG}"),
             ),
         ),
         _build_scenario(
@@ -816,8 +810,8 @@ def _all_scenarios() -> tuple[_SeedScenario, ...]:
                 ticker=_TICKER_CD_SHORT,
                 share_count=_CD_SHORT_PRE_QTY,
                 average_cost_basis_per_share=_CD_SHORT_PRE_BASIS,
-                thesis_id=f"thesis-{_POS_CD_SHORT}",
-                bracket_id=f"brk-{_POS_CD_SHORT}",
+                thesis_id=ThesisId(f"thesis-{_POS_CD_SHORT}"),
+                bracket_id=BracketId(f"brk-{_POS_CD_SHORT}"),
             ),
         ),
         _build_scenario(
@@ -828,8 +822,8 @@ def _all_scenarios() -> tuple[_SeedScenario, ...]:
                 ticker=_TICKER_CASH_MERGER,
                 share_count=_CASH_MERGER_PRE_QTY,
                 average_cost_basis_per_share=_CASH_MERGER_PRE_BASIS,
-                thesis_id=f"thesis-{_POS_CASH_MERGER}",
-                bracket_id=f"brk-{_POS_CASH_MERGER}",
+                thesis_id=ThesisId(f"thesis-{_POS_CASH_MERGER}"),
+                bracket_id=BracketId(f"brk-{_POS_CASH_MERGER}"),
             ),
         ),
         _build_scenario(
@@ -840,8 +834,8 @@ def _all_scenarios() -> tuple[_SeedScenario, ...]:
                 ticker=_TICKER_STOCK_MERGER_OLD,
                 share_count=_STOCK_MERGER_PRE_QTY,
                 average_cost_basis_per_share=_STOCK_MERGER_PRE_BASIS,
-                thesis_id=f"thesis-{_POS_STOCK_MERGER}",
-                bracket_id=f"brk-{_POS_STOCK_MERGER}",
+                thesis_id=ThesisId(f"thesis-{_POS_STOCK_MERGER}"),
+                bracket_id=BracketId(f"brk-{_POS_STOCK_MERGER}"),
             ),
         ),
         _build_scenario(
@@ -852,8 +846,8 @@ def _all_scenarios() -> tuple[_SeedScenario, ...]:
                 ticker=_TICKER_SPIN_OFF_PARENT,
                 share_count=_SPIN_OFF_PARENT_QTY,
                 average_cost_basis_per_share=_SPIN_OFF_PARENT_PRE_BASIS,
-                thesis_id=f"thesis-{_POS_SPIN_OFF}",
-                bracket_id=f"brk-{_POS_SPIN_OFF}",
+                thesis_id=ThesisId(f"thesis-{_POS_SPIN_OFF}"),
+                bracket_id=BracketId(f"brk-{_POS_SPIN_OFF}"),
             ),
         ),
         _build_scenario(
@@ -864,8 +858,8 @@ def _all_scenarios() -> tuple[_SeedScenario, ...]:
                 underlying_ticker=_TICKER_SYMBOL_CHANGE_OLD,
                 contract_count=_SYMBOL_CHANGE_PRE_CONTRACTS,
                 premium_paid_per_contract=_SYMBOL_CHANGE_PRE_PREMIUM,
-                thesis_id=f"thesis-{_POS_SYMBOL_CHANGE}",
-                bracket_id=f"brk-{_POS_SYMBOL_CHANGE}",
+                thesis_id=ThesisId(f"thesis-{_POS_SYMBOL_CHANGE}"),
+                bracket_id=BracketId(f"brk-{_POS_SYMBOL_CHANGE}"),
             ),
         ),
         _build_scenario(
@@ -874,8 +868,8 @@ def _all_scenarios() -> tuple[_SeedScenario, ...]:
             position=_strategy_position(
                 _POS_STRATEGY,
                 underlying_ticker=_TICKER_STRATEGY,
-                thesis_id=f"thesis-{_POS_STRATEGY}",
-                bracket_id=f"brk-{_POS_STRATEGY}",
+                thesis_id=ThesisId(f"thesis-{_POS_STRATEGY}"),
+                bracket_id=BracketId(f"brk-{_POS_STRATEGY}"),
             ),
         ),
     )
@@ -979,46 +973,53 @@ def _ca_activities() -> tuple[CorporateActionActivity, ...]:
 
 
 def _equity_snapshot(symbol: str, qty: float, avg_entry_price: float) -> PositionSnapshot:
+    # ALP-462 — PositionSnapshot fields are Price/Money; wrap fixture floats.
+    px = price(str(avg_entry_price))
+    notional = money(str(qty * avg_entry_price))
     return PositionSnapshot(
         symbol=symbol,
         asset_class="us_equity",
         qty=qty,
-        avg_entry_price=avg_entry_price,
-        market_value=qty * avg_entry_price,
-        cost_basis=qty * avg_entry_price,
-        unrealized_pl=0.0,
+        avg_entry_price=px,
+        market_value=notional,
+        cost_basis=notional,
+        unrealized_pl=money("0"),
         unrealized_plpc=0.0,
-        current_price=avg_entry_price,
+        current_price=px,
         side="long",
     )
 
 
 def _equity_short_snapshot(symbol: str, qty: float, avg_entry_price: float) -> PositionSnapshot:
+    px = price(str(avg_entry_price))
+    notional = money(str(qty * avg_entry_price))
     return PositionSnapshot(
         symbol=symbol,
         asset_class="us_equity",
         qty=qty,
-        avg_entry_price=avg_entry_price,
-        market_value=qty * avg_entry_price,
-        cost_basis=qty * avg_entry_price,
-        unrealized_pl=0.0,
+        avg_entry_price=px,
+        market_value=notional,
+        cost_basis=notional,
+        unrealized_pl=money("0"),
         unrealized_plpc=0.0,
-        current_price=avg_entry_price,
+        current_price=px,
         side="short",
     )
 
 
 def _options_snapshot(symbol: str, qty: float, avg_entry_price: float) -> PositionSnapshot:
+    px = price(str(avg_entry_price))
+    notional = money(str(qty * avg_entry_price * 100.0))
     return PositionSnapshot(
         symbol=symbol,
         asset_class="us_option",
         qty=qty,
-        avg_entry_price=avg_entry_price,
-        market_value=qty * avg_entry_price * 100.0,
-        cost_basis=qty * avg_entry_price * 100.0,
-        unrealized_pl=0.0,
+        avg_entry_price=px,
+        market_value=notional,
+        cost_basis=notional,
+        unrealized_pl=money("0"),
         unrealized_plpc=0.0,
-        current_price=avg_entry_price,
+        current_price=px,
         side="long",
     )
 
@@ -1107,14 +1108,15 @@ def _alpaca_account_aligned() -> TradeAccountSnapshot:
         + _CASH_MERGER_PROCEEDS
         + _STOCK_MERGER_CASH_PARTIAL
     )
+    # ALP-462 — TradeAccountSnapshot fields are Money; wrap fixture floats.
     return TradeAccountSnapshot(
         account_id="alp-account-1",
-        cash=expected_cash,
-        equity=expected_cash,
-        buying_power=200_000.0,
-        regt_buying_power=200_000.0,
-        daytrading_buying_power=200_000.0,
-        maintenance_margin=0.0,
+        cash=money(str(expected_cash)),
+        equity=money(str(expected_cash)),
+        buying_power=money("200000"),
+        regt_buying_power=money("200000"),
+        daytrading_buying_power=money("200000"),
+        maintenance_margin=money("0"),
         daytrade_count=0,
         pattern_day_trader=False,
         status="ACTIVE",
@@ -1581,6 +1583,10 @@ async def run_verify(db_path: Path) -> VerifyResult:
             try:
                 row = await validator(factory)
             except Exception as exc:
+                # Per-validator supervisor per runtime §G1: each action type's
+                # validator runs independently; one raising must not abort the
+                # full validation grid. ``BaseException`` (``CancelledError``)
+                # propagates so verify-script cancellation is honored.
                 row = ActionRowResult(action_type.value, ok=False, detail=f"exception: {exc!r}")
             action_rows.append(row)
 
@@ -1683,7 +1689,7 @@ def _resolve_db_path(arg_db_path: Path | None) -> tuple[Path, bool]:
 def _migrate_db_to_head(db_path: Path) -> None:
     """Apply the state-persistence schema via ``Base.metadata.create_all``."""
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
     from alphamind.persistence.models import Base
 
     sync_engine = make_engine(str(db_path))

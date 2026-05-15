@@ -16,16 +16,24 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownState,
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
+from alphamind._kernel.regime import (
     DrawdownTier,
     RegimeLabel,
     RegimeTransitionState,
+    RiskZone,
+)
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
     RiskBudgetConsumption,
     RiskBudgetEntry,
-    RiskZone,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -70,7 +78,7 @@ def make_position_record(
     direction_enum = Direction.SHORT if is_short else Direction.LONG
     share_count = size_usd / 100.0  # synthetic; primitives use only weight/notional/pnl
     equity_details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=100.0,
         borrow_rate_pct=2.5 if is_short else None,
@@ -81,7 +89,7 @@ def make_position_record(
     cost_basis = max(size_usd - unrealized_pnl_usd, 1e-9)
     unrealized_pnl_pct = (unrealized_pnl_usd / cost_basis) * 100.0
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,

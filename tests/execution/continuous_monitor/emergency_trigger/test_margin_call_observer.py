@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.money import money
 from alphamind.execution.broker_adapter.queries import TradeAccountSnapshot
 from alphamind.execution.continuous_monitor.emergency_trigger.margin_call_observer import (
     AlpacaMarginCallObserver,
@@ -38,12 +39,12 @@ class _FakeAccountQueries:
 def _snapshot(*, equity: float, maintenance_margin: float) -> TradeAccountSnapshot:
     return TradeAccountSnapshot(
         account_id="acct-1",
-        cash=0.0,
-        equity=equity,
-        buying_power=0.0,
-        regt_buying_power=0.0,
-        daytrading_buying_power=0.0,
-        maintenance_margin=maintenance_margin,
+        cash=money(0.0),
+        equity=money(equity),
+        buying_power=money(0.0),
+        regt_buying_power=money(0.0),
+        daytrading_buying_power=money(0.0),
+        maintenance_margin=money(maintenance_margin),
         daytrade_count=0,
         pattern_day_trader=False,
         status="ACTIVE",

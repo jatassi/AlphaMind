@@ -1,25 +1,22 @@
-"""Tests for finra/short_volume.py — all HTTP calls are mocked."""
+"""Tests for finra/short_volume.py — all FINRA SDK calls routed through FakeFinraAPI."""
 
 from __future__ import annotations
 
 from datetime import date
-from unittest.mock import MagicMock
 
-import httpx
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
+from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import AssetUniverse, Base, ShortVolumeDaily
 from alphamind.persistence.session import make_engine, make_session_factory
+from tests.data_sources._fakes.finra import FakeFinraAPI
+from tests.data_sources._fakes.run_repo import FakeRunRepo
 
 # Trade date used throughout: 2026-01-23 is a Friday
 _TRADE_DATE = date(2026, 1, 23)
 _TRADE_DATE_STR = "20260123"
 _TRADE_DATE_ISO = "2026-01-23"
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
@@ -31,7 +28,7 @@ def session_factory() -> sessionmaker[Session]:
         sess.add(
             AssetUniverse(
                 asset_id="u1",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 full_name="Apple Inc.",
                 asset_class="equity",
                 asset_role="universe",
@@ -57,31 +54,8 @@ def _file_body(rows: list[tuple[str, str, int, int, int, str]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _make_client(responses: dict[str, str | Exception]) -> MagicMock:
-    """Return a mock FinraClient whose get() dispatches on path."""
-
-    def fake_get(path: str) -> str:
-        val = responses.get(path)
-        if val is None:
-            req = httpx.Request("GET", f"https://cdn.finra.org{path}")
-            resp = httpx.Response(404, request=req)
-            raise httpx.HTTPStatusError("404", request=req, response=resp)
-        if isinstance(val, Exception):
-            raise val
-        return val
-
-    client = MagicMock()
-    client.get.side_effect = fake_get
-    return client
-
-
 def _path_for(trade_date: date) -> str:
     return f"/equity/regsho/daily/CNMSshvol{trade_date.strftime('%Y%m%d')}.txt"
-
-
-# ---------------------------------------------------------------------------
-# collect_short_volume — happy path
-# ---------------------------------------------------------------------------
 
 
 class TestCollectShortVolume:
@@ -91,14 +65,14 @@ class TestCollectShortVolume:
 
         path = _path_for(_TRADE_DATE)
         body = _file_body([(_TRADE_DATE_STR, "AAPL", 2_000_000, 10_000, 5_000_000, "CNMS")])
-        client = _make_client({path: body})
+        client = FakeFinraAPI(responses={path: body})
 
         collect_short_volume(
             since=_TRADE_DATE,
             until=_TRADE_DATE,
             client=client,
             session_factory=session_factory,
-            _repo=MagicMock(),
+            _repo=FakeRunRepo(),
         )
 
         with session_factory() as sess:
@@ -119,14 +93,14 @@ class TestCollectShortVolume:
                 (_TRADE_DATE_STR, "UNKNOWN_XYZ", 500_000, 0, 1_000_000, "CNMS"),
             ]
         )
-        client = _make_client({path: body})
+        client = FakeFinraAPI(responses={path: body})
 
         collect_short_volume(
             since=_TRADE_DATE,
             until=_TRADE_DATE,
             client=client,
             session_factory=session_factory,
-            _repo=MagicMock(),
+            _repo=FakeRunRepo(),
         )
 
         with session_factory() as sess:
@@ -141,21 +115,21 @@ class TestCollectShortVolume:
 
         path = _path_for(_TRADE_DATE)
         body = _file_body([(_TRADE_DATE_STR, "AAPL", 2_000_000, 10_000, 5_000_000, "CNMS")])
-        client = _make_client({path: body})
+        client = FakeFinraAPI(responses={path: body})
 
         collect_short_volume(
             since=_TRADE_DATE,
             until=_TRADE_DATE,
             client=client,
             session_factory=session_factory,
-            _repo=MagicMock(),
+            _repo=FakeRunRepo(),
         )
         collect_short_volume(
             since=_TRADE_DATE,
             until=_TRADE_DATE,
             client=client,
             session_factory=session_factory,
-            _repo=MagicMock(),
+            _repo=FakeRunRepo(),
         )
 
         with session_factory() as sess:
@@ -165,14 +139,14 @@ class TestCollectShortVolume:
         """A 404 on a future-dated file is silently skipped — no rows, no error."""
         from alphamind.data_sources.finra.short_volume import collect_short_volume
 
-        client = _make_client({})  # all paths → 404
+        client = FakeFinraAPI()  # all paths → 404
 
         collect_short_volume(
             since=_TRADE_DATE,
             until=_TRADE_DATE,
             client=client,
             session_factory=session_factory,
-            _repo=MagicMock(),
+            _repo=FakeRunRepo(),
         )
 
         with session_factory() as sess:
@@ -185,8 +159,8 @@ class TestCollectShortVolume:
         from alphamind.data_sources.finra.short_volume import collect_short_volume
 
         path = _path_for(_TRADE_DATE)
-        client = _make_client({path: RuntimeError("unexpected")})
-        mock_repo = MagicMock()
+        client = FakeFinraAPI(responses={path: RuntimeError("unexpected")})
+        repo = FakeRunRepo()
 
         with pytest.raises(RuntimeError, match="unexpected"):
             collect_short_volume(
@@ -194,7 +168,7 @@ class TestCollectShortVolume:
                 until=_TRADE_DATE,
                 client=client,
                 session_factory=session_factory,
-                _repo=mock_repo,
+                _repo=repo,
             )
 
-        mock_repo.update_failed.assert_called_once()
+        assert repo.failed()

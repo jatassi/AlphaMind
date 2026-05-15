@@ -13,6 +13,13 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     CloseSubmissionResult,
@@ -99,14 +106,14 @@ def _options_position(
     iv: float = 0.30,
 ) -> PositionRecord:
     return PositionRecord(
-        position_id=position_id,
-        thesis_id="THESIS-1",
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-1"),
+        bracket_id=BracketId(bracket_id),
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_NOW,
         details=OptionsPositionDetails(
-            underlying_ticker=underlying,
+            underlying_ticker=Symbol(underlying),
             strike_price=850.0,
             expiration_date=date(2026, 6, 19),
             contract_type=OptionContractType.CALL,
@@ -150,7 +157,7 @@ def _price_stop_bracket(
         leg_type=BracketLegType.PRICE_STOP,
         order_id=None,
         trigger=PriceTrigger(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             threshold_usd=threshold,
             direction=direction,  # type: ignore[arg-type]
         ),
@@ -158,10 +165,10 @@ def _price_stop_bracket(
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-entry-1",
+        entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -180,7 +187,7 @@ def _pl_target_bracket(
         leg_type=BracketLegType.TAKE_PROFIT,
         order_id=None,
         trigger=PriceTrigger(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             threshold_usd=actual_entry_price * (1.0 + target_pct),
             direction="GTE",
         ),
@@ -195,10 +202,10 @@ def _pl_target_bracket(
         ),
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-entry-1",
+        entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -465,14 +472,14 @@ class TestEquityPositionsSkipped:
         from alphamind.portfolio_state.records.positions import EquityPositionDetails
 
         equity = PositionRecord(
-            position_id="pos-eq",
+            position_id=PositionId("pos-eq"),
             thesis_id=None,
-            bracket_id="brk-eq",
+            bracket_id=BracketId("brk-eq"),
             status=PositionStatus.OPEN,
             direction=Direction.LONG,
             entry_timestamp=_NOW,
             details=EquityPositionDetails(
-                ticker="AAPL", share_count=100.0, average_cost_basis_per_share=150.0
+                ticker=Symbol("AAPL"), share_count=100.0, average_cost_basis_per_share=150.0
             ),
             execution_history=(
                 PositionFill(
@@ -492,15 +499,17 @@ class TestEquityPositionsSkipped:
             leg_id="leg-eq",
             leg_type=BracketLegType.PRICE_STOP,
             order_id=None,
-            trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.ACTIVE,
         )
         bracket = BracketRecord(
-            bracket_id="brk-eq",
-            position_id="pos-eq",
+            bracket_id=BracketId("brk-eq"),
+            position_id=PositionId("pos-eq"),
             status=BracketStatus.ACTIVE,
-            entry_order_id="ord-eq",
+            entry_order_id=OrderId("ord-eq"),
             protective_legs=(leg,),
             modification_history=(),
             corporate_action_cancellation_reason=None,
@@ -540,7 +549,9 @@ class TestLegStatusFiltering:
             leg_id="leg-cancelled",
             leg_type=BracketLegType.PRICE_STOP,
             order_id=None,
-            trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=865.0, direction="LTE"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("NVDA"), threshold_usd=865.0, direction="LTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.CANCELLED,
         )
@@ -558,10 +569,10 @@ class TestLegStatusFiltering:
             status=BracketLegStatus.ACTIVE,
         )
         bracket = BracketRecord(
-            bracket_id="brk-1",
-            position_id="pos-1",
+            bracket_id=BracketId("brk-1"),
+            position_id=PositionId("pos-1"),
             status=BracketStatus.ACTIVE,
-            entry_order_id="ord-entry-1",
+            entry_order_id=OrderId("ord-entry-1"),
             protective_legs=(leg, backstop),
             modification_history=(),
             corporate_action_cancellation_reason=None,
@@ -639,9 +650,8 @@ class TestConfigKnob:
         assert cfg.bracket_stop_evaluation_cadence_seconds == 1.0
 
     def test_bracket_stop_evaluation_cadence_seconds_positive_required(self) -> None:
-        from pydantic import ValidationError
 
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             ContinuousMonitorConfig(
                 breach_evaluation_cadence_seconds=60,
                 greeks_refresh_interval_minutes=15,
@@ -653,7 +663,7 @@ class TestConfigKnob:
                 supervisor_shutdown_timeout_seconds=5,
             )
 
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             ContinuousMonitorConfig(
                 breach_evaluation_cadence_seconds=60,
                 greeks_refresh_interval_minutes=15,

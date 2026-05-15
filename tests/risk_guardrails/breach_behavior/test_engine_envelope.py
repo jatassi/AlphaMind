@@ -6,6 +6,10 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -35,14 +39,14 @@ def _short_mara_position() -> PositionView:
     """A6 / A7 fixture: 140 shares short MARA at $20 avg cost, current $28."""
     fill_ts = datetime(2026, 4, 28, 14, 0, tzinfo=UTC)
     record = PositionRecord(
-        position_id="POS-MARA-001",
+        position_id=PositionId("POS-MARA-001"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.SHORT,
         entry_timestamp=fill_ts,
         details=EquityPositionDetails(
-            ticker="MARA",
+            ticker=Symbol("MARA"),
             share_count=140.0,
             average_cost_basis_per_share=20.0,
             borrow_rate_pct=2.5,
@@ -89,7 +93,7 @@ def _breach_details() -> BreachDetails:
 
 def _full_close_selection() -> PositionSelectionResult:
     return PositionSelectionResult(
-        position_id="POS-MARA-001",
+        position_id=PositionId("POS-MARA-001"),
         action=PositionSelectionAction.FULL_CLOSE,
         target_post_action_size_pct_of_portfolio=None,
         rationale="position-level max loss breach on MARA (loss: -40.0% of cost, limit: -30.0%)",
@@ -98,7 +102,7 @@ def _full_close_selection() -> PositionSelectionResult:
 
 def _trim_selection(target_pct: float = 2.5) -> PositionSelectionResult:
     return PositionSelectionResult(
-        position_id="POS-MARA-001",
+        position_id=PositionId("POS-MARA-001"),
         action=PositionSelectionAction.PARTIAL_TRIM,
         target_post_action_size_pct_of_portfolio=target_pct,
         rationale=(
@@ -338,7 +342,7 @@ def test_compose_engine_envelope_limit_price_execution() -> None:
 
 
 def test_compose_engine_envelope_rejects_missing_position_in_lookup() -> None:
-    selection = _full_close_selection()  # position_id="POS-MARA-001"
+    selection = _full_close_selection()  # position_id=PositionId("POS-MARA-001")
     with pytest.raises(ValueError, match="POS-MARA-001"):
         compose_engine_envelope(
             monitor_session_id="s1",
@@ -386,7 +390,6 @@ def test_compose_engine_envelope_limit_method_without_limit_price_raises() -> No
 
 
 def test_compose_engine_envelope_output_is_frozen() -> None:
-    from pydantic import ValidationError
 
     envelope = compose_engine_envelope(
         monitor_session_id="s1",
@@ -398,7 +401,7 @@ def test_compose_engine_envelope_output_is_frozen() -> None:
         positions_by_id={"POS-MARA-001": _short_mara_position()},
         portfolio_value_usd=100_000.0,
     )
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         envelope.envelope_id = "MON.x.99"
 
 
@@ -423,16 +426,15 @@ def _close_command_for_post_validator_tests(
 ) -> EngineCloseCommand:
     return EngineCloseCommand(
         command_id=command_id,
-        position_id="POS-MARA-001",
+        position_id=PositionId("POS-MARA-001"),
         quantity_or_all="all",
     )
 
 
 def test_engine_envelope_rejects_mismatched_trigger_timestamps() -> None:
-    from pydantic import ValidationError
 
     other_ts = datetime(2026, 5, 1, 14, 30, tzinfo=UTC)
-    with pytest.raises(ValidationError, match="trigger_timestamp"):
+    with pytest.raises((ValueError, TypeError), match="trigger_timestamp"):
         EngineEnvelope(
             envelope_id="MON.s1.1",
             trigger_timestamp=_TRIGGER_TS,
@@ -444,9 +446,8 @@ def test_engine_envelope_rejects_mismatched_trigger_timestamps() -> None:
 
 
 def test_engine_envelope_rejects_command_id_not_starting_with_envelope_id() -> None:
-    from pydantic import ValidationError
 
-    with pytest.raises(ValidationError, match="command_id"):
+    with pytest.raises((ValueError, TypeError), match="command_id"):
         EngineEnvelope(
             envelope_id="MON.s1.1",
             trigger_timestamp=_TRIGGER_TS,
@@ -456,9 +457,8 @@ def test_engine_envelope_rejects_command_id_not_starting_with_envelope_id() -> N
 
 
 def test_engine_envelope_rejects_envelope_id_pattern_violation() -> None:
-    from pydantic import ValidationError
 
-    with pytest.raises(ValidationError, match="envelope_id"):
+    with pytest.raises((ValueError, TypeError), match="envelope_id"):
         EngineEnvelope(
             envelope_id="PM.s1.1",
             trigger_timestamp=_TRIGGER_TS,

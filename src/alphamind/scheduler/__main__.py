@@ -32,9 +32,6 @@ from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.scheduler import SchedulerConfig
 from alphamind.config.models.venue import VenueConfig
-from alphamind.execution.state_persistence.process_lifetime import (
-    record_process_lifetime,
-)
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.risk_guardrails.breach_behavior.config import load_breach_behavior_config
 from alphamind.scheduler.driver import run_pipeline_scheduler_task
@@ -44,6 +41,9 @@ from alphamind.scheduler.orchestrator import run_invocation
 from alphamind.scheduler.run_context import RunInvocationContext
 from alphamind.scheduler.session import PipelineMode, new_session
 from alphamind.scheduler.supervisor import PipelineSupervisor
+from alphamind.state.process_lifetime import (
+    record_process_lifetime,
+)
 
 log = logging.getLogger(__name__)
 
@@ -245,5 +245,10 @@ if __name__ == "__main__":  # pragma: no cover - exercised via ``python -m``
     except SystemExit:
         raise
     except BaseException:
+        # Outermost supervisor per runtime §G1: log + exit 1 so NSSM's restart
+        # policy fires. ``BaseException`` (vs ``Exception``) catches
+        # ``KeyboardInterrupt`` / ``SystemExit`` paths that the inner ``main``
+        # entry can synthesize; ``SystemExit`` is rethrown above so the
+        # explicit exit code threads through unchanged.
         log.exception("pipeline scheduler exited with error")
         sys.exit(1)

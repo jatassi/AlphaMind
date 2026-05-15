@@ -16,11 +16,11 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
+from alphamind.portfolio_state.records.positions import PositionRecord, PositionStatus
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
     row_to_record as position_row_to_record,
 )
-from alphamind.portfolio_state.records.positions import PositionRecord, PositionStatus
 
 
 class SqlOpenPositionsReader:

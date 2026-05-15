@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
 from alphamind.analysis._shared import Sector, SignalQuality, TokensUsed
 from alphamind.analysis.adaptive_research.models import (
     AdaptiveBrief,
@@ -121,7 +122,7 @@ def _make_sector_brief(sector: Sector, prefix: str) -> SectorBrief:
         thesis_candidates=(
             ThesisCandidate(
                 thesis_candidate_id=f"{prefix}-TC-1",
-                ticker="AAA",
+                ticker=Symbol("AAA"),
                 direction=Direction.LONG,
                 setup_type=SetupType.MOMENTUM,
                 catalyst="Earnings.",
@@ -182,7 +183,7 @@ def _make_qualitative_brief() -> QualitativeBrief:
         catalyst_watches=(
             CatalystWatch(
                 catalyst_id="QR-CW-1",
-                ticker="NVDA",
+                ticker=Symbol("NVDA"),
                 catalyst_name="Earnings",
                 hours_to_event=18,
                 thesis_impact="Direct test.",
@@ -224,13 +225,13 @@ def _make_adaptive_brief() -> AdaptiveBrief:
 class _StubPortfolioReader:
     """Minimal SynthesizerPortfolioStateReader stub for tests."""
 
-    async def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]:
+    def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]:
         return ()
 
-    async def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]:
+    def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]:
         return ()
 
-    async def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot:
+    def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot:
         return SynthesizerExposureSnapshot(
             sector_exposure_pct={},
             net_directional_pct=0.0,

@@ -84,15 +84,16 @@ def _make_inputs(
 
 def test_import_resolves() -> None:
     """InputBundle and assemble_input_bundle import cleanly from the module."""
+    import dataclasses
+
     from alphamind.analysis.adaptive_research.input_bundle import (
         InputBundle,
         assemble_input_bundle,
     )
 
     assert callable(assemble_input_bundle)
-    from pydantic import BaseModel
-
-    assert issubclass(InputBundle, BaseModel)
+    # ALP-474: InputBundle is now a frozen dataclass, not a Pydantic model.
+    assert dataclasses.is_dataclass(InputBundle)
 
 
 # ---------------------------------------------------------------------------

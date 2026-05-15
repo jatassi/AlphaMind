@@ -9,9 +9,17 @@ following the strategist-specific contract documented in
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
+
+from alphamind._kernel.ids import (
+    OrderId,
+    PositionId,
+)
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.decision.strategist.models import (
@@ -32,7 +40,12 @@ from alphamind.decision.strategist.models import (
     RegimeTransitionUncuredBreach,
     StrategistOutput,
 )
-from alphamind.decision.strategist.validation import validate_strategist_output
+from alphamind.decision.strategist.validation import (
+    ValidationFailure,
+    ValidationResult,
+    ValidationWarning,
+    validate_strategist_output,
+)
 from alphamind.risk_guardrails.guardrail_evaluation import RuleProjection, Status
 
 # ---------------------------------------------------------------------------
@@ -172,7 +185,8 @@ class TestActionParametersMatch:
                 order_type="market",
             ),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim to cure breach.",
         )
@@ -204,7 +218,8 @@ class TestActionParametersMatch:
                 order_type="market",
             ),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim to cure breach.",
         )
@@ -225,8 +240,8 @@ class TestActionParametersMatch:
 
 class TestAssessmentIdUnique:
     def test_duplicate_assessment_id_is_failure(self) -> None:
-        a1 = _make_position_assessment(assessment_id="SA-1", position_id="POS-A")
-        a2 = _make_position_assessment(assessment_id="SA-1", position_id="POS-B")
+        a1 = _make_position_assessment(assessment_id="SA-1", position_id=PositionId("POS-A"))
+        a2 = _make_position_assessment(assessment_id="SA-1", position_id=PositionId("POS-B"))
         output = _make_output(position_assessments=(a1, a2))
         result = validate_strategist_output(
             output,
@@ -238,8 +253,8 @@ class TestAssessmentIdUnique:
         assert "assessment_id_unique" in rules
 
     def test_distinct_assessment_ids_pass(self) -> None:
-        a1 = _make_position_assessment(assessment_id="SA-1", position_id="POS-A")
-        a2 = _make_position_assessment(assessment_id="SA-2", position_id="POS-B")
+        a1 = _make_position_assessment(assessment_id="SA-1", position_id=PositionId("POS-A"))
+        a2 = _make_position_assessment(assessment_id="SA-2", position_id=PositionId("POS-B"))
         output = _make_output(position_assessments=(a1, a2))
         result = validate_strategist_output(
             output,
@@ -258,10 +273,10 @@ class TestAssessmentIdUnique:
 class TestPendingOrderAssessmentIdUnique:
     def test_duplicate_pending_order_assessment_id_is_failure(self) -> None:
         o1 = _make_pending_order_assessment(
-            pending_order_assessment_id="SA-ORD-1", order_id="ORD-A"
+            pending_order_assessment_id="SA-ORD-1", order_id=OrderId("ORD-A")
         )
         o2 = _make_pending_order_assessment(
-            pending_order_assessment_id="SA-ORD-1", order_id="ORD-B"
+            pending_order_assessment_id="SA-ORD-1", order_id=OrderId("ORD-B")
         )
         output = _make_output(pending_order_assessments=(o1, o2))
         result = validate_strategist_output(
@@ -275,10 +290,10 @@ class TestPendingOrderAssessmentIdUnique:
 
     def test_distinct_pending_order_assessment_ids_pass(self) -> None:
         o1 = _make_pending_order_assessment(
-            pending_order_assessment_id="SA-ORD-1", order_id="ORD-A"
+            pending_order_assessment_id="SA-ORD-1", order_id=OrderId("ORD-A")
         )
         o2 = _make_pending_order_assessment(
-            pending_order_assessment_id="SA-ORD-2", order_id="ORD-B"
+            pending_order_assessment_id="SA-ORD-2", order_id=OrderId("ORD-B")
         )
         output = _make_output(pending_order_assessments=(o1, o2))
         result = validate_strategist_output(
@@ -369,7 +384,8 @@ class TestRemedyFlagBreachPairing:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim.",
             remedy_flag="BREACH-2",
@@ -401,7 +417,8 @@ class TestRemedyFlagBreachPairing:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim.",
             remedy_flag="BREACH-1",
@@ -435,7 +452,8 @@ class TestRemedyFlagBreachPairing:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim.",
             remedy_flag="BREACH-1",
@@ -472,7 +490,8 @@ class TestAddressedUncuredDisjoint:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim.",
             remedy_flag="BREACH-1",
@@ -508,7 +527,8 @@ class TestAddressedUncuredDisjoint:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim.",
             remedy_flag="BREACH-1",
@@ -581,7 +601,7 @@ class TestDefensivePostureSummaryPresence:
             defensive_posture_summary=DefensivePostureSummary(
                 reduction_priority=(
                     ReductionPriorityEntry(
-                        position_id="POS-NVDA-001", priority_rationale="Weakest thesis."
+                        position_id=PositionId("POS-NVDA-001"), priority_rationale="Weakest thesis."
                     ),
                 ),
                 capital_preservation_notes="Capital preservation notes.",
@@ -665,7 +685,8 @@ class TestLayer3PositionAssessmentReferences:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim per [SA-FIN-99].",
         )
@@ -686,11 +707,11 @@ class TestLayer3PositionAssessmentReferences:
             action_parameters=AddParameters(
                 action="add",
                 additional_quantity=1.0,
-                additional_dollar_value=100.0,
+                additional_dollar_value=money(100.0),
                 entry_order=EntryOrder(type="market"),
             ),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=1.0, net_directional_impact=1.0
+                sector_delta_adjusted_change=money(1.0), net_directional_impact=money(1.0)
             ),
             guardrail_validation_result=_make_guardrail_result(),
             add_conviction_justification="Strengthening absent at entry per [AR-99].",
@@ -711,7 +732,9 @@ class TestLayer3PositionAssessmentReferences:
             recommended_action="adjust-bracket",
             action_parameters=AdjustBracketParameters(
                 action="adjust-bracket",
-                new_stop_level=BracketAdjustNewStopLevel(trigger_price=820.0, order_type="market"),
+                new_stop_level=BracketAdjustNewStopLevel(
+                    trigger_price=price(820.0), order_type="market"
+                ),
             ),
             adjustment_rationale="Tighten stop per [CR-99].",
         )
@@ -731,7 +754,8 @@ class TestLayer3PositionAssessmentReferences:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim.",
             remedy_flag="BREACH-1",
@@ -903,7 +927,7 @@ class TestLayer3PortfolioLevelReferences:
             defensive_posture_summary=DefensivePostureSummary(
                 reduction_priority=(
                     ReductionPriorityEntry(
-                        position_id="POS-NVDA-001",
+                        position_id=PositionId("POS-NVDA-001"),
                         priority_rationale="Weakest thesis.",
                     ),
                 ),
@@ -942,7 +966,8 @@ class TestSchemaValidHappyPath:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=2.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.35, net_directional_impact=-1.35
+                sector_delta_adjusted_change=signed_money(-1.35),
+                net_directional_impact=signed_money(-1.35),
             ),
             reduce_rationale="Trim per [SA-TECH-2].",
             remedy_flag="BREACH-1",
@@ -951,7 +976,7 @@ class TestSchemaValidHappyPath:
         )
         hold_assessment = _make_position_assessment(
             assessment_id="SA-2",
-            position_id="POS-JPM-002",
+            position_id=PositionId("POS-JPM-002"),
             sector="financials",
             status_rationale="Per [SA-FIN-4] thesis intact.",
         )
@@ -1016,7 +1041,8 @@ class TestSyntheticFailScenarios:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim.",
             remedy_flag="BREACH-99",
@@ -1075,7 +1101,7 @@ class TestAggregation:
         )
         a2 = _make_position_assessment(
             assessment_id="SA-1",  # duplicate id
-            position_id="POS-OTHER",
+            position_id=PositionId("POS-OTHER"),
             sector="semis",
         )
         output = _make_output(position_assessments=(a1, a2))
@@ -1089,3 +1115,32 @@ class TestAggregation:
         assert "sector_not_active" in rules
         assert "unknown_reference" in rules
         assert "assessment_id_unique" in rules
+
+
+# ---------------------------------------------------------------------------
+# Frozen-dataclass invariants (ALP-475: 10b conversion)
+# ---------------------------------------------------------------------------
+
+
+class TestValidationTypesAreFrozenDataclasses:
+    """Per ALP-475, strategist validation public types are
+    ``@dataclass(frozen=True, slots=True)``.
+    """
+
+    def test_validation_failure_is_frozen_dataclass(self) -> None:
+        failure = ValidationFailure(field_path="x.y", rule="r1", message="m1")
+        assert dataclasses.is_dataclass(ValidationFailure)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            failure.message = "mutated"  # type: ignore[misc]
+
+    def test_validation_warning_is_frozen_dataclass(self) -> None:
+        warn = ValidationWarning(field_path="x.y", rule="r1", message="m1")
+        assert dataclasses.is_dataclass(ValidationWarning)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            warn.rule = "mutated"  # type: ignore[misc]
+
+    def test_validation_result_is_frozen_dataclass(self) -> None:
+        result = ValidationResult(overall="PASS", failures=(), warnings=())
+        assert dataclasses.is_dataclass(ValidationResult)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.overall = "FAIL"  # type: ignore[misc]

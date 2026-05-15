@@ -66,7 +66,7 @@ expected post-CA local state, so the reconciler emits exactly one
 
    ```python
    from pathlib import Path
-   import alphamind.execution.state_persistence.tables  # noqa: F401
+   import alphamind.state.tables  # noqa: F401
    from alphamind.persistence.models import Base
    from alphamind.persistence.session import make_engine
 

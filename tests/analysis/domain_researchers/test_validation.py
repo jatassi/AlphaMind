@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from alphamind._kernel.ids import Symbol
 from alphamind.analysis._shared import Sector
 from alphamind.analysis.domain_researchers.models import (
     Anomaly,
@@ -69,7 +70,7 @@ def _make_anomaly(anomaly_id: str, **kwargs: Any) -> Anomaly:
 
 def _make_thesis(thesis_candidate_id: str, **kwargs: Any) -> ThesisCandidate:
     defaults: dict[str, Any] = dict(
-        ticker="NVDA",
+        ticker=Symbol("NVDA"),
         direction=Direction.LONG,
         setup_type=SetupType.CATALYST,
         catalyst="Earnings beat",

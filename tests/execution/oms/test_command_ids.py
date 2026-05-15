@@ -12,6 +12,23 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    EnvelopeId,
+    InvocationId,
+    Symbol,
+)
+from alphamind._kernel.money import money, price
+from alphamind.commands.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+    ThesisComponent,
+)
 from alphamind.decision.portfolio_manager.models import (
     CriterionAssessment,
     ModificationRecord,
@@ -29,17 +46,6 @@ from alphamind.execution.oms import (
     is_pm_originated,
     parse_engine_command_id,
     parse_pm_command_id,
-)
-from alphamind.execution.oms.command_models import (
-    BracketOrderParameters,
-    EntryOrder,
-    EquityInstrument,
-    PositionSize,
-    PriceCondition,
-    PriceLeg,
-    Target,
-    Thesis,
-    ThesisComponent,
 )
 
 # ---------------------------------------------------------------------------
@@ -64,12 +70,12 @@ def _thesis_eval_all_pass() -> ThesisQualityEvaluation:
 def _open_command() -> OpenCommand:
     return OpenCommand(
         command_type="open",
-        instrument=EquityInstrument(asset_type="equity", ticker="NVDA", direction="long"),
+        instrument=EquityInstrument(asset_type="equity", ticker=Symbol("NVDA"), direction="long"),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-        position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+        position_size=PositionSize(quantity=10.0, dollar_value=money(10_000.0)),
         target=Target(
             target_type="absolute_price",
-            price=950.0,
+            price=price(950.0),
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",
@@ -81,7 +87,7 @@ def _open_command() -> OpenCommand:
                 condition=PriceCondition(
                     underlying_trigger="NVDA",
                     comparator="<=",
-                    trigger_price=750.0,
+                    trigger_price=price(750.0),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),
@@ -262,8 +268,8 @@ class TestParsePMCommandId:
     def test_worked_example_post_rejection(self) -> None:
         components = parse_pm_command_id("inv-2026-04-23T14-30Z.ENV-REC-2.0.1")
         assert components == PMCommandIdComponents(
-            invocation_id="2026-04-23T14-30Z",
-            envelope_id="ENV-REC-2",
+            invocation_id=InvocationId("2026-04-23T14-30Z"),
+            envelope_id=EnvelopeId("ENV-REC-2"),
             command_ordinal=0,
             attempt_seq=1,
         )
@@ -437,3 +443,24 @@ class TestDiscriminators:
     def test_empty_string_rejected_by_both(self) -> None:
         assert is_pm_originated("") is False
         assert is_engine_originated("") is False
+
+
+# ---------------------------------------------------------------------------
+# Component-record frozen invariants (ALP-476 — Pydantic→frozen dataclass)
+# ---------------------------------------------------------------------------
+
+
+class TestComponentsAreFrozen:
+    def test_pm_components_reject_attribute_assignment(self) -> None:
+        import dataclasses
+
+        components = parse_pm_command_id("inv-X.ENV-REC-2.0.0")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            components.attempt_seq = 99  # type: ignore[misc]
+
+    def test_engine_components_reject_attribute_assignment(self) -> None:
+        import dataclasses
+
+        components = parse_engine_command_id("MON.abc-123.42.0")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            components.trigger_id = 99  # type: ignore[misc]

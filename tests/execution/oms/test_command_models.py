@@ -17,13 +17,19 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 
 # Import portfolio_manager.models first to break the latent cycle between
 # alphamind.execution.oms (engine-stub MCP) and alphamind.decision.portfolio_manager
 # (harness imports back from the OMS). Mirrors test_submit_envelope_mcp.py.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
-from alphamind.execution.oms.command_models import (
+from alphamind._kernel.ids import (
+    OrderId,
+    PositionId,
+    Symbol,
+)
+from alphamind._kernel.money import money, price
+from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
     BracketAdjustment,
@@ -59,14 +65,14 @@ from alphamind.execution.oms.command_models import (
 
 
 def _equity_instrument() -> EquityInstrument:
-    return EquityInstrument(asset_type="equity", ticker="AAPL", direction="long")
+    return EquityInstrument(asset_type="equity", ticker=Symbol("AAPL"), direction="long")
 
 
 def _option_instrument() -> OptionInstrument:
     return OptionInstrument(
         asset_type="option",
-        underlying="AAPL",
-        strike=150.0,
+        underlying=Symbol("AAPL"),
+        strike=price(150.0),
         expiration="2026-06-19",
         contract_type="call",
         direction="long",
@@ -75,7 +81,7 @@ def _option_instrument() -> OptionInstrument:
 
 def _strategy_leg(strike: float = 150.0, contract_type: str = "call") -> StrategyLeg:
     return StrategyLeg(
-        strike=strike,
+        strike=price(strike),
         expiration="2026-06-19",
         contract_type=contract_type,  # type: ignore[arg-type]
         direction="long",
@@ -87,7 +93,7 @@ def _strategy_instrument() -> StrategyInstrument:
     return StrategyInstrument(
         asset_type="strategy",
         strategy_type="vertical_spread",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         legs=(_strategy_leg(150.0, "call"), _strategy_leg(155.0, "call")),
     )
 
@@ -97,11 +103,11 @@ def _entry_order_market() -> EntryOrder:
 
 
 def _position_size() -> PositionSize:
-    return PositionSize(quantity=100.0, dollar_value=15_000.0, premium_at_risk=None)
+    return PositionSize(quantity=100.0, dollar_value=money(15_000.0), premium_at_risk=None)
 
 
 def _target_absolute() -> Target:
-    return Target(target_type="absolute_price", price=170.0, order_type="limit")
+    return Target(target_type="absolute_price", price=price(170.0), order_type="limit")
 
 
 def _price_leg(trigger_price: float = 140.0) -> PriceLeg:
@@ -109,7 +115,7 @@ def _price_leg(trigger_price: float = 140.0) -> PriceLeg:
         type="price",
         is_hard=True,
         condition=PriceCondition(
-            underlying_trigger="AAPL", comparator="<=", trigger_price=trigger_price
+            underlying_trigger="AAPL", comparator="<=", trigger_price=price(trigger_price)
         ),
         order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
     )
@@ -171,7 +177,7 @@ def _open_command() -> OpenCommand:
 def _close_command() -> CloseCommand:
     return CloseCommand(
         command_type="close",
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         quantity="all",
         order_type="market",
         close_rationale_type="target_reached",
@@ -181,16 +187,16 @@ def _close_command() -> CloseCommand:
 def _adjust_command() -> AdjustCommand:
     return AdjustCommand(
         command_type="adjust",
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         adjustment_rationale="bracket revision",
-        new_stop_level=NewStopLevel(trigger_price=130.0, order_type="market"),
+        new_stop_level=NewStopLevel(trigger_price=price(130.0), order_type="market"),
     )
 
 
 def _cancel_command() -> CancelCommand:
     return CancelCommand(
         command_type="cancel",
-        order_id="ord-1",
+        order_id=OrderId("ord-1"),
         cancel_reason="thesis no longer valid",
     )
 
@@ -198,9 +204,9 @@ def _cancel_command() -> CancelCommand:
 def _add_command() -> AddCommand:
     return AddCommand(
         command_type="add",
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         additional_quantity=10.0,
-        additional_dollar_value=1500.0,
+        additional_dollar_value=money(1500.0),
         entry_order=_entry_order_market(),
         thesis_addition_component=_thesis_component("entry_rationale"),
     )
@@ -232,11 +238,11 @@ class TestStrategyInstrument:
         assert len(inst.legs) == 2
 
     def test_rejects_single_leg(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             StrategyInstrument(
                 asset_type="strategy",
                 strategy_type="vertical_spread",
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 legs=(_strategy_leg(),),
             )
 
@@ -246,53 +252,55 @@ class TestEntryOrder:
         EntryOrder(type="market")
 
     def test_limit_requires_limit_price(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             EntryOrder(type="limit")
-        EntryOrder(type="limit", limit_price=100.0)
+        EntryOrder(type="limit", limit_price=price(100.0))
 
     def test_stop_limit_requires_both_prices(self) -> None:
-        with pytest.raises(ValidationError):
-            EntryOrder(type="stop_limit", limit_price=100.0)
-        with pytest.raises(ValidationError):
-            EntryOrder(type="stop_limit", stop_price=100.0)
-        EntryOrder(type="stop_limit", limit_price=100.0, stop_price=99.0)
+        with pytest.raises((ValueError, TypeError)):
+            EntryOrder(type="stop_limit", limit_price=price(100.0))
+        with pytest.raises((ValueError, TypeError)):
+            EntryOrder(type="stop_limit", stop_price=price(100.0))
+        EntryOrder(type="stop_limit", limit_price=price(100.0), stop_price=price(99.0))
 
 
 class TestPositionSize:
     def test_constructs_without_sector_field(self) -> None:
-        ps = PositionSize(quantity=100.0, dollar_value=15_000.0, premium_at_risk=None)
+        ps = PositionSize(quantity=100.0, dollar_value=money(15_000.0), premium_at_risk=None)
         # Parent decision (B): no sector field on canonical PositionSize.
         assert not hasattr(ps, "sector")
 
     def test_premium_at_risk_optional(self) -> None:
-        ps = PositionSize(quantity=10.0, dollar_value=1_000.0, premium_at_risk=500.0)
+        ps = PositionSize(quantity=10.0, dollar_value=money(1_000.0), premium_at_risk=money(500.0))
         assert ps.premium_at_risk == 500.0
 
 
 class TestTarget:
     def test_absolute_price_requires_price(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             Target(target_type="absolute_price", order_type="limit")
-        Target(target_type="absolute_price", price=170.0, order_type="limit")
+        Target(target_type="absolute_price", price=price(170.0), order_type="limit")
 
     def test_pl_percentage_requires_pct_and_price(self) -> None:
-        with pytest.raises(ValidationError):
-            Target(target_type="pl_percentage", price=170.0, order_type="limit")
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
+            Target(target_type="pl_percentage", price=price(170.0), order_type="limit")
+        with pytest.raises((ValueError, TypeError)):
             Target(target_type="pl_percentage", pl_percentage=80.0, order_type="limit")
         Target(
             target_type="pl_percentage",
             pl_percentage=80.0,
-            price=170.0,
+            price=price(170.0),
             order_type="limit",
         )
 
     def test_pl_dollar_requires_dollar_and_price(self) -> None:
-        with pytest.raises(ValidationError):
-            Target(target_type="pl_dollar", price=170.0, order_type="limit")
-        with pytest.raises(ValidationError):
-            Target(target_type="pl_dollar", pl_dollar=500.0, order_type="limit")
-        Target(target_type="pl_dollar", pl_dollar=500.0, price=170.0, order_type="limit")
+        with pytest.raises((ValueError, TypeError)):
+            Target(target_type="pl_dollar", price=price(170.0), order_type="limit")
+        with pytest.raises((ValueError, TypeError)):
+            Target(target_type="pl_dollar", pl_dollar=money(500.0), order_type="limit")
+        Target(
+            target_type="pl_dollar", pl_dollar=money(500.0), price=price(170.0), order_type="limit"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -302,18 +310,18 @@ class TestTarget:
 
 class TestInvalidationLegs:
     def test_price_leg_requires_is_hard_true(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             PriceLeg(
                 type="price",
                 is_hard=False,  # type: ignore[arg-type]
                 condition=PriceCondition(
-                    underlying_trigger="AAPL", comparator="<=", trigger_price=140.0
+                    underlying_trigger="AAPL", comparator="<=", trigger_price=price(140.0)
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             )
 
     def test_time_leg_requires_is_hard_true(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             TimeLeg(
                 type="time",
                 is_hard=False,  # type: ignore[arg-type]
@@ -322,7 +330,7 @@ class TestInvalidationLegs:
             )
 
     def test_event_leg_requires_is_hard_false(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             EventLeg(
                 type="event",
                 is_hard=True,  # type: ignore[arg-type]
@@ -331,7 +339,7 @@ class TestInvalidationLegs:
 
     def test_event_leg_disallows_order_parameters(self) -> None:
         # EventLeg should not accept order_parameters at all (extra=forbid).
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             EventLeg(
                 type="event",
                 is_hard=False,
@@ -353,7 +361,7 @@ class TestOpenCommand:
 
     def test_rejects_no_hard_legs(self) -> None:
         # Soft-only invalidation_legs (event leg) → reject.
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises((ValueError, TypeError)) as exc_info:
             OpenCommand(
                 command_type="open",
                 instrument=_equity_instrument(),
@@ -374,45 +382,45 @@ class TestCloseCommand:
 
     def test_close_rationale_type_excludes_tactical_exit(self) -> None:
         # Parent decision (E): canonical enum is the four design values; no tactical_exit.
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             CloseCommand(
                 command_type="close",
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 quantity="all",
                 order_type="market",
                 close_rationale_type="tactical_exit",  # type: ignore[arg-type]
             )
 
     def test_limit_order_requires_limit_price(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             CloseCommand(
                 command_type="close",
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 quantity="all",
                 order_type="limit",
                 close_rationale_type="target_reached",
             )
         CloseCommand(
             command_type="close",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             quantity="all",
             order_type="limit",
-            limit_price=170.0,
+            limit_price=price(170.0),
             close_rationale_type="target_reached",
         )
 
     def test_thesis_invalidated_requires_invalidation_reason(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             CloseCommand(
                 command_type="close",
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 quantity="all",
                 order_type="market",
                 close_rationale_type="thesis_invalidated",
             )
         CloseCommand(
             command_type="close",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             quantity="all",
             order_type="market",
             close_rationale_type="thesis_invalidated",
@@ -420,17 +428,17 @@ class TestCloseCommand:
         )
 
     def test_risk_management_requires_subtype(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             CloseCommand(
                 command_type="close",
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 quantity="all",
                 order_type="market",
                 close_rationale_type="risk_management",
             )
         CloseCommand(
             command_type="close",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             quantity="all",
             order_type="market",
             close_rationale_type="risk_management",
@@ -438,17 +446,17 @@ class TestCloseCommand:
         )
 
     def test_conviction_reduced_forbids_quantity_all(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             CloseCommand(
                 command_type="close",
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 quantity="all",
                 order_type="market",
                 close_rationale_type="conviction_reduced",
             )
         CloseCommand(
             command_type="close",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             quantity=10.0,
             order_type="market",
             close_rationale_type="conviction_reduced",
@@ -461,37 +469,37 @@ class TestAdjustCommand:
         assert cmd.command_type == "adjust"
 
     def test_requires_at_least_one_change(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             AdjustCommand(
                 command_type="adjust",
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 adjustment_rationale="x",
             )
 
     def test_accepts_each_change_field(self) -> None:
         AdjustCommand(
             command_type="adjust",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             adjustment_rationale="x",
             new_target_level=NewTargetLevel(
-                target_type="absolute_price", price=170.0, order_type="limit"
+                target_type="absolute_price", price=price(170.0), order_type="limit"
             ),
         )
         AdjustCommand(
             command_type="adjust",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             adjustment_rationale="x",
             new_time_expiration=_DEADLINE,
         )
         AdjustCommand(
             command_type="adjust",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             adjustment_rationale="x",
             new_event_invalidation=NewEventInvalidation(event_description="ev"),
         )
         AdjustCommand(
             command_type="adjust",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             adjustment_rationale="x",
             thesis_component_updates=(_thesis_component(),),
         )
@@ -509,20 +517,22 @@ class TestAddCommand:
         assert cmd.command_type == "add"
 
     def test_thesis_addition_component_must_be_entry_rationale(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             AddCommand(
                 command_type="add",
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 additional_quantity=10.0,
-                additional_dollar_value=1500.0,
+                additional_dollar_value=money(1500.0),
                 entry_order=_entry_order_market(),
                 thesis_addition_component=_thesis_component("target_rationale"),
             )
 
     def test_bracket_adjustment_requires_at_least_one_field(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             BracketAdjustment()
-        BracketAdjustment(new_stop_level=NewStopLevel(trigger_price=130.0, order_type="market"))
+        BracketAdjustment(
+            new_stop_level=NewStopLevel(trigger_price=price(130.0), order_type="market")
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -555,7 +565,7 @@ class TestFrozenModels:
     def test_models_are_frozen(self, instance: object) -> None:
         # Pydantic raises ValidationError on mutation of a frozen model.
         field_names = list(instance.__class__.model_fields.keys())  # type: ignore[attr-defined]
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             setattr(instance, field_names[0], None)
 
 
@@ -605,26 +615,30 @@ class TestSchemaExport:
 
 
 class TestPackageReExports:
-    def test_canonical_models_importable_from_package(self) -> None:
-        from alphamind.execution.oms import (
+    def test_canonical_models_importable_from_commands_package(self) -> None:
+        """After ALP-458 the OMS command discriminated union lives in
+        :mod:`alphamind.commands`; the public surface is re-exported from the
+        kernel ``__init__`` for one-line consumer imports.
+        """
+        from alphamind.commands import (
             AddCommand as PkgAddCommand,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             AdjustCommand as PkgAdjustCommand,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             CancelCommand as PkgCancelCommand,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             CloseCommand as PkgCloseCommand,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             OMSCommand as PkgOMSCommand,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             OpenCommand as PkgOpenCommand,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             oms_command_schema as pkg_oms_command_schema,
         )
 
@@ -636,6 +650,6 @@ class TestPackageReExports:
         assert PkgOMSCommand is OMSCommand
         assert pkg_oms_command_schema is oms_command_schema
 
-    def test_engine_stub_re_exports_preserved(self) -> None:
-        # SubmissionResult and friends are still re-exported from oms package.
-        from alphamind.execution.oms import SubmissionResult  # noqa: F401
+    def test_submission_result_re_exported_from_commands(self) -> None:
+        # SubmissionResult lives in commands/submission_results after ALP-458.
+        from alphamind.commands import SubmissionResult  # noqa: F401

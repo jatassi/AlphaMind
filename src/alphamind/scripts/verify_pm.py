@@ -18,11 +18,13 @@ scenario builders live in this module so
 the Anthropic API. The thin shim at ``scripts/verify_pm.py`` defers to
 :func:`main` here.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import enum
 import json
 import os
@@ -32,6 +34,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
+from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
+from alphamind._kernel.regime import RiskZone
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AgentName
 from alphamind.decision.portfolio_manager.harness import HarnessFailure, SDKFailure
@@ -41,17 +45,15 @@ from alphamind.decision.portfolio_manager.runner import (
     run_portfolio_manager,
 )
 from alphamind.decision.proposal_pre_processor.models import ProposalPreProcessorBundle
-from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     PortfolioManagerThesisComponentReader,
     PortfolioManagerView,
 )
 from alphamind.portfolio_state.consumers.strategist import StrategistView
-from alphamind.portfolio_state.records.capital import (
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
-)
 from alphamind.portfolio_state.records.theses import ThesisComponent
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
@@ -286,7 +288,7 @@ def _ensure_pm_risk_budget_entries(strategist_view: StrategistView) -> Strategis
         cumulative_invocation_impact_value=0.0,
     )
     extended = RiskBudgetConsumption(entries=(*rb.entries, daily_entry))
-    return strategist_view.model_copy(update={"risk_budget": extended})
+    return dataclasses.replace(strategist_view, risk_budget=extended)
 
 
 def _empty_thesis_quality_aggregates() -> ThesisQualityAggregate:

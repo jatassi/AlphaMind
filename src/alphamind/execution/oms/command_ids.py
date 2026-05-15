@@ -5,22 +5,23 @@ specified in :doc:`docs/design/oms-command-ids.md`. Two derivation functions
 (PM-originated / engine-originated), a helper that counts post-rejection
 modifications on a :class:`PMEnvelope`, and inverse parsers.
 
-The module is the canonical home for this logic. Story 03 (engine-stub
-upgrade) swaps the inline ``_format_command_id`` in
-:mod:`alphamind.execution.oms.submit_envelope_mcp` for
+The module is the canonical home for this logic. The engine-stub
+(:mod:`alphamind.decision.portfolio_manager.submit_envelope`) calls
 :func:`derive_pm_command_id`; the continuous-monitor work tree consumes
 :func:`derive_engine_command_id` when emitting envelopes.
+
+After ALP-458 the :class:`PMEnvelope` type lives in
+:mod:`alphamind.commands.pm_envelope` — execution imports the wire-format
+kernel downward to read the modification list for ``attempt_seq``.
 """
 
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
 
-from pydantic import BaseModel, ConfigDict
-
-if TYPE_CHECKING:
-    from alphamind.decision.portfolio_manager import PMEnvelope
+from alphamind._kernel.ids import EnvelopeId, InvocationId
+from alphamind.commands.pm_envelope import PMEnvelope
 
 __all__ = [
     "EngineCommandIdComponents",
@@ -50,11 +51,12 @@ _ENGINE_COMMAND_ID_PATTERN = re.compile(
 
 
 # ---------------------------------------------------------------------------
-# Component models (frozen, Pydantic)
+# Component models (frozen dataclass — internal carriers per ALP-476 / 10c)
 # ---------------------------------------------------------------------------
 
 
-class PMCommandIdComponents(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PMCommandIdComponents:
     """Decomposed PM-originated command ID — output of :func:`parse_pm_command_id`.
 
     ``invocation_id`` is returned **without** the ``inv-`` prefix to match the
@@ -62,19 +64,16 @@ class PMCommandIdComponents(BaseModel):
     is omitted.
     """
 
-    model_config = ConfigDict(frozen=True)
-
-    invocation_id: str
-    envelope_id: str
+    invocation_id: InvocationId
+    envelope_id: EnvelopeId
     command_ordinal: int
     attempt_seq: int
 
 
-class EngineCommandIdComponents(BaseModel):
+@dataclass(frozen=True, slots=True)
+class EngineCommandIdComponents:
     """Decomposed engine-originated command ID — output of
     :func:`parse_engine_command_id`."""
-
-    model_config = ConfigDict(frozen=True)
 
     monitor_session_id: str
     trigger_id: int
@@ -172,8 +171,8 @@ def parse_pm_command_id(command_id: str) -> PMCommandIdComponents:
     if match is None:
         raise ValueError(f"command_id does not match PM-originated pattern, got {command_id!r}")
     return PMCommandIdComponents(
-        invocation_id=match["inv"],
-        envelope_id=match["env"],
+        invocation_id=InvocationId(match["inv"]),
+        envelope_id=EnvelopeId(match["env"]),
         command_ordinal=int(match["ord"]),
         attempt_seq=int(match["seq"]),
     )

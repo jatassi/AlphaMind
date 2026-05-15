@@ -92,25 +92,25 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
 from alphamind.execution.continuous_monitor.underlying_stream.reader import (
     SqlOpenPositionsReader,
 )
-from alphamind.execution.state_persistence.config import (
-    StatePersistenceConfig,
-    load_state_persistence_config,
-)
-from alphamind.execution.state_persistence.repository import (
-    build_sql_portfolio_state_repository,
-)
 from alphamind.execution.venue_configuration.calendar_cache import (
     TradingCalendarCache,
 )
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.portfolio_state import load_portfolio_state_config
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
-from alphamind.portfolio_state.records.capital import ActiveRiskParameterSet
 from alphamind.risk_guardrails.breach_behavior import (
     BreachBehaviorConfig,
     load_breach_behavior_config,
 )
 from alphamind.risk_guardrails.guardrail_evaluation import FixtureIvProvider
+from alphamind.state.config import (
+    StatePersistenceConfig,
+    load_state_persistence_config,
+)
+from alphamind.state.repository import (
+    build_sql_portfolio_state_repository,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -336,6 +336,9 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
         for entry in entries:
             await _single_entry_emitter(entry)
 
+    # ``async def`` without ``await`` is intentional: satisfies the
+    # ``DeferralSink = Callable[[DeferralEvent], Awaitable[None]]``
+    # Protocol the cascade dispatcher awaits at each deferral.
     async def _log_deferral(event: DeferralEvent) -> None:
         log.info(
             "engine envelope deferred to PM: rule=%s position=%s session=%s "
@@ -383,12 +386,12 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     # Repository for the breach loop's ``get_drawdown_state`` read. The
     # monitor runs across invocations; the bootstrap-style providers below
     # are unused by ``get_drawdown_state`` (singleton-table read) but are
-    # required by the factory's signature.
-    async def _bootstrap_active_provider() -> ActiveRiskParameterSet:
+    # required by the factory's signature. Synchronous per ALP-454 (C).
+    def _bootstrap_active_provider() -> ActiveRiskParameterSet:
         msg = "active_risk_parameters_provider invoked from the breach loop path"
         raise RuntimeError(msg)
 
-    async def _bootstrap_prior_provider(_path: str) -> ActiveRiskParameterSet:
+    def _bootstrap_prior_provider(_path: str) -> ActiveRiskParameterSet:
         msg = "prior_active_risk_parameters_provider invoked from the breach loop path"
         raise RuntimeError(msg)
 
@@ -455,5 +458,10 @@ if __name__ == "__main__":  # pragma: no cover - exercised via ``python -m``
     except SystemExit:
         raise
     except BaseException:
+        # Outermost supervisor per runtime §G1: log + exit 1 so NSSM's restart
+        # policy fires. ``BaseException`` (vs ``Exception``) catches
+        # ``KeyboardInterrupt`` / ``SystemExit`` paths that the inner ``main``
+        # entry can synthesize; ``SystemExit`` is rethrown above so the
+        # explicit exit code threads through unchanged.
         log.exception("continuous monitor exited with error")
         sys.exit(1)

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
-
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.computations.activity_log import filter_by_event_type
 from alphamind.portfolio_state.consumers.analyst import (
     AnalystAbandonedOpening,
@@ -20,11 +22,6 @@ from alphamind.portfolio_state.records.activity_log import (
     PMDecisionDetail,
     PositionClosedDetail,
     PositionExitMethod,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    DrawdownState,
-    RiskBudgetConsumption,
 )
 from alphamind.portfolio_state.records.orders import BracketRecord, OrderRecord
 from alphamind.portfolio_state.records.positions import InstrumentType, resolve_ticker
@@ -44,10 +41,9 @@ from alphamind.portfolio_state.views.positions import PositionView
 _STRATEGIST_AGENT = "strategist"
 
 
-class StrategistPositionView(BaseModel):
+@dataclass(frozen=True, slots=True)
+class StrategistPositionView:
     """Per-position bundle for the strategist — position + thesis + bracket + orders + trail."""
-
-    model_config = ConfigDict(frozen=True)
 
     position: PositionView
     thesis: ThesisRecord | None
@@ -56,10 +52,9 @@ class StrategistPositionView(BaseModel):
     modification_trail: tuple[ActivityLogEntry, ...]
 
 
-class StrategistAbandonedAction(BaseModel):
+@dataclass(frozen=True, slots=True)
+class StrategistAbandonedAction:
     """An abandoned command from the strategist."""
-
-    model_config = ConfigDict(frozen=True)
 
     envelope_id: str
     command_type: Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"]
@@ -77,7 +72,8 @@ BetweenInvocationClosureOrigin = Literal[
 ]
 
 
-class BetweenInvocationClosure(BaseModel):
+@dataclass(frozen=True, slots=True)
+class BetweenInvocationClosure:
     """A position closure recorded by the continuous monitor between invocations.
 
     Surfaces both (a) story 04c's direct-broker-call closures (price-based
@@ -91,8 +87,6 @@ class BetweenInvocationClosure(BaseModel):
     :class:`StrategistView` provides the single surface.
     """
 
-    model_config = ConfigDict(frozen=True)
-
     position_id: str
     ticker: str
     instrument_type: InstrumentType
@@ -103,10 +97,9 @@ class BetweenInvocationClosure(BaseModel):
     rationale: str
 
 
-class StrategistView(BaseModel):
+@dataclass(frozen=True, slots=True)
+class StrategistView:
     """Full strategist projection — all positions bundled, P/L, drawdown, activity logs."""
-
-    model_config = ConfigDict(frozen=True)
 
     positions: tuple[StrategistPositionView, ...]
     recent_thesis_resolutions: tuple[RecentThesisResolution, ...]
@@ -120,7 +113,7 @@ class StrategistView(BaseModel):
     recent_pm_decision_log: tuple[ActivityLogEntry, ...]
     abandoned_openings: tuple[AnalystAbandonedOpening, ...]
     abandoned_actions: tuple[StrategistAbandonedAction, ...]
-    between_invocation_closures: tuple[BetweenInvocationClosure, ...] = ()
+    between_invocation_closures: tuple[BetweenInvocationClosure, ...] = field(default=())
 
 
 # ---------------------------------------------------------------------------
@@ -253,10 +246,10 @@ def _rationale_for_closure(
     method = detail.exit_method.value
     exit_price = detail.exit_price
     pnl = detail.realized_pnl_usd
-    exit_price_str = f"${exit_price:.2f}" if exit_price > 0.0 else "—"
+    exit_price_str = f"${float(exit_price):.2f}" if exit_price > 0 else "—"
     parts = [f"{origin}: exit_method={method}", f"exit_price={exit_price_str}"]
-    if pnl != 0.0:
-        parts.append(f"realized P/L=${pnl:.2f}")
+    if pnl != 0:
+        parts.append(f"realized P/L=${float(pnl):.2f}")
     if entry.order_id is not None:
         parts.append(f"order_id={entry.order_id}")
     return "; ".join(parts)

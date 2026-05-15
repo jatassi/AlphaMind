@@ -761,7 +761,7 @@ def detect_q12_signals(
     and the BTO proxy z-scores. Per the no-magic-numbers audit the
     orchestrator passes
     ``persistence_windows.volume_baseline_days`` from the loaded
-    :class:`DistillationConfig`; the function carries no default so a
+    :class:`DistillationDomainConfig`; the function carries no default so a
     Class A bypass cannot occur.
     """
     as_of_dt = _parse_iso_utc(as_of)

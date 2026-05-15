@@ -1,4 +1,5 @@
 """Tests for the strategist input-bundle assembler — story 04 (ALP-304)."""
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -6,9 +7,32 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.decision.strategist.input_bundle import (
     assemble_input_bundle_defensive_posture,
     assemble_input_bundle_normal,
+)
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
 )
 from alphamind.portfolio_state.consumers.analyst import AnalystAbandonedOpening
 from alphamind.portfolio_state.consumers.strategist import (
@@ -31,16 +55,6 @@ from alphamind.portfolio_state.records.activity_log import (
     PMDecisionDetail,
     PMVerdict,
     PositionExitMethod,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownState,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
 )
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
@@ -247,15 +261,20 @@ def _make_risk_budget() -> RiskBudgetConsumption:
 
 def _make_pnl() -> PortfolioPnL:
     return PortfolioPnL(
-        total_unrealized_pnl_usd=8200.0,
+        total_unrealized_pnl_usd=money(8200.0),
         total_unrealized_pnl_pct_of_portfolio=0.82,
-        daily_realized_pnl_usd=300.0,
-        daily_total_pnl_usd=1200.0,
-        cumulative_realized_pnl_usd=10000.0,
-        rolling_realized_pnl={"1d": 300.0, "3d": 600.0, "5d": 1200.0, "20d": 3000.0},
+        daily_realized_pnl_usd=money(300.0),
+        daily_total_pnl_usd=money(1200.0),
+        cumulative_realized_pnl_usd=money(10000.0),
+        rolling_realized_pnl={
+            "1d": money(300.0),
+            "3d": money(600.0),
+            "5d": money(1200.0),
+            "20d": money(3000.0),
+        },
         win_rate_pct=55.0,
-        average_win_size_usd=200.0,
-        average_loss_size_usd=150.0,
+        average_win_size_usd=money(200.0),
+        average_loss_size_usd=money(150.0),
         profit_factor=1.4,
     )
 
@@ -276,8 +295,8 @@ def _make_drawdown() -> DrawdownState:
 
 def _make_directional() -> DirectionalExposure:
     return DirectionalExposure(
-        total_long_delta_adjusted_usd=420_000.0,
-        total_short_delta_adjusted_usd=0.0,
+        total_long_delta_adjusted_usd=money(420_000.0),
+        total_short_delta_adjusted_usd=money(0.0),
         net_directional_pct_of_portfolio=42.0,
         gross_pct_of_portfolio=78.0,
     )
@@ -296,7 +315,7 @@ def _make_position_record(
 ) -> PositionView:
     market_value = weight_pct * _TOTAL_PORTFOLIO_VALUE_USD / 100.0
     equity = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=avg_cost,
     )
@@ -307,21 +326,19 @@ def _make_position_record(
         slippage=0.01,
         fees=1.0,
     )
-    record = PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _ENTRY_TIMESTAMP,
-            "details": equity,
-            "execution_history": (fill,),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    record = PositionRecord(
+        position_id=position_id,
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_ENTRY_TIMESTAMP,
+        details=equity,
+        execution_history=(fill,),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
     return PositionView(
         record=record,
@@ -346,7 +363,7 @@ def _make_thesis(
     def _comp(ctype: ThesisComponentType, cid: str, narrative: str) -> ThesisComponent:
         return ThesisComponent(
             component_id=cid,
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ctype,
             linked_bracket_leg_type=None,
             instrument_reference="NVDA",
@@ -363,39 +380,37 @@ def _make_thesis(
             resolution_notes=None,
         )
 
-    return ThesisRecord.model_validate(
-        {
-            "thesis_id": thesis_id,
-            "position_id": position_id,
-            "summary": "Hyperscaler capex acceleration drives Q1 revenue beat...",
-            "components": (
-                _comp(
-                    ThesisComponentType.ENTRY_RATIONALE,
-                    "comp-entry",
-                    "Entry: capex acceleration thesis",
-                ),
-                _comp(
-                    ThesisComponentType.TARGET_RATIONALE,
-                    "comp-target",
-                    "Target: Q1 print fully prices in",
-                ),
-                _comp(
-                    ThesisComponentType.INVALIDATION_RATIONALE,
-                    "comp-inv",
-                    "Invalidation: MSFT guides AI capex lower than consensus",
-                ),
+    return ThesisRecord(
+        thesis_id=thesis_id,
+        position_id=position_id,
+        summary="Hyperscaler capex acceleration drives Q1 revenue beat...",
+        components=(
+            _comp(
+                ThesisComponentType.ENTRY_RATIONALE,
+                "comp-entry",
+                "Entry: capex acceleration thesis",
             ),
-            "status": ThesisRecordStatus.ACTIVE,
-            "generation_timestamp": _ENTRY_TIMESTAMP,
-            "time_expectation_hours": 48.0,
-            "age_hours": 36.4,
-            "expected_resolution_at": datetime(2026, 5, 5, 14, 0, 0, tzinfo=UTC),
-            "resolution_timestamp": None,
-            "resolution_category": None,
-            "resolution_pnl_usd": None,
-            "entry_fill_gap_usd": None,
-            "key_catalyst": "MSFT Q1 capex guide",
-        }
+            _comp(
+                ThesisComponentType.TARGET_RATIONALE,
+                "comp-target",
+                "Target: Q1 print fully prices in",
+            ),
+            _comp(
+                ThesisComponentType.INVALIDATION_RATIONALE,
+                "comp-inv",
+                "Invalidation: MSFT guides AI capex lower than consensus",
+            ),
+        ),
+        status=ThesisRecordStatus.ACTIVE,
+        generation_timestamp=_ENTRY_TIMESTAMP,
+        time_expectation_hours=48.0,
+        age_hours=36.4,
+        expected_resolution_at=datetime(2026, 5, 5, 14, 0, 0, tzinfo=UTC),
+        resolution_timestamp=None,
+        resolution_category=None,
+        resolution_pnl_usd=None,
+        entry_fill_gap_usd=None,
+        key_catalyst="MSFT Q1 capex guide",
     )
 
 
@@ -407,23 +422,27 @@ def _make_bracket(
     target_leg = BracketLeg(
         leg_id="leg-target",
         leg_type=BracketLegType.TAKE_PROFIT,
-        order_id="ord-target",
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=189.00, direction="GTE"),
+        order_id=OrderId("ord-target"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=189.00, direction="GTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     stop_leg = BracketLeg(
         leg_id="leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id="ord-stop",
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=167.00, direction="LTE"),
+        order_id=OrderId("ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=167.00, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     time_leg = BracketLeg(
         leg_id="leg-time",
         leg_type=BracketLegType.TIME_EXPIRATION,
-        order_id="ord-time",
+        order_id=OrderId("ord-time"),
         trigger=TimeTrigger(deadline=datetime(2026, 4, 25, 16, 0, tzinfo=UTC)),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
@@ -437,10 +456,10 @@ def _make_bracket(
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-entry-1",
+        entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(target_leg, stop_leg, time_leg, event_leg),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -455,11 +474,11 @@ def _make_pending_order(
     limit_price: float = 380.0,
     age_hours: float = 36.0,
 ) -> OrderRecord:
-    spec = EquityInstrumentSpec(ticker=ticker)
+    spec = EquityInstrumentSpec(ticker=Symbol(ticker))
     return OrderRecord(
-        order_id=order_id,
-        position_id=position_id,
-        bracket_id="BRK-NVDA-001",
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id),
+        bracket_id=BracketId("BRK-NVDA-001"),
         role=OrderRole.ENTRY,
         instrument_spec=spec,
         direction=OrderDirection.BUY,
@@ -468,8 +487,8 @@ def _make_pending_order(
         quantity=10.0,
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
-        alpaca_order_id="alp-1",
-        alpaca_order_id_chain=("alp-1",),
+        alpaca_order_id=AlpacaOrderId("alp-1"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-1"),),
         submission_timestamp=_ENTRY_TIMESTAMP,
         last_update_timestamp=_ENTRY_TIMESTAMP,
         filled_quantity=0.0,
@@ -574,7 +593,7 @@ def _make_position_view(
         position=_make_position_record(position_id=position_id, ticker=ticker),
         thesis=_make_thesis(position_id=position_id) if with_thesis else None,
         bracket=(
-            _make_bracket(position_id=position_id, bracket_id=f"BRK-{position_id}")
+            _make_bracket(position_id=position_id, bracket_id=BracketId(f"BRK-{position_id}"))
             if with_bracket
             else None
         ),
@@ -869,7 +888,7 @@ def test_thesis_block_renders_prior_status_from_snapshot() -> None:
     from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 
     prior_snap = ThesisHealthSnapshot(
-        thesis_id="TH-NVDA-001",
+        thesis_id=ThesisId("TH-NVDA-001"),
         invocation_id="prior-inv-000",
         snapshot_timestamp=_TIMESTAMP,
         health_status=ThesisStatus.AT_RISK,
@@ -1015,7 +1034,7 @@ def test_greeks_refresh_failed_summary_surfaces_symbol_and_reason() -> None:
         entry_id="ALE-GRF-1",
         event_type=EventType.GREEKS_REFRESH_FAILED,
         detail=GreeksRefreshFailedDetail(
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             occ_symbol="O:AAPL260619C00200000",
             failure_reason="iv_fetch_no_row",
             prior_as_of=_TIMESTAMP,

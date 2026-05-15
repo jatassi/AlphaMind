@@ -14,14 +14,17 @@ from types import MappingProxyType
 
 import pytest
 
+from alphamind._kernel.ids import PositionId
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+)
 from alphamind.config.models.overlays import EventType, Overlay
 from alphamind.config.models.regimes import Regime
 from alphamind.distillation.calibration import CalibrationState
-from alphamind.portfolio_state.records.capital import (
+from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
 )
 from alphamind.risk_guardrails.regime_adaptation import (
     LOOSENING_INVOCATIONS,
@@ -319,7 +322,7 @@ def test_regime_adaptation_state_accepts_valid_loosening() -> None:
 
 def test_regime_transition_breach_constructible_per_position() -> None:
     breach = RegimeTransitionBreach(
-        position_id="POS-AAPL-1",
+        position_id=PositionId("POS-AAPL-1"),
         rule_id="position_max_size_pct",
         rule_label="Per-position max size",
         current_value=8.0,

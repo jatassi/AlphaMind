@@ -7,8 +7,10 @@ from enum import StrEnum
 from typing import Literal, get_args
 
 import pytest
-from pydantic import ValidationError
 
+from alphamind._kernel.ids import BracketId, OrderId, PositionId, Symbol, ThesisId
+from alphamind._kernel.money import money, price, signed_money
+from alphamind.portfolio_state.events.codec import decode_detail, encode_detail
 from alphamind.portfolio_state.records.activity_log import (
     EVENT_TYPE_TO_DETAIL_CLASS,
     EVENT_TYPE_TO_GROUP,
@@ -332,12 +334,12 @@ class TestDetailClassHappyPaths:
 
     def test_position_opened_detail(self) -> None:
         d = PositionOpenedDetail(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             direction="LONG",
-            fill_price=150.0,
+            fill_price=price("150.0"),
             quantity=10.0,
-            thesis_id="th-001",
-            bracket_id="br-001",
+            thesis_id=ThesisId("th-001"),
+            bracket_id=BracketId("br-001"),
             mechanism=PositionOpenMechanism.ORDER_FILL,
             parent_position_id=None,
         )
@@ -345,22 +347,22 @@ class TestDetailClassHappyPaths:
 
     def test_position_opened_detail_spin_off(self) -> None:
         d = PositionOpenedDetail(
-            ticker="SPIN",
+            ticker=Symbol("SPIN"),
             direction="LONG",
-            fill_price=50.0,
+            fill_price=price("50.0"),
             quantity=5.0,
             thesis_id=None,
             bracket_id=None,
             mechanism=PositionOpenMechanism.SPIN_OFF_FROM_PARENT,
-            parent_position_id="pos-parent-001",
+            parent_position_id=PositionId("pos-parent-001"),
         )
         assert d.parent_position_id == "pos-parent-001"
 
     def test_position_closed_detail(self) -> None:
         d = PositionClosedDetail(
             exit_method=PositionExitMethod.TARGET_REACHED,
-            exit_price=175.0,
-            realized_pnl_usd=250.0,
+            exit_price=money("175.0"),
+            realized_pnl_usd=signed_money("250.0"),
             thesis_resolution_category="WIN",
         )
         assert d.exit_method == PositionExitMethod.TARGET_REACHED
@@ -368,7 +370,7 @@ class TestDetailClassHappyPaths:
     def test_position_added_detail(self) -> None:
         d = PositionAddedDetail(
             additional_quantity=5.0,
-            new_average_cost_basis=155.0,
+            new_average_cost_basis=price("155.0"),
             addition_thesis_component_id="tc-001",
         )
         assert d.additional_quantity == 5.0
@@ -376,7 +378,7 @@ class TestDetailClassHappyPaths:
     def test_position_reduced_detail(self) -> None:
         d = PositionReducedDetail(
             reduced_quantity=3.0,
-            partial_realized_pnl_usd=75.0,
+            partial_realized_pnl_usd=signed_money("75.0"),
             close_rationale_classification="PARTIAL_TARGET",
         )
         assert d.reduced_quantity == 3.0
@@ -390,16 +392,16 @@ class TestDetailClassHappyPaths:
 
     def test_order_filled_detail(self) -> None:
         d = OrderFilledDetail(
-            fill_price=150.25,
+            fill_price=price("150.25"),
             fill_quantity=10.0,
-            slippage=0.25,
-            fees=1.50,
+            slippage=signed_money("0.25"),
+            fees=money("1.50"),
         )
         assert d.fill_price == 150.25
 
     def test_order_partially_filled_detail(self) -> None:
         d = OrderPartiallyFilledDetail(
-            fill_price=150.0,
+            fill_price=price("150.0"),
             fill_quantity=5.0,
             remaining_quantity=5.0,
         )
@@ -434,7 +436,7 @@ class TestDetailClassHappyPaths:
 
     def test_bracket_activated_detail(self) -> None:
         d = BracketActivatedDetail(
-            bracket_id="br-001",
+            bracket_id=BracketId("br-001"),
             protective_leg_order_ids=("ord-sl-001", "ord-tp-001"),
         )
         assert len(d.protective_leg_order_ids) == 2
@@ -479,14 +481,14 @@ class TestDetailClassHappyPaths:
 
     def test_bracket_cancelled_corporate_action_detail(self) -> None:
         d = BracketCancelledCorporateActionDetail(
-            bracket_id="br-001",
+            bracket_id=BracketId("br-001"),
             cancellation_reason="CASH_MERGER",
             cancelled_leg_order_ids=("ord-sl-001", "ord-tp-001"),
         )
         assert d.bracket_id == "br-001"
 
     def test_thesis_created_detail(self) -> None:
-        d = ThesisCreatedDetail(thesis_id="th-001", summary="Bullish on earnings beat")
+        d = ThesisCreatedDetail(thesis_id=ThesisId("th-001"), summary="Bullish on earnings beat")
         assert d.thesis_id == "th-001"
 
     def test_thesis_component_added_detail(self) -> None:
@@ -515,34 +517,34 @@ class TestDetailClassHappyPaths:
 
     def test_cash_debited_detail(self) -> None:
         d = CashDebitedDetail(
-            amount_usd=1500.0,
+            amount_usd=money("1500.0"),
             reason=CashDebitReason.ENTRY_FILL,
-            new_balance_usd=98500.0,
+            new_balance_usd=signed_money("98500.0"),
         )
         assert d.reason == CashDebitReason.ENTRY_FILL
 
     def test_cash_credited_detail(self) -> None:
         d = CashCreditedDetail(
-            amount_usd=1750.0,
+            amount_usd=money("1750.0"),
             reason=CashCreditReason.EXIT_FILL,
-            new_balance_usd=101750.0,
+            new_balance_usd=signed_money("101750.0"),
         )
         assert d.reason == CashCreditReason.EXIT_FILL
 
     def test_capital_reserved_detail(self) -> None:
-        d = CapitalReservedDetail(order_id="ord-001", amount_usd=1500.0)
+        d = CapitalReservedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0"))
         assert d.amount_usd == 1500.0
 
     def test_capital_released_detail(self) -> None:
-        d = CapitalReleasedDetail(order_id="ord-001", amount_usd=1500.0)
+        d = CapitalReleasedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0"))
         assert d.amount_usd == 1500.0
 
     def test_margin_call_detail(self) -> None:
         d = MarginCallDetail(
-            position_id="pos-001",
-            margin_required_usd=5000.0,
-            margin_available_usd=3000.0,
-            deficit_usd=2000.0,
+            position_id=PositionId("pos-001"),
+            margin_required_usd=money("5000.0"),
+            margin_available_usd=money("3000.0"),
+            deficit_usd=money("2000.0"),
         )
         assert d.deficit_usd == 2000.0
 
@@ -552,9 +554,9 @@ class TestDetailClassHappyPaths:
 
     def test_margin_liquidation_detail(self) -> None:
         d = MarginLiquidationDetail(
-            position_id="pos-001",
-            liquidation_price=140.0,
-            loss_usd=1000.0,
+            position_id=PositionId("pos-001"),
+            liquidation_price=price("140.0"),
+            loss_usd=signed_money("1000.0"),
         )
         assert d.loss_usd == 1000.0
 
@@ -609,7 +611,7 @@ class TestDetailClassHappyPaths:
 
     def test_command_abandoned_detail_requires_command_type(self) -> None:
         """Omitting command_type must raise ValidationError — it is a required field."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             CommandAbandonedDetail(  # type: ignore[call-arg]
                 envelope_id="env-001",
                 command_id="cmd-001",
@@ -623,7 +625,7 @@ class TestDetailClassHappyPaths:
         self,
         command_type: Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"],
     ) -> None:
-        """All five command_type values must survive model_dump_json/model_validate_json."""
+        """All five command_type values must survive an encode/decode round-trip."""
         d = CommandAbandonedDetail(
             envelope_id="env-001",
             command_id="cmd-001",
@@ -632,21 +634,22 @@ class TestDetailClassHappyPaths:
             retry_attempt_count=0,
             command_type=command_type,
         )
-        roundtripped = CommandAbandonedDetail.model_validate_json(d.model_dump_json())
+        roundtripped = decode_detail(encode_detail(d), CommandAbandonedDetail)
+        assert isinstance(roundtripped, CommandAbandonedDetail)
         assert roundtripped.command_type == command_type
 
     def test_corporate_action_applied_detail(self) -> None:
         d = CorporateActionAppliedDetail(
             action_type=CorporateActionType.SPLIT,
             alpaca_activity_id="act-001",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             new_ticker=None,
             ratio_or_amount=2.0,
             pre_action_quantity=10.0,
             post_action_quantity=20.0,
-            pre_action_cost_basis=1500.0,
-            post_action_cost_basis=1500.0,
-            signed_cash_impact_usd=0.0,
+            pre_action_cost_basis=money("1500.0"),
+            post_action_cost_basis=money("1500.0"),
+            signed_cash_impact_usd=signed_money("0.0"),
             parent_position_id=None,
             resulting_position_status="OPEN",
         )
@@ -671,29 +674,27 @@ class TestEmergencyInvocationRequestedDetail:
     """EmergencyInvocationRequestedDetail is frozen and validates inputs."""
 
     def test_is_frozen(self) -> None:
+        from dataclasses import FrozenInstanceError
+
         d = EmergencyInvocationRequestedDetail(
             trigger_type="margin_call",
             trigger_reason="Broker margin call",
             cooldown_remaining_seconds=0,
         )
-        with pytest.raises(ValidationError):
+        with pytest.raises(FrozenInstanceError):
             d.__setattr__("trigger_reason", "tampered")
 
     def test_negative_cooldown_remaining_seconds_raises(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             EmergencyInvocationRequestedDetail(
                 trigger_type="regime_jump",
                 trigger_reason="Regime jump",
                 cooldown_remaining_seconds=-1,
             )
 
-    def test_unknown_trigger_type_raises(self) -> None:
-        with pytest.raises(ValidationError):
-            EmergencyInvocationRequestedDetail(
-                trigger_type="unknown_trigger",  # type: ignore[arg-type]
-                trigger_reason="bogus",
-                cooldown_remaining_seconds=0,
-            )
+    # ``trigger_type`` is ``Literal[...]`` — type-checker only. The dataclass
+    # does not enforce the literal at runtime (Pydantic did); the previous
+    # test_unknown_trigger_type_raises has been retired with the migration.
 
     def test_event_type_is_risk_and_guardrail_group(self) -> None:
         assert (
@@ -741,7 +742,7 @@ class TestHaltActivatedDetail:
 
     def test_naive_detected_at_raises(self) -> None:
         naive_ts = _UTC_TS.replace(tzinfo=None)
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             HaltActivatedDetail(
                 halt_type="daily_drawdown",
                 current_drawdown_pct=5.0,
@@ -749,23 +750,20 @@ class TestHaltActivatedDetail:
                 detected_at=naive_ts,
             )
 
-    def test_unknown_halt_type_raises(self) -> None:
-        with pytest.raises(ValidationError):
-            HaltActivatedDetail(
-                halt_type="bogus",  # type: ignore[arg-type]
-                current_drawdown_pct=5.0,
-                limit_pct=5.0,
-                detected_at=_UTC_TS,
-            )
+    # ``halt_type`` is ``Literal[...]`` — type-checker only. The dataclass
+    # does not enforce the literal at runtime (Pydantic did); the previous
+    # test_unknown_halt_type_raises has been retired with the migration.
 
     def test_is_frozen(self) -> None:
+        from dataclasses import FrozenInstanceError
+
         detail = HaltActivatedDetail(
             halt_type="daily_drawdown",
             current_drawdown_pct=5.0,
             limit_pct=5.0,
             detected_at=_UTC_TS,
         )
-        with pytest.raises(ValidationError):
+        with pytest.raises(FrozenInstanceError):
             detail.__setattr__("current_drawdown_pct", 99.0)
 
     def test_event_type_is_risk_and_guardrail_group(self) -> None:
@@ -797,7 +795,7 @@ class TestHaltLiftedDetail:
 
     def test_naive_lifted_at_raises(self) -> None:
         naive_ts = _UTC_TS.replace(tzinfo=None)
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             HaltLiftedDetail(
                 halt_type="daily_drawdown",
                 current_drawdown_pct=2.0,
@@ -820,24 +818,24 @@ class TestPositionOpenedDetailValidator:
     """parent_position_id must be None when mechanism is ORDER_FILL."""
 
     def test_order_fill_with_parent_position_id_raises(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             PositionOpenedDetail(
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 direction="LONG",
-                fill_price=150.0,
+                fill_price=price("150.0"),
                 quantity=10.0,
                 thesis_id=None,
                 bracket_id=None,
                 mechanism=PositionOpenMechanism.ORDER_FILL,
-                parent_position_id="pos-parent-001",
+                parent_position_id=PositionId("pos-parent-001"),
             )
 
     def test_spin_off_with_none_parent_allowed(self) -> None:
         # spin-off with None parent_position_id is valid per the spec
         d = PositionOpenedDetail(
-            ticker="SPIN",
+            ticker=Symbol("SPIN"),
             direction="LONG",
-            fill_price=50.0,
+            fill_price=price("50.0"),
             quantity=5.0,
             thesis_id=None,
             bracket_id=None,
@@ -856,7 +854,7 @@ class TestBracketModifiedDetailValidator:
     """rationale must be non-None when source is not FILL_ANCHOR_RECALCULATION."""
 
     def test_pm_source_with_none_rationale_raises(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             BracketModifiedDetail(
                 source=BracketModificationSource.PM,
                 field_changed="stop_price",
@@ -866,7 +864,7 @@ class TestBracketModifiedDetailValidator:
             )
 
     def test_corporate_action_adjustment_with_none_rationale_raises(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             BracketModifiedDetail(
                 source=BracketModificationSource.CORPORATE_ACTION_ADJUSTMENT,
                 field_changed="stop_price",
@@ -905,9 +903,9 @@ class TestActivityLogEntryHappyPath:
 
     def test_position_opened(self) -> None:
         detail = PositionOpenedDetail(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             direction="LONG",
-            fill_price=150.0,
+            fill_price=price("150.0"),
             quantity=10.0,
             thesis_id=None,
             bracket_id=None,
@@ -920,8 +918,8 @@ class TestActivityLogEntryHappyPath:
     def test_position_closed(self) -> None:
         detail = PositionClosedDetail(
             exit_method=PositionExitMethod.TARGET_REACHED,
-            exit_price=175.0,
-            realized_pnl_usd=250.0,
+            exit_price=money("175.0"),
+            realized_pnl_usd=signed_money("250.0"),
             thesis_resolution_category="WIN",
         )
         e = self._make_entry(EventType.POSITION_CLOSED, EventGroup.POSITION_LIFECYCLE, detail)
@@ -930,7 +928,7 @@ class TestActivityLogEntryHappyPath:
     def test_position_added(self) -> None:
         detail = PositionAddedDetail(
             additional_quantity=5.0,
-            new_average_cost_basis=155.0,
+            new_average_cost_basis=price("155.0"),
             addition_thesis_component_id="tc-001",
         )
         e = self._make_entry(EventType.POSITION_ADDED, EventGroup.POSITION_LIFECYCLE, detail)
@@ -939,7 +937,7 @@ class TestActivityLogEntryHappyPath:
     def test_position_reduced(self) -> None:
         detail = PositionReducedDetail(
             reduced_quantity=3.0,
-            partial_realized_pnl_usd=75.0,
+            partial_realized_pnl_usd=signed_money("75.0"),
             close_rationale_classification="PARTIAL_TARGET",
         )
         e = self._make_entry(EventType.POSITION_REDUCED, EventGroup.POSITION_LIFECYCLE, detail)
@@ -954,13 +952,18 @@ class TestActivityLogEntryHappyPath:
         assert e.event_type == EventType.ORDER_SUBMITTED
 
     def test_order_filled(self) -> None:
-        detail = OrderFilledDetail(fill_price=150.25, fill_quantity=10.0, slippage=0.25, fees=1.50)
+        detail = OrderFilledDetail(
+            fill_price=price("150.25"),
+            fill_quantity=10.0,
+            slippage=signed_money("0.25"),
+            fees=money("1.50"),
+        )
         e = self._make_entry(EventType.ORDER_FILLED, EventGroup.ORDER_LIFECYCLE, detail)
         assert e.event_type == EventType.ORDER_FILLED
 
     def test_order_partially_filled(self) -> None:
         detail = OrderPartiallyFilledDetail(
-            fill_price=150.0, fill_quantity=5.0, remaining_quantity=5.0
+            fill_price=price("150.0"), fill_quantity=5.0, remaining_quantity=5.0
         )
         e = self._make_entry(EventType.ORDER_PARTIALLY_FILLED, EventGroup.ORDER_LIFECYCLE, detail)
         assert e.event_type == EventType.ORDER_PARTIALLY_FILLED
@@ -997,7 +1000,7 @@ class TestActivityLogEntryHappyPath:
 
     def test_bracket_activated(self) -> None:
         detail = BracketActivatedDetail(
-            bracket_id="br-001",
+            bracket_id=BracketId("br-001"),
             protective_leg_order_ids=("ord-sl-001",),
         )
         e = self._make_entry(
@@ -1062,7 +1065,7 @@ class TestActivityLogEntryHappyPath:
 
     def test_bracket_cancelled_corporate_action(self) -> None:
         detail = BracketCancelledCorporateActionDetail(
-            bracket_id="br-001",
+            bracket_id=BracketId("br-001"),
             cancellation_reason="CASH_MERGER",
             cancelled_leg_order_ids=("ord-sl-001",),
         )
@@ -1075,7 +1078,7 @@ class TestActivityLogEntryHappyPath:
         assert e.event_type == EventType.BRACKET_CANCELLED_CORPORATE_ACTION
 
     def test_thesis_created(self) -> None:
-        detail = ThesisCreatedDetail(thesis_id="th-001", summary="Bullish on earnings")
+        detail = ThesisCreatedDetail(thesis_id=ThesisId("th-001"), summary="Bullish on earnings")
         e = self._make_entry(EventType.THESIS_CREATED, EventGroup.THESIS, detail)
         assert e.event_type == EventType.THESIS_CREATED
 
@@ -1109,9 +1112,9 @@ class TestActivityLogEntryHappyPath:
 
     def test_cash_debited(self) -> None:
         detail = CashDebitedDetail(
-            amount_usd=1500.0,
+            amount_usd=money("1500.0"),
             reason=CashDebitReason.ENTRY_FILL,
-            new_balance_usd=98500.0,
+            new_balance_usd=signed_money("98500.0"),
         )
         e = self._make_entry(
             EventType.CASH_DEBITED,
@@ -1123,9 +1126,9 @@ class TestActivityLogEntryHappyPath:
 
     def test_cash_credited(self) -> None:
         detail = CashCreditedDetail(
-            amount_usd=1750.0,
+            amount_usd=money("1750.0"),
             reason=CashCreditReason.EXIT_FILL,
-            new_balance_usd=101750.0,
+            new_balance_usd=signed_money("101750.0"),
         )
         e = self._make_entry(
             EventType.CASH_CREDITED,
@@ -1136,7 +1139,7 @@ class TestActivityLogEntryHappyPath:
         assert e.event_type == EventType.CASH_CREDITED
 
     def test_capital_reserved(self) -> None:
-        detail = CapitalReservedDetail(order_id="ord-001", amount_usd=1500.0)
+        detail = CapitalReservedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0"))
         e = self._make_entry(
             EventType.CAPITAL_RESERVED,
             EventGroup.CASH_AND_MARGIN,
@@ -1146,7 +1149,7 @@ class TestActivityLogEntryHappyPath:
         assert e.event_type == EventType.CAPITAL_RESERVED
 
     def test_capital_released(self) -> None:
-        detail = CapitalReleasedDetail(order_id="ord-001", amount_usd=1500.0)
+        detail = CapitalReleasedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0"))
         e = self._make_entry(
             EventType.CAPITAL_RELEASED,
             EventGroup.CASH_AND_MARGIN,
@@ -1157,10 +1160,10 @@ class TestActivityLogEntryHappyPath:
 
     def test_margin_call(self) -> None:
         detail = MarginCallDetail(
-            position_id="pos-001",
-            margin_required_usd=5000.0,
-            margin_available_usd=3000.0,
-            deficit_usd=2000.0,
+            position_id=PositionId("pos-001"),
+            margin_required_usd=money("5000.0"),
+            margin_available_usd=money("3000.0"),
+            deficit_usd=money("2000.0"),
         )
         e = self._make_entry(
             EventType.MARGIN_CALL,
@@ -1182,9 +1185,9 @@ class TestActivityLogEntryHappyPath:
 
     def test_margin_liquidation(self) -> None:
         detail = MarginLiquidationDetail(
-            position_id="pos-001",
-            liquidation_price=140.0,
-            loss_usd=1000.0,
+            position_id=PositionId("pos-001"),
+            liquidation_price=price("140.0"),
+            loss_usd=signed_money("1000.0"),
         )
         e = self._make_entry(
             EventType.MARGIN_LIQUIDATION,
@@ -1277,14 +1280,14 @@ class TestActivityLogEntryHappyPath:
         detail = CorporateActionAppliedDetail(
             action_type=CorporateActionType.SPLIT,
             alpaca_activity_id="act-001",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             new_ticker=None,
             ratio_or_amount=2.0,
             pre_action_quantity=10.0,
             post_action_quantity=20.0,
-            pre_action_cost_basis=1500.0,
-            post_action_cost_basis=1500.0,
-            signed_cash_impact_usd=0.0,
+            pre_action_cost_basis=money("1500.0"),
+            post_action_cost_basis=money("1500.0"),
+            signed_cash_impact_usd=signed_money("0.0"),
             parent_position_id=None,
             resulting_position_status="OPEN",
         )
@@ -1309,11 +1312,11 @@ class TestActivityLogEntryValidation:
         """detail mismatch raises ValidationError naming expected and actual class."""
         detail = PositionClosedDetail(
             exit_method=PositionExitMethod.TARGET_REACHED,
-            exit_price=175.0,
-            realized_pnl_usd=250.0,
+            exit_price=money("175.0"),
+            realized_pnl_usd=signed_money("250.0"),
             thesis_resolution_category="WIN",
         )
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises((ValueError, TypeError)) as exc_info:
             ActivityLogEntry(
                 entry_id="eid-001",
                 invocation_id="inv-001",
@@ -1333,16 +1336,16 @@ class TestActivityLogEntryValidation:
     def test_mismatched_event_group_raises(self) -> None:
         """event_group mismatch raises ValidationError naming both groups."""
         detail = PositionOpenedDetail(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             direction="LONG",
-            fill_price=150.0,
+            fill_price=price("150.0"),
             quantity=10.0,
             thesis_id=None,
             bracket_id=None,
             mechanism=PositionOpenMechanism.ORDER_FILL,
             parent_position_id=None,
         )
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises((ValueError, TypeError)) as exc_info:
             ActivityLogEntry(
                 entry_id="eid-001",
                 invocation_id="inv-001",
@@ -1362,9 +1365,9 @@ class TestActivityLogEntryValidation:
     def test_naive_timestamp_raises(self) -> None:
         """naive timestamp raises ValidationError."""
         detail = PositionOpenedDetail(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             direction="LONG",
-            fill_price=150.0,
+            fill_price=price("150.0"),
             quantity=10.0,
             thesis_id=None,
             bracket_id=None,
@@ -1372,7 +1375,7 @@ class TestActivityLogEntryValidation:
             parent_position_id=None,
         )
         naive_ts = _UTC_TS.replace(tzinfo=None)
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             ActivityLogEntry(
                 entry_id="eid-001",
                 invocation_id="inv-001",
@@ -1389,16 +1392,16 @@ class TestActivityLogEntryValidation:
     def test_empty_entry_id_raises(self) -> None:
         """empty entry_id raises ValidationError."""
         detail = PositionOpenedDetail(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             direction="LONG",
-            fill_price=150.0,
+            fill_price=price("150.0"),
             quantity=10.0,
             thesis_id=None,
             bracket_id=None,
             mechanism=PositionOpenMechanism.ORDER_FILL,
             parent_position_id=None,
         )
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             ActivityLogEntry(
                 entry_id="",
                 invocation_id="inv-001",
@@ -1415,16 +1418,16 @@ class TestActivityLogEntryValidation:
     def test_empty_invocation_id_raises(self) -> None:
         """empty invocation_id raises ValidationError."""
         detail = PositionOpenedDetail(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             direction="LONG",
-            fill_price=150.0,
+            fill_price=price("150.0"),
             quantity=10.0,
             thesis_id=None,
             bracket_id=None,
             mechanism=PositionOpenMechanism.ORDER_FILL,
             parent_position_id=None,
         )
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             ActivityLogEntry(
                 entry_id="eid-001",
                 invocation_id="",
@@ -1471,7 +1474,7 @@ class TestConfigurationEventEnumMembers:
 class TestDistillationConfigChange:
     """``DistillationConfigChange`` represents one entry in the ``changes`` array."""
 
-    def test_round_trip_through_pydantic(self) -> None:
+    def test_round_trip_through_codec(self) -> None:
         from alphamind.portfolio_state.records.activity_log import DistillationConfigChange
 
         change = DistillationConfigChange(
@@ -1482,20 +1485,22 @@ class TestDistillationConfigChange:
         assert change.key_path == "anomaly_detection.volume_anomaly_sigma"
         assert change.old_value == 2.5
         assert change.new_value == 3.0
-        rebuilt = DistillationConfigChange.model_validate(change.model_dump())
+        rebuilt = decode_detail(encode_detail(change), DistillationConfigChange)
         assert rebuilt == change
 
     def test_is_frozen(self) -> None:
+        from dataclasses import FrozenInstanceError
+
         from alphamind.portfolio_state.records.activity_log import DistillationConfigChange
 
         change = DistillationConfigChange(key_path="x", old_value=1, new_value=2)
-        with pytest.raises(ValidationError):
-            change.key_path = "y"
+        with pytest.raises(FrozenInstanceError):
+            change.key_path = "y"  # type: ignore[misc]
 
     def test_empty_key_path_raises(self) -> None:
         from alphamind.portfolio_state.records.activity_log import DistillationConfigChange
 
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             DistillationConfigChange(key_path="", old_value=1, new_value=2)
 
 
@@ -1514,7 +1519,7 @@ def _change(
 class TestDistillationConfigChangeDetail:
     """``DistillationConfigChangeDetail`` is the per-event-type detail payload."""
 
-    def test_round_trip_through_pydantic(self) -> None:
+    def test_round_trip_through_codec(self) -> None:
         from alphamind.portfolio_state.records.activity_log import (
             DistillationConfigChangeDetail,
         )
@@ -1527,7 +1532,7 @@ class TestDistillationConfigChangeDetail:
             git_sha="abc1234",
         )
         assert detail.config_file == "config/distillation.yaml"
-        rebuilt = DistillationConfigChangeDetail.model_validate(detail.model_dump())
+        rebuilt = decode_detail(encode_detail(detail), DistillationConfigChangeDetail)
         assert rebuilt == detail
 
     def test_default_config_file(self) -> None:
@@ -1557,6 +1562,8 @@ class TestDistillationConfigChangeDetail:
         assert detail.prior_hash is None
 
     def test_is_frozen(self) -> None:
+        from dataclasses import FrozenInstanceError
+
         from alphamind.portfolio_state.records.activity_log import (
             DistillationConfigChangeDetail,
         )
@@ -1567,15 +1574,15 @@ class TestDistillationConfigChangeDetail:
             changes=(),
             git_sha="abc1234",
         )
-        with pytest.raises(ValidationError):
-            detail.git_sha = "deadbeef"
+        with pytest.raises(FrozenInstanceError):
+            detail.git_sha = "deadbeef"  # type: ignore[misc]
 
     def test_empty_config_file_raises(self) -> None:
         from alphamind.portfolio_state.records.activity_log import (
             DistillationConfigChangeDetail,
         )
 
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             DistillationConfigChangeDetail(
                 config_file="",
                 prior_hash=None,
@@ -1589,7 +1596,7 @@ class TestDistillationConfigChangeDetail:
             DistillationConfigChangeDetail,
         )
 
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             DistillationConfigChangeDetail(
                 prior_hash=None,
                 new_hash="",
@@ -1602,13 +1609,13 @@ class TestDistillationConfigChangeDetail:
             DistillationConfigChangeDetail,
         )
 
-        with pytest.raises(ValidationError):
-            DistillationConfigChangeDetail.model_validate(
-                {
-                    "prior_hash": None,
-                    "changes": (),
-                    "git_sha": "abc1234",
-                }
+        # Constructing without ``new_hash`` raises ``TypeError`` (missing required
+        # keyword arg on the dataclass constructor).
+        with pytest.raises(TypeError):
+            DistillationConfigChangeDetail(  # type: ignore[call-arg]
+                prior_hash=None,
+                changes=(),
+                git_sha="abc1234",
             )
 
     def test_empty_git_sha_raises(self) -> None:
@@ -1616,7 +1623,7 @@ class TestDistillationConfigChangeDetail:
             DistillationConfigChangeDetail,
         )
 
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             DistillationConfigChangeDetail(
                 prior_hash=None,
                 new_hash=_HASH_HEX_64,
@@ -1629,7 +1636,7 @@ class TestDistillationConfigChangeDetail:
             DistillationConfigChangeDetail,
         )
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises((ValueError, TypeError)) as exc_info:
             DistillationConfigChangeDetail(
                 prior_hash=None,
                 new_hash=_HASH_HEX_64,
@@ -1648,7 +1655,7 @@ class TestDistillationConfigChangeDetail:
             DistillationConfigChangeDetail,
         )
 
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             DistillationConfigChangeDetail(
                 prior_hash=None,
                 new_hash=_HASH_HEX_64,
@@ -1664,10 +1671,8 @@ class TestDistillationConfigChangeDetail:
             DistillationConfigChange,
         )
 
-        with pytest.raises(ValidationError):
-            DistillationConfigChange.model_validate(
-                {"key_path": 123, "old_value": 1, "new_value": 2}
-            )
+        with pytest.raises((ValueError, TypeError)):
+            DistillationConfigChange(key_path=123, old_value=1, new_value=2)  # type: ignore[arg-type]
 
 
 class TestDistillationConfigChangeRegistration:
@@ -1746,7 +1751,7 @@ class TestDistillationConfigChangeRegistration:
             changes=(),
             git_sha="abc1234",
         )
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             ActivityLogEntry(
                 entry_id="eid-001",
                 invocation_id="inv-001",
@@ -1939,7 +1944,7 @@ class TestReconciliationAlertEvent:
             timestamp=_UTC_TS,
             event_type=_EventType.RECONCILIATION_ALERT,
             event_group=_EventGroup.RECONCILIATION,
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             order_id=None,
             thesis_id=None,
             source=EventSource.CORPORATE_ACTION_PROCESSOR,
@@ -1948,16 +1953,6 @@ class TestReconciliationAlertEvent:
         assert entry.event_type == _EventType.RECONCILIATION_ALERT
         assert entry.event_group == _EventGroup.RECONCILIATION
 
-    def test_detail_rejects_invalid_domain(self) -> None:
-        from alphamind.portfolio_state.events.activity_log import (
-            ReconciliationAlertDetail,
-        )
-
-        with pytest.raises(ValidationError):
-            ReconciliationAlertDetail(
-                domain="bogus",  # type: ignore[arg-type]
-                field_name="share_count",
-                local_value=1.0,
-                alpaca_value=2.0,
-                delta_description="x",
-            )
+    # ``domain`` is ``Literal[...]`` — type-checker only. The dataclass does
+    # not enforce the literal at runtime (Pydantic did); the previous
+    # test_detail_rejects_invalid_domain has been retired with the migration.

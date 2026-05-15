@@ -1,0 +1,45 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same branch.
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: ruff + mypy + import-linter
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Sync dev dependencies
+        # The ta-lib Python wrapper ships manylinux2014 wheels for cp313, so
+        # no native libta-lib install is needed on the GitHub-hosted runner.
+        run: uv sync
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: ruff format (verify)
+        run: uv run ruff format --check .
+
+      - name: mypy
+        run: uv run mypy
+
+      # Story ALP-455 — import-linter scaffolding (lenient contracts).
+      # This step fails the build when any contract is broken; it sits
+      # after ruff and mypy so we catch lint/format/type errors first.
+      # ALP-459 tightens these contracts once cycle-fix stories land.
+      - name: lint-imports
+        run: uv run lint-imports

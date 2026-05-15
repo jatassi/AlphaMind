@@ -11,21 +11,21 @@ and secondary-deferred), A8 cumulative drawdown tier 2, A10 regime-jump
 emergency invocation + regime-transition breaches (cross-feature), A11
 synchronized HTB buy-in (verifies *absence* of trigger and halt).
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 import pathlib
 from collections.abc import Callable
+from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from pydantic import ValidationError
 
+from alphamind._kernel.ids import PositionId, Symbol
+from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.config.models.guardrails import ProgressiveTier
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RegimeTransitionState,
-)
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import (
     BreachBehaviorConfig,
@@ -155,7 +155,7 @@ def test_a4_daily_drawdown_halt_at_2pct8_intraday() -> None:
     assert halt_state.daily_drawdown_pct == 2.8
     assert halt_state.daily_drawdown_limit_pct == 2.5
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         halt_state.daily_halt_active = False
 
 
@@ -181,8 +181,8 @@ _A6_TRIGGER_TS = datetime(2026, 4, 28, 14, 30, tzinfo=UTC)
 def _a6_position() -> PositionView:
     """A6 fixture: 140-share MARA short at $20 entry, current $28 (40% loss)."""
     return make_position_record(
-        position_id="POS-MARA-001",
-        ticker="MARA",
+        position_id=PositionId("POS-MARA-001"),
+        ticker=Symbol("MARA"),
         direction="short",
         size_pct=3.92,
         size_usd=3920.0,
@@ -207,7 +207,7 @@ def test_a6_short_squeeze_position_max_loss_close() -> None:
     assert selection.position_id == "POS-MARA-001"
     assert "position-level max loss" in selection.rationale
     assert "MARA" in selection.rationale
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         selection.position_id = "POS-OTHER-001"
 
 
@@ -256,7 +256,7 @@ def test_a6_engine_envelope_for_max_loss_close() -> None:
     assert envelope.guardrail_trigger_record.cascade_id is None
     assert envelope.source_provenance == "engine_guardrail"
     assert envelope.guardrail_trigger_record.secondary_breach_check_result == secondary_check
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         envelope.envelope_id = "MON.x.99"
 
 
@@ -274,24 +274,24 @@ def _a7_positions() -> tuple[PositionView, ...]:
     """A7 fixture: 3 short positions COIN 8% / SQ 7% / HOOD 7% on $98K portfolio."""
     return (
         make_position_record(
-            position_id="POS-COIN-001",
-            ticker="COIN",
+            position_id=PositionId("POS-COIN-001"),
+            ticker=Symbol("COIN"),
             direction="short",
             size_pct=8.0,
             size_usd=7840.0,
             unrealized_pnl_usd=-940.0,
         ),
         make_position_record(
-            position_id="POS-SQ-001",
-            ticker="SQ",
+            position_id=PositionId("POS-SQ-001"),
+            ticker=Symbol("SQ"),
             direction="short",
             size_pct=7.0,
             size_usd=6860.0,
             unrealized_pnl_usd=-820.0,
         ),
         make_position_record(
-            position_id="POS-HOOD-001",
-            ticker="HOOD",
+            position_id=PositionId("POS-HOOD-001"),
+            ticker=Symbol("HOOD"),
             direction="short",
             size_pct=7.0,
             size_usd=6860.0,
@@ -302,18 +302,18 @@ def _a7_positions() -> tuple[PositionView, ...]:
 
 def _a7_liquidity() -> tuple[PositionLiquidity, ...]:
     return (
-        PositionLiquidity(position_id="POS-COIN-001", adv_to_position_size_ratio=3.0),
-        PositionLiquidity(position_id="POS-SQ-001", adv_to_position_size_ratio=2.5),
-        PositionLiquidity(position_id="POS-HOOD-001", adv_to_position_size_ratio=2.0),
+        PositionLiquidity(position_id=PositionId("POS-COIN-001"), adv_to_position_size_ratio=3.0),
+        PositionLiquidity(position_id=PositionId("POS-SQ-001"), adv_to_position_size_ratio=2.5),
+        PositionLiquidity(position_id=PositionId("POS-HOOD-001"), adv_to_position_size_ratio=2.0),
     )
 
 
 def _a7_risk_reward() -> tuple[PositionRiskReward, ...]:
     """COIN has the worst R/R (lowest ratio) per the design walkthrough."""
     return (
-        PositionRiskReward(position_id="POS-COIN-001", risk_reward_ratio=0.3),
-        PositionRiskReward(position_id="POS-SQ-001", risk_reward_ratio=0.7),
-        PositionRiskReward(position_id="POS-HOOD-001", risk_reward_ratio=0.9),
+        PositionRiskReward(position_id=PositionId("POS-COIN-001"), risk_reward_ratio=0.3),
+        PositionRiskReward(position_id=PositionId("POS-SQ-001"), risk_reward_ratio=0.7),
+        PositionRiskReward(position_id=PositionId("POS-HOOD-001"), risk_reward_ratio=0.9),
     )
 
 
@@ -399,7 +399,7 @@ def test_a7_margin_call_cascade_no_secondary_breach() -> None:
     secondary = env.guardrail_trigger_record.secondary_breach_check_result
     assert secondary is not None
     assert secondary.result == SecondaryBreachOutcome.NO_SECONDARY_BREACH
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         env.envelope_id = "MON.x.99"
 
 
@@ -481,7 +481,7 @@ def test_a8_cumulative_drawdown_tier_2_overrides() -> None:
     assert pos_max.value == 2.0
     assert gross.value == 60.0
     assert "cumulative_drawdown_tier_2" in post_params.active_overlays
-    with pytest.raises(ValidationError):
+    with pytest.raises(FrozenInstanceError):
         post_params.active_overlays = ()
 
 
@@ -519,7 +519,7 @@ def test_a10_regime_jump_low_vol_to_crisis_fires_emergency() -> None:
     assert "CRISIS" in context.trigger_detail
     assert context.minutes_since_last_invocation == pytest.approx(85.0)
     assert context.normal_cadence_minutes == 120.0
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         context.trigger = EmergencyTrigger.MARGIN_CALL
 
 
@@ -532,8 +532,8 @@ def _a10_positions() -> tuple[PositionView, ...]:
     """
     return (
         make_position_record(
-            position_id="POS-AAPL-001",
-            ticker="AAPL",
+            position_id=PositionId("POS-AAPL-001"),
+            ticker=Symbol("AAPL"),
             direction="long",
             size_pct=2.5,
             size_usd=2500.0,

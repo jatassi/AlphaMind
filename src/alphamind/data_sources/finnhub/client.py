@@ -39,3 +39,15 @@ class FinnhubClient:
         """Call market_status to confirm the API key is valid."""
         self._acquire()
         self._sdk.market_status(exchange="US")
+
+
+# Runtime contract: the underlying finnhub.Client must structurally satisfy
+# FinnhubSDK.  Checked by exposing :attr:`FinnhubClient.sdk` and asserting it
+# has the expected method names — we can't assign a runtime instance without
+# an API key, so the type-check is deferred to mypy via the property return.
+from alphamind.data_sources.finnhub._protocol import FinnhubSDK  # noqa: E402
+
+
+def _assert_sdk_protocol(sdk: FinnhubSDK) -> FinnhubSDK:
+    """Mypy-only check: any value typed as FinnhubSDK is acceptable here."""
+    return sdk

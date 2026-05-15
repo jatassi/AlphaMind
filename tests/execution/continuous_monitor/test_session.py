@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind.execution.continuous_monitor.session import MonitorSession, new_session
 
@@ -16,8 +16,8 @@ _SESSION_ID_RE = re.compile(r"^mon-\d{8}T\d{6}Z-[0-9a-f]{8}$")
 class TestMonitorSession:
     def test_frozen_record(self) -> None:
         session = new_session(mode="paper")
-        with pytest.raises(ValidationError):
-            session.mode = "live"
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            session.mode = "live"  # type: ignore[misc]
 
     def test_new_session_session_id_matches_required_pattern(self) -> None:
         session = new_session(mode="paper")
@@ -45,7 +45,7 @@ class TestMonitorSession:
         assert s1.session_id != s2.session_id
 
     def test_rejects_unknown_mode(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValueError, match="mode"):
             MonitorSession(
                 session_id="mon-20260511T120000Z-deadbeef",
                 started_at=datetime.now(UTC),

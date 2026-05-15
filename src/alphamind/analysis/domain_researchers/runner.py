@@ -19,7 +19,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from alphamind.analysis._shared import Sector, TokensUsed
@@ -55,7 +54,8 @@ _AGENT_NAME_BY_SECTOR: Mapping[Sector, str] = {
 # ---------------------------------------------------------------------------
 
 
-class DomainResearcherResult(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class DomainResearcherResult:
     """The runner's return type — carries the brief and all invocation metadata."""
 
     sector: Sector

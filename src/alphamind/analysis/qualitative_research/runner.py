@@ -24,7 +24,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from alphamind.analysis._shared import Sector, TokensUsed
@@ -61,7 +60,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class QualitativeResearcherResult(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class QualitativeResearcherResult:
     """The runner's return type — carries the brief and all invocation metadata."""
 
     brief: QualitativeBrief

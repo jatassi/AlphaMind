@@ -1,16 +1,17 @@
 """
 Tests for ``src/alphamind/data_sources/prediction_market/polymarket/``.
 
-All HTTP calls are mocked.  No real network access.
+All HTTP calls go through fakes — no real network access.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -23,6 +24,7 @@ from alphamind.persistence.models import (
     PredictionMarketSnapshots,
 )
 from alphamind.persistence.session import make_engine, make_session_factory
+from tests.data_sources._fakes.run_repo import FakeRunRepo
 
 # ---------------------------------------------------------------------------
 # Helpers / fakes
@@ -80,28 +82,8 @@ def _make_session_and_engine() -> tuple[Engine, sessionmaker[Session]]:
     return engine, make_session_factory(engine)
 
 
-class _FakeRunRepo:
-    def __init__(self) -> None:
-        self.rows: dict[str, dict[str, Any]] = {}
-
-    def insert_running(self, run_id: str, collector: str, started_at: str) -> None:
-        self.rows[run_id] = {
-            "run_id": run_id,
-            "collector": collector,
-            "started_at": started_at,
-            "status": "running",
-            "completed_at": None,
-            "rows_written": None,
-            "error_summary": None,
-        }
-
-    def update_success(self, run_id: str, completed_at: str, rows_written: int) -> None:
-        self.rows[run_id].update(
-            status="success", completed_at=completed_at, rows_written=rows_written
-        )
-
-    def update_failed(self, run_id: str, error_summary: str) -> None:
-        self.rows[run_id].update(status="failed", error_summary=error_summary)
+def _http_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
+    return httpx.Client(timeout=30.0, transport=httpx.MockTransport(handler))
 
 
 _SINCE = datetime(2026, 1, 1, tzinfo=UTC)
@@ -116,20 +98,18 @@ class TestVerifyConnectivity:
     def test_returns_true_when_gamma_responds(self) -> None:
         from alphamind.data_sources.prediction_market.polymarket.client import PolymarketClient
 
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.return_value = [_make_market()]
-        mock_http = MagicMock()
-        mock_http.get.return_value = mock_resp
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=[_make_market()])
 
-        assert PolymarketClient(http_client=mock_http).verify_connectivity() is True
+        assert PolymarketClient(http_client=_http_client(handler)).verify_connectivity() is True
 
     def test_returns_false_when_gamma_raises(self) -> None:
         from alphamind.data_sources.prediction_market.polymarket.client import PolymarketClient
 
-        mock_http = MagicMock()
-        mock_http.get.side_effect = httpx.ConnectError("unreachable")
-        assert PolymarketClient(http_client=mock_http).verify_connectivity() is False
+        def handler(_request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("unreachable")
+
+        assert PolymarketClient(http_client=_http_client(handler)).verify_connectivity() is False
 
 
 # ---------------------------------------------------------------------------
@@ -160,28 +140,27 @@ class TestClientPrimitives:
 
         limiter.acquire = tracking  # type: ignore[method-assign]  # mock-method assignment
 
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.return_value = []
-        mock_http = MagicMock()
-        mock_http.get.return_value = mock_resp
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=[])
 
-        PolymarketClient(http_client=mock_http, rate_limiter=limiter).get_markets(limit=10)
+        PolymarketClient(http_client=_http_client(handler), rate_limiter=limiter).get_markets(
+            limit=10
+        )
         assert "polymarket" in acquire_calls
 
     def test_get_events_by_ids_returns_events(self) -> None:
         from alphamind.data_sources.prediction_market.polymarket.client import PolymarketClient
 
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.return_value = [
-            {"id": "ev-1", "tags": [{"label": "Politics"}, {"label": "World"}]},
-            {"id": "ev-2", "tags": [{"label": "Crypto"}]},
-        ]
-        mock_http = MagicMock()
-        mock_http.get.return_value = mock_resp
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=[
+                    {"id": "ev-1", "tags": [{"label": "Politics"}, {"label": "World"}]},
+                    {"id": "ev-2", "tags": [{"label": "Crypto"}]},
+                ],
+            )
 
-        client = PolymarketClient(http_client=mock_http, _sleep=lambda _s: None)
+        client = PolymarketClient(http_client=_http_client(handler), _sleep=lambda _s: None)
         events = client.get_events_by_ids(["ev-1", "ev-2"])
         assert len(events) == 2
         assert events[0]["tags"][0]["label"] == "Politics"
@@ -189,10 +168,16 @@ class TestClientPrimitives:
     def test_get_events_by_ids_empty_input_skips_request(self) -> None:
         from alphamind.data_sources.prediction_market.polymarket.client import PolymarketClient
 
-        mock_http = MagicMock()
-        client = PolymarketClient(http_client=mock_http, _sleep=lambda _s: None)
+        captured: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            return httpx.Response(200, json=[])
+
+        client = PolymarketClient(http_client=_http_client(handler), _sleep=lambda _s: None)
         assert client.get_events_by_ids([]) == []
-        mock_http.get.assert_not_called()
+        # No HTTP request issued
+        assert captured == []
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +196,7 @@ class TestUpsertContracts:
             patch(_FETCH_MARKETS, return_value=markets),
             patch(_FETCH_EVENT_LABELS, return_value=_labels()),
         ):
-            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=_FakeRunRepo())
+            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=FakeRunRepo())
 
         with sf() as sess:
             contract = sess.get(PredictionMarketContracts, "cid-001")
@@ -231,13 +216,13 @@ class TestUpsertContracts:
             patch(_FETCH_EVENT_LABELS, return_value=_labels()),
             patch(_NOW, return_value=ts1),
         ):
-            collect_snapshots(since=ts1, _session_factory=sf, _repo=_FakeRunRepo())
+            collect_snapshots(since=ts1, _session_factory=sf, _repo=FakeRunRepo())
         with (
             patch(_FETCH_MARKETS, return_value=markets),
             patch(_FETCH_EVENT_LABELS, return_value=_labels()),
             patch(_NOW, return_value=ts2),
         ):
-            collect_snapshots(since=ts2, _session_factory=sf, _repo=_FakeRunRepo())
+            collect_snapshots(since=ts2, _session_factory=sf, _repo=FakeRunRepo())
 
         with sf() as sess:
             rows = sess.query(PredictionMarketContracts).filter_by(contract_id="cid-002").all()
@@ -265,7 +250,7 @@ class TestCategoryDerivation:
             patch(_FETCH_MARKETS, return_value=markets),
             patch(_FETCH_EVENT_LABELS, return_value={"ev-x": labels}),
         ):
-            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=_FakeRunRepo())
+            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=FakeRunRepo())
         with sf() as sess:
             contract = sess.get(PredictionMarketContracts, condition_id)
             assert contract is not None
@@ -326,7 +311,7 @@ class TestSnapshotRows:
             patch(_FETCH_EVENT_LABELS, return_value=_labels()),
             patch(_NOW, return_value=now),
         ):
-            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=_FakeRunRepo())
+            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=FakeRunRepo())
 
         with sf() as sess:
             snap = sess.get(PredictionMarketSnapshots, ("cid-snap", now.isoformat()))
@@ -349,7 +334,7 @@ class TestSnapshotRows:
                 patch(_FETCH_EVENT_LABELS, return_value=_labels()),
                 patch(_NOW, return_value=now),
             ):
-                collect_snapshots(since=_SINCE, _session_factory=sf, _repo=_FakeRunRepo())
+                collect_snapshots(since=_SINCE, _session_factory=sf, _repo=FakeRunRepo())
         with sf() as sess:
             snaps = sess.query(PredictionMarketSnapshots).filter_by(contract_id="cid-dedup").all()
             assert len(snaps) == 1
@@ -371,7 +356,7 @@ class TestLiquidityFilter:
             patch(_FETCH_MARKETS, return_value=markets),
             patch(_FETCH_EVENT_LABELS, return_value=_labels()),
         ):
-            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=_FakeRunRepo())
+            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=FakeRunRepo())
         with sf() as sess:
             assert sess.get(PredictionMarketContracts, "cid-low") is None
 
@@ -385,7 +370,7 @@ class TestLiquidityFilter:
             patch(_FETCH_MARKETS, return_value=markets),
             patch(_FETCH_EVENT_LABELS, return_value=_labels()),
         ):
-            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=_FakeRunRepo())
+            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=FakeRunRepo())
         with sf() as sess:
             assert sess.get(PredictionMarketContracts, "cid-edge") is not None
 
@@ -411,7 +396,7 @@ class TestClosedMarkets:
             patch(_FETCH_MARKETS, return_value=markets),
             patch(_FETCH_EVENT_LABELS, return_value=_labels()),
         ):
-            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=_FakeRunRepo())
+            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=FakeRunRepo())
         with sf() as sess:
             contract = sess.get(PredictionMarketContracts, "cid-yes")
             assert contract is not None
@@ -432,7 +417,7 @@ class TestClosedMarkets:
             patch(_FETCH_MARKETS, return_value=markets),
             patch(_FETCH_EVENT_LABELS, return_value=_labels()),
         ):
-            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=_FakeRunRepo())
+            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=FakeRunRepo())
         with sf() as sess:
             contract = sess.get(PredictionMarketContracts, "cid-no")
             assert contract is not None
@@ -453,7 +438,7 @@ class TestClosedMarkets:
             patch(_FETCH_MARKETS, return_value=markets),
             patch(_FETCH_EVENT_LABELS, return_value=_labels()),
         ):
-            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=_FakeRunRepo())
+            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=FakeRunRepo())
         with sf() as sess:
             contract = sess.get(PredictionMarketContracts, "cid-cancel")
             assert contract is not None
@@ -474,7 +459,7 @@ class TestClosedMarkets:
             patch(_FETCH_MARKETS, return_value=markets),
             patch(_FETCH_EVENT_LABELS, return_value=_labels()),
         ):
-            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=_FakeRunRepo())
+            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=FakeRunRepo())
         with sf() as sess:
             contract = sess.get(PredictionMarketContracts, "cid-mid")
             assert contract is not None
@@ -495,7 +480,7 @@ class TestClosedMarkets:
             patch(_FETCH_MARKETS, return_value=markets),
             patch(_FETCH_EVENT_LABELS, return_value=_labels()),
         ):
-            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=_FakeRunRepo())
+            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=FakeRunRepo())
         with sf() as sess:
             contract = sess.get(PredictionMarketContracts, "cid-open")
             assert contract is not None
@@ -512,7 +497,7 @@ class TestFailureHandling:
         from alphamind.data_sources.prediction_market.polymarket.contracts import collect_snapshots
 
         _engine, sf = _make_session_and_engine()
-        run_repo = _FakeRunRepo()
+        run_repo = FakeRunRepo()
 
         with (
             patch(_FETCH_MARKETS, side_effect=RuntimeError("partial failure")),
@@ -522,8 +507,7 @@ class TestFailureHandling:
 
         with sf() as sess:
             assert sess.query(PredictionMarketContracts).count() == 0
-        row = next(iter(run_repo.rows.values()))
-        assert row["status"] == "failed"
+        assert run_repo.failed()
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +528,7 @@ class TestNonBinaryMarkets:
             patch(_FETCH_MARKETS, return_value=markets),
             patch(_FETCH_EVENT_LABELS, return_value=_labels()),
         ):
-            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=_FakeRunRepo())
+            collect_snapshots(since=_SINCE, _session_factory=sf, _repo=FakeRunRepo())
 
         with sf() as sess:
             assert sess.query(PredictionMarketSnapshots).count() == 0
@@ -565,6 +549,6 @@ class TestNoArgsCallable:
             patch(_FETCH_MARKETS, return_value=[]),
             patch(_FETCH_EVENT_LABELS, return_value={}),
         ):
-            collect_snapshots(_session_factory=sf, _repo=_FakeRunRepo())
+            collect_snapshots(_session_factory=sf, _repo=FakeRunRepo())
         with sf() as sess:
             assert sess.query(PredictionMarketSnapshots).count() == 0

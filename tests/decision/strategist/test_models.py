@@ -12,8 +12,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    InvocationId,
+    PositionId,
+    RecommendationId,
+)
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.decision.strategist.models import (
     AddParameters,
     AdjustBracketParameters,
@@ -294,7 +299,7 @@ class TestExampleOutputRoundTrip:
 
 class TestModeInvariants:
     def test_defensive_posture_requires_summary(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)defensive_posture_summary"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)defensive_posture_summary"):
             _make_output(mode="defensive_posture")
 
     def test_defensive_posture_with_summary_accepted(self) -> None:
@@ -302,7 +307,7 @@ class TestModeInvariants:
             defensive_posture_summary=DefensivePostureSummary(
                 reduction_priority=(
                     ReductionPriorityEntry(
-                        position_id="POS-NVDA-001",
+                        position_id=PositionId("POS-NVDA-001"),
                         priority_rationale="Weakest thesis.",
                     ),
                 ),
@@ -325,17 +330,17 @@ class TestModeInvariants:
             action_parameters=AddParameters(
                 action="add",
                 additional_quantity=1.0,
-                additional_dollar_value=100.0,
+                additional_dollar_value=money(100.0),
                 entry_order=EntryOrder(type="market"),
             ),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=1.0, net_directional_impact=1.0
+                sector_delta_adjusted_change=money(1.0), net_directional_impact=money(1.0)
             ),
             guardrail_validation_result=_make_guardrail_result(),
             add_conviction_justification="Strengthening signal absent at entry.",
             thesis_status="on-track",
         )
-        with pytest.raises(ValidationError, match=r"(?i)defensive_posture"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)defensive_posture"):
             _make_output(
                 mode="defensive_posture",
                 position_assessments=(add_assessment,),
@@ -348,11 +353,11 @@ class TestModeInvariants:
             action_parameters=AddParameters(
                 action="add",
                 additional_quantity=1.0,
-                additional_dollar_value=100.0,
+                additional_dollar_value=money(100.0),
                 entry_order=EntryOrder(type="market"),
             ),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=1.0, net_directional_impact=1.0
+                sector_delta_adjusted_change=money(1.0), net_directional_impact=money(1.0)
             ),
             guardrail_validation_result=_make_guardrail_result(),
             add_conviction_justification="Strengthening signal absent at entry.",
@@ -368,7 +373,7 @@ class TestModeInvariants:
 
 class TestTimestampTzAware:
     def test_naive_timestamp_rejected(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)tz|timezone|aware"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)tz|timezone|aware"):
             _make_output(timestamp=datetime(2026, 4, 23, 14, 33, 47))  # noqa: DTZ001
 
     def test_utc_aware_timestamp_accepted(self) -> None:
@@ -383,7 +388,7 @@ class TestTimestampTzAware:
 
 class TestPositionAssessmentInvariants:
     def test_invalidated_requires_close(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)invalidated"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)invalidated"):
             _make_position_assessment(
                 thesis_status="invalidated",
                 recommended_action="hold",
@@ -400,7 +405,8 @@ class TestPositionAssessmentInvariants:
                 close_rationale_type="thesis_invalidated",
             ),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
         )
         assert pa.thesis_status == "invalidated"
@@ -408,7 +414,7 @@ class TestPositionAssessmentInvariants:
 
     def test_action_parameters_must_match_recommended_action(self) -> None:
         """Discriminator routing rejects mismatched action literal."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_position_assessment(
                 recommended_action="reduce",
                 action_parameters=CloseParameters(
@@ -418,36 +424,39 @@ class TestPositionAssessmentInvariants:
                     close_rationale_type="risk_management",
                 ),
                 exposure_impact=ExposureImpact(
-                    sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                    sector_delta_adjusted_change=signed_money(-1.0),
+                    net_directional_impact=signed_money(-1.0),
                 ),
                 reduce_rationale="Test reduce rationale.",
             )
 
     def test_reduce_requires_action_parameters(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)action_parameters"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)action_parameters"):
             _make_position_assessment(
                 recommended_action="reduce",
                 action_parameters=None,
                 reduce_rationale="Test reduce rationale.",
                 exposure_impact=ExposureImpact(
-                    sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                    sector_delta_adjusted_change=signed_money(-1.0),
+                    net_directional_impact=signed_money(-1.0),
                 ),
             )
 
     def test_reduce_requires_reduce_rationale(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)reduce_rationale"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)reduce_rationale"):
             _make_position_assessment(
                 recommended_action="reduce",
                 action_parameters=ReduceParameters(
                     action="reduce", quantity=2.0, order_type="market"
                 ),
                 exposure_impact=ExposureImpact(
-                    sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                    sector_delta_adjusted_change=signed_money(-1.0),
+                    net_directional_impact=signed_money(-1.0),
                 ),
             )
 
     def test_reduce_requires_exposure_impact(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)exposure_impact"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)exposure_impact"):
             _make_position_assessment(
                 recommended_action="reduce",
                 action_parameters=ReduceParameters(
@@ -457,7 +466,7 @@ class TestPositionAssessmentInvariants:
             )
 
     def test_close_requires_exposure_impact(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)exposure_impact"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)exposure_impact"):
             _make_position_assessment(
                 recommended_action="close",
                 action_parameters=CloseParameters(
@@ -470,49 +479,51 @@ class TestPositionAssessmentInvariants:
             )
 
     def test_adjust_bracket_requires_adjustment_rationale(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)adjustment_rationale"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)adjustment_rationale"):
             _make_position_assessment(
                 recommended_action="adjust-bracket",
                 action_parameters=AdjustBracketParameters(
                     action="adjust-bracket",
-                    new_target_level=BracketAdjustNewTargetLevel(price=900.0, order_type="limit"),
+                    new_target_level=BracketAdjustNewTargetLevel(
+                        price=price(900.0), order_type="limit"
+                    ),
                 ),
             )
 
     def test_add_requires_add_conviction_justification(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)add_conviction_justification"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)add_conviction_justification"):
             _make_position_assessment(
                 recommended_action="add",
                 action_parameters=AddParameters(
                     action="add",
                     additional_quantity=1.0,
-                    additional_dollar_value=100.0,
+                    additional_dollar_value=money(100.0),
                     entry_order=EntryOrder(type="market"),
                 ),
                 exposure_impact=ExposureImpact(
-                    sector_delta_adjusted_change=1.0, net_directional_impact=1.0
+                    sector_delta_adjusted_change=money(1.0), net_directional_impact=money(1.0)
                 ),
                 guardrail_validation_result=_make_guardrail_result(),
             )
 
     def test_add_requires_guardrail_validation_result(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)guardrail_validation_result"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)guardrail_validation_result"):
             _make_position_assessment(
                 recommended_action="add",
                 action_parameters=AddParameters(
                     action="add",
                     additional_quantity=1.0,
-                    additional_dollar_value=100.0,
+                    additional_dollar_value=money(100.0),
                     entry_order=EntryOrder(type="market"),
                 ),
                 exposure_impact=ExposureImpact(
-                    sector_delta_adjusted_change=1.0, net_directional_impact=1.0
+                    sector_delta_adjusted_change=money(1.0), net_directional_impact=money(1.0)
                 ),
                 add_conviction_justification="Strengthening signal.",
             )
 
     def test_remedy_flag_requires_remedy_rationale(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)remedy_rationale"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)remedy_rationale"):
             _make_position_assessment(remedy_flag="BREACH-1", remedy_rationale=None)
 
     def test_remedy_flag_with_rationale_accepted(self) -> None:
@@ -556,7 +567,7 @@ class TestPositionAssessmentInvariants:
 
 class TestCloseParametersInvariants:
     def test_conviction_reduced_forbids_all(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)conviction_reduced|all"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)conviction_reduced|all"):
             CloseParameters(
                 action="close",
                 quantity="all",
@@ -583,7 +594,7 @@ class TestCloseParametersInvariants:
         assert cp.quantity == "all"
 
     def test_limit_order_requires_limit_price(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)limit_price"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)limit_price"):
             CloseParameters(
                 action="close",
                 quantity=2.0,
@@ -596,7 +607,7 @@ class TestCloseParametersInvariants:
             action="close",
             quantity=2.0,
             order_type="limit",
-            limit_price=843.0,
+            limit_price=price(843.0),
             close_rationale_type="risk_management",
         )
         assert cp.limit_price == 843.0
@@ -604,7 +615,7 @@ class TestCloseParametersInvariants:
 
 class TestReduceParametersInvariants:
     def test_limit_requires_limit_price(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)limit_price"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)limit_price"):
             ReduceParameters(action="reduce", quantity=2.0, order_type="limit")
 
     def test_market_no_price_required(self) -> None:
@@ -619,13 +630,15 @@ class TestReduceParametersInvariants:
 
 class TestAdjustBracketAtLeastOneField:
     def test_no_fields_rejected(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)at least one"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)at least one"):
             AdjustBracketParameters(action="adjust-bracket")
 
     def test_only_new_stop_level_accepted(self) -> None:
         ap = AdjustBracketParameters(
             action="adjust-bracket",
-            new_stop_level=BracketAdjustNewStopLevel(trigger_price=820.0, order_type="market"),
+            new_stop_level=BracketAdjustNewStopLevel(
+                trigger_price=price(820.0), order_type="market"
+            ),
         )
         assert ap.new_stop_level is not None
 
@@ -666,7 +679,8 @@ class TestActionParametersDiscriminator:
             },
             thesis_status="invalidated",
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
         )
         assert isinstance(pa.action_parameters, CloseParameters)
@@ -681,7 +695,8 @@ class TestActionParametersDiscriminator:
             },
             reduce_rationale="Partial reduction rationale.",
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
         )
         assert isinstance(pa.action_parameters, ReduceParameters)
@@ -707,7 +722,7 @@ class TestActionParametersDiscriminator:
                 "entry_order": {"type": "market"},
             },
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=1.0, net_directional_impact=1.0
+                sector_delta_adjusted_change=money(1.0), net_directional_impact=money(1.0)
             ),
             guardrail_validation_result=_make_guardrail_result(),
             add_conviction_justification="Strengthening signal absent at entry.",
@@ -722,7 +737,7 @@ class TestActionParametersDiscriminator:
 
 class TestPendingOrderInvariants:
     def test_modify_requires_modification_parameters(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)modification_parameters"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)modification_parameters"):
             _make_pending_order_assessment(
                 recommended_action="modify",
                 modification_parameters=None,
@@ -731,7 +746,7 @@ class TestPendingOrderInvariants:
     def test_modify_with_parameters_accepted(self) -> None:
         poa = _make_pending_order_assessment(
             recommended_action="modify",
-            modification_parameters=ModificationParameters(new_limit_price=400.0),
+            modification_parameters=ModificationParameters(new_limit_price=price(400.0)),
         )
         assert poa.modification_parameters is not None
 
@@ -740,7 +755,7 @@ class TestPendingOrderInvariants:
         assert poa.modification_parameters is None
 
     def test_modification_parameters_at_least_one_field(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)at least one"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)at least one"):
             ModificationParameters()
 
 
@@ -755,7 +770,7 @@ class TestPatterns:
             pa = _make_position_assessment(assessment_id=valid)
             assert pa.assessment_id == valid
         for invalid in ("sa-1", "SA1", "SA-", "SA-ORD-1"):
-            with pytest.raises(ValidationError):
+            with pytest.raises((ValueError, TypeError)):
                 _make_position_assessment(assessment_id=invalid)
 
     def test_pending_order_assessment_id_pattern(self) -> None:
@@ -763,13 +778,13 @@ class TestPatterns:
             poa = _make_pending_order_assessment(pending_order_assessment_id=valid)
             assert poa.pending_order_assessment_id == valid
         for invalid in ("SA-1", "sa-ord-1", "SA-ORD"):
-            with pytest.raises(ValidationError):
+            with pytest.raises((ValueError, TypeError)):
                 _make_pending_order_assessment(pending_order_assessment_id=invalid)
 
     def test_linked_position_assessment_id_pattern(self) -> None:
         poa = _make_pending_order_assessment(linked_position_assessment_id="SA-1")
         assert poa.linked_position_assessment_id == "SA-1"
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_pending_order_assessment(linked_position_assessment_id="SA-ORD-1")
 
     def test_addressed_breach_assessment_id_pattern(self) -> None:
@@ -777,7 +792,7 @@ class TestPatterns:
             breach_id="BREACH-1", remedy_assessment_ids=("SA-1",)
         )
         assert good.remedy_assessment_ids == ("SA-1",)
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             RegimeTransitionAddressedBreach(breach_id="BREACH-1", remedy_assessment_ids=("sa-1",))
 
 
@@ -793,7 +808,7 @@ class TestEnums:
             assert pa.sector == s
 
     def test_unknown_sector_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_position_assessment(sector="healthcare")
 
     def test_all_thesis_statuses_accepted(self) -> None:
@@ -809,8 +824,8 @@ class TestEnums:
                         close_rationale_type="thesis_invalidated",
                     ),
                     exposure_impact=ExposureImpact(
-                        sector_delta_adjusted_change=-1.0,
-                        net_directional_impact=-1.0,
+                        sector_delta_adjusted_change=signed_money(-1.0),
+                        net_directional_impact=signed_money(-1.0),
                     ),
                 )
             else:
@@ -819,7 +834,7 @@ class TestEnums:
 
     def test_thesis_status_uppercase_rejected(self) -> None:
         """Schema vocabulary is lowercase-hyphenated; uppercase rejected."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_position_assessment(thesis_status="ON_TRACK")
 
     def test_prior_status_nullable(self) -> None:
@@ -835,13 +850,13 @@ class TestEnums:
 class TestFrozenForbid:
     def test_models_frozen(self) -> None:
         pa = _make_position_assessment()
-        with pytest.raises(ValidationError):
-            pa.assessment_id = "SA-99"
+        with pytest.raises((ValueError, TypeError)):
+            pa.assessment_id = RecommendationId("SA-99")
 
     def test_extra_field_forbidden(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)extra"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)extra"):
             StrategistOutput(
-                invocation_id="inv-001",
+                invocation_id=InvocationId("inv-001"),
                 timestamp=_ts("2026-04-23T14:33:47Z"),
                 mode="normal",
                 position_assessments=(),
@@ -955,7 +970,7 @@ class TestCanonicalTypeReuse:
 
 class TestRegimeTransitionSummary:
     def test_uncured_breach_requires_non_empty_rationale(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             RegimeTransitionUncuredBreach(breach_id="BREACH-2", rationale="")
 
     def test_summary_construction(self) -> None:

@@ -36,10 +36,10 @@ from alphamind.execution.continuous_monitor.fill_stream_consumer.translation imp
     fill_report_to_fill_record,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
-from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
-from alphamind.execution.state_persistence.write_paths.fill_persistence import (
+from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
 )
+from alphamind.state.tables.fill_records import FillRecordRow
 
 log = logging.getLogger(__name__)
 
@@ -104,6 +104,10 @@ async def run_fill_stream_consumer(
             log.info("fill_stream_consumer cancelled cleanly")
             raise
         except Exception:
+            # Reconnect-budget supervisor per runtime §G1: any websocket /
+            # downstream failure counts an attempt; on exhaustion we re-raise
+            # so the supervisor exits the task. ``BaseException``
+            # (``CancelledError``) re-raised above for clean shutdown.
             attempt += 1
             log.exception(
                 "fill_stream_consumer websocket failure (attempt %d / %d)",

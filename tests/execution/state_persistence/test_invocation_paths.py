@@ -1,11 +1,11 @@
-"""Tests for ``alphamind.execution.state_persistence.invocation_paths``."""
+"""Tests for the shared invocation-path constants in ``alphamind._kernel.invocations``."""
 
 from __future__ import annotations
 
 
 def test_constants_are_canonical_strings() -> None:
     """The shared filename constants carry their documented values."""
-    from alphamind.execution.state_persistence.invocation_paths import (
+    from alphamind._kernel.invocations import (
         CALIBRATION_SNAPSHOT_FILENAME,
         INVOCATIONS_DIRNAME,
         RESOLVED_CONFIG_FILENAME,

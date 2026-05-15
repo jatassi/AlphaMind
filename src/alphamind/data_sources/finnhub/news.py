@@ -175,6 +175,7 @@ def collect_news(
     _session_factory: Any = None,
     _repo: Any = None,
     _rate_limiter: RateLimiter | None = None,
+    _sdk: Any = None,
 ) -> None:
     """
     Pull company news for each ticker in ``ticker_scope`` and market-wide
@@ -189,6 +190,9 @@ def collect_news(
         Earliest published_at to request.  Defaults to the latest stored
         Finnhub article minus a 1-hour overlap, or 24 hours ago when the
         table is empty.
+    _sdk:
+        Optional Finnhub SDK override (anything implementing ``FinnhubSDK``).
+        Defaults to a freshly-constructed ``finnhub.Client``.
     """
     engine = _engine or make_engine()
     sf = _session_factory or make_session_factory(engine)
@@ -210,7 +214,7 @@ def collect_news(
         _rate_limiter = RateLimiter()
         _rate_limiter.set_limit(_PROVIDER, rate_per_minute=30)
 
-    sdk = finnhub.Client(api_key=_get_api_key())
+    sdk = _sdk if _sdk is not None else finnhub.Client(api_key=_get_api_key())
     outlets = _load_outlets()
     now = datetime.now(UTC)
     from_date = since.strftime("%Y-%m-%d")

@@ -14,6 +14,15 @@ from typing import Any, Literal
 import jsonschema
 import pytest
 
+from alphamind._kernel.ids import (
+    InvocationId,
+    OrderId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.decision.analyst.models import (
     AnalystOutput,
     EntryOrder,
@@ -35,6 +44,7 @@ from alphamind.decision.proposal_pre_processor import (
     ProposalPreProcessorBundle,
     run_proposal_pre_processor,
 )
+from alphamind.decision.proposal_pre_processor.models import AnalystSideConflict
 from alphamind.decision.strategist.models import (
     AddParameters,
     CloseParameters,
@@ -197,7 +207,9 @@ def _invalidation_leg(rec_id: str = "REC-1") -> InvalidationLeg:
         leg_id=f"INV-{rec_id[4:]}",
         type="price",
         is_hard=True,
-        condition=PriceCondition(underlying_trigger="AAPL", comparator="<=", trigger_price=140.0),
+        condition=PriceCondition(
+            underlying_trigger=Symbol("AAPL"), comparator="<=", trigger_price=price(140.0)
+        ),
         order_parameters=OrderParameters(order_type="market"),
     )
 
@@ -214,16 +226,20 @@ def _equity_recommendation(
 ) -> Recommendation:
     leg = _invalidation_leg(rec_id)
     return Recommendation(
-        recommendation_id=rec_id,
-        instrument=InstrumentEquity(asset_type="equity", ticker=underlying, direction=direction),
-        underlying=underlying,
+        recommendation_id=RecommendationId(rec_id),
+        instrument=InstrumentEquity(
+            asset_type="equity", ticker=Symbol(underlying), direction=direction
+        ),
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         conviction_level=conviction_level,
         entry_order=EntryOrder(type="market"),
         position_size=PositionSize(
-            quantity=quantity, dollar_value=dollar_value, pct_of_portfolio=3.0
+            quantity=quantity, dollar_value=money(dollar_value), pct_of_portfolio=3.0
         ),
-        target=Target(target_type="absolute_price", price=200.0, dollar_pl_target=5000.0),
+        target=Target(
+            target_type="absolute_price", price=price(200.0), dollar_pl_target=money(5000.0)
+        ),
         invalidation_legs=(leg,),
         guardrail_validation_result=_guardrail_result_analyst(),
         thesis_narrative="Thesis prose.",
@@ -237,7 +253,7 @@ def _equity_recommendation(
 
 def _watchlist_entry(ticker: str = "AAPL") -> WatchlistEntry:
     return WatchlistEntry(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         sector="tech",
         thesis_summary="Watch for breakout.",
         estimated_conviction=3,
@@ -253,10 +269,10 @@ def _hold_assessment(
     remedy_flag: str | None = None,
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id=f"THESIS-{position_id[4:]}",
-        underlying=underlying,
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THESIS-{position_id[4:]}"),
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         thesis_status="on-track",
         recommended_action="hold",
@@ -274,10 +290,10 @@ def _close_assessment(
     sector: str = "tech",
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id=f"THESIS-{position_id[4:]}",
-        underlying=underlying,
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THESIS-{position_id[4:]}"),
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         thesis_status="invalidated",
         recommended_action="close",
@@ -288,7 +304,8 @@ def _close_assessment(
             close_rationale_type="thesis_invalidated",
         ),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=-5_000.0, net_directional_impact=-5_000.0
+            sector_delta_adjusted_change=signed_money(-5_000.0),
+            net_directional_impact=signed_money(-5_000.0),
         ),
         status_rationale="Invalidated.",
         action_rationale="Close.",
@@ -303,16 +320,17 @@ def _reduce_assessment(
     sector: str = "tech",
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id=f"THESIS-{position_id[4:]}",
-        underlying=underlying,
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THESIS-{position_id[4:]}"),
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         thesis_status="partially-realized",
         recommended_action="reduce",
         action_parameters=ReduceParameters(action="reduce", quantity=10.0, order_type="market"),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=-1_500.0, net_directional_impact=-1_500.0
+            sector_delta_adjusted_change=signed_money(-1_500.0),
+            net_directional_impact=signed_money(-1_500.0),
         ),
         status_rationale="Partial target reached.",
         action_rationale="Lock in half.",
@@ -327,18 +345,22 @@ def _entry_pending_order(
     recommended_action: Literal["maintain", "modify", "cancel"] = "maintain",
 ) -> PendingOrderAssessment:
     modification = (
-        ModificationParameters(new_limit_price=99.0) if recommended_action == "modify" else None
+        ModificationParameters(new_limit_price=price(99.0))
+        if recommended_action == "modify"
+        else None
     )
     return PendingOrderAssessment(
-        pending_order_assessment_id=pending_id,
-        order_id=f"ORD-{pending_id[7:]}",
-        position_id=f"POS-{pending_id[7:]}",
+        pending_order_assessment_id=RecommendationId(pending_id),
+        order_id=OrderId(f"ORD-{pending_id[7:]}"),
+        position_id=PositionId(f"POS-{pending_id[7:]}"),
         order_type="entry_limit",
         order_age_hours=2.0,
         fill_probability_assessment="plausible",
         recommended_action=recommended_action,
         modification_parameters=modification,
-        linked_position_assessment_id=linked_assessment_id,
+        linked_position_assessment_id=RecommendationId(linked_assessment_id)
+        if linked_assessment_id is not None
+        else None,
         drift_rationale="Drift.",
         action_rationale="Action.",
     )
@@ -373,13 +395,13 @@ def _analyst_output(
 ) -> AnalystOutput:
     if mode == "normal":
         return AnalystOutput(
-            invocation_id=invocation_id,
+            invocation_id=InvocationId(invocation_id),
             timestamp=_NOW,
             mode="normal",
             recommendations=recommendations if recommendations is not None else (),
         )
     return AnalystOutput(
-        invocation_id=invocation_id,
+        invocation_id=InvocationId(invocation_id),
         timestamp=_NOW,
         mode="watchlist",
         watchlist=watchlist if watchlist is not None else (_watchlist_entry(),),
@@ -399,7 +421,7 @@ def _strategist_output(
         else _portfolio_observations()
     )
     return StrategistOutput(
-        invocation_id=invocation_id,
+        invocation_id=InvocationId(invocation_id),
         timestamp=_NOW,
         mode=mode,
         position_assessments=position_assessments,
@@ -435,16 +457,22 @@ def _run(
 
 def test_normal_mode_basis_ids_track_input_order() -> None:
     """basis IDs reflect analyst REC ordering and strategist non-hold SA ordering."""
-    rec_1 = _equity_recommendation(rec_id="REC-1", underlying="AAPL")
-    rec_2 = _equity_recommendation(rec_id="REC-2", underlying="MSFT")
-    close = _close_assessment(sa_id="SA-1", position_id="POS-1", underlying="NVDA")
-    hold = _hold_assessment(sa_id="SA-2", position_id="POS-2", underlying="MSFT")
-    reduce_ = _reduce_assessment(sa_id="SA-3", position_id="POS-3", underlying="AAPL")
+    rec_1 = _equity_recommendation(rec_id="REC-1", underlying=Symbol("AAPL"))
+    rec_2 = _equity_recommendation(rec_id="REC-2", underlying=Symbol("MSFT"))
+    close = _close_assessment(
+        sa_id="SA-1", position_id=PositionId("POS-1"), underlying=Symbol("NVDA")
+    )
+    hold = _hold_assessment(
+        sa_id="SA-2", position_id=PositionId("POS-2"), underlying=Symbol("MSFT")
+    )
+    reduce_ = _reduce_assessment(
+        sa_id="SA-3", position_id=PositionId("POS-3"), underlying=Symbol("AAPL")
+    )
 
     existing = {
-        "POS-1": _existing_long_equity(position_id="POS-1", underlying="NVDA"),
-        "POS-2": _existing_long_equity(position_id="POS-2", underlying="MSFT"),
-        "POS-3": _existing_long_equity(position_id="POS-3", underlying="AAPL"),
+        "POS-1": _existing_long_equity(position_id=PositionId("POS-1"), underlying=Symbol("NVDA")),
+        "POS-2": _existing_long_equity(position_id=PositionId("POS-2"), underlying=Symbol("MSFT")),
+        "POS-3": _existing_long_equity(position_id=PositionId("POS-3"), underlying=Symbol("AAPL")),
     }
     snap = _snapshot(existing_positions=existing)
 
@@ -469,7 +497,7 @@ def test_normal_mode_basis_ids_track_input_order() -> None:
 
 def test_watchlist_mode_bundle_shape() -> None:
     """analyst.mode=watchlist + strategist.mode=defensive_posture → halt-mode bundle."""
-    watchlist = (_watchlist_entry(ticker="AAPL"), _watchlist_entry(ticker="MSFT"))
+    watchlist = (_watchlist_entry(ticker=Symbol("AAPL")), _watchlist_entry(ticker=Symbol("MSFT")))
     bundle = _run(
         analyst_output=_analyst_output(mode="watchlist", watchlist=watchlist),
         strategist_output=_strategist_output(mode="defensive_posture"),
@@ -526,14 +554,18 @@ def test_disagreeing_invocation_ids_raise() -> None:
 
 def test_position_assessment_order_preserved() -> None:
     """Wrapped position_assessments order matches strategist_output.position_assessments order."""
-    sa1 = _close_assessment(sa_id="SA-1", position_id="POS-1", underlying="AAPL")
-    sa2 = _hold_assessment(sa_id="SA-2", position_id="POS-2", underlying="MSFT")
-    sa3 = _reduce_assessment(sa_id="SA-3", position_id="POS-3", underlying="NVDA")
+    sa1 = _close_assessment(
+        sa_id="SA-1", position_id=PositionId("POS-1"), underlying=Symbol("AAPL")
+    )
+    sa2 = _hold_assessment(sa_id="SA-2", position_id=PositionId("POS-2"), underlying=Symbol("MSFT"))
+    sa3 = _reduce_assessment(
+        sa_id="SA-3", position_id=PositionId("POS-3"), underlying=Symbol("NVDA")
+    )
 
     existing = {
-        "POS-1": _existing_long_equity(position_id="POS-1", underlying="AAPL"),
-        "POS-2": _existing_long_equity(position_id="POS-2", underlying="MSFT"),
-        "POS-3": _existing_long_equity(position_id="POS-3", underlying="NVDA"),
+        "POS-1": _existing_long_equity(position_id=PositionId("POS-1"), underlying=Symbol("AAPL")),
+        "POS-2": _existing_long_equity(position_id=PositionId("POS-2"), underlying=Symbol("MSFT")),
+        "POS-3": _existing_long_equity(position_id=PositionId("POS-3"), underlying=Symbol("NVDA")),
     }
     snap = _snapshot(existing_positions=existing)
 
@@ -555,7 +587,7 @@ def test_position_assessment_order_preserved() -> None:
 
 def test_pending_order_assessment_order_preserved() -> None:
     """Wrapped pending_order_assessments order matches the strategist's emitted order."""
-    sa = _hold_assessment(sa_id="SA-1", position_id="POS-1", underlying="AAPL")
+    sa = _hold_assessment(sa_id="SA-1", position_id=PositionId("POS-1"), underlying=Symbol("AAPL"))
     p1 = _entry_pending_order(pending_id="SA-ORD-1", linked_assessment_id="SA-1")
     p2 = _entry_pending_order(
         pending_id="SA-ORD-2", linked_assessment_id="SA-1", recommended_action="modify"
@@ -564,7 +596,9 @@ def test_pending_order_assessment_order_preserved() -> None:
         pending_id="SA-ORD-3", linked_assessment_id="SA-1", recommended_action="cancel"
     )
 
-    existing = {"POS-1": _existing_long_equity(position_id="POS-1", underlying="AAPL")}
+    existing = {
+        "POS-1": _existing_long_equity(position_id=PositionId("POS-1"), underlying=Symbol("AAPL"))
+    }
     snap = _snapshot(existing_positions=existing)
 
     bundle = _run(
@@ -589,9 +623,9 @@ def test_pending_order_assessment_order_preserved() -> None:
 
 def test_recommendation_order_preserved() -> None:
     """Wrapped recommendations order matches analyst_output.recommendations order."""
-    r1 = _equity_recommendation(rec_id="REC-1", underlying="AAPL")
-    r2 = _equity_recommendation(rec_id="REC-2", underlying="MSFT")
-    r3 = _equity_recommendation(rec_id="REC-3", underlying="NVDA")
+    r1 = _equity_recommendation(rec_id="REC-1", underlying=Symbol("AAPL"))
+    r2 = _equity_recommendation(rec_id="REC-2", underlying=Symbol("MSFT"))
+    r3 = _equity_recommendation(rec_id="REC-3", underlying=Symbol("NVDA"))
 
     bundle = _run(analyst_output=_analyst_output(recommendations=(r1, r2, r3)))
 
@@ -613,11 +647,13 @@ def test_inner_records_preserved_byte_for_byte() -> None:
     The wrapper only adds the pre_processor_annotations field; the inner record's
     serialization must be unchanged.
     """
-    rec = _equity_recommendation(rec_id="REC-1", underlying="AAPL")
-    sa = _close_assessment(sa_id="SA-1", position_id="POS-1", underlying="AAPL")
+    rec = _equity_recommendation(rec_id="REC-1", underlying=Symbol("AAPL"))
+    sa = _close_assessment(sa_id="SA-1", position_id=PositionId("POS-1"), underlying=Symbol("AAPL"))
     pending = _entry_pending_order(pending_id="SA-ORD-1", linked_assessment_id="SA-1")
 
-    existing = {"POS-1": _existing_long_equity(position_id="POS-1", underlying="AAPL")}
+    existing = {
+        "POS-1": _existing_long_equity(position_id=PositionId("POS-1"), underlying=Symbol("AAPL"))
+    }
     snap = _snapshot(existing_positions=existing)
 
     bundle = _run(
@@ -656,13 +692,21 @@ def test_mirror_symmetry_end_to_end() -> None:
     walking the bundle.
     """
     # Two analyst entries both targeting NVDA (one matching close, one matching pending).
-    rec_close = _equity_recommendation(rec_id="REC-1", underlying="NVDA", direction="long")
-    rec_pending = _equity_recommendation(rec_id="REC-2", underlying="MSFT", direction="long")
-    rec_hold = _equity_recommendation(rec_id="REC-3", underlying="AAPL", direction="long")
+    rec_close = _equity_recommendation(rec_id="REC-1", underlying=Symbol("NVDA"), direction="long")
+    rec_pending = _equity_recommendation(
+        rec_id="REC-2", underlying=Symbol("MSFT"), direction="long"
+    )
+    rec_hold = _equity_recommendation(rec_id="REC-3", underlying=Symbol("AAPL"), direction="long")
 
-    sa_close = _close_assessment(sa_id="SA-1", position_id="POS-1", underlying="NVDA")
-    sa_hold = _hold_assessment(sa_id="SA-2", position_id="POS-2", underlying="AAPL")
-    sa_link = _hold_assessment(sa_id="SA-3", position_id="POS-3", underlying="MSFT")
+    sa_close = _close_assessment(
+        sa_id="SA-1", position_id=PositionId("POS-1"), underlying=Symbol("NVDA")
+    )
+    sa_hold = _hold_assessment(
+        sa_id="SA-2", position_id=PositionId("POS-2"), underlying=Symbol("AAPL")
+    )
+    sa_link = _hold_assessment(
+        sa_id="SA-3", position_id=PositionId("POS-3"), underlying=Symbol("MSFT")
+    )
 
     p1 = _entry_pending_order(
         pending_id="SA-ORD-1",
@@ -671,9 +715,9 @@ def test_mirror_symmetry_end_to_end() -> None:
     )
 
     existing = {
-        "POS-1": _existing_long_equity(position_id="POS-1", underlying="NVDA"),
-        "POS-2": _existing_long_equity(position_id="POS-2", underlying="AAPL"),
-        "POS-3": _existing_long_equity(position_id="POS-3", underlying="MSFT"),
+        "POS-1": _existing_long_equity(position_id=PositionId("POS-1"), underlying=Symbol("NVDA")),
+        "POS-2": _existing_long_equity(position_id=PositionId("POS-2"), underlying=Symbol("AAPL")),
+        "POS-3": _existing_long_equity(position_id=PositionId("POS-3"), underlying=Symbol("MSFT")),
     }
     snap = _snapshot(existing_positions=existing)
 
@@ -746,9 +790,11 @@ def test_mirror_symmetry_end_to_end() -> None:
 
 def test_mirror_symmetry_strategist_side_to_analyst() -> None:
     """Every strategist-side conflict has a matching analyst-side entry on the recommendation."""
-    rec = _equity_recommendation(rec_id="REC-1", underlying="NVDA", direction="long")
-    sa = _close_assessment(sa_id="SA-1", position_id="POS-1", underlying="NVDA")
-    existing = {"POS-1": _existing_long_equity(position_id="POS-1", underlying="NVDA")}
+    rec = _equity_recommendation(rec_id="REC-1", underlying=Symbol("NVDA"), direction="long")
+    sa = _close_assessment(sa_id="SA-1", position_id=PositionId("POS-1"), underlying=Symbol("NVDA"))
+    existing = {
+        "POS-1": _existing_long_equity(position_id=PositionId("POS-1"), underlying=Symbol("NVDA"))
+    }
     snap = _snapshot(existing_positions=existing)
 
     bundle = _run(
@@ -758,7 +804,7 @@ def test_mirror_symmetry_strategist_side_to_analyst() -> None:
     )
 
     assert bundle.analyst_section.recommendations is not None
-    analyst_conflicts_by_rec_id = {
+    analyst_conflicts_by_rec_id: dict[str, tuple[AnalystSideConflict, ...]] = {
         wr.recommendation.recommendation_id: wr.pre_processor_annotations.conflicts
         for wr in bundle.analyst_section.recommendations
     }
@@ -785,16 +831,18 @@ def test_mirror_symmetry_strategist_side_to_analyst() -> None:
 
 def test_strategist_holds_excluded_count_matches_hold_assessments() -> None:
     """basis.strategist_holds_excluded_count equals the count of hold assessments."""
-    sa1 = _hold_assessment(sa_id="SA-1", position_id="POS-1", underlying="AAPL")
-    sa2 = _hold_assessment(sa_id="SA-2", position_id="POS-2", underlying="MSFT")
-    sa3 = _close_assessment(sa_id="SA-3", position_id="POS-3", underlying="NVDA")
-    sa4 = _hold_assessment(sa_id="SA-4", position_id="POS-4", underlying="AAPL")
+    sa1 = _hold_assessment(sa_id="SA-1", position_id=PositionId("POS-1"), underlying=Symbol("AAPL"))
+    sa2 = _hold_assessment(sa_id="SA-2", position_id=PositionId("POS-2"), underlying=Symbol("MSFT"))
+    sa3 = _close_assessment(
+        sa_id="SA-3", position_id=PositionId("POS-3"), underlying=Symbol("NVDA")
+    )
+    sa4 = _hold_assessment(sa_id="SA-4", position_id=PositionId("POS-4"), underlying=Symbol("AAPL"))
 
     existing = {
-        "POS-1": _existing_long_equity(position_id="POS-1", underlying="AAPL"),
-        "POS-2": _existing_long_equity(position_id="POS-2", underlying="MSFT"),
-        "POS-3": _existing_long_equity(position_id="POS-3", underlying="NVDA"),
-        "POS-4": _existing_long_equity(position_id="POS-4", underlying="AAPL"),
+        "POS-1": _existing_long_equity(position_id=PositionId("POS-1"), underlying=Symbol("AAPL")),
+        "POS-2": _existing_long_equity(position_id=PositionId("POS-2"), underlying=Symbol("MSFT")),
+        "POS-3": _existing_long_equity(position_id=PositionId("POS-3"), underlying=Symbol("NVDA")),
+        "POS-4": _existing_long_equity(position_id=PositionId("POS-4"), underlying=Symbol("AAPL")),
     }
     snap = _snapshot(existing_positions=existing)
 
@@ -843,12 +891,14 @@ def test_conviction_distribution_total_zero_in_watchlist_mode() -> None:
 
 def test_book_health_summary_total_matches_position_count() -> None:
     """book_health_summary.total == len(strategist_section.position_assessments)."""
-    sa1 = _hold_assessment(sa_id="SA-1", position_id="POS-1", underlying="AAPL")
-    sa2 = _close_assessment(sa_id="SA-2", position_id="POS-2", underlying="MSFT")
+    sa1 = _hold_assessment(sa_id="SA-1", position_id=PositionId("POS-1"), underlying=Symbol("AAPL"))
+    sa2 = _close_assessment(
+        sa_id="SA-2", position_id=PositionId("POS-2"), underlying=Symbol("MSFT")
+    )
 
     existing = {
-        "POS-1": _existing_long_equity(position_id="POS-1", underlying="AAPL"),
-        "POS-2": _existing_long_equity(position_id="POS-2", underlying="MSFT"),
+        "POS-1": _existing_long_equity(position_id=PositionId("POS-1"), underlying=Symbol("AAPL")),
+        "POS-2": _existing_long_equity(position_id=PositionId("POS-2"), underlying=Symbol("MSFT")),
     }
     snap = _snapshot(existing_positions=existing)
 
@@ -867,12 +917,14 @@ def test_book_health_summary_total_matches_position_count() -> None:
 
 
 def test_bundle_dump_validates_against_schema() -> None:
-    """ProposalPreProcessorBundle.model_dump() validates against BUNDLE_OUTPUT_SCHEMA."""
-    rec = _equity_recommendation(rec_id="REC-1", underlying="AAPL")
-    sa = _close_assessment(sa_id="SA-1", position_id="POS-1", underlying="AAPL")
+    """dataclasses.asdict(ProposalPreProcessorBundle) validates against BUNDLE_OUTPUT_SCHEMA."""
+    rec = _equity_recommendation(rec_id="REC-1", underlying=Symbol("AAPL"))
+    sa = _close_assessment(sa_id="SA-1", position_id=PositionId("POS-1"), underlying=Symbol("AAPL"))
     pending = _entry_pending_order(pending_id="SA-ORD-1", linked_assessment_id="SA-1")
 
-    existing = {"POS-1": _existing_long_equity(position_id="POS-1", underlying="AAPL")}
+    existing = {
+        "POS-1": _existing_long_equity(position_id=PositionId("POS-1"), underlying=Symbol("AAPL"))
+    }
     snap = _snapshot(existing_positions=existing)
 
     bundle = _run(
@@ -905,9 +957,11 @@ def test_watchlist_bundle_dump_validates_against_schema() -> None:
 
 def test_runner_is_pure_two_calls_produce_equal_bundles() -> None:
     """Calling the runner twice with the same inputs produces equal bundles."""
-    rec = _equity_recommendation(rec_id="REC-1", underlying="AAPL")
-    sa = _close_assessment(sa_id="SA-1", position_id="POS-1", underlying="AAPL")
-    existing = {"POS-1": _existing_long_equity(position_id="POS-1", underlying="AAPL")}
+    rec = _equity_recommendation(rec_id="REC-1", underlying=Symbol("AAPL"))
+    sa = _close_assessment(sa_id="SA-1", position_id=PositionId("POS-1"), underlying=Symbol("AAPL"))
+    existing = {
+        "POS-1": _existing_long_equity(position_id=PositionId("POS-1"), underlying=Symbol("AAPL"))
+    }
     snap = _snapshot(existing_positions=existing)
 
     bundle_a = _run(
@@ -972,11 +1026,13 @@ def test_pending_without_linked_assessment_carries_empty_conflicts() -> None:
 
     The runner does not work around this; it forwards inputs naturally.
     """
-    rec = _equity_recommendation(rec_id="REC-1", underlying="AAPL")
-    sa = _hold_assessment(sa_id="SA-1", position_id="POS-1", underlying="MSFT")
+    rec = _equity_recommendation(rec_id="REC-1", underlying=Symbol("AAPL"))
+    sa = _hold_assessment(sa_id="SA-1", position_id=PositionId("POS-1"), underlying=Symbol("MSFT"))
     pending_no_link = _entry_pending_order(pending_id="SA-ORD-1", linked_assessment_id=None)
 
-    existing = {"POS-1": _existing_long_equity(position_id="POS-1", underlying="MSFT")}
+    existing = {
+        "POS-1": _existing_long_equity(position_id=PositionId("POS-1"), underlying=Symbol("MSFT"))
+    }
     snap = _snapshot(existing_positions=existing)
 
     bundle = _run(
@@ -998,24 +1054,24 @@ def test_pending_without_linked_assessment_carries_empty_conflicts() -> None:
 
 def test_add_action_yields_entry_vs_add_conflict() -> None:
     """A strategist add on the same underlying as an analyst entry → entry_vs_add."""
-    rec = _equity_recommendation(rec_id="REC-1", underlying="AAPL", direction="long")
+    rec = _equity_recommendation(rec_id="REC-1", underlying=Symbol("AAPL"), direction="long")
 
     add_assessment = PositionAssessment(
-        assessment_id="SA-1",
-        position_id="POS-1",
-        thesis_id="THESIS-1",
-        underlying="AAPL",
+        assessment_id=RecommendationId("SA-1"),
+        position_id=PositionId("POS-1"),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol("AAPL"),
         sector="tech",
         thesis_status="on-track",
         recommended_action="add",
         action_parameters=AddParameters(
             action="add",
             additional_quantity=10.0,
-            additional_dollar_value=1500.0,
+            additional_dollar_value=money(1500.0),
             entry_order=StratEntryOrder(type="market"),
         ),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=1500.0, net_directional_impact=1500.0
+            sector_delta_adjusted_change=money(1500.0), net_directional_impact=money(1500.0)
         ),
         guardrail_validation_result=StratGuardrailValidationResult(
             overall="PASS", per_rule=(), checked_at=_NOW
@@ -1025,7 +1081,9 @@ def test_add_action_yields_entry_vs_add_conflict() -> None:
         action_rationale="Add.",
     )
 
-    existing = {"POS-1": _existing_long_equity(position_id="POS-1", underlying="AAPL")}
+    existing = {
+        "POS-1": _existing_long_equity(position_id=PositionId("POS-1"), underlying=Symbol("AAPL"))
+    }
     snap = _snapshot(existing_positions=existing)
 
     bundle = _run(

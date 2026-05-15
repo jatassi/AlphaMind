@@ -35,6 +35,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from alphamind.commands.engine_envelope import (
+    EngineEnvelope as OmsEngineEnvelope,
+)
 from alphamind.config.models.guardrails import BreachResponse
 from alphamind.execution.continuous_monitor.breach_loop.result import (
     BreachLoopResult,
@@ -48,9 +51,6 @@ from alphamind.execution.continuous_monitor.cascade_dispatch.selectors import (
 )
 from alphamind.execution.continuous_monitor.cascade_dispatch.trigger_ids import (
     TriggerIdGenerator,
-)
-from alphamind.execution.oms.engine_envelope import (
-    EngineEnvelope as OmsEngineEnvelope,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -87,12 +87,10 @@ from alphamind.risk_guardrails.breach_behavior.cascade import (
 )
 
 if TYPE_CHECKING:
-    # ``SubmissionResult`` lives in ``submit_envelope_mcp``, which depends on
-    # ``decision.portfolio_manager`` — eager import would trigger the OMS ↔
-    # PM circular import. The dispatcher only annotates the submit callable's
-    # return type; the runtime never materialises the symbol from this
-    # module's import path.
-    from alphamind.execution.oms.submit_envelope_mcp import SubmissionResult
+    # ``SubmissionResult`` lives in the wire-format kernel
+    # :mod:`alphamind.commands.submission_results` after ALP-458 — pulling
+    # it down from the kernel keeps the dispatcher decoupled from decision.
+    from alphamind.commands.submission_results import SubmissionResult
 
 
 # ---------------------------------------------------------------------------

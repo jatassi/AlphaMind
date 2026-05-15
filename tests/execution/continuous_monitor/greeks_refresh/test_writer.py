@@ -17,14 +17,11 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.execution.continuous_monitor.greeks_refresh import SqlGreeksWriter
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.portfolio_state.records.positions import (
@@ -37,6 +34,13 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
     StrategyLeg,
     StrategyPositionDetails,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
 )
 
 
@@ -60,14 +64,14 @@ def _options_position(
     as_of: datetime | None = None,
 ) -> PositionRecord:
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=datetime(2026, 5, 1, 14, 30, tzinfo=UTC),
         details=OptionsPositionDetails(
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             strike_price=200.0,
             expiration_date=date(2026, 6, 19),
             contract_type=OptionContractType.CALL,
@@ -102,7 +106,7 @@ def _options_position(
 
 def _strategy_position(*, position_id: str = "strat-1") -> PositionRecord:
     leg_one_options = OptionsPositionDetails(
-        underlying_ticker="SPY",
+        underlying_ticker=Symbol("SPY"),
         strike_price=500.0,
         expiration_date=date(2026, 6, 19),
         contract_type=OptionContractType.CALL,
@@ -112,7 +116,7 @@ def _strategy_position(*, position_id: str = "strat-1") -> PositionRecord:
         greeks=OptionGreeks(delta=0.5, gamma=0.01, theta=-0.02, vega=0.15),
     )
     leg_two_options = OptionsPositionDetails(
-        underlying_ticker="SPY",
+        underlying_ticker=Symbol("SPY"),
         strike_price=510.0,
         expiration_date=date(2026, 6, 19),
         contract_type=OptionContractType.CALL,
@@ -122,7 +126,7 @@ def _strategy_position(*, position_id: str = "strat-1") -> PositionRecord:
         greeks=OptionGreeks(delta=0.3, gamma=0.01, theta=-0.015, vega=0.12),
     )
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -179,7 +183,7 @@ class TestSqlGreeksWriterOptions:
         self,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        await _insert_position(async_factory, _options_position(position_id="pos-1"))
+        await _insert_position(async_factory, _options_position(position_id=PositionId("pos-1")))
         new_greeks = OptionGreeks(
             delta=0.6,
             gamma=0.03,
@@ -190,7 +194,7 @@ class TestSqlGreeksWriterOptions:
             refresh_failed=False,
         )
         writer = SqlGreeksWriter(async_factory)
-        await writer.update_options_greeks(position_id="pos-1", greeks=new_greeks)
+        await writer.update_options_greeks(position_id=PositionId("pos-1"), greeks=new_greeks)
         reloaded = await _load_position(async_factory, "pos-1")
         details = reloaded.details
         assert isinstance(details, OptionsPositionDetails)
@@ -205,7 +209,7 @@ class TestSqlGreeksWriterOptions:
         writer = SqlGreeksWriter(async_factory)
         with pytest.raises(LookupError, match="no such position"):
             await writer.update_options_greeks(
-                position_id="missing-pos",
+                position_id=PositionId("missing-pos"),
                 greeks=OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0),
             )
 
@@ -215,7 +219,7 @@ class TestSqlGreeksWriterStrategy:
         self,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        await _insert_position(async_factory, _strategy_position(position_id="strat-1"))
+        await _insert_position(async_factory, _strategy_position(position_id=PositionId("strat-1")))
         as_of = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
         per_leg = {
             "leg-1": OptionGreeks(
@@ -245,7 +249,7 @@ class TestSqlGreeksWriterStrategy:
         )
         writer = SqlGreeksWriter(async_factory)
         await writer.update_strategy_greeks(
-            position_id="strat-1", per_leg=per_leg, aggregated=aggregated
+            position_id=PositionId("strat-1"), per_leg=per_leg, aggregated=aggregated
         )
         reloaded = await _load_position(async_factory, "strat-1")
         details = reloaded.details

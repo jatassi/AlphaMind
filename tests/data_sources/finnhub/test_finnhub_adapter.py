@@ -1,8 +1,9 @@
 """
 Tests for the Finnhub vendor adapter — story 05f.
 
-All Finnhub SDK calls are mocked.  Tests use an in-memory SQLite database
-seeded with a minimal AssetUniverse row so FK constraints are satisfied.
+All Finnhub SDK calls are routed through FakeFinnhubSDK.  Tests use an
+in-memory SQLite database seeded with a minimal AssetUniverse row so FK
+constraints are satisfied.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import (
     Base,
     EarningsEventDetails,
@@ -28,6 +30,8 @@ from alphamind.persistence.models import (
     NewsArticleTickers,
 )
 from alphamind.persistence.session import make_engine, make_session_factory
+from tests.data_sources._fakes.finnhub import FakeFinnhubSDK
+from tests.data_sources._fakes.run_repo import FakeRunRepo
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -77,28 +81,8 @@ def seeded_tickers(session: Session) -> None:
 
 
 @pytest.fixture()
-def fake_repo(session_factory: sessionmaker[Session]) -> Any:
-    """A thin in-memory repo that delegates to the real SQLite session."""
-
-    class _Repo:
-        def __init__(self) -> None:
-            self.rows: dict[str, dict[str, Any]] = {}
-
-        def insert_running(self, run_id: str, collector: str, started_at: str) -> None:
-            self.rows[run_id] = {
-                "status": "running",
-                "collector": collector,
-                "rows_written": None,
-                "error_summary": None,
-            }
-
-        def update_success(self, run_id: str, completed_at: str, rows_written: int) -> None:
-            self.rows[run_id].update(status="success", rows_written=rows_written)
-
-        def update_failed(self, run_id: str, error_summary: str) -> None:
-            self.rows[run_id].update(status="failed", error_summary=error_summary)
-
-    return _Repo()
+def fake_repo() -> FakeRunRepo:
+    return FakeRunRepo()
 
 
 # ---------------------------------------------------------------------------
@@ -113,50 +97,50 @@ def _article_id(url: str, published_at: str) -> str:
 class TestFinnhubClient:
     def test_verify_connectivity_calls_market_status(self) -> None:
         """verify_connectivity() calls the Finnhub SDK and returns without error."""
-        with patch("finnhub.Client") as mock_client:
-            mock_instance = mock_client.return_value
-            mock_instance.market_status.return_value = {"exchange": "US", "isOpen": True}
+        from alphamind.data_sources.finnhub.client import FinnhubClient
 
-            from alphamind.data_sources.finnhub.client import FinnhubClient
+        sdk = FakeFinnhubSDK()
+        client = FinnhubClient.__new__(FinnhubClient)
+        client._sdk = sdk
+        client._limiter = None
+        client.verify_connectivity()
 
-            client = FinnhubClient(api_key="test-key", _rate_limiter=None)
-            client.verify_connectivity()
-            mock_instance.market_status.assert_called_once()
+        assert sdk.market_status_calls == [{"exchange": "US"}]
 
     def test_client_exposes_sdk_instance(self) -> None:
         """The FinnhubClient wraps the finnhub.Client and exposes it."""
-        with patch("finnhub.Client"):
-            from alphamind.data_sources.finnhub.client import FinnhubClient
+        from alphamind.data_sources.finnhub.client import FinnhubClient
 
-            client = FinnhubClient(api_key="test-key", _rate_limiter=None)
-            assert client.sdk is not None
+        sdk = FakeFinnhubSDK()
+        client = FinnhubClient.__new__(FinnhubClient)
+        client._sdk = sdk
+        client._limiter = None
+        assert client.sdk is sdk
 
     def test_rate_limiter_acquire_called_before_sdk(self) -> None:
         """acquire() is called on the rate limiter before each SDK method."""
         from alphamind.data_sources._common import RateLimiter
+        from alphamind.data_sources.finnhub.client import FinnhubClient
 
         limiter = RateLimiter()
         limiter.set_limit("finnhub", rate_per_minute=60)
 
-        with patch("finnhub.Client") as mock_client:
-            mock_instance = mock_client.return_value
-            mock_instance.market_status.return_value = {"exchange": "US", "isOpen": True}
+        acquire_calls: list[str] = []
+        original_acquire = limiter.acquire
 
-            from alphamind.data_sources.finnhub.client import FinnhubClient
+        def tracking_acquire(provider: str) -> None:
+            acquire_calls.append(provider)
+            original_acquire(provider)
 
-            acquire_calls: list[str] = []
-            original_acquire = limiter.acquire
+        limiter.acquire = tracking_acquire  # type: ignore[method-assign]  # mock-method assignment
 
-            def tracking_acquire(provider: str) -> None:
-                acquire_calls.append(provider)
-                original_acquire(provider)
+        sdk = FakeFinnhubSDK()
+        client = FinnhubClient.__new__(FinnhubClient)
+        client._sdk = sdk
+        client._limiter = limiter
+        client.verify_connectivity()
 
-            limiter.acquire = tracking_acquire  # type: ignore[method-assign]  # mock-method assignment
-
-            client = FinnhubClient(api_key="test-key", _rate_limiter=limiter)
-            client.verify_connectivity()
-
-            assert "finnhub" in acquire_calls
+        assert "finnhub" in acquire_calls
 
 
 class TestCollectNews:
@@ -164,30 +148,27 @@ class TestCollectNews:
         self,
         engine: Engine,
         session_factory: sessionmaker[Session],
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
         ticker_scope: list[str],
         company_news_map: dict[str, list[dict[str, Any]]],
         general_news: list[dict[str, Any]],
         seeded_tickers: Any = None,
     ) -> None:
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
+        sdk = FakeFinnhubSDK(
+            company_news_by_symbol=company_news_map,
+            general_news_response=general_news,
+        )
 
-            def company_news_side_effect(symbol: str, _from: str, to: str) -> list[dict[str, Any]]:
-                return company_news_map.get(symbol, [])
+        from alphamind.data_sources.finnhub.news import collect_news
 
-            mock_sdk.company_news.side_effect = company_news_side_effect
-            mock_sdk.general_news.return_value = general_news
-
-            from alphamind.data_sources.finnhub.news import collect_news
-
-            collect_news(
-                ticker_scope=ticker_scope,
-                since=datetime(2026, 4, 25, tzinfo=UTC),
-                _engine=engine,
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        collect_news(
+            ticker_scope=ticker_scope,
+            since=datetime(2026, 4, 25, tzinfo=UTC),
+            _engine=engine,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+            _sdk=sdk,
+        )
 
     def test_collect_news_writes_article_row(
         self,
@@ -195,7 +176,7 @@ class TestCollectNews:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
         tmp_path: Path,
     ) -> None:
         """One company-news item produces one news_articles row."""
@@ -233,7 +214,7 @@ class TestCollectNews:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
         tmp_path: Path,
     ) -> None:
         """article_id is a SHA-256 of (source='finnhub', url, published_at)."""
@@ -275,7 +256,7 @@ class TestCollectNews:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
         tmp_path: Path,
     ) -> None:
         """source_credibility_tier is stamped from news_outlets.yaml lookup."""
@@ -312,7 +293,7 @@ class TestCollectNews:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
         tmp_path: Path,
     ) -> None:
         """Unknown outlet produces source_credibility_tier=None."""
@@ -349,7 +330,7 @@ class TestCollectNews:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
         tmp_path: Path,
     ) -> None:
         """vendor_sentiment_score and vendor_sentiment_label are null for Finnhub."""
@@ -387,7 +368,7 @@ class TestCollectNews:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
         tmp_path: Path,
     ) -> None:
         """Body text is written to disk and body_path populated."""
@@ -417,7 +398,6 @@ class TestCollectNews:
         row = session.query(NewsArticles).first()
         assert row is not None
         assert row.body_path is not None
-        from pathlib import Path
 
         assert Path(row.body_path).exists()
         assert Path(row.body_path).read_text() == "This is the article body."
@@ -428,7 +408,7 @@ class TestCollectNews:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
         tmp_path: Path,
     ) -> None:
         """When summary is empty/missing, body_path is null."""
@@ -465,7 +445,7 @@ class TestCollectNews:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
         tmp_path: Path,
     ) -> None:
         """news_article_tickers rows are written for in-scope tickers."""
@@ -503,7 +483,7 @@ class TestCollectNews:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
         tmp_path: Path,
     ) -> None:
         """Re-running collect_news on the same window produces no duplicate rows."""
@@ -535,29 +515,32 @@ class TestCollectNews:
         assert len(rows) == 1
 
     def test_collect_news_failure_records_failed_run(
-        self, engine: Engine, session_factory: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self,
+        engine: Engine,
+        session_factory: sessionmaker[Session],
+        fake_repo: FakeRunRepo,
+        tmp_path: Path,
     ) -> None:
         """On SDK failure, the run is marked failed and no articles written."""
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.company_news.side_effect = RuntimeError("API down")
-            mock_sdk.general_news.side_effect = RuntimeError("API down")
+        sdk = FakeFinnhubSDK(
+            company_news_error=RuntimeError("API down"),
+            general_news_error=RuntimeError("API down"),
+        )
 
-            from alphamind.data_sources.finnhub.news import collect_news
+        from alphamind.data_sources.finnhub.news import collect_news
 
-            env_patch = patch.dict(os.environ, {"ALPHAMIND_NEWS_DIR": str(tmp_path)})
-            with pytest.raises(RuntimeError), env_patch:
-                collect_news(
-                    ticker_scope=["AAPL"],
-                    since=datetime(2026, 4, 25, tzinfo=UTC),
-                    _engine=engine,
-                    _session_factory=session_factory,
-                    _repo=fake_repo,
-                )
+        env_patch = patch.dict(os.environ, {"ALPHAMIND_NEWS_DIR": str(tmp_path)})
+        with pytest.raises(RuntimeError), env_patch:
+            collect_news(
+                ticker_scope=["AAPL"],
+                since=datetime(2026, 4, 25, tzinfo=UTC),
+                _engine=engine,
+                _session_factory=session_factory,
+                _repo=fake_repo,
+                _sdk=sdk,
+            )
 
-        # Run was recorded as failed
-        run = next(iter(fake_repo.rows.values()))
-        assert run["status"] == "failed"
+        assert fake_repo.failed()
 
     def test_collect_news_general_news_no_ticker_link(
         self,
@@ -565,7 +548,7 @@ class TestCollectNews:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
         tmp_path: Path,
     ) -> None:
         """General (market-wide) news creates news_articles but no ticker links."""
@@ -602,14 +585,13 @@ class TestCollectNews:
         engine: Engine,
         session_factory: sessionmaker[Session],
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
         tmp_path: Path,
     ) -> None:
         """collect_news() is callable with no positional args (runner-registry contract)."""
-        from unittest.mock import patch
+        sdk = FakeFinnhubSDK()  # default empty
 
         with (
-            patch("finnhub.Client") as mock_client,
             patch(
                 "alphamind.data_sources.finnhub.news.active_universe_tickers",
                 return_value=["AAPL"],
@@ -620,16 +602,13 @@ class TestCollectNews:
             ),
             patch.dict(os.environ, {"ALPHAMIND_NEWS_DIR": str(tmp_path)}),
         ):
-            mock_sdk = mock_client.return_value
-            mock_sdk.company_news.return_value = []
-            mock_sdk.general_news.return_value = []
-
             from alphamind.data_sources.finnhub.news import collect_news
 
             collect_news(
                 _engine=engine,
                 _session_factory=session_factory,
                 _repo=fake_repo,
+                _sdk=sdk,
             )
 
 
@@ -661,23 +640,21 @@ class TestEarningsCalendar:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """One earnings item produces an event_calendar row with event_type='earnings'."""
         items = [self._make_earnings_item()]
+        sdk = FakeFinnhubSDK(earnings_calendar_response={"earningsCalendar": items})
 
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.earnings_calendar.return_value = {"earningsCalendar": items}
+        from alphamind.data_sources.finnhub.calendar import collect_earnings_calendar
 
-            from alphamind.data_sources.finnhub.calendar import collect_earnings_calendar
-
-            collect_earnings_calendar(
-                since=datetime(2026, 4, 25, tzinfo=UTC),
-                _engine=engine,
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        collect_earnings_calendar(
+            since=datetime(2026, 4, 25, tzinfo=UTC),
+            _engine=engine,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+            _sdk=sdk,
+        )
 
         events = session.query(EventCalendar).all()
         assert len(events) == 1
@@ -690,23 +667,21 @@ class TestEarningsCalendar:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """earnings_event_details is written with correct fields."""
         items = [self._make_earnings_item(eps_estimate=1.5, revenue_estimate=90e9)]
+        sdk = FakeFinnhubSDK(earnings_calendar_response={"earningsCalendar": items})
 
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.earnings_calendar.return_value = {"earningsCalendar": items}
+        from alphamind.data_sources.finnhub.calendar import collect_earnings_calendar
 
-            from alphamind.data_sources.finnhub.calendar import collect_earnings_calendar
-
-            collect_earnings_calendar(
-                since=datetime(2026, 4, 25, tzinfo=UTC),
-                _engine=engine,
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        collect_earnings_calendar(
+            since=datetime(2026, 4, 25, tzinfo=UTC),
+            _engine=engine,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+            _sdk=sdk,
+        )
 
         details = session.query(EarningsEventDetails).all()
         assert len(details) == 1
@@ -720,26 +695,24 @@ class TestEarningsCalendar:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """Finnhub hour field maps: bmo->bmo, amc->amc, dmh->dmh."""
         items = [
-            self._make_earnings_item(ticker="AAPL", date="2026-04-30", hour="bmo"),
-            self._make_earnings_item(ticker="MSFT", date="2026-05-01", hour="amc"),
+            self._make_earnings_item(ticker=Symbol("AAPL"), date="2026-04-30", hour="bmo"),
+            self._make_earnings_item(ticker=Symbol("MSFT"), date="2026-05-01", hour="amc"),
         ]
+        sdk = FakeFinnhubSDK(earnings_calendar_response={"earningsCalendar": items})
 
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.earnings_calendar.return_value = {"earningsCalendar": items}
+        from alphamind.data_sources.finnhub.calendar import collect_earnings_calendar
 
-            from alphamind.data_sources.finnhub.calendar import collect_earnings_calendar
-
-            collect_earnings_calendar(
-                since=datetime(2026, 4, 25, tzinfo=UTC),
-                _engine=engine,
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        collect_earnings_calendar(
+            since=datetime(2026, 4, 25, tzinfo=UTC),
+            _engine=engine,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+            _sdk=sdk,
+        )
 
         all_details = session.query(EarningsEventDetails).all()
         details = {d.ticker: d.expected_call_time for d in all_details}
@@ -752,55 +725,45 @@ class TestEarningsCalendar:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """Re-running on same window produces no duplicate rows."""
         items = [self._make_earnings_item()]
+        sdk = FakeFinnhubSDK(earnings_calendar_response={"earningsCalendar": items})
 
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.earnings_calendar.return_value = {"earningsCalendar": items}
+        from alphamind.data_sources.finnhub.calendar import collect_earnings_calendar
 
-            from alphamind.data_sources.finnhub.calendar import collect_earnings_calendar
-
-            for _ in range(2):
-                collect_earnings_calendar(
-                    since=datetime(2026, 4, 25, tzinfo=UTC),
-                    _engine=engine,
-                    _session_factory=session_factory,
-                    _repo=fake_repo,
-                )
+        for _ in range(2):
+            collect_earnings_calendar(
+                since=datetime(2026, 4, 25, tzinfo=UTC),
+                _engine=engine,
+                _session_factory=session_factory,
+                _repo=fake_repo,
+                _sdk=sdk,
+            )
 
         events = session.query(EventCalendar).all()
         assert len(events) == 1
 
     def test_bootstrap_earnings_calendar_uses_90_day_window(
-        self, engine: Engine, session_factory: sessionmaker[Session], fake_repo: Any
+        self, engine: Engine, session_factory: sessionmaker[Session], fake_repo: FakeRunRepo
     ) -> None:
         """bootstrap_earnings_calendar() requests a 90-day forward window."""
-        captured: list[dict[str, Any]] = []
+        sdk = FakeFinnhubSDK()  # default: empty earningsCalendar
 
-        def fake_earnings_calendar(
-            _from: str, to: str, symbol: str, international: bool = False
-        ) -> dict[str, Any]:
-            captured.append({"from": _from, "to": to})
-            return {"earningsCalendar": []}
+        from alphamind.data_sources.finnhub.calendar import bootstrap_earnings_calendar
 
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.earnings_calendar.side_effect = fake_earnings_calendar
+        bootstrap_earnings_calendar(
+            _engine=engine,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+            _sdk=sdk,
+        )
 
-            from alphamind.data_sources.finnhub.calendar import bootstrap_earnings_calendar
-
-            bootstrap_earnings_calendar(
-                _engine=engine,
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
-
-        assert len(captured) == 1
-        from_date = date_type.fromisoformat(captured[0]["from"])
-        to_date = date_type.fromisoformat(captured[0]["to"])
+        assert len(sdk.earnings_calendar_calls) == 1
+        first = sdk.earnings_calendar_calls[0]
+        from_date = date_type.fromisoformat(first["_from"])
+        to_date = date_type.fromisoformat(first["to"])
         delta = (to_date - from_date).days
         assert delta >= 89  # approximately 90 days
 
@@ -828,23 +791,21 @@ class TestEconomicCalendar:
         engine: Engine,
         session_factory: sessionmaker[Session],
         session: Session,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """CPI event maps to event_type='cpi_release'."""
         items = [self._make_eco_item(event="CPI")]
+        sdk = FakeFinnhubSDK(economic_calendar_response={"economicCalendar": items})
 
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.calendar_economic.return_value = {"economicCalendar": items}
+        from alphamind.data_sources.finnhub.calendar import collect_economic_calendar
 
-            from alphamind.data_sources.finnhub.calendar import collect_economic_calendar
-
-            collect_economic_calendar(
-                since=datetime(2026, 4, 25, tzinfo=UTC),
-                _engine=engine,
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        collect_economic_calendar(
+            since=datetime(2026, 4, 25, tzinfo=UTC),
+            _engine=engine,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+            _sdk=sdk,
+        )
 
         events = session.query(EventCalendar).all()
         assert len(events) == 1
@@ -855,23 +816,21 @@ class TestEconomicCalendar:
         engine: Engine,
         session_factory: sessionmaker[Session],
         session: Session,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """FOMC Statement maps to event_type='fomc'."""
         items = [self._make_eco_item(event="FOMC Statement")]
+        sdk = FakeFinnhubSDK(economic_calendar_response={"economicCalendar": items})
 
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.calendar_economic.return_value = {"economicCalendar": items}
+        from alphamind.data_sources.finnhub.calendar import collect_economic_calendar
 
-            from alphamind.data_sources.finnhub.calendar import collect_economic_calendar
-
-            collect_economic_calendar(
-                since=datetime(2026, 4, 25, tzinfo=UTC),
-                _engine=engine,
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        collect_economic_calendar(
+            since=datetime(2026, 4, 25, tzinfo=UTC),
+            _engine=engine,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+            _sdk=sdk,
+        )
 
         events = session.query(EventCalendar).all()
         assert len(events) == 1
@@ -882,23 +841,21 @@ class TestEconomicCalendar:
         engine: Engine,
         session_factory: sessionmaker[Session],
         session: Session,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """Unknown event names fall back to event_type='other'."""
         items = [self._make_eco_item(event="Some Obscure Index")]
+        sdk = FakeFinnhubSDK(economic_calendar_response={"economicCalendar": items})
 
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.calendar_economic.return_value = {"economicCalendar": items}
+        from alphamind.data_sources.finnhub.calendar import collect_economic_calendar
 
-            from alphamind.data_sources.finnhub.calendar import collect_economic_calendar
-
-            collect_economic_calendar(
-                since=datetime(2026, 4, 25, tzinfo=UTC),
-                _engine=engine,
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        collect_economic_calendar(
+            since=datetime(2026, 4, 25, tzinfo=UTC),
+            _engine=engine,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+            _sdk=sdk,
+        )
 
         events = session.query(EventCalendar).all()
         assert len(events) == 1
@@ -909,53 +866,45 @@ class TestEconomicCalendar:
         engine: Engine,
         session_factory: sessionmaker[Session],
         session: Session,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """Re-running on same window produces no duplicates."""
         items = [self._make_eco_item(event="CPI")]
+        sdk = FakeFinnhubSDK(economic_calendar_response={"economicCalendar": items})
 
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.calendar_economic.return_value = {"economicCalendar": items}
+        from alphamind.data_sources.finnhub.calendar import collect_economic_calendar
 
-            from alphamind.data_sources.finnhub.calendar import collect_economic_calendar
-
-            for _ in range(2):
-                collect_economic_calendar(
-                    since=datetime(2026, 4, 25, tzinfo=UTC),
-                    _engine=engine,
-                    _session_factory=session_factory,
-                    _repo=fake_repo,
-                )
+        for _ in range(2):
+            collect_economic_calendar(
+                since=datetime(2026, 4, 25, tzinfo=UTC),
+                _engine=engine,
+                _session_factory=session_factory,
+                _repo=fake_repo,
+                _sdk=sdk,
+            )
 
         events = session.query(EventCalendar).all()
         assert len(events) == 1
 
     def test_bootstrap_economic_calendar_uses_90_day_window(
-        self, engine: Engine, session_factory: sessionmaker[Session], fake_repo: Any
+        self, engine: Engine, session_factory: sessionmaker[Session], fake_repo: FakeRunRepo
     ) -> None:
         """bootstrap_economic_calendar() requests a 90-day forward window."""
-        captured: list[dict[str, Any]] = []
+        sdk = FakeFinnhubSDK()
 
-        def fake_eco_calendar(_from: str | None = None, to: str | None = None) -> dict[str, Any]:
-            captured.append({"from": _from, "to": to})
-            return {"economicCalendar": []}
+        from alphamind.data_sources.finnhub.calendar import bootstrap_economic_calendar
 
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.calendar_economic.side_effect = fake_eco_calendar
+        bootstrap_economic_calendar(
+            _engine=engine,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+            _sdk=sdk,
+        )
 
-            from alphamind.data_sources.finnhub.calendar import bootstrap_economic_calendar
-
-            bootstrap_economic_calendar(
-                _engine=engine,
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
-
-        assert len(captured) == 1
-        from_date = date_type.fromisoformat(captured[0]["from"])
-        to_date = date_type.fromisoformat(captured[0]["to"])
+        assert len(sdk.economic_calendar_calls) == 1
+        first = sdk.economic_calendar_calls[0]
+        from_date = date_type.fromisoformat(first["_from"])
+        to_date = date_type.fromisoformat(first["to"])
         delta = (to_date - from_date).days
         assert delta >= 89
 
@@ -978,23 +927,21 @@ class TestIpoCalendar:
         engine: Engine,
         session_factory: sessionmaker[Session],
         session: Session,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """An IPO item produces an event_calendar row."""
         items = [self._make_ipo_item()]
+        sdk = FakeFinnhubSDK(ipo_calendar_response={"ipoCalendar": items})
 
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.ipo_calendar.return_value = {"ipoCalendar": items}
+        from alphamind.data_sources.finnhub.calendar import collect_ipo_calendar
 
-            from alphamind.data_sources.finnhub.calendar import collect_ipo_calendar
-
-            collect_ipo_calendar(
-                since=datetime(2026, 4, 25, tzinfo=UTC),
-                _engine=engine,
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        collect_ipo_calendar(
+            since=datetime(2026, 4, 25, tzinfo=UTC),
+            _engine=engine,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+            _sdk=sdk,
+        )
 
         events = session.query(EventCalendar).all()
         assert len(events) == 1
@@ -1005,24 +952,22 @@ class TestIpoCalendar:
         engine: Engine,
         session_factory: sessionmaker[Session],
         session: Session,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """Re-running on same window produces no duplicates."""
         items = [self._make_ipo_item()]
+        sdk = FakeFinnhubSDK(ipo_calendar_response={"ipoCalendar": items})
 
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.ipo_calendar.return_value = {"ipoCalendar": items}
+        from alphamind.data_sources.finnhub.calendar import collect_ipo_calendar
 
-            from alphamind.data_sources.finnhub.calendar import collect_ipo_calendar
-
-            for _ in range(2):
-                collect_ipo_calendar(
-                    since=datetime(2026, 4, 25, tzinfo=UTC),
-                    _engine=engine,
-                    _session_factory=session_factory,
-                    _repo=fake_repo,
-                )
+        for _ in range(2):
+            collect_ipo_calendar(
+                since=datetime(2026, 4, 25, tzinfo=UTC),
+                _engine=engine,
+                _session_factory=session_factory,
+                _repo=fake_repo,
+                _sdk=sdk,
+            )
 
         events = session.query(EventCalendar).all()
         assert len(events) == 1
@@ -1044,23 +989,21 @@ class TestFdaCalendar:
         engine: Engine,
         session_factory: sessionmaker[Session],
         session: Session,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """An FDA item produces an event_calendar row with event_type='fda_advisory'."""
         items = [self._make_fda_item()]
+        sdk = FakeFinnhubSDK(fda_calendar_response={"fdaCalendar": items})
 
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.fda_calendar.return_value = {"fdaCalendar": items}
+        from alphamind.data_sources.finnhub.calendar import collect_fda_calendar
 
-            from alphamind.data_sources.finnhub.calendar import collect_fda_calendar
-
-            collect_fda_calendar(
-                since=datetime(2026, 4, 25, tzinfo=UTC),
-                _engine=engine,
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        collect_fda_calendar(
+            since=datetime(2026, 4, 25, tzinfo=UTC),
+            _engine=engine,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+            _sdk=sdk,
+        )
 
         events = session.query(EventCalendar).all()
         assert len(events) == 1
@@ -1071,45 +1014,41 @@ class TestFdaCalendar:
         engine: Engine,
         session_factory: sessionmaker[Session],
         session: Session,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """Re-running on same window produces no duplicates."""
         items = [self._make_fda_item()]
+        sdk = FakeFinnhubSDK(fda_calendar_response={"fdaCalendar": items})
 
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.fda_calendar.return_value = {"fdaCalendar": items}
+        from alphamind.data_sources.finnhub.calendar import collect_fda_calendar
 
-            from alphamind.data_sources.finnhub.calendar import collect_fda_calendar
-
-            for _ in range(2):
-                collect_fda_calendar(
-                    since=datetime(2026, 4, 25, tzinfo=UTC),
-                    _engine=engine,
-                    _session_factory=session_factory,
-                    _repo=fake_repo,
-                )
+        for _ in range(2):
+            collect_fda_calendar(
+                since=datetime(2026, 4, 25, tzinfo=UTC),
+                _engine=engine,
+                _session_factory=session_factory,
+                _repo=fake_repo,
+                _sdk=sdk,
+            )
 
         events = session.query(EventCalendar).all()
         assert len(events) == 1
 
     def test_collect_fda_calendar_failure_records_failed_run(
-        self, engine: Engine, session_factory: sessionmaker[Session], fake_repo: Any
+        self, engine: Engine, session_factory: sessionmaker[Session], fake_repo: FakeRunRepo
     ) -> None:
         """On SDK failure, the run is marked failed."""
-        with patch("finnhub.Client") as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.fda_calendar.side_effect = RuntimeError("API down")
+        sdk = FakeFinnhubSDK(fda_calendar_error=RuntimeError("API down"))
 
-            from alphamind.data_sources.finnhub.calendar import collect_fda_calendar
+        from alphamind.data_sources.finnhub.calendar import collect_fda_calendar
 
-            with pytest.raises(RuntimeError):
-                collect_fda_calendar(
-                    since=datetime(2026, 4, 25, tzinfo=UTC),
-                    _engine=engine,
-                    _session_factory=session_factory,
-                    _repo=fake_repo,
-                )
+        with pytest.raises(RuntimeError):
+            collect_fda_calendar(
+                since=datetime(2026, 4, 25, tzinfo=UTC),
+                _engine=engine,
+                _session_factory=session_factory,
+                _repo=fake_repo,
+                _sdk=sdk,
+            )
 
-        run = next(iter(fake_repo.rows.values()))
-        assert run["status"] == "failed"
+        assert fake_repo.failed()

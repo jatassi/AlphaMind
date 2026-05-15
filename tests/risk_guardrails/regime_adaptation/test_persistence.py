@@ -18,6 +18,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.config.models.overlays import Overlay
 from alphamind.config.models.regimes import Regime
 from alphamind.persistence.models import Base, RegimeAdaptationStateRow
@@ -31,7 +32,6 @@ from alphamind.risk_guardrails.regime_adaptation.persistence import (
     row_to_state,
     state_to_row,
 )
-from alphamind.risk_guardrails.regime_adaptation.types import RegimeTransitionState
 
 # ---------------------------------------------------------------------------
 # Fixtures

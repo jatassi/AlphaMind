@@ -9,9 +9,17 @@ shapes of ``alphamind.analysis.qualitative_research.validation`` and
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+import pytest
+
+from alphamind._kernel.ids import (
+    InvocationId,
+    Symbol,
+)
+from alphamind._kernel.money import money, price
 from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.decision.analyst.models import (
@@ -35,6 +43,9 @@ from alphamind.decision.analyst.models import (
 )
 from alphamind.decision.analyst.validation import (
     DEFAULT_CONVICTION_BANDS,
+    ValidationError,
+    ValidationResult,
+    ValidationWarning,
     validate_analyst_output,
 )
 from alphamind.risk_guardrails.guardrail_evaluation import RuleProjection, Status
@@ -83,20 +94,26 @@ def _make_guardrail_result(**overrides: Any) -> GuardrailValidationResult:
 def _make_recommendation(**overrides: Any) -> Recommendation:
     defaults: dict[str, Any] = {
         "recommendation_id": "REC-1",
-        "instrument": InstrumentEquity(asset_type="equity", ticker="NVDA", direction="long"),
+        "instrument": InstrumentEquity(
+            asset_type="equity", ticker=Symbol("NVDA"), direction="long"
+        ),
         "underlying": "NVDA",
         "sector": "semis",
         "conviction_level": 4,
-        "entry_order": EntryOrder(type="limit", limit_price=842.50),
-        "position_size": PositionSize(quantity=4, dollar_value=3370.0, pct_of_portfolio=3.37),
-        "target": Target(target_type="absolute_price", price=890.0, dollar_pl_target=190.0),
+        "entry_order": EntryOrder(type="limit", limit_price=price(842.50)),
+        "position_size": PositionSize(
+            quantity=4, dollar_value=money(3370.0), pct_of_portfolio=3.37
+        ),
+        "target": Target(
+            target_type="absolute_price", price=price(890.0), dollar_pl_target=money(190.0)
+        ),
         "invalidation_legs": (
             InvalidationLeg(
                 leg_id="INV-1",
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger="NVDA", comparator="<=", trigger_price=820.0
+                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=price(820.0)
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             ),
@@ -188,7 +205,9 @@ class TestLegIdPairing:
                     type="price",
                     is_hard=True,
                     condition=PriceCondition(
-                        underlying_trigger="NVDA", comparator="<=", trigger_price=820.0
+                        underlying_trigger=Symbol("NVDA"),
+                        comparator="<=",
+                        trigger_price=price(820.0),
                     ),
                     order_parameters=OrderParameters(order_type="market"),
                 ),
@@ -222,8 +241,10 @@ class TestLegIdPairing:
 class TestUnderlyingMatchesInstrument:
     def test_equity_underlying_mismatch_is_error(self) -> None:
         rec = _make_recommendation(
-            instrument=InstrumentEquity(asset_type="equity", ticker="AMD", direction="long"),
-            underlying="NVDA",
+            instrument=InstrumentEquity(
+                asset_type="equity", ticker=Symbol("AMD"), direction="long"
+            ),
+            underlying=Symbol("NVDA"),
         )
         output = _make_output(recommendations=(rec,))
         result = validate_analyst_output(
@@ -239,15 +260,18 @@ class TestUnderlyingMatchesInstrument:
         rec = _make_recommendation(
             instrument=InstrumentOption(
                 asset_type="option",
-                underlying="AMD",
-                strike=180.0,
+                underlying=Symbol("AMD"),
+                strike=price(180.0),
                 expiration=date(2026, 5, 16),
                 contract_type="call",
                 direction="long",
             ),
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             position_size=PositionSize(
-                quantity=4, dollar_value=3370.0, pct_of_portfolio=3.37, premium_at_risk=2000.0
+                quantity=4,
+                dollar_value=money(3370.0),
+                pct_of_portfolio=3.37,
+                premium_at_risk=money(2000.0),
             ),
         )
         output = _make_output(recommendations=(rec,))
@@ -265,17 +289,17 @@ class TestUnderlyingMatchesInstrument:
             instrument=InstrumentStrategy(
                 asset_type="strategy",
                 strategy_type="vertical_spread",
-                underlying="NVDA",
+                underlying=Symbol("NVDA"),
                 legs=(
                     StrategyLeg(
-                        strike=820.0,
+                        strike=price(820.0),
                         expiration=date(2026, 5, 16),
                         contract_type="call",
                         direction="long",
                         quantity_ratio=1,
                     ),
                     StrategyLeg(
-                        strike=860.0,
+                        strike=price(860.0),
                         expiration=date(2026, 5, 16),
                         contract_type="call",
                         direction="short",
@@ -283,9 +307,12 @@ class TestUnderlyingMatchesInstrument:
                     ),
                 ),
             ),
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             position_size=PositionSize(
-                quantity=4, dollar_value=3370.0, pct_of_portfolio=3.37, premium_at_risk=1500.0
+                quantity=4,
+                dollar_value=money(3370.0),
+                pct_of_portfolio=3.37,
+                premium_at_risk=money(1500.0),
             ),
         )
         output = _make_output(recommendations=(rec,))
@@ -408,15 +435,18 @@ class TestAssetTypePermitted:
         rec = _make_recommendation(
             instrument=InstrumentOption(
                 asset_type="option",
-                underlying="NVDA",
-                strike=820.0,
+                underlying=Symbol("NVDA"),
+                strike=price(820.0),
                 expiration=date(2026, 5, 16),
                 contract_type="call",
                 direction="long",
             ),
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             position_size=PositionSize(
-                quantity=1, dollar_value=2000.0, pct_of_portfolio=2.0, premium_at_risk=2000.0
+                quantity=1,
+                dollar_value=money(2000.0),
+                pct_of_portfolio=2.0,
+                premium_at_risk=money(2000.0),
             ),
             guardrail_validation_result=_make_guardrail_result(
                 overall="FAIL",
@@ -438,15 +468,18 @@ class TestAssetTypePermitted:
         rec = _make_recommendation(
             instrument=InstrumentOption(
                 asset_type="option",
-                underlying="NVDA",
-                strike=820.0,
+                underlying=Symbol("NVDA"),
+                strike=price(820.0),
                 expiration=date(2026, 5, 16),
                 contract_type="call",
                 direction="long",
             ),
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             position_size=PositionSize(
-                quantity=1, dollar_value=2000.0, pct_of_portfolio=2.0, premium_at_risk=2000.0
+                quantity=1,
+                dollar_value=money(2000.0),
+                pct_of_portfolio=2.0,
+                premium_at_risk=money(2000.0),
             ),
         )
         output = _make_output(recommendations=(rec,))
@@ -584,7 +617,9 @@ class TestConvictionBandWarn:
         """conviction 4 (band 2.0-4.0%) but pct=5.5% emits the rule warning."""
         rec = _make_recommendation(
             conviction_level=4,
-            position_size=PositionSize(quantity=10, dollar_value=5500.0, pct_of_portfolio=5.5),
+            position_size=PositionSize(
+                quantity=10, dollar_value=money(5500.0), pct_of_portfolio=5.5
+            ),
         )
         output = _make_output(recommendations=(rec,))
         result = validate_analyst_output(
@@ -600,7 +635,9 @@ class TestConvictionBandWarn:
     def test_size_inside_band_no_warning(self) -> None:
         rec = _make_recommendation(
             conviction_level=4,
-            position_size=PositionSize(quantity=4, dollar_value=3370.0, pct_of_portfolio=3.37),
+            position_size=PositionSize(
+                quantity=4, dollar_value=money(3370.0), pct_of_portfolio=3.37
+            ),
         )
         output = _make_output(recommendations=(rec,))
         result = validate_analyst_output(
@@ -615,7 +652,7 @@ class TestConvictionBandWarn:
         """Below the band still emits the warning."""
         rec = _make_recommendation(
             conviction_level=4,
-            position_size=PositionSize(quantity=1, dollar_value=500.0, pct_of_portfolio=0.5),
+            position_size=PositionSize(quantity=1, dollar_value=money(500.0), pct_of_portfolio=0.5),
         )
         output = _make_output(recommendations=(rec,))
         result = validate_analyst_output(
@@ -630,7 +667,9 @@ class TestConvictionBandWarn:
         """Passing conviction_bands overrides DEFAULT_CONVICTION_BANDS."""
         rec = _make_recommendation(
             conviction_level=4,
-            position_size=PositionSize(quantity=4, dollar_value=3370.0, pct_of_portfolio=3.37),
+            position_size=PositionSize(
+                quantity=4, dollar_value=money(3370.0), pct_of_portfolio=3.37
+            ),
         )
         output = _make_output(recommendations=(rec,))
         # Tightened band: 4 = (1.0, 2.0); pct=3.37 sits outside.
@@ -790,14 +829,14 @@ class TestLayer3Referential:
 class TestWatchlistMode:
     def test_baseline_watchlist_passes(self) -> None:
         watch = WatchlistEntry(
-            ticker="NVDA",
+            ticker=Symbol("NVDA"),
             sector="semis",
             thesis_summary="Watching for confirmation.",
             estimated_conviction=3,
             source_references=("SA-TECH-2",),
         )
         output = AnalystOutput(
-            invocation_id="inv-001",
+            invocation_id=InvocationId("inv-001"),
             timestamp=_ts("2026-04-23T14:31:22Z"),
             mode="watchlist",
             watchlist=(watch,),
@@ -811,13 +850,13 @@ class TestWatchlistMode:
 
     def test_watchlist_sector_outside_active_set_is_error(self) -> None:
         watch = WatchlistEntry(
-            ticker="JPM",
+            ticker=Symbol("JPM"),
             sector="financials",
             thesis_summary="Watching JPM.",
             estimated_conviction=2,
         )
         output = AnalystOutput(
-            invocation_id="inv-001",
+            invocation_id=InvocationId("inv-001"),
             timestamp=_ts("2026-04-23T14:31:22Z"),
             mode="watchlist",
             watchlist=(watch,),
@@ -833,14 +872,14 @@ class TestWatchlistMode:
 
     def test_watchlist_unknown_source_reference_is_error(self) -> None:
         watch = WatchlistEntry(
-            ticker="NVDA",
+            ticker=Symbol("NVDA"),
             sector="semis",
             thesis_summary="Watching NVDA.",
             estimated_conviction=3,
             source_references=("SA-TECH-99",),
         )
         output = AnalystOutput(
-            invocation_id="inv-001",
+            invocation_id=InvocationId("inv-001"),
             timestamp=_ts("2026-04-23T14:31:22Z"),
             mode="watchlist",
             watchlist=(watch,),
@@ -981,3 +1020,33 @@ class TestExampleOutputSmoke:
         )
         assert result.is_valid is True
         assert result.warnings == ()
+
+
+# ---------------------------------------------------------------------------
+# Frozen-dataclass invariants (ALP-475: 10b conversion)
+# ---------------------------------------------------------------------------
+
+
+class TestValidationTypesAreFrozenDataclasses:
+    """Per ALP-475, analyst validation public types are
+    ``@dataclass(frozen=True, slots=True)`` — internal Pydantic types were
+    converted because they never cross an LLM/persistence/vendor boundary.
+    """
+
+    def test_validation_error_is_frozen_dataclass(self) -> None:
+        err = ValidationError(field_path="x.y", rule="r1", message="m1")
+        assert dataclasses.is_dataclass(ValidationError)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            err.message = "mutated"  # type: ignore[misc]
+
+    def test_validation_warning_is_frozen_dataclass(self) -> None:
+        warn = ValidationWarning(field_path="x.y", rule="r1", message="m1")
+        assert dataclasses.is_dataclass(ValidationWarning)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            warn.rule = "mutated"  # type: ignore[misc]
+
+    def test_validation_result_is_frozen_dataclass(self) -> None:
+        result = ValidationResult(is_valid=True, errors=(), warnings=())
+        assert dataclasses.is_dataclass(ValidationResult)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.is_valid = False  # type: ignore[misc]

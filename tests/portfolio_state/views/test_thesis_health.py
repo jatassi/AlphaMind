@@ -1,12 +1,14 @@
 """Tests for ThesisHealthSnapshot — story ALP-351."""
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
 
+from alphamind._kernel.ids import ThesisId
 from alphamind.portfolio_state.records.theses import (
     SupportingSignal,
     SupportingSignalStatus,
@@ -31,7 +33,7 @@ def _make_entry(component_id: str = "comp-1") -> ComponentHealthEntry:
 
 def test_thesis_health_snapshot_construction() -> None:
     snap = ThesisHealthSnapshot(
-        thesis_id="THESIS-1",
+        thesis_id=ThesisId("THESIS-1"),
         invocation_id="inv-001",
         snapshot_timestamp=_NOW,
         health_status=ThesisStatus.ON_TRACK,
@@ -47,14 +49,14 @@ def test_thesis_health_snapshot_construction() -> None:
 
 def test_thesis_health_snapshot_is_frozen() -> None:
     snap = ThesisHealthSnapshot(
-        thesis_id="THESIS-1",
+        thesis_id=ThesisId("THESIS-1"),
         invocation_id="inv-001",
         snapshot_timestamp=_NOW,
         health_status=ThesisStatus.ON_TRACK,
         prior_health_status=None,
         component_health=(),
     )
-    with pytest.raises((AttributeError, TypeError, ValidationError)):
+    with pytest.raises(FrozenInstanceError):
         snap.health_status = ThesisStatus.AT_RISK
 
 
@@ -62,7 +64,7 @@ def test_health_for_component_hit() -> None:
     entry_a = _make_entry("comp-a")
     entry_b = _make_entry("comp-b")
     snap = ThesisHealthSnapshot(
-        thesis_id="THESIS-1",
+        thesis_id=ThesisId("THESIS-1"),
         invocation_id="inv-001",
         snapshot_timestamp=_NOW,
         health_status=ThesisStatus.ON_TRACK,
@@ -75,7 +77,7 @@ def test_health_for_component_hit() -> None:
 
 def test_health_for_component_miss() -> None:
     snap = ThesisHealthSnapshot(
-        thesis_id="THESIS-1",
+        thesis_id=ThesisId("THESIS-1"),
         invocation_id="inv-001",
         snapshot_timestamp=_NOW,
         health_status=ThesisStatus.ON_TRACK,
@@ -88,7 +90,7 @@ def test_health_for_component_miss() -> None:
 def test_empty_component_health_accepted_for_initial_invocation() -> None:
     """Initial-invocation case: no component health yet."""
     snap = ThesisHealthSnapshot(
-        thesis_id="THESIS-1",
+        thesis_id=ThesisId("THESIS-1"),
         invocation_id="inv-001",
         snapshot_timestamp=_NOW,
         health_status=ThesisStatus.ON_TRACK,
@@ -100,9 +102,9 @@ def test_empty_component_health_accepted_for_initial_invocation() -> None:
 
 
 def test_thesis_id_min_length() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         ThesisHealthSnapshot(
-            thesis_id="",
+            thesis_id=ThesisId(""),
             invocation_id="inv-001",
             snapshot_timestamp=_NOW,
             health_status=ThesisStatus.ON_TRACK,
@@ -112,9 +114,9 @@ def test_thesis_id_min_length() -> None:
 
 
 def test_invocation_id_min_length() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         ThesisHealthSnapshot(
-            thesis_id="THESIS-1",
+            thesis_id=ThesisId("THESIS-1"),
             invocation_id="",
             snapshot_timestamp=_NOW,
             health_status=ThesisStatus.ON_TRACK,
@@ -125,12 +127,12 @@ def test_invocation_id_min_length() -> None:
 
 def test_component_health_entry_is_frozen() -> None:
     entry = _make_entry()
-    with pytest.raises((AttributeError, TypeError, ValidationError)):
+    with pytest.raises(FrozenInstanceError):
         entry.component_id = "changed"
 
 
 def test_component_health_entry_min_id() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         ComponentHealthEntry(
             component_id="",
             supporting_signals=(),
@@ -140,7 +142,7 @@ def test_component_health_entry_min_id() -> None:
 def test_prior_health_status_distinct_from_current() -> None:
     """Prior and current can both be present (carry-forward across invocations)."""
     snap = ThesisHealthSnapshot(
-        thesis_id="THESIS-1",
+        thesis_id=ThesisId("THESIS-1"),
         invocation_id="inv-002",
         snapshot_timestamp=_NOW,
         health_status=ThesisStatus.AT_RISK,

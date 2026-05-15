@@ -20,7 +20,7 @@ from alphamind.scheduler.__main__ import main
 
 def _make_summary_stub(invocation_id: str = "inv-stub-1") -> Any:
     """Return an ``InvocationSummary``-like object the CLI can serialize."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import Phase1Summary
+    from alphamind.execution.write_paths.phase1 import Phase1Summary
     from alphamind.scheduler.orchestrator import InvocationSummary
 
     return InvocationSummary(

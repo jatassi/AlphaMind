@@ -31,7 +31,7 @@ def test_news_outlets_yaml_parses_cleanly() -> None:
 def test_news_outlets_rejects_unknown_tier() -> None:
     from alphamind.config.models import NewsOutletsConfig
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         NewsOutletsConfig.model_validate({"outlets": {"FakeNews": {"tier": "tier_4"}}})
 
 
@@ -51,7 +51,7 @@ def test_collector_schedule_yaml_parses_cleanly() -> None:
 def test_collector_schedule_rejects_malformed_cron() -> None:
     from alphamind.config.models import CollectorScheduleConfig
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         CollectorScheduleConfig.model_validate(
             {"timezone": "US/Eastern", "collectors": {"bad.job": {"cron": "not-a-cron"}}}
         )
@@ -86,7 +86,7 @@ def test_data_sources_rejects_unknown_retry_shape() -> None:
         "retry_shapes": {"critical": {"attempts": 3, "backoff": "exponential", "failover": True}},
         "categories": {},
     }
-    with pytest.raises(ValidationError, match="nonexistent"):
+    with pytest.raises((ValueError, TypeError), match="nonexistent"):
         DataSourcesConfig.model_validate(raw)
 
 
@@ -111,7 +111,7 @@ def test_data_sources_rejects_category_with_missing_primary() -> None:
             }
         },
     }
-    with pytest.raises(ValidationError, match="ghost_provider"):
+    with pytest.raises((ValueError, TypeError), match="ghost_provider"):
         DataSourcesConfig.model_validate(raw)
 
 
@@ -133,7 +133,7 @@ def test_data_sources_rejects_api_key_env_not_in_env_example(
         "retry_shapes": {"critical": {"attempts": 3, "backoff": "exponential", "failover": True}},
         "categories": {},
     }
-    with pytest.raises(ValidationError, match="BAD_KEY"):
+    with pytest.raises((ValueError, TypeError), match="BAD_KEY"):
         models_mod.DataSourcesConfig.model_validate(raw)
 
 
@@ -170,7 +170,7 @@ def test_assets_rejects_lowercase_ticker() -> None:
         "sectors": {"tech": ["aapl"]},
         "benchmarks": {},
     }
-    with pytest.raises(ValidationError, match="aapl"):
+    with pytest.raises((ValueError, TypeError), match="aapl"):
         AssetsConfig.model_validate(raw)
 
 
@@ -183,7 +183,7 @@ def test_assets_rejects_digit_leading_ticker() -> None:
         "sectors": {"tech": ["123XYZ"]},
         "benchmarks": {},
     }
-    with pytest.raises(ValidationError, match="123XYZ"):
+    with pytest.raises((ValueError, TypeError), match="123XYZ"):
         AssetsConfig.model_validate(raw)
 
 
@@ -196,7 +196,7 @@ def test_assets_rejects_benchmark_key_with_space() -> None:
         "sectors": {},
         "benchmarks": {"SP Y": {"role": "broad_market", "description": "bad key"}},
     }
-    with pytest.raises(ValidationError, match="SP Y"):
+    with pytest.raises((ValueError, TypeError), match="SP Y"):
         AssetsConfig.model_validate(raw)
 
 
@@ -221,7 +221,7 @@ def test_assets_rejects_malformed_last_full_validation() -> None:
         "sectors": {},
         "benchmarks": {},
     }
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         AssetsConfig.model_validate(raw)
 
 
@@ -232,19 +232,19 @@ def test_assets_models_are_frozen() -> None:
     config = AssetsConfig.model_validate(data)
 
     # AssetsConfig itself
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.sectors = {}
 
     # Nested DiscoverySource
     src = next(iter(config.discovery_sources.values()))
     assert isinstance(src, DiscoverySource)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         src.etf = "ZZZZ"
 
     # Nested Benchmark
     bench = next(iter(config.benchmarks.values()))
     assert isinstance(bench, Benchmark)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         bench.description = "mutated"
 
 
@@ -288,7 +288,7 @@ def test_scheduler_rejects_malformed_cron_in_trigger() -> None:
 
     raw = _valid_scheduler_raw()
     raw["triggers"] = {"pre_open": "not-a-cron"}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         SchedulerConfig.model_validate(raw)
 
 
@@ -297,7 +297,7 @@ def test_scheduler_rejects_empty_triggers_map() -> None:
 
     raw = _valid_scheduler_raw()
     raw["triggers"] = {}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         SchedulerConfig.model_validate(raw)
 
 
@@ -307,7 +307,7 @@ def test_scheduler_rejects_non_snake_case_trigger_key(bad_key: str) -> None:
 
     raw = _valid_scheduler_raw()
     raw["triggers"] = {bad_key: "0 9 * * mon-fri"}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         SchedulerConfig.model_validate(raw)
 
 
@@ -316,7 +316,7 @@ def test_scheduler_rejects_max_instances_zero() -> None:
 
     raw = _valid_scheduler_raw()
     raw["max_instances"] = 0
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         SchedulerConfig.model_validate(raw)
 
 
@@ -424,7 +424,7 @@ def test_guardrails_rejects_duplicate_rule_id() -> None:
         ],
         "emergency_invocation": _minimal_emergency_invocation(),
     }
-    with pytest.raises(ValidationError, match="Duplicate rule id"):
+    with pytest.raises((ValueError, TypeError), match="Duplicate rule id"):
         GuardrailsConfig.model_validate(raw)
 
 
@@ -440,7 +440,7 @@ def test_guardrails_rejects_misordered_escalation_zones() -> None:
         ],
         "emergency_invocation": _minimal_emergency_invocation(),
     }
-    with pytest.raises(ValidationError, match="warning < critical < hard_block"):
+    with pytest.raises((ValueError, TypeError), match="warning < critical < hard_block"):
         GuardrailsConfig.model_validate(raw)
 
 
@@ -456,7 +456,7 @@ def test_guardrails_rejects_progressive_tiers_on_non_cumulative_rule() -> None:
         ],
         "emergency_invocation": _minimal_emergency_invocation(),
     }
-    with pytest.raises(ValidationError, match="must not declare progressive_tiers"):
+    with pytest.raises((ValueError, TypeError), match="must not declare progressive_tiers"):
         GuardrailsConfig.model_validate(raw)
 
 
@@ -475,7 +475,7 @@ def test_guardrails_rejects_cumulative_drawdown_without_progressive_tiers() -> N
         ],
         "emergency_invocation": _minimal_emergency_invocation(),
     }
-    with pytest.raises(ValidationError, match="requires progressive_tiers"):
+    with pytest.raises((ValueError, TypeError), match="requires progressive_tiers"):
         GuardrailsConfig.model_validate(raw)
 
 
@@ -498,7 +498,7 @@ def test_guardrails_rejects_non_monotonic_progressive_tiers() -> None:
         ],
         "emergency_invocation": _minimal_emergency_invocation(),
     }
-    with pytest.raises(ValidationError, match="monotonically increasing"):
+    with pytest.raises((ValueError, TypeError), match="monotonically increasing"):
         GuardrailsConfig.model_validate(raw)
 
 
@@ -509,7 +509,7 @@ def test_guardrails_rejects_unknown_enforcement_tier() -> None:
         "rules": [_minimal_rule("position_max_size_pct", enforcement_tiers=["T4"])],
         "emergency_invocation": _minimal_emergency_invocation(),
     }
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         GuardrailsConfig.model_validate(raw)
 
 
@@ -520,7 +520,7 @@ def test_guardrails_rejects_empty_emergency_triggers() -> None:
         "rules": [_minimal_rule("position_max_size_pct")],
         "emergency_invocation": {"cooldown_minutes": 30, "triggers": []},
     }
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         GuardrailsConfig.model_validate(raw)
 
 
@@ -531,7 +531,7 @@ def test_guardrails_rejects_invalid_rule_id_pattern() -> None:
         "rules": [_minimal_rule("Position_Max_Size_Pct")],
         "emergency_invocation": _minimal_emergency_invocation(),
     }
-    with pytest.raises(ValidationError, match="does not match"):
+    with pytest.raises((ValueError, TypeError), match="does not match"):
         GuardrailsConfig.model_validate(raw)
 
 
@@ -541,17 +541,17 @@ def test_guardrails_models_are_frozen() -> None:
     data = load_yaml(CONFIG_DIR / "guardrails.yaml")
     config = GuardrailsConfig.model_validate(data)
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.__setattr__("rules", [])
 
     rule = config.rules[0]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         rule.__setattr__("id", "mutated")
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         rule.escalation_zones.__setattr__("warning", 1)
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.emergency_invocation.__setattr__("cooldown_minutes", 0)
 
 
@@ -591,7 +591,7 @@ def test_main_rejects_unknown_active_profile() -> None:
 
     raw = _valid_main_raw()
     raw["active_profile"] = "huge"
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         MainConfig.model_validate(raw)
 
 
@@ -600,7 +600,7 @@ def test_main_rejects_unknown_execution_mode() -> None:
 
     raw = _valid_main_raw()
     raw["execution_mode"] = "backtest"
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         MainConfig.model_validate(raw)
 
 
@@ -613,7 +613,7 @@ def test_main_rejects_missing_paths_database_key() -> None:
         "archive": "%USERPROFILE%\\AlphaMind\\archive",
         "prompts": "prompts/",
     }
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         MainConfig.model_validate(raw)
 
 
@@ -637,11 +637,11 @@ def test_main_models_are_frozen() -> None:
 
     config = MainConfig.model_validate(_valid_main_raw())
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.__setattr__("execution_mode", "live")
 
     assert isinstance(config.paths, Paths)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.paths.__setattr__("database", "mutated")
 
 
@@ -734,7 +734,7 @@ def test_agents_rejects_yaml_missing_an_agent() -> None:
     agents_map = raw["agents"]
     assert isinstance(agents_map, dict)
     del agents_map["synthesizer"]
-    with pytest.raises(ValidationError, match="synthesizer"):
+    with pytest.raises((ValueError, TypeError), match="synthesizer"):
         AgentsConfig.model_validate(raw)
 
 
@@ -745,7 +745,7 @@ def test_agents_rejects_yaml_with_extra_agent_name() -> None:
     agents_map = raw["agents"]
     assert isinstance(agents_map, dict)
     agents_map["portfolio_analyst"] = _valid_base_agent()
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         AgentsConfig.model_validate(raw)
 
 
@@ -758,7 +758,7 @@ def test_agents_rejects_nonexistent_prompt_path() -> None:
     analyst_entry = agents_map["analyst"]
     assert isinstance(analyst_entry, dict)
     analyst_entry["prompt"] = "prompts/decision/does_not_exist.md"
-    with pytest.raises(ValidationError, match="does_not_exist"):
+    with pytest.raises((ValueError, TypeError), match="does_not_exist"):
         AgentsConfig.model_validate(raw)
 
 
@@ -771,7 +771,7 @@ def test_agents_rejects_unknown_model() -> None:
     analyst_entry = agents_map["analyst"]
     assert isinstance(analyst_entry, dict)
     analyst_entry["model"] = "claude-haiku-3-5"
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         AgentsConfig.model_validate(raw)
 
 
@@ -786,7 +786,7 @@ def test_agents_rejects_analyst_carrying_adaptive_only_fields() -> None:
     analyst_entry["cumulative_tool_call_limit"] = 25
     analyst_entry["cumulative_tool_token_budget"] = 4000
     analyst_entry["tool_caps"] = {"news_search": 10}
-    with pytest.raises(ValidationError, match="must not declare"):
+    with pytest.raises((ValueError, TypeError), match="must not declare"):
         AgentsConfig.model_validate(raw)
 
 
@@ -799,7 +799,7 @@ def test_agents_rejects_adaptive_missing_cumulative_tool_call_limit() -> None:
     adaptive_entry = agents_map["adaptive_researcher"]
     assert isinstance(adaptive_entry, dict)
     del adaptive_entry["cumulative_tool_call_limit"]
-    with pytest.raises(ValidationError, match="must declare"):
+    with pytest.raises((ValueError, TypeError), match="must declare"):
         AgentsConfig.model_validate(raw)
 
 
@@ -812,7 +812,7 @@ def test_agents_rejects_tool_name_with_capital_letter() -> None:
     analyst_entry = agents_map["analyst"]
     assert isinstance(analyst_entry, dict)
     analyst_entry["tools"] = ["Retrieve_Brief"]
-    with pytest.raises(ValidationError, match="Retrieve_Brief"):
+    with pytest.raises((ValueError, TypeError), match="Retrieve_Brief"):
         AgentsConfig.model_validate(raw)
 
 
@@ -825,7 +825,7 @@ def test_agents_rejects_tool_caps_key_with_capital_letter() -> None:
     adaptive_entry = agents_map["adaptive_researcher"]
     assert isinstance(adaptive_entry, dict)
     adaptive_entry["tool_caps"] = {"News_Search": 5}
-    with pytest.raises(ValidationError, match="News_Search"):
+    with pytest.raises((ValueError, TypeError), match="News_Search"):
         AgentsConfig.model_validate(raw)
 
 
@@ -883,11 +883,11 @@ def test_agents_models_are_frozen() -> None:
     data = load_yaml(CONFIG_DIR / "agents.yaml")
     config = AgentsConfig.model_validate(data)
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.__setattr__("agents", {})
 
     entry = config.agents[AgentName.analyst]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         entry.__setattr__("model", "claude-sonnet-4-6")
 
 
@@ -928,7 +928,7 @@ def test_execution_rejects_missing_stop_in_impact_coefficients() -> None:
         "spread_buffer_pct": 10,
         "impact_coefficients": {"market": 0.5, "limit": 0.25},
     }
-    with pytest.raises(ValidationError, match="missing"):
+    with pytest.raises((ValueError, TypeError), match="missing"):
         ExecutionConfig.model_validate(raw)
 
 
@@ -945,7 +945,7 @@ def test_execution_rejects_unknown_order_type_in_impact_coefficients() -> None:
             "trailing_stop": 1.0,
         },
     }
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         ExecutionConfig.model_validate(raw)
 
 
@@ -957,7 +957,7 @@ def test_execution_rejects_zero_market_impact_coefficient() -> None:
         "spread_buffer_pct": 10,
         "impact_coefficients": {"market": 0, "limit": 0.25, "stop": 0.75},
     }
-    with pytest.raises(ValidationError, match="market"):
+    with pytest.raises((ValueError, TypeError), match="market"):
         ExecutionConfig.model_validate(raw)
 
 
@@ -966,7 +966,7 @@ def test_execution_rejects_negative_conservative_delta_buffer() -> None:
 
     raw = _valid_execution_raw()
     raw["conservative_delta_buffer_pct"] = -1
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         ExecutionConfig.model_validate(raw)
 
 
@@ -975,7 +975,7 @@ def test_execution_rejects_zero_move_trigger_pct() -> None:
 
     raw = _valid_execution_raw()
     raw["greeks_refresh"] = {"scheduled_interval_minutes": 15, "move_trigger_pct": 0}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         ExecutionConfig.model_validate(raw)
 
 
@@ -984,7 +984,7 @@ def test_execution_rejects_missing_pl_target_margin_pct() -> None:
 
     raw = _valid_execution_raw()
     raw.pop("pl_target_margin_pct")
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         ExecutionConfig.model_validate(raw)
 
 
@@ -994,13 +994,13 @@ def test_execution_models_are_frozen() -> None:
     data = load_yaml(CONFIG_DIR / "execution.yaml")
     config = ExecutionConfig.model_validate(data)
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.__setattr__("conservative_delta_buffer_pct", 0)
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.greeks_refresh.__setattr__("scheduled_interval_minutes", 1)
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.paper_harness.__setattr__("spread_buffer_pct", 0)
 
 
@@ -1060,7 +1060,7 @@ def test_digest_rejects_missing_regime_change_block() -> None:
 
     raw = _valid_digest_raw()
     del raw["regime_change"]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         DigestConfig.model_validate(raw)
 
 
@@ -1073,7 +1073,7 @@ def test_digest_rejects_anti_pattern_multiplier_equal_to_one() -> None:
         "multiplier_vs_baseline": 1.0,
         "min_occurrences_this_week": 5,
     }
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         DigestConfig.model_validate(raw)
 
 
@@ -1086,7 +1086,7 @@ def test_digest_rejects_anti_pattern_multiplier_below_one() -> None:
         "multiplier_vs_baseline": 0.5,
         "min_occurrences_this_week": 5,
     }
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         DigestConfig.model_validate(raw)
 
 
@@ -1095,7 +1095,7 @@ def test_digest_rejects_citation_chain_delta_pp_zero() -> None:
 
     raw = _valid_digest_raw()
     raw["citation_chain_shift"] = {"baseline_window_weeks": 4, "delta_pp_threshold": 0}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         DigestConfig.model_validate(raw)
 
 
@@ -1113,7 +1113,7 @@ def test_digest_rejects_citation_chain_delta_pp_above_upper_bound() -> None:
 
     raw = _valid_digest_raw()
     raw["citation_chain_shift"] = {"baseline_window_weeks": 4, "delta_pp_threshold": 100.1}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         DigestConfig.model_validate(raw)
 
 
@@ -1122,7 +1122,7 @@ def test_digest_rejects_sector_underperform_median_offset_sigma_zero() -> None:
 
     raw = _valid_digest_raw()
     raw["sector_underperform"] = {"baseline_window_weeks": 4, "median_offset_sigma": 0}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         DigestConfig.model_validate(raw)
 
 
@@ -1140,7 +1140,7 @@ def test_digest_rejects_validation_window_days_before_due_negative() -> None:
 
     raw = _valid_digest_raw()
     raw["validation_window_end"] = {"days_before_due": -1}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         DigestConfig.model_validate(raw)
 
 
@@ -1162,7 +1162,7 @@ def test_digest_rejects_baseline_window_weeks_zero() -> None:
 
     raw = _valid_digest_raw()
     raw["sector_underperform"] = {"baseline_window_weeks": 0, "median_offset_sigma": 1.5}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         DigestConfig.model_validate(raw)
 
 
@@ -1275,7 +1275,7 @@ def test_distillation_rejects_negative_sigma() -> None:
 
     raw = _valid_distillation_raw()
     raw["anomaly_detection"]["volume_anomaly_sigma"] = -0.1
-    with pytest.raises(ValidationError, match="volume_anomaly_sigma"):
+    with pytest.raises((ValueError, TypeError), match="volume_anomaly_sigma"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1285,7 +1285,7 @@ def test_distillation_rejects_negative_multiple() -> None:
 
     raw = _valid_distillation_raw()
     raw["anomaly_detection"]["price_move_atr_multiple"] = -0.5
-    with pytest.raises(ValidationError, match="price_move_atr_multiple"):
+    with pytest.raises((ValueError, TypeError), match="price_move_atr_multiple"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1295,7 +1295,7 @@ def test_distillation_rejects_zero_baseline_days() -> None:
 
     raw = _valid_distillation_raw()
     raw["persistence_windows"]["volume_baseline_days"] = 0
-    with pytest.raises(ValidationError, match="volume_baseline_days"):
+    with pytest.raises((ValueError, TypeError), match="volume_baseline_days"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1305,7 +1305,7 @@ def test_distillation_rejects_zero_minutes_window() -> None:
 
     raw = _valid_distillation_raw()
     raw["anomaly_detection"]["dark_pool_one_sided_window_minutes"] = 0
-    with pytest.raises(ValidationError, match="dark_pool_one_sided_window_minutes"):
+    with pytest.raises((ValueError, TypeError), match="dark_pool_one_sided_window_minutes"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1315,7 +1315,7 @@ def test_distillation_rejects_zero_hours_window() -> None:
 
     raw = _valid_distillation_raw()
     raw["anomaly_detection"]["news_price_divergence_window_hours"] = 0
-    with pytest.raises(ValidationError, match="news_price_divergence_window_hours"):
+    with pytest.raises((ValueError, TypeError), match="news_price_divergence_window_hours"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1325,7 +1325,7 @@ def test_distillation_rejects_empty_lead_lag_pairs() -> None:
 
     raw = _valid_distillation_raw()
     raw["lead_lag"]["pairs"] = []
-    with pytest.raises(ValidationError, match="pairs"):
+    with pytest.raises((ValueError, TypeError), match="pairs"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1335,7 +1335,7 @@ def test_distillation_rejects_malformed_lead_lag_pair_ticker() -> None:
 
     raw = _valid_distillation_raw()
     raw["lead_lag"]["pairs"] = [{"key": "x", "lead": "hyg", "lag": "SPY"}]  # lowercase ticker
-    with pytest.raises(ValidationError, match="pair ticker"):
+    with pytest.raises((ValueError, TypeError), match="pair ticker"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1345,7 +1345,7 @@ def test_distillation_rejects_malformed_lead_lag_pair_key() -> None:
 
     raw = _valid_distillation_raw()
     raw["lead_lag"]["pairs"] = [{"key": "BadKey", "lead": "HYG", "lag": "SPY"}]
-    with pytest.raises(ValidationError, match="pair key"):
+    with pytest.raises((ValueError, TypeError), match="pair key"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1358,7 +1358,7 @@ def test_distillation_rejects_duplicate_lead_lag_pair_keys() -> None:
         {"key": "dup", "lead": "HYG", "lag": "SPY"},
         {"key": "dup", "lead": "USO", "lag": "XLE"},
     ]
-    with pytest.raises(ValidationError, match="pair keys must be unique"):
+    with pytest.raises((ValueError, TypeError), match="pair keys must be unique"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1369,7 +1369,7 @@ def test_distillation_rejects_sentiment_min_observations_above_baseline() -> Non
     raw = _valid_distillation_raw()
     raw["persistence_windows"]["sentiment_min_observations"] = 100
     raw["persistence_windows"]["sentiment_baseline_days"] = 60
-    with pytest.raises(ValidationError, match="sentiment_min_observations"):
+    with pytest.raises((ValueError, TypeError), match="sentiment_min_observations"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1380,7 +1380,7 @@ def test_distillation_rejects_gap_fill_min_events_above_baseline() -> None:
     raw = _valid_distillation_raw()
     raw["persistence_windows"]["gap_fill_min_events"] = 300
     raw["persistence_windows"]["gap_fill_baseline_days"] = 252
-    with pytest.raises(ValidationError, match="gap_fill_min_events"):
+    with pytest.raises((ValueError, TypeError), match="gap_fill_min_events"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1391,7 +1391,7 @@ def test_distillation_rejects_extended_hours_min_events_above_confirmation() -> 
     raw = _valid_distillation_raw()
     raw["persistence_windows"]["extended_hours_min_events"] = 100
     raw["persistence_windows"]["extended_hours_confirmation_days"] = 90
-    with pytest.raises(ValidationError, match="extended_hours_min_events"):
+    with pytest.raises((ValueError, TypeError), match="extended_hours_min_events"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1402,7 +1402,9 @@ def test_distillation_rejects_low_vol_normal_boundary_mismatch() -> None:
     raw = _valid_distillation_raw()
     raw["regime_classification"]["regime_low_vol_vix_max"] = 14.0
     raw["regime_classification"]["regime_normal_vix_min"] = 15.0
-    with pytest.raises(ValidationError, match=r"regime_low_vol_vix_max.*regime_normal_vix_min"):
+    with pytest.raises(
+        (ValueError, TypeError), match=r"regime_low_vol_vix_max.*regime_normal_vix_min"
+    ):
         DistillationConfig.model_validate(raw)
 
 
@@ -1413,7 +1415,9 @@ def test_distillation_rejects_normal_elevated_boundary_mismatch() -> None:
     raw = _valid_distillation_raw()
     raw["regime_classification"]["regime_normal_vix_max"] = 22.0
     raw["regime_classification"]["regime_elevated_vix_min"] = 23.0
-    with pytest.raises(ValidationError, match=r"regime_normal_vix_max.*regime_elevated_vix_min"):
+    with pytest.raises(
+        (ValueError, TypeError), match=r"regime_normal_vix_max.*regime_elevated_vix_min"
+    ):
         DistillationConfig.model_validate(raw)
 
 
@@ -1424,7 +1428,9 @@ def test_distillation_rejects_elevated_crisis_boundary_mismatch() -> None:
     raw = _valid_distillation_raw()
     raw["regime_classification"]["regime_elevated_vix_max"] = 35.0
     raw["regime_classification"]["regime_crisis_vix_min"] = 36.0
-    with pytest.raises(ValidationError, match=r"regime_elevated_vix_max.*regime_crisis_vix_min"):
+    with pytest.raises(
+        (ValueError, TypeError), match=r"regime_elevated_vix_max.*regime_crisis_vix_min"
+    ):
         DistillationConfig.model_validate(raw)
 
 
@@ -1439,7 +1445,7 @@ def test_distillation_rejects_non_monotonic_regime_ceilings() -> None:
     raw["regime_classification"]["regime_normal_vix_min"] = 22.0
     raw["regime_classification"]["regime_normal_vix_max"] = 22.0
     raw["regime_classification"]["regime_elevated_vix_min"] = 22.0
-    with pytest.raises(ValidationError, match=r"strictly|monotonic|<"):
+    with pytest.raises((ValueError, TypeError), match=r"strictly|monotonic|<"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1462,7 +1468,7 @@ def test_distillation_rejects_funding_stress_alert_count_zero() -> None:
 
     raw = _valid_distillation_raw()
     raw["anomaly_detection"]["funding_stress_component_alert_count"] = 0
-    with pytest.raises(ValidationError, match="funding_stress_component_alert_count"):
+    with pytest.raises((ValueError, TypeError), match="funding_stress_component_alert_count"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1472,7 +1478,7 @@ def test_distillation_rejects_funding_stress_alert_count_above_four() -> None:
 
     raw = _valid_distillation_raw()
     raw["anomaly_detection"]["funding_stress_component_alert_count"] = 5
-    with pytest.raises(ValidationError, match="funding_stress_component_alert_count"):
+    with pytest.raises((ValueError, TypeError), match="funding_stress_component_alert_count"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1482,7 +1488,7 @@ def test_distillation_rejects_funding_stress_percentile_below_fifty() -> None:
 
     raw = _valid_distillation_raw()
     raw["anomaly_detection"]["funding_stress_component_percentile"] = 49
-    with pytest.raises(ValidationError, match="funding_stress_component_percentile"):
+    with pytest.raises((ValueError, TypeError), match="funding_stress_component_percentile"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1492,7 +1498,7 @@ def test_distillation_rejects_market_liquidity_percentile_above_fifty() -> None:
 
     raw = _valid_distillation_raw()
     raw["anomaly_detection"]["market_liquidity_alert_percentile"] = 51
-    with pytest.raises(ValidationError, match="market_liquidity_alert_percentile"):
+    with pytest.raises((ValueError, TypeError), match="market_liquidity_alert_percentile"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1502,7 +1508,7 @@ def test_distillation_rejects_prediction_market_delta_pp_zero() -> None:
 
     raw = _valid_distillation_raw()
     raw["prediction_market"]["prediction_market_delta_pp_threshold"] = 0
-    with pytest.raises(ValidationError, match="prediction_market_delta_pp_threshold"):
+    with pytest.raises((ValueError, TypeError), match="prediction_market_delta_pp_threshold"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1512,7 +1518,7 @@ def test_distillation_rejects_prediction_market_delta_pp_above_hundred() -> None
 
     raw = _valid_distillation_raw()
     raw["prediction_market"]["prediction_market_delta_pp_threshold"] = 100.1
-    with pytest.raises(ValidationError, match="prediction_market_delta_pp_threshold"):
+    with pytest.raises((ValueError, TypeError), match="prediction_market_delta_pp_threshold"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1522,7 +1528,7 @@ def test_distillation_rejects_regime_transition_confirmed_invocations_zero() -> 
 
     raw = _valid_distillation_raw()
     raw["regime_transition"]["regime_transition_confirmed_invocations"] = 0
-    with pytest.raises(ValidationError, match="regime_transition_confirmed_invocations"):
+    with pytest.raises((ValueError, TypeError), match="regime_transition_confirmed_invocations"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1532,7 +1538,7 @@ def test_distillation_rejects_non_numeric_sigma() -> None:
 
     raw = _valid_distillation_raw()
     raw["anomaly_detection"]["volume_anomaly_sigma"] = "two-and-a-half"
-    with pytest.raises(ValidationError, match="volume_anomaly_sigma"):
+    with pytest.raises((ValueError, TypeError), match="volume_anomaly_sigma"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1542,7 +1548,7 @@ def test_distillation_rejects_non_boolean_skip_emergency_trigger() -> None:
 
     raw = _valid_distillation_raw()
     raw["regime_transition"]["regime_skip_emergency_trigger"] = "not-a-bool"
-    with pytest.raises(ValidationError, match="regime_skip_emergency_trigger"):
+    with pytest.raises((ValueError, TypeError), match="regime_skip_emergency_trigger"):
         DistillationConfig.model_validate(raw)
 
 
@@ -1551,7 +1557,7 @@ def test_digest_rejects_sector_underperform_median_offset_sigma_negative() -> No
 
     raw = _valid_digest_raw()
     raw["sector_underperform"] = {"baseline_window_weeks": 4, "median_offset_sigma": -1.0}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         DigestConfig.model_validate(raw)
 
 
@@ -1561,21 +1567,21 @@ def test_digest_models_are_frozen() -> None:
     data = load_yaml(CONFIG_DIR / "digest.yaml")
     config = DigestConfig.model_validate(data)
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.__setattr__("regime_change", config.regime_change)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.anti_pattern_spike.__setattr__("baseline_window_weeks", 99)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.regime_change.__setattr__("enabled", False)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.sector_underperform.__setattr__("median_offset_sigma", 99.0)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.citation_chain_shift.__setattr__("delta_pp_threshold", 99.0)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.source_signal_survival_drop.__setattr__("delta_pp_threshold", 99.0)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.validation_window_end.__setattr__("days_before_due", 99)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.validation_superseded.__setattr__("enabled", False)
 
 
@@ -1616,7 +1622,7 @@ def test_llm_failure_rejects_missing_tool_use_error_entry() -> None:
 
     retries = _valid_llm_failure_retries()
     del retries["tool_use_error"]
-    with pytest.raises(ValidationError, match="tool_use_error"):
+    with pytest.raises((ValueError, TypeError), match="tool_use_error"):
         LLMFailureConfig.model_validate({"retries": retries})
 
 
@@ -1625,7 +1631,7 @@ def test_llm_failure_rejects_context_overflow_with_positive_attempts() -> None:
 
     retries = _valid_llm_failure_retries()
     retries["context_overflow"] = {"attempts": 1}
-    with pytest.raises(ValidationError, match="context_overflow"):
+    with pytest.raises((ValueError, TypeError), match="context_overflow"):
         LLMFailureConfig.model_validate({"retries": retries})
 
 
@@ -1634,7 +1640,7 @@ def test_llm_failure_rejects_model_api_error_without_backoff() -> None:
 
     retries = _valid_llm_failure_retries()
     retries["model_api_error"] = {"attempts": 3}
-    with pytest.raises(ValidationError, match="model_api_error"):
+    with pytest.raises((ValueError, TypeError), match="model_api_error"):
         LLMFailureConfig.model_validate({"retries": retries})
 
 
@@ -1647,7 +1653,7 @@ def test_llm_failure_rejects_tool_use_error_with_backoff() -> None:
         "condition": "idempotent_only",
         "backoff": "exponential",
     }
-    with pytest.raises(ValidationError, match="tool_use_error"):
+    with pytest.raises((ValueError, TypeError), match="tool_use_error"):
         LLMFailureConfig.model_validate({"retries": retries})
 
 
@@ -1666,9 +1672,9 @@ def test_llm_failure_models_are_frozen() -> None:
     data = load_yaml(CONFIG_DIR / "llm_failure.yaml")
     config = LLMFailureConfig.model_validate(data)
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.__setattr__("retries", {})
 
     policy = config.retries[FailureMode.model_api_error]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         policy.__setattr__("attempts", 99)

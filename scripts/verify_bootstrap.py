@@ -27,7 +27,7 @@ from sqlalchemy import inspect, text
 # Side-effect import: registers state-persistence tables on
 # ``Base.metadata`` so the inspector below sees them and the table-existence
 # check covers the durable substrate alongside the data-layer tables.
-import alphamind.execution.state_persistence.tables  # noqa: F401
+import alphamind.state.tables  # noqa: F401
 from alphamind.persistence.session import make_engine
 
 # ---------------------------------------------------------------------------

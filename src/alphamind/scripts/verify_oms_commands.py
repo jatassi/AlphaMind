@@ -25,16 +25,19 @@ Usage::
 
 See ``scripts/RUNBOOK_oms_commands.md`` for the operator runbook.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import json
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -49,17 +52,15 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 # ``tests/execution/oms/test_submit_engine_envelope.py``; without this the
 # transitive harness-side imports race with the lazy submodule load.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
-from alphamind.config.guardrails_helpers import (
-    load_cumulative_drawdown_progressive_tiers,
+from alphamind._kernel.ids import (
+    EnvelopeId,
+    InvocationId,
+    OrderId,
+    PositionId,
+    RecommendationId,
 )
-from alphamind.execution.oms.command_ids import (
-    compute_attempt_seq,
-    derive_engine_command_id,
-    derive_pm_command_id,
-    parse_engine_command_id,
-    parse_pm_command_id,
-)
-from alphamind.execution.oms.command_models import (
+from alphamind._kernel.money import money, price
+from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
     BracketAdjustment,
@@ -80,10 +81,20 @@ from alphamind.execution.oms.command_models import (
     Thesis,
     ThesisComponent,
 )
-from alphamind.execution.oms.engine_envelope import (
+from alphamind.commands.engine_envelope import (
     BreachDetails,
     EngineEnvelope,
     GuardrailTriggerRecord,
+)
+from alphamind.config.guardrails_helpers import (
+    load_cumulative_drawdown_progressive_tiers,
+)
+from alphamind.execution.oms.command_ids import (
+    compute_attempt_seq,
+    derive_engine_command_id,
+    derive_pm_command_id,
+    parse_engine_command_id,
+    parse_pm_command_id,
 )
 from alphamind.persistence.session import make_engine
 from alphamind.portfolio_state.events.activity_log import EventType
@@ -101,6 +112,19 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Result type
 # ---------------------------------------------------------------------------
+
+
+# Bypass-init helpers — replace Pydantic ``model_construct``. The dataclass __init__
+# enforces all fields; these helpers skip validation so tests can inject sparse fixtures.
+
+
+def _bypass_init_PortfolioManagerView(**kwargs: Any) -> Any:  # noqa: N802
+    from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
+
+    obj = object.__new__(PortfolioManagerView)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
 
 
 @dataclass(frozen=True)
@@ -127,14 +151,15 @@ _NOW = datetime(2026, 5, 9, 14, 30, 0, tzinfo=UTC)
 
 
 def _open_command_variant() -> OpenCommand:
+    # ALP-462 — wrap fixture floats at the command-wire-format boundary.
     return OpenCommand(
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker=_TICKER, direction="long"),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-        position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+        position_size=PositionSize(quantity=10.0, dollar_value=money("10000")),
         target=Target(
             target_type="absolute_price",
-            price=950.0,
+            price=price("950"),
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",
@@ -146,7 +171,7 @@ def _open_command_variant() -> OpenCommand:
                 condition=PriceCondition(
                     underlying_trigger=_TICKER,
                     comparator="<=",
-                    trigger_price=750.0,
+                    trigger_price=price("750"),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),
@@ -171,7 +196,7 @@ def _close_command_variants() -> tuple[CloseCommand, ...]:
     return (
         CloseCommand(
             command_type="close",
-            position_id="POS-NVDA-INVALIDATED",
+            position_id=PositionId("POS-NVDA-INVALIDATED"),
             quantity="all",
             order_type="market",
             limit_price=None,
@@ -181,17 +206,17 @@ def _close_command_variants() -> tuple[CloseCommand, ...]:
         ),
         CloseCommand(
             command_type="close",
-            position_id="POS-NVDA-TARGET",
+            position_id=PositionId("POS-NVDA-TARGET"),
             quantity="all",
             order_type="limit",
-            limit_price=950.0,
+            limit_price=price("950"),
             close_rationale_type="target_reached",
             invalidation_reason=None,
             risk_management_subtype=None,
         ),
         CloseCommand(
             command_type="close",
-            position_id="POS-NVDA-CONVICTION",
+            position_id=PositionId("POS-NVDA-CONVICTION"),
             quantity=5.0,
             order_type="market",
             limit_price=None,
@@ -201,7 +226,7 @@ def _close_command_variants() -> tuple[CloseCommand, ...]:
         ),
         CloseCommand(
             command_type="close",
-            position_id="POS-NVDA-RISK",
+            position_id=PositionId("POS-NVDA-RISK"),
             quantity="all",
             order_type="market",
             limit_price=None,
@@ -217,21 +242,21 @@ def _adjust_command_variants() -> tuple[AdjustCommand, ...]:
     return (
         AdjustCommand(
             command_type="adjust",
-            position_id="POS-NVDA-A1",
+            position_id=PositionId("POS-NVDA-A1"),
             adjustment_rationale="Tighten stop after favorable move.",
             new_stop_level=NewStopLevel(
-                trigger_price=820.0,
+                trigger_price=price("820"),
                 order_type="stop",
                 limit_price=None,
             ),
         ),
         AdjustCommand(
             command_type="adjust",
-            position_id="POS-NVDA-A2",
+            position_id=PositionId("POS-NVDA-A2"),
             adjustment_rationale="Lift target after upgrade.",
             new_target_level=NewTargetLevel(
                 target_type="absolute_price",
-                price=1000.0,
+                price=price("1000"),
                 pl_percentage=None,
                 pl_dollar=None,
                 order_type="limit",
@@ -239,13 +264,13 @@ def _adjust_command_variants() -> tuple[AdjustCommand, ...]:
         ),
         AdjustCommand(
             command_type="adjust",
-            position_id="POS-NVDA-A3",
+            position_id=PositionId("POS-NVDA-A3"),
             adjustment_rationale="Extend time horizon.",
             new_time_expiration=datetime(2026, 6, 1, tzinfo=UTC),
         ),
         AdjustCommand(
             command_type="adjust",
-            position_id="POS-NVDA-A4",
+            position_id=PositionId("POS-NVDA-A4"),
             adjustment_rationale="Add event invalidation leg.",
             new_event_invalidation=NewEventInvalidation(
                 event_description="Earnings guidance cut.",
@@ -253,7 +278,7 @@ def _adjust_command_variants() -> tuple[AdjustCommand, ...]:
         ),
         AdjustCommand(
             command_type="adjust",
-            position_id="POS-NVDA-A5",
+            position_id=PositionId("POS-NVDA-A5"),
             adjustment_rationale="Refine entry rationale.",
             thesis_component_updates=(
                 ThesisComponent(
@@ -271,7 +296,7 @@ def _adjust_command_variants() -> tuple[AdjustCommand, ...]:
 def _cancel_command_variant() -> CancelCommand:
     return CancelCommand(
         command_type="cancel",
-        order_id="ORD-NVDA-PENDING",
+        order_id=OrderId("ORD-NVDA-PENDING"),
         cancel_reason="Pre-fill cancellation: thesis stale.",
     )
 
@@ -279,9 +304,9 @@ def _cancel_command_variant() -> CancelCommand:
 def _add_command_variant() -> AddCommand:
     return AddCommand(
         command_type="add",
-        position_id="POS-NVDA-EXISTING",
+        position_id=PositionId("POS-NVDA-EXISTING"),
         additional_quantity=5.0,
-        additional_dollar_value=5_000.0,
+        additional_dollar_value=money("5000"),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
         thesis_addition_component=ThesisComponent(
             component_type="entry_rationale",
@@ -292,7 +317,7 @@ def _add_command_variant() -> AddCommand:
         ),
         bracket_adjustment=BracketAdjustment(
             new_stop_level=NewStopLevel(
-                trigger_price=800.0,
+                trigger_price=price("800"),
                 order_type="stop",
                 limit_price=None,
             ),
@@ -303,7 +328,7 @@ def _add_command_variant() -> AddCommand:
 def _engine_envelope_variant() -> EngineEnvelope:
     trigger_ts = datetime(2026, 5, 9, 14, 30, tzinfo=UTC)
     return EngineEnvelope(
-        envelope_id="MON.session-verify.42",
+        envelope_id=EnvelopeId("MON.session-verify.42"),
         invocation_id=None,
         trigger_timestamp=trigger_ts,
         source_provenance="engine_guardrail",
@@ -324,7 +349,7 @@ def _engine_envelope_variant() -> EngineEnvelope:
         commands=(
             CloseCommand(
                 command_type="close",
-                position_id="POS-NVDA-001",
+                position_id=PositionId("POS-NVDA-001"),
                 quantity="all",
                 order_type="market",
                 limit_price=None,
@@ -510,10 +535,10 @@ def _phase_2_check_attempt_seq() -> str | None:
     )
     pass_assessment = CriterionAssessment(status="pass", note=None)
     envelope = PMAnalystEnvelope(
-        envelope_id=_WORKED_ENVELOPE_ID,
-        invocation_id=_WORKED_INVOCATION_ID,
+        envelope_id=EnvelopeId(_WORKED_ENVELOPE_ID),
+        invocation_id=InvocationId(_WORKED_INVOCATION_ID),
         source_provenance="pm_analyst",
-        source_recommendation_id="REC-2",
+        source_recommendation_id=RecommendationId("REC-2"),
         recommendation_type="new_entry",
         verdict="approve_with_modification",
         evaluation=ThesisQualityEvaluation(
@@ -555,7 +580,7 @@ _PHASE_3_QUANTITY = 5.0
 
 
 def _state_persistence_config() -> Any:
-    from alphamind.execution.state_persistence.config import StatePersistenceConfig
+    from alphamind.state.config import StatePersistenceConfig
 
     return StatePersistenceConfig.model_validate(
         {
@@ -593,11 +618,11 @@ def _phase_3_open_command() -> OpenCommand:
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
         position_size=PositionSize(
             quantity=_PHASE_3_QUANTITY,
-            dollar_value=_PHASE_3_DOLLAR_VALUE,
+            dollar_value=money(str(_PHASE_3_DOLLAR_VALUE)),
         ),
         target=Target(
             target_type="absolute_price",
-            price=950.0,
+            price=price("950"),
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",
@@ -609,7 +634,7 @@ def _phase_3_open_command() -> OpenCommand:
                 condition=PriceCondition(
                     underlying_trigger=_PHASE_3_TICKER,
                     comparator="<=",
-                    trigger_price=750.0,
+                    trigger_price=price("750"),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),
@@ -638,10 +663,10 @@ def _phase_3_envelope() -> Any:
 
     pass_assessment = CriterionAssessment(status="pass", note=None)
     return PMAnalystEnvelope(
-        envelope_id=_PHASE_3_ENVELOPE_ID,
-        invocation_id=_PHASE_3_INVOCATION_ID,
+        envelope_id=EnvelopeId(_PHASE_3_ENVELOPE_ID),
+        invocation_id=InvocationId(_PHASE_3_INVOCATION_ID),
         source_provenance="pm_analyst",
-        source_recommendation_id=_PHASE_3_RECOMMENDATION_ID,
+        source_recommendation_id=RecommendationId(_PHASE_3_RECOMMENDATION_ID),
         recommendation_type="new_entry",
         verdict="approve",
         evaluation=ThesisQualityEvaluation(
@@ -669,15 +694,15 @@ def _phase_3_active_risk_parameters() -> Any:
     The result preserves the prior inline construction's values while routing
     through the canonical Phase-1 entry point.
     """
+    from alphamind._kernel.regime import (
+        RegimeLabel,
+        RegimeTransitionState,
+        RiskZone,
+    )
     from alphamind.config.models.regimes import Regime
     from alphamind.execution.guardrail_enforcement import compose_phase_1_enforcement
     from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-    from alphamind.portfolio_state.records.capital import (
-        ActiveRiskParameterSet,
-        RegimeLabel,
-        RegimeTransitionState,
-    )
-    from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+    from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
     from alphamind.risk_guardrails.regime_adaptation import (
         RegimeAdaptationOutput,
         RegimeAdaptationState,
@@ -739,9 +764,7 @@ def _phase_3_validation_state() -> Any:
     """Build the cumulative ValidationToolState the engine-stub re-runs guardrail
     checks against. Sized so the OPEN command's $5,000 stays well under all
     per-rule headroom on a $100k portfolio."""
-    from alphamind.portfolio_state.records.capital import (
-        RiskBudgetConsumption,
-    )
+    from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
     from alphamind.risk_guardrails.guardrail_evaluation import (
         ContractType,
         EscalationZones,
@@ -913,9 +936,8 @@ def _phase_3_pre_processor_bundle() -> Any:
 
 
 def _phase_3_pm_view() -> Any:
-    from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 
-    return PortfolioManagerView.model_construct(
+    return _bypass_init_PortfolioManagerView(
         positions=(),
         recent_thesis_resolutions=(),
         portfolio_pnl=None,
@@ -942,14 +964,14 @@ def _phase_3_retrieval_store() -> Any:
 async def _seed_phase_3_substrate(factory: async_sessionmaker[AsyncSession]) -> None:
     """Seed process_lifetime + cash_ledger so the engine-stub's writeback can
     reserve capital and the activity-log writes have a valid invocation FK."""
-    from alphamind.execution.state_persistence.invocation_context.records import (
+    from alphamind.portfolio_state.records.cash import CashLedger
+    from alphamind.state.invocation_context.records import (
         ProcessLifetimeRecord,
         process_lifetime_record_to_row,
     )
-    from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
+    from alphamind.state.tables.cash_ledger_codec import (
         cash_ledger_record_to_row,
     )
-    from alphamind.portfolio_state.records.cash import CashLedger
 
     proc = ProcessLifetimeRecord(
         process_lifetime_id=_PHASE_3_PROCESS_ID,
@@ -967,20 +989,18 @@ async def _seed_phase_3_substrate(factory: async_sessionmaker[AsyncSession]) -> 
         claude_agent_sdk_version="0.1.69",
         os_release="verify-script",
     )
-    cash = CashLedger.model_validate(
-        {
-            "current_cash_usd": 100_000.0,
-            "settled_cash_usd": 100_000.0,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": 100_000.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    cash = CashLedger(
+        current_cash_usd=100_000.0,
+        settled_cash_usd=100_000.0,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=100_000.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
     async with factory() as sess:
         sess.add(process_lifetime_record_to_row(proc))
@@ -990,7 +1010,7 @@ async def _seed_phase_3_substrate(factory: async_sessionmaker[AsyncSession]) -> 
 
 
 def _phase_3_invocation_record() -> Any:
-    from alphamind.execution.state_persistence.invocation_context.records import (
+    from alphamind.state.invocation_context.records import (
         InvocationRecord,
     )
 
@@ -1060,11 +1080,11 @@ async def run_phase_3_pm_envelope_path(db_path: Path) -> PhaseResult:
     ``thesis.components`` entry, (e) the activity log carries
     ``order_submitted`` + ``thesis_created`` + ``capital_reserved`` +
     ``pm_decision``."""
-    from alphamind.execution.oms import build_submit_envelope_mcp_server
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         build_initial_submit_envelope_state,
+        build_submit_envelope_mcp_server,
     )
-    from alphamind.execution.state_persistence.invocation_context.context import (
+    from alphamind.state.invocation_context.context import (
         InvocationContext,
     )
 
@@ -1086,7 +1106,7 @@ async def run_phase_3_pm_envelope_path(db_path: Path) -> PhaseResult:
                 invocation_id=_PHASE_3_INVOCATION_ID,
                 starting_validation_state=validation_state,
             )
-            mcp_servers, _allowed = build_submit_envelope_mcp_server(
+            mcp_servers, _allowed, _get_state = build_submit_envelope_mcp_server(
                 state,
                 retrieval_store=_phase_3_retrieval_store(),
                 pre_processor_bundle=_phase_3_pre_processor_bundle(),
@@ -1116,6 +1136,11 @@ async def run_phase_3_pm_envelope_path(db_path: Path) -> PhaseResult:
                 await ctx.__aexit__(None, None, None)
                 return PhaseResult(label=_PHASE_3_LABEL, ok=False, detail=shape_failure)
         except BaseException:
+            # Cleanup-handler per runtime §G1: ``BaseException`` (vs
+            # ``Exception``) is required so ``CancelledError`` /
+            # ``KeyboardInterrupt`` also tear down the context manager before
+            # the exception propagates. The bare ``raise`` re-raises the
+            # original.
             await ctx.__aexit__(None, None, None)
             raise
         else:
@@ -1210,7 +1235,7 @@ async def _phase_3_run_check_chain(
 
 async def _phase_3_load_activity_log(sess: AsyncSession) -> Sequence[Any]:
     """Return every ``activity_log`` row scoped to the Phase 3 invocation."""
-    from alphamind.execution.state_persistence.tables.activity_log import (
+    from alphamind.state.tables.activity_log import (
         ActivityLogRow,
     )
 
@@ -1240,13 +1265,26 @@ def _phase_3_check_activity_log(log_rows: Sequence[Any], expected_dollar: float)
 
 def _phase_3_check_capital_reserved(log_rows: Sequence[Any], expected_dollar: float) -> str | None:
     """Confirm exactly one ``capital_reserved`` row whose ``amount_usd`` matches
-    the canonical command's ``dollar_value`` — the regression-to-$1k-stub guard."""
+    the canonical command's ``dollar_value`` — the regression-to-$1k-stub guard.
+
+    ALP-463: ``amount_usd`` is stored as the Decimal-exact string repr of a
+    :class:`Money` value; compare via :class:`Decimal` so the value-equality
+    check survives the storage-format migration.
+    """
     rows = [r for r in log_rows if r.event_type == EventType.CAPITAL_RESERVED.value]
     if len(rows) != 1:
         return f"expected exactly 1 capital_reserved entry, got {len(rows)}"
     detail = json.loads(rows[0].detail_json)
     amount_usd = detail.get("amount_usd")
-    if amount_usd != expected_dollar:
+    try:
+        actual = Decimal(amount_usd)
+        expected = Decimal(str(expected_dollar))
+    except (InvalidOperation, ValueError, TypeError):
+        return (
+            f"capital_reserved.amount_usd={amount_usd!r}, expected "
+            f"{expected_dollar!r} (unparseable amount)"
+        )
+    if actual != expected:
         return (
             f"capital_reserved.amount_usd={amount_usd!r}, expected "
             f"{expected_dollar!r} (regression to retired $1k stub?)"
@@ -1257,7 +1295,7 @@ def _phase_3_check_capital_reserved(log_rows: Sequence[Any], expected_dollar: fl
 async def _phase_3_check_cash_ledger(sess: AsyncSession, expected_dollar: float) -> str | None:
     """Confirm the cash_ledger singleton's ``reserved_capital_usd`` matches the
     canonical command's ``dollar_value``."""
-    from alphamind.execution.state_persistence.tables.cash_ledger import (
+    from alphamind.state.tables.cash_ledger import (
         CASH_LEDGER_SINGLETON_ID,
         CashLedgerRow,
     )
@@ -1292,8 +1330,8 @@ async def _phase_3_check_thesis(
     ``ThesisComponentType``; ``>=`` lets the verify tolerate the backfill while
     still catching a regression that drops wire-side components.
     """
-    from alphamind.execution.state_persistence.tables.theses import ThesisRow
-    from alphamind.execution.state_persistence.tables.thesis_components import (
+    from alphamind.state.tables.theses import ThesisRow
+    from alphamind.state.tables.thesis_components import (
         ThesisComponentRow,
     )
 
@@ -1323,8 +1361,8 @@ async def _phase_3_check_bracket(
 ) -> str | None:
     """Confirm one bracket row for the position + the expected leg count
     (one TAKE_PROFIT + one per ``command.invalidation_legs``)."""
-    from alphamind.execution.state_persistence.tables.bracket_legs import BracketLegRow
-    from alphamind.execution.state_persistence.tables.brackets import BracketRow
+    from alphamind.state.tables.bracket_legs import BracketLegRow
+    from alphamind.state.tables.brackets import BracketRow
 
     bracket_rows = (
         (await sess.execute(select(BracketRow).where(BracketRow.position_id == position_id)))
@@ -1362,7 +1400,7 @@ _PHASE_4_RULE_BREACHED = "per_position_max_loss"
 
 
 def _phase_4_invocation_record() -> Any:
-    from alphamind.execution.state_persistence.invocation_context.records import (
+    from alphamind.state.invocation_context.records import (
         InvocationRecord,
     )
 
@@ -1399,7 +1437,7 @@ async def _phase_4_resolve_position_id(
 
     Returns ``None`` if nothing matches — the verify orchestrator catches that
     and surfaces a useful diagnostic (Phase 3 must run first)."""
-    from alphamind.execution.state_persistence.tables.positions import PositionRow
+    from alphamind.state.tables.positions import PositionRow
 
     async with factory() as sess:
         row = (
@@ -1423,17 +1461,17 @@ async def _phase_4_simulate_phase_1_fill(
     share count — so the verify script's Phase 4 can exercise the engine
     envelope path end-to-end.
     """
-    from alphamind.execution.state_persistence.tables.positions import PositionRow
-    from alphamind.execution.state_persistence.tables.positions_codec import (
-        record_to_row as position_record_to_row,
-    )
-    from alphamind.execution.state_persistence.tables.positions_codec import (
-        row_to_record as position_row_to_record,
-    )
     from alphamind.portfolio_state.records.positions import (
         EquityPositionDetails,
         PositionFill,
         PositionStatus,
+    )
+    from alphamind.state.tables.positions import PositionRow
+    from alphamind.state.tables.positions_codec import (
+        record_to_row as position_record_to_row,
+    )
+    from alphamind.state.tables.positions_codec import (
+        row_to_record as position_row_to_record,
     )
 
     async with factory() as sess:
@@ -1458,14 +1496,13 @@ async def _phase_4_simulate_phase_1_fill(
             slippage=0.0,
             fees=0.0,
         )
-        opened_details = record.details.model_copy(update={"share_count": _PHASE_3_QUANTITY})
-        opened_record = record.model_copy(
-            update={
-                "status": PositionStatus.OPEN,
-                "details": opened_details,
-                "entry_timestamp": _NOW,
-                "execution_history": (fill,),
-            }
+        opened_details = dataclasses.replace(record.details, share_count=_PHASE_3_QUANTITY)
+        opened_record = dataclasses.replace(
+            record,
+            status=PositionStatus.OPEN,
+            details=opened_details,
+            entry_timestamp=_NOW,
+            execution_history=(fill,),
         )
 
         # Project the rehydrated record back to a row and propagate the
@@ -1489,7 +1526,7 @@ async def run_phase_4_engine_envelope_path(db_path: Path) -> PhaseResult:
     ``position_selection_rationale`` + ``rule_breached``."""
     from alphamind.execution.oms import build_initial_submit_engine_envelope_state
     from alphamind.execution.oms.submit_engine_envelope import submit_engine_envelope
-    from alphamind.execution.state_persistence.invocation_context.context import (
+    from alphamind.state.invocation_context.context import (
         InvocationContext,
     )
 
@@ -1521,13 +1558,18 @@ async def run_phase_4_engine_envelope_path(db_path: Path) -> PhaseResult:
         )
         handle = await ctx.__aenter__()
         try:
-            result = await submit_engine_envelope(
+            result, state = await submit_engine_envelope(
                 envelope,
                 handle=handle,
                 state=state,
                 config=_state_persistence_config(),
             )
         except BaseException:
+            # Cleanup-handler per runtime §G1: ``BaseException`` (vs
+            # ``Exception``) is required so ``CancelledError`` /
+            # ``KeyboardInterrupt`` also tear down the context manager before
+            # the exception propagates. The bare ``raise`` re-raises the
+            # original.
             await ctx.__aexit__(None, None, None)
             raise
         else:
@@ -1549,7 +1591,7 @@ async def run_phase_4_engine_envelope_path(db_path: Path) -> PhaseResult:
 def _phase_4_engine_envelope(*, position_id: str) -> EngineEnvelope:
     trigger_ts = _NOW
     return EngineEnvelope(
-        envelope_id=f"MON.{_PHASE_4_MONITOR_SESSION}.{_PHASE_4_TRIGGER_ID}",
+        envelope_id=EnvelopeId(f"MON.{_PHASE_4_MONITOR_SESSION}.{_PHASE_4_TRIGGER_ID}"),
         invocation_id=None,
         trigger_timestamp=trigger_ts,
         source_provenance="engine_guardrail",
@@ -1570,7 +1612,7 @@ def _phase_4_engine_envelope(*, position_id: str) -> EngineEnvelope:
         commands=(
             CloseCommand(
                 command_type="close",
-                position_id=position_id,
+                position_id=PositionId(position_id),
                 quantity="all",
                 order_type="market",
                 limit_price=None,
@@ -1602,10 +1644,10 @@ async def _phase_4_validate_activity_log(
     whose ``source`` column is ``BRACKET_MANAGER`` and whose detail carries the
     engine-guardrail provenance + the trigger record's
     ``position_selection_rationale``."""
-    from alphamind.execution.state_persistence.tables.activity_log import (
+    from alphamind.portfolio_state.events.activity_log import EventSource, EventType
+    from alphamind.state.tables.activity_log import (
         ActivityLogRow,
     )
-    from alphamind.portfolio_state.events.activity_log import EventSource, EventType
 
     async with factory() as sess:
         rows = (

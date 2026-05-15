@@ -15,16 +15,12 @@ mutations parameterized by quantity and basis multiplicative factors.
 
 from __future__ import annotations
 
+import dataclasses
+from decimal import Decimal
 from typing import NamedTuple
 
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
-from alphamind.execution.state_persistence.write_paths.ca_integration_ledger import (
+from alphamind._kernel.ids import Symbol
+from alphamind.execution.write_paths.ca_integration_ledger import (
     mark_ca_activity_processed,
 )
 from alphamind.portfolio_state.records.positions import (
@@ -34,6 +30,13 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     StrategyLeg,
     StrategyPositionDetails,
+)
+from alphamind.state.invocation_context.context import (
+    InvocationHandle,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
 )
 
 from ..types import AlpacaPositionLookup, CorporateActionActivity
@@ -81,7 +84,7 @@ def _stale_greeks(prior: OptionGreeks) -> OptionGreeks:
     the freshness flag the architecture defines for this purpose so
     downstream consumers know to re-derive at the next 4d refresh.
     """
-    return prior.model_copy(update={"refresh_failed": True})
+    return dataclasses.replace(prior, refresh_failed=True)
 
 
 def _project_options_from_snapshot(
@@ -106,12 +109,17 @@ def _project_options_from_snapshot(
             f"options/strategy CA cannot project post-adjustment state"
         )
         raise ValueError(msg)
-    return prior.model_copy(
-        update={
-            "contract_count": snapshot.qty,
-            "premium_paid_per_contract": snapshot.avg_entry_price * prior.contract_multiplier,
-            "greeks": _stale_greeks(prior.greeks),
-        }
+    # ALP-462 — ``snapshot.avg_entry_price`` is ``Price`` (Decimal); coerce the
+    # float contract multiplier so the projected premium stays exact, then cast
+    # the result to float for the legacy float field on OptionsPositionDetails.
+    # The post-ALP-477 frozen dataclass no longer auto-coerces Decimal → float
+    # the way Pydantic did, so we coerce explicitly at the codec boundary.
+    projected_premium = float(snapshot.avg_entry_price * Decimal(str(prior.contract_multiplier)))
+    return dataclasses.replace(
+        prior,
+        contract_count=snapshot.qty,
+        premium_paid_per_contract=projected_premium,
+        greeks=_stale_greeks(prior.greeks),
     )
 
 
@@ -132,11 +140,8 @@ def _project_strategy_from_snapshot(
         )
         for leg in prior.legs
     )
-    return prior.model_copy(
-        update={
-            "legs": new_legs,
-            "strategy_greeks": _stale_greeks(prior.strategy_greeks),
-        }
+    return dataclasses.replace(
+        prior, legs=new_legs, strategy_greeks=_stale_greeks(prior.strategy_greeks)
     )
 
 
@@ -199,11 +204,10 @@ def apply_options_position_mutation(
 
     if isinstance(details, EquityPositionDetails):
         new_details: EquityPositionDetails | OptionsPositionDetails | StrategyPositionDetails = (
-            details.model_copy(
-                update={
-                    "share_count": pre_qty * equity_quantity_factor,
-                    "average_cost_basis_per_share": pre_basis * equity_basis_factor,
-                }
+            dataclasses.replace(
+                details,
+                share_count=pre_qty * equity_quantity_factor,
+                average_cost_basis_per_share=pre_basis * equity_basis_factor,
             )
         )
     else:
@@ -226,8 +230,8 @@ def apply_options_position_mutation(
             raise NotImplementedError(msg)
 
     post_qty, post_basis = _audit_metrics(new_details)
-    updated = position.model_copy(
-        update={"details": new_details, "corporate_action_adjustment_needed": True}
+    updated = dataclasses.replace(
+        position, details=new_details, corporate_action_adjustment_needed=True
     )
     return CAMutationResult(pre_qty, post_qty, pre_basis, post_basis, updated)
 
@@ -257,31 +261,31 @@ def apply_ticker_only_mutation(
             f"new_ticker, but it is None"
         )
         raise ValueError(msg)
-    new_ticker = activity.new_ticker
+    new_ticker = Symbol(activity.new_ticker)
     details = position.details
     if isinstance(details, EquityPositionDetails):
         new_details: EquityPositionDetails | OptionsPositionDetails | StrategyPositionDetails = (
-            details.model_copy(update={"ticker": new_ticker})
+            dataclasses.replace(details, ticker=new_ticker)
         )
     elif isinstance(details, OptionsPositionDetails):
-        new_details = details.model_copy(update={"underlying_ticker": new_ticker})
+        new_details = dataclasses.replace(details, underlying_ticker=new_ticker)
     elif isinstance(details, StrategyPositionDetails):
         new_legs = tuple(
             StrategyLeg(
                 leg_id=leg.leg_id,
                 direction=leg.direction,
-                options=leg.options.model_copy(update={"underlying_ticker": new_ticker}),
+                options=dataclasses.replace(leg.options, underlying_ticker=new_ticker),
             )
             for leg in details.legs
         )
-        new_details = details.model_copy(update={"legs": new_legs})
+        new_details = dataclasses.replace(details, legs=new_legs)
     else:
         msg = f"Unrecognized position details type: {type(details).__name__!r}"
         raise NotImplementedError(msg)
 
     qty, basis = _audit_metrics(details)
-    updated = position.model_copy(
-        update={"details": new_details, "corporate_action_adjustment_needed": True}
+    updated = dataclasses.replace(
+        position, details=new_details, corporate_action_adjustment_needed=True
     )
     return CAMutationResult(qty, qty, basis, basis, updated)
 

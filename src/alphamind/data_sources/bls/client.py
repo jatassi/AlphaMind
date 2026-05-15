@@ -135,3 +135,9 @@ class BLSClient:
             raise RuntimeError(f"BLS API error: {messages}")
         series: list[dict[str, Any]] = body["Results"]["series"]
         return series
+
+
+# Runtime contract: BLSClient must structurally implement BLSAPI.
+from alphamind.data_sources.bls._protocol import BLSAPI  # noqa: E402
+
+_: BLSAPI = BLSClient(api_key="<unused-for-typecheck>")

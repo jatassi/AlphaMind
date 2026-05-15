@@ -73,7 +73,7 @@ sub-second runtime. It exercises four phases plus a summary:
 
    ```python
    from pathlib import Path
-   import alphamind.execution.state_persistence.tables  # noqa: F401
+   import alphamind.state.tables  # noqa: F401
    from alphamind.persistence.models import Base
    from alphamind.persistence.session import make_engine
    db_path = Path("/tmp/alphamind-verify-guardrail.db")

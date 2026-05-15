@@ -57,7 +57,7 @@ def make_emergency_invocation_writer(
     Re-uses the activity-log row codec via a thin per-emit session +
     commit. Mirrors :func:`make_activity_log_emitter` (greeks-refresh).
     """
-    from alphamind.execution.state_persistence.invocation_context.activity_log import (
+    from alphamind.state.invocation_context.activity_log import (
         activity_log_entry_to_row,
     )
 
@@ -86,7 +86,7 @@ def make_invocation_id_provider(
     """
     from sqlalchemy import select
 
-    from alphamind.execution.state_persistence.tables.invocations import InvocationRow
+    from alphamind.state.tables.invocations import InvocationRow
 
     async def _provider() -> str:
         async with session_factory() as sess:

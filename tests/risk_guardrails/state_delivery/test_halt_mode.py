@@ -9,6 +9,29 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+)
+from alphamind._kernel.money import money, signed_money
+from alphamind._kernel.regime import (
+    DrawdownTier,
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.consumers.analyst import (
     AnalystAbandonedOpening,
@@ -23,17 +46,6 @@ from alphamind.portfolio_state.consumers.strategist import (
     StrategistView,
 )
 from alphamind.portfolio_state.records.activity_log import ActivityLogEntry
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownState,
-    DrawdownTier,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
-)
 from alphamind.portfolio_state.records.orders import (
     EquityInstrumentSpec,
     OrderDirection,
@@ -240,12 +252,17 @@ def _make_drawdown(
 
 def _make_pnl(*, daily_total_pnl_usd: float = -12_500.0) -> PortfolioPnL:
     return PortfolioPnL(
-        total_unrealized_pnl_usd=-10_000.0,
+        total_unrealized_pnl_usd=signed_money(-10_000.0),
         total_unrealized_pnl_pct_of_portfolio=-2.0,
-        daily_realized_pnl_usd=-2_500.0,
-        daily_total_pnl_usd=daily_total_pnl_usd,
-        cumulative_realized_pnl_usd=20_000.0,
-        rolling_realized_pnl={"1d": -2_500.0, "3d": -1_500.0, "5d": 0.0, "20d": 8_000.0},
+        daily_realized_pnl_usd=signed_money(-2_500.0),
+        daily_total_pnl_usd=signed_money(daily_total_pnl_usd),
+        cumulative_realized_pnl_usd=money(20_000.0),
+        rolling_realized_pnl={
+            "1d": signed_money(-2_500.0),
+            "3d": signed_money(-1_500.0),
+            "5d": money(0.0),
+            "20d": money(8_000.0),
+        },
         win_rate_pct=None,
         average_win_size_usd=None,
         average_loss_size_usd=None,
@@ -255,8 +272,8 @@ def _make_pnl(*, daily_total_pnl_usd: float = -12_500.0) -> PortfolioPnL:
 
 def _make_directional() -> DirectionalExposure:
     return DirectionalExposure(
-        total_long_delta_adjusted_usd=210_000.0,
-        total_short_delta_adjusted_usd=50_000.0,
+        total_long_delta_adjusted_usd=money(210_000.0),
+        total_short_delta_adjusted_usd=money(50_000.0),
         net_directional_pct_of_portfolio=32.0,
         gross_pct_of_portfolio=78.0,
     )
@@ -322,7 +339,7 @@ def _make_equity_position(
 ) -> PositionView:
     is_short = direction == Direction.SHORT
     equity_details = EquityPositionDetails(
-        ticker=position_id.split("-")[1],
+        ticker=Symbol(position_id.split("-")[1]),
         share_count=100.0,
         average_cost_basis_per_share=100.0,
         borrow_rate_pct=1.0 if is_short else None,
@@ -330,7 +347,7 @@ def _make_equity_position(
         margin_held_usd=5_000.0 if is_short else None,
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -470,19 +487,19 @@ def _make_pm_pending_order(
     age_hours: float = 1.5,
 ) -> OrderRecord:
     return OrderRecord(
-        order_id=order_id,
+        order_id=OrderId(order_id),
         position_id=None,
-        bracket_id="BR-001",
+        bracket_id=BracketId("BR-001"),
         role=OrderRole.ENTRY,
-        instrument_spec=EquityInstrumentSpec(ticker=ticker),
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
         direction=direction,
         order_type=OrderType.LIMIT,
         price_parameters=PriceParameters(limit_price=limit_price),
         quantity=quantity,
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
-        alpaca_order_id="ALPACA-001",
-        alpaca_order_id_chain=("ALPACA-001",),
+        alpaca_order_id=AlpacaOrderId("ALPACA-001"),
+        alpaca_order_id_chain=(AlpacaOrderId("ALPACA-001"),),
         submission_timestamp=datetime(2026, 4, 28, 13, 0, 0, tzinfo=UTC),
         last_update_timestamp=datetime(2026, 4, 28, 13, 0, 0, tzinfo=UTC),
         filled_quantity=0.0,
@@ -570,8 +587,12 @@ def test_halt_state_construction_requires_at_least_one_active() -> None:
 
 def test_render_analyst_header_halt_mode_full_fixture() -> None:
     held = (
-        _make_held_position(position_id="POS-NVDA-001", ticker="NVDA", sector="tech"),
-        _make_held_position(position_id="POS-MU-002", ticker="MU", sector="semis", size_pct=2.5),
+        _make_held_position(
+            position_id=PositionId("POS-NVDA-001"), ticker=Symbol("NVDA"), sector="tech"
+        ),
+        _make_held_position(
+            position_id=PositionId("POS-MU-002"), ticker=Symbol("MU"), sector="semis", size_pct=2.5
+        ),
     )
     view = _make_analyst_view(held_positions=held)
     rendered = render_analyst_header_halt_mode(
@@ -628,8 +649,12 @@ def test_render_analyst_header_halt_mode_full_fixture() -> None:
 def test_render_analyst_header_halt_mode_preserves_other_blocks() -> None:
     """Regression: halt-mode output (banner + capital block stripped) matches normal output."""
     held = (
-        _make_held_position(position_id="POS-NVDA-001", ticker="NVDA", sector="tech"),
-        _make_held_position(position_id="POS-MU-002", ticker="MU", sector="semis", size_pct=2.5),
+        _make_held_position(
+            position_id=PositionId("POS-NVDA-001"), ticker=Symbol("NVDA"), sector="tech"
+        ),
+        _make_held_position(
+            position_id=PositionId("POS-MU-002"), ticker=Symbol("MU"), sector="semis", size_pct=2.5
+        ),
     )
     view = _make_analyst_view(held_positions=held)
     common_kwargs: dict[str, Any] = {
@@ -788,9 +813,9 @@ def test_render_pm_header_halt_mode_full_fixture() -> None:
     view = _make_pm_view(positions=positions)
     pending_orders = (
         _make_pm_pending_order(
-            order_id="ORD-1001",
+            order_id=OrderId("ORD-1001"),
             direction=OrderDirection.BUY_TO_OPEN,
-            ticker="NVDA",
+            ticker=Symbol("NVDA"),
             limit_price=100.0,
             quantity=50.0,
             age_hours=1.5,
@@ -868,8 +893,8 @@ def test_render_pm_header_halt_mode_missing_price_raises_value_error() -> None:
     view = _make_pm_view()
     pending_orders = (
         _make_pm_pending_order(
-            order_id="ORD-1001",
-            ticker="MISSING",
+            order_id=OrderId("ORD-1001"),
+            ticker=Symbol("MISSING"),
             limit_price=100.0,
         ),
     )

@@ -8,8 +8,12 @@ collect_reference(ticker_scope, ...)
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
+
+import httpx
+from polygon.exceptions import BadResponse
 
 from alphamind.data_sources._common import (
     RetryShape,
@@ -20,6 +24,8 @@ from alphamind.data_sources._common import (
 )
 from alphamind.data_sources.polygon.client import PolygonClient
 from alphamind.persistence.models import AssetUniverse
+
+logger = logging.getLogger(__name__)
 
 
 def collect_reference(
@@ -66,9 +72,14 @@ def collect_reference(
         for ticker in ticker_scope:
             try:
                 details = _fetch_details(ticker)
-            except Exception:
+            except (BadResponse, httpx.HTTPError) as exc:
                 if single:
                     raise
+                logger.warning(
+                    "polygon get_ticker_details failed for %s",
+                    ticker,
+                    exc_info=exc,
+                )
                 continue
 
             last_updated = datetime.now(UTC).isoformat()

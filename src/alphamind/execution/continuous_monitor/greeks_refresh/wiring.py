@@ -19,6 +19,7 @@ Two pieces:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections.abc import Iterable
 
@@ -47,20 +48,20 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
 from alphamind.execution.continuous_monitor.underlying_stream.subscriptions import (
     OpenPositionsReader,
 )
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
 from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
 from alphamind.portfolio_state.records.positions import (
     OptionGreeks,
     OptionsPositionDetails,
     StrategyLeg,
     StrategyPositionDetails,
+)
+from alphamind.state.tables.invocations import InvocationRow
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
 )
 
 log = logging.getLogger(__name__)
@@ -101,8 +102,8 @@ class SqlGreeksWriter:
                     f"row; got {type(details).__name__}"
                 )
                 raise TypeError(msg)
-            new_details = details.model_copy(update={"greeks": greeks})
-            new_record = record.model_copy(update={"details": new_details})
+            new_details = dataclasses.replace(details, greeks=greeks)
+            new_record = dataclasses.replace(record, details=new_details)
             new_row = position_record_to_row(new_record)
             row.details_json = new_row.details_json
             await sess.commit()
@@ -127,15 +128,12 @@ class SqlGreeksWriter:
             new_legs: list[StrategyLeg] = []
             for leg in details.legs:
                 leg_greeks = per_leg.get(leg.leg_id, leg.options.greeks)
-                new_options = leg.options.model_copy(update={"greeks": leg_greeks})
-                new_legs.append(leg.model_copy(update={"options": new_options}))
-            new_details = details.model_copy(
-                update={
-                    "legs": tuple(new_legs),
-                    "strategy_greeks": aggregated,
-                }
+                new_options = dataclasses.replace(leg.options, greeks=leg_greeks)
+                new_legs.append(dataclasses.replace(leg, options=new_options))
+            new_details = dataclasses.replace(
+                details, legs=tuple(new_legs), strategy_greeks=aggregated
             )
-            new_record = record.model_copy(update={"details": new_details})
+            new_record = dataclasses.replace(record, details=new_details)
             new_row = position_record_to_row(new_record)
             row.details_json = new_row.details_json
             await sess.commit()
@@ -302,7 +300,7 @@ def make_activity_log_emitter(
     refresh task emits one entry per failing position; one transaction per
     emit avoids long-held locks during a chain of failures.
     """
-    from alphamind.execution.state_persistence.invocation_context.activity_log import (
+    from alphamind.state.invocation_context.activity_log import (
         activity_log_entry_to_row,
     )
 

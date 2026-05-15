@@ -11,6 +11,7 @@ from types import MappingProxyType
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
 from alphamind.risk_guardrails.guardrail_evaluation import (
     Action,
     AssetType,
@@ -141,7 +142,7 @@ def _equity_proposal(
 ) -> ProposedDelta:
     return ProposedDelta(
         id=proposal_id,
-        underlying="ABC",
+        underlying=Symbol("ABC"),
         sector=sector,
         direction=direction,
         asset_type=AssetType.EQUITY,
@@ -382,7 +383,7 @@ def test_project_all_returns_per_rule_in_registry_order() -> None:
 def test_proposed_delta_has_daily_borrow_cost_usd_default_none() -> None:
     proposal = ProposedDelta(
         id="P",
-        underlying="ABC",
+        underlying=Symbol("ABC"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,
@@ -398,7 +399,7 @@ def test_proposed_delta_has_daily_borrow_cost_usd_default_none() -> None:
 def test_proposed_delta_has_reserves_capital_default_false() -> None:
     proposal = ProposedDelta(
         id="P",
-        underlying="ABC",
+        underlying=Symbol("ABC"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,

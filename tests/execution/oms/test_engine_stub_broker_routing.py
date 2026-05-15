@@ -10,6 +10,7 @@ Tests use ``unittest.mock.MagicMock`` for the alpaca-py client so the suite
 runs offline. Mirrors the sibling ``tests/execution/broker_adapter/test_*``
 fixture pattern.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -26,10 +27,18 @@ from alpaca.trading.enums import OrderClass, OrderSide, OrderStatus, TimeInForce
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-# Pre-resolve the latent cycle between submit_envelope_mcp and PM models.
-import alphamind.decision.portfolio_manager.models  # noqa: F401
-from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
-from alphamind.execution.oms.command_models import (
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    ClientOrderId,
+    EnvelopeId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import price
+from alphamind.commands.command_models import (
     BracketOrderParameters,
     CloseCommand,
     EntryOrder,
@@ -45,36 +54,12 @@ from alphamind.execution.oms.command_models import (
     Thesis,
     ThesisComponent,
 )
-from alphamind.execution.oms.engine_envelope import (
+from alphamind.commands.engine_envelope import (
     BreachDetails,
     EngineEnvelope,
     GuardrailTriggerRecord,
 )
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.orders import OrderRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
-)
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -107,6 +92,31 @@ from alphamind.portfolio_state.records.theses import (
 from alphamind.portfolio_state.records.theses import (
     ThesisComponent as PersistedThesisComponent,
 )
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+    InvocationHandle,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.orders import OrderRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
+)
 
 _NOW = datetime(2026, 5, 9, 14, 30, 0, tzinfo=UTC)
 _TRIGGER_TS = datetime(2026, 5, 9, 14, 30, tzinfo=UTC)
@@ -126,7 +136,7 @@ async def db(
 ) -> AsyncIterator[tuple[AsyncEngine, async_sessionmaker[AsyncSession]]]:
     db_path = tmp_path / "alphamind.db"
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -217,20 +227,18 @@ async def _seed_cash_ledger(
     current_cash_usd: float = 100_000.0,
     reserved_capital_usd: float = 0.0,
 ) -> None:
-    record = CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": reserved_capital_usd,
-            "available_buying_power_usd": current_cash_usd - reserved_capital_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    record = CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=reserved_capital_usd,
+        available_buying_power_usd=current_cash_usd - reserved_capital_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
     async with factory() as sess:
         sess.add(cash_ledger_record_to_row(record, last_updated_at=_NOW))
@@ -247,7 +255,7 @@ def _open_position(
     from alphamind.portfolio_state.records.positions import PositionFill
 
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=10.0,
         average_cost_basis_per_share=150.0,
     )
@@ -260,21 +268,19 @@ def _open_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -284,7 +290,7 @@ def _active_thesis(
     components = tuple(
         PersistedThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -304,8 +310,8 @@ def _active_thesis(
     generation_at = _NOW - timedelta(hours=4)
     time_expectation_hours = 24.0
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="NVDA momentum",
         key_catalyst="Earnings beat",
         position_size_rationale="5% sized.",
@@ -329,16 +335,18 @@ def _active_bracket(
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id=f"{bracket_id}-ord-entry",
+        entry_order_id=OrderId(f"{bracket_id}-ord-entry"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -352,7 +360,7 @@ async def _seed_position_cluster(
     thesis: ThesisRecord,
     bracket: BracketRecord,
 ) -> None:
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     thesis_row, component_rows = thesis_record_to_rows(thesis)
     bracket_parent, leg_rows = bracket_record_to_rows(bracket)
@@ -394,20 +402,18 @@ async def _seed_substrate_with_cash(
     cash_usd: float = 100_000.0,
 ) -> None:
     """Seed process lifetime + cash ledger in one transaction."""
-    cash = CashLedger.model_validate(
-        {
-            "current_cash_usd": cash_usd,
-            "settled_cash_usd": cash_usd,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": cash_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    cash = CashLedger(
+        current_cash_usd=cash_usd,
+        settled_cash_usd=cash_usd,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=cash_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
     async with factory() as sess:
         sess.add(process_lifetime_record_to_row(_make_process_lifetime()))
@@ -459,7 +465,7 @@ def _build_db_factory(tmp_path: Path) -> tuple[Any, async_sessionmaker[AsyncSess
 def _engine_close_command() -> CloseCommand:
     return CloseCommand(
         command_type="close",
-        position_id="POS-NVDA-001",
+        position_id=PositionId("POS-NVDA-001"),
         quantity="all",
         order_type="market",
         close_rationale_type="risk_management",
@@ -469,7 +475,7 @@ def _engine_close_command() -> CloseCommand:
 
 def _engine_envelope() -> EngineEnvelope:
     return EngineEnvelope(
-        envelope_id="MON.session-abc.42",
+        envelope_id=EnvelopeId("MON.session-abc.42"),
         invocation_id=None,
         trigger_timestamp=_TRIGGER_TS,
         source_provenance="engine_guardrail",
@@ -594,7 +600,7 @@ async def test_engine_envelope_routes_close_through_dispatcher(
     )
 
     ctx, handle = await _open_handle(factory)
-    result = await submit_engine_envelope(
+    result, _state = await submit_engine_envelope(
         _engine_envelope(),
         handle=handle,
         state=state,
@@ -642,7 +648,7 @@ async def test_engine_envelope_legacy_path_unchanged_without_client(
     state = build_initial_submit_engine_envelope_state(monitor_session_id=_MONITOR_SESSION)
 
     ctx, handle = await _open_handle(factory)
-    result = await submit_engine_envelope(
+    result, _state = await submit_engine_envelope(
         _engine_envelope(),
         handle=handle,
         state=state,
@@ -668,11 +674,11 @@ async def test_pm_envelope_open_equity_routes_through_dispatcher(
     MCP factory, an accepted OPEN equity command routes through
     ``dispatch_command_to_broker``; the persisted entry order carries the real
     Alpaca order id."""
-    from alphamind.execution.broker_adapter import AccountStateQueries
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
     )
+    from alphamind.execution.broker_adapter import AccountStateQueries
     from tests.execution.oms.test_submit_envelope_mcp import (
         _DEFAULT_ACTIVE_SECTORS,
         _make_analyst_envelope,
@@ -717,7 +723,7 @@ async def test_pm_envelope_open_equity_routes_through_dispatcher(
         client.submit_order = MagicMock(side_effect=_submit_order)
         queries = MagicMock(spec=AccountStateQueries)
 
-        await _handle_submit_envelope(
+        _response, state = await _handle_submit_envelope(
             envelope.model_dump(mode="json"),
             state=state,
             retrieval_store=_retrieval_store(),
@@ -759,6 +765,134 @@ async def test_pm_envelope_open_equity_routes_through_dispatcher(
         await async_engine.dispose()
 
 
+async def test_pm_envelope_open_equity_routes_through_injected_broker_dispatch(
+    tmp_path: Any,
+) -> None:
+    """Composition-root-injected ``BrokerDispatch`` is consulted in lieu of the
+    concrete ``dispatch_command_to_broker`` when the engine-stub processes
+    an accepted OPEN command.
+
+    Architectural integration test for ALP-458: stubbing
+    ``dispatch_command_to_broker`` would not catch a regression where the
+    ``broker_dispatch`` kwarg got dropped between
+    ``build_submit_envelope_mcp_server`` and ``_route_through_broker``.
+    This test passes a fake Protocol implementer end-to-end and confirms
+    the fake — not the concrete dispatcher — is invoked.
+    """
+    from alphamind.commands.command_models import OMSCommand
+    from alphamind.commands.protocols import BrokerDispatch
+    from alphamind.decision.portfolio_manager.submit_envelope import (
+        _handle_submit_envelope,
+        build_initial_submit_envelope_state,
+    )
+    from alphamind.execution.broker_adapter import (
+        AccountStateQueries,
+        EquitySubmission,
+        Submitted,
+    )
+    from tests.execution.oms.test_submit_envelope_mcp import (
+        _DEFAULT_ACTIVE_SECTORS,
+        _make_analyst_envelope,
+        _make_bundle,
+        _make_pm_view,
+        _make_validation_state,
+        _recommendation_stub,
+        _retrieval_store,
+        _sector_resolver,
+    )
+
+    captured: list[OMSCommand] = []
+    expected_alpaca_order_id = uuid.uuid4()
+
+    class _FakeBrokerDispatch:
+        async def __call__(
+            self,
+            command: OMSCommand,
+            *,
+            client_order_id: str,
+            **context: Any,
+        ) -> Any:
+            captured.append(command)
+            payload = EquitySubmission(
+                alpaca_order_id=AlpacaOrderId(str(expected_alpaca_order_id)),
+                client_order_id=ClientOrderId(client_order_id),
+                status="accepted",
+                order_class="simple",
+            )
+            from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
+
+            return Submitted(
+                payload=BrokerDispatchResult(
+                    alpaca_order_id=AlpacaOrderId(str(expected_alpaca_order_id)),
+                    client_order_id=ClientOrderId(client_order_id),
+                    status="accepted",
+                    order_class="simple",
+                    payload_kind="equity",
+                    raw_submission=payload,
+                ),
+                attempt_count=1,
+            )
+
+    fake: BrokerDispatch = _FakeBrokerDispatch()
+    assert isinstance(fake, BrokerDispatch)
+
+    async_engine, factory = _build_db_factory(tmp_path)
+    try:
+        await _seed_substrate_with_cash(factory)
+        invocation_id = "inv-broker-dispatch-injected-1"
+        ctx = InvocationContext(
+            session_factory=factory,
+            record=_make_invocation_record(invocation_id=invocation_id),
+        )
+        handle = await ctx.__aenter__()
+
+        envelope = _make_analyst_envelope()
+        validation_state = _make_validation_state()
+        state = build_initial_submit_envelope_state(
+            invocation_id=validation_state.invocation_id,
+            starting_validation_state=validation_state,
+        )
+        bundle = _make_bundle(recommendations=(_recommendation_stub("REC-1"),))
+
+        # client/queries/execution_config still supplied so the engine-stub
+        # routes through *some* dispatcher; the injected fake replaces the
+        # concrete one without monkey-patching.
+        client = MagicMock()
+        queries = MagicMock(spec=AccountStateQueries)
+
+        _response, state = await _handle_submit_envelope(
+            envelope.model_dump(mode="json"),
+            state=state,
+            retrieval_store=_retrieval_store(),
+            pre_processor_bundle=bundle,
+            pm_view=_make_pm_view(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            halt_mode=False,
+            sector_resolver=_sector_resolver,
+            invocation_handle=handle,
+            client=client,
+            queries=queries,
+            execution_config=_default_execution_config(),
+            broker_dispatch=fake,
+        )
+        await ctx.__aexit__(None, None, None)
+
+        # The injected fake was invoked; the concrete client.submit_order
+        # was NOT (the fake bypasses it entirely).
+        assert len(captured) == 1
+        client.submit_order.assert_not_called()
+
+        # The acknowledgment carries the fake's alpaca_order_id, proving the
+        # full path: invoked fake → result wrap → acknowledgment writeback.
+        assert len(state.submission_log) == 1
+        log_entry = state.submission_log[0]
+        ack = log_entry.submission_results[0].acknowledgment
+        assert ack is not None
+        assert ack.order_id == str(expected_alpaca_order_id)
+    finally:
+        await async_engine.dispose()
+
+
 async def test_pm_envelope_gateway_failure_writes_command_abandoned(
     tmp_path: Any,
 ) -> None:
@@ -768,11 +902,11 @@ async def test_pm_envelope_gateway_failure_writes_command_abandoned(
     persisted."""
     import httpx
 
-    from alphamind.execution.broker_adapter import AccountStateQueries
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
     )
+    from alphamind.execution.broker_adapter import AccountStateQueries
     from tests.execution.oms.test_submit_envelope_mcp import (
         _DEFAULT_ACTIVE_SECTORS,
         _make_analyst_envelope,
@@ -807,7 +941,7 @@ async def test_pm_envelope_gateway_failure_writes_command_abandoned(
         client.submit_order = MagicMock(side_effect=httpx.ConnectError("network down"))
         queries = MagicMock(spec=AccountStateQueries)
 
-        await _handle_submit_envelope(
+        _response, state = await _handle_submit_envelope(
             envelope.model_dump(mode="json"),
             state=state,
             retrieval_store=_retrieval_store(),
@@ -856,11 +990,11 @@ async def test_pm_envelope_close_equity_routes_through_dispatcher(
     """A PM-originated CLOSE on an equity position routes through
     ``submit_equity_close``; the persisted close order carries Alpaca's real
     ``alpaca_order_id``."""
-    from alphamind.execution.broker_adapter import AccountStateQueries
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
     )
+    from alphamind.execution.broker_adapter import AccountStateQueries
     from tests.execution.oms.test_submit_envelope_mcp import (
         _DEFAULT_ACTIVE_SECTORS,
         _close_command,
@@ -890,7 +1024,7 @@ async def test_pm_envelope_close_equity_routes_through_dispatcher(
 
         envelope = _make_strategist_envelope(
             verdict="approve",
-            commands=(_close_command(position_id="POS-NVDA-001"),),
+            commands=(_close_command(position_id=PositionId("POS-NVDA-001")),),
         )
         validation_state = _make_validation_state()
         state = build_initial_submit_envelope_state(
@@ -914,7 +1048,7 @@ async def test_pm_envelope_close_equity_routes_through_dispatcher(
 
         pm_view = _make_pm_view(positions=(_position_view("POS-NVDA-001"),))
 
-        await _handle_submit_envelope(
+        _response, state = await _handle_submit_envelope(
             envelope.model_dump(mode="json"),
             state=state,
             retrieval_store=_retrieval_store(),
@@ -959,11 +1093,11 @@ async def test_pm_envelope_permanent_rejection_carries_code_in_gateway_reason(
 
     from alpaca.common.exceptions import APIError
 
-    from alphamind.execution.broker_adapter import AccountStateQueries
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
     )
+    from alphamind.execution.broker_adapter import AccountStateQueries
     from tests.execution.oms.test_submit_envelope_mcp import (
         _DEFAULT_ACTIVE_SECTORS,
         _make_analyst_envelope,
@@ -1003,7 +1137,7 @@ async def test_pm_envelope_permanent_rejection_carries_code_in_gateway_reason(
         client.submit_order = MagicMock(side_effect=api_error)
         queries = MagicMock(spec=AccountStateQueries)
 
-        await _handle_submit_envelope(
+        _response, state = await _handle_submit_envelope(
             envelope.model_dump(mode="json"),
             state=state,
             retrieval_store=_retrieval_store(),
@@ -1135,7 +1269,7 @@ def _options_open_position(
     )
 
     details = OptionsPositionDetails(
-        underlying_ticker="NVDA",
+        underlying_ticker=Symbol("NVDA"),
         strike_price=420.0,
         expiration_date=_date(2026, 6, 19),
         contract_type=OptionContractType.CALL,
@@ -1159,21 +1293,19 @@ def _options_open_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": "THE-OPT-1",
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=ThesisId("THE-OPT-1"),
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -1201,7 +1333,7 @@ def _strategy_open_position(
         leg_id="leg-1",
         direction=Direction.LONG,
         options=OptionsPositionDetails(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             strike_price=420.0,
             expiration_date=expiration,
             contract_type=OptionContractType.CALL,
@@ -1221,7 +1353,7 @@ def _strategy_open_position(
         leg_id="leg-2",
         direction=Direction.SHORT,
         options=OptionsPositionDetails(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             strike_price=425.0,
             expiration_date=expiration,
             contract_type=OptionContractType.CALL,
@@ -1261,21 +1393,19 @@ def _strategy_open_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": "THE-STRAT-1",
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=ThesisId("THE-STRAT-1"),
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -1292,9 +1422,6 @@ def _seed_pending_protective_orders(
     in test_phase2_write_path's adjust tests but trimmed to the rows needed
     by ``_adjust_command_context``.
     """
-    from alphamind.execution.state_persistence.tables.orders_codec import (
-        record_to_row as order_record_to_row,
-    )
     from alphamind.portfolio_state.records.orders import (
         EquityInstrumentSpec,
         OrderClass,
@@ -1306,14 +1433,17 @@ def _seed_pending_protective_orders(
         OrderType,
         PriceParameters,
     )
+    from alphamind.state.tables.orders_codec import (
+        record_to_row as order_record_to_row,
+    )
 
     def _build(order_id: str, role: OrderRole, params: PriceParameters) -> OrderRecord:
         return OrderRecord(
-            order_id=order_id,
-            position_id=position_id,
-            bracket_id=bracket_id,
+            order_id=OrderId(order_id),
+            position_id=PositionId(position_id),
+            bracket_id=BracketId(bracket_id),
             role=role,
-            instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+            instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
             direction=OrderDirection.SELL,
             order_type=OrderType.STOP if role is OrderRole.PRICE_STOP else OrderType.LIMIT,
             order_class=OrderClass.OTO,
@@ -1321,15 +1451,15 @@ def _seed_pending_protective_orders(
             quantity=10.0,
             duration=OrderDuration.DAY,
             status=OrderStatus.PENDING,
-            alpaca_order_id=f"alp-{order_id}",
-            alpaca_order_id_chain=(f"alp-{order_id}",),
+            alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+            alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
             submission_timestamp=_NOW - timedelta(hours=1),
             last_update_timestamp=_NOW - timedelta(hours=1),
             filled_quantity=0.0,
             avg_fill_price=None,
             remaining_quantity=10.0,
             modification_count=0,
-            originating_thesis_id=thesis_id,
+            originating_thesis_id=ThesisId(thesis_id),
             originating_pm_command_id=None,
             age_hours=1.0,
         )
@@ -1350,13 +1480,15 @@ def _seed_pending_protective_orders(
 
 def _adjust_stop_command(position_id: str) -> Any:
     """Build an ADJUST command targeting only the stop leg."""
-    from alphamind.execution.oms.command_models import AdjustCommand, NewStopLevel
+    from alphamind.commands.command_models import AdjustCommand, NewStopLevel
 
     return AdjustCommand(
         command_type="adjust",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         adjustment_rationale="Tighten stop.",
-        new_stop_level=NewStopLevel(trigger_price=145.0, order_type="stop", limit_price=None),
+        new_stop_level=NewStopLevel(
+            trigger_price=price(145.0), order_type="stop", limit_price=None
+        ),
         new_target_level=None,
         new_time_expiration=None,
         new_event_invalidation=None,
@@ -1366,14 +1498,14 @@ def _adjust_stop_command(position_id: str) -> Any:
 
 def _adjust_target_command(position_id: str) -> Any:
     """Build an ADJUST command targeting only the take-profit leg."""
-    from alphamind.execution.oms.command_models import AdjustCommand, NewTargetLevel
+    from alphamind.commands.command_models import AdjustCommand, NewTargetLevel
 
     return AdjustCommand(
         command_type="adjust",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         adjustment_rationale="Raise target.",
         new_stop_level=None,
-        new_target_level=NewTargetLevel(price=210.0, order_type="limit"),
+        new_target_level=NewTargetLevel(price=price(210.0), order_type="limit"),
         new_time_expiration=None,
         new_event_invalidation=None,
         thesis_component_updates=None,
@@ -1386,7 +1518,7 @@ async def test_adjust_command_context_options_position_routes_us_option_simple(
     """ADJUST against an options position derives ``us_option`` / ``simple``
     from the position's details, not the previously-hardcoded equity values.
     """
-    from alphamind.execution.oms.submit_envelope_mcp import _adjust_command_context
+    from alphamind.decision.portfolio_manager.submit_envelope import _adjust_command_context
 
     async_engine, factory = _build_db_factory(tmp_path)
     try:
@@ -1395,14 +1527,16 @@ async def test_adjust_command_context_options_position_routes_us_option_simple(
         await _seed_position_cluster(
             factory,
             _options_open_position(),
-            _active_thesis(thesis_id="THE-OPT-1", position_id="POS-OPT-001"),
-            _active_bracket(bracket_id="BRK-OPT-1", position_id="POS-OPT-001"),
+            _active_thesis(thesis_id=ThesisId("THE-OPT-1"), position_id=PositionId("POS-OPT-001")),
+            _active_bracket(
+                bracket_id=BracketId("BRK-OPT-1"), position_id=PositionId("POS-OPT-001")
+            ),
         )
         await _seed_pending_protective_orders(
             factory,
-            bracket_id="BRK-OPT-1",
-            position_id="POS-OPT-001",
-            thesis_id="THE-OPT-1",
+            bracket_id=BracketId("BRK-OPT-1"),
+            position_id=PositionId("POS-OPT-001"),
+            thesis_id=ThesisId("THE-OPT-1"),
         )
 
         ctx, handle = await _open_handle(factory)
@@ -1428,7 +1562,7 @@ async def test_adjust_command_context_strategy_position_routes_mleg(
     hardcoded ``us_equity`` / ``simple`` would have produced a
     field-out-of-surface ValueError or silently mis-routed at the broker.
     """
-    from alphamind.execution.oms.submit_envelope_mcp import _adjust_command_context
+    from alphamind.decision.portfolio_manager.submit_envelope import _adjust_command_context
 
     async_engine, factory = _build_db_factory(tmp_path)
     try:
@@ -1437,14 +1571,18 @@ async def test_adjust_command_context_strategy_position_routes_mleg(
         await _seed_position_cluster(
             factory,
             _strategy_open_position(),
-            _active_thesis(thesis_id="THE-STRAT-1", position_id="POS-STRAT-001"),
-            _active_bracket(bracket_id="BRK-STRAT-1", position_id="POS-STRAT-001"),
+            _active_thesis(
+                thesis_id=ThesisId("THE-STRAT-1"), position_id=PositionId("POS-STRAT-001")
+            ),
+            _active_bracket(
+                bracket_id=BracketId("BRK-STRAT-1"), position_id=PositionId("POS-STRAT-001")
+            ),
         )
         await _seed_pending_protective_orders(
             factory,
-            bracket_id="BRK-STRAT-1",
-            position_id="POS-STRAT-001",
-            thesis_id="THE-STRAT-1",
+            bracket_id=BracketId("BRK-STRAT-1"),
+            position_id=PositionId("POS-STRAT-001"),
+            thesis_id=ThesisId("THE-STRAT-1"),
         )
 
         ctx, handle = await _open_handle(factory)
@@ -1470,7 +1608,7 @@ async def test_adjust_command_context_targets_take_profit_when_target_change(
     selection silently sent the wrong order ID to ``submit_replace`` whenever
     the bracket's PRICE_STOP appeared first in the result set.
     """
-    from alphamind.execution.oms.submit_envelope_mcp import _adjust_command_context
+    from alphamind.decision.portfolio_manager.submit_envelope import _adjust_command_context
 
     async_engine, factory = _build_db_factory(tmp_path)
     try:
@@ -1484,9 +1622,9 @@ async def test_adjust_command_context_targets_take_profit_when_target_change(
         )
         await _seed_pending_protective_orders(
             factory,
-            bracket_id="BRK-NVDA-1",
-            position_id="POS-NVDA-001",
-            thesis_id="THE-NVDA-1",
+            bracket_id=BracketId("BRK-NVDA-1"),
+            position_id=PositionId("POS-NVDA-001"),
+            thesis_id=ThesisId("THE-NVDA-1"),
         )
 
         ctx, handle = await _open_handle(factory)

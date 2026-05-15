@@ -18,13 +18,17 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 
 # Import portfolio_manager.models first to break the latent cycle between
 # alphamind.execution.oms (engine-stub MCP) and alphamind.decision.portfolio_manager.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
-from alphamind.execution.oms.command_models import CloseCommand
-from alphamind.execution.oms.engine_envelope import (
+from alphamind._kernel.ids import (
+    EnvelopeId,
+    PositionId,
+)
+from alphamind.commands.command_models import CloseCommand
+from alphamind.commands.engine_envelope import (
     BreachDetails,
     EngineEnvelope,
     GuardrailTriggerRecord,
@@ -47,7 +51,7 @@ def _close_command(
 ) -> CloseCommand:
     return CloseCommand(
         command_type="close",
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         quantity="all",
         order_type="market",
         close_rationale_type=close_rationale_type,  # type: ignore[arg-type]
@@ -94,7 +98,7 @@ def _envelope(
     if trigger_record is None:
         trigger_record = _trigger_record(trigger_timestamp=trigger_timestamp)
     return EngineEnvelope(
-        envelope_id=envelope_id,
+        envelope_id=EnvelopeId(envelope_id),
         invocation_id=invocation_id,
         trigger_timestamp=trigger_timestamp,
         source_provenance="engine_guardrail",
@@ -134,23 +138,23 @@ class TestHappyPath:
 
 class TestFrozen:
     def test_breach_details_frozen(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _breach_details().current_value = 99.0
 
     def test_secondary_breach_check_result_frozen(self) -> None:
         sbc = SecondaryBreachCheckResult(result="no_secondary_breach")
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             sbc.result = "deferred_to_pm"
 
     def test_guardrail_trigger_record_frozen(self) -> None:
         rec = _trigger_record()
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             rec.rule_breached = "other_rule"
 
     def test_engine_envelope_frozen(self) -> None:
         env = _envelope()
-        with pytest.raises(ValidationError):
-            env.envelope_id = "MON.other.0"
+        with pytest.raises((ValueError, TypeError)):
+            env.envelope_id = EnvelopeId("MON.other.0")
 
 
 # ---------------------------------------------------------------------------
@@ -160,23 +164,23 @@ class TestFrozen:
 
 class TestEnvelopeIdPattern:
     def test_rejects_non_matching_envelope_id(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _envelope(envelope_id="ENV-REC-1")
 
     def test_rejects_envelope_id_missing_trigger(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _envelope(envelope_id="MON.session-abc")
 
     def test_rejects_envelope_id_with_extra_segment(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _envelope(envelope_id="MON.session-abc.42.0")
 
 
 class TestInvocationIdNull:
     def test_rejects_non_none_invocation_id(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             EngineEnvelope(
-                envelope_id="MON.session-abc.42",
+                envelope_id=EnvelopeId("MON.session-abc.42"),
                 invocation_id="inv-1",  # type: ignore[arg-type]
                 trigger_timestamp=_TRIGGER_TS,
                 source_provenance="engine_guardrail",
@@ -186,7 +190,7 @@ class TestInvocationIdNull:
 
     def test_accepts_none_invocation_id_implicitly(self) -> None:
         env = EngineEnvelope(
-            envelope_id="MON.session-abc.42",
+            envelope_id=EnvelopeId("MON.session-abc.42"),
             trigger_timestamp=_TRIGGER_TS,
             source_provenance="engine_guardrail",
             guardrail_trigger_record=_trigger_record(),
@@ -197,17 +201,17 @@ class TestInvocationIdNull:
 
 class TestCommandsArrayConstraints:
     def test_rejects_empty_commands(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _envelope(commands=())
 
     def test_rejects_two_commands(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _envelope(commands=(_close_command(), _close_command()))
 
 
 class TestEmbeddedCloseConstraints:
     def test_rejects_close_with_non_risk_management_rationale(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _envelope(
                 commands=(
                     _close_command(
@@ -218,7 +222,7 @@ class TestEmbeddedCloseConstraints:
             )
 
     def test_rejects_close_with_pm_directed_subtype(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _envelope(
                 commands=(
                     _close_command(
@@ -233,9 +237,9 @@ class TestTriggerTimestampEquality:
     def test_rejects_top_level_timestamp_mismatch(self) -> None:
         rec = _trigger_record(trigger_timestamp=_TRIGGER_TS)
         other_ts = datetime(2026, 5, 9, 15, 0, tzinfo=UTC)
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             EngineEnvelope(
-                envelope_id="MON.session-abc.42",
+                envelope_id=EnvelopeId("MON.session-abc.42"),
                 trigger_timestamp=other_ts,
                 source_provenance="engine_guardrail",
                 guardrail_trigger_record=rec,
@@ -317,20 +321,23 @@ class TestSchemaExport:
 
 
 class TestPackageReExports:
-    def test_engine_envelope_models_importable_from_package(self) -> None:
-        from alphamind.execution.oms import (
+    def test_engine_envelope_models_importable_from_commands_package(self) -> None:
+        """After ALP-458 the engine-envelope wire-format types live in
+        :mod:`alphamind.commands`; ``alphamind.commands`` re-exports them.
+        """
+        from alphamind.commands import (
             BreachDetails as PkgBreachDetails,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             EngineEnvelope as PkgEngineEnvelope,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             GuardrailTriggerRecord as PkgGuardrailTriggerRecord,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             SecondaryBreachCheckResult as PkgSecondaryBreachCheckResult,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             engine_envelope_schema as pkg_engine_envelope_schema,
         )
 

@@ -16,13 +16,14 @@ Tier 2 fields (transcript_available, transcript_analysis) are stub-shaped:
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.clock import Clock, RealClock
 from alphamind.analysis.tools._envelope import ToolEnvelope, ToolQuality, parse_iso
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -273,9 +274,9 @@ def _build_post_earnings_activity(
 
 
 def _get_earnings_commentary(
-    session: Session, inp: EarningsCommentaryInput
+    session: Session, inp: EarningsCommentaryInput, clock: Clock
 ) -> EarningsCommentaryOutput:
-    now = datetime.now(UTC)
+    now = clock.now()
     ticker = inp.ticker.upper()
 
     if not _ticker_in_universe(session, ticker):
@@ -314,10 +315,17 @@ def _get_earnings_commentary(
 
 def earnings_commentary_factory(
     session: Session,
+    *,
+    clock: Clock | None = None,
 ) -> Callable[[EarningsCommentaryInput], EarningsCommentaryOutput]:
-    """Return a callable suitable for the Claude Agent SDK tool registry."""
+    """Return a callable suitable for the Claude Agent SDK tool registry.
+
+    ``clock`` defaults to :class:`RealClock`; tests pass a fake to control
+    the timestamp deterministically (ALP-474).
+    """
+    resolved_clock: Clock = clock if clock is not None else RealClock()
 
     def _call(inp: EarningsCommentaryInput) -> EarningsCommentaryOutput:
-        return _get_earnings_commentary(session, inp)
+        return _get_earnings_commentary(session, inp, resolved_clock)
 
     return _call

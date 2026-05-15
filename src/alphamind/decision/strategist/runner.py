@@ -20,12 +20,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict
 
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
@@ -98,15 +98,14 @@ STRATEGIST_TOOL_NAMES: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 
-class StrategistResult(BaseModel):
+@dataclass(frozen=True, slots=True)
+class StrategistResult:
     """Runner return type — parsed strategist output plus invocation metadata.
 
     Mirrors the shape of :class:`HarnessSuccess` but lifted to the runner's
     public surface so downstream callers do not depend on the harness's
     internal type.
     """
-
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     output: StrategistOutput
     validation_result: ValidationResult

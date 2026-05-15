@@ -269,8 +269,15 @@ def _fetch_and_store_body(
         return None
     try:
         plain = _strip_html(client.get(doc_url).text)
-    except Exception:
-        logger.warning("SEC EDGAR: failed to fetch body for %s", accession)
+    except httpx.HTTPError as exc:
+        # Per-filing body fetch — one failure shouldn't sink the feed sweep.
+        # ``HTTPError`` covers HTTP status errors + network failures.
+        # Other exceptions surface naturally so misconfiguration isn't hidden.
+        logger.warning(
+            "SEC EDGAR: failed to fetch body for %s",
+            accession,
+            exc_info=exc,
+        )
         return None
 
     year = date_str[:4] if len(date_str) >= 4 else "unknown"

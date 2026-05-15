@@ -28,6 +28,9 @@ from alpaca.trading.models import (
     TradeAccount,
 )
 
+from alphamind._kernel.ids import Symbol
+from alphamind._kernel.money import money, price, signed_money
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -271,12 +274,15 @@ class TestGetAccount:
 
         assert isinstance(result, TradeAccountSnapshot)
         assert result.account_id == "a0d8e7b5-1234-4b3a-8765-000000000001"
-        assert result.cash == pytest.approx(10000.0)
-        assert result.equity == pytest.approx(60000.0)
-        assert result.buying_power == pytest.approx(50000.0)
-        assert result.regt_buying_power == pytest.approx(25000.0)
-        assert result.daytrading_buying_power == pytest.approx(100000.0)
-        assert result.maintenance_margin == pytest.approx(15000.0)
+        # ALP-462 — Decimal-exact equality; Alpaca's string-typed monetary
+        # fields parse via ``money(broker_str)`` so the wrapper threads the
+        # raw "10000.00" string into a ``Money`` without binary float drift.
+        assert result.cash == money("10000.00")
+        assert result.equity == money("60000.00")
+        assert result.buying_power == money("50000.00")
+        assert result.regt_buying_power == money("25000.00")
+        assert result.daytrading_buying_power == money("100000.00")
+        assert result.maintenance_margin == money("15000.00")
         assert result.daytrade_count == 2
         assert result.pattern_day_trader is False
         assert result.status == "ACTIVE"
@@ -294,7 +300,7 @@ class TestGetAccount:
         result = qs.get_account()
 
         with pytest.raises((TypeError, ValidationError)):
-            result.cash = 0.0
+            result.cash = money(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -350,12 +356,13 @@ class TestGetPositions:
         assert pos.symbol == "AAPL"
         assert pos.asset_class == "us_equity"
         assert pos.qty == pytest.approx(10.0)
-        assert pos.avg_entry_price == pytest.approx(150.0)
-        assert pos.market_value == pytest.approx(1600.0)
-        assert pos.cost_basis == pytest.approx(1500.0)
-        assert pos.unrealized_pl == pytest.approx(100.0)
+        # ALP-462 — Decimal-exact equality on the migrated price/USD fields.
+        assert pos.avg_entry_price == price("150.00")
+        assert pos.market_value == money("1600.00")
+        assert pos.cost_basis == money("1500.00")
+        assert pos.unrealized_pl == money("100.00")
         assert pos.unrealized_plpc == pytest.approx(0.0667, abs=1e-4)
-        assert pos.current_price == pytest.approx(160.0)
+        assert pos.current_price == price("160.00")
         assert pos.side == "long"
 
     def test_position_snapshot_frozen(self) -> None:
@@ -919,7 +926,8 @@ class TestGetAccountActivities:
         assert act.activity_type == "FILL"
         assert act.symbol == "AAPL"
         assert act.qty == pytest.approx(10.0)
-        assert act.price == pytest.approx(150.25)
+        # ALP-462 — ``price`` parses Alpaca's string field via ``Decimal``.
+        assert act.price == price("150.25")
         assert act.side == "buy"
         assert isinstance(act.raw, dict)
         assert "id" in act.raw
@@ -938,7 +946,9 @@ class TestGetAccountActivities:
         act = results[0]
 
         assert act.activity_type == "FEE"
-        assert act.net_amount == pytest.approx(-0.01)
+        # ALP-462 — signed ``Money``; the wrapper parses the raw "-0.01" string
+        # via ``signed_money(broker_str)`` so the negative is preserved exactly.
+        assert act.net_amount == signed_money("-0.01")
         assert act.description == "Regulatory fee"
         assert act.symbol is None
 
@@ -1074,15 +1084,15 @@ class TestGetOptionContracts:
 
         qs = AccountStateQueries(client)
         result = qs.get_option_contracts(
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             expiration=date(2026, 6, 19),
         )
 
         assert isinstance(result, tuple)
         assert len(result) == 3
         assert all(isinstance(c, OptionContractSnapshot) for c in result)
-        # Sorted by strike ascending so callers can pick by index.
-        assert [c.strike for c in result] == [100.0, 110.0, 120.0]
+        # ALP-462 — strikes parse via ``price()`` so equality is Decimal-exact.
+        assert [c.strike for c in result] == [price("100"), price("110"), price("120")]
 
     def test_passes_filters_to_sdk_request(self) -> None:
         """The call must build a ``GetOptionContractsRequest`` filtering by
@@ -1097,7 +1107,7 @@ class TestGetOptionContracts:
         client.get_option_contracts.return_value = _make_option_contracts_response([])
 
         qs = AccountStateQueries(client)
-        qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+        qs.get_option_contracts(underlying=Symbol("NVDA"), expiration=date(2026, 6, 19))
 
         call_args = client.get_option_contracts.call_args
         # Either positional or keyword.
@@ -1115,7 +1125,7 @@ class TestGetOptionContracts:
         client.get_option_contracts.return_value = _make_option_contracts_response([])
 
         qs = AccountStateQueries(client)
-        result = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+        result = qs.get_option_contracts(underlying=Symbol("NVDA"), expiration=date(2026, 6, 19))
 
         assert result == ()
 
@@ -1132,7 +1142,7 @@ class TestGetOptionContracts:
         client.get_option_contracts.return_value.option_contracts = None
 
         qs = AccountStateQueries(client)
-        result = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+        result = qs.get_option_contracts(underlying=Symbol("NVDA"), expiration=date(2026, 6, 19))
 
         assert result == ()
 
@@ -1145,10 +1155,11 @@ class TestGetOptionContracts:
         )
 
         qs = AccountStateQueries(client)
-        (snap,) = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+        (snap,) = qs.get_option_contracts(underlying=Symbol("NVDA"), expiration=date(2026, 6, 19))
 
         assert snap.symbol == "NVDA  260619C00105000"
-        assert snap.strike == 105.0
+        # ALP-462 — strike threaded through ``price()`` for Decimal-exact compare.
+        assert snap.strike == price("105")
         assert snap.contract_type == "call"
         assert snap.expiration == date(2026, 6, 19)
 
@@ -1163,10 +1174,10 @@ class TestGetOptionContracts:
         )
 
         qs = AccountStateQueries(client)
-        (snap,) = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+        (snap,) = qs.get_option_contracts(underlying=Symbol("NVDA"), expiration=date(2026, 6, 19))
 
         with pytest.raises((TypeError, ValidationError)):
-            snap.strike = 200.0
+            snap.strike = price(200.0)
 
     def test_paginates_through_next_page_token(self) -> None:
         """Heavily-listed underlyings (SPY/QQQ) routinely surface > 100
@@ -1191,7 +1202,7 @@ class TestGetOptionContracts:
         client.get_option_contracts.side_effect = responses
 
         qs = AccountStateQueries(client)
-        result = qs.get_option_contracts(underlying="SPY", expiration=date(2026, 6, 19))
+        result = qs.get_option_contracts(underlying=Symbol("SPY"), expiration=date(2026, 6, 19))
 
         assert len(result) == 250, (
             f"expected 250 contracts (3 pages of 100/100/50); "
@@ -1218,7 +1229,7 @@ class TestGetOptionContracts:
         )
 
         qs = AccountStateQueries(client)
-        result = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+        result = qs.get_option_contracts(underlying=Symbol("NVDA"), expiration=date(2026, 6, 19))
 
         assert len(result) == 1
         assert client.get_option_contracts.call_count == 1

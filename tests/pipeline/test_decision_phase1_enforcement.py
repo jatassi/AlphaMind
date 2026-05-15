@@ -18,16 +18,18 @@ from typing import Any
 
 import pytest
 
-from alphamind.config.models.guardrails import ProgressiveTier
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownState,
+from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
+    RiskZone,
+)
+from alphamind.config.models.guardrails import ProgressiveTier
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
 )
 from alphamind.risk_guardrails.breach_behavior.types import DrawdownTier
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 # ---------------------------------------------------------------------------
 # Fixture progressive tiers — mirror config/guardrails.yaml
@@ -49,18 +51,16 @@ def _progressive_tiers() -> tuple[ProgressiveTier, ...]:
 
 
 def _drawdown_state(*, current_drawdown_pct: float = 0.0) -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": current_drawdown_pct,
-            "equity_high_water_mark_usd": 100_000.0,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": current_drawdown_pct,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=current_drawdown_pct,
+        equity_high_water_mark_usd=100_000.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=current_drawdown_pct,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -148,17 +148,21 @@ def _regime_output(parameters: ActiveRiskParameterSet) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Helper: build_phase1_enforcement_inputs is exported and async
+# Helper: ``build_phase1_enforcement_inputs`` is exported and synchronous.
 # ---------------------------------------------------------------------------
 
 
-def test_build_phase1_enforcement_inputs_is_async_and_exported() -> None:
-    """The helper lives in ``alphamind.pipeline._shared`` and is an async function."""
+def test_build_phase1_enforcement_inputs_is_sync_and_exported() -> None:
+    """The helper lives in ``alphamind.pipeline._shared`` and is a sync function.
+
+    Per ALP-468 (sync strip): the repository surface is sync over SQLite, so
+    the input-gatherer is sync too.
+    """
     from alphamind.pipeline import _shared
 
     assert "build_phase1_enforcement_inputs" in _shared.__all__
     helper = _shared.build_phase1_enforcement_inputs
-    assert inspect.iscoroutinefunction(helper)
+    assert not inspect.iscoroutinefunction(helper)
 
 
 def test_build_phase1_enforcement_inputs_reads_drawdown_from_repository() -> None:
@@ -169,7 +173,7 @@ def test_build_phase1_enforcement_inputs_reads_drawdown_from_repository() -> Non
     expected_drawdown = _drawdown_state(current_drawdown_pct=8.5)
 
     class _Repo:
-        async def get_drawdown_state(self) -> DrawdownState:
+        def get_drawdown_state(self) -> DrawdownState:
             return expected_drawdown
 
     regime_output = _regime_output(_regime_resolved_parameters())
@@ -180,12 +184,10 @@ def test_build_phase1_enforcement_inputs_reads_drawdown_from_repository() -> Non
     # full Protocol with ~17 methods. Stubbing the rest is unwarranted
     # ceremony for a unit-scoped helper test; suppress the arg-type
     # narrowing instead.
-    result = asyncio.run(
-        build_phase1_enforcement_inputs(
-            repository=_Repo(),  # type: ignore[arg-type]
-            regime_output=regime_output,
-            progressive_tiers=progressive_tiers,
-        )
+    result = build_phase1_enforcement_inputs(
+        repository=_Repo(),  # type: ignore[arg-type]
+        regime_output=regime_output,
+        progressive_tiers=progressive_tiers,
     )
 
     # The helper returns a 3-tuple suitable for unpacking into
@@ -237,7 +239,7 @@ def _build_pipeline_kwargs(
     log = _CallLog()
     _patch_runners(monkeypatch, log=log)
 
-    kwargs = asyncio.run(_make_minimal_inputs())
+    kwargs = _make_minimal_inputs()
     parameters = _regime_resolved_parameters()
     regime_output = _regime_output(parameters)
 
@@ -245,7 +247,7 @@ def _build_pipeline_kwargs(
     state = _drawdown_state(current_drawdown_pct=drawdown_pct)
 
     class _Repo:
-        async def get_drawdown_state(self) -> DrawdownState:
+        def get_drawdown_state(self) -> DrawdownState:
             return state
 
     kwargs["repository"] = _Repo()

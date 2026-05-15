@@ -19,7 +19,10 @@ Cross-links:
 
 from __future__ import annotations
 
+import dataclasses
 import json
+from datetime import date, datetime
+from enum import StrEnum
 from typing import Any
 
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
@@ -27,6 +30,21 @@ from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     PortfolioManagerThesisComponentReader,
 )
+
+
+def _json_default(obj: object) -> object:
+    """Convert non-JSON-native values to JSON-friendly forms.
+
+    Used as ``default=`` to ``json.dumps`` so frozen-dataclass payloads carrying
+    enums / datetimes / dates serialise without per-call adapters.
+    """
+    if isinstance(obj, StrEnum):
+        return obj.value
+    if isinstance(obj, datetime | date):
+        return obj.isoformat()
+    msg = f"object of type {type(obj).__name__} is not JSON-serializable"
+    raise TypeError(msg)
+
 
 __all__ = ["build_get_thesis_components_mcp_server"]
 
@@ -67,8 +85,8 @@ def build_get_thesis_components_mcp_server(
     async def _get_thesis_components(args: dict[str, Any]) -> dict[str, Any]:
         position_id: str = args["position_id"]
         components = await reader.get_thesis_components(position_id)
-        payload = [c.model_dump(mode="json") for c in components]
-        return {"content": [{"type": "text", "text": json.dumps(payload)}]}
+        payload = [dataclasses.asdict(c) for c in components]
+        return {"content": [{"type": "text", "text": json.dumps(payload, default=_json_default)}]}
 
     server = create_sdk_mcp_server(name=server_name, tools=[_get_thesis_components])
     allowed = [f"mcp__{server_name}__get_thesis_components"]

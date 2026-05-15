@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
+from alphamind._kernel.money import money, signed_money
 from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventGroup,
@@ -216,8 +217,8 @@ def _build_position_closed_entry(
         source=EventSource.BRACKET_MANAGER,
         detail=PositionClosedDetail(
             exit_method=trigger_reason,
-            exit_price=estimated_exit_price,
-            realized_pnl_usd=realized_pnl_usd,
+            exit_price=money(estimated_exit_price),
+            realized_pnl_usd=signed_money(realized_pnl_usd),
             thesis_resolution_category=(
                 "invalidated"
                 if trigger_reason is PositionExitMethod.STOP_TRIGGERED

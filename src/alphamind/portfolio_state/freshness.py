@@ -1,6 +1,6 @@
 """Freshness contract for portfolio state snapshots (story 08).
 
-Three Pydantic value objects and one pure function:
+Three frozen-dataclass value objects and one pure function:
 
 - ``PriceFetchOutcomes``   — per-position price-fetch record (assembler accumulator)
 - ``SnapshotFreshness``   — typed sidecar reporting how fresh the snapshot's data is
@@ -11,9 +11,8 @@ Three Pydantic value objects and one pure function:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
-
-from pydantic import BaseModel, ConfigDict, model_validator
 
 from alphamind.portfolio_state import PortfolioStateConfig
 from alphamind.portfolio_state.pricing import PriceQuote
@@ -44,33 +43,26 @@ def _assert_pairwise_disjoint(
 # ---------------------------------------------------------------------------
 
 
-class PriceFetchOutcomes(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PriceFetchOutcomes:
     """Assembler's per-position price-fetch record — produced during Step 5/6."""
-
-    model_config = ConfigDict(frozen=True)
 
     position_ids_priced_fresh: frozenset[str]
     position_ids_priced_stale: frozenset[str]
     position_ids_unknown_ticker: frozenset[str]
     oldest_price_as_of: datetime | None
 
-    @model_validator(mode="after")
-    def _validate_disjoint_sets(self) -> PriceFetchOutcomes:
+    def __post_init__(self) -> None:
         _assert_pairwise_disjoint(
             self.position_ids_priced_fresh,
             self.position_ids_priced_stale,
             self.position_ids_unknown_ticker,
         )
-        return self
-
-    @model_validator(mode="after")
-    def _validate_oldest_price_tz(self) -> PriceFetchOutcomes:
         if self.oldest_price_as_of is not None:
             ts = self.oldest_price_as_of
             if ts.tzinfo is None or ts.utcoffset() is None:
                 msg = "oldest_price_as_of must be tz-aware UTC when not None"
                 raise ValueError(msg)
-        return self
 
 
 # ---------------------------------------------------------------------------
@@ -78,10 +70,9 @@ class PriceFetchOutcomes(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class SnapshotFreshness(BaseModel):
+@dataclass(frozen=True, slots=True)
+class SnapshotFreshness:
     """Typed sidecar reporting how fresh the snapshot's data is."""
-
-    model_config = ConfigDict(frozen=True)
 
     # Invocation timing
     phase1_committed_at: datetime
@@ -115,15 +106,24 @@ class SnapshotFreshness(BaseModel):
     # Validators
     # ------------------------------------------------------------------
 
-    @model_validator(mode="after")
-    def _validate_phase1_to_snapshot_non_negative(self) -> SnapshotFreshness:
+    def __post_init__(self) -> None:
+        self._check_phase1_to_snapshot_non_negative()
+        self._check_total_positions()
+        self._check_count_conservation()
+        _assert_pairwise_disjoint(
+            self.position_ids_priced_fresh,
+            self.position_ids_priced_stale,
+            self.position_ids_unknown_ticker,
+        )
+        self._check_oldest_price_as_of()
+        self._check_oldest_price_age_consistency()
+
+    def _check_phase1_to_snapshot_non_negative(self) -> None:
         if self.phase1_to_snapshot_seconds < 0:
             msg = f"phase1_to_snapshot_seconds must be >= 0; got {self.phase1_to_snapshot_seconds}"
             raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_total_positions(self) -> SnapshotFreshness:
+    def _check_total_positions(self) -> None:
         expected = self.total_open_positions + self.total_pending_positions
         if self.total_positions != expected:
             msg = (
@@ -132,10 +132,8 @@ class SnapshotFreshness(BaseModel):
                 f"total_pending_positions ({self.total_pending_positions}) = {expected}"
             )
             raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_count_conservation(self) -> SnapshotFreshness:
+    def _check_count_conservation(self) -> None:
         total = self.count_priced_fresh + self.count_priced_stale + self.count_unknown_ticker
         if total != self.total_positions:
             msg = (
@@ -145,19 +143,8 @@ class SnapshotFreshness(BaseModel):
                 f"must equal total_positions ({self.total_positions})"
             )
             raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_disjoint_sets(self) -> SnapshotFreshness:
-        _assert_pairwise_disjoint(
-            self.position_ids_priced_fresh,
-            self.position_ids_priced_stale,
-            self.position_ids_unknown_ticker,
-        )
-        return self
-
-    @model_validator(mode="after")
-    def _validate_oldest_price_as_of(self) -> SnapshotFreshness:
+    def _check_oldest_price_as_of(self) -> None:
         if self.oldest_price_as_of is not None:
             ts = self.oldest_price_as_of
             if ts.tzinfo is None or ts.utcoffset() is None:
@@ -169,10 +156,8 @@ class SnapshotFreshness(BaseModel):
                     f"snapshot_assembled_at ({self.snapshot_assembled_at})"
                 )
                 raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_oldest_price_age_consistency(self) -> SnapshotFreshness:
+    def _check_oldest_price_age_consistency(self) -> None:
         if (self.oldest_price_age_seconds is None) != (self.oldest_price_as_of is None):
             msg = (
                 "oldest_price_age_seconds is None if and only if oldest_price_as_of is None; "
@@ -180,7 +165,6 @@ class SnapshotFreshness(BaseModel):
                 f"oldest_price_as_of={self.oldest_price_as_of!r}"
             )
             raise ValueError(msg)
-        return self
 
     # ------------------------------------------------------------------
     # Convenience helpers
@@ -304,20 +288,19 @@ def compute_snapshot_freshness(
 # ---------------------------------------------------------------------------
 
 
-class AssembledSnapshot(BaseModel):
+@dataclass(frozen=True, slots=True)
+class AssembledSnapshot:
     """Bundle of (snapshot, freshness, price_map) returned by assemble_snapshot.
 
     ``price_map`` exposes the assembler-internal ticker → :class:`PriceQuote`
     mapping the assembler already fetched while building the snapshot, so
     downstream consumers (e.g., the decision pipeline composition) can reuse
     the materialized quotes instead of re-querying the price provider. The
-    field is typed ``dict`` (not ``Mapping``) because Pydantic v2 stores a
-    plain ``dict`` on the model regardless of annotation; ``frozen=True``
-    blocks field reassignment but does not prevent dict mutation, so the
-    type honestly reflects runtime behavior.
+    field is typed ``dict`` (not ``Mapping``) because the prior Pydantic model
+    stored a plain ``dict`` regardless of annotation; ``frozen=True`` blocks
+    field reassignment but does not prevent dict mutation, so the type
+    honestly reflects runtime behavior.
     """
-
-    model_config = ConfigDict(frozen=True)
 
     snapshot: PortfolioStateSnapshot
     freshness: SnapshotFreshness

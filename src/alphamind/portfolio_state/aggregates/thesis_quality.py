@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
-from alphamind.risk_guardrails.regime_adaptation.types import RegimeLabel
+from alphamind._kernel.regime import RegimeLabel
 
 __all__ = [
     "AlphaBetaDecomposition",
@@ -29,15 +27,23 @@ __all__ = [
     "TrailingWindow",
 ]
 
-_NonNegInt = Annotated[int, Field(ge=0)]
-_FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
+
+def _check_finite(value: float, field_name: str) -> None:
+    if not math.isfinite(value):
+        msg = f"{field_name} must be finite; got {value}"
+        raise ValueError(msg)
 
 
-def _check_finite_or_none(v: float | None, label: str) -> float | None:
+def _check_finite_or_none(v: float | None, label: str) -> None:
     if v is not None and not math.isfinite(v):
         msg = f"{label} must be finite when not None"
         raise ValueError(msg)
-    return v
+
+
+def _check_non_negative_int(value: int, field_name: str) -> None:
+    if value < 0:
+        msg = f"{field_name} must be >= 0; got {value}"
+        raise ValueError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -83,21 +89,28 @@ class AttributionDimension(StrEnum):
 # ---------------------------------------------------------------------------
 
 
-class ResolutionWindowCounts(BaseModel):
+@dataclass(frozen=True, slots=True)
+class ResolutionWindowCounts:
     """Trailing resolution counts per thesis-model.md resolution categories for one window."""
 
-    model_config = ConfigDict(frozen=True)
-
     window: TrailingWindow
-    total_resolutions: _NonNegInt
-    validated: _NonNegInt
-    profitable_but_wrong: _NonNegInt
-    invalidated_stopped_correctly: _NonNegInt
-    invalidated_wrong_on_exit: _NonNegInt
-    cancelled_never_entered: _NonNegInt
+    total_resolutions: int
+    validated: int
+    profitable_but_wrong: int
+    invalidated_stopped_correctly: int
+    invalidated_wrong_on_exit: int
+    cancelled_never_entered: int
 
-    @model_validator(mode="after")
-    def _validate_conservation(self) -> ResolutionWindowCounts:
+    def __post_init__(self) -> None:
+        for name in (
+            "total_resolutions",
+            "validated",
+            "profitable_but_wrong",
+            "invalidated_stopped_correctly",
+            "invalidated_wrong_on_exit",
+            "cancelled_never_entered",
+        ):
+            _check_non_negative_int(getattr(self, name), name)
         total = (
             self.validated
             + self.profitable_but_wrong
@@ -111,7 +124,6 @@ class ResolutionWindowCounts(BaseModel):
                 f"({self.total_resolutions})"
             )
             raise ValueError(msg)
-        return self
 
     @property
     def validation_rate(self) -> float | None:
@@ -121,33 +133,30 @@ class ResolutionWindowCounts(BaseModel):
         return self.validated / self.total_resolutions
 
 
-class ThesisDurationStat(BaseModel):
+@dataclass(frozen=True, slots=True)
+class ThesisDurationStat:
     """Thesis duration accuracy for one window per portfolio-state.md § 6a."""
-
-    model_config = ConfigDict(frozen=True)
 
     window: TrailingWindow
     mean_actual_to_expected_ratio: float | None
     median_actual_to_expected_ratio: float | None
-    count: _NonNegInt
+    count: int
 
-    @field_validator("mean_actual_to_expected_ratio", "median_actual_to_expected_ratio")
-    @classmethod
-    def _require_finite_or_none(cls, v: float | None) -> float | None:
-        return _check_finite_or_none(v, "ratio")
+    def __post_init__(self) -> None:
+        _check_non_negative_int(self.count, "count")
+        _check_finite_or_none(self.mean_actual_to_expected_ratio, "ratio")
+        _check_finite_or_none(self.median_actual_to_expected_ratio, "ratio")
 
 
-class InvalidationTimingStat(BaseModel):
+@dataclass(frozen=True, slots=True)
+class InvalidationTimingStat:
     """Invalidation timing statistics for one window per portfolio-state.md § 6a."""
-
-    model_config = ConfigDict(frozen=True)
 
     window: TrailingWindow
     class_distribution: dict[InvalidationTimingClass, int]
     mean_position_age_at_invalidation_hours: float | None
 
-    @model_validator(mode="after")
-    def _validate_class_distribution(self) -> InvalidationTimingStat:
+    def __post_init__(self) -> None:
         missing = set(InvalidationTimingClass) - set(self.class_distribution)
         if missing:
             msg = f"class_distribution missing keys: {missing}"
@@ -156,27 +165,30 @@ class InvalidationTimingStat(BaseModel):
         if negatives:
             msg = f"class_distribution values must be non-negative; got {negatives}"
             raise ValueError(msg)
-        return self
-
-    @field_validator("mean_position_age_at_invalidation_hours")
-    @classmethod
-    def _require_finite_non_negative_or_none(cls, v: float | None) -> float | None:
-        v = _check_finite_or_none(v, "mean_position_age_at_invalidation_hours")
-        if v is not None and v < 0:
+        _check_finite_or_none(
+            self.mean_position_age_at_invalidation_hours,
+            "mean_position_age_at_invalidation_hours",
+        )
+        if (
+            self.mean_position_age_at_invalidation_hours is not None
+            and self.mean_position_age_at_invalidation_hours < 0
+        ):
             msg = "mean_position_age_at_invalidation_hours must be non-negative when not None"
             raise ValueError(msg)
-        return v
 
 
-class SignalHitRate(BaseModel):
+@dataclass(frozen=True, slots=True)
+class SignalHitRate:
     """Trailing hit rate for one (signal_type, window) pair per portfolio-state.md § 6b."""
-
-    model_config = ConfigDict(frozen=True)
 
     signal_type: str
     window: TrailingWindow
-    cited_count: _NonNegInt
-    validated_count: _NonNegInt
+    cited_count: int
+    validated_count: int
+
+    def __post_init__(self) -> None:
+        _check_non_negative_int(self.cited_count, "cited_count")
+        _check_non_negative_int(self.validated_count, "validated_count")
 
     @property
     def hit_rate(self) -> float | None:
@@ -186,18 +198,21 @@ class SignalHitRate(BaseModel):
         return self.validated_count / self.cited_count
 
 
-class SignalToThesisConversion(BaseModel):
+@dataclass(frozen=True, slots=True)
+class SignalToThesisConversion:
     """Signal-to-thesis conversion rate per portfolio-state.md § 6b.
 
     One entry per (signal_type, window) pair.
     """
 
-    model_config = ConfigDict(frozen=True)
-
     signal_type: str
     window: TrailingWindow
-    signal_observed_count: _NonNegInt
-    pm_approved_count: _NonNegInt
+    signal_observed_count: int
+    pm_approved_count: int
+
+    def __post_init__(self) -> None:
+        _check_non_negative_int(self.signal_observed_count, "signal_observed_count")
+        _check_non_negative_int(self.pm_approved_count, "pm_approved_count")
 
     @property
     def conversion_rate(self) -> float | None:
@@ -207,46 +222,45 @@ class SignalToThesisConversion(BaseModel):
         return self.pm_approved_count / self.signal_observed_count
 
 
-class ConvictionCalibrationEntry(BaseModel):
+@dataclass(frozen=True, slots=True)
+class ConvictionCalibrationEntry:
     """One (conviction_level, window) slot per portfolio-state.md § 6b."""
-
-    model_config = ConfigDict(frozen=True)
 
     conviction_level: int
     window: TrailingWindow
-    count: _NonNegInt
+    count: int
     validation_rate: float | None
     mean_realized_pnl_pct: float | None
 
-    @field_validator("conviction_level")
-    @classmethod
-    def _require_valid_conviction_level(cls, v: int) -> int:
-        if v not in {1, 2, 3, 4, 5}:
-            msg = f"conviction_level must be in {{1, 2, 3, 4, 5}}; got {v}"
+    def __post_init__(self) -> None:
+        if self.conviction_level not in {1, 2, 3, 4, 5}:
+            msg = f"conviction_level must be in {{1, 2, 3, 4, 5}}; got {self.conviction_level}"
             raise ValueError(msg)
-        return v
-
-    @field_validator("validation_rate", "mean_realized_pnl_pct")
-    @classmethod
-    def _require_finite_or_none(cls, v: float | None) -> float | None:
-        return _check_finite_or_none(v, "field")
+        _check_non_negative_int(self.count, "count")
+        _check_finite_or_none(self.validation_rate, "validation_rate")
+        _check_finite_or_none(self.mean_realized_pnl_pct, "mean_realized_pnl_pct")
 
 
-class ConvictionSizingDeviation(BaseModel):
+@dataclass(frozen=True, slots=True)
+class ConvictionSizingDeviation:
     """Conviction-sizing deviation tracking per portfolio-state.md § 6b."""
 
-    model_config = ConfigDict(frozen=True)
-
     window: TrailingWindow
-    total_proposals: _NonNegInt
-    pm_sized_above_advisory_count: _NonNegInt
-    pm_sized_below_advisory_count: _NonNegInt
-    pm_sized_within_advisory_count: _NonNegInt
+    total_proposals: int
+    pm_sized_above_advisory_count: int
+    pm_sized_below_advisory_count: int
+    pm_sized_within_advisory_count: int
     outcome_correlation_above: float | None
     outcome_correlation_below: float | None
 
-    @model_validator(mode="after")
-    def _validate_conservation(self) -> ConvictionSizingDeviation:
+    def __post_init__(self) -> None:
+        for name in (
+            "total_proposals",
+            "pm_sized_above_advisory_count",
+            "pm_sized_below_advisory_count",
+            "pm_sized_within_advisory_count",
+        ):
+            _check_non_negative_int(getattr(self, name), name)
         total = (
             self.pm_sized_above_advisory_count
             + self.pm_sized_below_advisory_count
@@ -255,12 +269,8 @@ class ConvictionSizingDeviation(BaseModel):
         if total != self.total_proposals:
             msg = f"sizing counts sum ({total}) must equal total_proposals ({self.total_proposals})"
             raise ValueError(msg)
-        return self
-
-    @field_validator("outcome_correlation_above", "outcome_correlation_below")
-    @classmethod
-    def _require_finite_or_none(cls, v: float | None) -> float | None:
-        return _check_finite_or_none(v, "outcome_correlation")
+        _check_finite_or_none(self.outcome_correlation_above, "outcome_correlation_above")
+        _check_finite_or_none(self.outcome_correlation_below, "outcome_correlation_below")
 
     @property
     def deviation_rate(self) -> float | None:
@@ -272,34 +282,43 @@ class ConvictionSizingDeviation(BaseModel):
         return (above + below) / self.total_proposals
 
 
-class PerformanceAttributionEntry(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PerformanceAttributionEntry:
     """One (dimension, key, window) slice per portfolio-state.md § 6c."""
-
-    model_config = ConfigDict(frozen=True)
 
     dimension: AttributionDimension
     key: str
     window: TrailingWindow
-    cumulative_realized_pnl_usd: _FiniteFloat
+    cumulative_realized_pnl_usd: float
     realized_pnl_pct_of_window_capital: float | None
-    count: _NonNegInt
+    count: int
 
-    @field_validator("realized_pnl_pct_of_window_capital")
-    @classmethod
-    def _require_finite_or_none(cls, v: float | None) -> float | None:
-        return _check_finite_or_none(v, "realized_pnl_pct_of_window_capital")
+    def __post_init__(self) -> None:
+        _check_finite(self.cumulative_realized_pnl_usd, "cumulative_realized_pnl_usd")
+        _check_non_negative_int(self.count, "count")
+        _check_finite_or_none(
+            self.realized_pnl_pct_of_window_capital, "realized_pnl_pct_of_window_capital"
+        )
 
 
-class AlphaBetaDecomposition(BaseModel):
+@dataclass(frozen=True, slots=True)
+class AlphaBetaDecomposition:
     """Alpha vs. beta decomposition per portfolio-state.md § 6c."""
 
-    model_config = ConfigDict(frozen=True)
-
     window: TrailingWindow
-    total_realized_pnl_usd: _FiniteFloat
-    market_component_usd: _FiniteFloat
-    sector_component_usd: _FiniteFloat
-    alpha_component_usd: _FiniteFloat
+    total_realized_pnl_usd: float
+    market_component_usd: float
+    sector_component_usd: float
+    alpha_component_usd: float
+
+    def __post_init__(self) -> None:
+        for name in (
+            "total_realized_pnl_usd",
+            "market_component_usd",
+            "sector_component_usd",
+            "alpha_component_usd",
+        ):
+            _check_finite(getattr(self, name), name)
 
     @property
     def attribution_ratio(self) -> float | None:
@@ -309,10 +328,9 @@ class AlphaBetaDecomposition(BaseModel):
         return self.alpha_component_usd / self.total_realized_pnl_usd
 
 
-class ThesisQualityAggregate(BaseModel):
+@dataclass(frozen=True, slots=True)
+class ThesisQualityAggregate:
     """Outer record consumed via raw state category 6."""
-
-    model_config = ConfigDict(frozen=True)
 
     as_of_timestamp: datetime
     resolution_counts_by_window: tuple[ResolutionWindowCounts, ...]
@@ -325,16 +343,14 @@ class ThesisQualityAggregate(BaseModel):
     performance_attribution: tuple[PerformanceAttributionEntry, ...]
     alpha_beta_decomposition_by_window: tuple[AlphaBetaDecomposition, ...]
 
-    @field_validator("as_of_timestamp")
-    @classmethod
-    def _require_tz_aware(cls, v: datetime) -> datetime:
-        if v.tzinfo is None or v.utcoffset() is None:
+    def __post_init__(self) -> None:
+        if self.as_of_timestamp.tzinfo is None or self.as_of_timestamp.utcoffset() is None:
             msg = "as_of_timestamp must be timezone-aware UTC"
             raise ValueError(msg)
-        return v
+        self._validate_window_uniqueness()
+        self._validate_pair_uniqueness()
 
-    @model_validator(mode="after")
-    def _validate_window_uniqueness(self) -> ThesisQualityAggregate:
+    def _validate_window_uniqueness(self) -> None:
         window_tuples = [
             ("resolution_counts_by_window", [e.window for e in self.resolution_counts_by_window]),
             ("duration_stats_by_window", [e.window for e in self.duration_stats_by_window]),
@@ -355,10 +371,8 @@ class ThesisQualityAggregate(BaseModel):
             if len(windows) != len(set(windows)):
                 msg = f"{field_name} must not contain duplicate TrailingWindow values"
                 raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_pair_uniqueness(self) -> ThesisQualityAggregate:
+    def _validate_pair_uniqueness(self) -> None:
         shr_pairs = [(e.signal_type, e.window) for e in self.signal_hit_rates]
         if len(shr_pairs) != len(set(shr_pairs)):
             msg = "signal_hit_rates must not contain duplicate (signal_type, window) pairs"
@@ -386,8 +400,6 @@ class ThesisQualityAggregate(BaseModel):
                 "(dimension, key, window) triples"
             )
             raise ValueError(msg)
-
-        return self
 
     def counts_for(self, window: TrailingWindow) -> ResolutionWindowCounts | None:
         """Return the ResolutionWindowCounts for window, or None if not present."""

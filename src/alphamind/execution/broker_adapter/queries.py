@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import AsyncGenerator
+from decimal import Decimal
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -42,6 +43,8 @@ from alpaca.trading.requests import (
 )
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
+from alphamind._kernel.money import Money, Price, money, price, signed_money
+
 _ET = ZoneInfo("America/New_York")
 
 # Hoisted at module level — TypeAdapter construction is not free.
@@ -56,36 +59,48 @@ _PAGE_SIZE = 500
 
 
 class TradeAccountSnapshot(BaseModel):
-    """Subset of ``TradeAccount`` fields consumed by AlphaMind."""
+    """Subset of ``TradeAccount`` fields consumed by AlphaMind.
+
+    ALP-462 — monetary fields are :class:`Money` (Decimal-backed). The Alpaca
+    SDK returns these as strings; the wrapper parses them once at the
+    boundary via ``money(raw_str)`` so downstream consumers see Decimal
+    precision end-to-end.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     account_id: str
-    cash: float
-    equity: float
-    buying_power: float
-    regt_buying_power: float
-    daytrading_buying_power: float
-    maintenance_margin: float
+    cash: Money
+    equity: Money
+    buying_power: Money
+    regt_buying_power: Money
+    daytrading_buying_power: Money
+    maintenance_margin: Money
     daytrade_count: int
     pattern_day_trader: bool
     status: str
 
 
 class PositionSnapshot(BaseModel):
-    """Subset of Alpaca ``Position`` fields consumed by AlphaMind."""
+    """Subset of Alpaca ``Position`` fields consumed by AlphaMind.
+
+    ALP-462 — price/USD fields are Decimal-backed (:class:`Price` for
+    quoted prices, :class:`Money` for USD-denominated values).
+    ``unrealized_pl`` and ``cost_basis`` may legitimately carry a sign for
+    short positions / losses, so they thread through ``signed_money``.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     symbol: str
     asset_class: Literal["us_equity", "us_option", "crypto"]
     qty: float
-    avg_entry_price: float
-    market_value: float
-    cost_basis: float
-    unrealized_pl: float
+    avg_entry_price: Price
+    market_value: Money
+    cost_basis: Money
+    unrealized_pl: Money
     unrealized_plpc: float
-    current_price: float | None
+    current_price: Price | None
     side: Literal["long", "short"]
 
 
@@ -98,7 +113,7 @@ class OrderLegSnapshot(BaseModel):
     symbol: str
     qty: float
     filled_qty: float
-    filled_avg_price: float | None = None
+    filled_avg_price: Price | None = None
     side: str
     position_intent: str
     status: str
@@ -115,7 +130,7 @@ class OrderSnapshot(BaseModel):
     asset_class: str
     qty: float
     filled_qty: float
-    filled_avg_price: float | None = None
+    filled_avg_price: Price | None = None
     side: str
     order_type: str
     time_in_force: str
@@ -131,7 +146,11 @@ class OrderSnapshot(BaseModel):
 
 
 class ActivitySnapshot(BaseModel):
-    """Common projection of ``TradeActivity`` / ``NonTradeActivity``."""
+    """Common projection of ``TradeActivity`` / ``NonTradeActivity``.
+
+    ALP-462 — ``price`` is :class:`Price`, ``net_amount`` is signed
+    :class:`Money` (dividends are credits, fees are debits).
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -140,8 +159,8 @@ class ActivitySnapshot(BaseModel):
     transaction_time: dt.datetime | None
     symbol: str | None
     qty: float | None
-    price: float | None
-    net_amount: float | None
+    price: Price | None
+    net_amount: Money | None
     side: str | None
     description: str | None
     raw: dict[str, Any]
@@ -201,7 +220,7 @@ class OptionContractSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     symbol: str
-    strike: float
+    strike: Price
     expiration: dt.date
     contract_type: Literal["call", "put"]
 
@@ -260,7 +279,7 @@ def _convert_order(order: Order) -> OrderSnapshot:
                 symbol=str(leg.symbol),
                 qty=float(leg.qty or 0),
                 filled_qty=float(leg.filled_qty or 0),
-                filled_avg_price=_optional_float(leg.filled_avg_price),
+                filled_avg_price=_optional_price(leg.filled_avg_price),
                 side=_enum_str(leg.side),
                 position_intent=_enum_str(leg.position_intent) if leg.position_intent else "",
                 status=_enum_str(leg.status),
@@ -276,7 +295,7 @@ def _convert_order(order: Order) -> OrderSnapshot:
         asset_class=_enum_str(order.asset_class),
         qty=float(order.qty or 0),
         filled_qty=float(order.filled_qty or 0),
-        filled_avg_price=_optional_float(order.filled_avg_price),
+        filled_avg_price=_optional_price(order.filled_avg_price),
         side=_enum_str(order.side),
         order_type=_enum_str(order_type),
         time_in_force=_enum_str(order.time_in_force),
@@ -292,11 +311,38 @@ def _convert_order(order: Order) -> OrderSnapshot:
     )
 
 
-def _optional_float(value: str | float | None) -> float | None:
-    """Coerce alpaca-py's ``str | float | None`` price field to ``float | None``."""
+def _broker_decimal(value: str | float | int) -> Decimal:
+    """Parse Alpaca's loosely-typed monetary scalars without binary drift.
+
+    The SDK exposes these as ``str | float`` depending on the endpoint. We
+    funnel both shapes through ``Decimal(str(value))`` so a float ``0.1``
+    on the wire becomes ``Decimal('0.1')`` rather than the binary-rounded
+    ``Decimal('0.1000000000000000055511151231257827021181583404541015625')``.
+    """
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
+def _optional_price(value: str | float | None) -> Price | None:
+    """Parse the alpaca-py ``str | float | None`` price scalar to ``Price | None``."""
     if value is None:
         return None
-    return float(value)
+    return price(_broker_decimal(value))
+
+
+def _optional_money(value: str | float | None) -> Money | None:
+    """Parse the alpaca-py ``str | float | None`` money scalar to ``Money | None``."""
+    if value is None:
+        return None
+    return money(_broker_decimal(value))
+
+
+def _optional_signed_money(value: str | float | None) -> Money | None:
+    """Parse a signed money scalar (e.g., realized P/L, dividend ``net_amount``)."""
+    if value is None:
+        return None
+    return signed_money(_broker_decimal(value))
 
 
 def _convert_activity(activity: TradeActivity | NonTradeActivity) -> ActivitySnapshot:
@@ -319,8 +365,8 @@ def _convert_activity(activity: TradeActivity | NonTradeActivity) -> ActivitySna
         transaction_time=transaction_time,
         symbol=getattr(activity, "symbol", None),
         qty=float(qty_raw) if qty_raw is not None else None,
-        price=float(price_raw) if price_raw is not None else None,
-        net_amount=float(net_amount_raw) if net_amount_raw is not None else None,
+        price=_optional_price(price_raw),
+        net_amount=_optional_signed_money(net_amount_raw),
         side=_enum_str(side_raw) if side_raw is not None else None,
         description=getattr(activity, "description", None),
         raw=raw,
@@ -355,19 +401,23 @@ class AccountStateQueries:
         self._client = client
 
     def get_account(self) -> TradeAccountSnapshot:
-        """Return a frozen ``TradeAccountSnapshot`` from ``GET /v2/account``."""
+        """Return a frozen ``TradeAccountSnapshot`` from ``GET /v2/account``.
+
+        Alpaca returns monetary fields as strings; ``money(...)`` parses them
+        at the boundary so downstream consumers see ``Decimal`` precision.
+        """
         result = self._client.get_account()
         if not isinstance(result, TradeAccount):
             msg = "get_account returned unexpected raw-data response"
             raise TypeError(msg)
         return TradeAccountSnapshot(
             account_id=str(result.id),
-            cash=float(result.cash or 0),
-            equity=float(result.equity or 0),
-            buying_power=float(result.buying_power or 0),
-            regt_buying_power=float(result.regt_buying_power or 0),
-            daytrading_buying_power=float(result.daytrading_buying_power or 0),
-            maintenance_margin=float(result.maintenance_margin or 0),
+            cash=money(_broker_decimal(result.cash or "0")),
+            equity=money(_broker_decimal(result.equity or "0")),
+            buying_power=money(_broker_decimal(result.buying_power or "0")),
+            regt_buying_power=money(_broker_decimal(result.regt_buying_power or "0")),
+            daytrading_buying_power=money(_broker_decimal(result.daytrading_buying_power or "0")),
+            maintenance_margin=money(_broker_decimal(result.maintenance_margin or "0")),
             daytrade_count=int(result.daytrade_count or 0),
             pattern_day_trader=bool(result.pattern_day_trader),
             status=_enum_str(result.status),
@@ -386,14 +436,12 @@ class AccountStateQueries:
                     symbol=str(pos.symbol),
                     asset_class=_enum_str(pos.asset_class),  # type: ignore[arg-type]
                     qty=float(pos.qty or 0),
-                    avg_entry_price=float(pos.avg_entry_price or 0),
-                    market_value=float(pos.market_value or 0),
-                    cost_basis=float(pos.cost_basis or 0),
-                    unrealized_pl=float(pos.unrealized_pl or 0),
+                    avg_entry_price=price(_broker_decimal(pos.avg_entry_price or "1")),
+                    market_value=signed_money(_broker_decimal(pos.market_value or "0")),
+                    cost_basis=signed_money(_broker_decimal(pos.cost_basis or "0")),
+                    unrealized_pl=signed_money(_broker_decimal(pos.unrealized_pl or "0")),
                     unrealized_plpc=float(pos.unrealized_plpc or 0),
-                    current_price=(
-                        float(pos.current_price) if pos.current_price is not None else None
-                    ),
+                    current_price=_optional_price(pos.current_price),
                     side=_enum_str(pos.side),  # type: ignore[arg-type]
                 )
                 for pos in positions
@@ -598,7 +646,7 @@ class AccountStateQueries:
             (
                 OptionContractSnapshot(
                     symbol=str(c.symbol),
-                    strike=float(c.strike_price),
+                    strike=price(_broker_decimal(c.strike_price)),
                     expiration=c.expiration_date,
                     contract_type=_enum_str(c.type),  # type: ignore[arg-type]
                 )

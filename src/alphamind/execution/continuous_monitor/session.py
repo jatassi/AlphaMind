@@ -16,22 +16,25 @@ the same second cannot collide.
 from __future__ import annotations
 
 import secrets
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
-
-from pydantic import BaseModel, ConfigDict
+from typing import Literal, get_args
 
 MonitorMode = Literal["paper", "live"]
 
 
-class MonitorSession(BaseModel):
+@dataclass(frozen=True, slots=True)
+class MonitorSession:
     """Per-process handle threaded through the supervisor and its tasks."""
-
-    model_config = ConfigDict(frozen=True, strict=True)
 
     session_id: str
     started_at: datetime
     mode: MonitorMode
+
+    def __post_init__(self) -> None:
+        if self.mode not in get_args(MonitorMode):
+            msg = f"mode must be one of {get_args(MonitorMode)}, got {self.mode!r}"
+            raise ValueError(msg)
 
 
 def new_session(*, mode: MonitorMode) -> MonitorSession:

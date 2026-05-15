@@ -12,13 +12,14 @@ rather than raising — aggregate quality reflects the worst-case across rows.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.clock import Clock, RealClock
 from alphamind.analysis.tools._envelope import ToolEnvelope, ToolQuality, format_iso, parse_iso
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -202,9 +203,9 @@ def _build_ticker_entry(
 
 
 def _query_earnings_calendar(
-    session: Session, inp: EarningsCalendarInput
+    session: Session, inp: EarningsCalendarInput, clock: Clock
 ) -> EarningsCalendarOutput:
-    now = datetime.now(UTC)
+    now = clock.now()
 
     if not inp.tickers:
         return EarningsCalendarOutput(
@@ -235,10 +236,17 @@ def _query_earnings_calendar(
 
 def earnings_calendar_factory(
     session: Session,
+    *,
+    clock: Clock | None = None,
 ) -> Callable[[EarningsCalendarInput], EarningsCalendarOutput]:
-    """Return a callable suitable for the Claude Agent SDK tool registry."""
+    """Return a callable suitable for the Claude Agent SDK tool registry.
+
+    ``clock`` defaults to :class:`RealClock`; tests pass a fake to control
+    the timestamp deterministically (ALP-474).
+    """
+    resolved_clock: Clock = clock if clock is not None else RealClock()
 
     def _call(inp: EarningsCalendarInput) -> EarningsCalendarOutput:
-        return _query_earnings_calendar(session, inp)
+        return _query_earnings_calendar(session, inp, resolved_clock)
 
     return _call

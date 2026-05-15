@@ -13,6 +13,7 @@ shared post-conditions every cash-dividend handler must satisfy:
   ``BRACKET_CANCELLED_CORPORATE_ACTION`` entry are emitted.
 * The bracket is dissolved and a CA-integration-ledger row is written.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -24,50 +25,15 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-    InvocationHandle,
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
 )
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.tables.brackets import BracketRow
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger import (
-    CASH_LEDGER_SINGLETON_ID,
-    CashLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.corporate_action_integration_ledger import (
-    CorporateActionIntegrationLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.orders_codec import (
-    record_to_row as order_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    CorporateActionLedgerStatus,
-)
+from alphamind._kernel.regime import RiskZone
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -115,7 +81,50 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+    InvocationHandle,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.records import (
+    CorporateActionLedgerStatus,
+)
+from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger import (
+    CASH_LEDGER_SINGLETON_ID,
+    CashLedgerRow,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.corporate_action_integration_ledger import (
+    CorporateActionIntegrationLedgerRow,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
+)
+from alphamind.state.tables.orders_codec import (
+    record_to_row as order_record_to_row,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
+)
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
+)
 
 _NOW = datetime(2026, 5, 9, 13, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-cash-div-2026-05-09T13:00:00Z"
@@ -135,7 +144,7 @@ async def db(
     """Yield (async_engine, session_factory) over a fresh on-disk SQLite DB."""
     db_path = tmp_path / "alphamind_cash_div.db"
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401 — side-effect import
+    import alphamind.state.tables  # noqa: F401 — side-effect import
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -209,7 +218,7 @@ def _make_open_position(
 ) -> PositionRecord:
     if direction == Direction.SHORT:
         details = EquityPositionDetails(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             share_count=share_count,
             average_cost_basis_per_share=average_cost_basis_per_share,
             borrow_rate_pct=0.025,
@@ -218,7 +227,7 @@ def _make_open_position(
         )
     else:
         details = EquityPositionDetails(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             share_count=share_count,
             average_cost_basis_per_share=average_cost_basis_per_share,
         )
@@ -231,21 +240,19 @@ def _make_open_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": direction,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=direction,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -253,32 +260,30 @@ def _make_pending_entry_order(
     order_id: str = "ord-entry-1",
     bracket_id: str = "brk-1",
 ) -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": "pos-1",
-            "bracket_id": bracket_id,
-            "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker="AAPL"),
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": 100.0,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 100.0,
-            "modification_count": 0,
-            "originating_thesis_id": "thesis-1",
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=PositionId("pos-1"),
+        bracket_id=bracket_id,
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=100.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=100.0,
+        modification_count=0,
+        originating_thesis_id=ThesisId("thesis-1"),
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -286,16 +291,16 @@ def _make_active_bracket(bracket_id: str = "brk-1", position_id: str = "pos-1") 
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=40.0, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(underlying_ticker=Symbol("AAPL"), threshold_usd=40.0, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-entry-1",
+        entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -307,7 +312,7 @@ def _make_active_thesis(thesis_id: str = "thesis-1", position_id: str = "pos-1")
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -326,8 +331,8 @@ def _make_active_thesis(thesis_id: str = "thesis-1", position_id: str = "pos-1")
     )
     generation_at = _NOW - timedelta(hours=4)
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="AAPL momentum",
         key_catalyst="Q3 earnings beat",
         position_size_rationale="Sized at 5%",
@@ -345,36 +350,32 @@ def _make_active_thesis(thesis_id: str = "thesis-1", position_id: str = "pos-1")
 
 
 def _make_cash_ledger(current_cash_usd: float = _INITIAL_CASH) -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": current_cash_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=current_cash_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _make_drawdown_state() -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": _INITIAL_CASH,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=_INITIAL_CASH,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -398,7 +399,7 @@ async def _seed_position_cluster(
     thesis: ThesisRecord,
     bracket: BracketRecord,
 ) -> None:
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     thesis_row, component_rows = thesis_record_to_rows(thesis)
     bracket_row, leg_rows = bracket_record_to_rows(bracket)
@@ -483,10 +484,10 @@ async def test_cash_dividend_long_credits_cash_ledger(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-long-1",
         action_type=CorporateActionType.CASH_DIVIDEND_LONG,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.50,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=50.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -510,10 +511,10 @@ async def test_cash_dividend_long_emits_cash_credited_entry(
     """The long handler emits exactly one CASH_CREDITED entry with reason=CASH_DIVIDEND_LONG."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
     from alphamind.execution.corporate_actions.types import CorporateActionActivity
-    from alphamind.execution.state_persistence.invocation_context.activity_log import (
+    from alphamind.portfolio_state.events.activity_log import CashCreditedDetail
+    from alphamind.state.invocation_context.activity_log import (
         activity_log_entry_from_row,
     )
-    from alphamind.portfolio_state.events.activity_log import CashCreditedDetail
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -531,10 +532,10 @@ async def test_cash_dividend_long_emits_cash_credited_entry(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-long-2",
         action_type=CorporateActionType.CASH_DIVIDEND_LONG,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.25,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=25.0,
         transaction_time=txn_time,
     )
@@ -596,10 +597,10 @@ async def test_cash_dividend_long_leaves_quantity_and_basis_unchanged(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-long-3",
         action_type=CorporateActionType.CASH_DIVIDEND_LONG,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.10,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=10.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -642,10 +643,10 @@ async def test_cash_dividend_long_cancels_bracket_and_writes_ledger_row(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-long-4",
         action_type=CorporateActionType.CASH_DIVIDEND_LONG,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.10,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=10.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -712,10 +713,10 @@ async def test_cash_dividend_long_raises_when_position_missing(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-long-missing",
         action_type=CorporateActionType.CASH_DIVIDEND_LONG,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.10,
-        position_id="pos-does-not-exist",
+        position_id=PositionId("pos-does-not-exist"),
         signed_cash_impact_usd=10.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -753,10 +754,10 @@ async def test_cash_dividend_short_debits_cash_ledger(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-short-1",
         action_type=CorporateActionType.CASH_DIVIDEND_SHORT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.50,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=-50.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -780,10 +781,10 @@ async def test_cash_dividend_short_emits_cash_debited_entry(
     """One CASH_DEBITED entry is emitted with reason=CASH_DIVIDEND_SHORT_OBLIGATION."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
     from alphamind.execution.corporate_actions.types import CorporateActionActivity
-    from alphamind.execution.state_persistence.invocation_context.activity_log import (
+    from alphamind.portfolio_state.events.activity_log import CashDebitedDetail
+    from alphamind.state.invocation_context.activity_log import (
         activity_log_entry_from_row,
     )
-    from alphamind.portfolio_state.events.activity_log import CashDebitedDetail
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -801,10 +802,10 @@ async def test_cash_dividend_short_emits_cash_debited_entry(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-short-2",
         action_type=CorporateActionType.CASH_DIVIDEND_SHORT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.30,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=-30.0,
         transaction_time=txn_time,
     )
@@ -864,10 +865,10 @@ async def test_cash_dividend_short_leaves_quantity_and_basis_unchanged(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-short-3",
         action_type=CorporateActionType.CASH_DIVIDEND_SHORT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.10,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=-10.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -910,10 +911,10 @@ async def test_cash_dividend_short_cancels_bracket_and_writes_ledger_row(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-short-4",
         action_type=CorporateActionType.CASH_DIVIDEND_SHORT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.10,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=-10.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -994,10 +995,10 @@ async def test_zero_amount_cash_dividend_does_not_emit_cash_entry(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-zero",
         action_type=CorporateActionType.CASH_DIVIDEND_LONG,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )

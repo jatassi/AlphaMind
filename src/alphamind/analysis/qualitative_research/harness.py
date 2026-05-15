@@ -6,9 +6,11 @@ executes a single corrective retry on parse-or-validation failure, and
 re-classifies failures paired with ``stop_reason: max_tokens`` as
 :class:`ContextOverflowFailure`.
 
-Structurally mirrors :mod:`alphamind.analysis.domain_researchers.harness`;
-the differences are confined to: parser/validator imports, retry-message
-text, the tools-allowlist plumbing, and ``tool_calls_used`` accounting.
+The shared SDK driver loop, exception hierarchy, prompt cache, diagnostic
+writer, and retry-message builder live in
+:mod:`alphamind.analysis._harness_core`. Only the parser/validator wiring,
+tool-allowlist plumbing, and qualitative-researcher-specific options
+builder live here.
 
 Architecture note: ``invoke_qualitative_researcher`` accepts ``sdk_query_fn``
 for dependency injection.  In production the default (the real
@@ -18,18 +20,28 @@ the Anthropic API.
 
 from __future__ import annotations
 
-# ruff: noqa: N818  # Exception class names are spec-mandated (ALP-249 story scope)
-import asyncio
-import json
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from alphamind.analysis._harness_core import (
+    _PROMPT_CACHE,
+    ContextOverflowFailure,
+    DiagState,
+    HarnessFailure,
+    MalformedOutputFailure,
+    SDKFailure,
+    TimeoutFailure,
+    _add_tokens,
+    _build_retry_message,
+    _load_prompt,
+    _render_raw_response,
+    invoke_sdk,
+)
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.qualitative_research.models import QualitativeBrief
 from alphamind.analysis.qualitative_research.parser import ParseError, parse_qualitative_brief
@@ -40,7 +52,6 @@ from alphamind.analysis.qualitative_research.validation import (
 from alphamind.analysis.tools import TOOLS
 from alphamind.analysis.tools._sdk_adapter import build_analysis_mcp_server
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
-from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 
 __all__ = [
     "ContextOverflowFailure",
@@ -52,28 +63,8 @@ __all__ = [
     "invoke_qualitative_researcher",
 ]
 
-# ---------------------------------------------------------------------------
-# Per-process system-prompt cache
-# ---------------------------------------------------------------------------
-
-# Maps prompt file path → loaded prompt text.  No invalidation needed:
-# the pipeline process restarts on agents.yaml edits per the deploy-time
-# vs. invocation-time classification in configuration-management.md.
-# The lock gates the read-then-write so concurrent orchestrator coroutines
-# can't redundantly re-read the same file.
-_PROMPT_CACHE: dict[str, str] = {}
-_PROMPT_CACHE_LOCK = asyncio.Lock()
-
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-
-
-async def _load_prompt(prompt_path: str) -> str:
-    """Load system prompt from *prompt_path*, caching per process."""
-    async with _PROMPT_CACHE_LOCK:
-        if prompt_path not in _PROMPT_CACHE:
-            _PROMPT_CACHE[prompt_path] = (_REPO_ROOT / prompt_path).read_text(encoding="utf-8")
-        return _PROMPT_CACHE[prompt_path]
-
+# Re-export internals tests reach for via the module attribute.
+__all__ += ["_PROMPT_CACHE", "_load_prompt"]
 
 # ---------------------------------------------------------------------------
 # Multi-turn budget
@@ -94,117 +85,12 @@ _TOOL_NAME_PREFIX = "mcp__alphamind_qualitative__"
 
 
 # ---------------------------------------------------------------------------
-# Exception hierarchy
-# ---------------------------------------------------------------------------
-
-
-class HarnessFailure(Exception):
-    """Base class for all harness-level failures.
-
-    Every subclass carries *agent_name* and *invocation_id* so the caller
-    (story 06's runner) has full context for the failure log.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        agent_name: str,
-        invocation_id: str,
-    ) -> None:
-        super().__init__(message)
-        self.agent_name = agent_name
-        self.invocation_id = invocation_id
-
-
-class MalformedOutputFailure(HarnessFailure):
-    """Exhausted retries on parse / Layer-2 / Layer-3 failure.
-
-    Carries the raw response text from both attempts when a retry occurred,
-    plus the underlying error trail.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        agent_name: str,
-        invocation_id: str,
-        raw_response_initial: str | None = None,
-        raw_response_retry: str | None = None,
-        cause: Exception | None = None,
-    ) -> None:
-        super().__init__(message, agent_name=agent_name, invocation_id=invocation_id)
-        self.raw_response_initial = raw_response_initial
-        self.raw_response_retry = raw_response_retry
-        self.cause = cause
-
-
-class ContextOverflowFailure(HarnessFailure):
-    """stop_reason: max_tokens paired with any structural failure.
-
-    The pipeline aborts immediately — no corrective retry is attempted.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        agent_name: str,
-        invocation_id: str,
-        raw_response: str | None = None,
-    ) -> None:
-        super().__init__(message, agent_name=agent_name, invocation_id=invocation_id)
-        self.raw_response = raw_response
-
-
-class SDKFailure(HarnessFailure):
-    """Non-recoverable SDK error (auth, model API error, network post-retry,
-    or tool-allowlist drift)."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        agent_name: str,
-        invocation_id: str,
-        cause: Exception | None = None,
-    ) -> None:
-        super().__init__(message, agent_name=agent_name, invocation_id=invocation_id)
-        self.cause = cause
-
-
-class TimeoutFailure(HarnessFailure):
-    """Invocation exceeded the per-call timeout (agent_config.latency_budget_seconds)."""
-
-
-class _CLIResultError(Exception):
-    """Internal signal: ResultMessage carried is_error=True.
-
-    Raised from inside ``_collect_response`` so the caller (``_invoke``)
-    can convert into the appropriate ``HarnessFailure`` subclass with full
-    agent-name / invocation-id context. Not part of the public API.
-    """
-
-    def __init__(
-        self,
-        *,
-        error_text: str,
-        partial_response: str,
-        stop_reason: str | None,
-    ) -> None:
-        super().__init__(error_text)
-        self.error_text = error_text
-        self.partial_response = partial_response
-        self.stop_reason = stop_reason
-
-
-# ---------------------------------------------------------------------------
 # HarnessSuccess
 # ---------------------------------------------------------------------------
 
 
-class HarnessSuccess(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class HarnessSuccess:
     """Successful invocation result returned to the qualitative-researcher runner."""
 
     brief: QualitativeBrief
@@ -216,113 +102,7 @@ class HarnessSuccess(BaseModel, frozen=True):
 
 
 # ---------------------------------------------------------------------------
-# SDK response accumulation helpers
-# ---------------------------------------------------------------------------
-
-
-def _tokens_from_usage(usage: dict[str, Any], previous: TokensUsed) -> TokensUsed:
-    """Merge an SDK ``usage`` dict into *previous*, preserving fields the SDK omits."""
-    return TokensUsed(
-        input_tokens=usage.get("input_tokens", previous.input_tokens),
-        output_tokens=usage.get("output_tokens", previous.output_tokens),
-        cache_read_tokens=usage.get("cache_read_input_tokens", previous.cache_read_tokens),
-        cache_write_tokens=usage.get("cache_creation_input_tokens", previous.cache_write_tokens),
-    )
-
-
-def _add_tokens(a: TokensUsed, b: TokensUsed) -> TokensUsed:
-    """Sum two :class:`TokensUsed` instances field-wise."""
-    return TokensUsed(
-        input_tokens=a.input_tokens + b.input_tokens,
-        output_tokens=a.output_tokens + b.output_tokens,
-        cache_read_tokens=a.cache_read_tokens + b.cache_read_tokens,
-        cache_write_tokens=a.cache_write_tokens + b.cache_write_tokens,
-    )
-
-
-def _absorb_metadata(
-    message: Any,
-    *,
-    stop_reason: str | None,
-    tokens: TokensUsed,
-) -> tuple[str | None, TokensUsed]:
-    """Update accumulator state from any message that carries metadata — pure transformation."""
-    if message.stop_reason:
-        stop_reason = message.stop_reason
-    if message.usage:
-        tokens = _tokens_from_usage(message.usage, tokens)
-    return stop_reason, tokens
-
-
-async def _collect_response(
-    sdk_query_fn: Callable[..., AsyncIterator[Any]],
-    *,
-    prompt: str,
-    options: Any,
-) -> tuple[dict[str, Any] | None, str, str | None, TokensUsed, int]:
-    """Drive the SDK generator to completion.
-
-    Returns ``(structured_output, response_text, stop_reason, tokens_used,
-    tool_calls)``.
-
-    ``structured_output`` is the dict the API delivers on ``ResultMessage``
-    when ``output_format`` is set; ``None`` when the SDK did not populate it
-    (the harness's parse path treats ``None`` as a parse failure). The
-    concatenated ``response_text`` is preserved alongside for diagnostic-
-    record forensics — JSON-mode runs typically have empty text but Sonnet
-    occasionally narrates between tool calls.
-
-    ``tool_calls`` counts only ``ToolUseBlock``s whose ``name`` starts with
-    :data:`_TOOL_NAME_PREFIX`; the SDK's JSON-Schema output mode injects
-    ``ToolSearch`` and ``StructuredOutput`` pseudo-events that would
-    otherwise inflate the count.
-    """
-    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
-
-    text_parts: list[str] = []
-    structured_output: dict[str, Any] | None = None
-    stop_reason: str | None = None
-    tokens = TokensUsed(input_tokens=0, output_tokens=0, cache_read_tokens=0, cache_write_tokens=0)
-    tool_calls = 0
-
-    query_iter = sdk_query_fn(prompt=prompt, options=options)
-    try:
-        async for message in query_iter:
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        text_parts.append(block.text)
-                    elif isinstance(block, ToolUseBlock) and block.name.startswith(
-                        _TOOL_NAME_PREFIX
-                    ):
-                        tool_calls += 1
-                stop_reason, tokens = _absorb_metadata(
-                    message, stop_reason=stop_reason, tokens=tokens
-                )
-            elif isinstance(message, ResultMessage):
-                stop_reason, tokens = _absorb_metadata(
-                    message, stop_reason=stop_reason, tokens=tokens
-                )
-                raw_so = getattr(message, "structured_output", None)
-                if isinstance(raw_so, dict):
-                    structured_output = raw_so
-                if message.is_error:
-                    raise _CLIResultError(
-                        error_text=message.result or "(no result text)",
-                        partial_response="".join(text_parts),
-                        stop_reason=stop_reason,
-                    )
-                break
-    finally:
-        # Close from this task; GC-time aclose() races the SDK reader
-        # and prints "asynchronous generator is already running" to stderr.
-        await cast(AsyncGenerator[Any], query_iter).aclose()
-
-    return structured_output, "".join(text_parts), stop_reason, tokens, tool_calls
-
-
-# ---------------------------------------------------------------------------
-# Corrective-retry message construction
+# Corrective-retry messages
 # ---------------------------------------------------------------------------
 
 _SECTION_DIRECTIVE = (
@@ -338,25 +118,16 @@ _CONTRACT_REF = (
 )
 
 
-def _build_retry_message(framing: str, error_detail: str) -> str:
-    """Construct a corrective-retry message.
-
-    Per llm-output-validation.md § Corrective-retry message construction:
-    - Explicit framing line naming which contract failed
-    - First error only (caller extracts it)
-    - Contract reference
-    - Directive with exact section headers
-    - Does NOT contain: full error list, analytical guidance, raw input data
-    """
-    return "\n\n".join([framing, error_detail, _CONTRACT_REF, _SECTION_DIRECTIVE])
-
-
 def _build_retry_message_for_parse_error(error: ParseError) -> str:
     framing = (
         "The prior response did not meet the parse contract for the qualitative researcher output."
     )
-    error_detail = f"Field: {error.field_path}\nError: {error.message}"
-    return _build_retry_message(framing, error_detail)
+    return _build_retry_message(
+        framing=framing,
+        error_detail=f"Field: {error.field_path}\nError: {error.message}",
+        contract_ref=_CONTRACT_REF,
+        directive=_SECTION_DIRECTIVE,
+    )
 
 
 def _build_retry_message_for_validation_failure(result: ValidationResult) -> str:
@@ -365,74 +136,16 @@ def _build_retry_message_for_validation_failure(result: ValidationResult) -> str
         "the qualitative researcher output."
     )
     first_error = result.errors[0]
-    error_detail = (
-        f"Field: {first_error.field_path}\nRule: {first_error.rule}\nError: {first_error.message}"
+    return _build_retry_message(
+        framing=framing,
+        error_detail=(
+            f"Field: {first_error.field_path}\n"
+            f"Rule: {first_error.rule}\n"
+            f"Error: {first_error.message}"
+        ),
+        contract_ref=_CONTRACT_REF,
+        directive=_SECTION_DIRECTIVE,
     )
-    return _build_retry_message(framing, error_detail)
-
-
-# ---------------------------------------------------------------------------
-# Diagnostic state
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class _DiagState:
-    """Mutable diagnostic state accumulated during an invocation."""
-
-    agent_name: str
-    invocation_id: str
-    prompt_text: str
-    user_message: str
-    model: str
-    archive_root: Path | None
-
-    response_initial: str = ""
-    response_retry: str | None = None
-    errors: list[dict[str, Any]] = field(default_factory=list)
-    tokens_used: TokensUsed = field(
-        default_factory=lambda: TokensUsed(
-            input_tokens=0, output_tokens=0, cache_read_tokens=0, cache_write_tokens=0
-        )
-    )
-    retry_count: int = 0
-    tool_calls_used: int = 0
-
-    def write(
-        self,
-        *,
-        success: bool,
-        wall_clock_seconds: float,
-        stop_reason: str | None,
-    ) -> None:
-        """Flush the diagnostic record to disk, if archive_root is set."""
-        if self.archive_root is None:
-            return
-        diag_dir = (
-            self.archive_root
-            / INVOCATIONS_DIRNAME
-            / self.invocation_id
-            / "analysis"
-            / self.agent_name
-        )
-        diag_dir.mkdir(parents=True, exist_ok=True)
-
-        (diag_dir / "prompt.md").write_text(self.prompt_text, encoding="utf-8")
-        (diag_dir / "user_message.md").write_text(self.user_message, encoding="utf-8")
-        (diag_dir / "response_initial.md").write_text(self.response_initial, encoding="utf-8")
-        if self.response_retry is not None:
-            (diag_dir / "response_retry.md").write_text(self.response_retry, encoding="utf-8")
-        (diag_dir / "errors.json").write_text(json.dumps(self.errors, indent=2), encoding="utf-8")
-        metadata: dict[str, Any] = {
-            "model": self.model,
-            "retry_count": self.retry_count,
-            "tokens_used": self.tokens_used.model_dump(),
-            "tool_calls_used": self.tool_calls_used,
-            "wall_clock_seconds": wall_clock_seconds,
-            "stop_reason": stop_reason,
-            "success": success,
-        }
-        (diag_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -447,19 +160,14 @@ def _parse_and_validate(
     universe: frozenset[str],
     stop_reason: str | None,
     attempt: int,
-    diag: _DiagState,
+    diag: DiagState,
 ) -> tuple[QualitativeBrief | None, str | None]:
-    """Parse the structured *payload* and validate the result.
+    """Parse and validate. Returns ``(brief, retry_message)``.
 
-    Returns ``(brief, retry_message)``.  When the brief is ``None``, a
-    corrective-retry message is returned.  Raises
-    :class:`ContextOverflowFailure` immediately when the failure is paired
-    with ``stop_reason == 'max_tokens'``.
-
-    *response_text* is the concatenated text-block content from the same
-    SDK call, carried forward only for the ContextOverflowFailure raw_response
-    field — JSON-mode runs may have empty text but the diagnostic must still
-    carry whatever the model said.
+    ``brief=None`` means the response failed parse/validation and a
+    corrective retry message is returned. Raises
+    :class:`ContextOverflowFailure` immediately when paired with
+    ``stop_reason == 'max_tokens'``.
     """
     try:
         brief = parse_qualitative_brief(payload, invocation_id=invocation_id)
@@ -505,23 +213,6 @@ def _parse_and_validate(
     return brief, None
 
 
-def _render_raw_response(payload: dict[str, Any] | None, response_text: str) -> str:
-    """Format the SDK response for HarnessSuccess.raw_response and the diagnostic.
-
-    The structured-output dict is the load-bearing artifact; any text the
-    agent emitted alongside (rare in JSON mode but seen under provocation)
-    is preserved as a leading section so forensic review is not lossy.
-    """
-    parts: list[str] = []
-    if response_text:
-        parts.append(response_text)
-    if payload is not None:
-        parts.append(json.dumps(payload, indent=2, sort_keys=True))
-    else:
-        parts.append("(structured_output not populated)")
-    return "\n\n".join(parts)
-
-
 # ---------------------------------------------------------------------------
 # Tool-allowlist plumbing
 # ---------------------------------------------------------------------------
@@ -534,20 +225,13 @@ def _resolve_tools(
     agent_name: str,
     invocation_id: str,
 ) -> tuple[list[str], dict[str, Any]]:
-    """Resolve agent_config.tools against the registry and build the SDK MCP server.
+    """Resolve ``agent_config.tools`` against the registry and build the SDK MCP server.
 
-    Returns ``(allowed_tools, mcp_servers)`` ready for
-    :class:`ClaudeAgentOptions`.  ``allowed_tools`` carries the bundled
-    CLI's ``mcp__<server>__<tool>`` wire form so the permission filter
-    matches what the model emits.  ``mcp_servers`` is keyed by the
-    qualitative-research server name and registers each tool's handler
-    via the :mod:`alphamind.analysis.tools._sdk_adapter` decorator wrap.
-
-    Raises :class:`SDKFailure` immediately if any name in
-    ``agent_config.tools`` is not registered in
-    :data:`alphamind.analysis.tools.TOOLS` — fail loudly rather than
-    silently dropping tool privileges.  An empty ``agent_config.tools``
-    yields ``([], {})``: no MCP server is registered.
+    Returns ``(allowed_tools, mcp_servers)``. ``allowed_tools`` carries the
+    bundled CLI's ``mcp__<server>__<tool>`` wire form. An empty
+    ``agent_config.tools`` yields ``([], {})``. Raises :class:`SDKFailure`
+    if any tool name is not registered in
+    :data:`alphamind.analysis.tools.TOOLS`.
     """
     missing = [name for name in agent_config.tools if name not in TOOLS]
     if missing:
@@ -576,24 +260,15 @@ def _build_sdk_options(
 ) -> Any:
     """Build :class:`ClaudeAgentOptions` for the qualitative-researcher invocation.
 
-    ``setting_sources=[]`` keeps the SDK from loading developer
-    ``.claude/settings.json`` (hooks/permissions); ``tools=[]`` disables all
-    built-in CLI tools (Bash/Read/Edit/etc.); ``strict-mcp-config`` tells the
-    CLI to ignore plugin-level MCP servers (e.g. Linear, GitHub registered
-    via user-scope plugins) and only use ``--mcp-config``. Together these
-    guarantee the agent runs system_prompt + user_message + the allowlisted
-    research-tool MCP server only.
+    Pins the autonomous-agent contract: ``setting_sources=[]`` blocks
+    developer ``.claude/settings.json``; ``tools=[]`` disables built-in CLI
+    tools; ``strict-mcp-config`` ignores plugin-level MCP servers; and only
+    the allowlisted research-tool MCP server is registered.
     ``CLAUDE_CODE_MAX_OUTPUT_TOKENS`` is the only path the CLI exposes for
-    an output-token cap. ``mcp_servers`` registers the in-process SDK MCP
-    server that backs the tool callables; without it the SDK CLI returns
-    "tool not found" when the model emits a tool_use block.
-    ``output_format`` flips the agent into JSON-Schema mode so the API
-    enforces the ``QualitativeBrief`` shape post-generation; the dict
-    surfaces on ``ResultMessage.structured_output``. The schema is the raw
-    Pydantic-generated form — the conditional-field tightener cannot apply
-    at the root model (Anthropic API rejects top-level ``oneOf``); the
+    an output-token cap. ``output_format`` flips the agent into JSON-Schema
+    mode so the API enforces the ``QualitativeBrief`` shape; the
     ``signal_quality_reason ↔ signal_quality`` invariant is enforced
-    post-parse by the model_validator + the harness's retry path.
+    post-parse (the Anthropic API rejects top-level ``oneOf``).
     """
     from claude_agent_sdk import ClaudeAgentOptions
 
@@ -608,63 +283,6 @@ def _build_sdk_options(
         extra_args={"strict-mcp-config": None},
         env={"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(agent_config.output_token_budget)},
         output_format={"type": "json_schema", "schema": QualitativeBrief.model_json_schema()},
-    )
-
-
-# ---------------------------------------------------------------------------
-# Corrective-retry execution helper
-# ---------------------------------------------------------------------------
-
-
-async def _run_retry_attempt(
-    *,
-    retry_message: str,
-    raw_response_initial: str,
-    tokens1: TokensUsed,
-    tool_calls1: int,
-    universe: frozenset[str],
-    diag: _DiagState,
-    wall_start: float,
-    invoke: Any,
-) -> HarnessSuccess:
-    """Execute Attempt 2 and return :class:`HarnessSuccess` or raise.
-
-    Extracted to keep ``invoke_qualitative_researcher`` below the C901/PLR0915
-    thresholds.  All mutable state is passed explicitly.
-    """
-    diag.retry_count = 1
-
-    payload2, text2, stop_reason2, tokens2, tool_calls2 = await invoke(retry_message)
-    raw_response_retry = _render_raw_response(payload2, text2)
-    diag.response_retry = raw_response_retry
-    diag.tokens_used = _add_tokens(tokens1, tokens2)
-    diag.tool_calls_used = tool_calls1 + tool_calls2
-
-    brief2, _ = _parse_and_validate(
-        payload2, text2, diag.invocation_id, universe, stop_reason2, attempt=2, diag=diag
-    )
-
-    wall_elapsed = time.monotonic() - wall_start
-
-    if brief2 is None:
-        diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
-        raise MalformedOutputFailure(
-            "Parse or validation failed on both initial and retry attempts. "
-            f"First retry error: {diag.errors[-1].get('message', '')}",
-            agent_name=diag.agent_name,
-            invocation_id=diag.invocation_id,
-            raw_response_initial=raw_response_initial,
-            raw_response_retry=raw_response_retry,
-        )
-
-    diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
-    return HarnessSuccess(
-        brief=brief2,
-        raw_response=raw_response_retry,
-        retry_count=1,
-        tokens_used=diag.tokens_used,
-        tool_calls_used=diag.tool_calls_used,
-        wall_clock_seconds=wall_elapsed,
     )
 
 
@@ -685,41 +303,13 @@ async def invoke_qualitative_researcher(
 ) -> HarnessSuccess:
     """Invoke the qualitative-researcher agent and return a validated :class:`HarnessSuccess`.
 
-    Parameters
-    ----------
-    agent_config:
-        Per-agent LLM configuration from agents.yaml (model, prompt path,
-        tool allowlist, latency budget, output token budget).
-    user_message:
-        The pre-assembled input bundle passed as the user turn.
-    invocation_id:
-        Stable identifier for this pipeline invocation; used to locate
-        the diagnostic archive directory and to populate the parsed brief.
-    session:
-        SQLAlchemy session passed to each tool's ``callable_factory``.
-    universe:
-        Asset-universe ticker set used by the validator's catalyst-watch
-        ticker check.
-    archive_root:
-        Root path for the invocation archive.  Pass ``None`` to skip
-        diagnostic writes (e.g. in testing contexts that don't need them).
-    sdk_query_fn:
-        Callable matching the signature of ``claude_agent_sdk.query``.
-        Defaults to the real SDK function.  Inject a stub in tests.
-
-    Raises
-    ------
-    MalformedOutputFailure
-        Parse or validation failure after exhausting the one allowed retry.
-    ContextOverflowFailure
-        Any structural failure paired with ``stop_reason: max_tokens``.
-    SDKFailure
-        Authentication, non-recoverable SDK error, or tool-allowlist drift.
-    TimeoutFailure
-        Invocation exceeded ``agent_config.latency_budget_seconds``.
+    ``universe`` is the asset-universe ticker set used by the validator's
+    catalyst-watch check. ``archive_root=None`` skips diagnostic writes.
+    ``sdk_query_fn`` defaults to ``claude_agent_sdk.query``; tests inject a
+    stub. Raises ``MalformedOutputFailure`` (retry exhausted),
+    ``ContextOverflowFailure`` (``stop_reason=max_tokens``), ``SDKFailure``
+    (auth / non-recoverable / tool-allowlist drift), or ``TimeoutFailure``.
     """
-    from claude_agent_sdk import ClaudeSDKError, CLIConnectionError
-
     if sdk_query_fn is None:
         from claude_agent_sdk import query as _real_query
 
@@ -738,68 +328,40 @@ async def invoke_qualitative_researcher(
         mcp_servers=mcp_servers,
     )
 
-    diag = _DiagState(
+    diag = DiagState(
         agent_name=agent_name,
         invocation_id=invocation_id,
         prompt_text=prompt_text,
         user_message=user_message,
         model=str(agent_config.model),
         archive_root=archive_root,
+        record_tool_calls=True,
     )
     wall_start = time.monotonic()
-
-    def _flush_failure(stop_reason: str | None = None) -> None:
-        diag.write(
-            success=False,
-            wall_clock_seconds=time.monotonic() - wall_start,
-            stop_reason=stop_reason,
-        )
 
     async def _invoke(
         prompt: str,
     ) -> tuple[dict[str, Any] | None, str, str | None, TokensUsed, int]:
-        """Run one SDK call with the configured timeout.
-
-        Returns ``(structured_output, response_text, stop_reason, tokens,
-        tool_calls)``.
-        """
-        try:
-            return await asyncio.wait_for(
-                _collect_response(sdk_query_fn, prompt=prompt, options=options),
-                timeout=float(agent_config.latency_budget_seconds),
-            )
-        except TimeoutError as exc:
-            _flush_failure()
-            raise TimeoutFailure(
-                f"Invocation exceeded latency budget of {agent_config.latency_budget_seconds}s",
-                agent_name=agent_name,
-                invocation_id=invocation_id,
-            ) from exc
-        except _CLIResultError as exc:
-            _flush_failure(exc.stop_reason)
-            raise ContextOverflowFailure(
-                f"CLI returned is_error=True: {exc.error_text}",
-                agent_name=agent_name,
-                invocation_id=invocation_id,
-                raw_response=exc.partial_response,
-            ) from exc
-        except CLIConnectionError as exc:
-            _flush_failure()
-            raise SDKFailure(
-                f"Authentication or connection failure — ensure CLAUDE_CODE_OAUTH_TOKEN "
-                f"is set and valid. Underlying error: {exc}",
-                agent_name=agent_name,
-                invocation_id=invocation_id,
-                cause=exc,
-            ) from exc
-        except ClaudeSDKError as exc:
-            _flush_failure()
-            raise SDKFailure(
-                f"Non-recoverable SDK error: {exc}",
-                agent_name=agent_name,
-                invocation_id=invocation_id,
-                cause=exc,
-            ) from exc
+        outcome = await invoke_sdk(
+            sdk_query_fn=sdk_query_fn,
+            prompt=prompt,
+            options=options,
+            diag=diag,
+            budget_seconds=float(agent_config.latency_budget_seconds),
+            init_stall_timeout_seconds=None,
+            wall_start=wall_start,
+            agent_name=agent_name,
+            invocation_id=invocation_id,
+            on_cli_result_error="context_overflow",
+            tool_name_prefix=_TOOL_NAME_PREFIX,
+        )
+        return (
+            outcome.structured_output,
+            outcome.response_text,
+            outcome.stop_reason,
+            outcome.tokens_used,
+            outcome.tool_calls,
+        )
 
     # ------------------------------------------------------------------
     # Attempt 1: initial call
@@ -838,13 +400,37 @@ async def invoke_qualitative_researcher(
     # Attempt 2: corrective retry
     # ------------------------------------------------------------------
     assert retry_message is not None
-    return await _run_retry_attempt(
-        retry_message=retry_message,
-        raw_response_initial=raw_response_initial,
-        tokens1=tokens1,
-        tool_calls1=tool_calls1,
-        universe=universe,
-        diag=diag,
-        wall_start=wall_start,
-        invoke=_invoke,
+    diag.retry_count = 1
+
+    payload2, text2, stop_reason2, tokens2, tool_calls2 = await _invoke(retry_message)
+    raw_response_retry = _render_raw_response(payload2, text2)
+    diag.response_retry = raw_response_retry
+    diag.tokens_used = _add_tokens(tokens1, tokens2)
+    diag.tool_calls_used = tool_calls1 + tool_calls2
+
+    brief2, _ = _parse_and_validate(
+        payload2, text2, invocation_id, universe, stop_reason2, attempt=2, diag=diag
+    )
+
+    wall_elapsed = time.monotonic() - wall_start
+
+    if brief2 is None:
+        diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
+        raise MalformedOutputFailure(
+            "Parse or validation failed on both initial and retry attempts. "
+            f"First retry error: {diag.errors[-1].get('message', '')}",
+            agent_name=agent_name,
+            invocation_id=invocation_id,
+            raw_response_initial=raw_response_initial,
+            raw_response_retry=raw_response_retry,
+        )
+
+    diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
+    return HarnessSuccess(
+        brief=brief2,
+        raw_response=raw_response_retry,
+        retry_count=1,
+        tokens_used=diag.tokens_used,
+        tool_calls_used=diag.tool_calls_used,
+        wall_clock_seconds=wall_elapsed,
     )

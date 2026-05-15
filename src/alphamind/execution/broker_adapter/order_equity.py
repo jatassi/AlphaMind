@@ -32,6 +32,14 @@ from alpaca.trading.requests import (
     TakeProfitRequest,
 )
 
+from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId
+from alphamind.commands.command_models import (
+    AddCommand,
+    CloseCommand,
+    EquityInstrument,
+    OpenCommand,
+    PriceLeg,
+)
 from alphamind.config.models.execution import ExecutionConfig
 from alphamind.execution.broker_adapter.retry import (
     GatewaySubmissionFailed,
@@ -40,13 +48,6 @@ from alphamind.execution.broker_adapter.retry import (
     submit_with_retry,
 )
 from alphamind.execution.oms.command_ids import is_engine_originated, is_pm_originated
-from alphamind.execution.oms.command_models import (
-    AddCommand,
-    CloseCommand,
-    EquityInstrument,
-    OpenCommand,
-    PriceLeg,
-)
 
 
 def _require_equity_instrument(instrument: object, *, command_kind: str) -> EquityInstrument:
@@ -73,8 +74,8 @@ class EquitySubmission:
     order-record hydration (story 03e).
     """
 
-    alpaca_order_id: str
-    client_order_id: str
+    alpaca_order_id: AlpacaOrderId
+    client_order_id: ClientOrderId
     status: str  # Alpaca's reported status: accepted | new | pending_new | …
     order_class: str  # simple | bracket | oco | oto
 
@@ -119,8 +120,18 @@ async def submit_equity_open(
             symbol=ticker,
             qty=qty,
             side=side,
-            limit_price=command.entry_order.limit_price,
-            stop_price=command.entry_order.stop_price,
+            # ALP-462 — Price → float at the Alpaca SDK boundary; alpaca-py
+            # accepts floats and round-trips with string-typed response fields.
+            limit_price=(
+                float(command.entry_order.limit_price)
+                if command.entry_order.limit_price is not None
+                else None
+            ),
+            stop_price=(
+                float(command.entry_order.stop_price)
+                if command.entry_order.stop_price is not None
+                else None
+            ),
             order_class=order_class,
             take_profit=take_profit,
             stop_loss=stop_loss,
@@ -155,8 +166,17 @@ async def submit_equity_add(
             symbol=symbol,
             qty=command.additional_quantity,
             side=side,
-            limit_price=command.entry_order.limit_price,
-            stop_price=command.entry_order.stop_price,
+            # ALP-462 — Price → float at the Alpaca SDK boundary.
+            limit_price=(
+                float(command.entry_order.limit_price)
+                if command.entry_order.limit_price is not None
+                else None
+            ),
+            stop_price=(
+                float(command.entry_order.stop_price)
+                if command.entry_order.stop_price is not None
+                else None
+            ),
             order_class=OrderClass.SIMPLE,
             take_profit=None,
             stop_loss=None,
@@ -252,12 +272,17 @@ def _bracket_params(
     # command.target is always present on OpenCommand (required field); price is
     # non-None for all target_type values (enforced by Target's model validator).
     assert command.target.price is not None, "OpenCommand target.price must not be None"
-    tp = TakeProfitRequest(limit_price=command.target.price)
+    # ALP-462 — Price → float at the Alpaca SDK boundary.
+    tp = TakeProfitRequest(limit_price=float(command.target.price))
 
     if price_leg is not None:
         sl = StopLossRequest(
-            stop_price=price_leg.condition.trigger_price,
-            limit_price=price_leg.order_parameters.limit_price,
+            stop_price=float(price_leg.condition.trigger_price),
+            limit_price=(
+                float(price_leg.order_parameters.limit_price)
+                if price_leg.order_parameters.limit_price is not None
+                else None
+            ),
         )
         return OrderClass.BRACKET, tp, sl
 
@@ -328,8 +353,8 @@ async def _submit_and_map(
         case Submitted(payload=order, attempt_count=n):
             return Submitted(
                 EquitySubmission(
-                    alpaca_order_id=str(order.id),
-                    client_order_id=order.client_order_id,
+                    alpaca_order_id=AlpacaOrderId(str(order.id)),
+                    client_order_id=ClientOrderId(order.client_order_id),
                     status=order.status.value,
                     order_class=order.order_class.value,
                 ),

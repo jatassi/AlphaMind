@@ -9,11 +9,11 @@ and a test-and-fixture-only stub.
 
 from __future__ import annotations
 
+import dataclasses
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
-
-from pydantic import BaseModel, ConfigDict, Field
 
 
 class PriceSource(StrEnum):
@@ -24,16 +24,20 @@ class PriceSource(StrEnum):
     STALE_FALLBACK = "STALE_FALLBACK"
 
 
-class PriceQuote(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PriceQuote:
     """Immutable price record returned by a CurrentPriceProvider."""
 
-    model_config = ConfigDict(frozen=True)
-
     ticker: str
-    price_usd: float = Field(gt=0)
+    price_usd: float
     as_of_timestamp: datetime
     source: PriceSource
     is_stale: bool
+
+    def __post_init__(self) -> None:
+        if not (self.price_usd > 0):
+            msg = f"price_usd must be > 0; got {self.price_usd}"
+            raise ValueError(msg)
 
 
 class UnknownTickerError(ValueError):
@@ -42,9 +46,14 @@ class UnknownTickerError(ValueError):
 
 @runtime_checkable
 class CurrentPriceProvider(Protocol):
-    """Read-only protocol for fetching current prices."""
+    """Read-only protocol for fetching current prices.
 
-    async def get_quote(
+    Methods are synchronous per ALP-454 Pre-resolved decision (C); the
+    in-process providers (cache lookups, fixture stubs) carry no real
+    I/O. Revisit when a true remote pricing service lands.
+    """
+
+    def get_quote(
         self,
         ticker: str,
         *,
@@ -58,7 +67,7 @@ class CurrentPriceProvider(Protocol):
         """
         ...
 
-    async def get_quotes(
+    def get_quotes(
         self,
         tickers: tuple[str, ...],
         *,
@@ -88,9 +97,9 @@ class StubCurrentPriceProvider:
     def _recompute(self, quote: PriceQuote, freshness_threshold_seconds: float) -> PriceQuote:
         age = (self._now - quote.as_of_timestamp).total_seconds()
         is_stale = age > freshness_threshold_seconds
-        return quote.model_copy(update={"is_stale": is_stale})
+        return dataclasses.replace(quote, is_stale=is_stale)
 
-    async def get_quote(
+    def get_quote(
         self,
         ticker: str,
         *,
@@ -100,7 +109,7 @@ class StubCurrentPriceProvider:
             raise UnknownTickerError(ticker)
         return self._recompute(self._quotes[ticker], freshness_threshold_seconds)
 
-    async def get_quotes(
+    def get_quotes(
         self,
         tickers: tuple[str, ...],
         *,

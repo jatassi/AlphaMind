@@ -15,6 +15,13 @@ from types import MappingProxyType
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.decision.analyst.models import (
     EntryOrder,
     GuardrailValidationResult,
@@ -208,7 +215,9 @@ def _invalidation_leg() -> InvalidationLeg:
         leg_id="INV-1",
         type="price",
         is_hard=True,
-        condition=PriceCondition(underlying_trigger="AAPL", comparator="<=", trigger_price=140.0),
+        condition=PriceCondition(
+            underlying_trigger=Symbol("AAPL"), comparator="<=", trigger_price=price(140.0)
+        ),
         order_parameters=OrderParameters(order_type="market"),
     )
 
@@ -223,16 +232,18 @@ def _equity_recommendation(
     dollar_value: float = 15_000.0,
 ) -> Recommendation:
     return Recommendation(
-        recommendation_id=rec_id,
+        recommendation_id=RecommendationId(rec_id),
         instrument=InstrumentEquity(asset_type="equity", ticker=underlying, direction=direction),  # type: ignore[arg-type]
-        underlying=underlying,
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
         position_size=PositionSize(
-            quantity=quantity, dollar_value=dollar_value, pct_of_portfolio=15.0
+            quantity=quantity, dollar_value=money(dollar_value), pct_of_portfolio=15.0
         ),
-        target=Target(target_type="absolute_price", price=200.0, dollar_pl_target=5000.0),
+        target=Target(
+            target_type="absolute_price", price=price(200.0), dollar_pl_target=money(5000.0)
+        ),
         invalidation_legs=(_invalidation_leg(),),
         guardrail_validation_result=_guardrail_result(),
         thesis_narrative="Test thesis",
@@ -252,10 +263,10 @@ def _close_assessment(
     sector: str = "tech",
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id="THESIS-1",
-        underlying=underlying,
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         thesis_status="on-track",
         recommended_action="close",
@@ -266,7 +277,8 @@ def _close_assessment(
             close_rationale_type="target_reached",
         ),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=-15_000.0, net_directional_impact=-15_000.0
+            sector_delta_adjusted_change=signed_money(-15_000.0),
+            net_directional_impact=signed_money(-15_000.0),
         ),
         status_rationale="Target reached",
         action_rationale="Close",
@@ -400,7 +412,10 @@ def test_combined_set_two_recs_one_close_records_signed_contributors() -> None:
     Projected: 30 + 22 - 5 = 47% → FAIL. All three should appear as contributors.
     """
     existing = _existing_long_equity(
-        position_id="POS-1", underlying="AAPL", notional_usd=5_000.0, quantity=33.0
+        position_id=PositionId("POS-1"),
+        underlying=Symbol("AAPL"),
+        notional_usd=5_000.0,
+        quantity=33.0,
     )
     snap = _snapshot(
         net_long_pct=30.0,
@@ -412,7 +427,7 @@ def test_combined_set_two_recs_one_close_records_signed_contributors() -> None:
     market = _market()
     rec_1 = _equity_recommendation(rec_id="REC-1", quantity=80.0, dollar_value=12_000.0)
     rec_2 = _equity_recommendation(rec_id="REC-2", quantity=66.0, dollar_value=10_000.0)
-    close = _close_assessment(sa_id="SA-1", position_id="POS-1")
+    close = _close_assessment(sa_id="SA-1", position_id=PositionId("POS-1"))
 
     result = compute_combined_set_impact(
         recommendations=(rec_1, rec_2),
@@ -506,7 +521,7 @@ def test_zero_contribution_proposals_excluded_from_contributors() -> None:
     # Semis rec contributes 0.0 to sector_concentration_tech.
     semis_rec = _equity_recommendation(
         rec_id="REC-2",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         sector="semis",
         quantity=20.0,
         dollar_value=2_000.0,
@@ -545,23 +560,28 @@ def test_feature_disabled_proposals_raise() -> None:
     config = _full_config(options_enabled=False)
     market = _market()
     option_rec = Recommendation(
-        recommendation_id="REC-1",
+        recommendation_id=RecommendationId("REC-1"),
         instrument=InstrumentOption(
             asset_type="option",
-            underlying="AAPL",
-            strike=150.0,
+            underlying=Symbol("AAPL"),
+            strike=price(150.0),
             expiration=_EXP,
             contract_type="call",
             direction="long",
         ),
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="tech",
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
         position_size=PositionSize(
-            quantity=5.0, dollar_value=2_000.0, pct_of_portfolio=2.0, premium_at_risk=750.0
+            quantity=5.0,
+            dollar_value=money(2_000.0),
+            pct_of_portfolio=2.0,
+            premium_at_risk=money(750.0),
         ),
-        target=Target(target_type="absolute_price", price=200.0, dollar_pl_target=5000.0),
+        target=Target(
+            target_type="absolute_price", price=price(200.0), dollar_pl_target=money(5000.0)
+        ),
         invalidation_legs=(_invalidation_leg(),),
         guardrail_validation_result=_guardrail_result(),
         thesis_narrative="Test thesis",

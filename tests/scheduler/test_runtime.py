@@ -23,12 +23,6 @@ from alphamind.config.models.overlays import Overlay
 from alphamind.config.models.regimes import Regime
 from alphamind.config.models.run_types import RunType
 from alphamind.config.resolver import RuntimeDimensions
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -43,6 +37,12 @@ from alphamind.scheduler.runtime import (
     _resolve_active_overlays,
     _resolve_active_regime,
     resolve_runtime_dimensions,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
 )
 
 
@@ -115,7 +115,7 @@ async def async_factory(
     db_path = tmp_path / "alphamind.db"
 
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     try:

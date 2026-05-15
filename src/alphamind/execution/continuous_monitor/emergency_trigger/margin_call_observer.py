@@ -64,10 +64,12 @@ class AlpacaMarginCallObserver:
         # offloading to a thread keeps the supervisor's event loop responsive
         # to the underlying-stream / fill-stream / greeks-refresh tasks.
         snapshot = await asyncio.to_thread(self._queries.get_account)
+        # ALP-462 — TradeAccountSnapshot fields are ``Money`` (Decimal); the
+        # downstream MarginCallEvent surface is still float.
         deficit = snapshot.maintenance_margin - snapshot.equity
-        if deficit <= 0.0:
+        if deficit <= 0:
             return None
         return MarginCallEvent(
             issued_at=self._now(),
-            additional_margin_required_usd=deficit,
+            additional_margin_required_usd=float(deficit),
         )

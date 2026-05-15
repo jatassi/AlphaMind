@@ -33,6 +33,7 @@ test asserts is now implemented end-to-end. Three gaps were closed:
    it through to ``OptionsPositionDetails.greeks`` so the four greek values
    round-trip identically.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -51,7 +52,28 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 # ``submit_envelope_mcp``. Mirrors the pattern in
 # ``tests/execution/oms/test_submit_envelope_mcp.py``.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
+from alphamind._kernel.ids import (
+    EnvelopeId,
+    InvocationId,
+    RecommendationId,
+)
+from alphamind._kernel.money import money, price
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+)
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
+from alphamind.commands.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    OptionInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+    ThesisComponent,
+)
 from alphamind.decision.portfolio_manager.models import (
     CriterionAssessment,
     OpenCommand,
@@ -73,46 +95,15 @@ from alphamind.decision.proposal_pre_processor.models import (
     StrategistSection,
     WrappedRecommendation,
 )
-from alphamind.execution.oms.command_models import (
-    BracketOrderParameters,
-    EntryOrder,
-    OptionInstrument,
-    PositionSize,
-    PriceCondition,
-    PriceLeg,
-    Target,
-    Thesis,
-    ThesisComponent,
-)
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
     make_engine,
 )
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-)
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.positions import OptionsPositionDetails
 from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -128,6 +119,22 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
 )
 from alphamind.risk_guardrails.state_delivery.validation_tool import (
     ValidationToolState,
+)
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
 )
 
 _NOW = datetime(2026, 5, 9, 14, 30, 0, tzinfo=UTC)
@@ -145,6 +152,17 @@ _PORTFOLIO_VALUE = 100_000.0
 # ---------------------------------------------------------------------------
 
 
+# Bypass-init helpers — replace Pydantic ``model_construct``. The dataclass __init__
+# enforces all fields; these helpers skip validation so tests can inject sparse fixtures.
+
+
+def _bypass_init_PortfolioManagerView(**kwargs):  # noqa: N802
+    obj = object.__new__(PortfolioManagerView)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
+
+
 @pytest.fixture()
 async def db(
     tmp_path: Path,
@@ -153,7 +171,7 @@ async def db(
     db_path = tmp_path / "alphamind.db"
 
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -223,20 +241,18 @@ async def _seed_substrate(factory: async_sessionmaker[AsyncSession]) -> None:
     async with factory() as sess:
         sess.add(process_lifetime_record_to_row(_make_process_lifetime()))
         await sess.flush()
-        cash = CashLedger.model_validate(
-            {
-                "current_cash_usd": _PORTFOLIO_VALUE,
-                "settled_cash_usd": _PORTFOLIO_VALUE,
-                "reserved_capital_usd": 0.0,
-                "available_buying_power_usd": _PORTFOLIO_VALUE,
-                "margin_held_usd": 0.0,
-                "unsettled_proceeds": (),
-                "cash_pct_of_portfolio": 0.0,
-                "true_deployable_capital_usd": 0.0,
-                "regt_excess_trailing_30d_usd": 0.0,
-                "regt_excess_trailing_90d_usd": 0.0,
-                "regt_excess_lifetime_usd": 0.0,
-            }
+        cash = CashLedger(
+            current_cash_usd=_PORTFOLIO_VALUE,
+            settled_cash_usd=_PORTFOLIO_VALUE,
+            reserved_capital_usd=0.0,
+            available_buying_power_usd=_PORTFOLIO_VALUE,
+            margin_held_usd=0.0,
+            unsettled_proceeds=(),
+            cash_pct_of_portfolio=0.0,
+            true_deployable_capital_usd=0.0,
+            regt_excess_trailing_30d_usd=0.0,
+            regt_excess_trailing_90d_usd=0.0,
+            regt_excess_lifetime_usd=0.0,
         )
         sess.add(cash_ledger_record_to_row(cash, last_updated_at=_NOW))
         await sess.commit()
@@ -360,16 +376,16 @@ def _open_options_command() -> OpenCommand:
         instrument=OptionInstrument(
             asset_type="option",
             underlying=_TICKER,
-            strike=_STRIKE,
+            strike=price(_STRIKE),
             expiration=_EXPIRATION_STR,
             contract_type="call",
             direction="long",
         ),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-        position_size=PositionSize(quantity=1.0, dollar_value=1_000.0),
+        position_size=PositionSize(quantity=1.0, dollar_value=money(1_000.0)),
         target=Target(
             target_type="absolute_price",
-            price=120.0,
+            price=price(120.0),
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",
@@ -381,7 +397,7 @@ def _open_options_command() -> OpenCommand:
                 condition=PriceCondition(
                     underlying_trigger=_TICKER,
                     comparator="<=",
-                    trigger_price=80.0,
+                    trigger_price=price(80.0),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),
@@ -404,10 +420,10 @@ def _open_options_command() -> OpenCommand:
 def _envelope() -> PMAnalystEnvelope:
     pass_assessment = CriterionAssessment(status="pass", note=None)
     return PMAnalystEnvelope(
-        envelope_id="ENV-REC-1",
-        invocation_id=_INV_ID,
+        envelope_id=EnvelopeId("ENV-REC-1"),
+        invocation_id=InvocationId(_INV_ID),
         source_provenance="pm_analyst",
-        source_recommendation_id="REC-1",
+        source_recommendation_id=RecommendationId("REC-1"),
         recommendation_type="new_entry",
         verdict="approve",
         evaluation=ThesisQualityEvaluation(
@@ -487,7 +503,7 @@ def _pre_processor_bundle() -> ProposalPreProcessorBundle:
 
 
 def _pm_view() -> PortfolioManagerView:
-    return PortfolioManagerView.model_construct(
+    return _bypass_init_PortfolioManagerView(
         positions=(),
         recent_thesis_resolutions=(),
         portfolio_pnl=None,
@@ -549,9 +565,9 @@ async def test_open_options_acknowledgment_greeks_match_persisted_position_greek
     expose a ``greeks`` field equal field-by-field (delta / gamma / theta /
     vega) to the Acknowledgment's ``validation_metadata.greeks``.
     """
-    from alphamind.execution.oms import build_submit_envelope_mcp_server
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         build_initial_submit_envelope_state,
+        build_submit_envelope_mcp_server,
     )
 
     _, factory = db
@@ -570,7 +586,7 @@ async def test_open_options_acknowledgment_greeks_match_persisted_position_greek
             invocation_id=_INV_ID,
             starting_validation_state=validation_state,
         )
-        mcp_servers, _allowed = build_submit_envelope_mcp_server(
+        mcp_servers, _allowed, _get_state = build_submit_envelope_mcp_server(
             state,
             retrieval_store=_retrieval_store(),
             pre_processor_bundle=_pre_processor_bundle(),

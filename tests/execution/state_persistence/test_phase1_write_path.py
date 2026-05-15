@@ -11,6 +11,7 @@ around the call. Each test seeds the prerequisite Tier-1 entities (orders,
 positions, brackets, theses, cash, drawdown) via the same per-table codecs
 shipped in stories 04a-04e.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -22,63 +23,22 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price, signed_money
+from alphamind._kernel.regime import RiskZone
 from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
 )
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.tables.brackets import BracketRow
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger import (
-    CASH_LEDGER_SINGLETON_ID,
-    CashLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.corporate_action_integration_ledger import (
-    CorporateActionIntegrationLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
-from alphamind.execution.state_persistence.tables.orders import OrderRow
-from alphamind.execution.state_persistence.tables.orders_codec import (
-    record_to_row as order_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
-from alphamind.execution.state_persistence.tables.theses import ThesisRow
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
-)
-from alphamind.execution.state_persistence.write_paths.fill_persistence import (
+from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    CorporateActionLedgerStatus,
-    FillProcessingStatus,
-    FillRecord,
 )
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
@@ -128,7 +88,57 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
     MarketInputs,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+    InvocationHandle,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.records import (
+    CorporateActionLedgerStatus,
+    FillProcessingStatus,
+    FillRecord,
+)
+from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger import (
+    CASH_LEDGER_SINGLETON_ID,
+    CashLedgerRow,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.corporate_action_integration_ledger import (
+    CorporateActionIntegrationLedgerRow,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
+)
+from alphamind.state.tables.fill_records import FillRecordRow
+from alphamind.state.tables.invocations import InvocationRow
+from alphamind.state.tables.orders import OrderRow
+from alphamind.state.tables.orders_codec import (
+    record_to_row as order_record_to_row,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
+)
+from alphamind.state.tables.theses import ThesisRow
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
+)
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-2026-05-08T12:00:00Z-aaaa"
@@ -148,7 +158,7 @@ async def db(
     db_path = tmp_path / "alphamind.db"
 
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -249,32 +259,30 @@ def _make_pending_entry_order(
     avg_fill_price: float | None = None,
     position_id: str | None = None,
 ) -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": position_id,
-            "bracket_id": bracket_id,
-            "role": role,
-            "instrument_spec": EquityInstrumentSpec(ticker="AAPL"),
-            "direction": direction,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": quantity,
-            "duration": OrderDuration.DAY,
-            "status": status,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": filled_quantity,
-            "avg_fill_price": avg_fill_price,
-            "remaining_quantity": quantity - filled_quantity,
-            "modification_count": 0,
-            "originating_thesis_id": "thesis-1",
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=bracket_id,
+        role=role,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
+        direction=direction,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=quantity,
+        duration=OrderDuration.DAY,
+        status=status,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=filled_quantity,
+        avg_fill_price=avg_fill_price,
+        remaining_quantity=quantity - filled_quantity,
+        modification_count=0,
+        originating_thesis_id=ThesisId("thesis-1"),
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -289,25 +297,23 @@ def _make_pending_position(
     average_cost_basis_per_share: float = 0.0,
 ) -> PositionRecord:
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=average_cost_basis_per_share,
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.PENDING,
-            "direction": direction,
-            "entry_timestamp": None,
-            "details": details,
-            "execution_history": (),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.PENDING,
+        direction=direction,
+        entry_timestamp=None,
+        details=details,
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -326,7 +332,7 @@ def _make_open_position(
     from alphamind.portfolio_state.records.positions import PositionFill
 
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=average_cost_basis_per_share,
     )
@@ -339,21 +345,19 @@ def _make_open_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": direction,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=direction,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -361,16 +365,18 @@ def _make_pending_bracket(bracket_id: str = "brk-1", position_id: str = "pos-1")
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.PENDING_ENTRY,
-        entry_order_id="ord-entry-1",
+        entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -382,16 +388,18 @@ def _make_active_bracket(bracket_id: str = "brk-1", position_id: str = "pos-1") 
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-entry-1",
+        entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -406,7 +414,7 @@ def _make_active_thesis(
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -426,8 +434,8 @@ def _make_active_thesis(
     generation_at = _NOW - timedelta(hours=4)
     time_expectation_hours = 24.0
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="AAPL momentum",
         key_catalyst="Q3 earnings beat",
         position_size_rationale="Sized at 5%",
@@ -458,7 +466,7 @@ def _make_thesis_with_resolved_components(
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -478,8 +486,8 @@ def _make_thesis_with_resolved_components(
     generation_at = _NOW - timedelta(hours=4)
     time_expectation_hours = 24.0
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="AAPL momentum",
         key_catalyst="Q3 earnings beat",
         position_size_rationale="Sized at 5%",
@@ -497,38 +505,34 @@ def _make_thesis_with_resolved_components(
 
 
 def _make_cash_ledger(current_cash_usd: float = 100_000.0) -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": current_cash_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=current_cash_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _make_drawdown_state(
     equity_high_water_mark_usd: float = 100_000.0,
 ) -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": equity_high_water_mark_usd,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=equity_high_water_mark_usd,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -549,12 +553,12 @@ def _make_unprocessed_fill(
         fill_id=fill_id,
         order_id=order_id,
         fill_timestamp=ts,
-        fill_price=fill_price,
+        fill_price=price(fill_price),
         fill_quantity=fill_quantity,
         remaining_quantity_after=remaining_quantity_after,
         order_status_after=order_status_after,
-        slippage_usd=slippage_usd,
-        fees_usd=fees_usd,
+        slippage_usd=None if slippage_usd is None else signed_money(slippage_usd),
+        fees_usd=money(fees_usd),
         execution_venue="NASDAQ",
         gateway_reference=f"alp-{fill_id}",
         persistence_timestamp=ts + timedelta(seconds=1),
@@ -598,7 +602,7 @@ async def _seed_position_order_thesis_bracket(
     Protective-leg order_ids (deferred FK to orders) are also seeded as stub
     orders in the same transaction so the COMMIT does not raise IntegrityError.
     """
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     thesis_row, component_rows = thesis_record_to_rows(thesis)
     bracket_row, leg_rows = bracket_record_to_rows(bracket)
@@ -726,7 +730,7 @@ async def test_entry_fill_transitions_pending_position_to_open(
 ) -> None:
     """Happy-path entry fill: position PENDING → OPEN, fill marked processed,
     cash debited, activity log carries the lifecycle entries."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -817,28 +821,28 @@ async def test_exit_fill_closes_position_and_resolves_thesis(
 ) -> None:
     """Happy-path exit fill: position OPEN → CLOSED, realized P/L computed,
     bracket DISSOLVED, thesis RESOLVED."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
     _, factory = db
     await _seed_invocation_substrate(factory)
     close_order = _make_pending_entry_order(
-        order_id="ord-close-1",
+        order_id=OrderId("ord-close-1"),
         role=OrderRole.CLOSE,
         direction=OrderDirection.SELL,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
     )
     # All four entities reference each other cyclically — seed in one transaction.
-    # _make_active_bracket uses entry_order_id="ord-entry-1" and a protective leg
-    # with order_id="brk-1-ord-stop", so we need stubs for all referenced orders.
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    # _make_active_bracket uses entry_order_id=OrderId("ord-entry-1") and a protective leg
+    # with order_id=OrderId("brk-1-ord-stop"), so we need stubs for all referenced orders.
+    from tests.state._fk_substrate import stub_order_row
 
     entry_order = _make_pending_entry_order()
     thesis_row, component_rows = thesis_record_to_rows(_make_thesis_with_resolved_components())
     bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
     leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
-    seeded_order_ids = {entry_order.order_id, close_order.order_id}
+    seeded_order_ids: set[str] = {entry_order.order_id, close_order.order_id}
     async with factory() as sess:
         sess.add(position_record_to_row(_make_open_position()))
         sess.add(thesis_row)
@@ -862,7 +866,7 @@ async def test_exit_fill_closes_position_and_resolves_thesis(
         factory,
         _make_unprocessed_fill(
             fill_id="fill-close-1",
-            order_id="ord-close-1",
+            order_id=OrderId("ord-close-1"),
             fill_price=160.0,
             fill_quantity=10.0,
         ),
@@ -924,7 +928,7 @@ async def test_multi_fill_ordering_produces_cumulative_state(
 ) -> None:
     """Two unprocessed fills on the same order, processed in fill-timestamp
     order, produce the right cumulative state."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1008,7 +1012,7 @@ async def test_corporate_action_split_emits_events_and_ledger_anchor(
     """A stock split's corporate_action_applied entry fires, position quantity
     and cost basis adjust per the ratio, and the CA integration ledger records
     the dedupe anchor."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         CorporateActionActivity,
         process_unprocessed_fills,
     )
@@ -1028,10 +1032,10 @@ async def test_corporate_action_split_emits_events_and_ledger_anchor(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-split-1",
         action_type=CorporateActionType.SPLIT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=4.0,  # 4-for-1 split.
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -1095,16 +1099,16 @@ async def test_atomicity_exception_rolls_back_fills_and_log(
     raises NotImplementedError for short-entry fills (FK enforcement makes the
     original "missing position row" scenario impossible at the seeding layer).
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
     _, factory = db
     await _seed_invocation_substrate(factory)
     short_entry_order = _make_pending_entry_order(
-        order_id="ord-short-1",
+        order_id=OrderId("ord-short-1"),
         direction=OrderDirection.SELL_TO_OPEN,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
     )
     await _seed_position_order_thesis_bracket(
         factory,
@@ -1115,7 +1119,9 @@ async def test_atomicity_exception_rolls_back_fills_and_log(
     )
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
-    await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-1", order_id="ord-short-1"))
+    await _append_fill(
+        factory, _make_unprocessed_fill(fill_id="fill-1", order_id=OrderId("ord-short-1"))
+    )
 
     ctx, handle = await _open_handle(factory)
     invocation_id = handle.invocation_id
@@ -1157,7 +1163,7 @@ async def test_quarantined_fill_excluded_without_aborting_batch(
 ) -> None:
     """A fill with negative quantity is marked quarantined and excluded from
     integration; other fills in the batch still process normally."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1178,7 +1184,7 @@ async def test_quarantined_fill_excluded_without_aborting_batch(
     # by writing the row directly with a negative quantity.
     bad_fill_row = FillRecordRow(
         fill_id="fill-bad",
-        order_id="ord-entry-1",
+        order_id=OrderId("ord-entry-1"),
         fill_timestamp=(_NOW - timedelta(minutes=20)).isoformat(),
         fill_price=150.0,
         fill_quantity=-1.0,  # <— invalid
@@ -1239,7 +1245,7 @@ async def test_buy_fill_decrements_reserved_capital_to_zero(
     OPEN reserve and Phase 1's fill double-count: current_cash drops AND
     reserved_capital stays — overstating committed capital.
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1253,20 +1259,18 @@ async def test_buy_fill_decrements_reserved_capital_to_zero(
         _make_pending_bracket(),
     )
     # Seed cash with a $1000 reservation already in place (mirroring Phase 2's OPEN).
-    seeded = CashLedger.model_validate(
-        {
-            "current_cash_usd": 100_000.0,
-            "settled_cash_usd": 100_000.0,
-            "reserved_capital_usd": 1_000.0,
-            "available_buying_power_usd": 99_000.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    seeded = CashLedger(
+        current_cash_usd=100_000.0,
+        settled_cash_usd=100_000.0,
+        reserved_capital_usd=1_000.0,
+        available_buying_power_usd=99_000.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
     await _seed_cash_ledger(factory, seeded)
     await _seed_drawdown_state(factory)
@@ -1304,7 +1308,7 @@ async def test_buy_fill_clamps_reserved_capital_decrement_at_zero(
     (partial reservations, rounding, mid-flight adjustments), the
     decrement must clamp at zero rather than going negative.
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1318,20 +1322,18 @@ async def test_buy_fill_clamps_reserved_capital_decrement_at_zero(
         _make_pending_bracket(),
     )
     # Seed only $500 reserved while the fill consumes $1000.
-    seeded = CashLedger.model_validate(
-        {
-            "current_cash_usd": 100_000.0,
-            "settled_cash_usd": 100_000.0,
-            "reserved_capital_usd": 500.0,
-            "available_buying_power_usd": 99_500.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    seeded = CashLedger(
+        current_cash_usd=100_000.0,
+        settled_cash_usd=100_000.0,
+        reserved_capital_usd=500.0,
+        available_buying_power_usd=99_500.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
     await _seed_cash_ledger(factory, seeded)
     await _seed_drawdown_state(factory)
@@ -1374,7 +1376,7 @@ async def test_pending_position_with_missing_bracket_row_rejected_at_commit(
     await _seed_invocation_substrate(factory)
 
     # Attempt to commit a position row pointing at a bracket that does not exist.
-    position_row = position_record_to_row(_make_pending_position())  # bracket_id="brk-1"
+    position_row = position_record_to_row(_make_pending_position())  # bracket_id=BracketId("brk-1")
     with pytest.raises(IntegrityError):
         async with factory() as sess:
             sess.add(position_row)
@@ -1396,7 +1398,7 @@ async def test_open_position_with_missing_bracket_row_rejected_at_commit(
     await _seed_invocation_substrate(factory)
 
     # Attempt to commit an OPEN position pointing at a bracket that does not exist.
-    position_row = position_record_to_row(_make_open_position())  # bracket_id="brk-1"
+    position_row = position_record_to_row(_make_open_position())  # bracket_id=BracketId("brk-1")
     with pytest.raises(IntegrityError):
         async with factory() as sess:
             sess.add(position_row)
@@ -1417,7 +1419,7 @@ async def test_open_position_with_missing_thesis_row_rejected_at_commit(
     await _seed_invocation_substrate(factory)
 
     # Attempt to commit an OPEN position pointing at a thesis that does not exist.
-    position_row = position_record_to_row(_make_open_position())  # thesis_id="thesis-1"
+    position_row = position_record_to_row(_make_open_position())  # thesis_id=ThesisId("thesis-1")
     with pytest.raises(IntegrityError):
         async with factory() as sess:
             sess.add(position_row)
@@ -1438,7 +1440,7 @@ async def test_corporate_action_position_with_missing_bracket_row_rejected_at_co
     await _seed_invocation_substrate(factory)
 
     # Attempt to commit an OPEN position pointing at a bracket that does not exist.
-    # _make_open_position uses bracket_id="brk-1" by default.
+    # _make_open_position uses bracket_id=BracketId("brk-1") by default.
     position_row = position_record_to_row(_make_open_position(share_count=10.0))
     with pytest.raises(IntegrityError):
         async with factory() as sess:
@@ -1454,7 +1456,7 @@ async def test_short_entry_fill_raises_explicit_not_implemented(
     NotImplementedError naming the missing capability, not the cryptic
     "exit fill quantity exceeds open share count" leak from ``_apply_exit_fill``.
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1464,9 +1466,9 @@ async def test_short_entry_fill_raises_explicit_not_implemented(
         factory,
         _make_pending_position(),
         _make_pending_entry_order(
-            order_id="ord-short-entry",
+            order_id=OrderId("ord-short-entry"),
             direction=OrderDirection.SELL_TO_OPEN,
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
         ),
         _make_active_thesis(),
         _make_pending_bracket(),
@@ -1475,7 +1477,7 @@ async def test_short_entry_fill_raises_explicit_not_implemented(
     await _seed_drawdown_state(factory)
     await _append_fill(
         factory,
-        _make_unprocessed_fill(fill_id="fill-short-1", order_id="ord-short-entry"),
+        _make_unprocessed_fill(fill_id="fill-short-1", order_id=OrderId("ord-short-entry")),
     )
 
     ctx, handle = await _open_handle(factory)
@@ -1498,7 +1500,7 @@ async def test_phase1_stamps_completion_timestamp_on_invocation_row(
     repository's snapshot-isolation guard reads this column and raises
     RepositoryConsistencyError when it is NULL.
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1543,12 +1545,12 @@ def _alpaca_account_snapshot(*, cash: float = 100_000.0) -> TradeAccountSnapshot
     """Build a typed ``TradeAccountSnapshot`` for the new entry-point signature."""
     return TradeAccountSnapshot(
         account_id="alp-account-1",
-        cash=cash,
-        equity=cash,
-        buying_power=cash * 2.0,
-        regt_buying_power=cash * 2.0,
-        daytrading_buying_power=cash * 4.0,
-        maintenance_margin=0.0,
+        cash=money(cash),
+        equity=money(cash),
+        buying_power=money(cash * 2.0),
+        regt_buying_power=money(cash * 2.0),
+        daytrading_buying_power=money(cash * 4.0),
+        maintenance_margin=money(0.0),
         daytrade_count=0,
         pattern_day_trader=False,
         status="ACTIVE",
@@ -1561,12 +1563,12 @@ def _alpaca_equity_snapshot(*, symbol: str = "AAPL", qty: float = 10.0) -> Posit
         symbol=symbol,
         asset_class="us_equity",
         qty=qty,
-        avg_entry_price=150.0,
-        market_value=qty * 150.0,
-        cost_basis=qty * 150.0,
-        unrealized_pl=0.0,
+        avg_entry_price=price(150.0),
+        market_value=money(qty * 150.0),
+        cost_basis=money(qty * 150.0),
+        unrealized_pl=money(0.0),
         unrealized_plpc=0.0,
-        current_price=150.0,
+        current_price=price(150.0),
         side="long",
     )
 
@@ -1576,7 +1578,7 @@ async def test_summary_carries_reconciliation_alert_count(
 ) -> None:
     """``Phase1Summary`` exposes ``reconciliation_alerts`` and the count reflects
     one ``RECONCILIATION_ALERT`` per unexplained delta."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1618,7 +1620,7 @@ async def test_fill_before_ca_reflects_pre_action_quantity_at_fill(
       * pre-CA share_count = 10 + 5 = 15 (entry+add fill applied first)
       * post-CA share_count = 15 * 2 = 30 (split applied second)
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         CorporateActionActivity,
         process_unprocessed_fills,
     )
@@ -1627,18 +1629,18 @@ async def test_fill_before_ca_reflects_pre_action_quantity_at_fill(
     await _seed_invocation_substrate(factory)
     # Open position with 10 shares + an entry order already filled.
     add_order = _make_pending_entry_order(
-        order_id="ord-add-1",
+        order_id=OrderId("ord-add-1"),
         role=OrderRole.ADD_ENTRY,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         quantity=5.0,
     )
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     entry_order = _make_pending_entry_order()
     thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
     bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
     leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
-    seeded_order_ids = {entry_order.order_id, add_order.order_id}
+    seeded_order_ids: set[str] = {entry_order.order_id, add_order.order_id}
     async with factory() as sess:
         sess.add(position_record_to_row(_make_open_position(share_count=10.0)))
         sess.add(thesis_row)
@@ -1663,7 +1665,7 @@ async def test_fill_before_ca_reflects_pre_action_quantity_at_fill(
         factory,
         _make_unprocessed_fill(
             fill_id="fill-add-1",
-            order_id="ord-add-1",
+            order_id=OrderId("ord-add-1"),
             fill_quantity=5.0,
             fill_price=150.0,
             fill_timestamp=fill_ts,
@@ -1675,10 +1677,10 @@ async def test_fill_before_ca_reflects_pre_action_quantity_at_fill(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-split-merge-1",
         action_type=CorporateActionType.SPLIT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=2.0,  # 2-for-1 split.
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=_NOW - timedelta(minutes=10),
     )
@@ -1714,7 +1716,7 @@ async def test_fill_after_ca_reflects_post_action_quantity_at_fill(
       * post-CA share_count = 10 * 2 = 20
       * post-fill share_count = 20 + 5 = 25
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         CorporateActionActivity,
         process_unprocessed_fills,
     )
@@ -1722,18 +1724,18 @@ async def test_fill_after_ca_reflects_post_action_quantity_at_fill(
     _, factory = db
     await _seed_invocation_substrate(factory)
     add_order = _make_pending_entry_order(
-        order_id="ord-add-2",
+        order_id=OrderId("ord-add-2"),
         role=OrderRole.ADD_ENTRY,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         quantity=5.0,
     )
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     entry_order = _make_pending_entry_order()
     thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
     bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
     leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
-    seeded_order_ids = {entry_order.order_id, add_order.order_id}
+    seeded_order_ids: set[str] = {entry_order.order_id, add_order.order_id}
     async with factory() as sess:
         sess.add(position_record_to_row(_make_open_position(share_count=10.0)))
         sess.add(thesis_row)
@@ -1758,7 +1760,7 @@ async def test_fill_after_ca_reflects_post_action_quantity_at_fill(
         factory,
         _make_unprocessed_fill(
             fill_id="fill-add-2",
-            order_id="ord-add-2",
+            order_id=OrderId("ord-add-2"),
             fill_quantity=5.0,
             fill_price=75.0,  # post-split price.
             fill_timestamp=fill_ts,
@@ -1770,10 +1772,10 @@ async def test_fill_after_ca_reflects_post_action_quantity_at_fill(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-split-merge-2",
         action_type=CorporateActionType.SPLIT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=2.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=_NOW - timedelta(minutes=30),
     )

@@ -29,41 +29,23 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alphamind.config.load import PipelineConfig, load_full_config
-from alphamind.config.models.modes import Mode
-from alphamind.config.models.run_types import RunType
-from alphamind.config.resolver import RuntimeDimensions
-from alphamind.config.snapshot import _atomic_write
-from alphamind.execution.state_persistence.invocation_context.context import (
-    insert_invocation_row,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    ActiveMode,
-    InvocationRecord,
-    TriggerType,
-)
-from alphamind.execution.state_persistence.invocation_paths import (
+from alphamind._kernel.atomic_io import atomic_write_text
+from alphamind._kernel.invocations import (
     CALIBRATION_SNAPSHOT_FILENAME,
     INVOCATIONS_DIRNAME,
 )
+from alphamind._kernel.mode import PipelineMode
+from alphamind.config.load import PipelineConfig, load_full_config
+from alphamind.config.models.run_types import RunType
+from alphamind.config.resolver import RuntimeDimensions
 from alphamind.persistence.models import CollectionRuns
-
-
-def _mode_to_active_mode_literal(mode: Mode) -> ActiveMode:
-    """Translate the config-layer ``Mode`` enum into the row-layer ``ActiveMode``.
-
-    Direct ``.value`` is wrong: ``Mode.halt.value == "halt"``, but the row's
-    ``active_mode`` column accepts ``"normal" | "defensive_posture" | "halted"``.
-    ``defensive_posture`` is unreachable from this story's caller until a future
-    story lands the operator-pinning mechanism (parent issue ``ALP-431`` § Notes
-    for the orchestrator — surfacing condition iv).
-    """
-    if mode is Mode.normal:
-        return "normal"
-    if mode is Mode.halt:
-        return "halted"
-    msg = f"unexpected Mode member {mode!r}; story 03a knows only normal | halt"
-    raise ValueError(msg)
+from alphamind.state.invocation_context.context import (
+    insert_invocation_row,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    TriggerType,
+)
 
 
 async def build_invocation_record(  # noqa: PLR0913 — signature pinned by story 03a spec
@@ -113,7 +95,7 @@ async def build_invocation_record(  # noqa: PLR0913 — signature pinned by stor
         git_sha_at_invocation=git_sha,
         active_profile=pipeline_config.resolved.profile_label,
         active_regime=runtime.active_regime.value,
-        active_mode=_mode_to_active_mode_literal(runtime.active_mode),
+        active_mode=PipelineMode.from_config_mode(runtime.active_mode).to_active_mode_literal(),
         active_overlays_json=json.dumps([o.value for o in runtime.active_overlays]),
         resolved_config_hash=pipeline_config.snapshot.hash,
         resolved_config_snapshot_path=str(pipeline_config.snapshot.path),
@@ -164,8 +146,7 @@ def _persist_data_calibration_snapshot(
     )
     payload = prior_content if prior_content is not None else "{}"
 
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_write(target_path, payload)
+    atomic_write_text(target_path, payload)
     return target_path
 
 

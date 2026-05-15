@@ -35,6 +35,7 @@ from alphamind.data_sources._common import (
     default_session_factory,
     track_run,
 )
+from alphamind.data_sources.finra._protocol import FinraAPI
 from alphamind.data_sources.finra.client import FinraClient
 from alphamind.persistence.models import ShortInterestSnapshot
 
@@ -124,7 +125,7 @@ def _parse_csv(text: str, universe: set[str], ingested_at: str) -> list[dict[str
 def collect_short_interest(
     settlement_dates: list[str] | None = None,
     *,
-    client: FinraClient | None = None,
+    client: FinraAPI | None = None,
     session_factory: Any = None,
     _repo: Any = None,
 ) -> None:
@@ -193,7 +194,7 @@ def collect_short_interest(
 def bootstrap_short_interest(
     months: int = 6,
     *,
-    client: FinraClient | None = None,
+    client: FinraAPI | None = None,
     session_factory: Any = None,
     _repo: Any = None,
 ) -> None:

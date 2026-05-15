@@ -51,4 +51,7 @@ def run_all(
             fn(since=None)
             log.info("catch-up: collector=%s done", collector_id)
         except Exception:
+            # Per-collector supervisor per runtime §G1: one collector raising
+            # must not abort the catch-up sweep. ``BaseException``
+            # (``KeyboardInterrupt``) propagates so the sweep can be cancelled.
             log.exception("catch-up: collector=%s error", collector_id)

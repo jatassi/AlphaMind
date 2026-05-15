@@ -11,6 +11,13 @@ from types import MappingProxyType
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.decision.analyst.models import (
     EntryOrder,
     GuardrailValidationResult,
@@ -121,13 +128,15 @@ def _invalidation_leg() -> InvalidationLeg:
         leg_id="INV-1",
         type="price",
         is_hard=True,
-        condition=PriceCondition(underlying_trigger="AAPL", comparator="<=", trigger_price=140.0),
+        condition=PriceCondition(
+            underlying_trigger=Symbol("AAPL"), comparator="<=", trigger_price=price(140.0)
+        ),
         order_parameters=OrderParameters(order_type="market"),
     )
 
 
 def _target() -> Target:
-    return Target(target_type="absolute_price", price=200.0, dollar_pl_target=5000.0)
+    return Target(target_type="absolute_price", price=price(200.0), dollar_pl_target=money(5000.0))
 
 
 def _position_size(
@@ -137,9 +146,9 @@ def _position_size(
 ) -> PositionSize:
     return PositionSize(
         quantity=quantity,
-        dollar_value=dollar_value,
+        dollar_value=money(dollar_value),
         pct_of_portfolio=15.0,
-        premium_at_risk=premium_at_risk,
+        premium_at_risk=None if premium_at_risk is None else money(premium_at_risk),
     )
 
 
@@ -158,9 +167,9 @@ def _equity_recommendation(
     if order_type == "stop_limit":
         entry_order_kwargs["stop_price"] = 150.0
     return Recommendation(
-        recommendation_id=rec_id,
+        recommendation_id=RecommendationId(rec_id),
         instrument=InstrumentEquity(asset_type="equity", ticker=underlying, direction=direction),  # type: ignore[arg-type]
-        underlying=underlying,
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         conviction_level=3,
         entry_order=EntryOrder(**entry_order_kwargs),  # type: ignore[arg-type]
@@ -219,16 +228,16 @@ def _option_recommendation(
     premium_at_risk: float | None = 750.0,
 ) -> Recommendation:
     return Recommendation(
-        recommendation_id=rec_id,
+        recommendation_id=RecommendationId(rec_id),
         instrument=InstrumentOption(
             asset_type="option",
-            underlying=underlying,
-            strike=strike,
+            underlying=Symbol(underlying),
+            strike=price(strike),
             expiration=_EXP,
             contract_type=contract_type,  # type: ignore[arg-type]
             direction=direction,  # type: ignore[arg-type]
         ),
-        underlying=underlying,
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
@@ -256,21 +265,21 @@ def _strategy_recommendation(
     premium_at_risk: float | None = 600.0,
 ) -> Recommendation:
     return Recommendation(
-        recommendation_id=rec_id,
+        recommendation_id=RecommendationId(rec_id),
         instrument=InstrumentStrategy(
             asset_type="strategy",
             strategy_type="vertical_spread",
-            underlying=underlying,
+            underlying=Symbol(underlying),
             legs=(
                 StrategyLeg(
-                    strike=150.0,
+                    strike=price(150.0),
                     expiration=_EXP,
                     contract_type="call",
                     direction="long",
                     quantity_ratio=1,
                 ),
                 StrategyLeg(
-                    strike=160.0,
+                    strike=price(160.0),
                     expiration=_EXP,
                     contract_type="call",
                     direction="short",
@@ -278,7 +287,7 @@ def _strategy_recommendation(
                 ),
             ),
         ),
-        underlying=underlying,
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
@@ -355,8 +364,8 @@ def test_strategy_recommendation_legs() -> None:
 def test_short_equity_with_snapshot_picks_up_borrow_cost() -> None:
     """AC-4: SHORT EQUITY with matching snapshot position picks up daily_borrow_cost_usd."""
     existing = _existing_equity(
-        position_id="POS-SHORT-1",
-        underlying="NVDA",
+        position_id=PositionId("POS-SHORT-1"),
+        underlying=Symbol("NVDA"),
         sector="semis",
         direction=Direction.SHORT,
         daily_borrow_cost_usd=12.50,
@@ -364,7 +373,7 @@ def test_short_equity_with_snapshot_picks_up_borrow_cost() -> None:
     snap = _snapshot(existing_positions={"POS-SHORT-1": existing})
     rec = _equity_recommendation(
         rec_id="REC-10",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         sector="semis",
         direction="short",
     )
@@ -379,7 +388,7 @@ def test_short_equity_no_snapshot_raises_translator_error() -> None:
     snap = _snapshot()  # empty existing_positions
     rec = _equity_recommendation(
         rec_id="REC-11",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         sector="semis",
         direction="short",
     )
@@ -414,7 +423,10 @@ def test_market_order_does_not_reserve_capital() -> None:
 
 
 def _exposure_impact() -> ExposureImpact:
-    return ExposureImpact(sector_delta_adjusted_change=-5000.0, net_directional_impact=-5000.0)
+    return ExposureImpact(
+        sector_delta_adjusted_change=signed_money(-5000.0),
+        net_directional_impact=signed_money(-5000.0),
+    )
 
 
 def _strategist_guardrail() -> StrategistGuardrailResult:
@@ -429,10 +441,10 @@ def _close_assessment(
     quantity: float | str = "all",
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id="THESIS-1",
-        underlying=underlying,
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         thesis_status="on-track",
         recommended_action="close",
@@ -454,10 +466,10 @@ def _reduce_assessment(
     quantity: float = 30.0,
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id="THESIS-1",
-        underlying="AAPL",
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol("AAPL"),
         sector="tech",
         thesis_status="at-risk",
         recommended_action="reduce",
@@ -480,21 +492,21 @@ def _add_assessment(
     additional_dollar_value: float = 7_500.0,
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id="THESIS-1",
-        underlying="AAPL",
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol("AAPL"),
         sector="tech",
         thesis_status="on-track",
         recommended_action="add",
         action_parameters=AddParameters(
             action="add",
             additional_quantity=additional_quantity,
-            additional_dollar_value=additional_dollar_value,
+            additional_dollar_value=money(additional_dollar_value),
             entry_order=StrategistEntryOrder(type="market"),
         ),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=7500.0, net_directional_impact=7500.0
+            sector_delta_adjusted_change=money(7500.0), net_directional_impact=money(7500.0)
         ),
         guardrail_validation_result=_strategist_guardrail(),
         add_conviction_justification="Strong conviction",
@@ -508,17 +520,17 @@ def _adjust_bracket_assessment(
     position_id: str = "POS-1",
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id="THESIS-1",
-        underlying="AAPL",
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol("AAPL"),
         sector="tech",
         thesis_status="on-track",
         recommended_action="adjust-bracket",
         action_parameters=AdjustBracketParameters(
             action="adjust-bracket",
             new_stop_level=BracketAdjustNewStopLevel(
-                trigger_price=140.0,
+                trigger_price=price(140.0),
                 order_type="market",
             ),
         ),
@@ -530,10 +542,10 @@ def _adjust_bracket_assessment(
 
 def _hold_assessment(sa_id: str = "SA-5", position_id: str = "POS-1") -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id="THESIS-1",
-        underlying="AAPL",
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol("AAPL"),
         sector="tech",
         thesis_status="on-track",
         recommended_action="hold",
@@ -649,7 +661,7 @@ def test_hold_assessment_raises_translator_error() -> None:
 def test_missing_position_id_raises_translator_error() -> None:
     """AC-12: position_id not in snapshot raises TranslatorError."""
     snap = _snapshot()  # empty existing_positions
-    assessment = _close_assessment(position_id="POS-MISSING")
+    assessment = _close_assessment(position_id=PositionId("POS-MISSING"))
     with pytest.raises(TranslatorError, match="POS-MISSING"):
         translate_position_assessment_to_proposed_delta(assessment, snapshot=snap)
 
@@ -680,7 +692,7 @@ def test_translator_output_accepted_by_evaluate_proposals() -> None:
 
     # Build a minimal snapshot with one existing LONG EQUITY position
     existing = _existing_equity(
-        position_id="POS-1",
+        position_id=PositionId("POS-1"),
         underlying=underlying,
         notional_usd=15_000.0,
         quantity=100.0,
@@ -767,7 +779,11 @@ def test_translator_output_accepted_by_evaluate_proposals() -> None:
     open_delta = translate_recommendation_to_proposed_delta(rec, snapshot=snap)
 
     close_assessment = _close_assessment(
-        sa_id="SA-1", position_id="POS-1", underlying=underlying, sector="tech", quantity="all"
+        sa_id="SA-1",
+        position_id=PositionId("POS-1"),
+        underlying=underlying,
+        sector="tech",
+        quantity="all",
     )
     close_delta = translate_position_assessment_to_proposed_delta(close_assessment, snapshot=snap)
 

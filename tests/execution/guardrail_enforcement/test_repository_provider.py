@@ -1,20 +1,22 @@
 """Tests for ``make_active_risk_parameters_provider`` (story 03a).
 
-Adapter that turns a ``Phase1EnforcementResult`` into the zero-arg awaitable
-callable shape ``SqlPortfolioStateRepository`` expects for its
+Adapter that turns a ``Phase1EnforcementResult`` into the zero-arg callable
+shape ``SqlPortfolioStateRepository`` expects for its
 ``active_risk_parameters_provider`` slot.
+
+Per ALP-454 Pre-resolved decision (C): the provider is synchronous,
+matching the sync ``PortfolioStateRepository`` Protocol.
 """
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 
 from alphamind.execution.guardrail_enforcement import (
     Phase1EnforcementResult,
     make_active_risk_parameters_provider,
 )
-from alphamind.portfolio_state.records.capital import ActiveRiskParameterSet
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from tests.execution.guardrail_enforcement._helpers import baseline_normal_parameters
 
 
@@ -31,16 +33,13 @@ def _build_result(parameters: ActiveRiskParameterSet) -> Phase1EnforcementResult
 
 
 def test_provider_yields_result_active_risk_parameters() -> None:
-    """The provider awaits to ``result.active_risk_parameters`` (object identity)."""
+    """The provider returns ``result.active_risk_parameters`` (object identity)."""
     parameters = baseline_normal_parameters()
     result = _build_result(parameters)
 
     provider = make_active_risk_parameters_provider(result)
 
-    async def _call() -> ActiveRiskParameterSet:
-        return await provider()
-
-    yielded = asyncio.run(_call())
+    yielded = provider()
 
     assert yielded is result.active_risk_parameters
 
@@ -57,15 +56,9 @@ def test_provider_returns_same_parameter_set_on_multiple_calls() -> None:
 
     provider = make_active_risk_parameters_provider(result)
 
-    async def _call_three_times() -> tuple[
-        ActiveRiskParameterSet, ActiveRiskParameterSet, ActiveRiskParameterSet
-    ]:
-        a = await provider()
-        b = await provider()
-        c = await provider()
-        return a, b, c
-
-    a, b, c = asyncio.run(_call_three_times())
+    a = provider()
+    b = provider()
+    c = provider()
 
     assert a is b is c
     assert a is parameters
@@ -77,7 +70,7 @@ def test_provider_returns_same_parameter_set_on_multiple_calls() -> None:
 
 
 def test_provider_signature_matches_repository_slot() -> None:
-    """The provider type-checks as ``Callable[[], Awaitable[ActiveRiskParameterSet]]``.
+    """The provider type-checks as ``Callable[[], ActiveRiskParameterSet]``.
 
     This is the slot ``SqlPortfolioStateRepository.__init__`` expects.
     Static checking is mypy's job; this runtime assertion documents the
@@ -87,12 +80,7 @@ def test_provider_signature_matches_repository_slot() -> None:
     parameters = baseline_normal_parameters()
     result = _build_result(parameters)
 
-    provider: Callable[[], Awaitable[ActiveRiskParameterSet]] = (
-        make_active_risk_parameters_provider(result)
-    )
+    provider: Callable[[], ActiveRiskParameterSet] = make_active_risk_parameters_provider(result)
 
-    async def _call() -> ActiveRiskParameterSet:
-        return await provider()
-
-    yielded = asyncio.run(_call())
+    yielded = provider()
     assert isinstance(yielded, ActiveRiskParameterSet)

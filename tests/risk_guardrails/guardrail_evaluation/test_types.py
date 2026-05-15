@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import PositionId, Symbol
 from alphamind.risk_guardrails.guardrail_evaluation import (
     Action,
     AssetType,
@@ -119,7 +120,7 @@ def _build_option_leg() -> OptionLeg:
 def _build_proposed_delta() -> ProposedDelta:
     return ProposedDelta(
         id="REC-1",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,
@@ -133,8 +134,8 @@ def _build_proposed_delta() -> ProposedDelta:
 
 def _build_existing_position() -> ExistingPosition:
     return ExistingPosition(
-        position_id="POS-1",
-        underlying="AAPL",
+        position_id=PositionId("POS-1"),
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,

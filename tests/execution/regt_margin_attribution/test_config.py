@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 import yaml
-from pydantic import ValidationError
 
 _CONFIG_PATH = pathlib.Path(__file__).parents[3] / "config" / "regt_margin_attribution.yaml"
 
@@ -111,7 +110,7 @@ def test_config_rejects_non_finite_risk_free_rate(tmp_path: pathlib.Path) -> Non
         encoding="utf-8",
     )
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         load_regt_margin_attribution_config(yaml_file)
 
 
@@ -124,7 +123,7 @@ def test_config_rejects_invalid_iv_shock_direction(tmp_path: pathlib.Path) -> No
     yaml_file = tmp_path / "regt.yaml"
     yaml_file.write_text(yaml.safe_dump(payload), encoding="utf-8")
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         load_regt_margin_attribution_config(yaml_file)
 
 
@@ -137,7 +136,7 @@ def test_config_rejects_invalid_iv_shock_up_direction(tmp_path: pathlib.Path) ->
     yaml_file = tmp_path / "regt.yaml"
     yaml_file.write_text(yaml.safe_dump(payload), encoding="utf-8")
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         load_regt_margin_attribution_config(yaml_file)
 
 
@@ -150,7 +149,7 @@ def test_config_rejects_shock_outside_unit_interval(tmp_path: pathlib.Path) -> N
     yaml_file = tmp_path / "regt.yaml"
     yaml_file.write_text(yaml.safe_dump(payload), encoding="utf-8")
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         load_regt_margin_attribution_config(yaml_file)
 
 

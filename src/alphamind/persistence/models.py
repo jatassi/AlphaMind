@@ -21,9 +21,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from alphamind._kernel.calibration import CALIBRATION_STATE_VALUES
+from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.config.models.regimes import Regime
-from alphamind.distillation.calibration import CALIBRATION_STATE_VALUES
-from alphamind.risk_guardrails.regime_adaptation.types import RegimeTransitionState
 
 
 class Base(DeclarativeBase):

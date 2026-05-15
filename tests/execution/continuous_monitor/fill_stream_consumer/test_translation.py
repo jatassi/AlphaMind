@@ -15,14 +15,20 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    ClientOrderId,
+    OccSymbol,
+)
+from alphamind._kernel.money import price
 from alphamind.execution.broker_adapter import FillReport
 from alphamind.execution.continuous_monitor.fill_stream_consumer import (
     fill_report_to_fill_record,
 )
-from alphamind.execution.state_persistence.write_paths.records import (
+from alphamind.portfolio_state.records.orders import OrderStatus
+from alphamind.state.records import (
     FillProcessingStatus,
 )
-from alphamind.portfolio_state.records.orders import OrderStatus
 
 
 def _ts(minute: int = 0) -> datetime:
@@ -44,10 +50,14 @@ def _equity_fill_report(
     timestamp: datetime | None = None,
 ) -> FillReport:
     return FillReport(
-        client_order_id=client_order_id,
-        alpaca_order_id=alpaca_order_id,
-        parent_client_order_id=parent_client_order_id,
-        parent_alpaca_order_id=parent_alpaca_order_id,
+        client_order_id=ClientOrderId(client_order_id),
+        alpaca_order_id=AlpacaOrderId(alpaca_order_id),
+        parent_client_order_id=ClientOrderId(parent_client_order_id)
+        if parent_client_order_id is not None
+        else None,
+        parent_alpaca_order_id=AlpacaOrderId(parent_alpaca_order_id)
+        if parent_alpaca_order_id is not None
+        else None,
         event_type=event_type,
         fill_timestamp=timestamp or _ts(30),
         fill_price=fill_price,
@@ -55,7 +65,7 @@ def _equity_fill_report(
         cumulative_filled_quantity=cumulative,
         remaining_quantity=remaining,
         execution_venue=None,
-        occ_symbol=occ_symbol,
+        occ_symbol=OccSymbol(occ_symbol) if occ_symbol is not None else None,
         position_intent=None,
         raw_event_payload={},
     )
@@ -65,7 +75,7 @@ class TestEquityFillEvent:
     def test_filled_event_translates_to_fill_record(self) -> None:
         report = _equity_fill_report(
             client_order_id="oms-order-1",
-            alpaca_order_id="alp-abc",
+            alpaca_order_id=AlpacaOrderId("alp-abc"),
             event_type="filled",
             fill_price=189.42,
             fill_quantity=100.0,
@@ -76,7 +86,10 @@ class TestEquityFillEvent:
         assert record is not None
         assert record.order_id == "oms-order-1"
         assert record.fill_timestamp == report.fill_timestamp
-        assert record.fill_price == pytest.approx(189.42)
+        # ALP-462 — FillRecord.fill_price is ``Price`` (Decimal-backed); the
+        # translator forwards the report's float value through Pydantic's
+        # float→Decimal coercion, so equality is against the canonical string.
+        assert record.fill_price == price("189.42")
         assert record.fill_quantity == pytest.approx(100.0)
         assert record.remaining_quantity_after == pytest.approx(0.0)
         assert record.order_status_after is OrderStatus.FILLED
@@ -146,7 +159,8 @@ class TestSingleLegOptionsEvent:
         # round-trip into the persistence row.
         assert record is not None
         assert record.order_status_after is OrderStatus.PARTIALLY_FILLED
-        assert record.fill_price == pytest.approx(3.45)
+        # ALP-462 — FillRecord.fill_price is ``Price`` (Decimal-backed).
+        assert record.fill_price == price("3.45")
         assert record.fill_quantity == pytest.approx(2.0)
 
 
@@ -223,7 +237,7 @@ class TestMlegEvents:
         record = fill_report_to_fill_record(
             self._mleg_leg_child(
                 client_order_id="strategy-1-leg-1",
-                alpaca_order_id="alp-leg-1",
+                alpaca_order_id=AlpacaOrderId("alp-leg-1"),
                 parent_client_order_id="strategy-1",
                 parent_alpaca_order_id="alp-parent",
             )

@@ -13,9 +13,8 @@ This module captures that re-assessment as an in-memory snapshot.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
-
-from pydantic import BaseModel, ConfigDict, Field
 
 from alphamind.portfolio_state.records.theses import (
     SupportingSignal,
@@ -28,20 +27,25 @@ __all__ = [
 ]
 
 
-class ComponentHealthEntry(BaseModel):
+@dataclass(frozen=True, slots=True)
+class ComponentHealthEntry:
     """Per-component re-assessment from one strategist invocation.
 
     The strategist produces one entry per active thesis component at each
     invocation, capturing the current state of cited signals.
     """
 
-    model_config = ConfigDict(frozen=True)
-
-    component_id: str = Field(min_length=1)
+    component_id: str
     supporting_signals: tuple[SupportingSignal, ...]
 
+    def __post_init__(self) -> None:
+        if len(self.component_id) < 1:
+            msg = "component_id must be non-empty"
+            raise ValueError(msg)
 
-class ThesisHealthSnapshot(BaseModel):
+
+@dataclass(frozen=True, slots=True)
+class ThesisHealthSnapshot:
     """Per-invocation thesis-health re-assessment from the strategist.
 
     Produced by the strategist at each invocation; consumed by the PM and
@@ -50,14 +54,20 @@ class ThesisHealthSnapshot(BaseModel):
     across invocations, snapshotted here).
     """
 
-    model_config = ConfigDict(frozen=True)
-
-    thesis_id: str = Field(min_length=1)
-    invocation_id: str = Field(min_length=1)
+    thesis_id: str
+    invocation_id: str
     snapshot_timestamp: datetime
     health_status: ThesisStatus
     prior_health_status: ThesisStatus | None
     component_health: tuple[ComponentHealthEntry, ...]
+
+    def __post_init__(self) -> None:
+        if len(self.thesis_id) < 1:
+            msg = "thesis_id must be non-empty"
+            raise ValueError(msg)
+        if len(self.invocation_id) < 1:
+            msg = "invocation_id must be non-empty"
+            raise ValueError(msg)
 
     def health_for_component(self, component_id: str) -> ComponentHealthEntry | None:
         """Return the per-component health entry for ``component_id``, or None."""

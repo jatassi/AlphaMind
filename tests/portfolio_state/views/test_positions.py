@@ -1,10 +1,14 @@
 """Tests for PositionView (story 05a — split persistent core from delivery view)."""
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
+from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    Symbol,
+)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -27,7 +31,7 @@ _FILL = PositionFill(
     fees=1.0,
 )
 _LONG_EQUITY = EquityPositionDetails(
-    ticker="AAPL",
+    ticker=Symbol("AAPL"),
     share_count=100.0,
     average_cost_basis_per_share=150.0,
 )
@@ -50,7 +54,7 @@ def _make_record(**overrides: object) -> PositionRecord:
         "origin": None,
     }
     kwargs.update(overrides)
-    return PositionRecord.model_validate(kwargs)
+    return PositionRecord(**kwargs)
 
 
 def _make_view(**overrides: object) -> PositionView:
@@ -70,7 +74,7 @@ def _make_view(**overrides: object) -> PositionView:
         "risk_reward_at_current": None,
     }
     kwargs.update(overrides)
-    return PositionView.model_validate(kwargs)
+    return PositionView(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +107,7 @@ class TestPositionViewConstruction:
 class TestPositionViewFrozen:
     def test_frozen(self) -> None:
         view = _make_view()
-        with pytest.raises(ValidationError):
+        with pytest.raises(FrozenInstanceError):
             view.unrealized_pnl_usd = 9_999.0
 
 
@@ -117,16 +121,16 @@ class TestPositionViewFieldConstraints:
 
     # finite-only — current_market_value_usd
     def test_current_market_value_usd_inf_fails(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_view(current_market_value_usd=float("inf"))
 
     def test_current_market_value_usd_nan_fails(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_view(current_market_value_usd=float("nan"))
 
     # finite-only — unrealized_pnl_usd
     def test_unrealized_pnl_usd_inf_fails(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_view(unrealized_pnl_usd=float("inf"))
 
     # signed — position_weight_pct can be negative for shorts
@@ -140,12 +144,12 @@ class TestPositionViewFieldConstraints:
         assert view.position_weight_pct == 145.0
 
     def test_position_weight_pct_inf_fails(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_view(position_weight_pct=float("inf"))
 
     # non-negative — position_age_hours
     def test_position_age_hours_negative_fails(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_view(position_age_hours=-1.0)
 
     def test_position_age_hours_zero_passes(self) -> None:
@@ -154,7 +158,7 @@ class TestPositionViewFieldConstraints:
 
     # non-negative — notional_exposure_usd
     def test_notional_exposure_usd_negative_fails(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_view(notional_exposure_usd=-100.0)
 
     def test_notional_exposure_usd_zero_passes(self) -> None:
@@ -167,7 +171,7 @@ class TestPositionViewFieldConstraints:
         assert view.delta_adjusted_exposure_usd == -50_000.0
 
     def test_delta_adjusted_exposure_usd_inf_fails(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_view(delta_adjusted_exposure_usd=float("inf"))
 
     # nullable — distance_to_target_usd / distance_to_stop_usd / risk_reward_at_current

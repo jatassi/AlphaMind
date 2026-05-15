@@ -18,6 +18,9 @@ from typing import Any, Literal
 
 import pytest
 
+from alphamind._kernel.ids import (
+    InvocationId,
+)
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AgentName, AllowedModel, BaseAgentConfig
@@ -78,7 +81,7 @@ _NOW = _AS_OF
 _TIMESTAMP = _AS_OF
 
 
-async def _pipeline_inputs_from_fixture(
+def _pipeline_inputs_from_fixture(
     fixture: Any,
     quotes: dict[str, PriceQuote],
     config: Any,
@@ -97,13 +100,15 @@ async def _pipeline_inputs_from_fixture(
     """
     from types import MappingProxyType
 
-    from alphamind.portfolio_state.assembler import assemble_snapshot
-    from alphamind.portfolio_state.records.capital import (
-        ActiveRiskParameterEntry,
-        ActiveRiskParameterSet,
+    from alphamind._kernel.regime import (
         RegimeLabel,
         RegimeTransitionState,
     )
+    from alphamind.portfolio_state.aggregates.risk_parameters import (
+        ActiveRiskParameterEntry,
+        ActiveRiskParameterSet,
+    )
+    from alphamind.portfolio_state.assembler import assemble_snapshot
     from alphamind.portfolio_state.repository import StubPortfolioStateRepository
     from alphamind.risk_guardrails.guardrail_evaluation import (
         FeatureFlagsView,
@@ -138,13 +143,13 @@ async def _pipeline_inputs_from_fixture(
         ),
         active_overlays=(),
     )
-    fixture = fixture.model_copy(update={"active_risk_parameters": active_risk_parameters})
+    fixture = dataclasses.replace(fixture, active_risk_parameters=active_risk_parameters)
 
     from alphamind.portfolio_state.consumers.synthesizer import adapt_ticker_sector_resolver
 
     repository = StubPortfolioStateRepository(fixture)
     price_provider = StubCurrentPriceProvider(quotes, now)
-    assembled = await assemble_snapshot(
+    assembled = assemble_snapshot(
         repository=repository,
         price_provider=price_provider,
         sector_resolver=adapt_ticker_sector_resolver(_sector_resolver),
@@ -216,8 +221,8 @@ def _progressive_tiers_fixture() -> tuple[Any, ...]:
 
 def _build_regime_output(parameters: Any) -> Any:
     """Build a fixture ``RegimeAdaptationOutput`` carrying *parameters*."""
+    from alphamind._kernel.regime import RegimeTransitionState
     from alphamind.config.models.regimes import Regime
-    from alphamind.portfolio_state.records.capital import RegimeTransitionState
     from alphamind.risk_guardrails.regime_adaptation import (
         RegimeAdaptationOutput,
         RegimeAdaptationState,
@@ -250,7 +255,7 @@ def _build_regime_output(parameters: Any) -> Any:
     )
 
 
-async def _make_minimal_inputs() -> dict[str, Any]:
+def _make_minimal_inputs() -> dict[str, Any]:
     """Return a fixture-tuple dict ready for ``run_decision_pipeline``.
 
     Uses the empty-portfolio repository fixture (zero positions, $100k cash)
@@ -260,7 +265,7 @@ async def _make_minimal_inputs() -> dict[str, Any]:
     from tests.portfolio_state._fixtures import build_minimal_snapshot_inputs
 
     fixture, quotes, _, config, now = build_minimal_snapshot_inputs()
-    return await _pipeline_inputs_from_fixture(
+    return _pipeline_inputs_from_fixture(
         fixture,
         quotes,
         config,
@@ -307,14 +312,14 @@ def _make_analyst_output(*, mode: Literal["normal", "watchlist"] = "normal") -> 
 
     if mode == "normal":
         return AnalystOutput(
-            invocation_id=_INVOCATION_ID,
+            invocation_id=InvocationId(_INVOCATION_ID),
             timestamp=_TIMESTAMP,
             mode="normal",
             recommendations=(),
             watchlist=None,
         )
     return AnalystOutput(
-        invocation_id=_INVOCATION_ID,
+        invocation_id=InvocationId(_INVOCATION_ID),
         timestamp=_TIMESTAMP,
         mode="watchlist",
         recommendations=None,
@@ -353,7 +358,7 @@ def _make_strategist_output(*, mode: Literal["normal", "defensive_posture"] = "n
         ),
     )
     return StrategistOutput(
-        invocation_id=_INVOCATION_ID,
+        invocation_id=InvocationId(_INVOCATION_ID),
         timestamp=_TIMESTAMP,
         mode=mode,
         position_assessments=(),
@@ -459,7 +464,7 @@ def _make_pm_result() -> PMResult:
 
     return PMResult(
         output=PMCompletionRecord(
-            invocation_id=_INVOCATION_ID,
+            invocation_id=InvocationId(_INVOCATION_ID),
             timestamp=_TIMESTAMP,
             envelopes_submitted=0,
             verdict_summary=VerdictSummary(
@@ -582,7 +587,7 @@ def _drive(**overrides: Any) -> Any:
     from alphamind.pipeline.decision import run_decision_pipeline
 
     async def _go() -> Any:
-        kwargs = await _make_minimal_inputs()
+        kwargs = _make_minimal_inputs()
         kwargs.update(overrides)
         return await run_decision_pipeline(**kwargs)
 
@@ -728,6 +733,43 @@ def test_strategist_failure_cancels_analyst_and_propagates(
     with pytest.raises(SDKFailure) as exc_info:
         _drive()
     assert exc_info.value is failure
+    assert "pre_processor" not in log.order
+    assert "pm" not in log.order
+
+
+def test_analyst_and_strategist_double_failure_propagates_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Analyst + strategist both fail simultaneously → pipeline surfaces a
+    single ``SDKFailure`` (the first non-``CancelledError`` child of the
+    underlying ``BaseExceptionGroup``) rather than the group container.
+
+    Guards the TaskGroup migration: ``asyncio.TaskGroup`` always raises
+    ``BaseExceptionGroup``; without explicit unwrapping the caller would
+    suddenly receive a group container instead of an ``SDKFailure``.
+    """
+    log = _CallLog()
+    analyst_failure = SDKFailure(
+        "analyst stub failure",
+        agent_name=AgentName.analyst.value,
+        invocation_id=_INVOCATION_ID,
+    )
+    strategist_failure = SDKFailure(
+        "strategist stub failure",
+        agent_name=AgentName.strategist.value,
+        invocation_id=_INVOCATION_ID,
+    )
+    _patch_runners(
+        monkeypatch,
+        log=log,
+        analyst_raises=analyst_failure,
+        strategist_raises=strategist_failure,
+    )
+    with pytest.raises(SDKFailure) as exc_info:
+        _drive()
+    assert exc_info.value in (analyst_failure, strategist_failure)
+    # Pre-processor + PM must NOT have run; the pipeline aborted at the
+    # parallel stage.
     assert "pre_processor" not in log.order
     assert "pm" not in log.order
 
@@ -956,7 +998,7 @@ def test_strategist_and_pm_receive_lookups_keyed_to_assembled_prices(
         from alphamind.pipeline.decision import run_decision_pipeline
 
         fixture, quotes, _, config, now = build_multi_position_snapshot_inputs()
-        inputs = await _pipeline_inputs_from_fixture(
+        inputs = _pipeline_inputs_from_fixture(
             fixture,
             quotes,
             config,

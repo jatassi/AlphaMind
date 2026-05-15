@@ -18,7 +18,6 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -27,11 +26,12 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from alphamind.config.resolver import ResolvedConfig
-from alphamind.execution.state_persistence.invocation_paths import (
+from alphamind._kernel.atomic_io import atomic_write_text
+from alphamind._kernel.invocations import (
     INVOCATIONS_DIRNAME,
     RESOLVED_CONFIG_FILENAME,
 )
+from alphamind.config.resolver import ResolvedConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,23 +126,6 @@ def feature_flags_snapshot(resolved: ResolvedConfig) -> dict[str, bool]:
     return {name: bool(value) for name, value in resolved.feature_flags.model_dump().items()}
 
 
-def _atomic_write(path: Path, contents: str) -> None:
-    """Write ``contents`` to ``path`` atomically.
-
-    Writes to ``<path>.tmp``, fsyncs the file descriptor, then ``Path.replace``
-    to the final name. ``Path.replace`` is OS-level atomic on macOS, Linux,
-    and Windows for paths on the same filesystem, so a process crash mid-write
-    cannot leave a half-written ``resolved_config.json``.
-    """
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    encoded = contents.encode("utf-8")
-    with tmp_path.open("wb") as handle:
-        handle.write(encoded)
-        handle.flush()
-        os.fsync(handle.fileno())
-    tmp_path.replace(path)
-
-
 def persist_snapshot(
     resolved: ResolvedConfig, *, archive_root: Path, invocation_id: str
 ) -> SnapshotResult:
@@ -157,9 +140,7 @@ def persist_snapshot(
     digest = compute_snapshot_hash(serialized)
     flags = feature_flags_snapshot(resolved)
 
-    invocation_dir = archive_root / INVOCATIONS_DIRNAME / invocation_id
-    invocation_dir.mkdir(parents=True, exist_ok=True)
-    snapshot_path = invocation_dir / RESOLVED_CONFIG_FILENAME
-    _atomic_write(snapshot_path, serialized)
+    snapshot_path = archive_root / INVOCATIONS_DIRNAME / invocation_id / RESOLVED_CONFIG_FILENAME
+    atomic_write_text(snapshot_path, serialized)
 
     return SnapshotResult(hash=digest, path=snapshot_path, feature_flags_snapshot=flags)

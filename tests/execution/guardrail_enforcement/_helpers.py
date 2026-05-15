@@ -17,7 +17,7 @@ from collections.abc import Callable
 from alphamind.config.guardrails_helpers import (
     load_cumulative_drawdown_progressive_tiers,
 )
-from alphamind.portfolio_state.records.capital import (
+from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )

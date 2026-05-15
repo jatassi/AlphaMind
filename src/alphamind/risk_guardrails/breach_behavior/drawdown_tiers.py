@@ -14,6 +14,7 @@ sequence so operator tuning does not require code changes.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING
 
 from alphamind.config.models.guardrails import ProgressiveTier
@@ -24,7 +25,7 @@ if TYPE_CHECKING:
     # which re-exports ``DrawdownTier`` from this package. Importing them at
     # runtime would cycle through capital → breach_behavior package init → this
     # module. They appear only in annotations, so deferring is sound.
-    from alphamind.portfolio_state.records.capital import (
+    from alphamind.portfolio_state.aggregates.risk_parameters import (
         ActiveRiskParameterEntry,
         ActiveRiskParameterSet,
     )
@@ -149,12 +150,12 @@ def apply_progressive_tier_overrides(
     overlays = _extend_overlays(active_risk_parameters.active_overlays, tier)
 
     if tier is DrawdownTier.FULL_HALT:
-        return active_risk_parameters.model_copy(update={"active_overlays": overlays})
+        return dataclasses.replace(active_risk_parameters, active_overlays=overlays)
 
     tier_cfg = _resolve_non_halt_tier(tier, progressive_tiers)
     new_entries = _override_rule_values(active_risk_parameters.entries, tier_cfg)
-    return active_risk_parameters.model_copy(
-        update={"entries": new_entries, "active_overlays": overlays}
+    return dataclasses.replace(
+        active_risk_parameters, entries=new_entries, active_overlays=overlays
     )
 
 
@@ -213,11 +214,10 @@ def _override_rule_values(
             raise KeyError(msg)
 
     return tuple(
-        entry.model_copy(
-            update={
-                "value": min(entry.value, overrides[entry.rule_id]),
-                "regime_multiplier_applied": 1.0,
-            }
+        dataclasses.replace(
+            entry,
+            value=min(entry.value, overrides[entry.rule_id]),
+            regime_multiplier_applied=1.0,
         )
         if entry.rule_id in overrides
         else entry

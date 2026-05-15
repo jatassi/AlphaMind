@@ -108,7 +108,7 @@ def build_portfolio_state_mcp_server(
         _EMPTY_INPUT_SCHEMA,
     )
     async def _get_positions_summary(_args: dict[str, Any]) -> dict[str, Any]:
-        positions = await reader.get_positions_summary()
+        positions = reader.get_positions_summary()
         return {"content": [{"type": "text", "text": _render_positions(positions)}]}
 
     @tool(
@@ -117,7 +117,7 @@ def build_portfolio_state_mcp_server(
         _EMPTY_INPUT_SCHEMA,
     )
     async def _get_active_theses_summary(_args: dict[str, Any]) -> dict[str, Any]:
-        theses = await reader.get_active_theses_summary()
+        theses = reader.get_active_theses_summary()
         return {"content": [{"type": "text", "text": _render_theses(theses)}]}
 
     @tool(
@@ -126,7 +126,7 @@ def build_portfolio_state_mcp_server(
         _EMPTY_INPUT_SCHEMA,
     )
     async def _get_exposure_snapshot(_args: dict[str, Any]) -> dict[str, Any]:
-        snapshot = await reader.get_exposure_snapshot()
+        snapshot = reader.get_exposure_snapshot()
         return {"content": [{"type": "text", "text": _render_exposure(snapshot)}]}
 
     server = create_sdk_mcp_server(

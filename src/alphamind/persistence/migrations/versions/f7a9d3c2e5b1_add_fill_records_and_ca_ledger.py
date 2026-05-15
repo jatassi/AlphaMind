@@ -28,11 +28,11 @@ from enum import StrEnum
 import sqlalchemy as sa
 from alembic import op
 
-from alphamind.execution.state_persistence.write_paths.records import (
+from alphamind.portfolio_state.records.orders import OrderStatus
+from alphamind.state.records import (
     CorporateActionLedgerStatus,
     FillProcessingStatus,
 )
-from alphamind.portfolio_state.records.orders import OrderStatus
 
 # revision identifiers, used by Alembic.
 revision: str = "f7a9d3c2e5b1"

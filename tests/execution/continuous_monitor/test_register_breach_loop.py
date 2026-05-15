@@ -31,6 +31,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import alphamind.decision.portfolio_manager.models  # noqa: F401 — break OMS↔PM cycle
+from alphamind._kernel.money import money
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.guardrails import BreachResponse
 from alphamind.execution.broker_adapter.queries import TradeAccountSnapshot
@@ -38,11 +39,11 @@ from alphamind.execution.continuous_monitor.__main__ import _register_breach_loo
 from alphamind.execution.continuous_monitor.cascade_dispatch import TriggerIdGenerator
 from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.venue_configuration.calendar_cache import TradingCalendarCache
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.risk_guardrails.breach_behavior import BreachBehaviorConfig
+from alphamind.state.config import StatePersistenceConfig
 
 _CONFIG_DIR = Path(__file__).resolve().parents[3] / "config"
 
@@ -117,12 +118,12 @@ class _SolventAccountQueries:
     def get_account(self) -> TradeAccountSnapshot:
         return TradeAccountSnapshot(
             account_id="acct-1",
-            cash=0.0,
-            equity=100_000.0,
-            buying_power=0.0,
-            regt_buying_power=0.0,
-            daytrading_buying_power=0.0,
-            maintenance_margin=25_000.0,
+            cash=money(0.0),
+            equity=money(100_000.0),
+            buying_power=money(0.0),
+            regt_buying_power=money(0.0),
+            daytrading_buying_power=money(0.0),
+            maintenance_margin=money(25_000.0),
             daytrade_count=0,
             pattern_day_trader=False,
             status="ACTIVE",

@@ -85,6 +85,11 @@ def _refresh_transaction(session: Session) -> Iterator[None]:
         yield
         session.commit()
     except Exception:
+        # Transaction rollback wrapper per runtime §G1: any exception inside
+        # the refresh body rolls back partial writes and re-raises so the
+        # caller surfaces the failure. ``BaseException`` (``CancelledError``,
+        # ``KeyboardInterrupt``) propagates without rollback — interrupting a
+        # transaction is the operator's call.
         session.rollback()
         raise
 

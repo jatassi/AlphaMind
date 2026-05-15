@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind.analysis.synthesizer.models import BriefBundle, BriefSource
 from alphamind.analysis.synthesizer.retrieval import (
@@ -133,7 +132,9 @@ def test_freshness_by_source_populated() -> None:
 
 
 def test_retrieval_store_is_frozen() -> None:
-    """RetrievalStore is a Pydantic model, frozen — assignment after construction fails."""
+    """ALP-474: RetrievalStore is a frozen dataclass — assignment after construction fails."""
+    import dataclasses
+
     store = RetrievalStore(entries={}, freshness_by_source={})
-    with pytest.raises(ValidationError):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         store.entries = {"x": "y"}  # type: ignore[misc]

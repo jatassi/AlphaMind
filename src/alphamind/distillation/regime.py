@@ -24,9 +24,9 @@ Reference docs:
   invocation trigger — the ``regime_skip_emergency`` consumer.
 
 The module is the single source of truth for the regime label. Every
-threshold reaches the classifier as a keyword argument from the loaded
-:class:`alphamind.config.models.distillation.DistillationConfig`; no
-literals are encoded here. Per the no-magic-numbers audit
+threshold reaches the classifier as a keyword argument projected from
+:class:`alphamind.distillation._config_domain.DistillationDomainConfig`;
+no literals are encoded here. Per the no-magic-numbers audit
 (``tests/distillation/test_no_magic_numbers.py``) the module must be
 clean of YAML-matching literal values.
 """
@@ -80,17 +80,20 @@ assert {member.value for member in RegimeLabel} == set(_REGIME_LABELS), (
 # The classifier needs all nine ``regime_classification`` thresholds plus
 # the two ``regime_transition`` thresholds. Bundling each YAML group into
 # a frozen dataclass keeps argument counts manageable and matches the
-# Pydantic config shape one-for-one — the orchestrator (story 12) pulls
-# the values from :class:`alphamind.config.models.distillation.RegimeClassification`
-# and :class:`alphamind.config.models.distillation.RegimeTransition` into
-# these dataclasses without re-typing.
+# config shape one-for-one — the orchestrator (story 12) pulls the values
+# from
+# :class:`alphamind.distillation._config_domain.RegimeClassificationDomainConfig`
+# and
+# :class:`alphamind.distillation._config_domain.RegimeTransitionDomainConfig`
+# into these dataclasses without re-typing.
 
 
 @dataclass(frozen=True, slots=True)
 class RegimeClassificationThresholds:
     """The nine ``regime_classification`` thresholds.
 
-    Field names mirror :class:`alphamind.config.models.distillation.RegimeClassification`
+    Field names mirror
+    :class:`alphamind.distillation._config_domain.RegimeClassificationDomainConfig`
     one-for-one so the orchestrator can transcribe them directly.
     """
 

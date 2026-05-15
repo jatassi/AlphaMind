@@ -25,9 +25,6 @@ from alphamind.config.models.overlays import Overlay
 from alphamind.config.models.regimes import Regime
 from alphamind.config.models.run_types import RunType
 from alphamind.config.resolver import RuntimeDimensions
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-)
 from alphamind.persistence.models import Base, CollectionRuns
 from alphamind.persistence.session import (
     make_async_engine,
@@ -38,6 +35,9 @@ from alphamind.scheduler.invocation import (
     _compute_data_source_freshness_json,
     _persist_data_calibration_snapshot,
     build_invocation_record,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
 )
 
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -112,7 +112,7 @@ async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[Asyn
     # Side-effect import: register the state-persistence tables on Base.metadata
     # (needed when build_invocation_record's freshness query touches collection_runs
     # and we want all tables created up front).
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     try:
@@ -398,7 +398,7 @@ class TestBuildInvocationRecord:
             "staleness_flag",
             "snapshot_metadata_json",
         }
-        record_fields = record.model_dump()
+        record_fields = record.model_dump(mode="json")
         assert set(record_fields) == {
             "invocation_id",
             "process_lifetime_id",

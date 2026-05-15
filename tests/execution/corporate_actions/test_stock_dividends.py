@@ -8,18 +8,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.tables.brackets import BracketRow
-from alphamind.execution.state_persistence.tables.corporate_action_integration_ledger import (
-    CorporateActionIntegrationLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    CorporateActionLedgerStatus,
-)
+from alphamind._kernel.ids import PositionId, Symbol
 from alphamind.portfolio_state.events.activity_log import (
     CorporateActionType,
     EventType,
@@ -29,6 +18,18 @@ from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
     OptionsPositionDetails,
     StrategyPositionDetails,
+)
+from alphamind.state.records import (
+    CorporateActionLedgerStatus,
+)
+from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.corporate_action_integration_ledger import (
+    CorporateActionIntegrationLedgerRow,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
 )
 from tests.execution.corporate_actions._handler_substrate import (
     NOW,
@@ -70,10 +71,10 @@ async def test_stock_dividend_scales_equity_quantity_and_basis(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-stockdiv-1",
         action_type=CorporateActionType.STOCK_DIVIDEND,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.10,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -115,10 +116,10 @@ async def test_stock_dividend_no_cash_movement(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-stockdiv-cash-1",
         action_type=CorporateActionType.STOCK_DIVIDEND,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.10,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -174,10 +175,10 @@ async def test_stock_dividend_options_projects_alpaca_state(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-stockdiv-opt-1",
         action_type=CorporateActionType.STOCK_DIVIDEND,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.10,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -224,10 +225,10 @@ async def test_stock_dividend_strategy_applies_per_leg_projection(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-stockdiv-strat-1",
         action_type=CorporateActionType.STOCK_DIVIDEND,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.10,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -285,10 +286,10 @@ async def test_stock_dividend_emits_corporate_action_applied(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-stockdiv-applied-1",
         action_type=CorporateActionType.STOCK_DIVIDEND,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.05,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -335,10 +336,10 @@ async def test_stock_dividend_cancels_bracket_and_writes_ledger(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-stockdiv-bracket-1",
         action_type=CorporateActionType.STOCK_DIVIDEND,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.10,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )

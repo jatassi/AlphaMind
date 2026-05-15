@@ -27,6 +27,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    InvocationId,
+)
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.modes import Mode
 from alphamind.config.models.run_types import RunType
@@ -41,12 +44,7 @@ from alphamind.config.models.venue import (
 # Side-effect import to break the submit_envelope_mcp ↔ portfolio_manager
 # circular import: PMEnvelope first, then submit_envelope_mcp.
 from alphamind.decision.portfolio_manager.models import PMEnvelope  # noqa: F401
-from alphamind.execution.state_persistence.invocation_context.records import (
-    ProcessLifetimeRecord,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
-from alphamind.execution.state_persistence.write_paths.phase1 import Phase1Summary
+from alphamind.execution.write_paths.phase1 import Phase1Summary
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -54,6 +52,11 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
+from alphamind.state.invocation_context.records import (
+    ProcessLifetimeRecord,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.tables.invocations import InvocationRow
 
 _NOW = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -106,7 +109,7 @@ async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[Asyn
     """Yield an async session factory bound to an initialized SQLite DB."""
     db_path = tmp_path / "alphamind.db"
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     try:
@@ -138,7 +141,7 @@ async def async_factory_with_singletons(
     """
     db_path = tmp_path / "alphamind.db"
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     try:
@@ -146,10 +149,10 @@ async def async_factory_with_singletons(
         with make_session_factory(sync_engine)() as sess:
             sess.add(process_lifetime_record_to_row(_make_process_lifetime_record()))
             cash, drawdown = _singleton_records()
-            from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
+            from alphamind.state.tables.cash_ledger_codec import (
                 cash_ledger_record_to_row,
             )
-            from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
+            from alphamind.state.tables.drawdown_state_codec import (
                 drawdown_state_record_to_row,
             )
 
@@ -286,7 +289,7 @@ def _make_decision_result() -> Any:
 
     pm_result = PMResult(
         output=PMCompletionRecord(
-            invocation_id="inv-x",
+            invocation_id=InvocationId("inv-x"),
             timestamp=_NOW,
             envelopes_submitted=0,
             verdict_summary=VerdictSummary(approve=0, approve_with_modification=0, reject=0),
@@ -348,7 +351,7 @@ def _patch_no_op_pipeline(
         # effect of fill integration. The stub mirrors both so the
         # orchestrator's post-Phase-1 snapshot read finds the singletons + a
         # stamped row.
-        from alphamind.execution.state_persistence.invocation_context.context import (
+        from alphamind.state.invocation_context.context import (
             stamp_phase_completion,
         )
 
@@ -682,36 +685,33 @@ class TestRunInvocationModeAndStaleness:
 
 def _singleton_records() -> tuple[Any, Any]:
     """Return ``(cash_ledger, drawdown_state)`` records for the snapshot singletons."""
-    from alphamind.portfolio_state.records.capital import CashLedger, DrawdownState
-    from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+    from alphamind._kernel.regime import RiskZone
+    from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+    from alphamind.portfolio_state.records.cash import CashLedger
 
-    cash = CashLedger.model_validate(
-        {
-            "current_cash_usd": 100_000.0,
-            "settled_cash_usd": 100_000.0,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": 100_000.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    cash = CashLedger(
+        current_cash_usd=100_000.0,
+        settled_cash_usd=100_000.0,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=100_000.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
-    drawdown = DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": 100_000.0,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    drawdown = DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=100_000.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
     return cash, drawdown
 
@@ -723,10 +723,10 @@ async def _seed_singletons_via_handle(handle: Any) -> None:
     effect of fill integration; joins the Phase 1 transaction so the
     singletons commit together with ``phase1_completed_at``.
     """
-    from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
+    from alphamind.state.tables.cash_ledger_codec import (
         cash_ledger_record_to_row,
     )
-    from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
+    from alphamind.state.tables.drawdown_state_codec import (
         drawdown_state_record_to_row,
     )
 
@@ -861,10 +861,10 @@ class TestRunInvocationSnapshotWiring:
 
         assemble_count = 0
 
-        async def _counting_assemble(*args: Any, **kwargs: Any) -> Any:
+        def _counting_assemble(*args: Any, **kwargs: Any) -> Any:
             nonlocal assemble_count
             assemble_count += 1
-            return await assemble_snapshot(*args, **kwargs)
+            return assemble_snapshot(*args, **kwargs)
 
         monkeypatch.setattr(module, "assemble_snapshot", _counting_assemble)
 
@@ -934,155 +934,6 @@ class TestRunInvocationFailuresThreeTxBoundaries:
         row = rows[0]
         assert row.phase1_completed_at is not None
         assert row.phase2_completed_at is None
-
-
-class TestLoadPriorActiveRiskParameters:
-    """``_load_prior_active_risk_parameters`` rehydrates the set from a snapshot.
-
-    The repository's ``prior_active_risk_parameters_provider`` is keyed by the
-    prior invocation's ``resolved_config_snapshot_path``; the orchestrator's
-    wiring needs to parse that file and return the prior set so the snapshot
-    assembler compares Phase 1 state against the actual prior limits, not the
-    current ones.
-    """
-
-    def test_reads_rule_values_and_regime_from_snapshot(self, tmp_path: Path) -> None:
-        """Given a snapshot with known rule_values + regime_label, return that set."""
-        from alphamind.config.models.regimes import Regime
-        from alphamind.portfolio_state.records.capital import RegimeLabel
-        from alphamind.scheduler.orchestrator import _load_prior_active_risk_parameters
-
-        snapshot_path = tmp_path / "prior_resolved.json"
-        snapshot_path.write_text(
-            json.dumps(
-                {
-                    "regime_label": Regime.elevated.value,
-                    "rule_values": {
-                        "daily_drawdown_pct": 0.025,
-                        "position_max_loss_pct": 0.01,
-                    },
-                }
-            )
-        )
-
-        result = _load_prior_active_risk_parameters(str(snapshot_path))
-
-        assert result.regime_label is RegimeLabel.ELEVATED
-        rule_map = {entry.rule_id: entry.value for entry in result.entries}
-        assert rule_map == {
-            "daily_drawdown_pct": 0.025,
-            "position_max_loss_pct": 0.01,
-        }
-
-
-class TestPriorProviderRehydratesFromPriorInvocation:
-    """End-to-end: a second invocation passes the prior row's snapshot through.
-
-    The repository factory's ``prior_active_risk_parameters_provider`` is
-    invoked by the snapshot assembler with the PRIOR invocation row's
-    ``resolved_config_snapshot_path``. With the rehydration wired, the
-    returned set reflects the rule_values that lived on disk for that prior
-    invocation, not the current invocation's set.
-    """
-
-    async def test_second_invocation_returns_prior_snapshot_set(
-        self,
-        async_factory: async_sessionmaker[AsyncSession],
-        env_path: Path,
-        archive_root: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-    ) -> None:
-        """Two snapshots on disk → prior provider returns the older one's set."""
-        from alphamind.config.models.regimes import Regime
-        from alphamind.scheduler.orchestrator import _make_repository_providers
-
-        # Hand-roll a "prior" snapshot file with distinguishable rule_values.
-        prior_snapshot_path = tmp_path / "prior_resolved.json"
-        prior_snapshot_path.write_text(
-            json.dumps(
-                {
-                    "regime_label": Regime.crisis.value,
-                    "rule_values": {"daily_drawdown_pct": 0.005},
-                }
-            )
-        )
-
-        # The current set is what _make_repository_providers takes as input.
-        from alphamind.scheduler.orchestrator import _build_active_risk_parameters
-
-        current_set = _build_active_risk_parameters(
-            rule_values={"daily_drawdown_pct": 0.05},
-            regime=Regime.normal,
-        )
-
-        _, prior_provider = _make_repository_providers(current_set)
-        prior_set = await prior_provider(str(prior_snapshot_path))
-
-        # The prior provider must return the snapshot-derived set, NOT a copy
-        # of the current set.
-        from alphamind.portfolio_state.records.capital import RegimeLabel
-
-        assert prior_set.regime_label is RegimeLabel.CRISIS
-        rule_map = {entry.rule_id: entry.value for entry in prior_set.entries}
-        assert rule_map == {"daily_drawdown_pct": 0.005}
-
-    async def test_unknown_snapshot_path_falls_back_to_current(
-        self,
-        async_factory: async_sessionmaker[AsyncSession],
-        env_path: Path,
-        archive_root: Path,
-        tmp_path: Path,
-    ) -> None:
-        """If the snapshot path is missing on disk, fall back to the current set.
-
-        First-ever invocation has no prior; the FK-resolution layer may still
-        end up handing the provider a path that doesn't exist (e.g. archive
-        relocation). Falling back to the current set keeps the snapshot
-        assembler operational instead of raising mid-invocation.
-        """
-        from alphamind.config.models.regimes import Regime
-        from alphamind.scheduler.orchestrator import (
-            _build_active_risk_parameters,
-            _make_repository_providers,
-        )
-
-        current_set = _build_active_risk_parameters(
-            rule_values={"daily_drawdown_pct": 0.05},
-            regime=Regime.normal,
-        )
-
-        _, prior_provider = _make_repository_providers(current_set)
-        missing_path = str(tmp_path / "definitely_not_on_disk.json")
-        result = await prior_provider(missing_path)
-
-        assert result is current_set
-
-    async def test_corrupt_snapshot_propagates_error(self, tmp_path: Path) -> None:
-        """A corrupt prior snapshot propagates JSON / schema errors.
-
-        Defensive fallback would mask a contract violation by substituting
-        an unrelated set; propagation aborts the invocation cleanly so the
-        operator sees the cause. The ``FileNotFoundError`` fallback exists
-        only for the legitimate "no prior" case, not for corrupted data.
-        """
-        from alphamind.config.models.regimes import Regime
-        from alphamind.scheduler.orchestrator import (
-            _build_active_risk_parameters,
-            _make_repository_providers,
-        )
-
-        corrupt_path = tmp_path / "corrupt.json"
-        corrupt_path.write_text("{not valid json")
-
-        current_set = _build_active_risk_parameters(
-            rule_values={"daily_drawdown_pct": 0.05},
-            regime=Regime.normal,
-        )
-        _, prior_provider = _make_repository_providers(current_set)
-
-        with pytest.raises(json.JSONDecodeError):
-            await prior_provider(str(corrupt_path))
 
 
 def _stub_only_llm_and_broker(
@@ -1207,37 +1058,3 @@ class TestRunInvocationProductionPathArtifacts:
         finally:
             sync_engine.dispose()
         assert result.passed, result.message
-
-
-class TestModeToDecisionLiteral:
-    """``_mode_to_decision_literal`` is symmetric with the row-side translator.
-
-    Both raise ``ValueError`` on unknown ``Mode`` members rather than silently
-    falling back to ``"normal"``. A future ``Mode`` enum expansion that adds a
-    new member would otherwise silently mis-translate into ``"normal"``.
-    """
-
-    def test_normal_translates_to_normal(self) -> None:
-        from alphamind.scheduler.orchestrator import _mode_to_decision_literal
-
-        assert _mode_to_decision_literal(Mode.normal) == "normal"
-
-    def test_halt_translates_to_halt(self) -> None:
-        from alphamind.scheduler.orchestrator import _mode_to_decision_literal
-
-        assert _mode_to_decision_literal(Mode.halt) == "halt"
-
-    def test_unknown_mode_raises_valueerror(self) -> None:
-        """Passing a non-Mode value (simulating an enum expansion) raises ValueError."""
-        from enum import Enum
-
-        from alphamind.scheduler.orchestrator import _mode_to_decision_literal
-
-        # Simulate a future enum member by passing a fresh Enum value that is
-        # not one of Mode.normal / Mode.halt. ``_mode_to_decision_literal``
-        # narrows via ``is``-identity and falls into the raise branch.
-        class FutureMode(Enum):
-            ATTENTIVE = "attentive"
-
-        with pytest.raises(ValueError, match="unexpected Mode member"):
-            _mode_to_decision_literal(FutureMode.ATTENTIVE)  # type: ignore[arg-type]

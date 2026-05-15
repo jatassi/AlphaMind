@@ -23,6 +23,10 @@ from uuid import uuid4
 import pytest
 from alpaca.common.exceptions import APIError
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    ClientOrderId,
+)
 from alphamind.execution.broker_adapter import (
     GatewaySubmissionFailed,
     PermanentRejection,
@@ -140,7 +144,7 @@ async def test_submit_replace_us_equity_simple_accepts_all_fields(
     result = await submit_replace(
         client=client,
         execution=execution,
-        target_alpaca_order_id="orig-id-123",
+        target_alpaca_order_id=AlpacaOrderId("orig-id-123"),
         target_asset_class="us_equity",
         target_order_class="simple",
         fields=fields,
@@ -173,7 +177,7 @@ async def test_submit_replace_us_option_simple_rejects_trail_fields(
         await submit_replace(
             client=client,
             execution=execution,
-            target_alpaca_order_id="orig-id-123",
+            target_alpaca_order_id=AlpacaOrderId("orig-id-123"),
             target_asset_class="us_option",
             target_order_class="simple",
             fields=fields,
@@ -195,7 +199,7 @@ async def test_submit_replace_us_option_simple_accepts_valid_fields() -> None:
     result = await submit_replace(
         client=client,
         execution=execution,
-        target_alpaca_order_id="orig-id-123",
+        target_alpaca_order_id=AlpacaOrderId("orig-id-123"),
         target_asset_class="us_option",
         target_order_class="simple",
         fields=fields,
@@ -227,7 +231,7 @@ async def test_submit_replace_mleg_rejects_non_mleg_fields(bad_field: str) -> No
         await submit_replace(
             client=client,
             execution=execution,
-            target_alpaca_order_id="orig-id-123",
+            target_alpaca_order_id=AlpacaOrderId("orig-id-123"),
             target_asset_class="us_option_strategy",
             target_order_class="mleg",
             fields=fields,
@@ -248,7 +252,7 @@ async def test_submit_replace_mleg_accepts_limit_price_and_qty() -> None:
     result = await submit_replace(
         client=client,
         execution=execution,
-        target_alpaca_order_id="orig-mleg-123",
+        target_alpaca_order_id=AlpacaOrderId("orig-mleg-123"),
         target_asset_class="us_option_strategy",
         target_order_class="mleg",
         fields=fields,
@@ -277,7 +281,7 @@ async def test_submit_replace_mleg_with_only_limit_price_no_stop_in_request() ->
     await submit_replace(
         client=client,
         execution=execution,
-        target_alpaca_order_id="orig-mleg-123",
+        target_alpaca_order_id=AlpacaOrderId("orig-mleg-123"),
         target_asset_class="us_option_strategy",
         target_order_class="mleg",
         fields=fields,
@@ -325,7 +329,7 @@ async def test_submit_replace_equity_child_order_class_field_restrictions(
         await submit_replace(
             client=client,
             execution=execution,
-            target_alpaca_order_id="orig-id",
+            target_alpaca_order_id=AlpacaOrderId("orig-id"),
             target_asset_class="us_equity",
             target_order_class=order_class,  # type: ignore[arg-type]
             fields=fields,
@@ -355,7 +359,7 @@ async def test_submit_replace_success_returns_submitted_replacement_ack() -> Non
     result = await submit_replace(
         client=client,
         execution=execution,
-        target_alpaca_order_id=orig_id,
+        target_alpaca_order_id=AlpacaOrderId(orig_id),
         target_asset_class="us_equity",
         target_order_class="simple",
         fields=fields,
@@ -402,7 +406,7 @@ async def test_submit_replace_retry_exhaustion_returns_gateway_submission_failed
     result = await submit_replace(
         client=client,
         execution=execution,
-        target_alpaca_order_id="orig-id",
+        target_alpaca_order_id=AlpacaOrderId("orig-id"),
         target_asset_class="us_equity",
         target_order_class="simple",
         fields=fields,
@@ -439,7 +443,7 @@ async def test_submit_replace_permanent_rejection_reraises() -> None:
         await submit_replace(
             client=client,
             execution=execution,
-            target_alpaca_order_id="orig-id",
+            target_alpaca_order_id=AlpacaOrderId("orig-id"),
             target_asset_class="us_equity",
             target_order_class="simple",
             fields=fields,
@@ -468,7 +472,7 @@ async def test_submit_replace_mleg_leg_mutation_422_reraises() -> None:
         await submit_replace(
             client=client,
             execution=execution,
-            target_alpaca_order_id="orig-mleg",
+            target_alpaca_order_id=AlpacaOrderId("orig-mleg"),
             target_asset_class="us_option_strategy",
             target_order_class="mleg",
             fields=fields,
@@ -497,7 +501,7 @@ async def test_submit_cancel_success_returns_submitted_cancellation_ack() -> Non
     result = await submit_cancel(
         client=client,
         execution=execution,
-        target_alpaca_order_id=target_id,
+        target_alpaca_order_id=AlpacaOrderId(target_id),
     )
 
     assert isinstance(result, Submitted)
@@ -531,7 +535,7 @@ async def test_submit_cancel_unknown_order_raises_permanent_rejection() -> None:
         await submit_cancel(
             client=client,
             execution=execution,
-            target_alpaca_order_id="ghost-order-id",
+            target_alpaca_order_id=AlpacaOrderId("ghost-order-id"),
         )
 
     rejection = classify_alpaca_error(exc_info.value)
@@ -553,7 +557,7 @@ async def test_submit_cancel_already_filled_order_raises_permanent_rejection() -
         await submit_cancel(
             client=client,
             execution=execution,
-            target_alpaca_order_id="filled-order-id",
+            target_alpaca_order_id=AlpacaOrderId("filled-order-id"),
         )
 
     rejection = classify_alpaca_error(exc_info.value)
@@ -592,7 +596,7 @@ async def test_submit_cancel_retry_exhaustion_returns_gateway_submission_failed(
     result = await submit_cancel(
         client=client,
         execution=execution,
-        target_alpaca_order_id="target-order-id",
+        target_alpaca_order_id=AlpacaOrderId("target-order-id"),
     )
 
     assert isinstance(result, GatewaySubmissionFailed)
@@ -634,7 +638,7 @@ async def test_submit_replace_runs_sdk_call_on_worker_thread(
     result = await submit_replace(
         client=client,
         execution=execution,
-        target_alpaca_order_id="orig-id",
+        target_alpaca_order_id=AlpacaOrderId("orig-id"),
         target_asset_class="us_equity",
         target_order_class="simple",
         fields=fields,
@@ -669,7 +673,7 @@ async def test_submit_cancel_runs_sdk_call_on_worker_thread() -> None:
     result = await submit_cancel(
         client=client,
         execution=execution,
-        target_alpaca_order_id="some-id",
+        target_alpaca_order_id=AlpacaOrderId("some-id"),
     )
 
     assert isinstance(result, Submitted)
@@ -696,7 +700,7 @@ async def test_submit_cancel_uses_alpaca_order_id_directly() -> None:
     await submit_cancel(
         client=client,
         execution=execution,
-        target_alpaca_order_id=target_id,
+        target_alpaca_order_id=AlpacaOrderId(target_id),
     )
 
     # The mock should have been called with the Alpaca order ID directly
@@ -710,17 +714,17 @@ async def test_submit_cancel_uses_alpaca_order_id_directly() -> None:
 
 def test_replacement_ack_is_frozen() -> None:
     ack = ReplacementAck(
-        new_alpaca_order_id="new",
-        replaced_alpaca_order_id="old",
-        client_order_id="coid",
+        new_alpaca_order_id=AlpacaOrderId("new"),
+        replaced_alpaca_order_id=AlpacaOrderId("old"),
+        client_order_id=ClientOrderId("coid"),
         status="pending_new",
     )
     with pytest.raises(FrozenInstanceError):
-        ack.new_alpaca_order_id = "mutated"  # type: ignore[misc]
+        ack.new_alpaca_order_id = AlpacaOrderId("mutated")  # type: ignore[misc]
 
 
 def test_cancellation_ack_is_frozen() -> None:
-    ack = CancellationAck(alpaca_order_id="abc", accepted=True)
+    ack = CancellationAck(alpaca_order_id=AlpacaOrderId("abc"), accepted=True)
     with pytest.raises(FrozenInstanceError):
         ack.accepted = False  # type: ignore[misc]
 

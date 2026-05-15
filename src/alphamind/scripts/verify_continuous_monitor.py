@@ -65,9 +65,24 @@ import alphamind.decision.portfolio_manager.models
 
 # Side-effect import: register state-persistence tables on ``Base.metadata``
 # so the in-memory engine in scenario (b) has the ``fill_records`` table.
-import alphamind.execution.state_persistence.tables  # noqa: F401
+import alphamind.state.tables  # noqa: F401
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price
+from alphamind.commands.engine_envelope import (
+    EngineEnvelope as OmsEngineEnvelope,
+)
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.guardrails import BreachResponse
+from alphamind.decision.portfolio_manager.submit_envelope import (
+    Acknowledgment,
+    SubmissionResult,
+)
 from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     CloseSubmissionResult,
 )
@@ -111,20 +126,8 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
 from alphamind.execution.guardrail_enforcement.orchestrator import (
     Phase1EnforcementResult,
 )
-from alphamind.execution.oms.engine_envelope import (
-    EngineEnvelope as OmsEngineEnvelope,
-)
-from alphamind.execution.oms.submit_envelope_mcp import (
-    Acknowledgment,
-    SubmissionResult,
-)
-from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
-from alphamind.execution.state_persistence.write_paths.fill_persistence import (
+from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    FillProcessingStatus,
-    FillRecord,
 )
 from alphamind.persistence.models import Base
 from alphamind.portfolio_state.aggregates.risk_parameters import (
@@ -177,6 +180,11 @@ from alphamind.risk_guardrails.breach_behavior import (
     RegimeTransitionState,
     RiskZone,
 )
+from alphamind.state.records import (
+    FillProcessingStatus,
+    FillRecord,
+)
+from alphamind.state.tables.fill_records import FillRecordRow
 
 __all__ = [
     "ScenarioResult",
@@ -271,14 +279,14 @@ def _options_position(
 ) -> PositionRecord:
     """Fixture: one long-NVDA call option position with a price-based stop."""
     return PositionRecord(
-        position_id=position_id,
-        thesis_id="THE-OPT-NVDA",
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THE-OPT-NVDA"),
+        bracket_id=BracketId(bracket_id),
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW,
         details=OptionsPositionDetails(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             strike_price=850.0,
             expiration_date=date(2026, 6, 19),
             contract_type=OptionContractType.CALL,
@@ -325,7 +333,7 @@ async def run_scenario_a_stream_caches_quote() -> ScenarioResult:
     second (the asyncio-only lock path).
     """
     cache = UnderlyingPriceCache()
-    quote = UnderlyingQuote(ticker="SPY", price=520.50, as_of=_NOW)
+    quote = UnderlyingQuote(ticker=Symbol("SPY"), price=520.50, as_of=_NOW)
     try:
         await asyncio.wait_for(cache.update(quote), timeout=1.0)
     except TimeoutError:
@@ -392,16 +400,17 @@ async def run_scenario_b_fill_persists() -> ScenarioResult:
     engine, factory = _make_async_in_memory_factory()
     try:
         await _create_schema(engine)
+        # ALP-462 — wrap fixture floats at the FillRecord boundary.
         fill = FillRecord(
             fill_id="FILL-001",
-            order_id="ORD-001",
+            order_id=OrderId("ORD-001"),
             fill_timestamp=_NOW,
-            fill_price=150.0,
+            fill_price=price("150"),
             fill_quantity=10.0,
             remaining_quantity_after=0.0,
             order_status_after=PSOrderStatus.FILLED,
-            slippage_usd=0.0,
-            fees_usd=0.0,
+            slippage_usd=money("0"),
+            fees_usd=money("0"),
             execution_venue=None,
             gateway_reference=None,
             persistence_timestamp=_NOW,
@@ -497,8 +506,8 @@ def _seed_iv_quotes(position: PositionRecord, *, iv: float) -> dict[str, IVQuote
 
 async def _seed_underlying_cache(prices: Mapping[str, float]) -> UnderlyingPriceCache:
     cache = UnderlyingPriceCache()
-    for ticker, price in prices.items():
-        await cache.update(UnderlyingQuote(ticker=ticker, price=price, as_of=_NOW))
+    for ticker, quote_price in prices.items():
+        await cache.update(UnderlyingQuote(ticker=ticker, price=quote_price, as_of=_NOW))
     return cache
 
 
@@ -849,14 +858,14 @@ def _equity_position_view(
 test_dispatcher._equity_position_view`.
     """
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=cost_basis,
     )
     record = PositionRecord(
-        position_id=position_id,
-        thesis_id=f"THE-{position_id}",
-        bracket_id=f"BRK-{position_id}",
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THE-{position_id}"),
+        bracket_id=BracketId(f"BRK-{position_id}"),
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_NOW,
@@ -986,7 +995,7 @@ def _make_dispatch_context(
 ) -> BreachDispatchContext:
     breaching = _equity_position_view(
         position_id=breaching_position_id,
-        ticker="NVDA",
+        ticker=Symbol("NVDA"),
         unrealized_pnl_usd=-3_500.0,
     )
     positions = (breaching,)
@@ -1053,7 +1062,7 @@ class _RecordingSubmit:
             command_id=f"{envelope.envelope_id}.0",
             acknowledgment=Acknowledgment(
                 position_id=envelope.commands[0].position_id,
-                order_id=f"ORD-{envelope.commands[0].position_id}",
+                order_id=OrderId(f"ORD-{envelope.commands[0].position_id}"),
             ),
         )
 
@@ -1245,7 +1254,7 @@ def _price_stop_bracket(
         leg_type=BracketLegType.PRICE_STOP,
         order_id=None,
         trigger=PriceTrigger(
-            underlying_ticker=underlying,
+            underlying_ticker=Symbol(underlying),
             threshold_usd=threshold,
             direction=direction,  # type: ignore[arg-type]
         ),
@@ -1253,10 +1262,10 @@ def _price_stop_bracket(
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-entry-1",
+        entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -1310,14 +1319,14 @@ async def run_scenario_i_bracket_stop_fires() -> ScenarioResult:
     ``event_source=BRACKET_MANAGER`` and ``exit_method=STOP_TRIGGERED``.
     """
     position = _options_position(
-        position_id="POS-OPT-NVDA-BR",
-        bracket_id="BRK-OPT-NVDA-BR",
+        position_id=PositionId("POS-OPT-NVDA-BR"),
+        bracket_id=BracketId("BRK-OPT-NVDA-BR"),
     )
     bracket = _price_stop_bracket(
-        bracket_id="BRK-OPT-NVDA-BR",
-        position_id="POS-OPT-NVDA-BR",
+        bracket_id=BracketId("BRK-OPT-NVDA-BR"),
+        position_id=PositionId("POS-OPT-NVDA-BR"),
         threshold=865.0,
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         direction="LTE",
     )
     cache = await _seed_underlying_cache({"NVDA": 860.0})  # below threshold
@@ -1423,16 +1432,16 @@ async def run_scenario_j_strategist_visibility() -> ScenarioResult:
     cascade_closure_at = _NOW
     bracket_closure_at = _NOW + timedelta(minutes=1)
     cascade_closure = _between_invocation_closure(
-        position_id="POS-NVDA-1",
-        ticker="NVDA",
+        position_id=PositionId("POS-NVDA-1"),
+        ticker=Symbol("NVDA"),
         closed_at=cascade_closure_at,
         origin="engine_guardrail",
         exit_method=PositionExitMethod.MARGIN_LIQUIDATION,
         closing_order_id="MON.monsession-verify.1.0",
     )
     bracket_closure = _between_invocation_closure(
-        position_id="POS-OPT-NVDA-BR",
-        ticker="NVDA",
+        position_id=PositionId("POS-OPT-NVDA-BR"),
+        ticker=Symbol("NVDA"),
         closed_at=bracket_closure_at,
         origin="bracket_manager",
         exit_method=PositionExitMethod.STOP_TRIGGERED,
@@ -1657,6 +1666,10 @@ async def _run_all_scenarios() -> list[ScenarioResult]:
         try:
             result = await resolved()
         except Exception as exc:
+            # Per-scenario supervisor per runtime §G1: scenarios are
+            # independent; one raising must not skip the remaining scenarios.
+            # ``BaseException`` (``KeyboardInterrupt`` / ``CancelledError``)
+            # propagates so the runner can be cancelled.
             result = ScenarioResult(
                 label=fn.__name__,
                 ok=False,

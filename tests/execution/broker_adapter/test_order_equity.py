@@ -25,21 +25,14 @@ from alpaca.trading.requests import (
     StopLimitOrderRequest,
 )
 
-from alphamind.config.models.execution import (
-    ExecutionConfig,
-    GreeksRefresh,
-    OrderType,
-    PaperHarness,
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    ClientOrderId,
+    PositionId,
+    Symbol,
 )
-from alphamind.execution.broker_adapter import (
-    EquitySubmission,
-    GatewaySubmissionFailed,
-    Submitted,
-    submit_equity_add,
-    submit_equity_close,
-    submit_equity_open,
-)
-from alphamind.execution.oms.command_models import (
+from alphamind._kernel.money import money, price
+from alphamind.commands.command_models import (
     AddCommand,
     BracketOrderParameters,
     CloseCommand,
@@ -55,6 +48,20 @@ from alphamind.execution.oms.command_models import (
     ThesisComponent,
     TimeCondition,
     TimeLeg,
+)
+from alphamind.config.models.execution import (
+    ExecutionConfig,
+    GreeksRefresh,
+    OrderType,
+    PaperHarness,
+)
+from alphamind.execution.broker_adapter import (
+    EquitySubmission,
+    GatewaySubmissionFailed,
+    Submitted,
+    submit_equity_add,
+    submit_equity_close,
+    submit_equity_open,
 )
 
 # ---------------------------------------------------------------------------
@@ -104,7 +111,7 @@ def _make_price_leg(ticker: str = "AAPL", trigger: float = 150.0) -> PriceLeg:
         condition=PriceCondition(
             underlying_trigger=ticker,
             comparator="<=",
-            trigger_price=trigger,
+            trigger_price=price(trigger),
         ),
         order_parameters=BracketOrderParameters(order_type="stop", limit_price=None),
     )
@@ -119,10 +126,10 @@ def _make_time_leg() -> TimeLeg:
     )
 
 
-def _make_target(price: float = 200.0) -> Target:
+def _make_target(target_price: float = 200.0) -> Target:
     return Target(
         target_type="absolute_price",
-        price=price,
+        price=price(target_price),
         order_type="limit",
     )
 
@@ -146,7 +153,7 @@ def _make_open_command(
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker=ticker, direction=direction),  # type: ignore[arg-type]
         entry_order=entry_order,
-        position_size=PositionSize(quantity=100.0, dollar_value=17000.0),
+        position_size=PositionSize(quantity=100.0, dollar_value=money(17000.0)),
         target=target,
         invalidation_legs=invalidation_legs,
         thesis=_make_thesis(),
@@ -160,9 +167,9 @@ def _make_add_command(
 ) -> AddCommand:
     return AddCommand(
         command_type="add",
-        position_id="pos-001",
+        position_id=PositionId("pos-001"),
         additional_quantity=50.0,
-        additional_dollar_value=8500.0,
+        additional_dollar_value=money(8500.0),
         entry_order=EntryOrder(type=entry_type, limit_price=limit_price),  # type: ignore[arg-type]
         thesis_addition_component=ThesisComponent(
             component_type="entry_rationale",
@@ -182,10 +189,10 @@ def _make_close_command(
 ) -> CloseCommand:
     return CloseCommand(
         command_type="close",
-        position_id="pos-001",
+        position_id=PositionId("pos-001"),
         quantity=quantity,  # type: ignore[arg-type]
         order_type=order_type,  # type: ignore[arg-type]
-        limit_price=limit_price,
+        limit_price=None if limit_price is None else price(limit_price),
         close_rationale_type=close_rationale,  # type: ignore[arg-type]
     )
 
@@ -211,8 +218,8 @@ def _make_fake_order(
 
 def test_equity_submission_is_frozen_dataclass() -> None:
     sub = EquitySubmission(
-        alpaca_order_id="alp-123",
-        client_order_id=_CLIENT_ORDER_ID_INV,
+        alpaca_order_id=AlpacaOrderId("alp-123"),
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID_INV),
         status="accepted",
         order_class="bracket",
     )
@@ -221,7 +228,7 @@ def test_equity_submission_is_frozen_dataclass() -> None:
     assert sub.order_class == "bracket"
     # frozen — assignment must raise FrozenInstanceError
     with pytest.raises(FrozenInstanceError):
-        sub.alpaca_order_id = "other"  # type: ignore[misc]
+        sub.alpaca_order_id = AlpacaOrderId("other")  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -434,8 +441,10 @@ async def test_open_with_target_and_price_stop_produces_bracket() -> None:
     price_leg = PriceLeg(
         type="price",
         is_hard=True,
-        condition=PriceCondition(underlying_trigger="AAPL", comparator="<=", trigger_price=150.0),
-        order_parameters=BracketOrderParameters(order_type="stop_limit", limit_price=149.0),
+        condition=PriceCondition(
+            underlying_trigger="AAPL", comparator="<=", trigger_price=price(150.0)
+        ),
+        order_parameters=BracketOrderParameters(order_type="stop_limit", limit_price=price(149.0)),
     )
     cmd = _make_open_command(
         target=_make_target(200.0),
@@ -585,7 +594,7 @@ async def test_add_always_produces_simple_order_class() -> None:
     client = MagicMock()
     client.submit_order = fake_submit
 
-    cmd = _make_add_command(ticker="AAPL", entry_type="market")
+    cmd = _make_add_command(ticker=Symbol("AAPL"), entry_type="market")
     await submit_equity_add(
         cmd,
         client=client,
@@ -930,7 +939,7 @@ async def test_open_market_order_symbol_from_instrument() -> None:
     client = MagicMock()
     client.submit_order = fake_submit
 
-    cmd = _make_open_command(ticker="NVDA")
+    cmd = _make_open_command(ticker=Symbol("NVDA"))
     await submit_equity_open(
         cmd,
         client=client,

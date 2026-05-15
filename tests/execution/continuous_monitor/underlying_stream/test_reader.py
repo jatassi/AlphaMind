@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from alphamind.execution.continuous_monitor.underlying_stream.reader import (
     SqlOpenPositionsReader,
 )
-from alphamind.execution.state_persistence.tables.positions import PositionRow
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -30,6 +29,7 @@ from alphamind.portfolio_state.records.positions import (
     InstrumentType,
     PositionStatus,
 )
+from alphamind.state.tables.positions import PositionRow
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ async def session_factory(
 ) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     db_path = tmp_path / "alphamind.db"
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)

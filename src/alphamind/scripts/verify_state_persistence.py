@@ -21,6 +21,7 @@ Usage::
 
 See ``scripts/RUNBOOK_state_persistence.md`` for the operator runbook.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -35,6 +36,32 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    EnvelopeId,
+    InvocationId,
+    OrderId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price
+from alphamind._kernel.regime import RiskZone
+from alphamind.commands.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+)
+from alphamind.commands.command_models import (
+    ThesisComponent as OMSThesisComponent,
+)
 from alphamind.config.guardrails_helpers import (
     load_cumulative_drawdown_progressive_tiers,
 )
@@ -45,59 +72,13 @@ from alphamind.decision.portfolio_manager.models import (
     PMEnvelope,
     ThesisQualityEvaluation,
 )
-from alphamind.execution.oms.command_models import (
-    BracketOrderParameters,
-    EntryOrder,
-    EquityInstrument,
-    PositionSize,
-    PriceCondition,
-    PriceLeg,
-    Target,
-    Thesis,
-)
-from alphamind.execution.oms.command_models import (
-    ThesisComponent as OMSThesisComponent,
-)
-from alphamind.execution.oms.submit_envelope_mcp import (
+from alphamind.decision.portfolio_manager.submit_envelope import (
     Acknowledgment,
     FailedSubmissionEntry,
     SubmissionResult,
 )
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
-from alphamind.execution.state_persistence.tables.orders_codec import (
-    record_to_row as order_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
-)
-from alphamind.execution.state_persistence.write_paths.fill_persistence import (
+from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    FillProcessingStatus,
-    FillRecord,
 )
 from alphamind.persistence.session import (
     make_async_engine,
@@ -142,7 +123,39 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
     MarketInputs,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.records import (
+    FillProcessingStatus,
+    FillRecord,
+)
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
+)
+from alphamind.state.tables.invocations import InvocationRow
+from alphamind.state.tables.orders_codec import (
+    record_to_row as order_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
+)
 
 __all__ = [
     "PhaseResult",
@@ -267,7 +280,7 @@ async def _seed_process_lifetime(factory: async_sessionmaker[AsyncSession]) -> N
     """
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-    from alphamind.execution.state_persistence.tables.process_lifetimes import (
+    from alphamind.state.tables.process_lifetimes import (
         ProcessLifetimeRow,
     )
 
@@ -304,32 +317,30 @@ _FILL_ID = "verify-fill-1"
 
 
 def _pending_entry_order() -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": _ENTRY_ORDER_ID,
-            "position_id": None,
-            "bracket_id": _BRACKET_ID,
-            "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=_TICKER),
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": 10.0,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{_ENTRY_ORDER_ID}",
-            "alpaca_order_id_chain": (f"alp-{_ENTRY_ORDER_ID}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": _THESIS_ID,
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=_ENTRY_ORDER_ID,
+        position_id=None,
+        bracket_id=_BRACKET_ID,
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(_TICKER)),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{_ENTRY_ORDER_ID}"),
+        alpaca_order_id_chain=(f"alp-{_ENTRY_ORDER_ID}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=_THESIS_ID,
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -341,55 +352,51 @@ def _pending_protective_stop_order() -> OrderRecord:
     protective order; the FK migration enforces that reference at COMMIT.
     """
     stop_order_id = f"{_BRACKET_ID}-ord-stop"
-    return OrderRecord.model_validate(
-        {
-            "order_id": stop_order_id,
-            "position_id": None,
-            "bracket_id": _BRACKET_ID,
-            "role": OrderRole.PRICE_STOP,
-            "instrument_spec": EquityInstrumentSpec(ticker=_TICKER),
-            "direction": OrderDirection.SELL,
-            "order_type": OrderType.STOP,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(stop_trigger_price=140.0),
-            "quantity": 10.0,
-            "duration": OrderDuration.GTC,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{stop_order_id}",
-            "alpaca_order_id_chain": (f"alp-{stop_order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": _THESIS_ID,
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=stop_order_id,
+        position_id=None,
+        bracket_id=_BRACKET_ID,
+        role=OrderRole.PRICE_STOP,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(_TICKER)),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(stop_trigger_price=140.0),
+        quantity=10.0,
+        duration=OrderDuration.GTC,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{stop_order_id}"),
+        alpaca_order_id_chain=(f"alp-{stop_order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=_THESIS_ID,
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
 def _pending_position() -> PositionRecord:
-    return PositionRecord.model_validate(
-        {
-            "position_id": _POSITION_ID,
-            "thesis_id": _THESIS_ID,
-            "bracket_id": _BRACKET_ID,
-            "status": PositionStatus.PENDING,
-            "direction": Direction.LONG,
-            "entry_timestamp": None,
-            "details": EquityPositionDetails(
-                ticker=_TICKER,
-                share_count=0.0,
-                average_cost_basis_per_share=0.0,
-            ),
-            "execution_history": (),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=_POSITION_ID,
+        thesis_id=_THESIS_ID,
+        bracket_id=_BRACKET_ID,
+        status=PositionStatus.PENDING,
+        direction=Direction.LONG,
+        entry_timestamp=None,
+        details=EquityPositionDetails(
+            ticker=Symbol(_TICKER),
+            share_count=0.0,
+            average_cost_basis_per_share=0.0,
+        ),
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -397,16 +404,18 @@ def _pending_bracket() -> BracketRecord:
     leg = BracketLeg(
         leg_id=f"{_BRACKET_ID}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{_BRACKET_ID}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker=_TICKER, threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId(f"{_BRACKET_ID}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol(_TICKER), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
     return BracketRecord(
-        bracket_id=_BRACKET_ID,
-        position_id=_POSITION_ID,
+        bracket_id=BracketId(_BRACKET_ID),
+        position_id=PositionId(_POSITION_ID),
         status=BracketStatus.PENDING_ENTRY,
-        entry_order_id=_ENTRY_ORDER_ID,
+        entry_order_id=OrderId(_ENTRY_ORDER_ID),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -418,7 +427,7 @@ def _active_thesis() -> ThesisRecord:
     components = tuple(
         ThesisComponent(
             component_id=f"{_THESIS_ID}-{ct.value.lower()}",
-            thesis_id=_THESIS_ID,
+            thesis_id=ThesisId(_THESIS_ID),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -437,8 +446,8 @@ def _active_thesis() -> ThesisRecord:
     )
     generation_at = _NOW - timedelta(hours=4)
     return ThesisRecord(
-        thesis_id=_THESIS_ID,
-        position_id=_POSITION_ID,
+        thesis_id=ThesisId(_THESIS_ID),
+        position_id=PositionId(_POSITION_ID),
         summary="AAPL momentum",
         key_catalyst="Q3 earnings beat",
         position_size_rationale="Sized at 5% conviction-3",
@@ -456,50 +465,47 @@ def _active_thesis() -> ThesisRecord:
 
 
 def _cash_ledger(current_cash_usd: float = 100_000.0) -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": current_cash_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=current_cash_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _drawdown_state() -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": 100_000.0,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=100_000.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
 def _unprocessed_entry_fill() -> FillRecord:
+    # ALP-462 — wrap fixture floats at the FillRecord boundary.
     return FillRecord(
         fill_id=_FILL_ID,
         order_id=_ENTRY_ORDER_ID,
         fill_timestamp=_NOW - timedelta(minutes=10),
-        fill_price=150.0,
+        fill_price=price("150"),
         fill_quantity=10.0,
         remaining_quantity_after=0.0,
         order_status_after=OrderStatus.FILLED,
-        slippage_usd=0.0,
-        fees_usd=0.0,
+        slippage_usd=money("0"),
+        fees_usd=money("0"),
         execution_venue="NASDAQ",
         gateway_reference=f"alp-{_FILL_ID}",
         persistence_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=1),
@@ -541,10 +547,10 @@ def _phase_d_open_envelope(invocation_id: str) -> PMEnvelope:
             direction="long",
         ),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-        position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+        position_size=PositionSize(quantity=10.0, dollar_value=money("10000")),
         target=Target(
             target_type="absolute_price",
-            price=950.0,
+            price=price("950"),
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",
@@ -556,7 +562,7 @@ def _phase_d_open_envelope(invocation_id: str) -> PMEnvelope:
                 condition=PriceCondition(
                     underlying_trigger=_PHASE_D_TICKER,
                     comparator="<=",
-                    trigger_price=750.0,
+                    trigger_price=price("750"),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),
@@ -575,10 +581,10 @@ def _phase_d_open_envelope(invocation_id: str) -> PMEnvelope:
         ),
     )
     return PMAnalystEnvelope(
-        envelope_id=_PHASE_D_ENVELOPE_ID,
-        invocation_id=invocation_id,
+        envelope_id=EnvelopeId(_PHASE_D_ENVELOPE_ID),
+        invocation_id=InvocationId(invocation_id),
         source_provenance="pm_analyst",
-        source_recommendation_id=_PHASE_D_RECOMMENDATION_ID,
+        source_recommendation_id=RecommendationId(_PHASE_D_RECOMMENDATION_ID),
         recommendation_type="new_entry",
         verdict="approve",
         evaluation=_all_pass_thesis_evaluation(),
@@ -608,7 +614,7 @@ async def _seed_cash_ledger_singleton_idempotent(
     snapshot read requires it). Idempotent so phases can each call it without
     racing on the singleton's PK.
     """
-    from alphamind.execution.state_persistence.tables.cash_ledger import (
+    from alphamind.state.tables.cash_ledger import (
         CASH_LEDGER_SINGLETON_ID,
         CashLedgerRow,
     )
@@ -627,7 +633,7 @@ async def _seed_drawdown_state_singleton_idempotent(
     Symmetrical with the cash_ledger helper above; the SQL repo's snapshot
     read requires both singletons to be present.
     """
-    from alphamind.execution.state_persistence.tables.drawdown_state import (
+    from alphamind.state.tables.drawdown_state import (
         DRAWDOWN_STATE_SINGLETON_ID,
         DrawdownStateRow,
     )
@@ -702,7 +708,7 @@ def run_phase_a_schema(db_path: Path) -> PhaseResult:
 
     # Side-effect import: registers state-persistence tables on Base.metadata
     # so test DBs created from Base.metadata.create_all also see them.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     engine = make_engine(str(db_path))
     try:
@@ -750,7 +756,7 @@ async def run_phase_b_invocation_context(db_path: Path) -> PhaseResult:
     """
     from sqlalchemy import select
 
-    from alphamind.execution.state_persistence.invocation_context.context import (
+    from alphamind.state.invocation_context.context import (
         stamp_phase_completion,
     )
 
@@ -840,12 +846,12 @@ async def run_phase_c_phase1_write_path(db_path: Path) -> PhaseResult:
     PENDING→OPEN, (c) the activity log carries the documented event chain."""
     from sqlalchemy import select
 
-    from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-    from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
-    from alphamind.execution.state_persistence.tables.positions import PositionRow
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
+    from alphamind.state.tables.activity_log import ActivityLogRow
+    from alphamind.state.tables.fill_records import FillRecordRow
+    from alphamind.state.tables.positions import PositionRow
 
     engine, factory = _open_async_factory(db_path)
     try:
@@ -956,7 +962,7 @@ async def _phase_d_validate_state(
     """
     from sqlalchemy import select
 
-    from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
+    from alphamind.state.tables.activity_log import ActivityLogRow
 
     async with factory() as sess:
         log_rows = (
@@ -999,10 +1005,10 @@ async def _phase_d_check_entities(sess: AsyncSession, position_id: str) -> str |
     *position_id*; return a failure detail or ``None``."""
     from sqlalchemy import select
 
-    from alphamind.execution.state_persistence.tables.brackets import BracketRow
-    from alphamind.execution.state_persistence.tables.orders import OrderRow
-    from alphamind.execution.state_persistence.tables.positions import PositionRow
-    from alphamind.execution.state_persistence.tables.theses import ThesisRow
+    from alphamind.state.tables.brackets import BracketRow
+    from alphamind.state.tables.orders import OrderRow
+    from alphamind.state.tables.positions import PositionRow
+    from alphamind.state.tables.theses import ThesisRow
 
     position = (
         await sess.execute(select(PositionRow).where(PositionRow.position_id == position_id))
@@ -1059,7 +1065,7 @@ async def run_phase_d_phase2_envelope(db_path: Path) -> PhaseResult:
     than by absolute table counts so the phase tolerates Phase C running
     against the same DB first.
     """
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
 
@@ -1109,11 +1115,11 @@ async def run_phase_e_layer1_parse_failure(db_path: Path) -> PhaseResult:
     from pydantic import ValidationError
     from sqlalchemy import select
 
-    from alphamind.execution.oms.submit_envelope_mcp import _validate_envelope_payload
-    from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.decision.portfolio_manager.submit_envelope import _validate_envelope_payload
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_parse_failure,
     )
+    from alphamind.state.tables.activity_log import ActivityLogRow
 
     engine, factory = _open_async_factory(db_path)
     try:
@@ -1211,34 +1217,30 @@ def _phase_e_validate_sql_row(
 
 
 def _phase_f_active_risk_parameters() -> Any:
+    from alphamind._kernel.regime import (
+        RegimeLabel,
+        RegimeTransitionState,
+    )
     from alphamind.portfolio_state.aggregates.risk_parameters import (
         ActiveRiskParameterEntry,
         ActiveRiskParameterSet,
     )
-    from alphamind.portfolio_state.records.capital import (
-        RegimeLabel,
-        RegimeTransitionState,
-    )
 
-    entry = ActiveRiskParameterEntry.model_validate(
-        {
-            "rule_id": "max_position_size_usd",
-            "rule_label": "Max position size (USD)",
-            "value": 1000.0,
-            "unit": "USD",
-            "regime_multiplier_applied": 1.0,
-            "base_value": 1000.0,
-        }
+    entry = ActiveRiskParameterEntry(
+        rule_id="max_position_size_usd",
+        rule_label="Max position size (USD)",
+        value=1000.0,
+        unit="USD",
+        regime_multiplier_applied=1.0,
+        base_value=1000.0,
     )
-    return ActiveRiskParameterSet.model_validate(
-        {
-            "regime_label": RegimeLabel.NORMAL,
-            "transition_state": RegimeTransitionState.STABLE,
-            "transition_invocations_remaining": 0,
-            "parameter_change_flag": False,
-            "entries": (entry,),
-            "active_overlays": (),
-        }
+    return ActiveRiskParameterSet(
+        regime_label=RegimeLabel.NORMAL,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        parameter_change_flag=False,
+        entries=(entry,),
+        active_overlays=(),
     )
 
 
@@ -1252,11 +1254,10 @@ def _phase_f_phase_1_enforcement_result() -> Any:
     unchanged. The resulting bundle is the canonical input to
     :func:`make_active_risk_parameters_provider`.
     """
+    from alphamind._kernel.regime import RegimeTransitionState, RiskZone
     from alphamind.config.models.regimes import Regime
     from alphamind.execution.guardrail_enforcement import compose_phase_1_enforcement
     from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-    from alphamind.portfolio_state.records.capital import RegimeTransitionState
-    from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
     from alphamind.risk_guardrails.regime_adaptation import (
         RegimeAdaptationOutput,
         RegimeAdaptationState,
@@ -1323,10 +1324,7 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
     from alphamind.execution.guardrail_enforcement import (
         make_active_risk_parameters_provider,
     )
-    from alphamind.execution.state_persistence.repository import (
-        build_sql_portfolio_state_repository,
-    )
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
     from alphamind.portfolio_state import PortfolioStateConfig
@@ -1337,6 +1335,9 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
         StubCurrentPriceProvider,
     )
     from alphamind.portfolio_state.repository import RepositoryConsistencyError
+    from alphamind.state.repository import (
+        build_sql_portfolio_state_repository,
+    )
 
     engine, factory = _open_async_factory(db_path)
     try:
@@ -1391,7 +1392,7 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
         phase_1_result = _phase_f_phase_1_enforcement_result()
         provider = make_active_risk_parameters_provider(phase_1_result)
 
-        async def _prior_provider(_path: str) -> Any:
+        def _prior_provider(_path: str) -> Any:
             return _phase_f_active_risk_parameters()
 
         committed_repo = build_sql_portfolio_state_repository(
@@ -1402,14 +1403,12 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
             config=_state_persistence_config(),
         )
 
-        portfolio_config = PortfolioStateConfig.model_validate(
-            {
-                "pm_decision_log_sliding_window_invocations": 5,
-                "thesis_resolutions_lookback_trading_days": 10,
-                "thesis_quality_aggregates_trailing_windows_days": (5, 20),
-                "snapshot_freshness_max_phase1_to_snapshot_seconds": 300.0,
-                "snapshot_freshness_max_price_age_seconds": 60.0,
-            }
+        portfolio_config = PortfolioStateConfig(
+            pm_decision_log_sliding_window_invocations=5,
+            thesis_resolutions_lookback_trading_days=10,
+            thesis_quality_aggregates_trailing_windows_days=(5, 20),
+            snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
+            snapshot_freshness_max_price_age_seconds=60.0,
         )
         # Provide quotes for every underlying any earlier phase may have
         # opened a position against (Phase C: AAPL, Phase D: NVDA). Missing
@@ -1439,7 +1438,7 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
             return "tech"
 
         try:
-            assembled = await assemble_snapshot(
+            assembled = assemble_snapshot(
                 repository=committed_repo,
                 price_provider=price_provider,
                 sector_resolver=_sector_resolver,
@@ -1480,7 +1479,7 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
             config=_state_persistence_config(),
         )
         try:
-            await uncommitted_repo.get_current_invocation_metadata()
+            uncommitted_repo.get_current_invocation_metadata()
         except RepositoryConsistencyError:
             pass
         else:

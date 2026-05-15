@@ -31,14 +31,12 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.config.models.regimes import Regime
 from alphamind.config.resolver import LoadedConfig
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.regime import RegimeLabel as DistillationRegimeLabel
-from alphamind.portfolio_state.records.capital import (
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-)
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.regime_adaptation import (
     CompositeAlertState,

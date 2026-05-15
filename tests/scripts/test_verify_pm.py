@@ -19,6 +19,14 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    EnvelopeId,
+    InvocationId,
+    OrderId,
+    PositionId,
+    RecommendationId,
+)
+from alphamind._kernel.money import money
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.decision.portfolio_manager.models import (
@@ -28,7 +36,7 @@ from alphamind.decision.portfolio_manager.runner import (
     PMResult,
     run_portfolio_manager,
 )
-from alphamind.execution.oms.submit_envelope_mcp import (
+from alphamind.decision.portfolio_manager.submit_envelope import (
     Acknowledgment,
     SubmissionLogEntry,
     SubmissionResult,
@@ -126,24 +134,24 @@ def _make_envelope_for_log(invocation_id: str = "inv-pm-001") -> Any:
     code only inspects ``submission_results``, so any well-formed
     envelope suffices.
     """
+    from alphamind.commands.command_models import (
+        EntryOrder,
+    )
+    from alphamind.commands.command_models import (
+        ThesisComponent as OMSThesisComponent,
+    )
     from alphamind.decision.portfolio_manager.models import (
         AddCommand,
         CriterionAssessment,
         PMAnalystEnvelope,
         ThesisQualityEvaluation,
     )
-    from alphamind.execution.oms.command_models import (
-        EntryOrder,
-    )
-    from alphamind.execution.oms.command_models import (
-        ThesisComponent as OMSThesisComponent,
-    )
 
     cmd = AddCommand(
         command_type="add",
-        position_id="POS-AAPL-001",
+        position_id=PositionId("POS-AAPL-001"),
         additional_quantity=5.0,
-        additional_dollar_value=5_000.0,
+        additional_dollar_value=money(5_000.0),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
         thesis_addition_component=OMSThesisComponent(
             component_type="entry_rationale",
@@ -156,10 +164,10 @@ def _make_envelope_for_log(invocation_id: str = "inv-pm-001") -> Any:
     )
     pass_criterion = CriterionAssessment(status="pass")
     return PMAnalystEnvelope(
-        envelope_id="ENV-REC-1",
-        invocation_id=invocation_id,
+        envelope_id=EnvelopeId("ENV-REC-1"),
+        invocation_id=InvocationId(invocation_id),
         source_provenance="pm_analyst",
-        source_recommendation_id="REC-1",
+        source_recommendation_id=RecommendationId("REC-1"),
         recommendation_type="new_entry",
         verdict="approve",
         evaluation=ThesisQualityEvaluation(
@@ -178,7 +186,7 @@ def _make_envelope_for_log(invocation_id: str = "inv-pm-001") -> Any:
 
 def _make_rejected_submission_result() -> SubmissionResult:
     """Build a SubmissionResult with status='rejected'."""
-    from alphamind.execution.oms.submit_envelope_mcp import RejectionPayload, _BreachedRule
+    from alphamind.commands.submission_results import RejectionPayload, _BreachedRule
 
     return SubmissionResult(
         command_ordinal=0,
@@ -362,8 +370,8 @@ def test_fixture_export_writes_completion_record_plus_submission_log(tmp_path: P
                 status="accepted",
                 command_id="inv-pm-001.ENV-REC-1.0.0",
                 acknowledgment=Acknowledgment(
-                    position_id="POS-AAPL-stub",
-                    order_id="ORD-AAPL-stub",
+                    position_id=PositionId("POS-AAPL-stub"),
+                    order_id=OrderId("ORD-AAPL-stub"),
                 ),
             ),
         ),

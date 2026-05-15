@@ -25,7 +25,7 @@ from alphamind.config.models.agents import AgentName, BaseAgentConfig
 
 if TYPE_CHECKING:
     from alphamind.config.models.guardrails import ProgressiveTier
-    from alphamind.portfolio_state.records.capital import DrawdownState
+    from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
     from alphamind.portfolio_state.repository import PortfolioStateRepository
     from alphamind.risk_guardrails.regime_adaptation.types import RegimeAdaptationOutput
 
@@ -57,7 +57,7 @@ def apply_agent_overrides(
     }
 
 
-async def build_phase1_enforcement_inputs(
+def build_phase1_enforcement_inputs(
     *,
     repository: PortfolioStateRepository,
     regime_output: RegimeAdaptationOutput,
@@ -71,9 +71,10 @@ async def build_phase1_enforcement_inputs(
     zip([\"regime_output\", \"drawdown_state\", \"progressive_tiers\"],
     result)))``.
 
-    Pure async I/O — no caching. The decision-pipeline runner (story
-    ALP-433) is the canonical caller; analysis-layer or monitor consumers
-    needing the same composition view may call this helper directly.
+    Synchronous per ALP-454 Pre-resolved decision (C): repository reads
+    are sync over SQLite. The decision-pipeline runner (story ALP-433) is
+    the canonical caller; analysis-layer or monitor consumers needing the
+    same composition view may call this helper directly.
     """
-    drawdown_state = await repository.get_drawdown_state()
+    drawdown_state = repository.get_drawdown_state()
     return regime_output, drawdown_state, progressive_tiers

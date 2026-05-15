@@ -76,13 +76,13 @@ def archive_root(tmp_path: Path) -> Path:
 class _StubPortfolioReader:
     """Minimal stub satisfying SynthesizerPortfolioStateReader."""
 
-    async def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]:
+    def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]:
         return ()
 
-    async def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]:
+    def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]:
         return ()
 
-    async def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot:
+    def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot:
         return SynthesizerExposureSnapshot(
             sector_exposure_pct={},
             net_directional_pct=0.0,

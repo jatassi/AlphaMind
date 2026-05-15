@@ -7,6 +7,10 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.execution.continuous_monitor.greeks_refresh import LastRefreshState
 from alphamind.execution.continuous_monitor.greeks_refresh.state import (
     seed_last_refresh_states,
@@ -47,14 +51,14 @@ def _options_position(
         fees=0.0,
     )
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=datetime(2026, 5, 1, 14, 30, tzinfo=UTC),
         details=OptionsPositionDetails(
-            underlying_ticker=underlying_ticker,
+            underlying_ticker=Symbol(underlying_ticker),
             strike_price=200.0,
             expiration_date=datetime(2026, 6, 19, tzinfo=UTC).date(),
             contract_type=OptionContractType.CALL,
@@ -73,7 +77,7 @@ def _options_position(
 
 def _strategy_position(*, position_id: str, as_of_timestamp: datetime | None) -> PositionRecord:
     leg_details = OptionsPositionDetails(
-        underlying_ticker="SPY",
+        underlying_ticker=Symbol("SPY"),
         strike_price=500.0,
         expiration_date=datetime(2026, 6, 19, tzinfo=UTC).date(),
         contract_type=OptionContractType.CALL,
@@ -105,7 +109,7 @@ def _strategy_position(*, position_id: str, as_of_timestamp: datetime | None) ->
         fees=0.0,
     )
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -131,7 +135,7 @@ def _strategy_position(*, position_id: str, as_of_timestamp: datetime | None) ->
 class TestLastRefreshStateShape:
     def test_is_frozen(self) -> None:
         state = LastRefreshState(
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             last_refreshed_at=datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
             underlying_price_at_last_refresh=200.0,
         )
@@ -141,7 +145,7 @@ class TestLastRefreshStateShape:
     def test_carries_position_id_and_anchor_fields(self) -> None:
         ts = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
         state = LastRefreshState(
-            position_id="pos-42",
+            position_id=PositionId("pos-42"),
             last_refreshed_at=ts,
             underlying_price_at_last_refresh=199.75,
         )
@@ -160,7 +164,7 @@ class TestSeedLastRefreshStates:
 
     def test_seed_from_existing_as_of_timestamp(self) -> None:
         ts = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
-        position = _options_position(position_id="pos-1", as_of_timestamp=ts)
+        position = _options_position(position_id=PositionId("pos-1"), as_of_timestamp=ts)
         states = seed_last_refresh_states(
             (position,),
             underlying_prices={"AAPL": 198.0},
@@ -176,7 +180,7 @@ class TestSeedLastRefreshStates:
         delta exceeds any positive interval — the task picks them up on the
         first inspection tick.
         """
-        position = _options_position(position_id="pos-2", as_of_timestamp=None)
+        position = _options_position(position_id=PositionId("pos-2"), as_of_timestamp=None)
         now = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
         states = seed_last_refresh_states(
             (position,),
@@ -198,9 +202,9 @@ class TestSeedLastRefreshStates:
         falls back to the scheduled path until a quote arrives).
         """
         position = _options_position(
-            position_id="pos-3",
+            position_id=PositionId("pos-3"),
             as_of_timestamp=datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
-            underlying_ticker="UNKNOWN",
+            underlying_ticker=Symbol("UNKNOWN"),
         )
         states = seed_last_refresh_states(
             (position,),
@@ -211,7 +215,7 @@ class TestSeedLastRefreshStates:
 
     def test_seed_handles_strategy_position(self) -> None:
         ts = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
-        position = _strategy_position(position_id="strat-1", as_of_timestamp=ts)
+        position = _strategy_position(position_id=PositionId("strat-1"), as_of_timestamp=ts)
         states = seed_last_refresh_states(
             (position,),
             underlying_prices={"SPY": 500.0},

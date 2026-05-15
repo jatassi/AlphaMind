@@ -14,6 +14,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
 from alphamind.risk_guardrails.guardrail_evaluation import (
     Action,
     AssetType,
@@ -119,7 +120,7 @@ def _equity(
 ) -> ProposedDelta:
     return ProposedDelta(
         id="proposal-eq",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="Technology",
         direction=direction,
         asset_type=AssetType.EQUITY,
@@ -140,7 +141,7 @@ def _single_call(
 ) -> ProposedDelta:
     return ProposedDelta(
         id="proposal-opt",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="Technology",
         direction=direction,
         asset_type=AssetType.OPTION,
@@ -292,7 +293,7 @@ def _spread_provider(underlying: str) -> FixtureIvProvider:
 def _long_call_spread() -> ProposedDelta:
     return ProposedDelta(
         id="proposal-spread",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="Technology",
         direction=Direction.LONG,
         asset_type=AssetType.STRATEGY,
@@ -364,7 +365,7 @@ def test_atm_straddle_has_near_zero_delta_with_long_vol_greek_signs() -> None:
     vega > 0 (canonical long-volatility exposure)."""
     proposal = ProposedDelta(
         id="proposal-straddle",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="Technology",
         direction=Direction.LONG,
         asset_type=AssetType.STRATEGY,
@@ -507,7 +508,7 @@ def test_iv_source_falls_back_when_any_leg_falls_back() -> None:
     provider = FixtureIvProvider(
         surface={
             "AAPL": IvSurfaceEntry(
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 quotes=(
                     IvQuote(
                         strike=100.0,
@@ -518,11 +519,13 @@ def test_iv_source_falls_back_when_any_leg_falls_back() -> None:
                 ),
             ),
         },
-        realized_vol={"AAPL": RealizedVolEntry(underlying="AAPL", trailing_30d_realized_vol=0.25)},
+        realized_vol={
+            "AAPL": RealizedVolEntry(underlying=Symbol("AAPL"), trailing_30d_realized_vol=0.25)
+        },
     )
     proposal = ProposedDelta(
         id="proposal-mixed",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="Technology",
         direction=Direction.LONG,
         asset_type=AssetType.STRATEGY,

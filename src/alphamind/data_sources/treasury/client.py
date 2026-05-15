@@ -57,3 +57,11 @@ class TreasuryClient:
         response.raise_for_status()
         result: dict[str, Any] = response.json()
         return result
+
+
+# Runtime contract: TreasuryClient must structurally implement TreasuryAPI.
+# Type-check failures here surface SDK-vs-Protocol drift at import time
+# rather than at the next test run.
+from alphamind.data_sources.treasury._protocol import TreasuryAPI  # noqa: E402
+
+_: TreasuryAPI = TreasuryClient()

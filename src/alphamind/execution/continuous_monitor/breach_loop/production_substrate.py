@@ -29,6 +29,11 @@ from typing import TYPE_CHECKING, Any, cast
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+)
+from alphamind.commands.engine_envelope import EngineEnvelope as OmsEngineEnvelope
 from alphamind.config.loaders import read_yaml_file
 from alphamind.config.models.guardrails import ProgressiveTier
 from alphamind.config.models.main import MainConfig
@@ -44,18 +49,11 @@ from alphamind.config.resolver import (
 from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
     BreachDispatchContext,
 )
-from alphamind.execution.oms.engine_envelope import EngineEnvelope as OmsEngineEnvelope
-from alphamind.execution.state_persistence.config import (
-    StatePersistenceConfig,
-)
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.repository import (
-    build_sql_portfolio_state_repository,
-)
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.portfolio_state import PortfolioStateConfig
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.consumers.synthesizer import adapt_ticker_sector_resolver
 from alphamind.portfolio_state.library_snapshot import to_library_snapshot
@@ -63,12 +61,6 @@ from alphamind.portfolio_state.pricing import (
     PriceQuote,
     PriceSource,
     StubCurrentPriceProvider,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
 )
 from alphamind.risk_guardrails.breach_behavior import (
     PositionLiquidity,
@@ -86,6 +78,16 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
 )
 from alphamind.risk_guardrails.regime_adaptation import RegimeAdaptationOutput
 from alphamind.risk_guardrails.regime_adaptation.types import RegimeAdaptationState
+from alphamind.state.config import (
+    StatePersistenceConfig,
+)
+from alphamind.state.invocation_context.context import (
+    InvocationHandle,
+)
+from alphamind.state.repository import (
+    build_sql_portfolio_state_repository,
+)
+from alphamind.state.tables.invocations import InvocationRow
 
 if TYPE_CHECKING:
     from alphamind.execution.continuous_monitor.underlying_stream.cache import (
@@ -423,10 +425,10 @@ def make_snapshot_provider(
         invocation_id = _BOOTSTRAP_SENTINEL if row is None else row[0]
         active = await _load_active_risk_parameters_from_row(row, fallback=bootstrap_parameters)
 
-        async def _active_provider() -> ActiveRiskParameterSet:
+        def _active_provider() -> ActiveRiskParameterSet:
             return active
 
-        async def _prior_provider(_snapshot_path: str) -> ActiveRiskParameterSet:
+        def _prior_provider(_snapshot_path: str) -> ActiveRiskParameterSet:
             return active
 
         repository = build_sql_portfolio_state_repository(
@@ -437,7 +439,7 @@ def make_snapshot_provider(
             config=state_persistence_config,
         )
         price_provider = _build_price_provider(underlying_cache, as_of=now())
-        assembled = await assemble_snapshot(
+        assembled = assemble_snapshot(
             repository=repository,
             price_provider=price_provider,
             sector_resolver=position_sector_resolver,
@@ -687,26 +689,26 @@ def make_submit_envelope(
     so duplicate-trigger protection holds across all envelopes the monitor
     submits within one session.
     """
-    # Lazy-import via ``alphamind.execution.oms`` so the package's
-    # ``__getattr__`` runs ``importlib.import_module`` — avoids the circular
-    # path that ``from ... .submit_engine_envelope import ...`` would trigger
-    # when the caller loads us mid-portfolio_manager package init.
-    import importlib
-
-    engine_module = importlib.import_module("alphamind.execution.oms.submit_engine_envelope")
-    submit_engine_envelope = engine_module.submit_engine_envelope
-    build_initial_submit_engine_envelope_state = (
-        engine_module.build_initial_submit_engine_envelope_state
+    # After ALP-458 the decision↔execution cycle is gone and the
+    # ``__getattr__`` lazy-loader has been deleted, so a direct import
+    # works at module-load time.
+    from alphamind.execution.oms.submit_engine_envelope import (
+        build_initial_submit_engine_envelope_state,
+        submit_engine_envelope,
     )
 
     state = build_initial_submit_engine_envelope_state(monitor_session_id=monitor_session_id)
     id_provider = invocation_id_provider or make_invocation_id_provider_sync(session_factory)
 
     async def _submit(envelope: OmsEngineEnvelope) -> Any:
+        nonlocal state
         invocation_id = await id_provider()
         async with session_factory() as session:
             handle = InvocationHandle(session=session, invocation_id=invocation_id)
-            result = await submit_engine_envelope(
+            # ALP-476 — submit_engine_envelope returns ``(result, new_state)``;
+            # rebind the closure cell so the dedup frozenset persists across
+            # subsequent envelopes within the same monitor session.
+            result, state = await submit_engine_envelope(
                 envelope,
                 handle=handle,
                 state=state,

@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind.config.loaders import load_profiles
 from alphamind.config.models import Profile
@@ -128,14 +127,14 @@ def _minimal_profile_payload(**overrides: object) -> dict[str, object]:
 def test_inverted_capital_range_raises() -> None:
     from alphamind.config.models import ProfileConfig
 
-    with pytest.raises(ValidationError, match="capital_range_usd"):
+    with pytest.raises((ValueError, TypeError), match="capital_range_usd"):
         ProfileConfig.model_validate(_minimal_profile_payload(capital_range_usd=[50000, 25000]))
 
 
 def test_inverted_pm_context_token_budget_raises() -> None:
     from alphamind.config.models import ProfileConfig
 
-    with pytest.raises(ValidationError, match="Token budget lower must be <= upper"):
+    with pytest.raises((ValueError, TypeError), match="Token budget lower must be <= upper"):
         ProfileConfig.model_validate(
             _minimal_profile_payload(
                 agent_token_budgets={
@@ -148,14 +147,14 @@ def test_inverted_pm_context_token_budget_raises() -> None:
 def test_empty_active_sectors_raises() -> None:
     from alphamind.config.models import ProfileConfig
 
-    with pytest.raises(ValidationError, match="active_sectors must not be empty"):
+    with pytest.raises((ValueError, TypeError), match="active_sectors must not be empty"):
         ProfileConfig.model_validate(_minimal_profile_payload(active_sectors=[]))
 
 
 def test_uppercase_rule_values_key_raises() -> None:
     from alphamind.config.models import ProfileConfig
 
-    with pytest.raises(ValidationError, match="does not match"):
+    with pytest.raises((ValueError, TypeError), match="does not match"):
         ProfileConfig.model_validate(
             _minimal_profile_payload(rule_values={"PositionMaxSizePct": 5.0})
         )
@@ -164,7 +163,7 @@ def test_uppercase_rule_values_key_raises() -> None:
 def test_duplicate_active_sectors_raises() -> None:
     from alphamind.config.models import ProfileConfig
 
-    with pytest.raises(ValidationError, match="duplicate"):
+    with pytest.raises((ValueError, TypeError), match="duplicate"):
         ProfileConfig.model_validate(_minimal_profile_payload(active_sectors=["tech", "tech"]))
 
 

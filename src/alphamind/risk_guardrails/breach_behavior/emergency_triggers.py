@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     # which re-exports the four risk-guardrail enums from this package.
     # Eager import would cycle. Annotation-only usage is sound under
     # ``from __future__ import annotations``.
-    from alphamind.portfolio_state.records.capital import RiskBudgetConsumption
+    from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 
 
 def _require_tz_aware(v: datetime, *, field_name: str) -> datetime:

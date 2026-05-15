@@ -17,7 +17,7 @@ from itertools import pairwise
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from alphamind.data_sources._common import HeadlineType
+from alphamind.data_sources.news.types import HeadlineType
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import (
     AnomalyFlag,
@@ -70,8 +70,9 @@ class CorrelationRegimeChangeConfig:
     """Threshold bundle for :func:`compute_correlation_regime_change`.
 
     Packs the per-window and per-detection thresholds that the orchestrator
-    pulls out of :class:`DistillationConfig` into a single immutable record
-    so :func:`compute_correlation_regime_change` keeps a tight signature.
+    pulls out of :class:`DistillationDomainConfig` into a single immutable
+    record so :func:`compute_correlation_regime_change` keeps a tight
+    signature.
 
     ``correlation_breakdown_sigma`` gates the Fisher-z breakdown test
     (multiple-comparison-aware default in ``config/distillation.yaml``);

@@ -17,8 +17,8 @@ message:
 - :func:`load_qualitative_inputs` — aggregator assembling the
   :class:`QualitativeInputs` container.
 
-All records are immutable ``BaseModel(frozen=True)``; no rendering happens
-here.
+All records are immutable ``@dataclass(frozen=True, slots=True)``; no
+rendering happens here.
 
 Public names
 ------------
@@ -42,7 +42,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -79,7 +78,8 @@ _DEFAULT_SENTIMENT_MIN_OBSERVATIONS: int = 30
 # ---------------------------------------------------------------------------
 
 
-class SentimentAggregate(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class SentimentAggregate:
     """Per-ticker sentiment aggregate, expressed as a percentile vs. history.
 
     ``percentile_vs_self`` is in ``[0.0, 1.0]`` (unit interval, not 0-100).
@@ -92,16 +92,27 @@ class SentimentAggregate(BaseModel, frozen=True):
     """
 
     ticker: str
-    directional_score: float = Field(ge=-1.0, le=1.0)
-    magnitude: float = Field(ge=0.0, le=1.0)
+    directional_score: float
+    magnitude: float
     rate_of_change: float | None
-    volume: int | None = Field(ge=0)
+    volume: int | None
     divergence_flag: bool | None
-    percentile_vs_self: float = Field(ge=0.0, le=1.0)
+    percentile_vs_self: float
     data_freshness: datetime
 
+    def __post_init__(self) -> None:
+        if not -1.0 <= self.directional_score <= 1.0:
+            raise ValueError(f"directional_score must be in [-1.0, 1.0]: {self.directional_score}")
+        if not 0.0 <= self.magnitude <= 1.0:
+            raise ValueError(f"magnitude must be in [0.0, 1.0]: {self.magnitude}")
+        if self.volume is not None and self.volume < 0:
+            raise ValueError(f"volume must be >= 0 when set: {self.volume}")
+        if not 0.0 <= self.percentile_vs_self <= 1.0:
+            raise ValueError(f"percentile_vs_self must be in [0.0, 1.0]: {self.percentile_vs_self}")
 
-class PredictionMarketSnapshot(BaseModel, frozen=True):
+
+@dataclass(frozen=True, slots=True)
+class PredictionMarketSnapshot:
     """Snapshot of one prediction-market contract with delta fields.
 
     ``delta_since_last_invocation_pp`` is ``0.0`` when only one history row
@@ -127,7 +138,8 @@ class PredictionMarketSnapshot(BaseModel, frozen=True):
     data_freshness: datetime
 
 
-class CalendarEvent(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class CalendarEvent:
     """One event in the 72-hour forward calendar.
 
     ``sectors`` is a ``frozenset[Sector]`` (empty means cross-sector / macro).
@@ -143,7 +155,8 @@ class CalendarEvent(BaseModel, frozen=True):
     consensus: str | None
 
 
-class ActiveThesis(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class ActiveThesis:
     """Summary record for one active investment thesis.
 
     Stub until the execution-layer thesis model lands (ALP-111 § Sequencing
@@ -154,10 +167,15 @@ class ActiveThesis(BaseModel, frozen=True):
     ticker: str
     summary: str
     key_catalyst: str
-    time_expectation_hours: int = Field(ge=0)
+    time_expectation_hours: int
+
+    def __post_init__(self) -> None:
+        if self.time_expectation_hours < 0:
+            raise ValueError(f"time_expectation_hours must be >= 0: {self.time_expectation_hours}")
 
 
-class QualitativeInputs(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class QualitativeInputs:
     """Top-level container assembled by :func:`load_qualitative_inputs`.
 
     ``data_freshness`` is the minimum (most stale) of the four sub-loaders'

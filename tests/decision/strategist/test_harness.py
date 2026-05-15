@@ -20,6 +20,10 @@ from unittest.mock import patch
 
 import pytest
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+)
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AllowedModel, BaseAgentConfig
@@ -33,12 +37,8 @@ from alphamind.decision.strategist.harness import (
     run_strategist_harness,
 )
 from alphamind.decision.strategist.models import StrategistOutput
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-)
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.risk_guardrails.guardrail_evaluation import (
     ContractType,
     EscalationZones,

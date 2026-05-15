@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import PositionId, Symbol
 from alphamind.analysis.synthesizer.portfolio_tools import build_portfolio_state_mcp_server
 from alphamind.portfolio_state.consumers.synthesizer import (
     SynthesizerExposureSnapshot,
@@ -66,15 +67,15 @@ class _StubReader:
         self.theses_calls = 0
         self.exposure_calls = 0
 
-    async def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]:
+    def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]:
         self.positions_calls += 1
         return self._positions
 
-    async def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]:
+    def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]:
         self.theses_calls += 1
         return self._theses
 
-    async def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot:
+    def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot:
         self.exposure_calls += 1
         return self._exposure
 
@@ -115,14 +116,14 @@ async def test_positions_handler_returns_text() -> None:
     reader = _StubReader(
         positions=(
             SynthesizerPositionSummary(
-                ticker="NVDA",
+                ticker=Symbol("NVDA"),
                 direction=Direction.LONG,
                 sector="TECH",
                 size_pct=4.5,
                 position_age_hours=72.0,
             ),
             SynthesizerPositionSummary(
-                ticker="XOM",
+                ticker=Symbol("XOM"),
                 direction=Direction.SHORT,
                 sector="ENERGY",
                 size_pct=2.1,
@@ -151,8 +152,8 @@ async def test_theses_handler_returns_text() -> None:
     reader = _StubReader(
         theses=(
             SynthesizerThesisSummary(
-                position_id="pos-001",
-                ticker="NVDA",
+                position_id=PositionId("pos-001"),
+                ticker=Symbol("NVDA"),
                 summary=summary,
                 key_catalyst="Earnings on 2026-05-22",
                 time_expectation_hours=48.0,
@@ -232,9 +233,12 @@ async def test_empty_state_handlers_return_graceful_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_handlers_use_async_reader_methods() -> None:
-    """Each handler invocation calls the reader's corresponding async method
-    exactly once and awaits its return."""
+async def test_handlers_use_reader_methods() -> None:
+    """Each handler invocation calls the reader's corresponding method exactly once.
+
+    Per ALP-468 the reader surface is sync; the SDK ``@tool`` wrappers stay
+    ``async`` (Claude Agent SDK contract) but no longer ``await`` the reader.
+    """
     reader = _StubReader()
     mcp_servers, _ = build_portfolio_state_mcp_server(reader)
     server = mcp_servers["alphamind_synthesizer_portfolio"]["instance"]

@@ -21,6 +21,13 @@ from collections.abc import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    OccSymbol,
+)
+from alphamind.commands.command_models import (
+    CloseCommand,
+    StrategyType,
+)
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.execution import ExecutionConfig
 from alphamind.execution.broker_adapter.order_mleg import (
@@ -55,21 +62,17 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
 from alphamind.execution.continuous_monitor.underlying_stream.subscriptions import (
     OpenPositionsReader,
 )
-from alphamind.execution.oms.command_models import (
-    CloseCommand,
-    StrategyType,
-)
-from alphamind.execution.state_persistence.tables.bracket_legs import BracketLegRow
-from alphamind.execution.state_persistence.tables.brackets import BracketRow
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    rows_to_record as bracket_rows_to_record,
-)
 from alphamind.portfolio_state.records.orders import BracketRecord
 from alphamind.portfolio_state.records.positions import (
     Direction,
     OptionsPositionDetails,
     PositionRecord,
     StrategyPositionDetails,
+)
+from alphamind.state.tables.bracket_legs import BracketLegRow
+from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.brackets_codec import (
+    rows_to_record as bracket_rows_to_record,
 )
 
 log = logging.getLogger(__name__)
@@ -342,7 +345,7 @@ def _open_legs_from_strategy(
         )
         acks.append(
             MLEGLegAck(
-                occ_symbol=occ,
+                occ_symbol=OccSymbol(occ),
                 side=side,  # type: ignore[arg-type]
                 ratio_qty=int(opt.contract_count),
                 position_intent=intent,

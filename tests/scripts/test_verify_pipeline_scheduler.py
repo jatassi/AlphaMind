@@ -9,6 +9,7 @@ exercised in the verify script itself (operator-driven), not here.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -532,10 +533,13 @@ class TestCheckProcessLifetimeRow:
     async def test_fails_when_writer_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
+        """The writer's narrowed catch covers ``CalledProcessError`` — the
+        canonical ``git rev-parse HEAD`` failure that returns the verify
+        FAIL path."""
         from alphamind.scripts.verify_pipeline_scheduler import check_process_lifetime_row
 
         async def _stub(**_kwargs: Any) -> str:
-            raise RuntimeError("git unavailable")
+            raise subprocess.CalledProcessError(1, "git", stderr="git unavailable")
 
         monkeypatch.setattr(
             "alphamind.scripts.verify_pipeline_scheduler.record_process_lifetime",
@@ -547,7 +551,7 @@ class TestCheckProcessLifetimeRow:
             archive_root=tmp_path,
         )
         assert not result.passed
-        assert "git unavailable" in result.message
+        assert "git" in result.message.lower()
 
 
 class TestCheckProcessLifetimeRowReturnsId:
@@ -585,10 +589,11 @@ class TestCheckProcessLifetimeRowReturnsId:
     async def test_failing_result_returns_none_id(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
+        """A writer failure returns ``None`` for the process-lifetime id."""
         from alphamind.scripts.verify_pipeline_scheduler import check_process_lifetime_row
 
         async def _stub(**_kwargs: Any) -> str:
-            raise RuntimeError("git unavailable")
+            raise subprocess.CalledProcessError(1, "git", stderr="git unavailable")
 
         monkeypatch.setattr(
             "alphamind.scripts.verify_pipeline_scheduler.record_process_lifetime",

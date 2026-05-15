@@ -128,7 +128,7 @@ def test_round_trip_via_model_dump() -> None:
     )
     payload = first.model_dump(mode="json")
     second = parse_adaptive_brief(payload, invocation_id="inv-2026-04-23T14-30Z")
-    assert first.model_dump() == second.model_dump()
+    assert first.model_dump(mode="json") == second.model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------

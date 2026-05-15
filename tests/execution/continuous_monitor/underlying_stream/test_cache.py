@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
 from alphamind.execution.continuous_monitor.underlying_stream import (
     UnderlyingPriceCache,
     UnderlyingQuote,
@@ -41,7 +42,7 @@ class TestUnderlyingQuoteSchema:
     def test_naive_as_of_rejected(self) -> None:
         with pytest.raises(ValueError, match="tz-aware"):
             UnderlyingQuote(
-                ticker="SPY",
+                ticker=Symbol("SPY"),
                 price=500.0,
                 as_of=datetime(2026, 5, 11, 14, 30, 0),  # noqa: DTZ001 — test
             )

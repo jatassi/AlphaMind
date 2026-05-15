@@ -21,7 +21,22 @@ import pytest
 # ``submit_envelope_mcp``-derived symbols (mirror of the discipline in
 # ``tests/execution/oms/test_submit_engine_envelope.py``).
 import alphamind.decision.portfolio_manager.models  # noqa: F401
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.regime import RegimeTransitionState
+from alphamind.commands.engine_envelope import (
+    EngineEnvelope as OmsEngineEnvelope,
+)
 from alphamind.config.models.guardrails import BreachResponse
+from alphamind.decision.portfolio_manager.submit_envelope import (
+    Acknowledgment,
+    SubmissionResult,
+)
 from alphamind.execution.continuous_monitor.breach_loop.result import (
     BreachLoopResult,
     RuleEvaluation,
@@ -36,13 +51,6 @@ from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
 )
 from alphamind.execution.guardrail_enforcement.orchestrator import (
     Phase1EnforcementResult,
-)
-from alphamind.execution.oms.engine_envelope import (
-    EngineEnvelope as OmsEngineEnvelope,
-)
-from alphamind.execution.oms.submit_envelope_mcp import (
-    Acknowledgment,
-    SubmissionResult,
 )
 from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterSet,
@@ -64,7 +72,6 @@ from alphamind.risk_guardrails.breach_behavior import (
     RegimeLabel,
     RiskZone,
 )
-from alphamind.risk_guardrails.regime_adaptation.types import RegimeTransitionState
 
 _NOW = datetime(2026, 5, 11, 14, 30, 0, tzinfo=UTC)
 _SESSION_ID = "monsession-a"
@@ -154,14 +161,14 @@ def _equity_position_view(
 ) -> PositionView:
     """Build a PositionView for an equity position. Long-only by default."""
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=cost_basis,
     )
     record = PositionRecord(
-        position_id=position_id,
-        thesis_id=f"THE-{position_id}",
-        bracket_id=f"BRK-{position_id}",
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THE-{position_id}"),
+        bracket_id=BracketId(f"BRK-{position_id}"),
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_NOW,
@@ -264,7 +271,7 @@ class _RecordingSubmit:
             command_id=f"{envelope.envelope_id}.0",
             acknowledgment=Acknowledgment(
                 position_id=envelope.commands[0].position_id,
-                order_id=f"ORD-{envelope.commands[0].position_id}",
+                order_id=OrderId(f"ORD-{envelope.commands[0].position_id}"),
             ),
         )
 
@@ -290,7 +297,7 @@ def _make_dispatch_context(
     """Build a per-tick context with one breaching position + a passing secondary check."""
     breaching = _equity_position_view(
         position_id=breaching_position_id,
-        ticker="NVDA",
+        ticker=Symbol("NVDA"),
         unrealized_pnl_usd=-3_500.0,
     )
     positions = (breaching, *extra_positions)
@@ -517,8 +524,8 @@ async def test_secondary_breach_avoided_submits_alternate_envelope() -> None:
         ]
     )
     alternate = _equity_position_view(
-        position_id="POS-AMD-1",
-        ticker="AMD",
+        position_id=PositionId("POS-AMD-1"),
+        ticker=Symbol("AMD"),
         unrealized_pnl_usd=-1_000.0,
     )
     context = _make_dispatch_context(
@@ -638,8 +645,8 @@ async def test_breach_cascade_submits_chained_envelopes_in_order_with_shared_cas
     submit = _RecordingSubmit()
     # Two positions so post-close cascade has a follow-up candidate to close.
     alternate = _equity_position_view(
-        position_id="POS-AMD-1",
-        ticker="AMD",
+        position_id=PositionId("POS-AMD-1"),
+        ticker=Symbol("AMD"),
         unrealized_pnl_usd=-1_000.0,
         position_weight_pct=8.0,
     )
@@ -707,7 +714,7 @@ async def test_breach_cascade_submits_chained_envelopes_in_order_with_shared_cas
         )
         close = ProposedClose(
             position_id=chosen.position_id,
-            ticker="AMD",
+            ticker=Symbol("AMD"),
             asset_type="equity",
             direction="long",
             pre_close_size_pct_of_portfolio=pre_pct,
@@ -766,8 +773,8 @@ async def test_margin_call_cascade_submits_returned_envelopes_in_order() -> None
     )
     # margin call selector picks worst R/R; add a couple positions.
     second = _equity_position_view(
-        position_id="POS-AMD-1",
-        ticker="AMD",
+        position_id=PositionId("POS-AMD-1"),
+        ticker=Symbol("AMD"),
         unrealized_pnl_usd=-1_500.0,
     )
     context = _make_dispatch_context(

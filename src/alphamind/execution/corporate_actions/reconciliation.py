@@ -31,20 +31,6 @@ from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
 )
-from alphamind.execution.state_persistence.invocation_context.activity_log import (
-    append_activity_log_entry,
-)
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger import (
-    CASH_LEDGER_SINGLETON_ID,
-    CashLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
 from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventGroup,
@@ -56,6 +42,20 @@ from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
     OptionsPositionDetails,
     PositionStatus,
+)
+from alphamind.state.invocation_context.activity_log import (
+    append_activity_log_entry,
+)
+from alphamind.state.invocation_context.context import (
+    InvocationHandle,
+)
+from alphamind.state.tables.cash_ledger import (
+    CASH_LEDGER_SINGLETON_ID,
+    CashLedgerRow,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
 )
 
 # Mirrors phase1.py's tolerance for "quantities are effectively equal".
@@ -224,13 +224,15 @@ async def _reconcile_cash(
         return 0
     if abs(cash_row.current_cash_usd - alpaca_account.cash) <= _CASH_EPSILON:
         return 0
+    # ALP-462 — both sides are ``Decimal`` after the migration; cast to float
+    # at the activity-log boundary (06a migrates ReconciliationAlertDetail).
     await _emit_alert(
         handle,
         position_id=None,
         domain="cash",
         field_name="current_cash_usd",
-        local_value=cash_row.current_cash_usd,
-        alpaca_value=alpaca_account.cash,
+        local_value=float(cash_row.current_cash_usd),
+        alpaca_value=float(alpaca_account.cash),
         delta_description=(
             f"cash_ledger.current_cash_usd={cash_row.current_cash_usd} "
             f"vs Alpaca account.cash={alpaca_account.cash}"
@@ -272,7 +274,7 @@ async def _emit_alert(
             delta_description=delta_description,
         ),
     )
-    await append_activity_log_entry(handle, entry)
+    append_activity_log_entry(handle, entry)
 
 
 async def _read_live_position_rows(handle: InvocationHandle) -> list[PositionRow]:

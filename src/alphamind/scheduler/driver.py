@@ -28,10 +28,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.scheduler import SchedulerConfig
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.scheduler.orchestrator import run_invocation
 from alphamind.scheduler.run_context import RunInvocationContext
 from alphamind.scheduler.session import PipelineSession
+from alphamind.state.tables.invocations import InvocationRow
 
 __all__ = ["register_pipeline_jobs", "run_pipeline_scheduler_task"]
 
@@ -137,6 +137,10 @@ def _make_scheduled_job(
                 now=now,
             )
         except Exception:
+            # Per-job supervisor per runtime §G1: catch any orchestrator
+            # exception so the daemon keeps running per parent decision (H).
+            # ``BaseException`` (``CancelledError``) propagates so daemon
+            # shutdown is honored.
             log.exception("scheduled trigger=%s failed", trigger_key)
             return
         duration = time.monotonic() - start_perf

@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.consumers.strategist import (
     BetweenInvocationClosure,
@@ -32,7 +33,6 @@ from alphamind.portfolio_state.records.activity_log import (
     HaltLiftedDetail,
     PMDecisionDetail,
 )
-from alphamind.portfolio_state.records.capital import DrawdownState
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegType,
@@ -312,8 +312,9 @@ def _render_aggregate_block(strategist_view: StrategistView) -> str:
 
 
 def _render_aggregate_pnl_line(pnl: PortfolioPnL) -> str:
-    intraday = format_dollar(pnl.daily_total_pnl_usd)
-    cumulative = format_dollar(pnl.cumulative_realized_pnl_usd)
+    # ALP-462 — Money → float at the legacy format_dollar surface.
+    intraday = format_dollar(float(pnl.daily_total_pnl_usd))
+    cumulative = format_dollar(float(pnl.cumulative_realized_pnl_usd))
     return f"  Portfolio P/L: intraday {intraday}, cumulative realized {cumulative}"
 
 
@@ -330,11 +331,16 @@ def _render_aggregate_drawdown_line(drawdown: DrawdownState) -> str:
 
 
 def _render_directional_lines(directional: DirectionalExposure) -> str:
+    # ALP-462 — Money → float at the legacy format_dollar surface.
     net = format_dollar(
-        directional.total_long_delta_adjusted_usd - directional.total_short_delta_adjusted_usd
+        float(
+            directional.total_long_delta_adjusted_usd - directional.total_short_delta_adjusted_usd
+        )
     )
     gross = format_dollar(
-        directional.total_long_delta_adjusted_usd + directional.total_short_delta_adjusted_usd
+        float(
+            directional.total_long_delta_adjusted_usd + directional.total_short_delta_adjusted_usd
+        )
     )
     net_pct = format_pct(directional.net_directional_pct_of_portfolio)
     gross_pct = format_pct(directional.gross_pct_of_portfolio)

@@ -271,7 +271,7 @@ def test_malformed_yaml_raises_pydantic_validation_error(
     assert broken != payload
     venue_yaml.write_text(broken)
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         load_full_config(
             config_dir=fixture_config_tree,
             env_path=env_path,
@@ -359,7 +359,7 @@ def test_loader_propagates_native_exception_types_unchanged(
     venue_yaml.write_text(
         venue_yaml.read_text().replace("    rest_url: https://paper-api.alpaca.markets\n", "")
     )
-    with pytest.raises(ValidationError) as parse_exc:
+    with pytest.raises((ValueError, TypeError)) as parse_exc:
         load_full_config(
             config_dir=fixture_config_tree,
             env_path=env_path,

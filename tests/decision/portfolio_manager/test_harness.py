@@ -6,10 +6,12 @@ Tests are behaviour-driven through the public interface only:
 Anthropic API. Mirrors the structure of
 ``tests/decision/strategist/test_harness.py``.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from datetime import UTC, date, datetime
@@ -20,7 +22,33 @@ from unittest.mock import patch
 
 import pytest
 
+from alphamind._kernel.ids import (
+    EnvelopeId,
+    InvocationId,
+    OrderId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+)
+from alphamind._kernel.money import money, price
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+)
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
+from alphamind.commands.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+)
+from alphamind.commands.command_models import (
+    ThesisComponent as OMSThesisComponent,
+)
 from alphamind.config.models.agents import AllowedModel, BaseAgentConfig
 from alphamind.decision.portfolio_manager.harness import (
     ContextOverflowFailure,
@@ -38,6 +66,14 @@ from alphamind.decision.portfolio_manager.models import (
     PMCompletionRecord,
     ThesisQualityEvaluation,
 )
+from alphamind.decision.portfolio_manager.submit_envelope import (
+    Acknowledgment,
+    FailedSubmissionEntry,
+    SubmissionLogEntry,
+    SubmissionResult,
+    SubmitEnvelopeState,
+    build_initial_submit_envelope_state,
+)
 from alphamind.decision.proposal_pre_processor.models import (
     AggregateObservations,
     AnalystSection,
@@ -51,36 +87,11 @@ from alphamind.decision.proposal_pre_processor.models import (
     ProposalPreProcessorBundle,
     StrategistSection,
 )
-from alphamind.execution.oms.command_models import (
-    BracketOrderParameters,
-    EntryOrder,
-    EquityInstrument,
-    PositionSize,
-    PriceCondition,
-    PriceLeg,
-    Target,
-    Thesis,
-)
-from alphamind.execution.oms.command_models import (
-    ThesisComponent as OMSThesisComponent,
-)
-from alphamind.execution.oms.submit_envelope_mcp import (
-    Acknowledgment,
-    FailedSubmissionEntry,
-    SubmissionLogEntry,
-    SubmissionResult,
-    SubmitEnvelopeState,
-    build_initial_submit_envelope_state,
-)
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     PortfolioManagerThesisComponentReader,
     PortfolioManagerView,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
 )
 from alphamind.portfolio_state.records.theses import ThesisComponent
 from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -311,23 +322,31 @@ def pre_processor_bundle() -> ProposalPreProcessorBundle:
 
 @pytest.fixture()
 def pm_view() -> PortfolioManagerView:
-    """Minimal PortfolioManagerView for harness tests."""
-    return PortfolioManagerView.model_construct(
-        positions=(),
-        recent_thesis_resolutions=(),
-        portfolio_pnl=None,
-        drawdown=None,
-        sector_exposure=(),
-        directional_exposure=None,
-        risk_budget=None,
-        active_risk_parameters=None,
-        intra_invocation_changelog=(),
-        recent_pm_decision_log=(),
-        abandoned_openings=(),
-        abandoned_actions=(),
-        thesis_quality_aggregates=None,
-        position_modification_trail={},
-    )
+    """Minimal PortfolioManagerView for harness tests.
+
+    Bypasses the dataclass __init__ via ``object.__new__`` because the test
+    harness only consumes a handful of fields and the full ctor demands every
+    sub-aggregate. Mirrors the pre-conversion ``model_construct`` shortcut.
+    """
+    view = object.__new__(PortfolioManagerView)
+    for name, value in {
+        "positions": (),
+        "recent_thesis_resolutions": (),
+        "portfolio_pnl": None,
+        "drawdown": None,
+        "sector_exposure": (),
+        "directional_exposure": None,
+        "risk_budget": None,
+        "active_risk_parameters": None,
+        "intra_invocation_changelog": (),
+        "recent_pm_decision_log": (),
+        "abandoned_openings": (),
+        "abandoned_actions": (),
+        "thesis_quality_aggregates": None,
+        "position_modification_trail": {},
+    }.items():
+        object.__setattr__(view, name, value)
+    return view
 
 
 @pytest.fixture()
@@ -1154,10 +1173,10 @@ async def test_submission_log_threads_from_engine_stub_state_cell(
     """
     eval_pass = CriterionAssessment(status="pass")
     envelope = PMAnalystEnvelope(
-        envelope_id="ENV-REC-1",
-        invocation_id="inv-log-001",
+        envelope_id=EnvelopeId("ENV-REC-1"),
+        invocation_id=InvocationId("inv-log-001"),
         source_provenance="pm_analyst",
-        source_recommendation_id="REC-1",
+        source_recommendation_id=RecommendationId("REC-1"),
         recommendation_type="new_entry",
         verdict="approve",
         evaluation=ThesisQualityEvaluation(
@@ -1174,12 +1193,14 @@ async def test_submission_log_threads_from_engine_stub_state_cell(
         commands=(
             OpenCommand(
                 command_type="open",
-                instrument=EquityInstrument(asset_type="equity", ticker="NVDA", direction="long"),
+                instrument=EquityInstrument(
+                    asset_type="equity", ticker=Symbol("NVDA"), direction="long"
+                ),
                 entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-                position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+                position_size=PositionSize(quantity=10.0, dollar_value=money(10_000.0)),
                 target=Target(
                     target_type="absolute_price",
-                    price=950.0,
+                    price=price(950.0),
                     pl_percentage=None,
                     pl_dollar=None,
                     order_type="limit",
@@ -1191,7 +1212,7 @@ async def test_submission_log_threads_from_engine_stub_state_cell(
                         condition=PriceCondition(
                             underlying_trigger="NVDA",
                             comparator="<=",
-                            trigger_price=750.0,
+                            trigger_price=price(750.0),
                         ),
                         order_parameters=BracketOrderParameters(
                             order_type="market", limit_price=None
@@ -1221,12 +1242,12 @@ async def test_submission_log_threads_from_engine_stub_state_cell(
                 status="accepted",
                 command_id="inv-log-001.ENV-REC-1.0.0",
                 acknowledgment=Acknowledgment(
-                    position_id="POS-NVDA-stub", order_id="ORD-NVDA-stub"
+                    position_id=PositionId("POS-NVDA-stub"), order_id=OrderId("ORD-NVDA-stub")
                 ),
             ),
         ),
     )
-    submit_envelope_state.submission_log = (fake_entry,)
+    submit_envelope_state = dataclasses.replace(submit_envelope_state, submission_log=(fake_entry,))
 
     stub = _make_stub_query([_make_sdk_response(_MINIMAL_PAYLOAD)])
     result = await invoke_pm(
@@ -1286,7 +1307,9 @@ async def test_failed_submission_log_archived_from_state_cell(
         validation_error_repr="1 validation error for PMEnvelope\nsource_provenance: missing",
         command_id="inv-fail-001.ENV-REC-99.0.0",
     )
-    submit_envelope_state.failed_submission_log = (fake_failure,)
+    submit_envelope_state = dataclasses.replace(
+        submit_envelope_state, failed_submission_log=(fake_failure,)
+    )
 
     stub = _make_stub_query([_make_sdk_response(_MINIMAL_PAYLOAD)])
     await invoke_pm(

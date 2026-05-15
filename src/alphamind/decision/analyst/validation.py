@@ -23,9 +23,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime
-
-from pydantic import BaseModel
 
 from alphamind.analysis.synthesizer.models import parse_reference_id
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
@@ -50,7 +49,8 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-class ValidationError(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class ValidationError:
     """A single Layer-2/3 violation found in an :class:`AnalystOutput`."""
 
     field_path: str
@@ -58,7 +58,8 @@ class ValidationError(BaseModel, frozen=True):
     message: str
 
 
-class ValidationWarning(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class ValidationWarning:
     """A soft Layer-2 violation that does not disqualify the output."""
 
     field_path: str
@@ -66,7 +67,8 @@ class ValidationWarning(BaseModel, frozen=True):
     message: str
 
 
-class ValidationResult(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class ValidationResult:
     """Aggregate outcome of running :func:`validate_analyst_output`."""
 
     is_valid: bool

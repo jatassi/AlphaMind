@@ -1,17 +1,35 @@
 """Tests for the snapshot assembler (story 06)."""
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+)
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.regt_margin_attribution import RegTExcessAggregates
 from alphamind.portfolio_state import PortfolioStateConfig
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.freshness import AssembledSnapshot, SnapshotFreshness
 from alphamind.portfolio_state.pricing import (
@@ -27,16 +45,7 @@ from alphamind.portfolio_state.records.activity_log import (
     PMDecisionDetail,
     PMVerdict,
 )
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    CashLedger,
-    DrawdownState,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskZone,
-)
+from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegEnforcement,
@@ -96,32 +105,28 @@ _INV_ID = "inv-test-001"
 
 
 def _make_config() -> PortfolioStateConfig:
-    return PortfolioStateConfig.model_validate(
-        {
-            "pm_decision_log_sliding_window_invocations": 5,
-            "thesis_resolutions_lookback_trading_days": 10,
-            "thesis_quality_aggregates_trailing_windows_days": (5, 20),
-            "snapshot_freshness_max_phase1_to_snapshot_seconds": 300.0,
-            "snapshot_freshness_max_price_age_seconds": 60.0,
-        }
+    return PortfolioStateConfig(
+        pm_decision_log_sliding_window_invocations=5,
+        thesis_resolutions_lookback_trading_days=10,
+        thesis_quality_aggregates_trailing_windows_days=(5, 20),
+        snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
+        snapshot_freshness_max_price_age_seconds=60.0,
     )
 
 
 def _make_cash_ledger(current_cash: float = 10_000.0) -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash,
-            "settled_cash_usd": current_cash,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": current_cash,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": [],
-            "cash_pct_of_portfolio": 0.0,  # assembler will recompute
-            "true_deployable_capital_usd": 0.0,  # assembler will recompute
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=current_cash,
+        settled_cash_usd=current_cash,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=current_cash,
+        margin_held_usd=0.0,
+        unsettled_proceeds=[],
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
@@ -129,102 +134,88 @@ def _make_drawdown_state(
     current_drawdown_pct: float = 0.0,
     drawdown_by_source_pct: dict[str, float] | None = None,
 ) -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": current_drawdown_pct,
-            "equity_high_water_mark_usd": 100_000.0,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": current_drawdown_pct,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": drawdown_by_source_pct or {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=current_drawdown_pct,
+        equity_high_water_mark_usd=100_000.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=current_drawdown_pct,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct=drawdown_by_source_pct or {},
     )
 
 
 def _make_pnl_inputs() -> PortfolioPnLInputs:
-    return PortfolioPnLInputs.model_validate(
-        {
-            "daily_realized_pnl_usd": 0.0,
-            "cumulative_realized_pnl_usd": 0.0,
-            "rolling_realized_pnl": {"1d": 0.0, "3d": 0.0, "5d": 0.0, "20d": 0.0},
-            "win_rate_pct": None,
-            "average_win_size_usd": None,
-            "average_loss_size_usd": None,
-            "profit_factor": None,
-        }
+    return PortfolioPnLInputs(
+        daily_realized_pnl_usd=0.0,
+        cumulative_realized_pnl_usd=0.0,
+        rolling_realized_pnl={"1d": 0.0, "3d": 0.0, "5d": 0.0, "20d": 0.0},
+        win_rate_pct=None,
+        average_win_size_usd=None,
+        average_loss_size_usd=None,
+        profit_factor=None,
     )
 
 
 def _make_risk_budget() -> RiskBudgetConsumption:
-    return RiskBudgetConsumption.model_validate({"entries": []})
+    return RiskBudgetConsumption(entries=[])
 
 
 def _make_active_risk_parameters(
     regime: RegimeLabel = RegimeLabel.NORMAL,
     parameter_change_flag: bool = False,
 ) -> ActiveRiskParameterSet:
-    return ActiveRiskParameterSet.model_validate(
-        {
-            "regime_label": regime,
-            "transition_state": RegimeTransitionState.STABLE,
-            "transition_invocations_remaining": 0,
-            "parameter_change_flag": parameter_change_flag,
-            "entries": [],
-            "active_overlays": [],
-        }
+    return ActiveRiskParameterSet(
+        regime_label=regime,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        parameter_change_flag=parameter_change_flag,
+        entries=[],
+        active_overlays=[],
     )
 
 
 def _make_active_risk_parameters_with_entry(rule_id: str, value: float) -> ActiveRiskParameterSet:
-    entry = ActiveRiskParameterEntry.model_validate(
-        {
-            "rule_id": rule_id,
-            "rule_label": rule_id,
-            "value": value,
-            "unit": "USD",
-            "regime_multiplier_applied": 1.0,
-            "base_value": value,
-        }
+    entry = ActiveRiskParameterEntry(
+        rule_id=rule_id,
+        rule_label=rule_id,
+        value=value,
+        unit="USD",
+        regime_multiplier_applied=1.0,
+        base_value=value,
     )
-    return ActiveRiskParameterSet.model_validate(
-        {
-            "regime_label": RegimeLabel.NORMAL,
-            "transition_state": RegimeTransitionState.STABLE,
-            "transition_invocations_remaining": 0,
-            "parameter_change_flag": False,
-            "entries": [entry],
-            "active_overlays": [],
-        }
+    return ActiveRiskParameterSet(
+        regime_label=RegimeLabel.NORMAL,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        parameter_change_flag=False,
+        entries=[entry],
+        active_overlays=[],
     )
 
 
 def _make_thesis_quality_aggregates() -> ThesisQualityAggregate:
-    return ThesisQualityAggregate.model_validate(
-        {
-            "as_of_timestamp": _NOW,
-            "resolution_counts_by_window": [],
-            "duration_stats_by_window": [],
-            "invalidation_timing_stats_by_window": [],
-            "signal_hit_rates": [],
-            "signal_to_thesis_conversions": [],
-            "conviction_calibration": [],
-            "conviction_sizing_deviation_by_window": [],
-            "performance_attribution": [],
-            "alpha_beta_decomposition_by_window": [],
-        }
+    return ThesisQualityAggregate(
+        as_of_timestamp=_NOW,
+        resolution_counts_by_window=[],
+        duration_stats_by_window=[],
+        invalidation_timing_stats_by_window=[],
+        signal_hit_rates=[],
+        signal_to_thesis_conversions=[],
+        conviction_calibration=[],
+        conviction_sizing_deviation_by_window=[],
+        performance_attribution=[],
+        alpha_beta_decomposition_by_window=[],
     )
 
 
 def _make_invocation_metadata(invocation_id: str = _INV_ID) -> CurrentInvocationMetadata:
-    return CurrentInvocationMetadata.model_validate(
-        {
-            "invocation_id": invocation_id,
-            "phase1_committed_at": _PHASE1_AT,
-            "pipeline_invocation_started_at": None,
-        }
+    return CurrentInvocationMetadata(
+        invocation_id=invocation_id,
+        phase1_committed_at=_PHASE1_AT,
+        pipeline_invocation_started_at=None,
     )
 
 
@@ -232,19 +223,15 @@ def _make_prior_context(
     prior_params: ActiveRiskParameterSet | None = None,
 ) -> PriorInvocationContext:
     if prior_params is None:
-        return PriorInvocationContext.model_validate(
-            {
-                "prior_invocation_id": None,
-                "prior_active_risk_parameters": None,
-                "prior_phase1_committed_at": None,
-            }
+        return PriorInvocationContext(
+            prior_invocation_id=None,
+            prior_active_risk_parameters=None,
+            prior_phase1_committed_at=None,
         )
-    return PriorInvocationContext.model_validate(
-        {
-            "prior_invocation_id": "inv-000",
-            "prior_active_risk_parameters": prior_params,
-            "prior_phase1_committed_at": _PHASE1_AT,
-        }
+    return PriorInvocationContext(
+        prior_invocation_id="inv-000",
+        prior_active_risk_parameters=prior_params,
+        prior_phase1_committed_at=_PHASE1_AT,
     )
 
 
@@ -256,7 +243,7 @@ def _make_open_equity_position(
     direction: Direction = Direction.LONG,
 ) -> PositionRecord:
     equity = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=cost_per_share,
         borrow_rate_pct=0.5 if direction == Direction.SHORT else None,
@@ -270,31 +257,19 @@ def _make_open_equity_position(
         slippage=0.01,
         fees=1.0,
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": PositionStatus.OPEN,
-            "direction": direction,
-            "entry_timestamp": _ENTRY_AT,
-            "details": equity,
-            "execution_history": (fill,),
-            "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": 0.0,  # assembler will recompute
-            "unrealized_pnl_usd": 0.0,
-            "unrealized_pnl_pct": 0.0,
-            "position_weight_pct": 0.0,
-            "position_age_hours": 0.0,
-            "notional_exposure_usd": 0.0,
-            "delta_adjusted_exposure_usd": 0.0,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=direction,
+        entry_timestamp=_ENTRY_AT,
+        details=equity,
+        execution_history=(fill,),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -323,32 +298,30 @@ def _make_pending_order(
     position_id: str = "POS-001",
     submission_timestamp: datetime = _ORDER_SUBMITTED_AT,
 ) -> OrderRecord:
-    spec = EquityInstrumentSpec(ticker="NVDA")
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": position_id,
-            "bracket_id": "BRK-001",
-            "role": OrderRole.ENTRY,
-            "instrument_spec": spec,
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "price_parameters": PriceParameters(limit_price=None, stop_trigger_price=None),
-            "quantity": 10.0,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": "alp-001",
-            "alpaca_order_id_chain": ("alp-001",),
-            "submission_timestamp": submission_timestamp,
-            "last_update_timestamp": submission_timestamp,
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": None,
-            "originating_pm_command_id": None,
-            "age_hours": 0.0,  # assembler will recompute
-        }
+    spec = EquityInstrumentSpec(ticker=Symbol("NVDA"))
+    return OrderRecord(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=BracketId("BRK-001"),
+        role=OrderRole.ENTRY,
+        instrument_spec=spec,
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        price_parameters=PriceParameters(limit_price=None, stop_trigger_price=None),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId("alp-001"),
+        alpaca_order_id_chain=("alp-001",),
+        submission_timestamp=submission_timestamp,
+        last_update_timestamp=submission_timestamp,
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=None,
+        originating_pm_command_id=None,
+        age_hours=0.0,
     )
 
 
@@ -361,29 +334,31 @@ def _make_bracket(
     stop_leg = BracketLeg(
         leg_id="leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id="ord-stop-1",
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=stop_price, direction="LTE"),
+        order_id=OrderId("ord-stop-1"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=stop_price, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     target_leg = BracketLeg(
         leg_id="leg-target",
         leg_type=BracketLegType.TAKE_PROFIT,
-        order_id="ord-target-1",
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=target_price, direction="GTE"),
+        order_id=OrderId("ord-target-1"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=target_price, direction="GTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
-    return BracketRecord.model_validate(
-        {
-            "bracket_id": bracket_id,
-            "position_id": position_id,
-            "status": BracketStatus.ACTIVE,
-            "entry_order_id": "ord-entry-1",
-            "protective_legs": (stop_leg, target_leg),
-            "modification_history": (),
-            "corporate_action_cancellation_reason": None,
-        }
+    return BracketRecord(
+        bracket_id=bracket_id,
+        position_id=position_id,
+        status=BracketStatus.ACTIVE,
+        entry_order_id=OrderId("ord-entry-1"),
+        protective_legs=(stop_leg, target_leg),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
     )
 
 
@@ -396,7 +371,7 @@ def _make_options_position(
     delta: float = 0.5,
 ) -> PositionRecord:
     options = OptionsPositionDetails(
-        underlying_ticker=underlying_ticker,
+        underlying_ticker=Symbol(underlying_ticker),
         strike_price=500.0,
         expiration_date=date(2025, 12, 31),
         contract_type=OptionContractType.CALL,
@@ -412,31 +387,29 @@ def _make_options_position(
         slippage=0.01,
         fees=1.0,
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _ENTRY_AT,
-            "details": options,
-            "execution_history": (fill,),
-            "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": 0.0,
-            "unrealized_pnl_usd": 0.0,
-            "unrealized_pnl_pct": 0.0,
-            "position_weight_pct": 0.0,
-            "position_age_hours": 0.0,
-            "notional_exposure_usd": 0.0,
-            "delta_adjusted_exposure_usd": 0.0,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_ENTRY_AT,
+        details=options,
+        execution_history=(fill,),
+        realized_pnl_to_date_usd=None,
+        current_market_value_usd=0.0,
+        unrealized_pnl_usd=0.0,
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=0.0,
+        position_age_hours=0.0,
+        notional_exposure_usd=0.0,
+        delta_adjusted_exposure_usd=0.0,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -448,7 +421,7 @@ def _make_strategy_position(
     premium2: float = 5.0,
 ) -> PositionRecord:
     leg1_options = OptionsPositionDetails(
-        underlying_ticker=leg1_underlying,
+        underlying_ticker=Symbol(leg1_underlying),
         strike_price=500.0,
         expiration_date=date(2025, 12, 31),
         contract_type=OptionContractType.CALL,
@@ -458,7 +431,7 @@ def _make_strategy_position(
         greeks=OptionGreeks(delta=0.5, gamma=0.01, theta=-0.5, vega=0.2),
     )
     leg2_options = OptionsPositionDetails(
-        underlying_ticker=leg2_underlying,
+        underlying_ticker=Symbol(leg2_underlying),
         strike_price=510.0,
         expiration_date=date(2025, 12, 31),
         contract_type=OptionContractType.PUT,
@@ -486,31 +459,19 @@ def _make_strategy_position(
         slippage=0.0,
         fees=2.0,
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _ENTRY_AT,
-            "details": strategy_details,
-            "execution_history": (fill,),
-            "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": 0.0,
-            "unrealized_pnl_usd": 0.0,
-            "unrealized_pnl_pct": 0.0,
-            "position_weight_pct": 0.0,
-            "position_age_hours": 0.0,
-            "notional_exposure_usd": 0.0,
-            "delta_adjusted_exposure_usd": 0.0,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_ENTRY_AT,
+        details=strategy_details,
+        execution_history=(fill,),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -529,33 +490,30 @@ def _make_fixture(
     cash_ledger: CashLedger | None = None,
     regt_excess_aggregates: RegTExcessAggregates | None = None,
 ) -> RepositoryFixture:
-    return RepositoryFixture.model_validate(
-        {
-            "open_positions": open_positions,
-            "pending_positions": pending_positions,
-            "drawdown_state": drawdown_state or _make_drawdown_state(),
-            "portfolio_pnl_inputs": _make_pnl_inputs(),
-            "active_theses": (),
-            "recent_thesis_resolutions": (),
-            "cash_ledger": cash_ledger or _make_cash_ledger(),
-            "pending_orders": pending_orders,
-            "risk_budget": _make_risk_budget(),
-            "active_risk_parameters": active_risk_parameters or _make_active_risk_parameters(),
-            "intra_invocation_changelog": intra_invocation_changelog,
-            "recent_pm_decision_log": recent_pm_decision_log,
-            "position_modification_trail": position_modification_trail or {},
-            "thesis_quality_aggregates": _make_thesis_quality_aggregates(),
-            "brackets": brackets,
-            "current_invocation_metadata": current_invocation_metadata
-            or _make_invocation_metadata(),
-            "prior_invocation_context": prior_invocation_context or _make_prior_context(),
-            "regt_excess_aggregates": regt_excess_aggregates
-            or RegTExcessAggregates(
-                trailing_30d_usd=0.0,
-                trailing_90d_usd=0.0,
-                lifetime_usd=0.0,
-            ),
-        }
+    return RepositoryFixture(
+        open_positions=open_positions,
+        pending_positions=pending_positions,
+        drawdown_state=drawdown_state or _make_drawdown_state(),
+        portfolio_pnl_inputs=_make_pnl_inputs(),
+        active_theses=(),
+        recent_thesis_resolutions=(),
+        cash_ledger=cash_ledger or _make_cash_ledger(),
+        pending_orders=pending_orders,
+        risk_budget=_make_risk_budget(),
+        active_risk_parameters=active_risk_parameters or _make_active_risk_parameters(),
+        intra_invocation_changelog=intra_invocation_changelog,
+        recent_pm_decision_log=recent_pm_decision_log,
+        position_modification_trail=position_modification_trail or {},
+        thesis_quality_aggregates=_make_thesis_quality_aggregates(),
+        brackets=brackets,
+        current_invocation_metadata=current_invocation_metadata or _make_invocation_metadata(),
+        prior_invocation_context=prior_invocation_context or _make_prior_context(),
+        regt_excess_aggregates=regt_excess_aggregates
+        or RegTExcessAggregates(
+            trailing_30d_usd=0.0,
+            trailing_90d_usd=0.0,
+            lifetime_usd=0.0,
+        ),
     )
 
 
@@ -576,8 +534,15 @@ def _ticker_sector_resolver(
     return _resolve
 
 
-def _run[T](coro: Coroutine[object, object, T]) -> T:
-    return asyncio.run(coro)
+def _run[T](value: T) -> T:
+    """Identity passthrough kept for call-site stability across the ALP-468 sync strip.
+
+    Before the strip, callers wrapped ``_run(assemble_snapshot(...))`` to drive
+    the assembler's coroutine via ``asyncio.run``. The assembler is sync now;
+    the helper now just returns the value unchanged so the call sites remain
+    grep-stable. Inline at next refactor pass.
+    """
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -588,77 +553,75 @@ def _run[T](coro: Coroutine[object, object, T]) -> T:
 class _FailingRepository:
     """Raises RepositoryReadError on every method call."""
 
-    async def get_open_positions(self) -> tuple[PositionRecord, ...]:
+    def get_open_positions(self) -> tuple[PositionRecord, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_pending_positions(self) -> tuple[PositionRecord, ...]:
+    def get_pending_positions(self) -> tuple[PositionRecord, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_drawdown_state(self) -> DrawdownState:
+    def get_drawdown_state(self) -> DrawdownState:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_portfolio_pnl_inputs(self) -> PortfolioPnLInputs:
+    def get_portfolio_pnl_inputs(self) -> PortfolioPnLInputs:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_active_theses(self) -> tuple[ThesisRecord, ...]:
+    def get_active_theses(self) -> tuple[ThesisRecord, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_recent_thesis_resolutions(
+    def get_recent_thesis_resolutions(
         self, *, lookback_trading_days: int
     ) -> tuple[RecentThesisResolution, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_cash_ledger(self) -> CashLedger:
+    def get_cash_ledger(self) -> CashLedger:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_regt_excess_aggregates(self, now: datetime) -> RegTExcessAggregates:
+    def get_regt_excess_aggregates(self, now: datetime) -> RegTExcessAggregates:
         del now
         raise RepositoryReadError("simulated read failure")
 
-    async def get_pending_orders(self) -> tuple[OrderRecord, ...]:
+    def get_pending_orders(self) -> tuple[OrderRecord, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_risk_budget_consumption(self) -> RiskBudgetConsumption:
+    def get_risk_budget_consumption(self) -> RiskBudgetConsumption:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_active_risk_parameters(self) -> ActiveRiskParameterSet:
+    def get_active_risk_parameters(self) -> ActiveRiskParameterSet:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_intra_invocation_changelog(
-        self, *, invocation_id: str
-    ) -> tuple[ActivityLogEntry, ...]:
+    def get_intra_invocation_changelog(self, *, invocation_id: str) -> tuple[ActivityLogEntry, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_recent_pm_decision_log(
+    def get_recent_pm_decision_log(
         self, *, sliding_window_invocations: int
     ) -> tuple[ActivityLogEntry, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_position_modification_trail(
+    def get_position_modification_trail(
         self, *, position_ids: tuple[str, ...]
     ) -> dict[str, tuple[ActivityLogEntry, ...]]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_thesis_quality_aggregates(self) -> ThesisQualityAggregate:
+    def get_thesis_quality_aggregates(self) -> ThesisQualityAggregate:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_brackets_for_positions(
+    def get_brackets_for_positions(
         self, *, position_ids: tuple[str, ...]
     ) -> tuple[BracketRecord, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_current_invocation_metadata(self) -> CurrentInvocationMetadata:
+    def get_current_invocation_metadata(self) -> CurrentInvocationMetadata:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_prior_invocation_context(self) -> PriorInvocationContext:
+    def get_prior_invocation_context(self) -> PriorInvocationContext:
         raise RepositoryReadError("simulated read failure")
 
 
 class _ConsistencyErrorRepository(_FailingRepository):
-    async def get_current_invocation_metadata(self) -> CurrentInvocationMetadata:
+    def get_current_invocation_metadata(self) -> CurrentInvocationMetadata:
         raise RepositoryConsistencyError("isolation violation")
 
-    async def get_prior_invocation_context(self) -> PriorInvocationContext:
+    def get_prior_invocation_context(self) -> PriorInvocationContext:
         raise RepositoryConsistencyError("isolation violation")
 
 
@@ -696,14 +659,38 @@ def test_empty_portfolio_returns_valid_snapshot() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 2: assemble_snapshot signature — async, keyword-only
+# Test 2: assemble_snapshot signature — sync, keyword-only
 # ---------------------------------------------------------------------------
 
 
-def test_assemble_snapshot_is_async() -> None:
+def test_assemble_snapshot_is_sync() -> None:
+    """Per ALP-468: ``assemble_snapshot`` is synchronous after the strip.
+
+    Calling it without ``await`` returns an ``AssembledSnapshot`` directly,
+    not a coroutine. Guards against accidental re-introduction of ``async``.
+    """
     import inspect
 
-    assert inspect.iscoroutinefunction(assemble_snapshot)
+    assert not inspect.iscoroutinefunction(assemble_snapshot)
+
+
+def test_assemble_snapshot_call_returns_assembled_snapshot_not_coroutine() -> None:
+    """Smoke check: a stub-fixture invocation yields a value, not a coroutine."""
+    from alphamind.portfolio_state.freshness import AssembledSnapshot
+    from alphamind.portfolio_state.repository import StubPortfolioStateRepository
+
+    repo = StubPortfolioStateRepository(_make_fixture())
+    provider = StubCurrentPriceProvider({}, _NOW)
+    result = assemble_snapshot(
+        repository=repo,
+        price_provider=provider,
+        sector_resolver=_null_sector_resolver,
+        config=_make_config(),
+        now=_NOW,
+    )
+    # Direct equality against AssembledSnapshot (sync return) — would fail if
+    # ``assemble_snapshot`` were async and returned a coroutine.
+    assert isinstance(result, AssembledSnapshot)
 
 
 # ---------------------------------------------------------------------------
@@ -762,26 +749,24 @@ def test_multi_position_rollup() -> None:
     pos_tech_short = _make_open_equity_position("POS-TECH-S", "AMD", 5.0, 100.0, Direction.SHORT)
     pos_health = _make_open_equity_position("POS-HLTH", "JNJ", 20.0, 150.0, Direction.LONG)
 
-    modification_trail_entry = ActivityLogEntry.model_validate(
-        {
-            "entry_id": "trail-1",
-            "invocation_id": _INV_ID,
-            "timestamp": _NOW,
-            "event_type": EventType.PM_DECISION,
-            "event_group": EventGroup.PM_DECISION,
-            "position_id": "POS-TECH",
-            "order_id": None,
-            "thesis_id": None,
-            "source": EventSource.COMMAND_EXECUTOR,
-            "detail": PMDecisionDetail(
-                envelope_id="e1",
-                source_provenance_json={},
-                evaluation_json={},
-                modifications_json=[],
-                resulting_command_ids=(),
-                verdict=PMVerdict.APPROVE,
-            ),
-        }
+    modification_trail_entry = ActivityLogEntry(
+        entry_id="trail-1",
+        invocation_id=_INV_ID,
+        timestamp=_NOW,
+        event_type=EventType.PM_DECISION,
+        event_group=EventGroup.PM_DECISION,
+        position_id=PositionId("POS-TECH"),
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.COMMAND_EXECUTOR,
+        detail=PMDecisionDetail(
+            envelope_id="e1",
+            source_provenance_json={},
+            evaluation_json={},
+            modifications_json=[],
+            resulting_command_ids=(),
+            verdict=PMVerdict.APPROVE,
+        ),
     )
 
     fixture = _make_fixture(
@@ -926,7 +911,7 @@ def test_stale_price_does_not_abort_assembly(caplog: pytest.LogCaptureFixture) -
 
 def test_missing_ticker_from_get_quotes_treated_as_stale(caplog: pytest.LogCaptureFixture) -> None:
     """Ticker absent from get_quotes result → warning logged, MV=0.0, snapshot constructs."""
-    pos = _make_open_equity_position(ticker="UNKNOWN")
+    pos = _make_open_equity_position(ticker=Symbol("UNKNOWN"))
     fixture = _make_fixture(
         open_positions=(pos,),
         cash_ledger=_make_cash_ledger(current_cash=1000.0),
@@ -1457,20 +1442,18 @@ def test_assembler_recomputes_available_buying_power_from_canonical_formula() ->
     """
     # Seed cash with a stale/wrong available_buying_power so the test fails
     # if the assembler simply passes the field through unchanged.
-    cash = CashLedger.model_validate(
-        {
-            "current_cash_usd": 100_000.0,
-            "settled_cash_usd": 90_000.0,
-            "reserved_capital_usd": 5_000.0,
-            "available_buying_power_usd": 999_999.0,  # stale persisted value
-            "margin_held_usd": 3_000.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    cash = CashLedger(
+        current_cash_usd=100_000.0,
+        settled_cash_usd=90_000.0,
+        reserved_capital_usd=5_000.0,
+        available_buying_power_usd=999_999.0,
+        margin_held_usd=3_000.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
     fixture = _make_fixture(cash_ledger=cash)
     repo = StubPortfolioStateRepository(fixture)
@@ -1528,21 +1511,18 @@ def test_step_11_zero_aggregates_overwrite_persisted_placeholders() -> None:
     fields from the aggregator) would surface those placeholders unchanged
     and the test would fail.
     """
-    cash = CashLedger.model_validate(
-        {
-            "current_cash_usd": 10_000.0,
-            "settled_cash_usd": 10_000.0,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": 10_000.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            # Non-zero stale placeholders Step 11 must overwrite.
-            "regt_excess_trailing_30d_usd": 999.0,
-            "regt_excess_trailing_90d_usd": 999.0,
-            "regt_excess_lifetime_usd": 999.0,
-        }
+    cash = CashLedger(
+        current_cash_usd=10_000.0,
+        settled_cash_usd=10_000.0,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=10_000.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=999.0,
+        regt_excess_trailing_90d_usd=999.0,
+        regt_excess_lifetime_usd=999.0,
     )
     fixture = _make_fixture(cash_ledger=cash)  # default fixture supplies zero aggregates
     repo = StubPortfolioStateRepository(fixture)

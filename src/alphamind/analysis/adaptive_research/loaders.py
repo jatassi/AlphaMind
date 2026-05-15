@@ -19,10 +19,9 @@ Public names
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
-
-from pydantic import BaseModel, Field
 
 from alphamind.analysis._shared import AnomalySeverity, Sector
 from alphamind.analysis.domain_researchers.models import SectorBrief
@@ -43,7 +42,11 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-class DistillationAnomalyRecord(BaseModel, frozen=True):
+_SECTOR_ANOMALY_ID_RE = re.compile(r"^SA-(TECH|FIN|ENERGY)-ANOM-\d+$")
+
+
+@dataclass(frozen=True, slots=True)
+class DistillationAnomalyRecord:
     """One anomaly flag extracted from ``DistillationOutputs.all_blocks``.
 
     Trigger-attribution fields the LLM uses to construct its ``Trigger:`` field:
@@ -56,15 +59,22 @@ class DistillationAnomalyRecord(BaseModel, frozen=True):
     - ``freshness_ts`` — the ``OutputBlock.freshness_ts`` (UTC timestamp of the data).
     """
 
-    block_id: str = Field(min_length=1)
-    flag_name: str = Field(min_length=1)
+    block_id: str
+    flag_name: str
     magnitude: float
     severity: AnomalySeverity
     regime_context: str | None
     freshness_ts: datetime
 
+    def __post_init__(self) -> None:
+        if not self.block_id:
+            raise ValueError("block_id must be a non-empty string")
+        if not self.flag_name:
+            raise ValueError("flag_name must be a non-empty string")
 
-class SectorAnomalyRecord(BaseModel, frozen=True):
+
+@dataclass(frozen=True, slots=True)
+class SectorAnomalyRecord:
     """One anomaly extracted from a domain researcher's ``SectorBrief.anomalies``.
 
     Carries the upstream reference ID directly so the LLM's ``Trigger:`` field
@@ -75,15 +85,27 @@ class SectorAnomalyRecord(BaseModel, frozen=True):
     bundle renderer can group by sector without a second pass.
     """
 
-    anomaly_id: str = Field(pattern=r"^SA-(TECH|FIN|ENERGY)-ANOM-\d+$")
-    description: str = Field(min_length=1)
+    anomaly_id: str
+    description: str
     # str rather than enum — the Anomaly.anomaly_type StrEnum value passes
     # through unchanged.
-    anomaly_type: str = Field(min_length=1)
+    anomaly_type: str
     tickers: tuple[str, ...]
     severity: AnomalySeverity
-    suggested_question: str = Field(min_length=1)
+    suggested_question: str
     sector: Sector
+
+    def __post_init__(self) -> None:
+        if not _SECTOR_ANOMALY_ID_RE.match(self.anomaly_id):
+            raise ValueError(
+                f"anomaly_id must match SA-(TECH|FIN|ENERGY)-ANOM-N: {self.anomaly_id!r}"
+            )
+        if not self.description:
+            raise ValueError("description must be a non-empty string")
+        if not self.anomaly_type:
+            raise ValueError("anomaly_type must be a non-empty string")
+        if not self.suggested_question:
+            raise ValueError("suggested_question must be a non-empty string")
 
 
 # ---------------------------------------------------------------------------

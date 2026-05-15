@@ -15,11 +15,12 @@ path. Adding a monitor-specific event-source value is the operator's call
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
 
+from alphamind._kernel.ids import PositionId, Symbol
 from alphamind.portfolio_state.events.activity_log import (
     EVENT_TYPE_TO_DETAIL_CLASS,
     EVENT_TYPE_TO_GROUP,
@@ -34,7 +35,7 @@ from alphamind.portfolio_state.events.activity_log import (
 class TestGreeksRefreshFailedDetail:
     def test_constructs_with_required_fields(self) -> None:
         detail = GreeksRefreshFailedDetail(
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             occ_symbol="O:AAPL260619C00200000",
             failure_reason="iv_fetch_timeout",
             prior_as_of=datetime(2026, 5, 11, 14, 15, tzinfo=UTC),
@@ -48,7 +49,7 @@ class TestGreeksRefreshFailedDetail:
         """A position whose greeks have never been successfully refreshed (no
         prior ``as_of_timestamp``) emits the failure with ``prior_as_of=None``."""
         detail = GreeksRefreshFailedDetail(
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             occ_symbol="O:AAPL260619C00200000",
             failure_reason="iv_fetch_404",
             prior_as_of=None,
@@ -57,13 +58,13 @@ class TestGreeksRefreshFailedDetail:
 
     def test_is_frozen(self) -> None:
         detail = GreeksRefreshFailedDetail(
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             occ_symbol="O:AAPL260619C00200000",
             failure_reason="iv_fetch_timeout",
             prior_as_of=None,
         )
-        with pytest.raises(ValidationError):
-            detail.failure_reason = "something_else"
+        with pytest.raises(FrozenInstanceError):
+            detail.failure_reason = "something_else"  # type: ignore[misc]
 
 
 class TestGreeksRefreshFailedCatalogRegistration:
@@ -87,12 +88,12 @@ class TestActivityLogEntryAcceptsGreeksRefreshFailed:
             timestamp=datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
             event_type=EventType.GREEKS_REFRESH_FAILED,
             event_group=EventGroup.RISK_AND_GUARDRAIL,
-            position_id="pos-001",
+            position_id=PositionId("pos-001"),
             order_id=None,
             thesis_id=None,
             source=EventSource.GUARDRAIL_LAYER,
             detail=GreeksRefreshFailedDetail(
-                underlying_ticker="AAPL",
+                underlying_ticker=Symbol("AAPL"),
                 occ_symbol="O:AAPL260619C00200000",
                 failure_reason="iv_fetch_timeout",
                 prior_as_of=datetime(2026, 5, 11, 14, 15, tzinfo=UTC),
@@ -102,19 +103,19 @@ class TestActivityLogEntryAcceptsGreeksRefreshFailed:
         assert entry.event_group == EventGroup.RISK_AND_GUARDRAIL
 
     def test_entry_with_wrong_group_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValueError):
             ActivityLogEntry(
                 entry_id="ent-test-002",
                 invocation_id="inv-test-002",
                 timestamp=datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
                 event_type=EventType.GREEKS_REFRESH_FAILED,
                 event_group=EventGroup.POSITION_LIFECYCLE,  # wrong group
-                position_id="pos-001",
+                position_id=PositionId("pos-001"),
                 order_id=None,
                 thesis_id=None,
                 source=EventSource.GUARDRAIL_LAYER,
                 detail=GreeksRefreshFailedDetail(
-                    underlying_ticker="AAPL",
+                    underlying_ticker=Symbol("AAPL"),
                     occ_symbol="O:AAPL260619C00200000",
                     failure_reason="iv_fetch_timeout",
                     prior_as_of=None,

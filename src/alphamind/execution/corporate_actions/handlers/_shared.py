@@ -13,26 +13,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Final
 
 from sqlalchemy import select
 
-from alphamind.execution.state_persistence.invocation_context.activity_log import (
-    append_activity_log_entry,
-)
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.tables.bracket_legs import BracketLegRow
-from alphamind.execution.state_persistence.tables.brackets import BracketRow
-from alphamind.execution.state_persistence.tables.cash_ledger import (
-    CASH_LEDGER_SINGLETON_ID,
-    CashLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
+from alphamind._kernel.money import money, signed_money
 from alphamind.portfolio_state.events.activity_log import (
     EVENT_TYPE_TO_GROUP,
     ActivityLogEntry,
@@ -47,6 +33,22 @@ from alphamind.portfolio_state.events.activity_log import (
 )
 from alphamind.portfolio_state.records.orders import BracketStatus
 from alphamind.portfolio_state.records.positions import PositionRecord
+from alphamind.state.invocation_context.activity_log import (
+    append_activity_log_entry,
+)
+from alphamind.state.invocation_context.context import (
+    InvocationHandle,
+)
+from alphamind.state.tables.bracket_legs import BracketLegRow
+from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.cash_ledger import (
+    CASH_LEDGER_SINGLETON_ID,
+    CashLedgerRow,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
 
 from ..types import CorporateActionActivity
 
@@ -69,7 +71,7 @@ class _StateInconsistencyError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-async def _emit(
+def _emit(
     handle: InvocationHandle,
     *,
     event_type: EventType,
@@ -93,7 +95,7 @@ async def _emit(
         source=source,
         detail=detail,
     )
-    await append_activity_log_entry(handle, entry)
+    append_activity_log_entry(handle, entry)
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +153,7 @@ async def _cancel_bracket_for_corporate_action(
     bracket_row.status = BracketStatus.DISSOLVED.value
     bracket_row.corporate_action_cancellation_reason = cancellation_reason
     leg_ids = await _bracket_leg_order_ids(handle, bracket_id)
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.BRACKET_CANCELLED_CORPORATE_ACTION,
         order_id=None,
@@ -181,7 +183,7 @@ async def _emit_corporate_action_applied(
     pre_basis: float,
     post_basis: float,
 ) -> None:
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.CORPORATE_ACTION_APPLIED,
         order_id=None,
@@ -196,9 +198,9 @@ async def _emit_corporate_action_applied(
             ratio_or_amount=activity.ratio_or_amount,
             pre_action_quantity=pre_qty,
             post_action_quantity=post_qty,
-            pre_action_cost_basis=pre_basis,
-            post_action_cost_basis=post_basis,
-            signed_cash_impact_usd=activity.signed_cash_impact_usd,
+            pre_action_cost_basis=money(pre_basis),
+            post_action_cost_basis=money(post_basis),
+            signed_cash_impact_usd=signed_money(activity.signed_cash_impact_usd),
             parent_position_id=None,
             resulting_position_status=position.status.value,
         ),
@@ -242,11 +244,14 @@ async def _apply_signed_cash_movement(
     if cash_row is None:
         msg = "cash_ledger singleton missing — CA handler cannot apply cash movement"
         raise ValueError(msg)
-    cash_row.current_cash_usd = cash_row.current_cash_usd + signed_cash_impact_usd
+    # ALP-462 — current_cash_usd is ``Numeric``/Decimal-backed; thread the
+    # caller-supplied float impact through ``Decimal(str(...))`` so the cash
+    # accumulator stays exact across CA-driven movements.
+    cash_row.current_cash_usd = cash_row.current_cash_usd + Decimal(str(signed_cash_impact_usd))
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
-    new_balance = cash_row.current_cash_usd
+    new_balance_money = signed_money(cash_row.current_cash_usd)
     if signed_cash_impact_usd >= 0:
-        await _emit(
+        _emit(
             handle,
             event_type=EventType.CASH_CREDITED,
             order_id=None,
@@ -254,13 +259,13 @@ async def _apply_signed_cash_movement(
             thesis_id=None,
             timestamp=timestamp,
             detail=CashCreditedDetail(
-                amount_usd=abs(signed_cash_impact_usd),
+                amount_usd=money(abs(signed_cash_impact_usd)),
                 reason=CashCreditReason(reason),
-                new_balance_usd=new_balance,
+                new_balance_usd=new_balance_money,
             ),
         )
     else:
-        await _emit(
+        _emit(
             handle,
             event_type=EventType.CASH_DEBITED,
             order_id=None,
@@ -268,9 +273,9 @@ async def _apply_signed_cash_movement(
             thesis_id=None,
             timestamp=timestamp,
             detail=CashDebitedDetail(
-                amount_usd=abs(signed_cash_impact_usd),
+                amount_usd=money(abs(signed_cash_impact_usd)),
                 reason=CashDebitReason(reason),
-                new_balance_usd=new_balance,
+                new_balance_usd=new_balance_money,
             ),
         )
 

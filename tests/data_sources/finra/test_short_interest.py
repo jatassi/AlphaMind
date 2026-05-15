@@ -1,24 +1,22 @@
-"""Tests for finra/short_interest.py — all HTTP calls are mocked."""
+"""Tests for finra/short_interest.py — all FINRA SDK calls are routed
+through FakeFinraAPI."""
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
 
-import httpx
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
+from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import AssetUniverse, Base, ShortInterestSnapshot
 from alphamind.persistence.session import make_engine, make_session_factory
+from tests.data_sources._fakes.finra import FakeFinraAPI
+from tests.data_sources._fakes.run_repo import FakeRunRepo
 
 # FINRA settlement date used throughout tests (real FINRA schedule: ~15th of month)
 _SETTLEMENT_DATE = "2026-01-15"
 _SETTLEMENT_YYYYMMDD = "20260115"
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
@@ -30,7 +28,7 @@ def session_factory() -> sessionmaker[Session]:
         sess.add(
             AssetUniverse(
                 asset_id="u1",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 full_name="Apple Inc.",
                 asset_class="equity",
                 asset_role="universe",
@@ -64,31 +62,8 @@ def _csv_body(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _make_client(responses: dict[str, str | Exception]) -> MagicMock:
-    """Return a mock FinraClient whose get() dispatches on path."""
-
-    def fake_get(path: str) -> str:
-        val = responses.get(path)
-        if val is None:
-            req = httpx.Request("GET", f"https://cdn.finra.org{path}")
-            resp = httpx.Response(404, request=req)
-            raise httpx.HTTPStatusError("404", request=req, response=resp)
-        if isinstance(val, Exception):
-            raise val
-        return val
-
-    client = MagicMock()
-    client.get.side_effect = fake_get
-    return client
-
-
 def _path_for(yyyymmdd: str) -> str:
     return f"/equity/otcmarket/biweekly/shrt{yyyymmdd}.csv"
-
-
-# ---------------------------------------------------------------------------
-# collect_short_interest — happy path
-# ---------------------------------------------------------------------------
 
 
 class TestCollectShortInterest:
@@ -110,13 +85,13 @@ class TestCollectShortInterest:
                 }
             ]
         )
-        client = _make_client({path: body})
+        client = FakeFinraAPI(responses={path: body})
 
         collect_short_interest(
             settlement_dates=[_SETTLEMENT_DATE],
             client=client,
             session_factory=session_factory,
-            _repo=MagicMock(),
+            _repo=FakeRunRepo(),
         )
 
         with session_factory() as sess:
@@ -152,13 +127,13 @@ class TestCollectShortInterest:
                 },
             ]
         )
-        client = _make_client({path: body})
+        client = FakeFinraAPI(responses={path: body})
 
         collect_short_interest(
             settlement_dates=[_SETTLEMENT_DATE],
             client=client,
             session_factory=session_factory,
-            _repo=MagicMock(),
+            _repo=FakeRunRepo(),
         )
 
         with session_factory() as sess:
@@ -185,19 +160,19 @@ class TestCollectShortInterest:
                 }
             ]
         )
-        client = _make_client({path: body})
+        client = FakeFinraAPI(responses={path: body})
 
         collect_short_interest(
             settlement_dates=[_SETTLEMENT_DATE],
             client=client,
             session_factory=session_factory,
-            _repo=MagicMock(),
+            _repo=FakeRunRepo(),
         )
         collect_short_interest(
             settlement_dates=[_SETTLEMENT_DATE],
             client=client,
             session_factory=session_factory,
-            _repo=MagicMock(),
+            _repo=FakeRunRepo(),
         )
 
         with session_factory() as sess:
@@ -207,13 +182,13 @@ class TestCollectShortInterest:
         """A 404 on a settlement-date file is silently skipped — no rows, no error."""
         from alphamind.data_sources.finra.short_interest import collect_short_interest
 
-        client = _make_client({})  # all paths → 404
+        client = FakeFinraAPI()  # all paths → 404
 
         collect_short_interest(
             settlement_dates=[_SETTLEMENT_DATE],
             client=client,
             session_factory=session_factory,
-            _repo=MagicMock(),
+            _repo=FakeRunRepo(),
         )
 
         with session_factory() as sess:
@@ -226,15 +201,15 @@ class TestCollectShortInterest:
         from alphamind.data_sources.finra.short_interest import collect_short_interest
 
         path = _path_for(_SETTLEMENT_YYYYMMDD)
-        client = _make_client({path: RuntimeError("unexpected")})
-        mock_repo = MagicMock()
+        client = FakeFinraAPI(responses={path: RuntimeError("unexpected")})
+        repo = FakeRunRepo()
 
         with pytest.raises(RuntimeError, match="unexpected"):
             collect_short_interest(
                 settlement_dates=[_SETTLEMENT_DATE],
                 client=client,
                 session_factory=session_factory,
-                _repo=mock_repo,
+                _repo=repo,
             )
 
-        mock_repo.update_failed.assert_called_once()
+        assert repo.failed()

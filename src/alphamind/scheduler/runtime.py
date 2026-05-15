@@ -10,9 +10,9 @@ from alphamind.config.models.overlays import Overlay
 from alphamind.config.models.regimes import Regime
 from alphamind.config.models.run_types import RunType
 from alphamind.config.resolver import RuntimeDimensions
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.risk_guardrails.breach_behavior.types import HaltState
 from alphamind.risk_guardrails.regime_adaptation.types import OverlayActivationDecision
+from alphamind.state.tables.invocations import InvocationRow
 
 
 async def _resolve_active_regime(session: AsyncSession) -> Regime:

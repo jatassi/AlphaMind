@@ -221,6 +221,10 @@ def _run_step(label: str, fn: Any, *args: Any, **kwargs: Any) -> None:
         elapsed = time.monotonic() - t0
         log.info("bootstrap: %s — done (%.1fs)", label, elapsed)
     except Exception:
+        # Per-step supervisor per runtime §G1: per the lifecycle.md interrupt-
+        # safe guarantee, one step's failure must not abort the rest of the
+        # plan. ``BaseException`` (``KeyboardInterrupt``) propagates so the
+        # operator can cancel the bootstrap.
         elapsed = time.monotonic() - t0
         log.exception("bootstrap: %s — failed after %.1fs", label, elapsed)
 

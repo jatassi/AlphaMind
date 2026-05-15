@@ -25,6 +25,15 @@ import yaml
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.config.loaders import (
     load_modes,
     load_overlays,
@@ -55,14 +64,11 @@ from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.regime import RegimeLabel as DistillationRegimeLabel
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
+from alphamind.portfolio_state.aggregates.risk_budget import (
     RiskBudgetConsumption,
     RiskBudgetEntry,
-    RiskZone,
 )
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -226,14 +232,14 @@ def _zero_positions() -> tuple[PositionView, ...]:
 
 def _equity_position(*, position_id: str, position_weight_pct: float) -> PositionView:
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW,
         details=EquityPositionDetails(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             share_count=10.0,
             average_cost_basis_per_share=100.0,
             borrow_rate_pct=None,
@@ -480,7 +486,7 @@ class TestTighteningWithBreaches:
     ) -> None:
         _persist_prior(session, active_regime=Regime.normal)
         # crisis position_max_size_pct: 5.0 * 0.40 = 2.0; position is at 4.0
-        breaching = _equity_position(position_id="POS-1", position_weight_pct=4.0)
+        breaching = _equity_position(position_id=PositionId("POS-1"), position_weight_pct=4.0)
         inputs = _build_inputs(
             loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,
@@ -1146,7 +1152,7 @@ class TestAggregateBreachOnTightening:
         budget = RiskBudgetConsumption(
             entries=(_budget_entry("gross_exposure_pct", current_value=80.0),)
         )
-        anchor = _equity_position(position_id="ANCHOR", position_weight_pct=1.0)
+        anchor = _equity_position(position_id=PositionId("ANCHOR"), position_weight_pct=1.0)
         inputs = _build_inputs(
             loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,

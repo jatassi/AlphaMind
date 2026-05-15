@@ -29,14 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.venue import VenueConfig
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.write_paths.phase1 import Phase1Summary
+from alphamind.execution.write_paths.phase1 import Phase1Summary
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -49,10 +42,18 @@ from alphamind.portfolio_state.events.activity_log import (
     EventGroup,
     EventSource,
     EventType,
+    encode_detail,
 )
 from alphamind.scheduler.emergency import run_emergency_receiver_task
 from alphamind.scheduler.orchestrator import InvocationSummary
 from alphamind.scheduler.session import PipelineSession, new_session
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.tables.activity_log import ActivityLogRow
 
 # ---------------------------------------------------------------------------
 # Test fixtures and helpers
@@ -141,7 +142,7 @@ def _make_emergency_activity_log_row(
         order_id=None,
         thesis_id=None,
         source=EventSource.GUARDRAIL_LAYER.value,
-        detail_json=detail.model_dump_json(),
+        detail_json=encode_detail(detail),
     )
 
 
@@ -158,7 +159,7 @@ async def async_factory(
     """
     db_path = tmp_path / "alphamind.db"
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     try:
