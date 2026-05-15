@@ -70,10 +70,6 @@ from alphamind.portfolio_state.consumers.portfolio_manager import (
 from alphamind.portfolio_state.consumers.strategist import project_strategist_view
 from alphamind.portfolio_state.consumers.synthesizer import adapt_ticker_sector_resolver
 from alphamind.portfolio_state.freshness import AssembledSnapshot
-from alphamind.portfolio_state.library_snapshot import (
-    LibrarySnapshot,
-    to_library_snapshot,
-)
 from alphamind.portfolio_state.repository import PortfolioStateRepository
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
 from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
@@ -83,6 +79,10 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     FeatureFlagsView,
     LibraryConfig,
     MarketInputs,
+)
+from alphamind.risk_guardrails.library_snapshot import (
+    LibrarySnapshot,
+    to_library_snapshot,
 )
 from alphamind.risk_guardrails.regime_adaptation import (
     RegimeAdaptationOutput,

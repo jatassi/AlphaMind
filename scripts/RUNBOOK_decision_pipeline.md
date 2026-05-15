@@ -6,7 +6,7 @@ agents (analyst + strategist in parallel, then proposal pre-processor,
 then portfolio manager) correctly against the real Claude Agent SDK.
 Run after a `git pull` that touches
 `src/alphamind/pipeline/decision.py`,
-`src/alphamind/portfolio_state/library_snapshot.py`,
+`src/alphamind/risk_guardrails/library_snapshot.py`,
 any of the four agent runners
 (`src/alphamind/decision/{analyst,strategist,proposal_pre_processor,portfolio_manager}/runner.py`),
 or the agents.yaml slots for any decision-layer agent.

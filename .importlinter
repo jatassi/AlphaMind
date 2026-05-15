@@ -272,6 +272,8 @@ source_modules =
 forbidden_modules =
     alphamind.execution
 ignore_imports =
+    # Architectural exception: see contract header — submit_envelope/ is
+    # the PM MCP composition root (python-architecture §C4).
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter.errors
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter.order_modify
@@ -292,13 +294,10 @@ ignore_imports =
     # layer-neutral location (no ticket filed yet).
     alphamind.state.config -> alphamind.execution.corporate_actions.config
 
-# Architectural exception: ``library_snapshot.py`` is a Pydantic->dataclass
-# translator at the portfolio_state / risk_guardrails boundary
-# (python-architecture skill §B3). Boundary translators that bridge
-# feature shapes are a recognised exception; the contract enforces
-# purity on every other ``portfolio_state/*`` module. The file is
-# slated for relocation to ``risk_guardrails/`` (consumer side) in
-# ALP-483; this ``ignore_imports`` block retires when that lands.
+# ``portfolio_state`` must not reach upward into ``risk_guardrails``.
+# ALP-483 retired the lone exception (``library_snapshot.py``) by
+# relocating it to ``risk_guardrails/`` per python-architecture §B3
+# (boundary translators live on the consumer side).
 [importlinter:contract:portfolio_state-not-risk_guardrails]
 name = portfolio_state/ has no upward imports of risk_guardrails/
 type = forbidden
@@ -306,6 +305,3 @@ source_modules =
     alphamind.portfolio_state
 forbidden_modules =
     alphamind.risk_guardrails
-ignore_imports =
-    alphamind.portfolio_state.library_snapshot -> alphamind.risk_guardrails.guardrail_evaluation
-    alphamind.portfolio_state.library_snapshot -> alphamind.risk_guardrails.guardrail_evaluation.types

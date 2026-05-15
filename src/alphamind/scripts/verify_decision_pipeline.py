@@ -98,7 +98,6 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
-from alphamind.portfolio_state.library_snapshot import LibrarySnapshot
 from alphamind.portfolio_state.pricing import (
     PriceQuote,
     PriceSource,
@@ -136,6 +135,7 @@ from alphamind.portfolio_state.repository import (
     RepositoryFixture,
     StubPortfolioStateRepository,
 )
+from alphamind.risk_guardrails.library_snapshot import LibrarySnapshot
 from alphamind.scripts.verify_strategist import (
     build_fixture_library_config,
     build_fixture_market_inputs,

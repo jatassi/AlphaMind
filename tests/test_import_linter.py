@@ -25,8 +25,10 @@ ALP-459 (this story) tightens the scaffolding with five additional contracts:
   sits above ``alphamind.persistence.models``; reverse direction is banned.
 - ``decision-not-execution`` (forbidden, with architectural-exception
   ``ignore_imports`` for the PM MCP composition root ``submit_envelope.py``).
-- ``portfolio_state-not-risk_guardrails`` (forbidden, with architectural-
-  exception ``ignore_imports`` for the boundary translator ``library_snapshot.py``).
+- ``portfolio_state-not-risk_guardrails`` (forbidden): ``alphamind.portfolio_state``
+  must not import ``alphamind.risk_guardrails``. ALP-483 retired the lone
+  boundary-translator exception by relocating ``library_snapshot.py`` to
+  the consumer side.
 """
 
 from __future__ import annotations
@@ -445,14 +447,12 @@ def test_decision_not_execution_contract_with_composition_root_exception() -> No
     )
 
 
-def test_portfolio_state_not_risk_guardrails_with_boundary_translator_exception() -> None:
-    """``alphamind.portfolio_state`` must not import ``alphamind.risk_guardrails``
-    — except from the boundary translator ``library_snapshot.py``.
+def test_portfolio_state_not_risk_guardrails_is_pure() -> None:
+    """``alphamind.portfolio_state`` must not import ``alphamind.risk_guardrails``.
 
-    The 2 ignored edges bridge feature shapes (Pydantic <-> dataclass) at
-    the portfolio_state/risk_guardrails boundary. python-architecture
-    skill §B3 recognises boundary translators as a legitimate exception.
-    The block retires when ALP-483 relocates the file to risk_guardrails/.
+    ALP-483 relocated the lone boundary translator (``library_snapshot.py``)
+    to the consumer side per python-architecture §B3, so the contract now
+    enforces purity with no ``ignore_imports`` exceptions.
     """
     parser = _parse_importlinter_config()
     section = _contract_section(parser, "portfolio_state-not-risk_guardrails")
@@ -463,18 +463,10 @@ def test_portfolio_state_not_risk_guardrails_with_boundary_translator_exception(
     forbidden = _split_module_list(section["forbidden_modules"])
     assert forbidden == ["alphamind.risk_guardrails"], forbidden
 
-    ignored = _split_module_list(section["ignore_imports"])
-    source = "alphamind.portfolio_state.library_snapshot"
-    targets = [
-        "alphamind.risk_guardrails.guardrail_evaluation",
-        "alphamind.risk_guardrails.guardrail_evaluation.types",
-    ]
-    expected_edges = {f"{source} -> {target}" for target in targets}
-    assert set(ignored) == expected_edges, (
-        "portfolio_state-not-risk_guardrails ignore_imports does not match "
-        "grimp-discovered edges.\n"
-        f"  missing: {expected_edges - set(ignored)}\n"
-        f"  extra:   {set(ignored) - expected_edges}"
+    ignored = _split_module_list(section.get("ignore_imports", ""))
+    assert ignored == [], (
+        "portfolio_state-not-risk_guardrails should have no ignore_imports "
+        f"after ALP-483; found: {ignored}"
     )
 
 
