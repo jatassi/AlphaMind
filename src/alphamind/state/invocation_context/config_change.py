@@ -10,14 +10,16 @@ prior reload — see ``state-persistence.md`` § Activity log entries.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
+from pathlib import Path
 
 from alphamind.config.models.distillation import DistillationConfig
 from alphamind.portfolio_state.computations.activity_log import (
     build_distillation_config_change_entry,
     compute_distillation_config_hash,
 )
-from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
+from alphamind.portfolio_state.events.activity_log import ActivityLogEntry, EventType
 from alphamind.state.invocation_context.activity_log import (
     append_activity_log_entry,
 )
@@ -27,6 +29,7 @@ from alphamind.state.invocation_context.context import (
 from alphamind.state.repository.activity_log_queries import (
     read_most_recent_config_change_new_hash,
 )
+from alphamind.state.tables.invocations import InvocationRow
 
 
 async def emit_distillation_config_change_entry(
@@ -71,3 +74,51 @@ async def emit_distillation_config_change_entry(
         return None
     append_activity_log_entry(handle, entry)
     return entry
+
+
+async def emit_baseline_config_change_entry(
+    *,
+    handle: InvocationHandle,
+    config_dir: Path,
+    now: datetime,
+) -> None:
+    """Emit a baseline ``DISTILLATION_CONFIG_CHANGE`` entry for one invocation.
+
+    Loads the distillation config from ``<config_dir>/distillation.yaml``
+    and calls :func:`emit_distillation_config_change_entry` with
+    ``prior=None``. The helper's hash-check de-dup
+    (:func:`read_most_recent_config_change_new_hash`) suppresses no-op
+    re-emissions on subsequent invocations with byte-identical config; on
+    a fresh DB this writes one baseline entry per config-version so the
+    verify script's ``check_activity_log`` succeeds even when Phase 1 and
+    Phase 2 emit zero entries (clean paper-DB invocation).
+
+    The git SHA is read from the bound invocation row (stamped by
+    ``insert_invocation_record`` before Phase 1 opened). The entry id
+    follows the Phase 1 / Phase 2 emitter convention
+    (``{invocation_id}-{event_type}-{uuid4-hex}``).
+    """
+    # Local import keeps the state-layer module from pulling scripts into its
+    # closure at import time; the loader is small and only invoked here.
+    from alphamind.scripts._common import load_distillation_config
+
+    distillation_config = load_distillation_config(config_dir / "distillation.yaml")
+    row = await handle.session.get(InvocationRow, handle.invocation_id)
+    if row is None:
+        msg = (
+            f"invocations row {handle.invocation_id!r} disappeared before "
+            "baseline DISTILLATION_CONFIG_CHANGE emission; "
+            "insert_invocation_record should have committed it before Phase 1 opened"
+        )
+        raise RuntimeError(msg)
+    entry_id = (
+        f"{handle.invocation_id}-{EventType.DISTILLATION_CONFIG_CHANGE.value}-{uuid.uuid4().hex}"
+    )
+    await emit_distillation_config_change_entry(
+        handle,
+        prior=None,
+        new=distillation_config,
+        timestamp=now,
+        git_sha=row.git_sha_at_invocation,
+        entry_id=entry_id,
+    )

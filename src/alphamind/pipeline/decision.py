@@ -41,6 +41,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from alphamind._kernel.mode import PipelineMode
 from alphamind._kernel.money import money
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
 from alphamind.config.models.guardrails import ProgressiveTier
@@ -130,21 +131,6 @@ class DecisionPipelineResult:
     pre_processor_bundle: ProposalPreProcessorBundle
     pm_result: PMResult
     drawdown_tier: DrawdownTier | None
-
-
-# ---------------------------------------------------------------------------
-# Mode-dispatch tables (avoid magic strings inline)
-# ---------------------------------------------------------------------------
-
-_ANALYST_MODE_FOR_PIPELINE: Mapping[str, Literal["normal", "watchlist"]] = {
-    "normal": "normal",
-    "halt": "watchlist",
-}
-
-_STRATEGIST_MODE_FOR_PIPELINE: Mapping[str, Literal["normal", "defensive_posture"]] = {
-    "normal": "normal",
-    "halt": "defensive_posture",
-}
 
 
 # ---------------------------------------------------------------------------
@@ -318,8 +304,9 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     thesis_component_reader = SnapshotBackedThesisComponentReader(pydantic_snapshot)
 
     # 5. Run analyst + strategist in parallel — fail-closed via gather.
-    analyst_mode = _ANALYST_MODE_FOR_PIPELINE[mode]
-    strategist_mode = _STRATEGIST_MODE_FOR_PIPELINE[mode]
+    pipeline_mode = PipelineMode(mode)
+    analyst_mode = pipeline_mode.to_analyst_pipeline_mode()
+    strategist_mode = pipeline_mode.to_strategist_pipeline_mode()
     available_capital_usd = pydantic_snapshot.cash_ledger.true_deployable_capital_usd
     current_price_lookup = _price_lookup_from_assembled(assembled)
     analyst_result, strategist_result = await asyncio.gather(

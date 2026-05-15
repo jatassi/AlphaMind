@@ -34,6 +34,15 @@ submission paths: ``gather_phase1_inputs`` (story 03b / ALP-445),
 ``process_unprocessed_fills`` (story 07 / ALP-365), ``run_analysis_pipeline``
 (ALP-276), ``run_decision_pipeline`` (ALP-403), and ``dispatch_phase2``
 (story 03b).
+
+ALP-472 lifted the layer-spanning helpers out of this file into their
+feature packages: the regime/risk-parameter shims live in
+``risk_guardrails/regime_adaptation/`` (``build_active_risk_parameters``,
+``build_synthetic_regime_output``, ``load_prior_active_risk_parameters``,
+``make_repository_providers``, ``evaluate_pre_event_decision``,
+``evaluate_stress_decision``); the sector / ticker-scope views live in
+``config/assets_views.py``. The mode-translation dispatch tables consolidated
+onto :class:`alphamind._kernel.mode.PipelineMode`.
 """
 
 from __future__ import annotations
@@ -41,19 +50,20 @@ from __future__ import annotations
 import json
 import logging
 import time
-import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alphamind._kernel.regime import (
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskZone,
+from alphamind._kernel.mode import PipelineMode
+from alphamind.config.assets_views import (
+    active_sectors_from_resolved,
+    build_sector_resolver,
+    sectors_config_from_assets,
+    ticker_scope_from_assets,
 )
 from alphamind.config.guardrails_helpers import (
     load_cumulative_drawdown_progressive_tiers,
@@ -62,8 +72,6 @@ from alphamind.config.load import PipelineConfig
 from alphamind.config.loaders import load_overlays, read_yaml_file
 from alphamind.config.models.guardrails import ProgressiveTier
 from alphamind.config.models.main import MainConfig
-from alphamind.config.models.modes import Mode
-from alphamind.config.models.overlays import Overlay, PreEventOverlay, StressOverlay
 from alphamind.config.models.profiles import ProfileConfig
 from alphamind.config.models.regimes import Regime
 from alphamind.config.models.run_types import RunType
@@ -75,11 +83,7 @@ from alphamind.execution.write_paths.phase1 import (
 from alphamind.pipeline.analysis import run_analysis_pipeline
 from alphamind.pipeline.decision import run_decision_pipeline
 from alphamind.portfolio_state import load_portfolio_state_config
-from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-from alphamind.portfolio_state.aggregates.risk_parameters import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-)
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.consumers.synthesizer import (
     SnapshotBackedSynthesizerReader,
@@ -99,20 +103,12 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     LibraryConfig,
     MarketInputs,
 )
-from alphamind.risk_guardrails.regime_adaptation.event_calendar import (
-    load_event_calendar,
-)
-from alphamind.risk_guardrails.regime_adaptation.pre_event_activator import (
-    evaluate_pre_event_overlay,
-)
-from alphamind.risk_guardrails.regime_adaptation.stress_activator import (
-    evaluate_stress_overlay,
-    fetch_composite_alert_state,
-)
-from alphamind.risk_guardrails.regime_adaptation.types import (
-    OverlayActivationDecision,
-    RegimeAdaptationOutput,
-    RegimeAdaptationState,
+from alphamind.risk_guardrails.regime_adaptation import (
+    build_active_risk_parameters,
+    build_synthetic_regime_output,
+    evaluate_pre_event_decision,
+    evaluate_stress_decision,
+    make_repository_providers,
 )
 from alphamind.risk_guardrails.state_delivery.config import (
     StateDeliveryConfig,
@@ -130,8 +126,9 @@ from alphamind.state.config import (
     StatePersistenceConfig,
     load_state_persistence_config,
 )
+from alphamind.state.drawdown_reader import read_drawdown_state
 from alphamind.state.invocation_context.config_change import (
-    emit_distillation_config_change_entry,
+    emit_baseline_config_change_entry,
 )
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
@@ -142,13 +139,6 @@ from alphamind.state.invocation_context.records import (
 )
 from alphamind.state.repository import (
     build_sql_portfolio_state_repository,
-)
-from alphamind.state.tables.drawdown_state import (
-    DRAWDOWN_STATE_SINGLETON_ID,
-    DrawdownStateRow,
-)
-from alphamind.state.tables.drawdown_state_codec import (
-    drawdown_state_record_from_row,
 )
 from alphamind.state.tables.invocations import InvocationRow
 
@@ -175,120 +165,12 @@ class InvocationSummary:
     duration_seconds: float
 
 
-# ---------------------------------------------------------------------------
-# Regime → RegimeLabel mapping (inlined to avoid pulling parameter_set's
-# private constant)
-# ---------------------------------------------------------------------------
-
-
-_REGIME_TO_LABEL: dict[Regime, RegimeLabel] = {
-    Regime.low_vol: RegimeLabel.LOW_VOL,
-    Regime.normal: RegimeLabel.NORMAL,
-    Regime.elevated: RegimeLabel.ELEVATED,
-    Regime.crisis: RegimeLabel.CRISIS,
-}
-
-
 _PORTFOLIO_STATE_CONFIG_PATH = (
     Path(__file__).resolve().parents[3] / "config" / "portfolio_state.yaml"
 )
 
 
-# ---------------------------------------------------------------------------
-# Drawdown-state and active-risk-parameters helpers (pre-review triage)
-# ---------------------------------------------------------------------------
-
-
-def _zero_drawdown_state() -> DrawdownState:
-    """Return a zero-drawdown ``DrawdownState``.
-
-    Used when the singleton row is absent (fresh DB / first run) and as the
-    halt-state computation input on bootstrap. The four computed read-time
-    fields carry neutral defaults; only ``current_drawdown_pct`` and
-    ``intraday_drawdown_pct`` (both zero) and ``cumulative_tier`` (``None``)
-    matter for halt detection.
-    """
-    return DrawdownState(
-        current_drawdown_pct=0.0,
-        equity_high_water_mark_usd=0.0,
-        drawdown_duration_hours=0.0,
-        lifetime_max_drawdown_pct=0.0,
-        intraday_drawdown_pct=0.0,
-        daily_zone=RiskZone.NORMAL,
-        cumulative_zone=RiskZone.NORMAL,
-        cumulative_tier=None,
-        drawdown_by_source_pct={},
-    )
-
-
-async def _read_drawdown_state(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> DrawdownState:
-    """Read the ``drawdown_state`` singleton row; fall back to zero on absence.
-
-    Phase 1's write path (``process_unprocessed_fills``) seeds the singleton
-    row, so a fresh DB legitimately has none before the first invocation
-    completes. Treating absence as zero drawdown keeps the orchestrator
-    runnable from a clean state without violating the halt-detection
-    contract (no drawdown → no halt).
-    """
-    async with session_factory() as session:
-        row = await session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)
-        if row is None:
-            return _zero_drawdown_state()
-        return drawdown_state_record_from_row(
-            row,
-            intraday_drawdown_pct=0.0,
-            daily_zone=RiskZone.NORMAL,
-            cumulative_zone=RiskZone.NORMAL,
-            cumulative_tier=None,
-        )
-
-
-def _build_active_risk_parameters(
-    *,
-    rule_values: Mapping[str, float],
-    regime: Regime,
-) -> ActiveRiskParameterSet:
-    """Compose an ``ActiveRiskParameterSet`` from a flat rule-values map.
-
-    Pre-review triage simplification: the production pipeline normally
-    derives this set through ``compose_phase_1_enforcement`` which in turn
-    requires a fully-resolved ``RegimeAdaptationOutput``. Until the
-    regime-adaptation orchestrator is threaded through the pipeline
-    scheduler (deferred follow-up), we wrap the resolved ``rule_values``
-    directly — they already carry the profile * regime * overlay *
-    feature-flag fold ``compose_config`` produced, which is what the
-    downstream consumers (halt-state computation, repository provider,
-    decision pipeline) actually read.
-
-    Each entry's ``rule_label`` / ``unit`` mirror the ``rule_id`` and a
-    flat ``"pct"`` unit — the values aren't surfaced anywhere downstream
-    in the current pipeline-scheduler call path (the decision pipeline
-    only reads ``rule_id`` and ``value`` from the entries).
-    """
-    entries = tuple(
-        ActiveRiskParameterEntry(
-            rule_id=rule_id,
-            rule_label=rule_id,
-            value=value,
-            unit="pct",
-            regime_multiplier_applied=1.0,
-            base_value=value,
-        )
-        for rule_id, value in sorted(rule_values.items())
-    )
-    return ActiveRiskParameterSet(
-        regime_label=_REGIME_TO_LABEL[regime],
-        transition_state=RegimeTransitionState.STABLE,
-        transition_invocations_remaining=0,
-        parameter_change_flag=False,
-        entries=entries,
-        active_overlays=(),
-    )
-
-
-def _load_base_profile_rule_values(config_dir: Path) -> Mapping[str, float]:
+def _load_base_profile_rule_values(config_dir: Path) -> dict[str, float]:
     """Read ``main.yaml`` + the active profile's rule_values, no fold applied.
 
     Used for the halt-state computation that happens *before* runtime
@@ -303,64 +185,7 @@ def _load_base_profile_rule_values(config_dir: Path) -> Mapping[str, float]:
     profile_config = ProfileConfig.model_validate(
         read_yaml_file(config_dir / "profiles" / f"{active_profile.value}.yaml")
     )
-    return profile_config.rule_values
-
-
-# ---------------------------------------------------------------------------
-# Overlay-evaluation helpers
-# ---------------------------------------------------------------------------
-
-
-def _evaluate_pre_event_decision(
-    *,
-    now: datetime,
-    config_dir: Path,
-    overlays_map: Mapping[Overlay, PreEventOverlay | StressOverlay],
-    scheduler_config: SchedulerConfig,
-) -> OverlayActivationDecision:
-    """Load the event calendar and run the pre-event activator."""
-    pre_event_overlay = overlays_map[Overlay.pre_event]
-    if not isinstance(pre_event_overlay, PreEventOverlay):
-        msg = f"overlays_map[Overlay.pre_event] is not a PreEventOverlay: {pre_event_overlay!r}"
-        raise TypeError(msg)
-    event_calendar = load_event_calendar(config_dir / "event_calendar.yaml")
-    return evaluate_pre_event_overlay(
-        now_utc=now,
-        event_calendar=event_calendar,
-        scheduler_config=scheduler_config,
-        pre_event_overlay=pre_event_overlay,
-    )
-
-
-async def _evaluate_stress_decision(
-    *,
-    session_factory: async_sessionmaker[AsyncSession],
-    overlays_map: Mapping[Overlay, PreEventOverlay | StressOverlay],
-) -> OverlayActivationDecision:
-    """Fetch the composite alert state via a sync-session bridge and evaluate stress.
-
-    ``fetch_composite_alert_state`` is a synchronous helper that consumes a
-    sync ``Session`` (it queries the ``DistillationCompositeState`` table the
-    regime-adaptation orchestrator persists). The pipeline scheduler runs on
-    async sessions; ``AsyncSession.run_sync`` is SQLAlchemy 2.x's canonical
-    bridge that hands the sync helper the underlying ``Session`` connected to
-    the same DB.
-    """
-    stress_overlay = overlays_map[Overlay.stress]
-    if not isinstance(stress_overlay, StressOverlay):
-        msg = f"overlays_map[Overlay.stress] is not a StressOverlay: {stress_overlay!r}"
-        raise TypeError(msg)
-    async with session_factory() as session:
-        composite_alert_state = await session.run_sync(
-            lambda sync_session: fetch_composite_alert_state(sync_session)
-        )
-    return evaluate_stress_overlay(
-        funding_stress_alert_active=composite_alert_state.funding_stress_alert_active,
-        market_liquidity_alert_active=composite_alert_state.market_liquidity_alert_active,
-        funding_stress_calibration_state=composite_alert_state.funding_stress_calibration_state,
-        market_liquidity_calibration_state=composite_alert_state.market_liquidity_calibration_state,
-        stress_overlay=stress_overlay,
-    )
+    return dict(profile_config.rule_values)
 
 
 # ---------------------------------------------------------------------------
@@ -374,12 +199,7 @@ async def _update_row_phase1(
     phase1_summary: Phase1Summary,
     staleness_flag: bool,
 ) -> None:
-    """Persist Phase 1 outcomes onto the bound invocation row.
-
-    Writes ``fill_collection_summary_json`` (the serialized
-    :class:`Phase1Summary`) and ``staleness_flag`` (the union of every
-    sub-fetch's degradation state).
-    """
+    """Persist Phase 1 outcomes onto the bound invocation row."""
     row = await handle.session.get(InvocationRow, handle.invocation_id)
     if row is None:
         msg = (
@@ -422,82 +242,6 @@ async def _update_row_phase2(
 
 
 # ---------------------------------------------------------------------------
-# Mode translation (config-layer ``Mode`` → decision-pipeline literal)
-# ---------------------------------------------------------------------------
-
-
-def _mode_to_decision_literal(mode: Mode) -> Literal["normal", "halt"]:
-    """Translate the config-layer ``Mode`` to the decision pipeline's literal.
-
-    ``Mode.normal`` → ``"normal"``; ``Mode.halt`` → ``"halt"`` (defensive
-    posture). The row's ``active_mode`` column uses a different vocabulary
-    (story 03a's ``ActiveMode``); this helper handles only the
-    decision-pipeline side. Symmetric with
-    :func:`alphamind.scheduler.invocation._mode_to_active_mode_literal`: a
-    future ``Mode`` enum expansion raises ``ValueError`` rather than
-    silently mis-translating into ``"normal"``.
-    """
-    if mode is Mode.normal:
-        return "normal"
-    if mode is Mode.halt:
-        return "halt"
-    msg = f"unexpected Mode member {mode!r}; orchestrator knows only normal | halt"
-    raise ValueError(msg)
-
-
-# ---------------------------------------------------------------------------
-# Baseline DISTILLATION_CONFIG_CHANGE emission
-# ---------------------------------------------------------------------------
-
-
-async def _emit_baseline_config_change_entry(
-    *,
-    handle: InvocationHandle,
-    config_dir: Path,
-    now: datetime,
-) -> None:
-    """Emit a baseline ``DISTILLATION_CONFIG_CHANGE`` entry per invocation.
-
-    Loads the distillation config from ``<config_dir>/distillation.yaml``
-    and calls :func:`emit_distillation_config_change_entry` with
-    ``prior=None``. The helper's hash-check de-dup
-    (``read_most_recent_config_change_new_hash``) suppresses no-op
-    re-emissions on subsequent invocations with byte-identical config; on
-    a fresh DB this writes one baseline entry per config-version so the
-    verify script's ``check_activity_log`` succeeds even when Phase 1 and
-    Phase 2 emit zero entries (clean paper-DB invocation).
-
-    The git SHA is read from the bound invocation row (stamped by
-    ``insert_invocation_record`` before Phase 1 opened). The entry id
-    follows the Phase 1 / Phase 2 emitter convention
-    (``{invocation_id}-{event_type}-{uuid4-hex}``).
-    """
-    from alphamind.portfolio_state.events.activity_log import EventType
-    from alphamind.scripts._common import load_distillation_config
-
-    distillation_config = load_distillation_config(config_dir / "distillation.yaml")
-    row = await handle.session.get(InvocationRow, handle.invocation_id)
-    if row is None:
-        msg = (
-            f"invocations row {handle.invocation_id!r} disappeared before "
-            "baseline DISTILLATION_CONFIG_CHANGE emission; "
-            "insert_invocation_record should have committed it before Phase 1 opened"
-        )
-        raise RuntimeError(msg)
-    entry_id = (
-        f"{handle.invocation_id}-{EventType.DISTILLATION_CONFIG_CHANGE.value}-{uuid.uuid4().hex}"
-    )
-    await emit_distillation_config_change_entry(
-        handle,
-        prior=None,
-        new=distillation_config,
-        timestamp=now,
-        git_sha=row.git_sha_at_invocation,
-        entry_id=entry_id,
-    )
-
-
-# ---------------------------------------------------------------------------
 # Decision-pipeline kwarg builder
 # ---------------------------------------------------------------------------
 
@@ -508,7 +252,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     pipeline_config: PipelineConfig,
     analysis_result: Any,
     phase1_market_inputs: MarketInputs,
-    mode_literal: Literal["normal", "halt"],
+    pipeline_mode: PipelineMode,
     halt_state: HaltState | None,
     now: datetime,
     archive_root: Path,
@@ -520,22 +264,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     runtime_active_regime: Regime,
     progressive_tiers: tuple[ProgressiveTier, ...],
 ) -> dict[str, Any]:
-    """Assemble the kwargs ``run_decision_pipeline`` requires.
-
-    Pulls from the loaded :class:`PipelineConfig` (resolved feature flags,
-    active sectors, agents config + overrides), the pre-built
-    :class:`AssembledSnapshot` (the same one the synthesizer reader
-    projected from), and the Phase 1 market inputs (so the library
-    projector reads consistent prices).
-
-    Threads the repository plus the synthetic
-    :class:`RegimeAdaptationOutput` + progressive-tier sequence the
-    pipeline runner needs to compose Phase 1 enforcement (story
-    ALP-433). The synthetic output wraps the current invocation's
-    folded ``active_risk_parameters`` until the regime-adaptation
-    orchestrator is threaded through the scheduler (deferred follow-up
-    per the inline comment on :func:`_build_active_risk_parameters`).
-    """
+    """Assemble the kwargs ``run_decision_pipeline`` requires."""
     resolved = pipeline_config.resolved
 
     feature_flags = FeatureFlagsView(
@@ -546,7 +275,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
         effective_limits=resolved.rule_values,
         escalation_zones={},  # populated by upstream guardrail composition; minimal default here
         feature_flags=feature_flags,
-        active_sectors=tuple(sorted(_active_sectors_from_resolved(resolved))),
+        active_sectors=tuple(sorted(active_sectors_from_resolved(resolved))),
         active_regime=resolved.regime_label,
         active_profile=resolved.profile_label,
         conservative_buffer_pct=0.0,
@@ -556,7 +285,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     return {
         "assembled_snapshot": assembled_snapshot,
         "repository": repository,
-        "regime_output": _build_synthetic_regime_output(
+        "regime_output": build_synthetic_regime_output(
             active_risk_parameters=active_risk_parameters,
             runtime_active_regime=runtime_active_regime,
             invocation_id=invocation_id,
@@ -565,7 +294,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
         "progressive_tiers": progressive_tiers,
         "synthesizer_text": analysis_result.synthesizer_result.synthesis_text,
         "retrieval_store": analysis_result.synthesizer_result.retrieval_store,
-        "mode": mode_literal,
+        "mode": pipeline_mode.to_decision_literal(),
         "halt_state": halt_state,
         "agents_config": dict(resolved.agents.agents),
         "agent_overrides": dict(resolved.agent_overrides),
@@ -584,151 +313,10 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     }
 
 
-def _build_synthetic_regime_output(
-    *,
-    active_risk_parameters: ActiveRiskParameterSet,
-    runtime_active_regime: Regime,
-    invocation_id: str,
-    now: datetime,
-) -> RegimeAdaptationOutput:
-    """Wrap the scheduler's folded ``ActiveRiskParameterSet`` in a synthetic
-    :class:`RegimeAdaptationOutput`.
-
-    Pre-review triage shim — the scheduler does not yet invoke
-    :func:`resolve_regime_adaptation` (its rule_values already carry the
-    profile * regime * overlay fold ``compose_config`` produces). Story
-    ALP-433 still needs a :class:`RegimeAdaptationOutput` to thread into
-    the pipeline's Phase 1 enforcement composition; this helper wraps the
-    parameter set in an otherwise-empty bundle. When the regime-adaptation
-    orchestrator is wired into the scheduler (deferred follow-up), this
-    helper retires and ``resolve_regime_adaptation``'s real output flows
-    through.
-    """
-    state = RegimeAdaptationState(
-        as_of=now.isoformat().replace("+00:00", "Z"),
-        invocation_id=invocation_id,
-        active_regime=runtime_active_regime,
-        prior_regime=None,
-        transition_state=RegimeTransitionState.STABLE,
-        transition_invocations_remaining=0,
-        transition_started_invocation_id=None,
-        transition_origin_regime=None,
-        active_overlays=(),
-        distillation_regime_label=runtime_active_regime.value,
-        distillation_vix_level=0.0,
-        regime_skip_emergency=False,
-    )
-    return RegimeAdaptationOutput(
-        runtime_dimensions_active_regime=runtime_active_regime,
-        runtime_dimensions_active_overlays=(),
-        overlay_activation_decisions=(),
-        effective_limits={},
-        active_risk_parameter_set=active_risk_parameters,
-        regime_transition_breaches=(),
-        regime_skip_emergency=False,
-        new_persisted_state=state,
-        audit_log_entries=(),
-    )
-
-
-def _active_sectors_from_resolved(resolved: Any) -> set[str]:
-    """Read active sectors from the loaded assets config.
-
-    Logs a warning and returns an empty set when the resolved config lacks
-    either ``assets`` or ``assets.sectors``. Future schema changes that
-    rename or relocate these attributes surface as a visible warning rather
-    than silently producing empty data.
-    """
-    if not hasattr(resolved, "assets"):
-        log.warning("resolved config has no 'assets' attribute; active_sectors empty")
-        return set()
-    if not hasattr(resolved.assets, "sectors"):
-        log.warning("resolved.assets has no 'sectors' attribute; active_sectors empty")
-        return set()
-    return set(resolved.assets.sectors.keys())
-
-
-def _build_sector_resolver(resolved: Any) -> Callable[[str], str]:
-    """Build a ticker→sector resolver from the resolved assets config.
-
-    Walks ``resolved.assets.sectors`` (``dict[sector, list[ticker]]``) and
-    constructs the inverse map. The returned callable looks up the ticker
-    and returns its sector; tickers absent from every sector list resolve
-    to ``"UNCLASSIFIED"`` (the same sentinel
-    :func:`alphamind.portfolio_state.consumers.synthesizer._project_positions`
-    uses). Logs a warning when ``assets.sectors`` is unavailable.
-    """
-    ticker_to_sector: dict[str, str] = {}
-    if not hasattr(resolved, "assets") or not hasattr(resolved.assets, "sectors"):
-        log.warning("resolved.assets.sectors unavailable; sector_resolver returns 'UNCLASSIFIED'")
-    else:
-        for sector, tickers in resolved.assets.sectors.items():
-            for ticker in tickers:
-                ticker_to_sector[ticker] = sector
-
-    def _resolver(ticker: str) -> str:
-        return ticker_to_sector.get(ticker, "UNCLASSIFIED")
-
-    return _resolver
-
-
-def _load_prior_active_risk_parameters(snapshot_path: str) -> ActiveRiskParameterSet:
-    """Rehydrate an ``ActiveRiskParameterSet`` from a resolved-config snapshot.
-
-    Reads the JSON file persisted by :func:`alphamind.config.snapshot.persist_snapshot`,
-    extracts the ``rule_values`` map and ``regime_label`` string the prior
-    invocation composed, and re-wraps them via :func:`_build_active_risk_parameters`
-    so the snapshot assembler reads the same values the decision pipeline
-    consumed at the time the prior invocation wrote that snapshot.
-    """
-    payload = json.loads(Path(snapshot_path).read_text())
-    return _build_active_risk_parameters(
-        rule_values=payload["rule_values"],
-        regime=Regime(payload["regime_label"]),
-    )
-
-
-def _make_repository_providers(
-    active_risk_parameters: ActiveRiskParameterSet,
-) -> tuple[
-    Callable[[], ActiveRiskParameterSet],
-    Callable[[str], ActiveRiskParameterSet],
-]:
-    """Build the two closure-providers ``SqlPortfolioStateRepository`` consumes.
-
-    The repository factory's ``active_risk_parameters_provider`` is zero-arg;
-    ``prior_active_risk_parameters_provider`` takes the prior invocation's
-    resolved-config snapshot path and rehydrates the ``ActiveRiskParameterSet``
-    that was active at that point. When the snapshot file is missing on disk
-    (first-ever invocation, archive relocation), the prior provider falls
-    back to the current set so the snapshot assembler stays operational.
-
-    Both closures are synchronous per ALP-454 Pre-resolved decision (C):
-    the SQL repository surface is sync, so its provider seam is too.
-    """
-
-    def _active_provider() -> ActiveRiskParameterSet:
-        return active_risk_parameters
-
-    def _prior_provider(snapshot_path: str) -> ActiveRiskParameterSet:
-        try:
-            return _load_prior_active_risk_parameters(snapshot_path)
-        except FileNotFoundError:
-            return active_risk_parameters
-
-    return _active_provider, _prior_provider
-
-
 def _price_provider_from_phase1(
     market_inputs: MarketInputs,
 ) -> StubCurrentPriceProvider:
-    """Wrap Phase 1's underlying-price map in the canonical stub price provider.
-
-    Reuses ``StubCurrentPriceProvider`` so the snapshot assembler reads the
-    same prices the Reg T wedge consumed during Phase 1 — one consistent
-    set per invocation. Future stories swap in a real Alpaca-quotes-backed
-    provider once the streaming-quotes path lands.
-    """
+    """Wrap Phase 1's underlying-price map in the canonical stub price provider."""
     quotes = {
         ticker: PriceQuote(
             ticker=ticker,
@@ -783,17 +371,8 @@ async def run_invocation(
 
     # Step 1a: read drawdown state + compose a base ActiveRiskParameterSet
     # so we can compute halt_state before resolving runtime dimensions.
-    #
-    # The orchestrator faces a chicken-and-egg between active_risk_parameters
-    # (computed from the resolved fold, which needs runtime) and halt_state
-    # (computed from active_risk_parameters, which feeds back into runtime).
-    # Pre-review triage simplification: use the base profile's rule_values
-    # (regime=normal, no overlays, no fold) for the halt-state computation;
-    # the CURRENT invocation's active_risk_parameters — derived from the
-    # fully resolved fold below — is what we pass to the repository and to
-    # ``run_decision_pipeline``.
-    drawdown_state = await _read_drawdown_state(session_factory)
-    base_active_risk_parameters = _build_active_risk_parameters(
+    drawdown_state = await read_drawdown_state(session_factory)
+    base_active_risk_parameters = build_active_risk_parameters(
         rule_values=_load_base_profile_rule_values(config_dir),
         regime=Regime.normal,
     )
@@ -805,13 +384,13 @@ async def run_invocation(
     # Step 1b: evaluate the two overlay activators against the freshly-loaded
     # event calendar (pre-event) and the most-recent composite-alert rows
     # (stress).
-    pre_event_decision = _evaluate_pre_event_decision(
+    pre_event_decision = evaluate_pre_event_decision(
         now=now,
         config_dir=config_dir,
         overlays_map=overlays_map,
         scheduler_config=scheduler_config,
     )
-    stress_decision = await _evaluate_stress_decision(
+    stress_decision = await evaluate_stress_decision(
         session_factory=session_factory,
         overlays_map=overlays_map,
     )
@@ -826,10 +405,7 @@ async def run_invocation(
             stress_decision=stress_decision,
         )
 
-    # Step 2: insert the invocation row in its own short transaction. The
-    # row is committed before Phase 1 opens, so fresh-session reads (from
-    # the SQL repository in particular) can see it across the rest of the
-    # invocation.
+    # Step 2: insert the invocation row in its own short transaction.
     invocation_id, pipeline_config = await insert_invocation_record(
         session_factory=session_factory,
         process_lifetime_id=process_lifetime_id,
@@ -844,29 +420,16 @@ async def run_invocation(
         now=now,
     )
 
-    # Compose the current invocation's active_risk_parameters from the
-    # resolved fold (profile * regime * overlays * feature-flags). Threaded
-    # into the repository providers (current + prior) so the snapshot
-    # assembler reads the same values the decision pipeline consumes.
-    active_risk_parameters = _build_active_risk_parameters(
+    # Compose the current invocation's active_risk_parameters from the resolved fold.
+    active_risk_parameters = build_active_risk_parameters(
         rule_values=pipeline_config.resolved.rule_values,
         regime=runtime.active_regime,
     )
 
-    # Step 3 — Phase 1 transaction. One session wraps the baseline config
-    # change entry, fill integration, the Phase 1 summary writeback, and the
-    # ``phase1_completed_at`` stamp (which ``process_unprocessed_fills``
-    # emits at write_paths/phase1.py:294). Commits on context exit.
+    # Step 3 — Phase 1 transaction.
     async with session_factory() as session:
         phase1_handle = InvocationHandle(session=session, invocation_id=invocation_id)
-        # Emit a baseline DISTILLATION_CONFIG_CHANGE entry on first invocation
-        # per config-version. The helper's hash-check de-dup suppresses
-        # no-op re-emissions on subsequent invocations with byte-identical
-        # distillation config; on a fresh DB this guarantees at least one
-        # ``activity_log`` entry per invocation so the verify script's
-        # ``check_activity_log`` succeeds even when Phase 1 / Phase 2 emit
-        # zero entries (clean paper-DB invocation with no fills, no commands).
-        await _emit_baseline_config_change_entry(
+        await emit_baseline_config_change_entry(
             handle=phase1_handle,
             config_dir=config_dir,
             now=now,
@@ -892,9 +455,8 @@ async def run_invocation(
         )
         await session.commit()
 
-    # Step 4 — Between-phase snapshot read. Fresh sessions via the
-    # repository factory now correctly see the committed Phase 1 state.
-    sector_resolver = _build_sector_resolver(pipeline_config.resolved)
+    # Step 4 — Between-phase snapshot read.
+    sector_resolver = build_sector_resolver(pipeline_config.resolved)
     assembled, snapshot_repository = _assemble_phase1_snapshot(
         session_factory=session_factory,
         invocation_id=invocation_id,
@@ -908,10 +470,7 @@ async def run_invocation(
         sector_resolver=adapt_ticker_sector_resolver(sector_resolver),
     )
 
-    # Step 5 — Read-only analysis + decision pipelines. The analysis
-    # pipeline consumes a fresh session for its distillation-layer reads;
-    # the decision pipeline's repository opens its own sessions via the
-    # session_factory.
+    # Step 5 — Read-only analysis + decision pipelines.
     async with session_factory() as read_session:
         analysis_handle = InvocationHandle(session=read_session, invocation_id=invocation_id)
         analysis_result = await _run_analysis(
@@ -923,13 +482,13 @@ async def run_invocation(
             portfolio_reader=portfolio_reader,
         )
 
-    mode_literal = _mode_to_decision_literal(runtime.active_mode)
+    pipeline_mode = PipelineMode.from_config_mode(runtime.active_mode)
     decision_kwargs = _build_decision_kwargs(
         invocation_id=invocation_id,
         pipeline_config=pipeline_config,
         analysis_result=analysis_result,
         phase1_market_inputs=phase1_inputs.market_inputs,
-        mode_literal=mode_literal,
+        pipeline_mode=pipeline_mode,
         halt_state=halt_state,
         now=now,
         archive_root=archive_root,
@@ -943,9 +502,7 @@ async def run_invocation(
     )
     decision_result = await run_decision_pipeline(**decision_kwargs)
 
-    # Step 6 — Phase 2. ``dispatch_phase2`` commits each envelope in its
-    # own transaction; the trailing short transaction here writes the
-    # Phase 2 summary and stamps ``phase2_completed_at``.
+    # Step 6 — Phase 2.
     phase2_summary = await dispatch_phase2(
         session_factory=session_factory,
         invocation_id=invocation_id,
@@ -994,7 +551,7 @@ def _assemble_phase1_snapshot(
     invocation.
     """
     portfolio_state_config = load_portfolio_state_config(_PORTFOLIO_STATE_CONFIG_PATH)
-    active_provider, prior_provider = _make_repository_providers(active_risk_parameters)
+    active_provider, prior_provider = make_repository_providers(active_risk_parameters)
     repository = build_sql_portfolio_state_repository(
         session_factory=session_factory,
         invocation_id=invocation_id,
@@ -1037,7 +594,7 @@ async def _run_analysis(
     from alphamind.scripts._common import load_distillation_config
 
     resolved = pipeline_config.resolved
-    ticker_scope = _ticker_scope_from_assets(resolved)
+    ticker_scope = ticker_scope_from_assets(resolved)
     return await run_analysis_pipeline(
         session=handle.session,  # type: ignore[arg-type]
         invocation_id=handle.invocation_id,
@@ -1047,44 +604,7 @@ async def _run_analysis(
         ticker_scope=ticker_scope,
         universe=frozenset(ticker_scope),
         agents_config={name.value: cfg for name, cfg in resolved.agents.agents.items()},
-        sectors_config=_sectors_config_from_assets(resolved),
+        sectors_config=sectors_config_from_assets(resolved),
         portfolio_reader=portfolio_reader,
         archive_root=archive_root,
     )
-
-
-def _ticker_scope_from_assets(resolved: Any) -> tuple[str, ...]:
-    """Extract the per-invocation ticker scope from the resolved assets config.
-
-    ``AssetsConfig`` does not expose a top-level ``universe`` field; the
-    scope is the alphabetized union of every sector's tickers (mirroring
-    :func:`alphamind.scripts._common.load_universe_scope`). Logs a warning
-    and returns an empty tuple when ``resolved`` lacks an ``assets`` /
-    ``assets.sectors`` attribute path — future schema changes surface as a
-    visible warning rather than silent empty data.
-    """
-    if not hasattr(resolved, "assets"):
-        log.warning("resolved config has no 'assets' attribute; ticker_scope empty")
-        return ()
-    if not hasattr(resolved.assets, "sectors"):
-        log.warning("resolved.assets has no 'sectors' attribute; ticker_scope empty")
-        return ()
-    tickers: set[str] = set()
-    for sector_tickers in resolved.assets.sectors.values():
-        tickers.update(sector_tickers)
-    return tuple(sorted(tickers))
-
-
-def _sectors_config_from_assets(resolved: Any) -> dict[str, list[str]]:
-    """Extract the per-sector ticker buckets from the resolved assets config.
-
-    Logs a warning and returns an empty dict when the resolved config
-    lacks ``assets`` / ``assets.sectors``.
-    """
-    if not hasattr(resolved, "assets"):
-        log.warning("resolved config has no 'assets' attribute; sectors_config empty")
-        return {}
-    if not hasattr(resolved.assets, "sectors"):
-        log.warning("resolved.assets has no 'sectors' attribute; sectors_config empty")
-        return {}
-    return {sector: list(tickers) for sector, tickers in resolved.assets.sectors.items()}
