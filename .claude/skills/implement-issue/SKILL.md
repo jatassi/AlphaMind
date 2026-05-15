@@ -220,7 +220,15 @@ PushNotification({
 
 ## Self-improvement
 
-Note moments during execution where reality diverged from what this skill led you to expect — ambiguous steps, Linear/git gotchas you worked around, verification gaps that masked a real failure. Surface them at the end, after PushNotification, as `Where / What / Why`. Skip silently if nothing came up.
+Note moments during execution where reality diverged from what this skill led you to expect. Surface after PushNotification.
+
+The bar is "would have saved a step" or "would have prevented a mistake" — generic critiques ("could be clearer", "more context would help", "consider adding X") fail it and must be skipped. Each entry must cite the specific event from this session that exposed the gap: a failed command and its error, a step you re-did, a gotcha you worked around, an acceptance criterion that passed but missed a real bug. If you can't cite the event, the entry is generic — drop it. Skip the section entirely if nothing met the bar; do not pad with affirmations that the skill worked.
+
+Shape per entry:
+
+- **Where:** section heading + the specific paragraph or bullet.
+- **What:** the concrete edit — proposed new wording, or "delete this", or "add a bullet after X saying Y".
+- **Why:** the cited event (command + error, commit, file:line, or quoted output).
 
 ## Anti-patterns
 
