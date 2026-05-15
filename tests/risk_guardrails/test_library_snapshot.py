@@ -32,7 +32,6 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
-from alphamind.portfolio_state.library_snapshot import to_library_snapshot
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -62,6 +61,7 @@ from alphamind.risk_guardrails.guardrail_evaluation.types import (
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
     Direction as LibDirection,
 )
+from alphamind.risk_guardrails.library_snapshot import to_library_snapshot
 
 # ---------------------------------------------------------------------------
 # Shared fixture helpers
@@ -850,7 +850,7 @@ def test_unresolvable_position_skipped_with_warning(caplog: pytest.LogCaptureFix
 
     snapshot = _make_pydantic_snapshot(open_positions=[pos, valid_pos])
 
-    with caplog.at_level(logging.WARNING, logger="alphamind.portfolio_state.library_snapshot"):
+    with caplog.at_level(logging.WARNING, logger="alphamind.risk_guardrails.library_snapshot"):
         lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
 
     # Unresolvable position is not in the map
@@ -896,8 +896,8 @@ def test_purity_equal_outputs() -> None:
 
 
 def test_library_snapshot_type_alias_exported() -> None:
-    """AC: LibrarySnapshot is exported from alphamind.portfolio_state.library_snapshot."""
-    import alphamind.portfolio_state.library_snapshot as mod
+    """AC: LibrarySnapshot is exported from alphamind.risk_guardrails.library_snapshot."""
+    import alphamind.risk_guardrails.library_snapshot as mod
 
     assert "LibrarySnapshot" in dir(mod)
     assert "to_library_snapshot" in dir(mod)

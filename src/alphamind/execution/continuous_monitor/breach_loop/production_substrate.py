@@ -56,7 +56,6 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
 )
 from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.consumers.synthesizer import adapt_ticker_sector_resolver
-from alphamind.portfolio_state.library_snapshot import to_library_snapshot
 from alphamind.portfolio_state.pricing import (
     PriceQuote,
     PriceSource,
@@ -76,6 +75,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
 from alphamind.risk_guardrails.guardrail_evaluation import (
     PortfolioStateSnapshot as LibrarySnapshot,
 )
+from alphamind.risk_guardrails.library_snapshot import to_library_snapshot
 from alphamind.risk_guardrails.regime_adaptation import RegimeAdaptationOutput
 from alphamind.risk_guardrails.regime_adaptation.types import RegimeAdaptationState
 from alphamind.state.config import (
