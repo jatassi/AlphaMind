@@ -11,6 +11,7 @@ Mirrors the structure of ``tests/decision/strategist/test_runner.py``.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -29,6 +30,7 @@ from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AllowedModel, BaseAgentConfig
 from alphamind.decision.portfolio_manager.harness import (
     HarnessFailure,
+    HarnessSuccess,
     MalformedOutputFailure,
 )
 from alphamind.decision.portfolio_manager.models import PMCompletionRecord
@@ -911,3 +913,54 @@ def test_module_lifecycle_imports() -> None:
     assert pm_pkg.PMResult is runner_module.PMResult
     assert pm_pkg.load_pm_agent_config is runner_module.load_pm_agent_config
     assert pm_pkg.PM_TOOL_NAMES is runner_module.PM_TOOL_NAMES
+
+
+# ---------------------------------------------------------------------------
+# Frozen-dataclass invariants (ALP-475: 10b conversion)
+# ---------------------------------------------------------------------------
+
+
+class TestPMResultIsFrozenDataclass:
+    def test_pm_result_is_frozen_dataclass(self) -> None:
+        from alphamind.analysis._shared import TokensUsed
+
+        completion_record = PMCompletionRecord.model_validate(_completion_payload())
+        result = PMResult(
+            output=completion_record,
+            submission_log=(),
+            retry_count=0,
+            tokens_used=TokensUsed(
+                input_tokens=0,
+                output_tokens=0,
+                cache_read_tokens=0,
+                cache_write_tokens=0,
+            ),
+            tool_calls_used=0,
+            wall_clock_seconds=1.0,
+            stop_reason="end_turn",
+        )
+        assert dataclasses.is_dataclass(PMResult)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.retry_count = 999  # type: ignore[misc]
+
+    def test_harness_success_is_frozen_dataclass(self) -> None:
+        from alphamind.analysis._shared import TokensUsed
+
+        completion_record = PMCompletionRecord.model_validate(_completion_payload())
+        success = HarnessSuccess(
+            output=completion_record,
+            retry_count=0,
+            tokens_used=TokensUsed(
+                input_tokens=0,
+                output_tokens=0,
+                cache_read_tokens=0,
+                cache_write_tokens=0,
+            ),
+            tool_calls_used=0,
+            wall_clock_seconds=1.0,
+            stop_reason="end_turn",
+            submission_log=(),
+        )
+        assert dataclasses.is_dataclass(HarnessSuccess)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            success.retry_count = 999  # type: ignore[misc]

@@ -9,6 +9,7 @@ Anthropic API.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -18,6 +19,7 @@ from typing import Any
 import pytest
 import yaml
 
+from alphamind._kernel.ids import InvocationId
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -26,7 +28,7 @@ from alphamind._kernel.regime import (
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AgentName, AllowedModel, BaseAgentConfig
-from alphamind.decision.analyst.harness import HarnessFailure, SDKFailure
+from alphamind.decision.analyst.harness import HarnessFailure, HarnessSuccess, SDKFailure
 from alphamind.decision.analyst.models import AnalystOutput
 from alphamind.decision.analyst.runner import (
     AnalystResult,
@@ -674,3 +676,56 @@ async def test_borrow_cost_resolver_propagates_to_validation_state(
     )
 
     assert captured_kwargs["borrow_cost_resolver"] is sentinel_resolver
+
+
+# ---------------------------------------------------------------------------
+# Frozen-dataclass invariants (ALP-475: 10b conversion)
+# ---------------------------------------------------------------------------
+
+
+def _zero_tokens() -> TokensUsed:
+    return TokensUsed(
+        input_tokens=0,
+        output_tokens=0,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+    )
+
+
+def _stub_analyst_output() -> AnalystOutput:
+    return AnalystOutput(
+        invocation_id=InvocationId("INV-frozen"),
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        mode="normal",
+        recommendations=(),
+        watchlist=None,
+    )
+
+
+class TestAnalystResultIsFrozenDataclass:
+    def test_analyst_result_is_frozen_dataclass(self) -> None:
+        result = AnalystResult(
+            output=_stub_analyst_output(),
+            retry_count=0,
+            tokens_used=_zero_tokens(),
+            tool_calls_used=0,
+            wall_clock_seconds=1.0,
+            stop_reason="end_turn",
+        )
+        assert dataclasses.is_dataclass(AnalystResult)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.retry_count = 999  # type: ignore[misc]
+
+    def test_harness_success_is_frozen_dataclass(self) -> None:
+        success = HarnessSuccess(
+            output=_stub_analyst_output(),
+            raw_response="{}",
+            retry_count=0,
+            tokens_used=_zero_tokens(),
+            tool_calls_used=0,
+            wall_clock_seconds=1.0,
+            stop_reason="end_turn",
+        )
+        assert dataclasses.is_dataclass(HarnessSuccess)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            success.retry_count = 999  # type: ignore[misc]

@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict
 
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
@@ -81,10 +81,9 @@ ANALYST_TOOL_NAMES: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 
-class AnalystResult(BaseModel):
+@dataclass(frozen=True, slots=True)
+class AnalystResult:
     """Runner return type — the parsed analyst output plus invocation metadata."""
-
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     output: AnalystOutput
     retry_count: int

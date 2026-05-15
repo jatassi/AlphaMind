@@ -11,6 +11,7 @@ Mirrors the structure of ``tests/decision/analyst/test_runner.py``.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -29,7 +30,7 @@ from alphamind._kernel.regime import (
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AgentName, AllowedModel, BaseAgentConfig
-from alphamind.decision.strategist.harness import HarnessFailure, SDKFailure
+from alphamind.decision.strategist.harness import HarnessFailure, HarnessSuccess, SDKFailure
 from alphamind.decision.strategist.models import StrategistOutput
 from alphamind.decision.strategist.runner import (
     StrategistResult,
@@ -798,3 +799,43 @@ def test_module_lifecycle_imports() -> None:
     assert hasattr(runner_module, "run_strategist")
     assert hasattr(runner_module, "StrategistResult")
     assert hasattr(runner_module, "load_strategist_agent_config")
+
+
+# ---------------------------------------------------------------------------
+# Frozen-dataclass invariants (ALP-475: 10b conversion)
+# ---------------------------------------------------------------------------
+
+
+def _zero_tokens() -> TokensUsed:
+    return TokensUsed(
+        input_tokens=0,
+        output_tokens=0,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+    )
+
+
+class TestStrategistResultIsFrozenDataclass:
+    def test_strategist_result_is_frozen_dataclass(self) -> None:
+        output = StrategistOutput.model_validate(_normal_payload())
+        result = StrategistResult(
+            output=output,
+            validation_result=ValidationResult(overall="PASS", failures=(), warnings=()),
+            tokens_used=_zero_tokens(),
+            metadata={},
+        )
+        assert dataclasses.is_dataclass(StrategistResult)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.tokens_used = _zero_tokens()  # type: ignore[misc]
+
+    def test_harness_success_is_frozen_dataclass(self) -> None:
+        output = StrategistOutput.model_validate(_normal_payload())
+        success = HarnessSuccess(
+            output=output,
+            validation_result=ValidationResult(overall="PASS", failures=(), warnings=()),
+            tokens_used=_zero_tokens(),
+            metadata={"attempts": 1},
+        )
+        assert dataclasses.is_dataclass(HarnessSuccess)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            success.tokens_used = _zero_tokens()  # type: ignore[misc]

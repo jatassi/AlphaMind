@@ -18,8 +18,11 @@ negative test:
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from typing import Any
+
+import pytest
 
 from alphamind._kernel.ids import (
     EnvelopeId,
@@ -1212,3 +1215,54 @@ class TestErrorInventoryCompleteness:
             ),
         )
         assert result.is_valid is True
+
+
+# ---------------------------------------------------------------------------
+# Frozen-dataclass invariants (ALP-475: 10b conversion)
+# ---------------------------------------------------------------------------
+
+
+class TestPMValidationTypesAreFrozenDataclasses:
+    """Per ALP-475, PM validation public types (hoisted to
+    :mod:`alphamind.commands.validation_results` per ALP-458) are
+    ``@dataclass(frozen=True, slots=True)``.
+    """
+
+    def test_validation_error_is_frozen_dataclass(self) -> None:
+        from alphamind.decision.portfolio_manager.validation import ValidationError
+
+        err = ValidationError(field_path="commands[0]", message="m1", criterion="c1")
+        assert dataclasses.is_dataclass(ValidationError)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            err.message = "mutated"  # type: ignore[misc]
+
+    def test_validation_warning_is_frozen_dataclass(self) -> None:
+        from alphamind.decision.portfolio_manager.validation import ValidationWarning
+
+        warn = ValidationWarning(field_path="x.y", message="m1")
+        assert dataclasses.is_dataclass(ValidationWarning)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            warn.criterion = "mutated"  # type: ignore[misc]
+
+    def test_validation_result_is_frozen_dataclass(self) -> None:
+        from alphamind.decision.portfolio_manager.validation import ValidationResult
+
+        result = ValidationResult(envelope_id=EnvelopeId("env-z"), errors=(), warnings=())
+        assert dataclasses.is_dataclass(ValidationResult)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.errors = ()  # type: ignore[misc]
+
+    def test_validation_result_is_valid_property_works_with_dataclass(self) -> None:
+        from alphamind.decision.portfolio_manager.validation import (
+            ValidationError,
+            ValidationResult,
+        )
+
+        empty = ValidationResult(envelope_id=EnvelopeId("env-x"), errors=(), warnings=())
+        assert empty.is_valid is True
+        with_err = ValidationResult(
+            envelope_id=EnvelopeId("env-y"),
+            errors=(ValidationError(field_path="x", message="m"),),
+            warnings=(),
+        )
+        assert with_err.is_valid is False

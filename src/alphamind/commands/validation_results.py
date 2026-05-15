@@ -14,7 +14,7 @@ ALP-458 to break the decision↔execution import cycle.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from dataclasses import dataclass
 
 from alphamind._kernel.ids import EnvelopeId
 
@@ -25,7 +25,8 @@ __all__ = [
 ]
 
 
-class ValidationError(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class ValidationError:
     """A single Layer-2/3 violation found in a :class:`PMEnvelope`."""
 
     field_path: str
@@ -33,7 +34,8 @@ class ValidationError(BaseModel, frozen=True):
     criterion: str | None = None
 
 
-class ValidationWarning(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class ValidationWarning:
     """A soft Layer-2 violation that does not disqualify the envelope."""
 
     field_path: str
@@ -41,7 +43,8 @@ class ValidationWarning(BaseModel, frozen=True):
     criterion: str | None = None
 
 
-class ValidationResult(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class ValidationResult:
     """Aggregate outcome of running :func:`validate_pm_envelope`."""
 
     envelope_id: EnvelopeId

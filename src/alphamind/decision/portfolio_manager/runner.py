@@ -21,12 +21,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict
 
 from alphamind._kernel.money import Money
 from alphamind.analysis._shared import TokensUsed
@@ -120,7 +120,8 @@ PM_TOOL_NAMES: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 
-class PMResult(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PMResult:
     """Runner return type — the parsed PM completion sentinel plus invocation
     metadata and the engine-stub's per-envelope submission log.
 
@@ -130,8 +131,6 @@ class PMResult(BaseModel):
     ``submit_envelope`` tool calls captured in ``submission_log``; the
     structured ``output`` is the thin completion sentinel.
     """
-
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     output: PMCompletionRecord
     submission_log: tuple[SubmissionLogEntry, ...]

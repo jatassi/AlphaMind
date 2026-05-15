@@ -19,6 +19,7 @@ the script after this PR lands.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -286,10 +287,11 @@ def _stub_pipeline_result(
         ),
     )
 
-    # Use ``model_construct`` to bypass Pydantic's strict ``SubmissionLogEntry``
-    # type-check on ``submission_log`` — the predicate cares about length and
-    # presence, not about each entry being a real envelope-shaped dataclass.
-    pm_result = PMResult.model_construct(
+    # ``PMResult`` is a frozen dataclass — no Pydantic strict type-check at
+    # construction; the predicate cares about length and presence on
+    # ``submission_log``, not about each entry being a real envelope-shaped
+    # dataclass.
+    pm_result = PMResult(
         output=PMCompletionRecord(
             invocation_id=InvocationId(inv_id),
             timestamp=timestamp,
@@ -429,7 +431,7 @@ def test_validate_pipeline_result_fails_on_analyst_mode_mismatch() -> None:
             ),
         ),
     )
-    drifted_analyst = result.analyst_result.model_copy(update={"output": watchlist_output})
+    drifted_analyst = dataclasses.replace(result.analyst_result, output=watchlist_output)
     drifted_result = DecisionPipelineResult(
         pydantic_snapshot=result.pydantic_snapshot,
         library_snapshot=result.library_snapshot,

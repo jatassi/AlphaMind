@@ -28,8 +28,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
-from pydantic import BaseModel
-
 from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
@@ -212,7 +210,8 @@ class _CLIResultError(Exception):
 # ---------------------------------------------------------------------------
 
 
-class HarnessSuccess(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class HarnessSuccess:
     """Successful analyst invocation result returned to the runner."""
 
     output: AnalystOutput

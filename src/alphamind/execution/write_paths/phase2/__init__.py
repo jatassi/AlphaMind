@@ -26,6 +26,7 @@ cash-ledger primitives, protective-leg cancellation, generic order builders).
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -180,7 +181,7 @@ async def persist_envelope_rejection(
         referenced_position_id=envelope.position_id,
         attempted_command_count=len(envelope.commands),
         blocking_criteria=tuple(e.criterion for e in errors if e.criterion is not None),
-        validation_errors_json=json.dumps([e.model_dump(mode="json") for e in errors]),
+        validation_errors_json=json.dumps([asdict(e) for e in errors]),
     )
     _emit(
         handle,

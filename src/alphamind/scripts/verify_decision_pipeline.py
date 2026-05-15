@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import enum
 import json
 import os
@@ -801,7 +802,7 @@ def serialize_pipeline_result(result: DecisionPipelineResult, target: Path) -> N
         },
         "strategist_result": {
             "output": strategist.output.model_dump(mode="json"),
-            "validation_result": strategist.validation_result.model_dump(mode="json"),
+            "validation_result": dataclasses.asdict(strategist.validation_result),
             "tokens_used": strategist.tokens_used.model_dump(),
             "metadata": strategist.metadata,
         },

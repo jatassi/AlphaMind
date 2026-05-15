@@ -9,8 +9,11 @@ shapes of ``alphamind.analysis.qualitative_research.validation`` and
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
+
+import pytest
 
 from alphamind._kernel.ids import (
     InvocationId,
@@ -40,6 +43,9 @@ from alphamind.decision.analyst.models import (
 )
 from alphamind.decision.analyst.validation import (
     DEFAULT_CONVICTION_BANDS,
+    ValidationError,
+    ValidationResult,
+    ValidationWarning,
     validate_analyst_output,
 )
 from alphamind.risk_guardrails.guardrail_evaluation import RuleProjection, Status
@@ -1014,3 +1020,33 @@ class TestExampleOutputSmoke:
         )
         assert result.is_valid is True
         assert result.warnings == ()
+
+
+# ---------------------------------------------------------------------------
+# Frozen-dataclass invariants (ALP-475: 10b conversion)
+# ---------------------------------------------------------------------------
+
+
+class TestValidationTypesAreFrozenDataclasses:
+    """Per ALP-475, analyst validation public types are
+    ``@dataclass(frozen=True, slots=True)`` — internal Pydantic types were
+    converted because they never cross an LLM/persistence/vendor boundary.
+    """
+
+    def test_validation_error_is_frozen_dataclass(self) -> None:
+        err = ValidationError(field_path="x.y", rule="r1", message="m1")
+        assert dataclasses.is_dataclass(ValidationError)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            err.message = "mutated"  # type: ignore[misc]
+
+    def test_validation_warning_is_frozen_dataclass(self) -> None:
+        warn = ValidationWarning(field_path="x.y", rule="r1", message="m1")
+        assert dataclasses.is_dataclass(ValidationWarning)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            warn.rule = "mutated"  # type: ignore[misc]
+
+    def test_validation_result_is_frozen_dataclass(self) -> None:
+        result = ValidationResult(is_valid=True, errors=(), warnings=())
+        assert dataclasses.is_dataclass(ValidationResult)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.is_valid = False  # type: ignore[misc]

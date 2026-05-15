@@ -9,8 +9,11 @@ following the strategist-specific contract documented in
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from typing import Any
+
+import pytest
 
 from alphamind._kernel.ids import (
     PositionId,
@@ -36,7 +39,12 @@ from alphamind.decision.strategist.models import (
     RegimeTransitionUncuredBreach,
     StrategistOutput,
 )
-from alphamind.decision.strategist.validation import validate_strategist_output
+from alphamind.decision.strategist.validation import (
+    ValidationFailure,
+    ValidationResult,
+    ValidationWarning,
+    validate_strategist_output,
+)
 from alphamind.risk_guardrails.guardrail_evaluation import RuleProjection, Status
 
 # ---------------------------------------------------------------------------
@@ -1106,3 +1114,32 @@ class TestAggregation:
         assert "sector_not_active" in rules
         assert "unknown_reference" in rules
         assert "assessment_id_unique" in rules
+
+
+# ---------------------------------------------------------------------------
+# Frozen-dataclass invariants (ALP-475: 10b conversion)
+# ---------------------------------------------------------------------------
+
+
+class TestValidationTypesAreFrozenDataclasses:
+    """Per ALP-475, strategist validation public types are
+    ``@dataclass(frozen=True, slots=True)``.
+    """
+
+    def test_validation_failure_is_frozen_dataclass(self) -> None:
+        failure = ValidationFailure(field_path="x.y", rule="r1", message="m1")
+        assert dataclasses.is_dataclass(ValidationFailure)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            failure.message = "mutated"  # type: ignore[misc]
+
+    def test_validation_warning_is_frozen_dataclass(self) -> None:
+        warn = ValidationWarning(field_path="x.y", rule="r1", message="m1")
+        assert dataclasses.is_dataclass(ValidationWarning)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            warn.rule = "mutated"  # type: ignore[misc]
+
+    def test_validation_result_is_frozen_dataclass(self) -> None:
+        result = ValidationResult(overall="PASS", failures=(), warnings=())
+        assert dataclasses.is_dataclass(ValidationResult)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.overall = "FAIL"  # type: ignore[misc]
