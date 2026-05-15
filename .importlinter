@@ -295,9 +295,7 @@ ignore_imports =
     alphamind.state.config -> alphamind.execution.corporate_actions.config
 
 # ``portfolio_state`` must not reach upward into ``risk_guardrails``.
-# ALP-483 retired the lone exception (``library_snapshot.py``) by
-# relocating it to ``risk_guardrails/`` per python-architecture §B3
-# (boundary translators live on the consumer side).
+# Boundary translators live on the consumer side (python-architecture §B3).
 [importlinter:contract:portfolio_state-not-risk_guardrails]
 name = portfolio_state/ has no upward imports of risk_guardrails/
 type = forbidden

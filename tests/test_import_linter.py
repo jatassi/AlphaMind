@@ -26,9 +26,8 @@ ALP-459 (this story) tightens the scaffolding with five additional contracts:
 - ``decision-not-execution`` (forbidden, with architectural-exception
   ``ignore_imports`` for the PM MCP composition root ``submit_envelope.py``).
 - ``portfolio_state-not-risk_guardrails`` (forbidden): ``alphamind.portfolio_state``
-  must not import ``alphamind.risk_guardrails``. ALP-483 retired the lone
-  boundary-translator exception by relocating ``library_snapshot.py`` to
-  the consumer side.
+  must not import ``alphamind.risk_guardrails``; boundary translators live on
+  the consumer side (python-architecture §B3).
 """
 
 from __future__ import annotations
@@ -450,9 +449,8 @@ def test_decision_not_execution_contract_with_composition_root_exception() -> No
 def test_portfolio_state_not_risk_guardrails_is_pure() -> None:
     """``alphamind.portfolio_state`` must not import ``alphamind.risk_guardrails``.
 
-    ALP-483 relocated the lone boundary translator (``library_snapshot.py``)
-    to the consumer side per python-architecture §B3, so the contract now
-    enforces purity with no ``ignore_imports`` exceptions.
+    Boundary translators live on the consumer side (python-architecture §B3),
+    so the contract enforces purity with no ``ignore_imports`` exceptions.
     """
     parser = _parse_importlinter_config()
     section = _contract_section(parser, "portfolio_state-not-risk_guardrails")
@@ -465,8 +463,7 @@ def test_portfolio_state_not_risk_guardrails_is_pure() -> None:
 
     ignored = _split_module_list(section.get("ignore_imports", ""))
     assert ignored == [], (
-        "portfolio_state-not-risk_guardrails should have no ignore_imports "
-        f"after ALP-483; found: {ignored}"
+        f"portfolio_state-not-risk_guardrails must have no ignore_imports; found: {ignored}"
     )
 
 
