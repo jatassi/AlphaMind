@@ -104,6 +104,10 @@ async def run_fill_stream_consumer(
             log.info("fill_stream_consumer cancelled cleanly")
             raise
         except Exception:
+            # Reconnect-budget supervisor per runtime §G1: any websocket /
+            # downstream failure counts an attempt; on exhaustion we re-raise
+            # so the supervisor exits the task. ``BaseException``
+            # (``CancelledError``) re-raised above for clean shutdown.
             attempt += 1
             log.exception(
                 "fill_stream_consumer websocket failure (attempt %d / %d)",

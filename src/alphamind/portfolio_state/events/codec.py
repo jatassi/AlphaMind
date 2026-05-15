@@ -173,7 +173,12 @@ def _resolve_field_hints(target_cls: type) -> dict[str, Any]:
     globalns = vars(module) if module is not None else {}
     try:
         return get_type_hints(target_cls, globalns=globalns)
-    except Exception:
+    except (NameError, TypeError, AttributeError):
+        # Forward-reference resolution fails when the declaring module's
+        # globalns lacks a referenced symbol (``NameError``) or the annotation
+        # is malformed (``TypeError``/``AttributeError``). Fall back to the
+        # by-name decoder; other exceptions surface naturally so a real bug
+        # in the decoder isn't masked.
         return {}
 
 

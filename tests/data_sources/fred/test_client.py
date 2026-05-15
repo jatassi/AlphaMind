@@ -23,11 +23,16 @@ def test_verify_connectivity_returns_true_on_success() -> None:
 
 
 def test_verify_connectivity_returns_false_on_exception() -> None:
-    """verify_connectivity() returns False when the SDK raises."""
+    """verify_connectivity() returns False when the SDK raises a vendor error.
+
+    ``fredapi`` wraps urllib HTTP errors as ``ValueError`` (the original
+    ``urllib.error.HTTPError`` lives on ``__context__``); the probe also
+    surfaces raw ``URLError`` for DNS / TCP failures. Both are caught.
+    """
     from alphamind.data_sources.fred.client import FredClient
 
     mock_fred = MagicMock()
-    mock_fred.get_series_info.side_effect = Exception("network error")
+    mock_fred.get_series_info.side_effect = ValueError("internal server error")
 
     with patch("alphamind.data_sources.fred.client.Fred", return_value=mock_fred):
         client = FredClient(api_key="test-key")

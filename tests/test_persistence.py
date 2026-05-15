@@ -142,6 +142,68 @@ class TestResolvePath:
         with pytest.raises(RuntimeError, match="not configured"):
             _resolve_path(None)
 
+    def test_malformed_yaml_falls_back_to_runtime_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """ALP-480 — ``yaml.YAMLError`` from a malformed ``main.yaml`` is
+        caught by the narrowed handler and the canonical ``RuntimeError(
+        'not configured')`` surfaces, not a parser traceback."""
+        monkeypatch.delenv("DATABASE_PATH", raising=False)
+        fake_yaml = tmp_path / "config" / "main.yaml"
+        fake_yaml.parent.mkdir()
+        # Tab-indented YAML is invalid syntax → yaml.YAMLError.
+        fake_yaml.write_text("paths:\n\tdatabase: foo\n")
+
+        import alphamind.persistence.session as session_mod
+
+        monkeypatch.setattr(
+            session_mod,
+            "__file__",
+            str(tmp_path / "src" / "alphamind" / "persistence" / "session.py"),
+        )
+
+        with pytest.raises(RuntimeError, match="not configured"):
+            _resolve_path(None)
+
+    def test_unexpected_exception_propagates_unmasked(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """ALP-480 — the narrowed handler catches only
+        ``(yaml.YAMLError, OSError, ImportError)``; a synthetic ``RuntimeError``
+        bubbles up so a real bug is not masked as ``RuntimeError('not
+        configured')``."""
+        monkeypatch.delenv("DATABASE_PATH", raising=False)
+        fake_yaml = tmp_path / "config" / "main.yaml"
+        fake_yaml.parent.mkdir()
+        fake_yaml.write_text("paths:\n  database: foo\n")
+
+        import alphamind.persistence.session as session_mod
+
+        monkeypatch.setattr(
+            session_mod,
+            "__file__",
+            str(tmp_path / "src" / "alphamind" / "persistence" / "session.py"),
+        )
+
+        class _SyntheticBugError(RuntimeError):
+            """Stand-in for an unrelated decoder bug."""
+
+        def _raise_synthetic(*_args: object, **_kwargs: object) -> object:
+            raise _SyntheticBugError("decoder bug")
+
+        # Patch ``yaml.safe_load`` to raise an unexpected type — the narrowed
+        # catch covers ``yaml.YAMLError`` / ``OSError`` / ``ImportError`` only.
+        import yaml
+
+        monkeypatch.setattr(yaml, "safe_load", _raise_synthetic)
+
+        with pytest.raises(_SyntheticBugError):
+            _resolve_path(None)
+
 
 class TestPragmas:
     def test_journal_mode_is_wal(self, file_engine: Engine) -> None:

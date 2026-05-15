@@ -90,8 +90,11 @@ class FinraClient:
                 headers={"User-Agent": self._user_agent},
             )
             resp.raise_for_status()
-        except Exception:
-            logger.exception("FINRA CDN connectivity check failed.")
+        except httpx.HTTPError as exc:
+            # ``HTTPError`` covers HTTP status errors plus network failures
+            # (timeout, refused, DNS). Other exceptions surface naturally
+            # so misconfiguration is not hidden as connectivity loss.
+            logger.warning("FINRA CDN connectivity check failed.", exc_info=exc)
             return False
         else:
             return True

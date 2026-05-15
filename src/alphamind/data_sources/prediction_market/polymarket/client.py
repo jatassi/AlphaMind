@@ -12,6 +12,7 @@ Gamma API base: https://gamma-api.polymarket.com
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from typing import Any
@@ -19,6 +20,8 @@ from typing import Any
 import httpx
 
 from alphamind.data_sources._common import RateLimiter, RetryShape, with_retries
+
+logger = logging.getLogger(__name__)
 
 _GAMMA_BASE = "https://gamma-api.polymarket.com"
 
@@ -73,7 +76,11 @@ class PolymarketClient:
             self.rate_limiter.acquire(_PROVIDER)
             resp = self._http.get(f"{_GAMMA_BASE}/markets", params={"limit": 1})
             resp.raise_for_status()
-        except Exception:
+        except httpx.HTTPError as exc:
+            # ``HTTPError`` covers HTTP status errors plus network failures
+            # (timeout, refused, DNS). Other exceptions surface naturally
+            # so misconfiguration is not hidden as connectivity loss.
+            logger.warning("Polymarket connectivity check failed.", exc_info=exc)
             return False
         else:
             return True

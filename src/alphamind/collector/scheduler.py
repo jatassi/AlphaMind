@@ -196,6 +196,9 @@ def _make_job(cid: str, callable_fn: Callable[..., object]) -> Callable[[], None
             callable_fn()
             log.info("collector=%s done", cid)
         except Exception:
+            # Per-job supervisor per runtime §G1: one collector raising must
+            # not unsubscribe the rest. ``BaseException`` (``KeyboardInterrupt``)
+            # propagates so the scheduler can shut down cleanly.
             log.exception("collector=%s error", cid)
 
     return _job

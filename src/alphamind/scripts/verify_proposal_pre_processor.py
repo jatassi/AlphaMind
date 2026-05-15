@@ -920,6 +920,10 @@ def run_scenario(
             timestamp=timestamp,
         )
     except Exception as exc:
+        # Verify-script per-check supervisor per runtime §G1: any failure
+        # from the pre-processor is a FAIL verdict; the exception's type +
+        # message names the offending layer for triage. ``BaseException``
+        # (``KeyboardInterrupt``) propagates.
         return Verdict.FAIL, [f"run_proposal_pre_processor raised {type(exc).__name__}: {exc}"]
 
     # Schema validation

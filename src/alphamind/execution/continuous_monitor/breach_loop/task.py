@@ -176,6 +176,11 @@ async def run_breach_loop(  # noqa: PLR0913 — fan-in is the seam, not incident
         except asyncio.CancelledError:
             raise
         except Exception:
+            # Per-tick supervisor per runtime §G1: one bad tick must not kill
+            # the loop. ``CancelledError`` re-raised above so supervisor
+            # shutdown propagates; ``BaseException`` (``KeyboardInterrupt`` /
+            # ``SystemExit``) also propagates as it falls through the
+            # ``Exception`` branch.
             log.exception("breach_loop tick raised; sleeping until next cycle")
 
         await asyncio.sleep(cadence_seconds)

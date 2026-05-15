@@ -1583,6 +1583,10 @@ async def run_verify(db_path: Path) -> VerifyResult:
             try:
                 row = await validator(factory)
             except Exception as exc:
+                # Per-validator supervisor per runtime §G1: each action type's
+                # validator runs independently; one raising must not abort the
+                # full validation grid. ``BaseException`` (``CancelledError``)
+                # propagates so verify-script cancellation is honored.
                 row = ActionRowResult(action_type.value, ok=False, detail=f"exception: {exc!r}")
             action_rows.append(row)
 

@@ -152,9 +152,14 @@ async def _route_through_broker(
             dispatches.append(None)
             continue
         except Exception as exc:
-            # Equity/mleg translators re-raise raw alpaca-py APIError on
-            # permanent failure; classify here for a uniform rejection shape.
-            # ``BaseException`` (CancelledError) propagates unclassified.
+            # Translation seam per runtime §G1: equity/mleg translators
+            # re-raise raw alpaca-py APIError on permanent failure; classify
+            # here for a uniform rejection shape. The wide catch is warranted
+            # because the translator's exception hierarchy is not contracted;
+            # ``classify_alpaca_error`` decides on a per-instance basis and we
+            # re-raise any non-broker exception so config bugs surface
+            # unchanged. ``BaseException`` (``CancelledError``) propagates so
+            # cooperative cancellation is never re-classified.
             rejection = classify_alpaca_error(exc)
             if rejection is None:
                 raise

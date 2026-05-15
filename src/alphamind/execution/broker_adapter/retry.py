@@ -94,6 +94,13 @@ async def submit_with_retry[T](
         try:
             payload = await submit()
         except Exception as exc:
+            # Retry classifier per runtime §G1: the wide catch hands every
+            # ``Exception`` to ``classifier`` (default ``is_transient``); the
+            # classifier returns ``False`` for permanent rejections so the
+            # raw exception re-raises unchanged. ``BaseException`` subclasses
+            # (``asyncio.CancelledError``, ``KeyboardInterrupt``,
+            # ``SystemExit``) propagate so external interruption is never
+            # mistaken for a transient broker failure.
             if not classifier(exc):
                 raise
             last_exc = exc

@@ -387,14 +387,17 @@ async def _dispatch_engine_close(
     except PermanentRejectionError as exc:
         return _BrokerFailure(reason=f"permanent_rejection: code={exc.rejection.code}")
     except Exception as exc:
-        # Equity / mleg translators re-raise the raw alpaca-py APIError on
-        # permanent failure rather than wrapping in PermanentRejectionError.
-        # Mirror the PM-side ``_route_through_broker`` and translate via
-        # ``classify_alpaca_error`` so the engine envelope path returns a
-        # uniform broker-rejection shape regardless of which translator
-        # produced the error. ``BaseException`` (CancelledError, etc.)
-        # propagates so external interruptions are never re-classified as
-        # broker rejections.
+        # Translation seam per runtime §G1: equity / mleg translators re-raise
+        # the raw alpaca-py APIError on permanent failure rather than wrapping
+        # in PermanentRejectionError. Mirror the PM-side
+        # ``_route_through_broker`` and translate via ``classify_alpaca_error``
+        # so the engine envelope path returns a uniform broker-rejection shape
+        # regardless of which translator produced the error. The wide catch
+        # is warranted because the translator's exception hierarchy is not
+        # contracted; the classifier inspects each instance and we re-raise
+        # any non-broker exception so config bugs surface unchanged.
+        # ``BaseException`` (``CancelledError``) propagates so external
+        # interruptions are never re-classified as broker rejections.
         rejection = classify_alpaca_error(exc)
         if rejection is None:
             raise

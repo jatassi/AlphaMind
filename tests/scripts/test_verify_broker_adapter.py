@@ -26,6 +26,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
 from alpaca.trading.models import Asset, Calendar, Clock, TradeAccount
 
@@ -434,11 +435,15 @@ async def test_phase_1_substrate_passes_with_working_factory_and_classifier() ->
 
 async def test_phase_1_fails_when_factory_raises() -> None:
     """If the factory raises on ``build_trading_client``, the phase fails with
-    a diagnostic detail naming the factory failure."""
+    a diagnostic detail naming the factory failure.
+
+    Uses ``APIError`` (Alpaca SDK base) since the phase narrows its catch to
+    ``(APIError, httpx.HTTPError, OSError)``.
+    """
     from alphamind.scripts.verify_broker_adapter import phase_1_adapter_substrate
 
     ctx = _make_context()
-    ctx.factory.build_trading_client.side_effect = RuntimeError("boom")
+    ctx.factory.build_trading_client.side_effect = APIError({"message": "boom"})  # type: ignore[no-untyped-call] # alpaca-py is untyped
 
     result = await phase_1_adapter_substrate(ctx)
     assert result.ok is False
@@ -697,10 +702,12 @@ async def test_phase_7_disconnect_recovery_passes_with_no_recent_orders() -> Non
 
 
 async def test_phase_7_fails_when_get_orders_raises() -> None:
+    """Phase 7 narrows its catch to ``(APIError, httpx.HTTPError, OSError)``;
+    inject ``APIError`` so the failure is captured in the phase result."""
     from alphamind.scripts.verify_broker_adapter import phase_7_disconnect_recovery
 
     client = MagicMock(spec=TradingClient)
-    client.get_orders.side_effect = RuntimeError("network blip")
+    client.get_orders.side_effect = APIError({"message": "network blip"})  # type: ignore[no-untyped-call] # alpaca-py is untyped
 
     ctx = _build_phase_2_ctx(client)
     result = await phase_7_disconnect_recovery(ctx)

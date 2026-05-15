@@ -1136,6 +1136,11 @@ async def run_phase_3_pm_envelope_path(db_path: Path) -> PhaseResult:
                 await ctx.__aexit__(None, None, None)
                 return PhaseResult(label=_PHASE_3_LABEL, ok=False, detail=shape_failure)
         except BaseException:
+            # Cleanup-handler per runtime §G1: ``BaseException`` (vs
+            # ``Exception``) is required so ``CancelledError`` /
+            # ``KeyboardInterrupt`` also tear down the context manager before
+            # the exception propagates. The bare ``raise`` re-raises the
+            # original.
             await ctx.__aexit__(None, None, None)
             raise
         else:
@@ -1560,6 +1565,11 @@ async def run_phase_4_engine_envelope_path(db_path: Path) -> PhaseResult:
                 config=_state_persistence_config(),
             )
         except BaseException:
+            # Cleanup-handler per runtime §G1: ``BaseException`` (vs
+            # ``Exception``) is required so ``CancelledError`` /
+            # ``KeyboardInterrupt`` also tear down the context manager before
+            # the exception propagates. The bare ``raise`` re-raises the
+            # original.
             await ctx.__aexit__(None, None, None)
             raise
         else:

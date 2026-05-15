@@ -9,10 +9,15 @@ Wraps the ``fredapi`` SDK with:
 
 from __future__ import annotations
 
+import logging
+import urllib.error
+
 import pandas as pd
 from fredapi import Fred
 
 from alphamind.data_sources._common import RateLimiter, RetryShape, with_retries
+
+logger = logging.getLogger(__name__)
 
 # Module-level shared rate limiter instance.
 _rate_limiter = RateLimiter()
@@ -58,7 +63,12 @@ class FredClient:
         try:
             self._rl.acquire("fred")
             self._fred.get_series_info(_CONNECTIVITY_PROBE_SERIES)
-        except Exception:
+        except (urllib.error.URLError, ValueError) as exc:
+            # fredapi wraps ``urllib.error.HTTPError`` as ``ValueError``; the
+            # original is on ``__context__``. ``URLError`` covers DNS / TCP
+            # failures. Other exceptions (TypeError, AttributeError) surface
+            # naturally so misconfiguration is not hidden as connectivity loss.
+            logger.warning("FRED connectivity check failed.", exc_info=exc)
             return False
         else:
             return True

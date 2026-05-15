@@ -178,8 +178,16 @@ async def _process_one_entry(
     """
     try:
         decoded = decode_detail(row.detail_json, EmergencyInvocationRequestedDetail)
-    except Exception:
-        log.exception("emergency entry_id=%s detail parse failed", row.entry_id)
+    except (ValueError, TypeError) as exc:
+        # ``decode_detail`` raises ``json.JSONDecodeError`` (a ``ValueError``)
+        # for malformed JSON and ``TypeError`` for shape mismatches. Other
+        # exceptions surface naturally — they would indicate a bug in the
+        # decoder rather than a malformed payload.
+        log.warning(
+            "emergency entry_id=%s detail parse failed",
+            row.entry_id,
+            exc_info=exc,
+        )
         return
     if not isinstance(decoded, EmergencyInvocationRequestedDetail):
         log.error(
@@ -216,6 +224,10 @@ async def _process_one_entry(
             now=datetime.now(UTC),
         )
     except Exception:
+        # Per-iteration supervisor per runtime §G1: any unhandled error from
+        # ``run_invocation`` is logged so the receiver task keeps polling per
+        # parent decision (H). ``BaseException`` (``CancelledError``) propagates
+        # so external interruption bubbles to the supervisor.
         log.exception("emergency invocation entry_id=%s failed", row.entry_id)
         return
 

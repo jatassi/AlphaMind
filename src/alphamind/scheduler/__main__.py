@@ -245,5 +245,10 @@ if __name__ == "__main__":  # pragma: no cover - exercised via ``python -m``
     except SystemExit:
         raise
     except BaseException:
+        # Outermost supervisor per runtime §G1: log + exit 1 so NSSM's restart
+        # policy fires. ``BaseException`` (vs ``Exception``) catches
+        # ``KeyboardInterrupt`` / ``SystemExit`` paths that the inner ``main``
+        # entry can synthesize; ``SystemExit`` is rethrown above so the
+        # explicit exit code threads through unchanged.
         log.exception("pipeline scheduler exited with error")
         sys.exit(1)

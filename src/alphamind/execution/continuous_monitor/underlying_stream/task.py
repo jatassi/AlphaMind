@@ -184,6 +184,12 @@ async def run_underlying_stream(
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
+            # Reconnect-budget supervisor per runtime §G1: ``BaseException``
+            # (vs ``Exception``) is intentional — alpaca-py raises raw
+            # ``KeyboardInterrupt``-shaped failures in some websocket paths,
+            # and the supervisor cancellation envelope must still count down
+            # the reconnect budget. ``CancelledError`` re-raised above so
+            # shutdown is honored.
             attempts_remaining -= 1
             if attempts_remaining <= 0:
                 log.exception("underlying_stream reconnect budget exhausted; propagating")

@@ -108,6 +108,12 @@ def track_run(
     try:
         yield run
     except BaseException as exc:
+        # Failed-run writer per runtime §G1: ``BaseException`` (vs
+        # ``Exception``) is intentional — operator-initiated
+        # ``KeyboardInterrupt`` or ``CancelledError`` must still write a
+        # failed-run row so the ``collection_runs`` audit trail records every
+        # invocation. The exception is always re-raised so the supervisor
+        # sees the original signal unchanged.
         error_summary = f"{type(exc).__name__}: {exc}"
         repo.update_failed(run_id, error_summary)
         raise

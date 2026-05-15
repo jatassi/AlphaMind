@@ -137,6 +137,10 @@ def _make_scheduled_job(
                 now=now,
             )
         except Exception:
+            # Per-job supervisor per runtime §G1: catch any orchestrator
+            # exception so the daemon keeps running per parent decision (H).
+            # ``BaseException`` (``CancelledError``) propagates so daemon
+            # shutdown is honored.
             log.exception("scheduled trigger=%s failed", trigger_key)
             return
         duration = time.monotonic() - start_perf

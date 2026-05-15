@@ -464,3 +464,40 @@ class TestCodecRoundTrip:
         assert str(decoded.fees) == "0.001"
         # And the round-trip must compare equal at the dataclass level too.
         assert decoded == detail
+
+
+class TestResolveFieldHintsNarrowedCatch:
+    """ALP-480 — ``_resolve_field_hints`` narrows its exception catch to
+    ``(NameError, TypeError, AttributeError)``; other exception types must
+    propagate so a real bug in the decoder is not masked.
+
+    Previously the function caught bare ``Exception`` and silently fell back
+    to ``{}``; the narrowed catch swallows only the expected forward-reference
+    resolution failures.
+    """
+
+    def test_unexpected_exception_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Injecting a non-narrowed exception class from ``get_type_hints``
+        propagates instead of being swallowed."""
+        from alphamind.portfolio_state.events import codec as codec_mod
+
+        class _SyntheticBugError(RuntimeError):
+            """Stand-in for an unexpected decoder bug."""
+
+        def _raise_synthetic(*_args: object, **_kwargs: object) -> dict[str, object]:
+            raise _SyntheticBugError("decoder bug")
+
+        monkeypatch.setattr(codec_mod, "get_type_hints", _raise_synthetic)
+        with pytest.raises(_SyntheticBugError):
+            codec_mod._resolve_field_hints(OrderFilledDetail)
+
+    def test_name_error_falls_through_to_empty_dict(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The narrowed catch still handles ``NameError`` — the canonical
+        forward-reference resolution failure."""
+        from alphamind.portfolio_state.events import codec as codec_mod
+
+        def _raise_name_error(*_args: object, **_kwargs: object) -> dict[str, object]:
+            raise NameError("missing forward reference")
+
+        monkeypatch.setattr(codec_mod, "get_type_hints", _raise_name_error)
+        assert codec_mod._resolve_field_hints(OrderFilledDetail) == {}

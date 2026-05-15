@@ -19,11 +19,15 @@ No authentication required. Key behaviors:
 
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any
 
 import httpx
 
 from alphamind.data_sources._common import RateLimiter
+
+logger = logging.getLogger(__name__)
 
 _BASE = "https://www.iborrowdesk.com/api/ticker"
 _PROVIDER = "iborrowdesk"
@@ -118,7 +122,10 @@ class IBorrowDeskClient:
         if resp.status_code == 404:
             try:
                 body = resp.json()
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
+                # Malformed JSON body on 404 — treat as no error payload and
+                # fall through to ``raise_for_status``. ``ValueError`` covers
+                # httpx's older builds; ``JSONDecodeError`` is the modern type.
                 body = {}
             errors = body.get("errors", [])
             if any(e.get("code") == "not_found" for e in errors):
@@ -136,6 +143,15 @@ class IBorrowDeskClient:
         """
         try:
             self.fetch_ticker("AAPL")
-        except Exception:
+        except (
+            httpx.HTTPError,
+            IBorrowDeskCoverageError,
+            IBorrowDeskBlockedError,
+        ) as exc:
+            # ``HTTPError`` covers HTTP status errors + network failures.
+            # The two domain errors signal coverage / block conditions that
+            # mean the endpoint is unreachable for our probe. Other exceptions
+            # surface naturally so misconfiguration isn't hidden.
+            logger.warning("iBorrowDesk connectivity check failed.", exc_info=exc)
             return False
         return True

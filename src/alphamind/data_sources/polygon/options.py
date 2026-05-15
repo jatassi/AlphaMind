@@ -9,9 +9,12 @@ bootstrap_options_chains(...)  — no-op (start fresh per lifecycle.md)
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
+from polygon.exceptions import BadResponse
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from alphamind.data_sources._common import (
@@ -23,6 +26,8 @@ from alphamind.data_sources._common import (
 )
 from alphamind.data_sources.polygon.client import PolygonClient
 from alphamind.persistence.models import OptionsContracts, OptionsContractSnapshots
+
+logger = logging.getLogger(__name__)
 
 # ALP-289: bulk INSERT...ON CONFLICT DO UPDATE replaced per-row sess.merge.
 # Chunk size keeps each statement well below SQLite's 32_766 host-parameter
@@ -96,9 +101,14 @@ def collect_options_chains(
         for underlying in ticker_scope:
             try:
                 snapshots = _fetch_chain(underlying)
-            except Exception:
+            except (BadResponse, httpx.HTTPError) as exc:
                 if single:
                     raise
+                logger.warning(
+                    "polygon list_snapshot_options_chain failed for %s",
+                    underlying,
+                    exc_info=exc,
+                )
                 continue
 
             contract_rows, snapshot_rows = _build_rows(

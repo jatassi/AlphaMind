@@ -137,6 +137,13 @@ def with_retries(
                 try:
                     return fn(*args, **kwargs)
                 except BaseException as exc:
+                    # Retry classifier per runtime §G1: ``BaseException`` (vs
+                    # ``Exception``) is intentional — ``_is_retryable``
+                    # explicitly returns ``False`` for ``CancelledError`` /
+                    # ``KeyboardInterrupt`` so they propagate. The wide catch
+                    # exists because vendor SDKs (``fredapi``, ``urllib``)
+                    # raise across multiple top-level hierarchies and the
+                    # classifier must inspect each before deciding.
                     if not _is_retryable(exc):
                         raise
                     last_exc = exc

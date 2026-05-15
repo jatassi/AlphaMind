@@ -1666,6 +1666,10 @@ async def _run_all_scenarios() -> list[ScenarioResult]:
         try:
             result = await resolved()
         except Exception as exc:
+            # Per-scenario supervisor per runtime §G1: scenarios are
+            # independent; one raising must not skip the remaining scenarios.
+            # ``BaseException`` (``KeyboardInterrupt`` / ``CancelledError``)
+            # propagates so the runner can be cancelled.
             result = ScenarioResult(
                 label=fn.__name__,
                 ok=False,

@@ -341,6 +341,13 @@ async def _fetch_quotes_with_failure_envelope(
     try:
         quotes = await iv_fetch(symbols)
     except Exception:
+        # Batch-fetch supervisor per runtime §G1: any IV-provider failure
+        # routes every due position to the failure path with a stable reason
+        # tag, so the cycle stays observable instead of crashing. The IV
+        # provider hides multiple vendor / DB exception types behind one
+        # call; surfacing them individually would couple this kernel to the
+        # provider implementation. ``BaseException`` (``CancelledError``)
+        # propagates so supervisor shutdown is honored.
         log.exception("greeks_refresh batch IV fetch raised; routing positions to failure")
         return {}, "iv_fetch_db_error"
     return quotes, None
@@ -650,8 +657,10 @@ async def run_greeks_refresh(  # noqa: PLR0913 — orchestrator surface dictated
         except asyncio.CancelledError:
             raise
         except Exception:
-            # The cycle should not raise — each per-position branch handles its
-            # own failures. A raise here indicates a programming bug; log and
-            # continue so the loop survives transient consistency issues.
+            # Per-cycle supervisor per runtime §G1: the cycle should not raise
+            # — each per-position branch handles its own failures. A raise
+            # here indicates a programming bug; log and continue so the loop
+            # survives transient consistency issues. ``BaseException``
+            # (``CancelledError``) re-raised above for clean shutdown.
             log.exception("greeks_refresh cycle raised; continuing after sleep")
         await sleep(float(config.greeks_refresh_inspection_cadence_seconds))

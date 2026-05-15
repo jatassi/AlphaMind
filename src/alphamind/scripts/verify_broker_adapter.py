@@ -25,6 +25,13 @@ Usage::
 
 See ``scripts/RUNBOOK_broker_adapter.md`` for the operator runbook including
 prerequisites, expected output, and failure-mode triage.
+
+Per runtime §G1: every broker-adapter probe narrows its catch to
+``_PROBE_EXCEPTIONS = (APIError, httpx.HTTPError, OSError)`` so the
+expected vendor-API + transport failures are folded into the per-check
+error string while misconfiguration (TypeError, AttributeError) surfaces
+naturally. ``BaseException`` (``KeyboardInterrupt``) propagates so the
+verify run can be cancelled.
 """
 
 from __future__ import annotations
@@ -38,6 +45,9 @@ from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
+
+import httpx
+from alpaca.common.exceptions import APIError
 
 from alphamind._kernel.ids import (
     AlpacaOrderId,
@@ -73,6 +83,13 @@ from alphamind.execution.broker_adapter import (
     recover_missed_fills_since,
     submit_with_retry,
 )
+
+# Per-check probe failures narrow to ``(APIError, httpx.HTTPError, OSError)`` —
+# the broker adapter exposes these three classes for Alpaca SDK errors,
+# transport-level HTTP failures, and underlying socket / file errors
+# respectively. Any other exception surfaces naturally so misconfiguration
+# (TypeError, AttributeError, ImportError) isn't mistaken for an API outage.
+_PROBE_EXCEPTIONS = (APIError, httpx.HTTPError, OSError)
 
 __all__ = [
     "PHASE_NAMES",
@@ -199,7 +216,7 @@ async def _phase_1_check_factory(ctx: VerifyContext) -> str | None:
     try:
         ctx.factory.build_trading_client()
         ctx.factory.build_trading_stream()
-    except Exception as exc:
+    except _PROBE_EXCEPTIONS as exc:
         return f"factory failed to build clients: {exc!s}"
     return None
 
@@ -326,7 +343,7 @@ async def phase_2_account_state_queries(ctx: VerifyContext) -> PhaseResult:
 def _phase_2_check_account(queries: AccountStateQueries) -> str | None:
     try:
         account = queries.get_account()
-    except Exception as exc:
+    except _PROBE_EXCEPTIONS as exc:
         return f"get_account raised: {exc!s}"
     if account.equity is None or account.cash is None:
         return (
@@ -338,7 +355,7 @@ def _phase_2_check_account(queries: AccountStateQueries) -> str | None:
 def _phase_2_check_positions(queries: AccountStateQueries) -> str | None:
     try:
         positions = queries.get_positions()
-    except Exception as exc:
+    except _PROBE_EXCEPTIONS as exc:
         return f"get_positions raised: {exc!s}"
     if not isinstance(positions, tuple):
         return f"get_positions returned {type(positions).__name__}, expected tuple"
@@ -348,7 +365,7 @@ def _phase_2_check_positions(queries: AccountStateQueries) -> str | None:
 def _phase_2_check_known_asset(queries: AccountStateQueries) -> str | None:
     try:
         nvda = queries.get_asset("NVDA")
-    except Exception as exc:
+    except _PROBE_EXCEPTIONS as exc:
         return f"get_asset('NVDA') raised: {exc!s}"
     if nvda is None:
         return "get_asset('NVDA') returned None — NVDA should be in Alpaca's universe"
@@ -361,7 +378,7 @@ def _phase_2_check_unknown_asset(queries: AccountStateQueries) -> str | None:
     """Confirm 404 on unknown symbols maps to None per ``get_asset`` contract."""
     try:
         unknown = queries.get_asset("ZZNONEXISTENT")
-    except Exception as exc:
+    except _PROBE_EXCEPTIONS as exc:
         return f"get_asset('ZZNONEXISTENT') raised (expected None): {exc!s}"
     if unknown is not None:
         return f"get_asset('ZZNONEXISTENT') returned {unknown!r}, expected None (404 → None)"
@@ -372,7 +389,7 @@ def _phase_2_check_calendar(queries: AccountStateQueries) -> str | None:
     today = _today_utc()
     try:
         calendar = queries.get_calendar(start=today, end=today + dt.timedelta(days=30))
-    except Exception as exc:
+    except _PROBE_EXCEPTIONS as exc:
         return f"get_calendar raised: {exc!s}"
     if len(calendar) < 20:
         return f"get_calendar returned {len(calendar)} entries, expected ≥ 20 over 30 days"
@@ -382,7 +399,7 @@ def _phase_2_check_calendar(queries: AccountStateQueries) -> str | None:
 def _phase_2_check_clock(queries: AccountStateQueries) -> str | None:
     try:
         clock = queries.get_clock()
-    except Exception as exc:
+    except _PROBE_EXCEPTIONS as exc:
         return f"get_clock raised: {exc!s}"
     if clock.timestamp is None or clock.next_open is None or clock.next_close is None:
         return f"get_clock returned incomplete record: {clock!r}"
@@ -397,7 +414,7 @@ async def _phase_2_check_orders(queries: AccountStateQueries) -> str | None:
             since=dt.datetime.now(dt.UTC) - dt.timedelta(days=7),
         ):
             pass
-    except Exception as exc:
+    except _PROBE_EXCEPTIONS as exc:
         return f"get_orders pagination raised: {exc!s}"
     return None
 
@@ -1156,7 +1173,7 @@ def _phase_6_check_clock_agreement(queries: AccountStateQueries, cache: Any) -> 
     try:
         cache_says_open = cache.is_market_open(now)
         clock_snapshot = queries.get_clock()
-    except Exception as exc:
+    except _PROBE_EXCEPTIONS as exc:
         return f"calendar/clock interaction raised: {exc!s}"
     if cache_says_open != clock_snapshot.is_open:
         return (
@@ -1175,7 +1192,7 @@ def _phase_6_check_business_day(cache: Any) -> str | tuple[dt.date, dt.date]:
     today = _today_utc()
     try:
         next_business = cache.business_day_offset(today, 1)
-    except Exception as exc:
+    except _PROBE_EXCEPTIONS as exc:
         return f"business_day_offset(today, 1) raised: {exc!s}"
     if next_business.weekday() >= 5:  # Saturday=5, Sunday=6
         return (
@@ -1191,7 +1208,7 @@ def _phase_6_check_venue_state(ctx: VerifyContext) -> str | None:
 
     try:
         venue_state = read_venue_account_state(ctx.queries)
-    except Exception as exc:
+    except _PROBE_EXCEPTIONS as exc:
         return f"read_venue_account_state raised: {exc!s}"
     if ctx.verbose:
         print(
@@ -1212,7 +1229,7 @@ def _phase_6_check_settlement(cache: Any, *, today: dt.date, next_business: dt.d
 
     try:
         settlement = compute_settlement_date(today, "equity", calendar=cache)
-    except Exception as exc:
+    except _PROBE_EXCEPTIONS as exc:
         return f"compute_settlement_date raised: {exc!s}"
     effective_trade_date = cache.business_day_offset(today, 0)
     expected_settlement = (
@@ -1302,7 +1319,7 @@ async def phase_7_disconnect_recovery(ctx: VerifyContext) -> PhaseResult:
     try:
         async for _report in recover_missed_fills_since(ctx.queries, since=since):
             pass
-    except Exception as exc:
+    except _PROBE_EXCEPTIONS as exc:
         return PhaseResult.failed(
             _PHASE_7_LABEL,
             f"recover_missed_fills_since raised: {exc!s}",

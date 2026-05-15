@@ -389,9 +389,13 @@ async def _submit(
             window_seconds=execution.submission_retry_window_seconds,
         )
     except Exception as exc:
-        # ``BaseException`` (CancelledError, KeyboardInterrupt, SystemExit)
-        # propagates so external interruptions are never re-classified as
-        # broker rejections.
+        # Translation seam per runtime §G1: the alpaca-py SDK raises a single
+        # ``APIError`` for both transient and permanent failures plus separate
+        # ``httpx`` exceptions for network errors. Catch ``Exception`` and let
+        # ``classify_alpaca_error`` decide; non-classifiable exceptions
+        # re-raise unchanged. ``BaseException`` (``CancelledError``,
+        # ``KeyboardInterrupt``, ``SystemExit``) propagates so external
+        # interruptions are never re-classified as broker rejections.
         rejection = classify_alpaca_error(exc)
         if rejection is not None:
             raise PermanentRejectionError(rejection) from exc
