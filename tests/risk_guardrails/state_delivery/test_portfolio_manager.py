@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from itertools import pairwise
 
@@ -1897,6 +1898,88 @@ def test_render_pm_header_full_system_fixture_full_render() -> None:
         ]
     )
     assert rendered == expected
+
+
+# ---------------------------------------------------------------------------
+# Frozen-dataclass shape (story 10e — ALP-478)
+#
+# The 5 PM-header parameter-bag types are pure internal containers — they
+# never cross HTTP/MCP/file/DB boundaries — so they are stdlib
+# ``@dataclass(frozen=True, slots=True)`` rather than Pydantic ``BaseModel``.
+# Each test below pins that shape: dataclass marker present, slots present,
+# mutation raises ``FrozenInstanceError``. Render-output equivalence is
+# already exercised by the suite above.
+# ---------------------------------------------------------------------------
+
+
+def test_cross_constraint_impact_per_rule_is_frozen_slotted_dataclass() -> None:
+    rule = CrossConstraintImpactPerRule(
+        rule_id="net_long_pct",
+        rule_label="Net long",
+        current=42.0,
+        projected_after=45.0,
+        limit=60.0,
+        unit="% of portfolio",
+    )
+    assert dataclasses.is_dataclass(rule)
+    assert hasattr(CrossConstraintImpactPerRule, "__slots__")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        rule.rule_id = "other"  # type: ignore[misc]
+
+
+def test_cross_constraint_impact_is_frozen_slotted_dataclass() -> None:
+    impact = CrossConstraintImpact(
+        per_rule=(),
+        flagged_rule_ids=(),
+        available_capital_before_usd=5_000.0,
+        available_capital_after_usd=3_500.0,
+    )
+    assert dataclasses.is_dataclass(impact)
+    assert hasattr(CrossConstraintImpact, "__slots__")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        impact.flagged_rule_ids = ("x",)  # type: ignore[misc]
+
+
+def test_regime_override_is_frozen_slotted_dataclass() -> None:
+    override = RegimeOverride(
+        overlay_name="pre_event",
+        description="FOMC tightening",
+        expires_at=None,
+    )
+    assert dataclasses.is_dataclass(override)
+    assert hasattr(RegimeOverride, "__slots__")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        override.overlay_name = "other"  # type: ignore[misc]
+
+
+def test_correlation_state_is_frozen_slotted_dataclass() -> None:
+    state = CorrelationState(
+        weighted_avg_correlation=0.45,
+        correlation_limit=0.60,
+        zone=RiskZone.NORMAL,
+        highest_pairwise_position_a="POS-NVDA-001",
+        highest_pairwise_position_b="POS-AAPL-002",
+        highest_pairwise_value=0.78,
+    )
+    assert dataclasses.is_dataclass(state)
+    assert hasattr(CorrelationState, "__slots__")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        state.weighted_avg_correlation = 0.99  # type: ignore[misc]
+
+
+def test_dependency_risk_flag_is_frozen_slotted_dataclass() -> None:
+    flag = DependencyRiskFlag(
+        max_catalyst_failure_exposure_pct=12.0,
+        catalyst_failure_limit_pct=20.0,
+        zone=RiskZone.NORMAL,
+        effective_independent_thesis_count=8,
+        worst_shared_catalyst_label="Q2 earnings",
+        worst_shared_catalyst_position_ids=("POS-NVDA-001", "POS-AAPL-002"),
+    )
+    assert dataclasses.is_dataclass(flag)
+    assert hasattr(DependencyRiskFlag, "__slots__")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        flag.effective_independent_thesis_count = 99  # type: ignore[misc]
 
 
 def test_render_pm_header_has_no_double_blank_lines_and_no_trailing_blank() -> None:

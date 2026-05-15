@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-
-from pydantic import BaseModel, ConfigDict
 
 from alphamind._kernel.regime import RiskZone
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
@@ -59,10 +58,9 @@ _PM_HARD_BLOCKS_HEADER = "Hard blocks (do NOT issue commands violating):"
 _DAILY_DRAWDOWN_RULE_ID = "daily_drawdown_pct"
 
 
-class CrossConstraintImpactPerRule(BaseModel):
+@dataclass(frozen=True, slots=True)
+class CrossConstraintImpactPerRule:
     """One per-rule projection inside a :class:`CrossConstraintImpact`."""
-
-    model_config = ConfigDict(frozen=True)
 
     rule_id: str
     rule_label: str
@@ -72,10 +70,9 @@ class CrossConstraintImpactPerRule(BaseModel):
     unit: str
 
 
-class CrossConstraintImpact(BaseModel):
+@dataclass(frozen=True, slots=True)
+class CrossConstraintImpact:
     """Pre-computed projection of pending proposals' impact across all rules."""
-
-    model_config = ConfigDict(frozen=True)
 
     per_rule: tuple[CrossConstraintImpactPerRule, ...]
     flagged_rule_ids: tuple[str, ...]
@@ -83,20 +80,18 @@ class CrossConstraintImpact(BaseModel):
     available_capital_after_usd: float
 
 
-class RegimeOverride(BaseModel):
+@dataclass(frozen=True, slots=True)
+class RegimeOverride:
     """An active regime overlay (pre-event tightening, stress overlay, ...)."""
-
-    model_config = ConfigDict(frozen=True)
 
     overlay_name: str
     description: str
     expires_at: datetime | None
 
 
-class CorrelationState(BaseModel):
+@dataclass(frozen=True, slots=True)
+class CorrelationState:
     """Portfolio-level correlation snapshot for the PM block."""
-
-    model_config = ConfigDict(frozen=True)
 
     weighted_avg_correlation: float
     correlation_limit: float
@@ -106,10 +101,9 @@ class CorrelationState(BaseModel):
     highest_pairwise_value: float
 
 
-class DependencyRiskFlag(BaseModel):
+@dataclass(frozen=True, slots=True)
+class DependencyRiskFlag:
     """Catalyst-failure dependency snapshot for the PM block."""
-
-    model_config = ConfigDict(frozen=True)
 
     max_catalyst_failure_exposure_pct: float
     catalyst_failure_limit_pct: float
