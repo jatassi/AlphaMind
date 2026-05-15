@@ -552,6 +552,9 @@ def test_positional_fields_match_runner_outputs_deterministically() -> None:
 
 
 def test_output_is_frozen() -> None:
+    """ALP-474: DomainResearchersOutput is a frozen dataclass."""
+    import dataclasses
+
     by_sector = {
         Sector.TECH_SEMIS: _make_runner_result(Sector.TECH_SEMIS),
         Sector.FINANCIALS: _make_runner_result(Sector.FINANCIALS),
@@ -567,9 +570,8 @@ def test_output_is_frozen() -> None:
             runner_fn=_runner_returning(by_sector),
         )
     )
-    from pydantic import ValidationError
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         output.tech_semis = by_sector[Sector.ENERGY]  # type: ignore[misc]
 
 

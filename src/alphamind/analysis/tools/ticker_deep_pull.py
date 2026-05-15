@@ -10,13 +10,14 @@ Supported categories: price_volume, short_data, earnings, macro_context.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.clock import Clock, RealClock
 from alphamind.analysis.tools._envelope import ToolEnvelope, ToolQuality, parse_iso
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -261,7 +262,7 @@ def _load_price_volume(
 
 
 def _load_short_data(
-    session: Session, ticker: str
+    session: Session, ticker: str, now: datetime
 ) -> tuple[ShortDataPayload | None, datetime | None, ToolQuality]:
     recent_si = session.execute(
         select(
@@ -311,7 +312,7 @@ def _load_short_data(
             si_pct = recent_si.current_short_shares / adv * 100.0
 
     # 30d prior snapshot for delta
-    window_ago = (datetime.now(UTC) - timedelta(days=30)).strftime("%Y-%m-%d")
+    window_ago = (now - timedelta(days=30)).strftime("%Y-%m-%d")
     older_si = session.execute(
         select(ShortInterestSnapshot.current_short_shares)
         .where(
@@ -359,7 +360,7 @@ def _revision_direction(
 
 
 def _load_earnings(
-    session: Session, ticker: str
+    session: Session, ticker: str, now: datetime
 ) -> tuple[EarningsPayload | None, datetime | None, ToolQuality]:
     details_row = session.execute(
         select(
@@ -398,7 +399,7 @@ def _load_earnings(
     if eps_actual is not None and eps_consensus is not None and eps_consensus != 0.0:
         eps_surprise = (eps_actual - eps_consensus) / abs(eps_consensus) * 100.0
 
-    window_start = (datetime.now(UTC) - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    window_start = (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
     revision_rows = session.execute(
         select(
             EarningsEstimateRevisions.consensus_value,
@@ -516,11 +517,18 @@ def _unavailable_envelope(ticker: str, now: datetime) -> TickerDeepPullOutput:
 
 def ticker_deep_pull_factory(
     session: Session,
+    *,
+    clock: Clock | None = None,
 ) -> Callable[[TickerDeepPullInput], TickerDeepPullOutput]:
-    """Build the ticker_deep_pull callable bound to ``session``."""
+    """Build the ticker_deep_pull callable bound to ``session``.
+
+    ``clock`` defaults to :class:`RealClock`; tests pass a fake to control
+    the timestamp deterministically (ALP-474).
+    """
+    resolved_clock: Clock = clock if clock is not None else RealClock()
 
     def _call(args: TickerDeepPullInput) -> TickerDeepPullOutput:
-        now = datetime.now(UTC)
+        now = resolved_clock.now()
         ticker = args.ticker.upper()
 
         if not _ticker_in_universe(session, ticker):
@@ -552,9 +560,9 @@ def _dispatch_categories(
         if category == TickerDeepPullCategory.PRICE_VOLUME:
             price_volume, freshness, quality = _load_price_volume(session, ticker)
         elif category == TickerDeepPullCategory.SHORT_DATA:
-            short_data, freshness, quality = _load_short_data(session, ticker)
+            short_data, freshness, quality = _load_short_data(session, ticker, now)
         elif category == TickerDeepPullCategory.EARNINGS:
-            earnings, freshness, quality = _load_earnings(session, ticker)
+            earnings, freshness, quality = _load_earnings(session, ticker, now)
         elif category == TickerDeepPullCategory.MACRO_CONTEXT:
             macro_context, freshness, quality = _load_macro_context(session, ticker)
         else:

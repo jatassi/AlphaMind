@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import BaseModel, ValidationError
 
 from alphamind.analysis._shared import Sector
 from alphamind.analysis.domain_researchers.input_bundle import (
@@ -105,31 +105,32 @@ def _assemble_default(
 
 
 # ---------------------------------------------------------------------------
-# Test 1: InputBundle is a frozen Pydantic model with the correct fields
+# Test 1: InputBundle is a frozen dataclass with the correct fields
 # ---------------------------------------------------------------------------
 
 
-def test_input_bundle_is_frozen_pydantic_model() -> None:
-    """InputBundle is a BaseModel subclass and frozen."""
-    assert issubclass(InputBundle, BaseModel)
-    assert InputBundle.model_config.get("frozen") is True
+def test_input_bundle_is_frozen_dataclass() -> None:
+    """InputBundle is a frozen dataclass (ALP-474 — converted from Pydantic)."""
+    assert dataclasses.is_dataclass(InputBundle)
+    # Behavioural frozen check: constructing an instance and attempting to mutate
+    # raises FrozenInstanceError; covered by test_input_bundle_is_immutable below.
 
 
 def test_input_bundle_has_required_fields() -> None:
     """InputBundle exposes the six documented fields."""
-    fields = InputBundle.model_fields
-    assert "sector" in fields
-    assert "invocation_id" in fields
-    assert "as_of" in fields
-    assert "distillation_text" in fields
-    assert "qualitative_text" in fields
-    assert "bundle_text" in fields
+    field_names = {f.name for f in dataclasses.fields(InputBundle)}
+    assert "sector" in field_names
+    assert "invocation_id" in field_names
+    assert "as_of" in field_names
+    assert "distillation_text" in field_names
+    assert "qualitative_text" in field_names
+    assert "bundle_text" in field_names
 
 
 def test_input_bundle_is_immutable() -> None:
-    """Frozen model raises ValidationError on attribute mutation."""
+    """Frozen dataclass raises FrozenInstanceError on attribute mutation."""
     bundle = _assemble_default()
-    with pytest.raises(ValidationError):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         bundle.invocation_id = "changed"  # type: ignore[misc]
 
 
@@ -333,6 +334,8 @@ def test_bundle_contains_sector_value() -> None:
 
 def test_no_regime_pydantic_classes_in_module() -> None:
     """The input_bundle module does not define RegimeLabel or RegimeContext Pydantic classes."""
+    from pydantic import BaseModel
+
     import alphamind.analysis.domain_researchers.input_bundle as module
 
     for name, obj in inspect.getmembers(module, inspect.isclass):

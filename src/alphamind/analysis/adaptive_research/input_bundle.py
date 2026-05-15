@@ -16,10 +16,9 @@ Public names
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-
-from pydantic import BaseModel
 
 from alphamind.analysis.adaptive_research.loaders import (
     AdaptiveAnomalyInputs,
@@ -38,7 +37,8 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-class InputBundle(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class InputBundle:
     """Composed bundle as a value object; preserved for the diagnostic archive."""
 
     invocation_id: str

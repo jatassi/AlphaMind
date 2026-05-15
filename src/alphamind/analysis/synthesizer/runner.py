@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel
 
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.adaptive_research.models import AdaptiveBrief
@@ -74,7 +73,8 @@ _AGENTS_YAML = _REPO_ROOT / "config" / "agents.yaml"
 # ---------------------------------------------------------------------------
 
 
-class SynthesizerResult(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class SynthesizerResult:
     """Runner return type — the synthesis prose plus the per-invocation store.
 
     ``synthesis_text`` is the LLM's prose. ``retrieval_store`` is the

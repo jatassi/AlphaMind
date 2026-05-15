@@ -24,10 +24,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from alphamind.analysis._shared import _SECTOR_AUDIENCE_MAP, Sector, TokensUsed
@@ -53,7 +53,8 @@ _SECTOR_ROSTER: tuple[Sector, ...] = (Sector.TECH_SEMIS, Sector.FINANCIALS, Sect
 # ---------------------------------------------------------------------------
 
 
-class DomainResearchersOutput(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class DomainResearchersOutput:
     """Aggregated result of the parallel three-sector orchestrator."""
 
     invocation_id: str

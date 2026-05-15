@@ -26,8 +26,7 @@ in the corrective-retry message.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-
-from pydantic import BaseModel
+from dataclasses import dataclass
 
 from alphamind.analysis.adaptive_research.models import AdaptiveBrief, Assessment
 from alphamind.analysis.domain_researchers.models import SectorBrief
@@ -46,7 +45,8 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-class ValidationError(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class ValidationError:
     """A single structural violation found in an :class:`AdaptiveBrief`.
 
     Mirrors the error-record shape produced by the JSON Schema validator so the
@@ -59,7 +59,8 @@ class ValidationError(BaseModel, frozen=True):
     message: str
 
 
-class ValidationResult(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class ValidationResult:
     """Aggregate outcome of running :func:`validate_adaptive_brief`."""
 
     is_valid: bool

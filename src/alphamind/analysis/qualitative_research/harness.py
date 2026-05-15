@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import time
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from alphamind.analysis._harness_core import (
@@ -89,7 +89,8 @@ _TOOL_NAME_PREFIX = "mcp__alphamind_qualitative__"
 # ---------------------------------------------------------------------------
 
 
-class HarnessSuccess(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class HarnessSuccess:
     """Successful invocation result returned to the qualitative-researcher runner."""
 
     brief: QualitativeBrief

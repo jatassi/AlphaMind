@@ -9,12 +9,12 @@ contracts ordered by ``volume_24h_usd`` descending.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
 
 from pydantic import BaseModel
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.clock import Clock, RealClock
 from alphamind.analysis.tools._envelope import ToolEnvelope, ToolQuality, parse_iso
 from alphamind.persistence.models import PredictionMarketContracts, PredictionMarketSnapshots
 
@@ -66,9 +66,9 @@ class PredictionMarketsOutput(ToolEnvelope, frozen=True):
 
 
 def _query_prediction_markets(
-    session: Session, inp: PredictionMarketsInput
+    session: Session, inp: PredictionMarketsInput, clock: Clock
 ) -> PredictionMarketsOutput:
-    now = datetime.now(UTC)
+    now = clock.now()
 
     if not inp.query and not inp.categories:
         return PredictionMarketsOutput(
@@ -167,10 +167,17 @@ def _query_prediction_markets(
 
 def prediction_markets_factory(
     session: Session,
+    *,
+    clock: Clock | None = None,
 ) -> Callable[[PredictionMarketsInput], PredictionMarketsOutput]:
-    """Return a callable suitable for the Claude Agent SDK tool registry."""
+    """Return a callable suitable for the Claude Agent SDK tool registry.
+
+    ``clock`` defaults to :class:`RealClock`; tests pass a fake to control
+    the timestamp deterministically (ALP-474).
+    """
+    resolved_clock: Clock = clock if clock is not None else RealClock()
 
     def _call(inp: PredictionMarketsInput) -> PredictionMarketsOutput:
-        return _query_prediction_markets(session, inp)
+        return _query_prediction_markets(session, inp, resolved_clock)
 
     return _call

@@ -13,9 +13,8 @@ wraps the existing distillation text rather than re-decorating it.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
-
-from pydantic import BaseModel
 
 from alphamind.analysis._shared import Sector
 from alphamind.analysis.domain_researchers.qualitative_input import (
@@ -35,7 +34,8 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-class InputBundle(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class InputBundle:
     """The composed bundle as a value object; also used for diagnostic preservation."""
 
     sector: Sector

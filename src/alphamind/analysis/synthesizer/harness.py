@@ -28,10 +28,9 @@ from __future__ import annotations
 # Exception class names mirror sibling harness names by spec.
 import time
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-from pydantic import BaseModel
 
 from alphamind.analysis._harness_core import (
     _PROMPT_CACHE,
@@ -102,7 +101,8 @@ class EmptyResponseFailure(HarnessFailure):
 # ---------------------------------------------------------------------------
 
 
-class HarnessSuccess(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class HarnessSuccess:
     """Successful synthesizer invocation result returned to the runner."""
 
     response_text: str

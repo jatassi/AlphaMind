@@ -15,10 +15,9 @@ Public names
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-
-from pydantic import BaseModel
 
 from alphamind.analysis.qualitative_research.loaders import (
     QualitativeInputs,
@@ -36,7 +35,8 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-class InputBundle(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class InputBundle:
     """The composed bundle as a value object; also used for diagnostic preservation."""
 
     invocation_id: str

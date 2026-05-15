@@ -18,7 +18,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 
-from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -95,11 +94,12 @@ _EVENT_FORWARD_HOURS = 72
 
 
 # ---------------------------------------------------------------------------
-# Pydantic records
+# Records
 # ---------------------------------------------------------------------------
 
 
-class HeadlineEntry(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class HeadlineEntry:
     """One headline row in the assembled qualitative input.
 
     ``tags`` is typed against the canonical taxonomy so ill-formed values
@@ -117,7 +117,8 @@ class HeadlineEntry(BaseModel, frozen=True):
     tags: tuple[HeadlineType, ...]
 
 
-class EventEntry(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class EventEntry:
     """One event-calendar entry, with tickers aggregated across rows sharing event_id."""
 
     event_id: str
@@ -128,7 +129,8 @@ class EventEntry(BaseModel, frozen=True):
     consensus: str | None
 
 
-class SectorQualitativeInput(BaseModel, frozen=True):
+@dataclass(frozen=True, slots=True)
+class SectorQualitativeInput:
     """The full qualitative slice a domain researcher consumes for one invocation."""
 
     sector: Sector

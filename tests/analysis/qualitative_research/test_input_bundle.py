@@ -155,15 +155,16 @@ def _make_inputs(
 
 def test_import_resolves() -> None:
     """assemble_input_bundle and InputBundle are importable from the module."""
+    import dataclasses
+
     from alphamind.analysis.qualitative_research.input_bundle import (
         InputBundle,
         assemble_input_bundle,
     )
 
     assert callable(assemble_input_bundle)
-    from pydantic import BaseModel
-
-    assert issubclass(InputBundle, BaseModel)
+    # ALP-474: InputBundle is now a frozen dataclass, not a Pydantic model.
+    assert dataclasses.is_dataclass(InputBundle)
 
 
 # ---------------------------------------------------------------------------
@@ -623,16 +624,17 @@ def test_prediction_market_renders_delta_since_prior_label() -> None:
 
 
 def test_input_bundle_is_frozen() -> None:
-    """InputBundle is a frozen Pydantic model."""
-    from pydantic import BaseModel, ValidationError
+    """InputBundle is a frozen dataclass (ALP-474 — converted from Pydantic)."""
+    import dataclasses
 
     from alphamind.analysis.qualitative_research.input_bundle import (
         InputBundle,
         assemble_input_bundle,
     )
 
-    assert issubclass(InputBundle, BaseModel)
-    assert InputBundle.model_config.get("frozen") is True
+    assert dataclasses.is_dataclass(InputBundle)
+    # The frozen-ness assertion is captured by the mutation attempt below
+    # (FrozenInstanceError fires only when ``frozen=True``).
 
     bundle = assemble_input_bundle(
         invocation_id=_INVOCATION_ID,
@@ -641,7 +643,7 @@ def test_input_bundle_is_frozen() -> None:
         digest=_DIGEST,
         inputs=_make_inputs(),
     )
-    with pytest.raises(ValidationError):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         bundle.invocation_id = "mutated"  # type: ignore[misc]
 
 
