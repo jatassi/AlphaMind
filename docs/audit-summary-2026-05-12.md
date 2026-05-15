@@ -43,7 +43,7 @@ Drift from any of these baselines trips a test. The CLAUDE.md lint suite (`ruff`
 
 Filed at audit close, parented to ALP-454:
 
-* [ALP-482](https://linear.app/alphamind-jatassi/issue/ALP-482) — Audit `submit_envelope.py` for composition-root extraction (hoist to top-level `composition_roots/` vs keep). Decides whether the `decision-not-execution` contract's `ignore_imports` block retires or becomes permanent documentation.
+* [ALP-482](https://linear.app/alphamind-jatassi/issue/ALP-482) — Audit `submit_envelope.py` for composition-root extraction (hoist to top-level `composition_roots/` vs keep). **Concluded keep**: the post-06b package is not a pure assembler — `process`, `dispatch`, and `server` carry PM request-routing logic alongside the wiring, and only 4 of the 11 ignored edges are runtime imports. The `decision-not-execution` `ignore_imports` block is therefore permanent architectural documentation, not a debt item.
 * [ALP-483](https://linear.app/alphamind-jatassi/issue/ALP-483) — Relocate `portfolio_state/library_snapshot.py` to the consumer side (`risk_guardrails/`); retires the 2 `portfolio_state-not-risk_guardrails` `ignore_imports` entries.
 * [ALP-484](https://linear.app/alphamind-jatassi/issue/ALP-484) — Propagate compute/load split to q3 (anomalies, atm_iv_baseline, etf_iv_divergence).
 * [ALP-485](https://linear.app/alphamind-jatassi/issue/ALP-485) — Propagate compute/load split to q6 (macro / funding stress, 1380 LOC).
@@ -51,7 +51,7 @@ Filed at audit close, parented to ALP-454:
 * [ALP-487](https://linear.app/alphamind-jatassi/issue/ALP-487) — Propagate compute/load split to qualitative_derived (3 public computations).
 * [ALP-488](https://linear.app/alphamind-jatassi/issue/ALP-488) — Remove broad `mypy: disable-error-code` directives from 53 test/script files (ALP-477 follow-up). Wrap test fixtures with NewType constructors instead of suppressing.
 
-Each of ALP-484–487 unlocks parallel execution in Phase 2 by lifting its q-package into its own `TaskGroup` task. ALP-482/483/488 retire the remaining `ignore_imports` exceptions and broad mypy directives respectively.
+Each of ALP-484–487 unlocks parallel execution in Phase 2 by lifting its q-package into its own `TaskGroup` task. ALP-483 retires the `portfolio_state-not-risk_guardrails` `ignore_imports` exceptions; ALP-488 removes the broad mypy directives. ALP-482 (composition-root audit) concluded keep, so the `decision-not-execution` exceptions remain as permanent documentation.
 
 ## Story-by-story landings
 

@@ -402,8 +402,10 @@ def test_decision_not_execution_contract_with_composition_root_exception() -> No
     so the three former ``dispatch -> execution.state_persistence.tables.*``
     and one ``persist -> execution.state_persistence.config`` edges are now
     decision -> state crossings — they no longer require an ignore here.
-    The block retires entirely when ALP-482 hoists the composition root
-    to a top-level ``composition_roots/``.
+    ALP-482 audited whether the package should hoist to a top-level
+    ``composition_roots/``; the conclusion was keep (see the contract
+    header in ``.importlinter`` for rationale), so this block is permanent
+    rather than a debt item awaiting retirement.
     """
     parser = _parse_importlinter_config()
     section = _contract_section(parser, "decision-not-execution")
