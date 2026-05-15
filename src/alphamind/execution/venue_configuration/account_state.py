@@ -9,10 +9,9 @@ on every invocation.  No caching: ``read_venue_account_state`` runs each call.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-
-from pydantic import BaseModel, ConfigDict
 
 from alphamind.execution.venue_configuration.constants import (
     PDT_DAY_TRADE_LIMIT_BELOW_THRESHOLD,
@@ -25,14 +24,13 @@ if TYPE_CHECKING:
     from alphamind.execution.broker_adapter.queries import AccountStateQueries
 
 
-class VenueAccountState(BaseModel):
+@dataclass(frozen=True, slots=True)
+class VenueAccountState:
     """Per-invocation snapshot of Alpaca account state with derived fields.
 
     Composes raw /v2/account fields with venue-constants resolution.
     All fields are frozen at construction time — no mutation after creation.
     """
-
-    model_config = ConfigDict(frozen=True)
 
     fetched_at: datetime  # tz-aware
 

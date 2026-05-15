@@ -13,6 +13,7 @@ imports them back.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
@@ -142,7 +143,7 @@ def _build_envelope_level_rejection(
     suggested_modification: str,
     log_state: SubmitEnvelopeState,
     log_envelope_for_record: PMEnvelope | None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], SubmitEnvelopeState]:
     """Build the envelope-level rejection (Layer-1 or Layer-2/3 failure).
 
     Emits a single synthetic ``submission_result`` with
@@ -150,6 +151,9 @@ def _build_envelope_level_rejection(
     shape uniform with command-level rejections even when no commands ran.
     ``log_envelope_for_record`` is the parsed PMEnvelope when the rejection
     follows Layer-2/3; ``None`` when Layer-1 parse failed.
+
+    Returns ``(response, new_state)`` — the new state carries the appended
+    submission-log entry when ``log_envelope_for_record`` is supplied.
     """
     synthetic_command_id = _safe_derive_pm_command_id(
         invocation_id=invocation_id,
@@ -176,14 +180,19 @@ def _build_envelope_level_rejection(
         rejection_payload=rejection,
     )
     submission_results = (result,)
+    new_state = log_state
     if log_envelope_for_record is not None:
-        log_state.submission_log = (
-            *log_state.submission_log,
-            SubmissionLogEntry(
-                envelope=log_envelope_for_record, submission_results=submission_results
+        new_state = dataclasses.replace(
+            log_state,
+            submission_log=(
+                *log_state.submission_log,
+                SubmissionLogEntry(
+                    envelope=log_envelope_for_record,
+                    submission_results=submission_results,
+                ),
             ),
         )
-    return {
+    response = {
         "content": [
             {
                 "type": "text",
@@ -191,6 +200,7 @@ def _build_envelope_level_rejection(
             }
         ],
     }
+    return response, new_state
 
 
 def _process_commands(
@@ -198,26 +208,28 @@ def _process_commands(
     *,
     state: SubmitEnvelopeState,
     sector_resolver: Callable[[str], str],
-) -> tuple[SubmissionResult, ...]:
+) -> tuple[tuple[SubmissionResult, ...], SubmitEnvelopeState]:
     """Process every command in *envelope*, in order.
 
     Re-runs :func:`validate_guardrail` per command against the cumulative
-    state cell. PASS advances the cell; FAIL leaves it unchanged. Returns
-    the per-command results in command_ordinal order.
+    state. PASS advances ``validation_state`` (returned in the new state
+    instance); FAIL leaves it unchanged. Returns the per-command results in
+    command_ordinal order alongside the post-processing state.
     """
     results: list[SubmissionResult] = []
     attempt_seq = compute_attempt_seq(envelope)
+    current_state = state
     for ordinal, command in enumerate(envelope.commands):
-        result = _process_one_command(
+        result, current_state = _process_one_command(
             command=command,
             command_ordinal=ordinal,
             envelope=envelope,
             attempt_seq=attempt_seq,
-            state=state,
+            state=current_state,
             sector_resolver=sector_resolver,
         )
         results.append(result)
-    return tuple(results)
+    return tuple(results), current_state
 
 
 def _process_one_command(
@@ -228,8 +240,13 @@ def _process_one_command(
     attempt_seq: int,
     state: SubmitEnvelopeState,
     sector_resolver: Callable[[str], str],
-) -> SubmissionResult:
-    """Process one embedded command — translate, validate, format result."""
+) -> tuple[SubmissionResult, SubmitEnvelopeState]:
+    """Process one embedded command — translate, validate, format result.
+
+    Returns ``(submission_result, new_state)`` — accepted OPEN/ADD commands
+    return a state with an advanced ``validation_state``; all other outcomes
+    return the input state unchanged.
+    """
     command_id = derive_pm_command_id(
         invocation_id=state.invocation_id,
         envelope_id=envelope.envelope_id,
@@ -243,58 +260,74 @@ def _process_one_command(
     # CANCEL).
     if isinstance(command, CancelCommand):
         ack = Acknowledgment(order_id=command.order_id, released_capital_usd=0.0)
-        return SubmissionResult(
-            command_ordinal=command_ordinal,
-            status="accepted",
-            command_id=command_id,
-            acknowledgment=ack,
+        return (
+            SubmissionResult(
+                command_ordinal=command_ordinal,
+                status="accepted",
+                command_id=command_id,
+                acknowledgment=ack,
+            ),
+            state,
         )
     if isinstance(command, CloseCommand):
         ack = Acknowledgment(
             position_id=command.position_id,
             order_id=OrderId(f"ORD-CLOSE-{command.position_id}"),
         )
-        return SubmissionResult(
-            command_ordinal=command_ordinal,
-            status="accepted",
-            command_id=command_id,
-            acknowledgment=ack,
+        return (
+            SubmissionResult(
+                command_ordinal=command_ordinal,
+                status="accepted",
+                command_id=command_id,
+                acknowledgment=ack,
+            ),
+            state,
         )
 
     request = _command_to_validation_request(command)
     result = validate_guardrail(request=request, state=state.validation_state)
 
     if result.overall == "PASS":
-        # Advance the cell unless the command produces no exposure delta
-        # (CLOSE / ADJUST under the stub semantics).
+        # Advance ``validation_state`` unless the command produces no exposure
+        # delta (CLOSE / ADJUST under the stub semantics).
+        new_state = state
         if isinstance(command, OpenCommand | AddCommand):
-            state.validation_state = state.validation_state.with_accepted_proposal(
-                ProjectedDelta(
-                    instrument=request.instrument,
-                    size=request.size,
-                    action=request.action,
-                    sector=sector_resolver(request.instrument.ticker),
-                    delta_adjusted_exposure=result.delta_adjusted_exposure,
-                    greeks=result.greeks,
-                    proposal_index=result.proposal_index_in_invocation,
-                    reserves_capital=request.reserves_capital,
-                    existing_position_id=None,
-                )
+            new_state = dataclasses.replace(
+                state,
+                validation_state=state.validation_state.with_accepted_proposal(
+                    ProjectedDelta(
+                        instrument=request.instrument,
+                        size=request.size,
+                        action=request.action,
+                        sector=sector_resolver(request.instrument.ticker),
+                        delta_adjusted_exposure=result.delta_adjusted_exposure,
+                        greeks=result.greeks,
+                        proposal_index=result.proposal_index_in_invocation,
+                        reserves_capital=request.reserves_capital,
+                        existing_position_id=None,
+                    )
+                ),
             )
         ack = _build_acknowledgment(command=command, result=result)
-        return SubmissionResult(
-            command_ordinal=command_ordinal,
-            status="accepted",
-            command_id=command_id,
-            acknowledgment=ack,
+        return (
+            SubmissionResult(
+                command_ordinal=command_ordinal,
+                status="accepted",
+                command_id=command_id,
+                acknowledgment=ack,
+            ),
+            new_state,
         )
 
     rejection = _build_rejection_payload(result=result)
-    return SubmissionResult(
-        command_ordinal=command_ordinal,
-        status="rejected",
-        command_id=command_id,
-        rejection_payload=rejection,
+    return (
+        SubmissionResult(
+            command_ordinal=command_ordinal,
+            status="rejected",
+            command_id=command_id,
+            rejection_payload=rejection,
+        ),
+        state,
     )
 
 

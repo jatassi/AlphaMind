@@ -576,7 +576,7 @@ async def test_open_options_acknowledgment_greeks_match_persisted_position_greek
             invocation_id=_INV_ID,
             starting_validation_state=validation_state,
         )
-        mcp_servers, _allowed = build_submit_envelope_mcp_server(
+        mcp_servers, _allowed, _get_state = build_submit_envelope_mcp_server(
             state,
             retrieval_store=_retrieval_store(),
             pre_processor_bundle=_pre_processor_bundle(),

@@ -10,6 +10,7 @@ Anthropic API. Mirrors the structure of
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from datetime import UTC, date, datetime
@@ -1234,7 +1235,7 @@ async def test_submission_log_threads_from_engine_stub_state_cell(
             ),
         ),
     )
-    submit_envelope_state.submission_log = (fake_entry,)
+    submit_envelope_state = dataclasses.replace(submit_envelope_state, submission_log=(fake_entry,))
 
     stub = _make_stub_query([_make_sdk_response(_MINIMAL_PAYLOAD)])
     result = await invoke_pm(
@@ -1294,7 +1295,9 @@ async def test_failed_submission_log_archived_from_state_cell(
         validation_error_repr="1 validation error for PMEnvelope\nsource_provenance: missing",
         command_id="inv-fail-001.ENV-REC-99.0.0",
     )
-    submit_envelope_state.failed_submission_log = (fake_failure,)
+    submit_envelope_state = dataclasses.replace(
+        submit_envelope_state, failed_submission_log=(fake_failure,)
+    )
 
     stub = _make_stub_query([_make_sdk_response(_MINIMAL_PAYLOAD)])
     await invoke_pm(

@@ -442,3 +442,24 @@ class TestDiscriminators:
     def test_empty_string_rejected_by_both(self) -> None:
         assert is_pm_originated("") is False
         assert is_engine_originated("") is False
+
+
+# ---------------------------------------------------------------------------
+# Component-record frozen invariants (ALP-476 — Pydantic→frozen dataclass)
+# ---------------------------------------------------------------------------
+
+
+class TestComponentsAreFrozen:
+    def test_pm_components_reject_attribute_assignment(self) -> None:
+        import dataclasses
+
+        components = parse_pm_command_id("inv-X.ENV-REC-2.0.0")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            components.attempt_seq = 99  # type: ignore[misc]
+
+    def test_engine_components_reject_attribute_assignment(self) -> None:
+        import dataclasses
+
+        components = parse_engine_command_id("MON.abc-123.42.0")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            components.trigger_id = 99  # type: ignore[misc]

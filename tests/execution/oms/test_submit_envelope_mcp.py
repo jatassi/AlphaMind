@@ -587,7 +587,10 @@ def _build_state_and_server(
 ) -> tuple[Any, Any, Any]:
     """Construct a SubmitEnvelopeState + factory output for tests.
 
-    Returns ``(state, mcp_server_instance, allowed_tools)``.
+    Returns ``(get_state, mcp_server_instance, allowed_tools)``. Post-ALP-476
+    the state cell is frozen; the closure rebinds the captured cell on each
+    invocation, so callers must read the latest state via ``get_state()``
+    rather than retaining a reference to the initial instance.
 
     Routes the bundle / pm_view based on the supplied envelope. ``ENV-REC-N``
     auto-populates an analyst recommendation; ``ENV-SA-N`` an analyst-side
@@ -646,7 +649,7 @@ def _build_state_and_server(
         starting_validation_state=validation_state,
     )
 
-    mcp_servers, allowed_tools = build_submit_envelope_mcp_server(
+    mcp_servers, allowed_tools, get_state = build_submit_envelope_mcp_server(
         state,
         retrieval_store=retrieval,
         pre_processor_bundle=bundle,
@@ -658,7 +661,7 @@ def _build_state_and_server(
         library_market=_market(),
     )
     server = mcp_servers["alphamind_execution_oms_submit"]["instance"]
-    return state, server, allowed_tools
+    return get_state, server, allowed_tools
 
 
 # ===========================================================================
@@ -672,8 +675,8 @@ def _build_state_and_server(
 
 
 def test_factory_returns_mcp_server_and_allowed_tools() -> None:
-    """The factory returns a ``(mcp_servers, allowed_tools)`` pair with the
-    canonical server name and a single registered tool."""
+    """The factory returns a ``(mcp_servers, allowed_tools, get_state)`` triple
+    with the canonical server name and a single registered tool."""
     from alphamind.decision.portfolio_manager.submit_envelope import (
         build_initial_submit_envelope_state,
         build_submit_envelope_mcp_server,
@@ -685,7 +688,7 @@ def test_factory_returns_mcp_server_and_allowed_tools() -> None:
         invocation_id="inv-2026-05-05",
         starting_validation_state=validation_state,
     )
-    mcp_servers, allowed_tools = build_submit_envelope_mcp_server(
+    mcp_servers, allowed_tools, _get_state = build_submit_envelope_mcp_server(
         state,
         retrieval_store=_retrieval_store(),
         pre_processor_bundle=_make_bundle(),
@@ -716,7 +719,7 @@ async def test_accepts_well_formed_envelope() -> None:
     accepted; the response carries one submission_result with status=accepted
     and the cumulative-state cell is updated to count the proposal."""
     envelope = _make_analyst_envelope()
-    state, server, _ = _build_state_and_server(envelope_for_routing=envelope)
+    get_state, server, _ = _build_state_and_server(envelope_for_routing=envelope)
 
     text, is_error = await _invoke_mcp_tool(
         server, "submit_envelope", envelope.model_dump(mode="json")
@@ -733,7 +736,7 @@ async def test_accepts_well_formed_envelope() -> None:
     assert result["rejection_payload"] is None
 
     # Cumulative state advanced — the next call would see proposal #2.
-    assert len(state.validation_state.accumulated_deltas) == 1
+    assert len(get_state().validation_state.accumulated_deltas) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -753,7 +756,7 @@ async def test_rejects_envelope_with_layer_2_violation() -> None:
         envelope_id="ENV-REC-1",
         source_recommendation_id="REC-2",
     )
-    state, server, _ = _build_state_and_server(envelope_for_routing=envelope)
+    get_state, server, _ = _build_state_and_server(envelope_for_routing=envelope)
 
     text, is_error = await _invoke_mcp_tool(
         server, "submit_envelope", envelope.model_dump(mode="json")
@@ -770,9 +773,9 @@ async def test_rejects_envelope_with_layer_2_violation() -> None:
     assert rejection["rules_breached"][0]["rule"] == "schema_invariant"
 
     # State cell unchanged.
-    assert len(state.validation_state.accumulated_deltas) == 0
+    assert len(get_state().validation_state.accumulated_deltas) == 0
     # Submission log captures the call.
-    assert len(state.submission_log) == 1
+    assert len(get_state().submission_log) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -796,7 +799,7 @@ async def test_rejects_command_breaching_sector_concentration() -> None:
         }
     )
     envelope = _make_analyst_envelope()
-    state, server, _ = _build_state_and_server(
+    get_state, server, _ = _build_state_and_server(
         envelope_for_routing=envelope,
         config=cfg,
         snapshot=snapshot,
@@ -822,7 +825,7 @@ async def test_rejects_command_breaching_sector_concentration() -> None:
     assert breach["overage"] > 0
 
     # State cell unchanged.
-    assert len(state.validation_state.accumulated_deltas) == 0
+    assert len(get_state().validation_state.accumulated_deltas) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -855,7 +858,7 @@ async def test_processes_multiple_commands_with_partial_rejection() -> None:
         verdict="approve",
         commands=(cmd1, cmd2, cmd3),
     )
-    state, server, _ = _build_state_and_server(
+    get_state, server, _ = _build_state_and_server(
         envelope_for_routing=envelope,
         config=cfg,
         snapshot=snapshot,
@@ -876,7 +879,7 @@ async def test_processes_multiple_commands_with_partial_rejection() -> None:
 
     # State cell advanced exactly twice — once per accepted constructive
     # command (cmd1 + cmd3).
-    assert len(state.validation_state.accumulated_deltas) == 2
+    assert len(get_state().validation_state.accumulated_deltas) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -904,7 +907,7 @@ async def test_close_commands_skip_validation_pass_through() -> None:
         verdict="approve",
         commands=(_close_command(), _cancel_command()),
     )
-    state, server, _ = _build_state_and_server(
+    get_state, server, _ = _build_state_and_server(
         envelope_for_routing=envelope,
         config=cfg,
         snapshot=snapshot,
@@ -920,7 +923,7 @@ async def test_close_commands_skip_validation_pass_through() -> None:
     assert len(results) == 2
     assert all(r["status"] == "accepted" for r in results)
     # No cumulative-state advancement (CLOSE/CANCEL produce no projected delta).
-    assert len(state.validation_state.accumulated_deltas) == 0
+    assert len(get_state().validation_state.accumulated_deltas) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -934,7 +937,7 @@ async def test_halt_mode_rejects_open_command() -> None:
     the halt-mode invariant in :func:`validate_pm_envelope`; the response is
     a single envelope-level rejection with rule=schema_invariant."""
     envelope = _make_analyst_envelope()
-    state, server, _ = _build_state_and_server(
+    get_state, server, _ = _build_state_and_server(
         envelope_for_routing=envelope,
         halt_mode=True,
     )
@@ -951,7 +954,7 @@ async def test_halt_mode_rejects_open_command() -> None:
     assert results[0]["rejection_payload"]["rules_breached"][0]["rule"] == "schema_invariant"
     assert "halt_mode" in results[0]["rejection_payload"]["suggested_modification"].lower()
     # No state-cell advancement.
-    assert len(state.validation_state.accumulated_deltas) == 0
+    assert len(get_state().validation_state.accumulated_deltas) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -968,7 +971,7 @@ async def test_submission_log_captures_every_call() -> None:
     cfg = _config()
 
     # Build state once and reuse for two calls.
-    state, server, _ = _build_state_and_server(
+    get_state, server, _ = _build_state_and_server(
         config=cfg,
         # Pre-route both envelopes' provenance.
         extra_recommendations=(
@@ -994,7 +997,7 @@ async def test_submission_log_captures_every_call() -> None:
     payload2 = json.loads(text2)
     assert payload2["submission_results"][0]["status"] == "rejected"
 
-    log = get_submission_log(state)
+    log = get_submission_log(get_state())
     assert len(log) == 2
     assert log[0].envelope.envelope_id == "ENV-REC-1"
     assert log[1].envelope.envelope_id == "ENV-REC-2"
@@ -1012,17 +1015,17 @@ async def test_state_cell_isolation() -> None:
     not affect the other."""
     envelope = _make_analyst_envelope()
 
-    state_a, server_a, _ = _build_state_and_server(envelope_for_routing=envelope)
-    state_b, _server_b, _ = _build_state_and_server(envelope_for_routing=envelope)
+    get_state_a, server_a, _ = _build_state_and_server(envelope_for_routing=envelope)
+    get_state_b, _server_b, _ = _build_state_and_server(envelope_for_routing=envelope)
 
     text, _ = await _invoke_mcp_tool(server_a, "submit_envelope", envelope.model_dump(mode="json"))
     assert json.loads(text)["submission_results"][0]["status"] == "accepted"
 
     # State A advanced; state B untouched.
-    assert len(state_a.validation_state.accumulated_deltas) == 1
-    assert len(state_b.validation_state.accumulated_deltas) == 0
-    assert len(state_a.submission_log) == 1
-    assert len(state_b.submission_log) == 0
+    assert len(get_state_a().validation_state.accumulated_deltas) == 1
+    assert len(get_state_b().validation_state.accumulated_deltas) == 0
+    assert len(get_state_a().submission_log) == 1
+    assert len(get_state_b().submission_log) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1059,7 +1062,7 @@ async def test_layer_1_parse_failure_captured_in_failed_submission_log() -> None
     ``submission_log`` remains empty since no PMEnvelope was produced."""
     from alphamind.decision.portfolio_manager.submit_envelope import get_failed_submission_log
 
-    state, server, _ = _build_state_and_server()
+    get_state, server, _ = _build_state_and_server()
 
     # Missing the source_provenance discriminator — the discriminated-union
     # adapter cannot route the payload to either PMAnalystEnvelope or
@@ -1080,7 +1083,7 @@ async def test_layer_1_parse_failure_captured_in_failed_submission_log() -> None
     assert result["status"] == "rejected"
     assert result["rejection_payload"]["rules_breached"][0]["rule"] == "schema_invariant"
 
-    failed_log = get_failed_submission_log(state)
+    failed_log = get_failed_submission_log(get_state())
     assert len(failed_log) == 1
     entry = failed_log[0]
     assert entry.raw_args == bogus_args
@@ -1090,9 +1093,9 @@ async def test_layer_1_parse_failure_captured_in_failed_submission_log() -> None
         f"command_id {entry.command_id!r} does not match expected Layer-1 format"
     )
     # Parsed submission_log untouched — Layer-1 failures don't reach there.
-    assert len(state.submission_log) == 0
+    assert len(get_state().submission_log) == 0
     # State cell unchanged.
-    assert len(state.validation_state.accumulated_deltas) == 0
+    assert len(get_state().validation_state.accumulated_deltas) == 0
 
 
 @pytest.mark.asyncio
@@ -1102,7 +1105,7 @@ async def test_layer_1_failure_uses_fallback_envelope_id_when_missing() -> None:
     synthetic command_id is still well-formed for downstream tooling."""
     from alphamind.decision.portfolio_manager.submit_envelope import get_failed_submission_log
 
-    state, server, _ = _build_state_and_server()
+    get_state, server, _ = _build_state_and_server()
 
     bogus_args: dict[str, Any] = {"garbage": "value"}
 
@@ -1110,7 +1113,7 @@ async def test_layer_1_failure_uses_fallback_envelope_id_when_missing() -> None:
     payload = json.loads(text)
     assert payload["envelope_id"] == "ENV-REC-INVALID"
 
-    failed_log = get_failed_submission_log(state)
+    failed_log = get_failed_submission_log(get_state())
     assert len(failed_log) == 1
     assert failed_log[0].raw_args == bogus_args
     assert failed_log[0].command_id.endswith(".ENV-REC-INVALID.0.0")
@@ -1219,7 +1222,7 @@ async def test_handle_submit_envelope_persists_layer1_failure_via_phase2(
         )
 
         bogus_args: dict[str, Any] = {"envelope_id": "ENV-REC-99", "garbage": "value"}
-        await _handle_submit_envelope(
+        _response, state = await _handle_submit_envelope(
             bogus_args,
             state=state,
             retrieval_store=_retrieval_store(),
@@ -1371,7 +1374,7 @@ async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
         )
         bundle = _make_bundle(recommendations=(_recommendation_stub("REC-1"),))
 
-        await _handle_submit_envelope(
+        _response, _state = await _handle_submit_envelope(
             envelope.model_dump(mode="json"),
             state=state,
             retrieval_store=_retrieval_store(),
@@ -1442,3 +1445,74 @@ def test_build_initial_submit_envelope_state_rejects_empty_invocation_id() -> No
             invocation_id="",
             starting_validation_state=validation_state,
         )
+
+
+# ---------------------------------------------------------------------------
+# 15. ALP-476 — frozen-dataclass invariants on the state cell + log entries
+# ---------------------------------------------------------------------------
+
+
+def test_submit_envelope_state_is_frozen() -> None:
+    """``SubmitEnvelopeState`` is a frozen dataclass; attribute assignment raises."""
+    import dataclasses
+
+    from alphamind.decision.portfolio_manager.submit_envelope import SubmitEnvelopeState
+
+    cfg = _config()
+    validation_state = _make_validation_state(config=cfg)
+    state = SubmitEnvelopeState(validation_state=validation_state, invocation_id="inv-1")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        state.submission_log = ()  # type: ignore[misc]
+
+
+def test_submit_envelope_state_replace_produces_new_instance_with_field_changed() -> None:
+    """``dataclasses.replace(state, submission_log=new_log)`` yields a new
+    instance with the updated field; the input state is unchanged."""
+    import dataclasses
+
+    from alphamind.decision.portfolio_manager.submit_envelope import (
+        SubmissionLogEntry,
+        SubmitEnvelopeState,
+    )
+
+    cfg = _config()
+    validation_state = _make_validation_state(config=cfg)
+    state = SubmitEnvelopeState(validation_state=validation_state, invocation_id="inv-1")
+
+    envelope = _make_analyst_envelope()
+    entry = SubmissionLogEntry(envelope=envelope, submission_results=())
+    new_state = dataclasses.replace(state, submission_log=(entry,))
+
+    assert new_state is not state
+    assert new_state.submission_log == (entry,)
+    assert state.submission_log == ()
+    # Other fields preserved.
+    assert new_state.invocation_id == state.invocation_id
+    assert new_state.validation_state is state.validation_state
+
+
+def test_submission_log_entry_is_frozen() -> None:
+    """``SubmissionLogEntry`` is a frozen, slotted dataclass."""
+    import dataclasses
+
+    from alphamind.decision.portfolio_manager.submit_envelope import SubmissionLogEntry
+
+    envelope = _make_analyst_envelope()
+    entry = SubmissionLogEntry(envelope=envelope, submission_results=())
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        entry.submission_results = ()  # type: ignore[misc]
+
+
+def test_failed_submission_entry_is_frozen() -> None:
+    """``FailedSubmissionEntry`` is a frozen, slotted dataclass."""
+    import dataclasses
+
+    from alphamind.decision.portfolio_manager.submit_envelope import FailedSubmissionEntry
+
+    entry = FailedSubmissionEntry(
+        raw_args={"k": "v"},
+        validation_error_repr="err",
+        command_id="inv-1.ENV-REC-1.0.0",
+    )
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        entry.command_id = "new"  # type: ignore[misc]

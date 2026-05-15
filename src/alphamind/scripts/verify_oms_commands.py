@@ -1094,7 +1094,7 @@ async def run_phase_3_pm_envelope_path(db_path: Path) -> PhaseResult:
                 invocation_id=_PHASE_3_INVOCATION_ID,
                 starting_validation_state=validation_state,
             )
-            mcp_servers, _allowed = build_submit_envelope_mcp_server(
+            mcp_servers, _allowed, _get_state = build_submit_envelope_mcp_server(
                 state,
                 retrieval_store=_phase_3_retrieval_store(),
                 pre_processor_bundle=_phase_3_pre_processor_bundle(),
@@ -1542,7 +1542,7 @@ async def run_phase_4_engine_envelope_path(db_path: Path) -> PhaseResult:
         )
         handle = await ctx.__aenter__()
         try:
-            result = await submit_engine_envelope(
+            result, state = await submit_engine_envelope(
                 envelope,
                 handle=handle,
                 state=state,

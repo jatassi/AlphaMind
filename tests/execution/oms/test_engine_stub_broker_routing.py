@@ -605,7 +605,7 @@ async def test_engine_envelope_routes_close_through_dispatcher(
     )
 
     ctx, handle = await _open_handle(factory)
-    result = await submit_engine_envelope(
+    result, _state = await submit_engine_envelope(
         _engine_envelope(),
         handle=handle,
         state=state,
@@ -653,7 +653,7 @@ async def test_engine_envelope_legacy_path_unchanged_without_client(
     state = build_initial_submit_engine_envelope_state(monitor_session_id=_MONITOR_SESSION)
 
     ctx, handle = await _open_handle(factory)
-    result = await submit_engine_envelope(
+    result, _state = await submit_engine_envelope(
         _engine_envelope(),
         handle=handle,
         state=state,
@@ -728,7 +728,7 @@ async def test_pm_envelope_open_equity_routes_through_dispatcher(
         client.submit_order = MagicMock(side_effect=_submit_order)
         queries = MagicMock(spec=AccountStateQueries)
 
-        await _handle_submit_envelope(
+        _response, state = await _handle_submit_envelope(
             envelope.model_dump(mode="json"),
             state=state,
             retrieval_store=_retrieval_store(),
@@ -865,7 +865,7 @@ async def test_pm_envelope_open_equity_routes_through_injected_broker_dispatch(
         client = MagicMock()
         queries = MagicMock(spec=AccountStateQueries)
 
-        await _handle_submit_envelope(
+        _response, state = await _handle_submit_envelope(
             envelope.model_dump(mode="json"),
             state=state,
             retrieval_store=_retrieval_store(),
@@ -946,7 +946,7 @@ async def test_pm_envelope_gateway_failure_writes_command_abandoned(
         client.submit_order = MagicMock(side_effect=httpx.ConnectError("network down"))
         queries = MagicMock(spec=AccountStateQueries)
 
-        await _handle_submit_envelope(
+        _response, state = await _handle_submit_envelope(
             envelope.model_dump(mode="json"),
             state=state,
             retrieval_store=_retrieval_store(),
@@ -1053,7 +1053,7 @@ async def test_pm_envelope_close_equity_routes_through_dispatcher(
 
         pm_view = _make_pm_view(positions=(_position_view("POS-NVDA-001"),))
 
-        await _handle_submit_envelope(
+        _response, state = await _handle_submit_envelope(
             envelope.model_dump(mode="json"),
             state=state,
             retrieval_store=_retrieval_store(),
@@ -1142,7 +1142,7 @@ async def test_pm_envelope_permanent_rejection_carries_code_in_gateway_reason(
         client.submit_order = MagicMock(side_effect=api_error)
         queries = MagicMock(spec=AccountStateQueries)
 
-        await _handle_submit_envelope(
+        _response, state = await _handle_submit_envelope(
             envelope.model_dump(mode="json"),
             state=state,
             retrieval_store=_retrieval_store(),

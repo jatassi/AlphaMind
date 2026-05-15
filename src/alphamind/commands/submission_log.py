@@ -27,7 +27,7 @@ __all__ = [
 ]
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class SubmissionLogEntry:
     """One ``submit_envelope`` call's record — envelope + per-command results."""
 
@@ -35,7 +35,7 @@ class SubmissionLogEntry:
     submission_results: tuple[SubmissionResult, ...]
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class FailedSubmissionEntry:
     """One ``submit_envelope`` call that failed Layer-1 (Pydantic) parsing.
 

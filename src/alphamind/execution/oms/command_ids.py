@@ -18,8 +18,7 @@ kernel downward to read the modification list for ``attempt_seq``.
 from __future__ import annotations
 
 import re
-
-from pydantic import BaseModel, ConfigDict
+from dataclasses import dataclass
 
 from alphamind._kernel.ids import EnvelopeId, InvocationId
 from alphamind.commands.pm_envelope import PMEnvelope
@@ -52,11 +51,12 @@ _ENGINE_COMMAND_ID_PATTERN = re.compile(
 
 
 # ---------------------------------------------------------------------------
-# Component models (frozen, Pydantic)
+# Component models (frozen dataclass — internal carriers per ALP-476 / 10c)
 # ---------------------------------------------------------------------------
 
 
-class PMCommandIdComponents(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PMCommandIdComponents:
     """Decomposed PM-originated command ID — output of :func:`parse_pm_command_id`.
 
     ``invocation_id`` is returned **without** the ``inv-`` prefix to match the
@@ -64,19 +64,16 @@ class PMCommandIdComponents(BaseModel):
     is omitted.
     """
 
-    model_config = ConfigDict(frozen=True)
-
     invocation_id: InvocationId
     envelope_id: EnvelopeId
     command_ordinal: int
     attempt_seq: int
 
 
-class EngineCommandIdComponents(BaseModel):
+@dataclass(frozen=True, slots=True)
+class EngineCommandIdComponents:
     """Decomposed engine-originated command ID — output of
     :func:`parse_engine_command_id`."""
-
-    model_config = ConfigDict(frozen=True)
 
     monitor_session_id: str
     trigger_id: int

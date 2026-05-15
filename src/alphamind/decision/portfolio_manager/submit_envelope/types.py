@@ -15,8 +15,10 @@ introduced by ALP-458). Log-entry types — :class:`SubmissionLogEntry`,
 We import them here so that the package's curated ``__init__.py`` can re-export
 the names from a single source.
 
-Story 10c's frozen-dataclass conversion of the internal Group C types is out of
-scope; they remain Pydantic on the engine-side contract module.
+ALP-476 (story 10c): :class:`SubmitEnvelopeState` is now ``frozen=True,
+slots=True`` per the audit's L8 mutable-dataclass remediation. Mutation sites
+use :func:`dataclasses.replace` and thread the new state through return values;
+the MCP closure in :mod:`.server` rebinds via ``nonlocal state``.
 """
 
 from __future__ import annotations
@@ -35,18 +37,19 @@ from alphamind.commands.submission_results import (
 from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationToolState
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class SubmitEnvelopeState:
-    """Mutable per-invocation cumulative state for the submit_envelope tool.
+    """Frozen per-invocation cumulative state for the submit_envelope tool.
 
-    The cell is mutated in place by the MCP closure: ``validation_state``
-    advances on every accepted command via ``with_accepted_proposal(delta)``;
-    ``submission_log`` appends one entry per call that parsed to a
-    :class:`PMEnvelope`; ``failed_submission_log`` appends one entry per
-    Layer-1 (Pydantic) parse failure; ``command_id_counter`` is not currently
-    incremented (the synthetic ID format derives ordinal from the envelope's
-    command index and ``attempt_seq`` from ``post_rejection`` modification
-    count, both of which are deterministic from the envelope alone).
+    Each transition produces a new instance via :func:`dataclasses.replace`:
+    ``validation_state`` advances on every accepted command via
+    ``with_accepted_proposal(delta)``; ``submission_log`` appends one entry per
+    call that parsed to a :class:`PMEnvelope`; ``failed_submission_log``
+    appends one entry per Layer-1 (Pydantic) parse failure;
+    ``command_id_counter`` is not currently incremented (the synthetic ID
+    format derives ordinal from the envelope's command index and
+    ``attempt_seq`` from ``post_rejection`` modification count, both
+    deterministic from the envelope alone).
 
     ``invocation_id`` is required (non-empty) — it is interpolated into every
     synthetic command_id via :func:`alphamind.execution.oms.command_ids.derive_pm_command_id`;

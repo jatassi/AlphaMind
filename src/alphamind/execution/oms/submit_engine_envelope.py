@@ -31,8 +31,9 @@ returns a :class:`SubmissionResult` matching the existing PM-side shape.
 
 from __future__ import annotations
 
+import dataclasses
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from alphamind._kernel.ids import (
@@ -76,19 +77,23 @@ __all__ = [
 _ENVELOPE_ID_PATTERN = re.compile(r"^MON\.(?P<session>[^.]+)\.(?P<trigger>[0-9]+)$")
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class SubmitEngineEnvelopeState:
-    """Mutable per-monitor-session state for :func:`submit_engine_envelope`.
+    """Frozen per-monitor-session state for :func:`submit_engine_envelope`.
 
-    The state cell tracks the bound ``monitor_session_id`` and the set of
+    The state tracks the bound ``monitor_session_id`` and the frozen set of
     ``trigger_id`` values already submitted within this session so duplicate
     ``(monitor_session_id, trigger_id)`` pairs raise per
     ``oms-command-ids.md § What happens if a duplicate command ID arrives``.
     A monitor restart creates a new session and a fresh state cell.
+
+    ALP-476 (story 10c) made the cell frozen: each accepted submission
+    produces a new instance via :func:`dataclasses.replace`; callers thread
+    the new state through their submission closure.
     """
 
     monitor_session_id: str
-    seen_trigger_ids: set[int] = field(default_factory=set)
+    seen_trigger_ids: frozenset[int] = frozenset()
 
     def __post_init__(self) -> None:
         if not self.monitor_session_id:
@@ -119,8 +124,9 @@ async def submit_engine_envelope(
     client: TradingClient | None = None,
     queries: AccountStateQueries | None = None,
     execution_config: ExecutionConfig | None = None,
-) -> SubmissionResult:
-    """Persist the protective CLOSE embedded in *envelope* and return a SubmissionResult.
+) -> tuple[SubmissionResult, SubmitEngineEnvelopeState]:
+    """Persist the protective CLOSE embedded in *envelope* and return
+    ``(SubmissionResult, new_state)``.
 
     See module docstring for the validation layering. On accepted submission,
     the protective CLOSE persists via the Phase 2 writeback machinery
@@ -129,6 +135,12 @@ async def submit_engine_envelope(
     ``position_selection_rationale``, ``rule_breached``, and (when set) the
     cascade_id. On ``deferred_to_pm`` secondary-breach, the function returns
     a rejection without persisting the close.
+
+    Post-ALP-476 the state cell is frozen: an accepted submission produces a
+    new state whose ``seen_trigger_ids`` includes ``envelope_trigger`` via
+    :func:`dataclasses.replace`. The caller's submission closure rebinds its
+    captured cell with the returned state. Rejections / failures return the
+    input state unchanged.
 
     When ``client`` + ``queries`` + ``execution_config`` are supplied (engine-stub
     coordinated swap, story 03e / ALP-390), the embedded CLOSE additionally
@@ -219,11 +231,14 @@ async def submit_engine_envelope(
             ),
             feature_disabled=None,
         )
-        return SubmissionResult(
-            command_ordinal=0,
-            status="rejected",
-            command_id=command_id,
-            rejection_payload=rejection,
+        return (
+            SubmissionResult(
+                command_ordinal=0,
+                status="rejected",
+                command_id=command_id,
+                rejection_payload=rejection,
+            ),
+            state,
         )
 
     # Optionally route through the broker adapter before persistence (engine-stub
@@ -244,10 +259,13 @@ async def submit_engine_envelope(
             client_order_id=ClientOrderId(command_id),
         )
         if isinstance(dispatch_outcome, _BrokerFailure):
-            return _build_engine_gateway_failure_result(
-                command_id=command_id,
-                envelope=envelope,
-                reason=dispatch_outcome,
+            return (
+                _build_engine_gateway_failure_result(
+                    command_id=command_id,
+                    envelope=envelope,
+                    reason=dispatch_outcome,
+                ),
+                state,
             )
         submitted_alpaca_order_id = dispatch_outcome
         # The Acknowledgment.order_id surfaces the broker's real id when present;
@@ -289,18 +307,25 @@ async def submit_engine_envelope(
     )
 
     # Mark the trigger as seen only after a successful persistence; a failure
-    # mid-writeback rolls back the surrounding transaction, so the state cell
-    # would otherwise be out of sync with the persisted record.
-    state.seen_trigger_ids.add(envelope_trigger)
+    # mid-writeback rolls back the surrounding transaction, so the new state
+    # (returned only on persistence success) would otherwise be out of sync
+    # with the persisted record. ALP-476 — replace the frozen cell to extend
+    # the dedup frozenset.
+    new_state = dataclasses.replace(
+        state, seen_trigger_ids=state.seen_trigger_ids | {envelope_trigger}
+    )
 
-    return SubmissionResult(
-        command_ordinal=0,
-        status="accepted",
-        command_id=command_id,
-        acknowledgment=Acknowledgment(
-            position_id=embedded.position_id,
-            order_id=OrderId(submitted_ack_order_id),
+    return (
+        SubmissionResult(
+            command_ordinal=0,
+            status="accepted",
+            command_id=command_id,
+            acknowledgment=Acknowledgment(
+                position_id=embedded.position_id,
+                order_id=OrderId(submitted_ack_order_id),
+            ),
         ),
+        new_state,
     )
 
 

@@ -701,10 +701,14 @@ def make_submit_envelope(
     id_provider = invocation_id_provider or make_invocation_id_provider_sync(session_factory)
 
     async def _submit(envelope: OmsEngineEnvelope) -> Any:
+        nonlocal state
         invocation_id = await id_provider()
         async with session_factory() as session:
             handle = InvocationHandle(session=session, invocation_id=invocation_id)
-            result = await submit_engine_envelope(
+            # ALP-476 — submit_engine_envelope returns ``(result, new_state)``;
+            # rebind the closure cell so the dedup frozenset persists across
+            # subsequent envelopes within the same monitor session.
+            result, state = await submit_engine_envelope(
                 envelope,
                 handle=handle,
                 state=state,

@@ -493,7 +493,7 @@ async def test_happy_path_persists_close_order_and_emits_activity_log(
     state = build_initial_submit_engine_envelope_state(monitor_session_id=_MONITOR_SESSION)
 
     ctx, handle = await _open_handle(factory)
-    result = await submit_engine_envelope(
+    result, _state = await submit_engine_envelope(
         _engine_envelope(),
         handle=handle,
         state=state,
@@ -548,7 +548,7 @@ async def test_derives_command_id_when_embedded_close_lacks_one(
     envelope = _engine_envelope(commands=(_engine_close_command(command_id=None),))
 
     ctx, handle = await _open_handle(factory)
-    result = await submit_engine_envelope(
+    result, _state = await submit_engine_envelope(
         envelope,
         handle=handle,
         state=state,
@@ -614,7 +614,7 @@ async def test_rejects_secondary_breach_deferred_to_pm(
     )
 
     ctx, handle = await _open_handle(factory)
-    result = await submit_engine_envelope(
+    result, _state = await submit_engine_envelope(
         deferred_envelope,
         handle=handle,
         state=state,
@@ -669,10 +669,10 @@ async def test_cascade_id_threads_through_to_activity_log(
     )
 
     ctx, handle = await _open_handle(factory)
-    await submit_engine_envelope(
+    _result1, state = await submit_engine_envelope(
         env1, handle=handle, state=state, config=_make_state_persistence_config()
     )
-    await submit_engine_envelope(
+    _result2, state = await submit_engine_envelope(
         env2, handle=handle, state=state, config=_make_state_persistence_config()
     )
     await ctx.__aexit__(None, None, None)
@@ -706,7 +706,7 @@ async def test_position_selection_rationale_threads_to_activity_log(
     )
 
     ctx, handle = await _open_handle(factory)
-    await submit_engine_envelope(
+    _result, _state = await submit_engine_envelope(
         envelope, handle=handle, state=state, config=_make_state_persistence_config()
     )
     await ctx.__aexit__(None, None, None)
@@ -736,7 +736,7 @@ async def test_duplicate_trigger_id_within_session_raises(
     envelope = _engine_envelope()
 
     ctx, handle = await _open_handle(factory)
-    await submit_engine_envelope(
+    _result, state = await submit_engine_envelope(
         envelope, handle=handle, state=state, config=_make_state_persistence_config()
     )
     # Second submission with the same envelope_id must raise.
@@ -820,7 +820,7 @@ async def test_engine_envelope_does_not_emit_pm_decision(
     envelope = _engine_envelope()
 
     ctx, handle = await _open_handle(factory)
-    await submit_engine_envelope(
+    _result, _state = await submit_engine_envelope(
         envelope, handle=handle, state=state, config=_make_state_persistence_config()
     )
     await ctx.__aexit__(None, None, None)
@@ -829,3 +829,36 @@ async def test_engine_envelope_does_not_emit_pm_decision(
     types = {r.event_type for r in rows}
     assert EventType.ORDER_SUBMITTED.value in types
     assert EventType.PM_DECISION.value not in types
+
+
+# ---------------------------------------------------------------------------
+# ALP-476 — frozen-dataclass invariants on the engine-envelope state cell
+# ---------------------------------------------------------------------------
+
+
+def test_submit_engine_envelope_state_is_frozen() -> None:
+    """``SubmitEngineEnvelopeState`` is a frozen dataclass; attribute assignment
+    raises (ALP-476 — Group C L8 mutable-dataclass conversion)."""
+    import dataclasses
+
+    from alphamind.execution.oms import build_initial_submit_engine_envelope_state
+
+    state = build_initial_submit_engine_envelope_state(monitor_session_id="session-frozen")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        state.seen_trigger_ids = frozenset({1})  # type: ignore[misc]
+
+
+def test_submit_engine_envelope_state_replace_extends_seen_trigger_ids() -> None:
+    """``dataclasses.replace(state, seen_trigger_ids=...)`` yields a new instance
+    with the updated dedup set; the input state is unchanged."""
+    import dataclasses
+
+    from alphamind.execution.oms import build_initial_submit_engine_envelope_state
+
+    state = build_initial_submit_engine_envelope_state(monitor_session_id="session-replace")
+    new_state = dataclasses.replace(state, seen_trigger_ids=frozenset({42}))
+
+    assert new_state is not state
+    assert new_state.seen_trigger_ids == frozenset({42})
+    assert state.seen_trigger_ids == frozenset()
+    assert new_state.monitor_session_id == state.monitor_session_id

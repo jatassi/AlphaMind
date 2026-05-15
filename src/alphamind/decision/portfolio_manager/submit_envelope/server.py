@@ -13,6 +13,7 @@ closure.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -100,18 +101,24 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     queries: AccountStateQueries | None = None,
     execution_config: ExecutionConfig | None = None,
     broker_dispatch: BrokerDispatch | None = None,
-) -> tuple[Mapping[str, McpSdkServerConfig], tuple[str, ...]]:
+) -> tuple[Mapping[str, McpSdkServerConfig], tuple[str, ...], Callable[[], SubmitEnvelopeState]]:
     """Build a per-invocation SDK MCP server bound to *state*.
 
-    Returns ``(mcp_servers_dict, allowed_tool_names)`` ready for direct
-    assignment to ``ClaudeAgentOptions.mcp_servers`` and
-    ``ClaudeAgentOptions.allowed_tools``. The single registered tool is
+    Returns ``(mcp_servers_dict, allowed_tool_names, get_current_state)`` —
+    the first two are ready for direct assignment to
+    ``ClaudeAgentOptions.mcp_servers`` / ``ClaudeAgentOptions.allowed_tools``;
+    the third is a zero-arg callable returning the latest
+    :class:`SubmitEnvelopeState` after the SDK loop completes (the harness +
+    runner archive ``state.submission_log`` / ``state.failed_submission_log``
+    via this callable). The single registered tool is
     ``mcp__alphamind_execution_oms_submit__submit_envelope``.
 
-    The factory captures *state* in the tool's closure; each call mutates
-    the cell — accepted commands advance ``state.validation_state`` via
-    ``with_accepted_proposal(delta)``, every call appends to
-    ``state.submission_log``.
+    The factory captures *state* in the tool's closure; each call rebinds the
+    captured variable via ``nonlocal state`` to the post-call state returned by
+    :func:`_handle_submit_envelope` — accepted commands advance
+    ``state.validation_state`` (via :func:`dataclasses.replace` with
+    ``with_accepted_proposal(delta)``), every call extends
+    ``state.submission_log`` (post-ALP-476 frozen-dataclass cell).
 
     ``library_config`` and ``library_market`` are part of the runner-facing
     signature (story 08 ALP-330) but are already wired into
@@ -154,7 +161,8 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
         _SUBMIT_ENVELOPE_INPUT_SCHEMA,
     )
     async def _submit_envelope(args: dict[str, Any]) -> dict[str, Any]:
-        return await _handle_submit_envelope(
+        nonlocal state
+        response, state = await _handle_submit_envelope(
             args,
             state=state,
             retrieval_store=retrieval_store,
@@ -170,10 +178,20 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
             execution_config=execution_config,
             broker_dispatch=broker_dispatch,
         )
+        return response
+
+    def get_current_state() -> SubmitEnvelopeState:
+        """Return the latest :class:`SubmitEnvelopeState` (post-ALP-476).
+
+        Callers archive ``state.submission_log`` / ``state.failed_submission_log``
+        after the SDK loop completes; the closure rebinds the captured cell on
+        every successful invocation.
+        """
+        return state
 
     server = create_sdk_mcp_server(name=_SERVER_NAME, tools=[_submit_envelope])
     allowed = (f"mcp__{_SERVER_NAME}__{_TOOL_NAME}",)
-    return {_SERVER_NAME: server}, allowed
+    return {_SERVER_NAME: server}, allowed, get_current_state
 
 
 async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator threads every per-invocation parameter once.
@@ -192,8 +210,13 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
     queries: AccountStateQueries | None = None,
     execution_config: ExecutionConfig | None = None,
     broker_dispatch: BrokerDispatch | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], SubmitEnvelopeState]:
     """Coerce input → run validators → process commands → log + respond.
+
+    Returns ``(response, new_state)`` — the new state carries the
+    log/validation-state advances accumulated during processing. The MCP
+    closure in :func:`build_submit_envelope_mcp_server` rebinds its captured
+    cell with the returned state via ``nonlocal``.
 
     When ``invocation_handle`` is supplied (production composition path,
     ALP-310), every accepted envelope writes through to SQL via the Phase 2
@@ -223,7 +246,10 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
             validation_error_repr=str(exc),
             command_id=synthetic_command_id,
         )
-        state.failed_submission_log = (*state.failed_submission_log, failed_entry)
+        state = dataclasses.replace(
+            state,
+            failed_submission_log=(*state.failed_submission_log, failed_entry),
+        )
         if invocation_handle is not None:
             await _persist_envelope_parse_failure_via_phase2(
                 invocation_handle, failed_entry, state_persistence_config
@@ -261,7 +287,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
         )
 
     # Step 3: process embedded commands.
-    submission_results = _process_commands(
+    submission_results, state = _process_commands(
         envelope,
         state=state,
         sector_resolver=sector_resolver,
@@ -288,9 +314,12 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
         )
 
     # Step 5: append to submission log (post-broker outcome).
-    state.submission_log = (
-        *state.submission_log,
-        SubmissionLogEntry(envelope=envelope, submission_results=submission_results),
+    state = dataclasses.replace(
+        state,
+        submission_log=(
+            *state.submission_log,
+            SubmissionLogEntry(envelope=envelope, submission_results=submission_results),
+        ),
     )
 
     # Step 6: SQL writeback (opt-in via invocation_handle).
@@ -314,7 +343,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
             )
 
     # Step 7: serialize.
-    return {
+    response = {
         "content": [
             {
                 "type": "text",
@@ -322,6 +351,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
             }
         ],
     }
+    return response, state
 
 
 __all__ = [

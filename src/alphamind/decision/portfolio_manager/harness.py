@@ -415,7 +415,13 @@ def _compose_retry_prompt(original_user_message: str, retry_diagnostic: str) -> 
 
 @dataclass
 class _DiagState:
-    """Mutable diagnostic state accumulated during an invocation."""
+    """Mutable diagnostic state accumulated during an invocation.
+
+    ``get_submit_envelope_state`` is the zero-arg accessor returned by
+    :func:`build_submit_envelope_mcp_server`; it returns the latest
+    :class:`SubmitEnvelopeState` after the SDK loop completes (ALP-476
+    frozen-cell threading).
+    """
 
     agent_name: str
     invocation_id: str
@@ -423,7 +429,7 @@ class _DiagState:
     user_message: str
     model: str
     archive_root: Path | None
-    submit_envelope_state: SubmitEnvelopeState
+    get_submit_envelope_state: Callable[[], SubmitEnvelopeState]
 
     response_initial: str = ""
     response_retry: str | None = None
@@ -484,12 +490,13 @@ class _DiagState:
         }
         (diag_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
+        latest_state = self.get_submit_envelope_state()
         submission_log = [
             {
                 "envelope": entry.envelope.model_dump(mode="json"),
                 "submission_results": [r.model_dump(mode="json") for r in entry.submission_results],
             }
-            for entry in self.submit_envelope_state.submission_log
+            for entry in latest_state.submission_log
         ]
         (diag_dir / "submission_log.json").write_text(
             json.dumps(submission_log, indent=2), encoding="utf-8"
@@ -501,7 +508,7 @@ class _DiagState:
                 "validation_error_repr": entry.validation_error_repr,
                 "raw_args": entry.raw_args,
             }
-            for entry in self.submit_envelope_state.failed_submission_log
+            for entry in latest_state.failed_submission_log
         ]
         (diag_dir / "failed_submission_log.json").write_text(
             json.dumps(failed_submission_log, indent=2), encoding="utf-8"
@@ -587,12 +594,14 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
     library_config: LibraryConfig,
     library_market: MarketInputs,
     broker_dispatch: BrokerDispatch | None = None,
-) -> tuple[dict[str, Any], list[str]]:
+) -> tuple[dict[str, Any], list[str], Callable[[], SubmitEnvelopeState]]:
     """Compose the four MCP servers and merge their allowed-tool lists.
 
-    Returns ``(merged_servers, merged_allowed_tools)`` ready for direct
-    assignment to ``ClaudeAgentOptions.mcp_servers`` and
-    ``ClaudeAgentOptions.allowed_tools``.
+    Returns ``(merged_servers, merged_allowed_tools, get_submit_envelope_state)``
+    — the first two are ready for direct assignment to
+    ``ClaudeAgentOptions.mcp_servers`` / ``ClaudeAgentOptions.allowed_tools``;
+    the third returns the latest :class:`SubmitEnvelopeState` after the SDK loop
+    completes (post-ALP-476 frozen-cell threading).
 
     ``broker_dispatch`` is the composition-root-injected
     :class:`alphamind.commands.protocols.BrokerDispatch` implementation
@@ -605,7 +614,7 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
     )
     retrieval_servers, retrieval_tools = build_retrieve_brief_mcp_server(retrieval_store)
     thesis_servers, thesis_tools = build_get_thesis_components_mcp_server(thesis_component_reader)
-    submit_servers, submit_tools = build_submit_envelope_mcp_server(
+    submit_servers, submit_tools, get_submit_envelope_state = build_submit_envelope_mcp_server(
         initial_submit_envelope_state,
         retrieval_store=retrieval_store,
         pre_processor_bundle=pre_processor_bundle,
@@ -629,7 +638,7 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
         *thesis_tools,
         *submit_tools,
     ]
-    return merged_servers, merged_tools
+    return merged_servers, merged_tools, get_submit_envelope_state
 
 
 _INCOMPAT_KEYWORDS: frozenset[str] = frozenset({"format", "discriminator"})
@@ -775,7 +784,7 @@ async def _run_retry_attempt(
         tool_calls_used=diag.tool_calls_used,
         wall_clock_seconds=wall_elapsed,
         stop_reason=stop_reason2,
-        submission_log=diag.submit_envelope_state.submission_log,
+        submission_log=diag.get_submit_envelope_state().submission_log,
     )
 
 
@@ -877,7 +886,7 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
 
     agent_name = AgentName.portfolio_manager.value
 
-    mcp_servers, allowed_tools = _build_mcp_wiring(
+    mcp_servers, allowed_tools, get_submit_envelope_state = _build_mcp_wiring(
         initial_validation_state=initial_validation_state,
         initial_submit_envelope_state=initial_submit_envelope_state,
         retrieval_store=retrieval_store,
@@ -906,7 +915,7 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
         user_message=user_message,
         model=str(agent_config.model),
         archive_root=archive_root,
-        submit_envelope_state=initial_submit_envelope_state,
+        get_submit_envelope_state=get_submit_envelope_state,
     )
     wall_start = time.monotonic()
 
@@ -994,7 +1003,7 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
             tool_calls_used=tool_calls1,
             wall_clock_seconds=wall_elapsed,
             stop_reason=stop_reason1,
-            submission_log=diag.submit_envelope_state.submission_log,
+            submission_log=diag.get_submit_envelope_state().submission_log,
         )
 
     # ------------------------------------------------------------------

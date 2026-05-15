@@ -868,7 +868,7 @@ async def test_handle_submit_envelope_writes_envelope_rejection_on_layer23_failu
     bundle = _bundle_with_recommendation("REC-1")
 
     ctx, handle = await _open_handle(factory)
-    response = await _handle_submit_envelope(
+    response, state = await _handle_submit_envelope(
         envelope.model_dump(mode="json"),
         state=state,
         retrieval_store=_minimal_retrieval_store(),
@@ -2199,7 +2199,7 @@ async def test_persist_envelope_parse_failure_without_handle_is_noop(
 
     # Bogus payload — fails Layer-1 (no source_provenance discriminator).
     bogus_args: dict[str, Any] = {"envelope_id": "ENV-REC-99", "garbage": "value"}
-    response = await _handle_submit_envelope(
+    response, state = await _handle_submit_envelope(
         bogus_args,
         state=state,
         retrieval_store=_minimal_retrieval_store(),
@@ -2241,7 +2241,7 @@ async def test_handle_submit_envelope_wires_sql_writeback_on_layer1_failure(
     bogus_args: dict[str, Any] = {"envelope_id": "ENV-REC-99", "garbage": "value"}
 
     ctx, handle = await _open_handle(factory)
-    response = await _handle_submit_envelope(
+    response, state = await _handle_submit_envelope(
         bogus_args,
         state=state,
         retrieval_store=_minimal_retrieval_store(),
@@ -2288,7 +2288,7 @@ async def test_handle_submit_envelope_wires_sql_writeback_on_accepted_envelope(
     bundle = _bundle_with_recommendation("REC-1")
 
     ctx, handle = await _open_handle(factory)
-    response = await _handle_submit_envelope(
+    response, state = await _handle_submit_envelope(
         envelope.model_dump(mode="json"),
         state=state,
         retrieval_store=_minimal_retrieval_store(),

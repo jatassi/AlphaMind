@@ -8,7 +8,8 @@ no hard-coded numerics in test bodies.
 
 from __future__ import annotations
 
-import pydantic
+import dataclasses
+
 import pytest
 
 from alphamind._kernel.regime import RegimeTransitionState
@@ -219,7 +220,7 @@ def test_inputs_are_unchanged_by_invocation() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Frozen Pydantic invariant on the result type
+# Frozen invariant on the result type (ALP-476 — Pydantic→frozen dataclass)
 # ---------------------------------------------------------------------------
 
 
@@ -235,8 +236,8 @@ def test_phase_1_enforcement_result_is_frozen() -> None:
         progressive_tiers=TIERS,
     )
 
-    with pytest.raises(pydantic.ValidationError):
-        result.drawdown_tier = DrawdownTier.CONSTRAINED
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        result.drawdown_tier = DrawdownTier.CONSTRAINED  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
