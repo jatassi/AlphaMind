@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 import yaml
 
-from alphamind._kernel.ids import InvocationId
+from alphamind._kernel.ids import InvocationId, Symbol
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -137,7 +137,7 @@ def _market_inputs(underlyings: Sequence[str] = ("AAPL", "NVDA", "ABC")) -> Mark
         iv_provider=FixtureIvProvider(
             surface={
                 "AAPL": IvSurfaceEntry(
-                    underlying="AAPL",
+                    underlying=Symbol("AAPL"),
                     quotes=(
                         IvQuote(
                             strike=100.0,

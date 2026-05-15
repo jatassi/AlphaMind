@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import Symbol
 from alphamind.execution.continuous_monitor.greeks_refresh import (
     IVQuote,
     fetch_iv_from_options_chains,
@@ -38,7 +39,7 @@ async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[Asyn
         sess.add(
             AssetUniverse(
                 asset_id="asset-AAPL",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 full_name="Apple Inc.",
                 asset_class="equity",
                 asset_role="universe",
@@ -51,7 +52,7 @@ async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[Asyn
         sess.add(
             OptionsContracts(
                 contract_ticker="O:AAPL260619C00200000",
-                underlying_ticker="AAPL",
+                underlying_ticker=Symbol("AAPL"),
                 expiration_date="2026-06-19",
                 strike_price=200.0,
                 contract_type="call",
@@ -174,7 +175,7 @@ class TestFetchIvQuotesBatch:
             sess.add(
                 OptionsContracts(
                     contract_ticker="O:AAPL260619P00200000",
-                    underlying_ticker="AAPL",
+                    underlying_ticker=Symbol("AAPL"),
                     expiration_date="2026-06-19",
                     strike_price=200.0,
                     contract_type="put",

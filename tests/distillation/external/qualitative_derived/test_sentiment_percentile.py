@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience
 from alphamind.distillation.qualitative_derived import (
@@ -144,7 +145,7 @@ class TestSentimentPercentileCalibrated:
         # Baseline mean=0.0, stdev=0.1 with 50 observations (above min)
         _add_baseline(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             as_of="2026-04-25T00:00:00Z",
             mean=0.0,
             stdev=0.1,
@@ -154,7 +155,7 @@ class TestSentimentPercentileCalibrated:
         _add_recent_article(
             session,
             article_id="art-1",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             published_at="2026-04-26T01:00:00Z",
             score=0.20,
         )
@@ -185,7 +186,7 @@ class TestSentimentPercentileCalibrated:
         _add_ticker(session, "AAPL")
         _add_baseline(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             as_of="2026-04-25T00:00:00Z",
             mean=0.5,
             stdev=0.1,
@@ -194,7 +195,7 @@ class TestSentimentPercentileCalibrated:
         _add_recent_article(
             session,
             article_id="art-1",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             published_at="2026-04-26T01:00:00Z",
             score=0.5,
         )
@@ -222,7 +223,7 @@ class TestSentimentPercentileBootstrap:
         # AAPL has only 10 observations — below the 30 min
         _add_baseline(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             as_of="2026-04-26T03:00:00Z",
             mean=0.0,
             stdev=0.1,
@@ -232,7 +233,7 @@ class TestSentimentPercentileBootstrap:
         # MSFT acts as the universe-pool source: calibrated with 50 obs
         _add_baseline(
             session,
-            ticker="MSFT",
+            ticker=Symbol("MSFT"),
             as_of="2026-04-26T03:00:00Z",
             mean=0.05,
             stdev=0.2,
@@ -242,7 +243,7 @@ class TestSentimentPercentileBootstrap:
         _add_recent_article(
             session,
             article_id="art-aapl",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             published_at="2026-04-26T01:00:00Z",
             score=0.3,
         )
@@ -272,7 +273,7 @@ class TestSentimentPercentileBootstrap:
         # No AAPL baseline; MSFT calibrated to act as pool
         _add_baseline(
             session,
-            ticker="MSFT",
+            ticker=Symbol("MSFT"),
             as_of="2026-04-26T03:00:00Z",
             mean=0.05,
             stdev=0.2,
@@ -282,7 +283,7 @@ class TestSentimentPercentileBootstrap:
         _add_recent_article(
             session,
             article_id="art-aapl",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             published_at="2026-04-26T01:00:00Z",
             score=0.3,
         )
@@ -315,7 +316,7 @@ class TestSentimentPercentileReflectsPerTickerDistribution:
         # TSLA: wide range → 0.2 is well within distribution
         _add_baseline(
             session,
-            ticker="TSLA",
+            ticker=Symbol("TSLA"),
             as_of="2026-04-25T00:00:00Z",
             mean=0.0,
             stdev=0.5,
@@ -324,7 +325,7 @@ class TestSentimentPercentileReflectsPerTickerDistribution:
         # JPM: narrow range → 0.2 is way out
         _add_baseline(
             session,
-            ticker="JPM",
+            ticker=Symbol("JPM"),
             as_of="2026-04-25T00:00:00Z",
             mean=0.0,
             stdev=0.05,
@@ -334,14 +335,14 @@ class TestSentimentPercentileReflectsPerTickerDistribution:
         _add_recent_article(
             session,
             article_id="art-tsla",
-            ticker="TSLA",
+            ticker=Symbol("TSLA"),
             published_at="2026-04-26T01:00:00Z",
             score=0.2,
         )
         _add_recent_article(
             session,
             article_id="art-jpm",
-            ticker="JPM",
+            ticker=Symbol("JPM"),
             published_at="2026-04-26T01:00:00Z",
             score=0.2,
         )

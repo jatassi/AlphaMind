@@ -260,10 +260,10 @@ class TestBracketsTable:
     def test_check_rejects_unknown_status(self, session: Session) -> None:
         session.add(
             BracketRow(
-                bracket_id="brk1",
-                position_id="pos1",
+                bracket_id=BracketId("brk1"),
+                position_id=PositionId("pos1"),
                 status="BOGUS_STATUS",
-                entry_order_id="entry-1",
+                entry_order_id=OrderId("entry-1"),
                 entry_window_deadline=None,
                 corporate_action_cancellation_reason=None,
                 modification_history_json="[]",
@@ -313,10 +313,10 @@ class TestBracketLegsTable:
         session.add(
             BracketLegRow(
                 bracket_leg_id="missing::0",
-                bracket_id="missing-bracket",
+                bracket_id=BracketId("missing-bracket"),
                 leg_index=0,
                 leg_type=BracketLegType.TAKE_PROFIT.value,
-                order_id="ord-tp",
+                order_id=OrderId("ord-tp"),
                 trigger_kind="PRICE",
                 trigger_payload_json="{}",
                 pl_anchor_json=None,
@@ -337,10 +337,10 @@ class TestBracketLegsTable:
         session.add(
             BracketLegRow(
                 bracket_leg_id="duplicate-id",
-                bracket_id="brk1",
+                bracket_id=BracketId("brk1"),
                 leg_index=0,
                 leg_type=BracketLegType.TAKE_PROFIT.value,
-                order_id="ord-other",
+                order_id=OrderId("ord-other"),
                 trigger_kind="PRICE",
                 trigger_payload_json="{}",
                 pl_anchor_json=None,

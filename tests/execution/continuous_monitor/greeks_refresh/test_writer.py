@@ -183,7 +183,7 @@ class TestSqlGreeksWriterOptions:
         self,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        await _insert_position(async_factory, _options_position(position_id="pos-1"))
+        await _insert_position(async_factory, _options_position(position_id=PositionId("pos-1")))
         new_greeks = OptionGreeks(
             delta=0.6,
             gamma=0.03,
@@ -194,7 +194,7 @@ class TestSqlGreeksWriterOptions:
             refresh_failed=False,
         )
         writer = SqlGreeksWriter(async_factory)
-        await writer.update_options_greeks(position_id="pos-1", greeks=new_greeks)
+        await writer.update_options_greeks(position_id=PositionId("pos-1"), greeks=new_greeks)
         reloaded = await _load_position(async_factory, "pos-1")
         details = reloaded.details
         assert isinstance(details, OptionsPositionDetails)
@@ -209,7 +209,7 @@ class TestSqlGreeksWriterOptions:
         writer = SqlGreeksWriter(async_factory)
         with pytest.raises(LookupError, match="no such position"):
             await writer.update_options_greeks(
-                position_id="missing-pos",
+                position_id=PositionId("missing-pos"),
                 greeks=OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0),
             )
 
@@ -219,7 +219,7 @@ class TestSqlGreeksWriterStrategy:
         self,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        await _insert_position(async_factory, _strategy_position(position_id="strat-1"))
+        await _insert_position(async_factory, _strategy_position(position_id=PositionId("strat-1")))
         as_of = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
         per_leg = {
             "leg-1": OptionGreeks(
@@ -249,7 +249,7 @@ class TestSqlGreeksWriterStrategy:
         )
         writer = SqlGreeksWriter(async_factory)
         await writer.update_strategy_greeks(
-            position_id="strat-1", per_leg=per_leg, aggregated=aggregated
+            position_id=PositionId("strat-1"), per_leg=per_leg, aggregated=aggregated
         )
         reloaded = await _load_position(async_factory, "strat-1")
         details = reloaded.details

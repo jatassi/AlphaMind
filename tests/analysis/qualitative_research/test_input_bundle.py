@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.ids import Symbol, ThesisId
 from alphamind.analysis._shared import Sector
 from alphamind.analysis.qualitative_research.loaders import (
     ActiveThesis,
@@ -225,7 +226,9 @@ def test_non_empty_theses_formatted_rows() -> None:
         assemble_input_bundle,
     )
 
-    thesis = _make_thesis(thesis_id="TH-001", ticker="NVDA", summary="AI capex supercycle")
+    thesis = _make_thesis(
+        thesis_id=ThesisId("TH-001"), ticker=Symbol("NVDA"), summary="AI capex supercycle"
+    )
     bundle = assemble_input_bundle(
         invocation_id=_INVOCATION_ID,
         as_of=_AS_OF,
@@ -248,9 +251,9 @@ def test_sentiment_sorted_alphabetically() -> None:
         assemble_input_bundle,
     )
 
-    s_z = _make_sentiment(ticker="ZZZZ")
-    s_a = _make_sentiment(ticker="AAAA")
-    s_m = _make_sentiment(ticker="MMMM")
+    s_z = _make_sentiment(ticker=Symbol("ZZZZ"))
+    s_a = _make_sentiment(ticker=Symbol("AAAA"))
+    s_m = _make_sentiment(ticker=Symbol("MMMM"))
     bundle = assemble_input_bundle(
         invocation_id=_INVOCATION_ID,
         as_of=_AS_OF,
@@ -333,12 +336,12 @@ def test_determinism_identical_inputs() -> None:
 
     inputs = _make_inputs(
         sentiment=(
-            _make_sentiment(ticker="TSLA"),
-            _make_sentiment(ticker="AAPL"),
+            _make_sentiment(ticker=Symbol("TSLA")),
+            _make_sentiment(ticker=Symbol("AAPL")),
         ),
         prediction_markets=(_make_prediction_market(contract_id="PM-001"),),
         events=(_make_calendar_event(event_id="EVT-001"),),
-        theses=(_make_thesis(thesis_id="TH-001"),),
+        theses=(_make_thesis(thesis_id=ThesisId("TH-001")),),
     )
 
     bundle1 = assemble_input_bundle(
@@ -556,7 +559,7 @@ def test_sentiment_renders_pending_for_none_stub_fields() -> None:
     )
 
     s = _make_sentiment(
-        ticker="NVDA",
+        ticker=Symbol("NVDA"),
         rate_of_change=None,
         volume=None,
         divergence_flag=None,
@@ -580,7 +583,7 @@ def test_sentiment_renders_concrete_values_when_present() -> None:
     )
 
     s = _make_sentiment(
-        ticker="NVDA",
+        ticker=Symbol("NVDA"),
         rate_of_change=0.25,
         volume=42,
         divergence_flag=True,

@@ -14,6 +14,7 @@ from types import MappingProxyType
 
 import pytest
 
+from alphamind._kernel.ids import PositionId
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -321,7 +322,7 @@ def test_regime_adaptation_state_accepts_valid_loosening() -> None:
 
 def test_regime_transition_breach_constructible_per_position() -> None:
     breach = RegimeTransitionBreach(
-        position_id="POS-AAPL-1",
+        position_id=PositionId("POS-AAPL-1"),
         rule_id="position_max_size_pct",
         rule_label="Per-position max size",
         current_value=8.0,

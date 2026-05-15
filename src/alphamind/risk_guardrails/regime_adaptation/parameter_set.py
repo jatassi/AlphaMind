@@ -17,6 +17,7 @@ Reading:
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -139,13 +140,12 @@ def assemble_active_risk_parameter_set(
         ),
         active_overlays=overlays_to_strings(active_overlays),
     )
-    return tentative.model_copy(
-        update={
-            "parameter_change_flag": compute_parameter_change_flag(
-                current=tentative,
-                prior=prior_parameter_set,
-            ),
-        },
+    return dataclasses.replace(
+        tentative,
+        parameter_change_flag=compute_parameter_change_flag(
+            current=tentative,
+            prior=prior_parameter_set,
+        ),
     )
 
 

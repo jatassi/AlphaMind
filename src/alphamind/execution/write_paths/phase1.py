@@ -14,6 +14,7 @@ unprocessed for the next invocation.
 
 from __future__ import annotations
 
+import dataclasses
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -504,14 +505,13 @@ def _apply_fill_to_order(order: OrderRecord, fill: FillRecord) -> OrderRecord:
     new_status = (
         OrderStatus.FILLED if new_remaining <= _QTY_EPSILON else OrderStatus.PARTIALLY_FILLED
     )
-    return order.model_copy(
-        update={
-            "filled_quantity": new_filled,
-            "remaining_quantity": new_remaining,
-            "avg_fill_price": new_avg,
-            "status": new_status,
-            "last_update_timestamp": fill.fill_timestamp,
-        }
+    return dataclasses.replace(
+        order,
+        filled_quantity=new_filled,
+        remaining_quantity=new_remaining,
+        avg_fill_price=new_avg,
+        status=new_status,
+        last_update_timestamp=fill.fill_timestamp,
     )
 
 
@@ -643,20 +643,25 @@ def _apply_entry_fill(
     details: EquityPositionDetails,
     fill: FillRecord,
 ) -> PositionRecord:
-    """PENDING → OPEN: set entry timestamp, quantity, cost basis, history."""
-    new_details = details.model_copy(
-        update={
-            "share_count": fill.fill_quantity,
-            "average_cost_basis_per_share": fill.fill_price,
-        }
+    """PENDING → OPEN: set entry timestamp, quantity, cost basis, history.
+
+    ALP-462: ``fill.fill_price`` is ``Price`` (Decimal); the legacy
+    ``average_cost_basis_per_share`` field on ``EquityPositionDetails`` is
+    typed ``float``. Cast at this codec boundary so the dataclass stores a
+    float — the pre-ALP-477 Pydantic record auto-coerced Decimal→float, the
+    frozen dataclass does not.
+    """
+    new_details = dataclasses.replace(
+        details,
+        share_count=fill.fill_quantity,
+        average_cost_basis_per_share=float(fill.fill_price),
     )
-    return position.model_copy(
-        update={
-            "status": PositionStatus.OPEN,
-            "entry_timestamp": fill.fill_timestamp,
-            "details": new_details,
-            "execution_history": (_position_fill_from_record(fill),),
-        }
+    return dataclasses.replace(
+        position,
+        status=PositionStatus.OPEN,
+        entry_timestamp=fill.fill_timestamp,
+        details=new_details,
+        execution_history=(_position_fill_from_record(fill),),
     )
 
 
@@ -676,14 +681,13 @@ def _apply_add_fill(
     prior_count = Decimal(str(details.share_count))
     new_qty_decimal = Decimal(str(new_qty))
     weighted_cost = float((prior_avg * prior_count + fp * fq) / new_qty_decimal)
-    new_details = details.model_copy(
-        update={"share_count": new_qty, "average_cost_basis_per_share": weighted_cost}
+    new_details = dataclasses.replace(
+        details, share_count=new_qty, average_cost_basis_per_share=weighted_cost
     )
-    return position.model_copy(
-        update={
-            "details": new_details,
-            "execution_history": (*position.execution_history, _position_fill_from_record(fill)),
-        }
+    return dataclasses.replace(
+        position,
+        details=new_details,
+        execution_history=(*position.execution_history, _position_fill_from_record(fill)),
     )
 
 
@@ -711,14 +715,22 @@ def _apply_exit_fill(
     cumulative_realized = (position.realized_pnl_to_date_usd or 0.0) + realized_delta
 
     closed = abs(qty_after) < _QTY_EPSILON
-    update: dict[str, object] = {
-        "details": details.model_copy(update={"share_count": 0.0 if closed else qty_after}),
-        "execution_history": (*position.execution_history, _position_fill_from_record(fill)),
-        "realized_pnl_to_date_usd": cumulative_realized,
-    }
+    new_details = dataclasses.replace(details, share_count=0.0 if closed else qty_after)
+    new_history = (*position.execution_history, _position_fill_from_record(fill))
     if closed:
-        update["status"] = PositionStatus.CLOSED
-    return position.model_copy(update=update)
+        return dataclasses.replace(
+            position,
+            details=new_details,
+            execution_history=new_history,
+            realized_pnl_to_date_usd=cumulative_realized,
+            status=PositionStatus.CLOSED,
+        )
+    return dataclasses.replace(
+        position,
+        details=new_details,
+        execution_history=new_history,
+        realized_pnl_to_date_usd=cumulative_realized,
+    )
 
 
 def _apply_options_entry_fill(
@@ -737,19 +749,17 @@ def _apply_options_entry_fill(
     Greeks set at OPEN-validation time by the guardrail-evaluation library
     are preserved unchanged — refresh is the continuous monitor's job.
     """
-    new_details = details.model_copy(
-        update={
-            "contract_count": fill.fill_quantity,
-            "premium_paid_per_contract": fill.fill_price,
-        }
+    new_details = dataclasses.replace(
+        details,
+        contract_count=fill.fill_quantity,
+        premium_paid_per_contract=float(fill.fill_price),
     )
-    return position.model_copy(
-        update={
-            "status": PositionStatus.OPEN,
-            "entry_timestamp": fill.fill_timestamp,
-            "details": new_details,
-            "execution_history": (_position_fill_from_record(fill),),
-        }
+    return dataclasses.replace(
+        position,
+        status=PositionStatus.OPEN,
+        entry_timestamp=fill.fill_timestamp,
+        details=new_details,
+        execution_history=(_position_fill_from_record(fill),),
     )
 
 
@@ -768,17 +778,13 @@ def _apply_options_add_fill(
     prior_count = Decimal(str(details.contract_count))
     new_count_decimal = Decimal(str(new_count))
     weighted_premium = float((prior_premium * prior_count + fp * fq) / new_count_decimal)
-    new_details = details.model_copy(
-        update={
-            "contract_count": new_count,
-            "premium_paid_per_contract": weighted_premium,
-        }
+    new_details = dataclasses.replace(
+        details, contract_count=new_count, premium_paid_per_contract=weighted_premium
     )
-    return position.model_copy(
-        update={
-            "details": new_details,
-            "execution_history": (*position.execution_history, _position_fill_from_record(fill)),
-        }
+    return dataclasses.replace(
+        position,
+        details=new_details,
+        execution_history=(*position.execution_history, _position_fill_from_record(fill)),
     )
 
 
@@ -813,14 +819,22 @@ def _apply_options_exit_fill(
     cumulative_realized = (position.realized_pnl_to_date_usd or 0.0) + realized_delta
 
     closed = abs(qty_after) < _QTY_EPSILON
-    update: dict[str, object] = {
-        "details": details.model_copy(update={"contract_count": 0.0 if closed else qty_after}),
-        "execution_history": (*position.execution_history, _position_fill_from_record(fill)),
-        "realized_pnl_to_date_usd": cumulative_realized,
-    }
+    new_details = dataclasses.replace(details, contract_count=0.0 if closed else qty_after)
+    new_history = (*position.execution_history, _position_fill_from_record(fill))
     if closed:
-        update["status"] = PositionStatus.CLOSED
-    return position.model_copy(update=update)
+        return dataclasses.replace(
+            position,
+            details=new_details,
+            execution_history=new_history,
+            realized_pnl_to_date_usd=cumulative_realized,
+            status=PositionStatus.CLOSED,
+        )
+    return dataclasses.replace(
+        position,
+        details=new_details,
+        execution_history=new_history,
+        realized_pnl_to_date_usd=cumulative_realized,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -881,7 +895,7 @@ async def _apply_strategy_entry_or_continuation(
 ) -> tuple[PositionRecord, tuple[str, ...]]:
     """Update one leg's contract_count + premium and gate the atomic OPEN."""
     new_legs = _set_leg_entry(details.legs, leg=leg, fill=fill)
-    new_details = details.model_copy(update={"legs": new_legs})
+    new_details = dataclasses.replace(details, legs=new_legs)
 
     sibling_statuses = await _read_sibling_leg_statuses(
         handle,
@@ -892,16 +906,21 @@ async def _apply_strategy_entry_or_continuation(
     any_canceled = any(status == OrderStatus.CANCELLED for status in sibling_statuses.values())
     this_leg_filled = updated_order.status == OrderStatus.FILLED
 
-    update: dict[str, object] = {
-        "details": new_details,
-        "execution_history": (*position.execution_history, _position_fill_from_record(fill)),
-    }
+    new_history = (*position.execution_history, _position_fill_from_record(fill))
     incomplete: tuple[str, ...] = ()
     if this_leg_filled and all_other_filled and not any_canceled:
         # Atomic PENDING → OPEN at the last leg's filled event.
-        update["status"] = PositionStatus.OPEN
-        update["entry_timestamp"] = fill.fill_timestamp
-    elif any_canceled:
+        return (
+            dataclasses.replace(
+                position,
+                details=new_details,
+                execution_history=new_history,
+                status=PositionStatus.OPEN,
+                entry_timestamp=fill.fill_timestamp,
+            ),
+            incomplete,
+        )
+    if any_canceled:
         # Cancel mid-fill: surface the unfilled sibling leg ids so the
         # surrounding integrator emits a BRACKET_INCOMPLETE_WARNING.
         incomplete = tuple(
@@ -911,7 +930,10 @@ async def _apply_strategy_entry_or_continuation(
                 if status != OrderStatus.FILLED
             )
         )
-    return position.model_copy(update=update), incomplete
+    return (
+        dataclasses.replace(position, details=new_details, execution_history=new_history),
+        incomplete,
+    )
 
 
 async def _apply_strategy_open_fill(
@@ -929,16 +951,15 @@ async def _apply_strategy_open_fill(
     is_opening_for_leg = is_buy_side == leg_direction_is_long
     if is_opening_for_leg:
         new_legs = _add_to_leg(details.legs, leg=leg, fill=fill)
-        new_details = details.model_copy(update={"legs": new_legs})
+        new_details = dataclasses.replace(details, legs=new_legs)
         return (
-            position.model_copy(
-                update={
-                    "details": new_details,
-                    "execution_history": (
-                        *position.execution_history,
-                        _position_fill_from_record(fill),
-                    ),
-                }
+            dataclasses.replace(
+                position,
+                details=new_details,
+                execution_history=(
+                    *position.execution_history,
+                    _position_fill_from_record(fill),
+                ),
             ),
             (),
         )
@@ -984,20 +1005,13 @@ async def _apply_strategy_close_fill(
     realized_delta = float(pnl_per_contract * fq * multiplier * leg_direction_sign)
     cumulative_realized = (position.realized_pnl_to_date_usd or 0.0) + realized_delta
 
-    new_options = leg.options.model_copy(
-        update={"contract_count": 0.0 if closed_for_this_leg else qty_after},
+    new_options = dataclasses.replace(
+        leg.options, contract_count=0.0 if closed_for_this_leg else qty_after
     )
     new_legs = _replace_leg(details.legs, leg_id=leg.leg_id, new_options=new_options)
-    new_details = details.model_copy(update={"legs": new_legs})
+    new_details = dataclasses.replace(details, legs=new_legs)
 
-    update: dict[str, object] = {
-        "details": new_details,
-        "execution_history": (
-            *position.execution_history,
-            _position_fill_from_record(fill),
-        ),
-        "realized_pnl_to_date_usd": cumulative_realized,
-    }
+    new_history = (*position.execution_history, _position_fill_from_record(fill))
     sibling_statuses = await _read_sibling_leg_statuses(
         handle,
         position_id=position.position_id,
@@ -1013,8 +1027,25 @@ async def _apply_strategy_close_fill(
         and all_others_terminal
         and _every_leg_closed(new_legs)
     ):
-        update["status"] = PositionStatus.CLOSED
-    return position.model_copy(update=update), ()
+        return (
+            dataclasses.replace(
+                position,
+                details=new_details,
+                execution_history=new_history,
+                realized_pnl_to_date_usd=cumulative_realized,
+                status=PositionStatus.CLOSED,
+            ),
+            (),
+        )
+    return (
+        dataclasses.replace(
+            position,
+            details=new_details,
+            execution_history=new_history,
+            realized_pnl_to_date_usd=cumulative_realized,
+        ),
+        (),
+    )
 
 
 def _strategy_leg_for_order(legs: tuple[StrategyLeg, ...], order: OrderRecord) -> StrategyLeg:
@@ -1061,11 +1092,10 @@ def _set_leg_entry(
     pre-fill ``contract_count`` is zero — the entry fill establishes the
     initial size and premium.
     """
-    new_options = leg.options.model_copy(
-        update={
-            "contract_count": fill.fill_quantity,
-            "premium_paid_per_contract": fill.fill_price,
-        }
+    new_options = dataclasses.replace(
+        leg.options,
+        contract_count=fill.fill_quantity,
+        premium_paid_per_contract=float(fill.fill_price),
     )
     return _replace_leg(legs, leg_id=leg.leg_id, new_options=new_options)
 
@@ -1087,11 +1117,8 @@ def _add_to_leg(
     prior_count_decimal = Decimal(str(prior_count))
     new_count_decimal = Decimal(str(new_count))
     weighted_premium = float((prior_premium * prior_count_decimal + fp * fq) / new_count_decimal)
-    new_options = leg.options.model_copy(
-        update={
-            "contract_count": new_count,
-            "premium_paid_per_contract": weighted_premium,
-        }
+    new_options = dataclasses.replace(
+        leg.options, contract_count=new_count, premium_paid_per_contract=weighted_premium
     )
     return _replace_leg(legs, leg_id=leg.leg_id, new_options=new_options)
 

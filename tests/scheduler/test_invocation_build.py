@@ -398,7 +398,7 @@ class TestBuildInvocationRecord:
             "staleness_flag",
             "snapshot_metadata_json",
         }
-        record_fields = record.model_dump()
+        record_fields = record.model_dump(mode="json")
         assert set(record_fields) == {
             "invocation_id",
             "process_lifetime_id",

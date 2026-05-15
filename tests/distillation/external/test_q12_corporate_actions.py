@@ -32,6 +32,7 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience, OutputBlock
 from alphamind.distillation.q12_corporate_actions import (
@@ -261,7 +262,7 @@ class TestUnusualEventCadence:
         _add_event(
             session,
             event_id="evt-old",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_type="investor_day",
             scheduled_at="2024-04-01T00:00:00Z",
             status="completed",
@@ -270,7 +271,7 @@ class TestUnusualEventCadence:
         _add_event(
             session,
             event_id="evt-new",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_type="investor_day",
             scheduled_at="2026-05-10T00:00:00Z",
             status="scheduled",
@@ -298,7 +299,7 @@ class TestUnusualEventCadence:
         _add_event(
             session,
             event_id="evt-recent",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_type="investor_day",
             scheduled_at="2025-06-01T00:00:00Z",
             status="completed",
@@ -306,7 +307,7 @@ class TestUnusualEventCadence:
         _add_event(
             session,
             event_id="evt-new",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_type="investor_day",
             scheduled_at="2026-05-10T00:00:00Z",
             status="scheduled",
@@ -344,21 +345,21 @@ class TestEventClustering:
         _add_event(
             session,
             event_id="evt-1",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_type="investor_day",
             scheduled_at="2026-05-01T00:00:00Z",
         )
         _add_event(
             session,
             event_id="evt-2",
-            ticker="MSFT",
+            ticker=Symbol("MSFT"),
             event_type="conference",
             scheduled_at="2026-05-10T00:00:00Z",
         )
         _add_event(
             session,
             event_id="evt-3",
-            ticker="GOOG",
+            ticker=Symbol("GOOG"),
             event_type="product_launch",
             scheduled_at="2026-05-20T00:00:00Z",
         )
@@ -398,14 +399,14 @@ class TestEventClustering:
         _add_event(
             session,
             event_id="evt-1",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_type="investor_day",
             scheduled_at="2026-05-01T00:00:00Z",
         )
         _add_event(
             session,
             event_id="evt-2",
-            ticker="MSFT",
+            ticker=Symbol("MSFT"),
             event_type="conference",
             scheduled_at="2026-05-10T00:00:00Z",
         )
@@ -678,7 +679,7 @@ class TestRecentCorporateActions:
         _add_corporate_action(
             session,
             action_id="ca-1",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             action_type="cash_dividend",
             ex_date="2026-04-25",
             cash_amount_per_share=0.24,
@@ -687,7 +688,7 @@ class TestRecentCorporateActions:
         _add_corporate_action(
             session,
             action_id="ca-old",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             action_type="cash_dividend",
             ex_date="2025-04-01",
             cash_amount_per_share=0.24,
@@ -713,7 +714,7 @@ class TestRecentCorporateActions:
         _add_corporate_action(
             session,
             action_id="ca-old",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             action_type="cash_dividend",
             ex_date="2024-01-01",
             cash_amount_per_share=0.24,

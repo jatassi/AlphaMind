@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.baselines import refresh_pair_lag
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.persistence.models import (
@@ -110,13 +111,13 @@ class TestRefreshPairLagHappyPath:
         for day in range(1, 26):
             smh_close *= 1 + smh_returns[day - 1]
             ts = f"2026-04-{day:02d}T00:00:00Z"
-            _add_close(session, ticker="SMH", period_start=ts, close=smh_close)
+            _add_close(session, ticker=Symbol("SMH"), period_start=ts, close=smh_close)
             # QQQ lags SMH by one day: today's QQQ return = yesterday's SMH return.
             if day == 1:
-                _add_close(session, ticker="QQQ", period_start=ts, close=qqq_close)
+                _add_close(session, ticker=Symbol("QQQ"), period_start=ts, close=qqq_close)
             else:
                 qqq_close *= 1 + smh_returns[day - 2]
-                _add_close(session, ticker="QQQ", period_start=ts, close=qqq_close)
+                _add_close(session, ticker=Symbol("QQQ"), period_start=ts, close=qqq_close)
         session.commit()
 
         result = refresh_pair_lag(
@@ -159,8 +160,8 @@ class TestRefreshPairLagBootstrapPath:
         # below the 10-event minimum.
         for day in range(1, 6):
             ts = f"2026-04-{day:02d}T00:00:00Z"
-            _add_close(session, ticker="SMH", period_start=ts, close=100.0 + day)
-            _add_close(session, ticker="QQQ", period_start=ts, close=200.0 + day)
+            _add_close(session, ticker=Symbol("SMH"), period_start=ts, close=100.0 + day)
+            _add_close(session, ticker=Symbol("QQQ"), period_start=ts, close=200.0 + day)
         session.commit()
 
         result = refresh_pair_lag(
@@ -196,8 +197,8 @@ class TestRefreshPairLagIdempotent:
         _add_ticker(session, "QQQ")
         for day in range(1, 26):
             ts = f"2026-04-{day:02d}T00:00:00Z"
-            _add_close(session, ticker="SMH", period_start=ts, close=100.0 + day)
-            _add_close(session, ticker="QQQ", period_start=ts, close=200.0 + day)
+            _add_close(session, ticker=Symbol("SMH"), period_start=ts, close=100.0 + day)
+            _add_close(session, ticker=Symbol("QQQ"), period_start=ts, close=200.0 + day)
         session.commit()
         kwargs: dict[str, Any] = dict(
             pair_scope=(("SMH", "QQQ"),),
@@ -227,10 +228,10 @@ class TestRefreshPairLagFaultInjection:
         _add_ticker(session, "SPY")
         for day in range(1, 26):
             ts = f"2026-04-{day:02d}T00:00:00Z"
-            _add_close(session, ticker="SMH", period_start=ts, close=100.0 + day)
-            _add_close(session, ticker="QQQ", period_start=ts, close=200.0 + day)
-            _add_close(session, ticker="XLF", period_start=ts, close=50.0 + day)
-            _add_close(session, ticker="SPY", period_start=ts, close=300.0 + day)
+            _add_close(session, ticker=Symbol("SMH"), period_start=ts, close=100.0 + day)
+            _add_close(session, ticker=Symbol("QQQ"), period_start=ts, close=200.0 + day)
+            _add_close(session, ticker=Symbol("XLF"), period_start=ts, close=50.0 + day)
+            _add_close(session, ticker=Symbol("SPY"), period_start=ts, close=300.0 + day)
         session.commit()
 
         original_execute = session.execute

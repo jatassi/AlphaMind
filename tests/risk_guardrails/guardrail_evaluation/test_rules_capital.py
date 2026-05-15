@@ -11,6 +11,7 @@ from types import MappingProxyType
 
 import pytest
 
+from alphamind._kernel.ids import PositionId, Symbol
 from alphamind.risk_guardrails.guardrail_evaluation import (
     Action,
     AssetType,
@@ -84,7 +85,7 @@ def _proposal(
 ) -> ProposedDelta:
     return ProposedDelta(
         id=proposal_id,
-        underlying="ABC",
+        underlying=Symbol("ABC"),
         sector="tech",
         direction=direction,
         asset_type=asset_type,
@@ -171,8 +172,8 @@ def test_min_cash_reserve_short_equity_open_does_not_reduce_cash() -> None:
 def test_min_cash_reserve_close_releases_cash() -> None:
     config = _config()
     existing = ExistingPosition(
-        position_id="POS-1",
-        underlying="ABC",
+        position_id=PositionId("POS-1"),
+        underlying=Symbol("ABC"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,
@@ -230,8 +231,8 @@ def test_pending_order_capital_open_without_reserves_capital_flag() -> None:
 def test_pending_order_capital_cancel_releases_reservation() -> None:
     config = _config()
     existing = ExistingPosition(
-        position_id="POS-1",
-        underlying="ABC",
+        position_id=PositionId("POS-1"),
+        underlying=Symbol("ABC"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,

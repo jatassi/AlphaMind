@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,
@@ -697,7 +698,7 @@ class TestRefreshNewsClusters:
             sess.add(
                 NewsArticleTickers(
                     article_id="a-nvda-003",
-                    ticker="NVDA",
+                    ticker=Symbol("NVDA"),
                     is_primary=1,
                 )
             )

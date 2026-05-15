@@ -17,6 +17,7 @@ filled event. Net cost basis follows the signed-sum-across-legs convention
 described in ``orders-and-brackets.md § Multi-leg strategies`` (positive =
 net debit / paid premium; negative = net credit / received premium).
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import (
+    AlpacaOrderId,
     BracketId,
     OrderId,
     PositionId,
@@ -381,21 +383,19 @@ def _make_pending_strategy_position(
     strategy_type_label: str = "iron-condor",
 ) -> PositionRecord:
     """Build a PENDING strategy position with no fills yet."""
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.PENDING,
-            "direction": Direction.LONG,
-            "entry_timestamp": None,
-            "details": _make_strategy_details(legs=legs, strategy_type_label=strategy_type_label),
-            "execution_history": (),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.PENDING,
+        direction=Direction.LONG,
+        entry_timestamp=None,
+        details=_make_strategy_details(legs=legs, strategy_type_label=strategy_type_label),
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -409,21 +409,19 @@ def _make_open_strategy_position(
     strategy_type_label: str = "iron-condor",
 ) -> PositionRecord:
     """Build an OPEN strategy position whose ``execution_history`` reflects entry fills."""
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": _make_strategy_details(legs=legs, strategy_type_label=strategy_type_label),
-            "execution_history": execution_history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=_make_strategy_details(legs=legs, strategy_type_label=strategy_type_label),
+        execution_history=execution_history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -453,32 +451,30 @@ def _make_strategy_parent_order(
             _make_options_spec(contract_type=OptionContractType.CALL, strike=430.0),
         )
     )
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": position_id,
-            "bracket_id": bracket_id,
-            "role": role,
-            "instrument_spec": StrategyInstrumentSpec(legs=spec_legs),
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.MLEG,
-            "price_parameters": PriceParameters(),
-            "quantity": quantity,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": quantity,
-            "modification_count": 0,
-            "originating_thesis_id": "thesis-strat-1",
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=bracket_id,
+        role=role,
+        instrument_spec=StrategyInstrumentSpec(legs=spec_legs),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.MLEG,
+        price_parameters=PriceParameters(),
+        quantity=quantity,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=quantity,
+        modification_count=0,
+        originating_thesis_id=ThesisId("thesis-strat-1"),
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -504,36 +500,34 @@ def _make_leg_order(
     a single-instrument identifier — the strategy-as-mleg structure lives on
     the parent order.
     """
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": position_id,
-            "bracket_id": bracket_id,
-            "role": role,
-            "instrument_spec": _make_options_spec(
-                contract_type=contract_type,
-                strike=strike,
-                contract_multiplier=contract_multiplier,
-            ),
-            "direction": direction,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": quantity,
-            "duration": OrderDuration.DAY,
-            "status": status,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": filled_quantity,
-            "avg_fill_price": avg_fill_price,
-            "remaining_quantity": max(quantity - filled_quantity, 0.0),
-            "modification_count": 0,
-            "originating_thesis_id": "thesis-strat-1",
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=bracket_id,
+        role=role,
+        instrument_spec=_make_options_spec(
+            contract_type=contract_type,
+            strike=strike,
+            contract_multiplier=contract_multiplier,
+        ),
+        direction=direction,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=quantity,
+        duration=OrderDuration.DAY,
+        status=status,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=filled_quantity,
+        avg_fill_price=avg_fill_price,
+        remaining_quantity=max(quantity - filled_quantity, 0.0),
+        modification_count=0,
+        originating_thesis_id=ThesisId("thesis-strat-1"),
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -721,38 +715,34 @@ def _make_strategy_thesis_with_resolved_components(
 
 
 def _make_cash_ledger(current_cash_usd: float = 100_000.0) -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": current_cash_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=current_cash_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _make_drawdown_state(
     equity_high_water_mark_usd: float = 100_000.0,
 ) -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": equity_high_water_mark_usd,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=equity_high_water_mark_usd,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -1112,14 +1102,14 @@ async def test_long_call_spread_has_positive_net_debit(
     )
     leg_orders = (
         _make_leg_order(
-            order_id="leg-long-lower",
+            order_id=OrderId("leg-long-lower"),
             contract_type=OptionContractType.CALL,
             strike=420.0,
             direction=OrderDirection.BUY_TO_OPEN,
             quantity=2.0,
         ),
         _make_leg_order(
-            order_id="leg-short-upper",
+            order_id=OrderId("leg-short-upper"),
             contract_type=OptionContractType.CALL,
             strike=425.0,
             direction=OrderDirection.SELL_TO_OPEN,
@@ -1213,13 +1203,13 @@ async def test_short_put_spread_has_negative_net_credit(
     )
     leg_orders = (
         _make_leg_order(
-            order_id="leg-short-higher",
+            order_id=OrderId("leg-short-higher"),
             contract_type=OptionContractType.PUT,
             strike=415.0,
             direction=OrderDirection.SELL_TO_OPEN,
         ),
         _make_leg_order(
-            order_id="leg-long-lower",
+            order_id=OrderId("leg-long-lower"),
             contract_type=OptionContractType.PUT,
             strike=410.0,
             direction=OrderDirection.BUY_TO_OPEN,
@@ -1362,7 +1352,7 @@ async def test_staggered_legs_only_open_at_last_filled_event(
         factory,
         _make_unprocessed_fill(
             fill_id="fill-t2-leg-long-call",
-            order_id="leg-long-call",
+            order_id=OrderId("leg-long-call"),
             fill_price=1.50,
             fill_timestamp=_NOW - timedelta(minutes=5),
         ),
@@ -1430,14 +1420,14 @@ async def test_partial_leg_fill_position_stays_pending(
     )
     leg_orders = (
         _make_leg_order(
-            order_id="leg-long",
+            order_id=OrderId("leg-long"),
             contract_type=OptionContractType.CALL,
             strike=420.0,
             direction=OrderDirection.BUY_TO_OPEN,
             quantity=4.0,
         ),
         _make_leg_order(
-            order_id="leg-short",
+            order_id=OrderId("leg-short"),
             contract_type=OptionContractType.CALL,
             strike=425.0,
             direction=OrderDirection.SELL_TO_OPEN,
@@ -1466,7 +1456,7 @@ async def test_partial_leg_fill_position_stays_pending(
         factory,
         _make_unprocessed_fill(
             fill_id="fill-partial-long",
-            order_id="leg-long",
+            order_id=OrderId("leg-long"),
             fill_quantity=2.0,
             fill_price=5.00,
             order_status_after=OrderStatus.PARTIALLY_FILLED,
@@ -1621,7 +1611,7 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
     # Close orders for each leg.
     close_leg_orders = (
         _make_leg_order(
-            order_id="close-leg-long-lower",
+            order_id=OrderId("close-leg-long-lower"),
             contract_type=OptionContractType.CALL,
             strike=420.0,
             direction=OrderDirection.SELL_TO_CLOSE,
@@ -1629,7 +1619,7 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
             role=OrderRole.CLOSE,
         ),
         _make_leg_order(
-            order_id="close-leg-short-upper",
+            order_id=OrderId("close-leg-short-upper"),
             contract_type=OptionContractType.CALL,
             strike=425.0,
             direction=OrderDirection.BUY_TO_CLOSE,
@@ -1639,10 +1629,10 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
     )
     parent_legs = _vertical_call_parent_legs()
     parent_close_order = _make_strategy_parent_order(
-        order_id="ord-strat-close",
+        order_id=OrderId("ord-strat-close"),
         quantity=2.0,
         legs=parent_legs,
-        position_id="pos-strat-1",
+        position_id=PositionId("pos-strat-1"),
         role=OrderRole.CLOSE,
     )
     parent_open_order = _make_strategy_parent_order(quantity=2.0, legs=parent_legs)
@@ -1773,7 +1763,7 @@ async def test_strategy_add_recomputes_average_cost_basis(
     # ADD orders for each leg with additional_quantity=2 (scales each leg ratio by 2).
     add_leg_orders = (
         _make_leg_order(
-            order_id="add-leg-long-lower",
+            order_id=OrderId("add-leg-long-lower"),
             contract_type=OptionContractType.CALL,
             strike=420.0,
             direction=OrderDirection.BUY_TO_OPEN,
@@ -1781,7 +1771,7 @@ async def test_strategy_add_recomputes_average_cost_basis(
             role=OrderRole.ADD_ENTRY,
         ),
         _make_leg_order(
-            order_id="add-leg-short-upper",
+            order_id=OrderId("add-leg-short-upper"),
             contract_type=OptionContractType.CALL,
             strike=425.0,
             direction=OrderDirection.SELL_TO_OPEN,
@@ -1792,10 +1782,10 @@ async def test_strategy_add_recomputes_average_cost_basis(
     parent_legs = _vertical_call_parent_legs()
     parent_open_order = _make_strategy_parent_order(quantity=2.0, legs=parent_legs)
     parent_add_order = _make_strategy_parent_order(
-        order_id="ord-strat-add",
+        order_id=OrderId("ord-strat-add"),
         quantity=2.0,
         legs=parent_legs,
-        position_id="pos-strat-1",
+        position_id=PositionId("pos-strat-1"),
         role=OrderRole.ADD_ENTRY,
     )
 
@@ -1899,7 +1889,7 @@ async def test_strategy_fill_failure_rolls_back_all_state(
         strategy_type_label="long-call-vertical",
     )
     bad_close = _make_leg_order(
-        order_id="bad-close-long",
+        order_id=OrderId("bad-close-long"),
         contract_type=OptionContractType.CALL,
         strike=420.0,
         direction=OrderDirection.SELL_TO_CLOSE,
@@ -1935,7 +1925,7 @@ async def test_strategy_fill_failure_rolls_back_all_state(
         factory,
         _make_unprocessed_fill(
             fill_id="fill-bad-close",
-            order_id="bad-close-long",
+            order_id=OrderId("bad-close-long"),
             fill_quantity=10.0,
             fill_price=7.00,
         ),

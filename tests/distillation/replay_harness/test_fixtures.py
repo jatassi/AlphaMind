@@ -11,7 +11,6 @@ import json
 import pathlib
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind.distillation.replay_harness.fixtures import (
     RAW_INPUTS_FILENAME,
@@ -82,7 +81,7 @@ def test_slice_manifest_accepts_live_archive_payload() -> None:
 
 def test_slice_manifest_is_frozen() -> None:
     manifest = SliceManifest.model_validate(_live_archive_manifest_kwargs())
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         manifest.slice_id = "different"
 
 
@@ -96,42 +95,42 @@ def test_slice_manifest_accepts_historical_curated_payload() -> None:
 def test_slice_manifest_rejects_live_archive_with_null_commit_hashes() -> None:
     kwargs = _live_archive_manifest_kwargs()
     kwargs["source_table_commit_hashes"] = None
-    with pytest.raises(ValidationError, match="source_table_commit_hashes"):
+    with pytest.raises((ValueError, TypeError), match="source_table_commit_hashes"):
         SliceManifest.model_validate(kwargs)
 
 
 def test_slice_manifest_rejects_live_archive_with_ingestion_timestamps() -> None:
     kwargs = _live_archive_manifest_kwargs()
     kwargs["original_ingestion_timestamps"] = {"ohlcv_bars": "2024-01-15T13:30:00Z"}
-    with pytest.raises(ValidationError, match="original_ingestion_timestamps"):
+    with pytest.raises((ValueError, TypeError), match="original_ingestion_timestamps"):
         SliceManifest.model_validate(kwargs)
 
 
 def test_slice_manifest_rejects_historical_curated_with_commit_hashes() -> None:
     kwargs = _historical_curated_manifest_kwargs()
     kwargs["source_table_commit_hashes"] = {"ohlcv_bars": "a" * 64}
-    with pytest.raises(ValidationError, match="source_table_commit_hashes"):
+    with pytest.raises((ValueError, TypeError), match="source_table_commit_hashes"):
         SliceManifest.model_validate(kwargs)
 
 
 def test_slice_manifest_rejects_historical_curated_with_null_ingestion_timestamps() -> None:
     kwargs = _historical_curated_manifest_kwargs()
     kwargs["original_ingestion_timestamps"] = None
-    with pytest.raises(ValidationError, match="original_ingestion_timestamps"):
+    with pytest.raises((ValueError, TypeError), match="original_ingestion_timestamps"):
         SliceManifest.model_validate(kwargs)
 
 
 def test_slice_manifest_rejects_unknown_regime_label() -> None:
     kwargs = _live_archive_manifest_kwargs()
     kwargs["regime_label"] = "panic"
-    with pytest.raises(ValidationError, match="regime_label"):
+    with pytest.raises((ValueError, TypeError), match="regime_label"):
         SliceManifest.model_validate(kwargs)
 
 
 def test_slice_manifest_rejects_empty_invocation_timestamps() -> None:
     kwargs = _live_archive_manifest_kwargs()
     kwargs["invocation_timestamps"] = []
-    with pytest.raises(ValidationError, match="invocation_timestamps"):
+    with pytest.raises((ValueError, TypeError), match="invocation_timestamps"):
         SliceManifest.model_validate(kwargs)
 
 
@@ -142,7 +141,7 @@ def test_slice_manifest_rejects_non_monotonic_invocation_timestamps() -> None:
         "2024-01-15T13:30:00Z",  # duplicate
         "2024-01-15T14:00:00Z",
     ]
-    with pytest.raises(ValidationError, match="strictly ascending"):
+    with pytest.raises((ValueError, TypeError), match="strictly ascending"):
         SliceManifest.model_validate(kwargs)
 
 
@@ -152,7 +151,7 @@ def test_slice_manifest_rejects_descending_invocation_timestamps() -> None:
         "2024-01-15T14:30:00Z",
         "2024-01-15T13:30:00Z",
     ]
-    with pytest.raises(ValidationError, match="strictly ascending"):
+    with pytest.raises((ValueError, TypeError), match="strictly ascending"):
         SliceManifest.model_validate(kwargs)
 
 

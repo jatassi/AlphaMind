@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind.scheduler.session import PipelineSession, new_session
 
@@ -13,7 +12,7 @@ from alphamind.scheduler.session import PipelineSession, new_session
 class TestPipelineSession:
     def test_frozen_record(self) -> None:
         session = new_session(process_lifetime_id="plt-pipeline-x", mode="paper")
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             session.mode = "live"
 
     def test_new_session_stamps_tz_aware_utc(self) -> None:
@@ -31,7 +30,7 @@ class TestPipelineSession:
         assert session.mode == "live"
 
     def test_rejects_unknown_mode(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             PipelineSession(
                 process_lifetime_id="plt-pipeline-x",
                 started_at=datetime.now(UTC),

@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import Base, EarningsEstimateRevisions
 from alphamind.persistence.session import make_engine, make_session_factory
 
@@ -235,7 +236,11 @@ class TestFirstObservation:
             revenue_response_map={"AAPL": _make_revenue_response("AAPL", [])},
         )
 
-        rows = session.query(EarningsEstimateRevisions).filter_by(ticker="AAPL", metric="eps").all()
+        rows = (
+            session.query(EarningsEstimateRevisions)
+            .filter_by(ticker=Symbol("AAPL"), metric="eps")
+            .all()
+        )
         assert len(rows) == 1
         assert rows[0].consensus_value == pytest.approx(1.5)
         assert rows[0].prior_consensus_value is None
@@ -262,7 +267,7 @@ class TestFirstObservation:
 
         rows = (
             session.query(EarningsEstimateRevisions)
-            .filter_by(ticker="AAPL", metric="revenue")
+            .filter_by(ticker=Symbol("AAPL"), metric="revenue")
             .all()
         )
         assert len(rows) == 1
@@ -288,7 +293,9 @@ class TestFirstObservation:
         )
 
         row = (
-            session.query(EarningsEstimateRevisions).filter_by(ticker="AAPL", metric="eps").first()
+            session.query(EarningsEstimateRevisions)
+            .filter_by(ticker=Symbol("AAPL"), metric="eps")
+            .first()
         )
         assert row is not None
         assert row.num_analysts == 12
@@ -312,7 +319,9 @@ class TestFirstObservation:
         )
 
         row = (
-            session.query(EarningsEstimateRevisions).filter_by(ticker="AAPL", metric="eps").first()
+            session.query(EarningsEstimateRevisions)
+            .filter_by(ticker=Symbol("AAPL"), metric="eps")
+            .first()
         )
         assert row is not None
         assert row.num_analysts is None
@@ -357,7 +366,7 @@ class TestChangedConsensus:
 
         rows = (
             session.query(EarningsEstimateRevisions)
-            .filter_by(ticker="AAPL", metric="eps")
+            .filter_by(ticker=Symbol("AAPL"), metric="eps")
             .order_by(EarningsEstimateRevisions.revised_at)
             .all()
         )
@@ -405,7 +414,11 @@ class TestUnchangedConsensus:
             revenue_response_map={"AAPL": _make_revenue_response("AAPL", [])},
         )
 
-        rows = session.query(EarningsEstimateRevisions).filter_by(ticker="AAPL", metric="eps").all()
+        rows = (
+            session.query(EarningsEstimateRevisions)
+            .filter_by(ticker=Symbol("AAPL"), metric="eps")
+            .all()
+        )
         assert len(rows) == 1
 
 
@@ -428,7 +441,7 @@ class TestUniverseFilter:
         session.add(
             AssetUniverse(
                 asset_id="asset-inactive",
-                ticker="INACT",
+                ticker=Symbol("INACT"),
                 full_name="Inactive Corp",
                 asset_class="equity",
                 asset_role="universe",
@@ -463,7 +476,7 @@ class TestUniverseFilter:
                 _repo=fake_repo,
             )
 
-        rows = session.query(EarningsEstimateRevisions).filter_by(ticker="INACT").all()
+        rows = session.query(EarningsEstimateRevisions).filter_by(ticker=Symbol("INACT")).all()
         assert rows == [], "Inactive ticker should not produce estimate_revisions rows"
 
     def test_active_ticker_is_processed(
@@ -564,7 +577,9 @@ class TestFiscalPeriodMapping:
         )
 
         row = (
-            session.query(EarningsEstimateRevisions).filter_by(ticker="AAPL", metric="eps").first()
+            session.query(EarningsEstimateRevisions)
+            .filter_by(ticker=Symbol("AAPL"), metric="eps")
+            .first()
         )
         assert row is not None
         assert row.fiscal_period == "Q3"
@@ -590,7 +605,9 @@ class TestFiscalPeriodMapping:
         )
 
         row = (
-            session.query(EarningsEstimateRevisions).filter_by(ticker="MSFT", metric="eps").first()
+            session.query(EarningsEstimateRevisions)
+            .filter_by(ticker=Symbol("MSFT"), metric="eps")
+            .first()
         )
         assert row is not None
         # 2026-06-30 is end of Q2 by calendar

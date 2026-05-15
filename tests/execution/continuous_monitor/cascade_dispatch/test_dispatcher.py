@@ -297,7 +297,7 @@ def _make_dispatch_context(
     """Build a per-tick context with one breaching position + a passing secondary check."""
     breaching = _equity_position_view(
         position_id=breaching_position_id,
-        ticker="NVDA",
+        ticker=Symbol("NVDA"),
         unrealized_pnl_usd=-3_500.0,
     )
     positions = (breaching, *extra_positions)
@@ -524,8 +524,8 @@ async def test_secondary_breach_avoided_submits_alternate_envelope() -> None:
         ]
     )
     alternate = _equity_position_view(
-        position_id="POS-AMD-1",
-        ticker="AMD",
+        position_id=PositionId("POS-AMD-1"),
+        ticker=Symbol("AMD"),
         unrealized_pnl_usd=-1_000.0,
     )
     context = _make_dispatch_context(
@@ -645,8 +645,8 @@ async def test_breach_cascade_submits_chained_envelopes_in_order_with_shared_cas
     submit = _RecordingSubmit()
     # Two positions so post-close cascade has a follow-up candidate to close.
     alternate = _equity_position_view(
-        position_id="POS-AMD-1",
-        ticker="AMD",
+        position_id=PositionId("POS-AMD-1"),
+        ticker=Symbol("AMD"),
         unrealized_pnl_usd=-1_000.0,
         position_weight_pct=8.0,
     )
@@ -714,7 +714,7 @@ async def test_breach_cascade_submits_chained_envelopes_in_order_with_shared_cas
         )
         close = ProposedClose(
             position_id=chosen.position_id,
-            ticker="AMD",
+            ticker=Symbol("AMD"),
             asset_type="equity",
             direction="long",
             pre_close_size_pct_of_portfolio=pre_pct,
@@ -773,8 +773,8 @@ async def test_margin_call_cascade_submits_returned_envelopes_in_order() -> None
     )
     # margin call selector picks worst R/R; add a couple positions.
     second = _equity_position_view(
-        position_id="POS-AMD-1",
-        ticker="AMD",
+        position_id=PositionId("POS-AMD-1"),
+        ticker=Symbol("AMD"),
         unrealized_pnl_usd=-1_500.0,
     )
     context = _make_dispatch_context(

@@ -1,11 +1,13 @@
 """Tests for position records (story 03a)."""
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
+from dataclasses import FrozenInstanceError
 from datetime import UTC, date, datetime
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind._kernel.ids import (
+    PositionId,
     Symbol,
 )
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
@@ -92,12 +94,12 @@ class TestOptionGreeks:
 
     def test_frozen(self) -> None:
         g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3)
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             g.delta = 0.9
 
     def test_required_fields_enforced(self) -> None:
-        with pytest.raises(ValidationError):
-            OptionGreeks.model_validate({"delta": 0.5})
+        with pytest.raises((ValueError, TypeError)):
+            OptionGreeks(delta=0.5)
 
     def test_freshness_defaults_all_none_or_false(self) -> None:
         """(a) All freshness fields default to None/False; legacy construction succeeds."""
@@ -124,7 +126,7 @@ class TestOptionGreeks:
 
     def test_naive_datetime_rejected(self) -> None:
         """(c) Naive datetime (no tzinfo) raises ValidationError."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             OptionGreeks(
                 delta=0.5,
                 gamma=0.1,
@@ -141,12 +143,12 @@ class TestOptionGreeks:
 
     def test_zero_iv_used_rejected(self) -> None:
         """(d) iv_used=0.0 raises ValidationError."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, iv_used=0.0)
 
     def test_negative_iv_used_rejected(self) -> None:
         """(d) iv_used=-0.1 raises ValidationError."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, iv_used=-0.1)
 
     def test_positive_iv_used_accepted(self) -> None:
@@ -172,7 +174,7 @@ class TestOptionGreeks:
         """(f) Frozen model — can't mutate as_of_timestamp after construction."""
         ts = datetime.now(tz=UTC)
         g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, as_of_timestamp=ts)
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             g.as_of_timestamp = datetime.now(tz=UTC)
 
     def test_docstring_sign_convention_paragraphs(self) -> None:
@@ -208,12 +210,12 @@ class TestPositionFill:
             slippage=0.01,
             fees=1.50,
         )
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             fill.fill_price = 200.0
 
     def test_required_fields_enforced(self) -> None:
-        with pytest.raises(ValidationError):
-            PositionFill.model_validate({"fill_price": 100.0})
+        with pytest.raises((ValueError, TypeError)):
+            PositionFill(fill_price=100.0)
 
     def test_live_execution_estimate_defaults_to_none(self) -> None:
         """(a) live_execution_estimate defaults to None (live-mode case)."""
@@ -241,7 +243,7 @@ class TestPositionFill:
 
     def test_negative_fees_rejected(self) -> None:
         """(c) Negative fees raises ValidationError (newly enforced constraint)."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             PositionFill(
                 fill_timestamp=self._now_utc(),
                 fill_price=100.0,
@@ -288,12 +290,12 @@ class TestEquityPositionDetails:
             share_count=100.0,
             average_cost_basis_per_share=150.0,
         )
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             d.ticker = Symbol("MSFT")
 
     def test_required_fields_enforced(self) -> None:
-        with pytest.raises(ValidationError):
-            EquityPositionDetails.model_validate({"ticker": "AAPL"})
+        with pytest.raises((ValueError, TypeError)):
+            EquityPositionDetails(ticker=Symbol("AAPL"))
 
 
 _GREEKS = OptionGreeks(delta=0.5, gamma=0.05, theta=-0.01, vega=0.2)
@@ -312,7 +314,7 @@ def _make_options_details(**overrides: object) -> OptionsPositionDetails:
         "greeks": _GREEKS,
     }
     kwargs.update(overrides)
-    return OptionsPositionDetails.model_validate(kwargs)
+    return OptionsPositionDetails(**kwargs)
 
 
 class TestOptionsPositionDetails:
@@ -324,12 +326,12 @@ class TestOptionsPositionDetails:
 
     def test_frozen(self) -> None:
         d = _make_options_details()
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             d.underlying_ticker = Symbol("MSFT")
 
     def test_required_fields_enforced(self) -> None:
-        with pytest.raises(ValidationError):
-            OptionsPositionDetails.model_validate({"underlying_ticker": "AAPL"})
+        with pytest.raises((ValueError, TypeError)):
+            OptionsPositionDetails(underlying_ticker=Symbol("AAPL"))
 
 
 def _make_strategy_leg(**overrides: object) -> StrategyLeg:
@@ -338,7 +340,7 @@ def _make_strategy_leg(**overrides: object) -> StrategyLeg:
         "options": _make_options_details(),
     }
     kwargs.update(overrides)
-    return StrategyLeg.model_validate(kwargs)
+    return StrategyLeg(**kwargs)
 
 
 class TestStrategyLeg:
@@ -349,7 +351,7 @@ class TestStrategyLeg:
 
     def test_frozen(self) -> None:
         leg = _make_strategy_leg()
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             leg.leg_id = "leg-2"
 
 
@@ -379,7 +381,7 @@ class TestStrategyPositionDetails:
             breakeven_levels=(205.0,),
             strategy_greeks=_GREEKS,
         )
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             d.strategy_type_label = "other"
 
 
@@ -428,7 +430,7 @@ def _make_position(**overrides: object) -> PositionRecord:
         "origin": None,
     }
     kwargs.update(overrides)
-    return PositionRecord.model_validate(kwargs)
+    return PositionRecord(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -464,8 +466,12 @@ class TestPositionRecordDiscriminator:
         p = _make_position(details=strat, direction=Direction.LONG)
         assert isinstance(p.details, StrategyPositionDetails)
 
-    def test_construction_from_dict_via_discriminator(self) -> None:
-        """Pydantic discriminator parses dict payloads into the correct concrete class."""
+    def test_construction_from_dict_no_longer_supported(self) -> None:
+        """Post-Pydantic dataclass: dict-payload discriminator parsing now lives in
+        the codec layer (``state/tables/positions_codec.py``); callers construct
+        each variant via its concrete dataclass directly. Documenting the
+        boundary so this regression is intentional, not silent."""
+        # The dataclass accepts the dict but it stays a dict (no auto-conversion).
         p = _make_position(
             details={
                 "instrument_type": "EQUITY",
@@ -474,23 +480,18 @@ class TestPositionRecordDiscriminator:
                 "average_cost_basis_per_share": 150.0,
             }
         )
+        assert not isinstance(p.details, EquityPositionDetails)
+
+    def test_concrete_instance_passes_through(self) -> None:
+        """The dataclass stores the variant the caller hands it without conversion."""
+        equity = EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=100.0,
+            average_cost_basis_per_share=150.0,
+        )
+        p = _make_position(details=equity)
         assert isinstance(p.details, EquityPositionDetails)
         assert p.details.ticker == "AAPL"
-
-    def test_bogus_discriminator_tag_fails_at_parse_time(self) -> None:
-        """Unknown discriminator tag raises ValidationError before any model_validator runs."""
-        with pytest.raises(ValidationError) as exc_info:
-            _make_position(details={"instrument_type": "BOGUS"})
-        # Pydantic's native discriminator surfaces the tag error in the message
-        assert "BOGUS" in str(exc_info.value) or "instrument_type" in str(exc_info.value)
-
-    def test_model_json_schema_has_discriminator(self) -> None:
-        """PositionRecord.model_json_schema() exposes the Pydantic-native discriminator."""
-        schema = PositionRecord.model_json_schema()
-        # The "details" property should declare a discriminator with propertyName="instrument_type"
-        details_schema = schema["properties"]["details"]
-        assert "discriminator" in details_schema
-        assert details_schema["discriminator"]["propertyName"] == "instrument_type"
 
 
 # ---------------------------------------------------------------------------
@@ -508,7 +509,7 @@ class TestPendingStatusRules:
         assert p.status == PositionStatus.PENDING
 
     def test_pending_with_filled_execution_history_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises((ValueError, TypeError)) as exc_info:
             _make_position(
                 status=PositionStatus.PENDING,
                 entry_timestamp=None,
@@ -548,7 +549,7 @@ class TestOpenStatusRules:
         assert p.status == PositionStatus.OPEN
 
     def test_open_with_empty_execution_history_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises((ValueError, TypeError)) as exc_info:
             _make_position(status=PositionStatus.OPEN, execution_history=())
         assert "execution_history" in str(exc_info.value)
 
@@ -562,7 +563,7 @@ class TestClosedStatusRules:
         assert p.status == PositionStatus.CLOSED
 
     def test_closed_without_realized_pnl_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises((ValueError, TypeError)) as exc_info:
             _make_position(
                 status=PositionStatus.CLOSED,
                 realized_pnl_to_date_usd=None,
@@ -582,7 +583,7 @@ class TestDirectionShortFields:
         assert p.details.borrow_rate_pct is None
 
     def test_long_with_short_fields_populated_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises((ValueError, TypeError)) as exc_info:
             _make_position(direction=Direction.LONG, details=_SHORT_EQUITY)
         assert "borrow_rate_pct" in str(exc_info.value) or "locate_status" in str(exc_info.value)
 
@@ -600,7 +601,7 @@ class TestDirectionShortFields:
             locate_status=LocateStatus.LOCATED,
             margin_held_usd=5000.0,
         )
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises((ValueError, TypeError)) as exc_info:
             _make_position(direction=Direction.SHORT, details=partial)
         assert "borrow_rate_pct" in str(exc_info.value)
 
@@ -617,7 +618,7 @@ class TestDirectionShortFields:
 
 class TestSpinOffInvariant:
     def test_origin_without_parent_position_id_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises((ValueError, TypeError)) as exc_info:
             _make_position(
                 origin="SPIN",
                 parent_position_id=None,
@@ -626,10 +627,10 @@ class TestSpinOffInvariant:
         assert "parent_position_id" in str(exc_info.value)
 
     def test_origin_without_corporate_action_flag_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises((ValueError, TypeError)) as exc_info:
             _make_position(
                 origin="SPIN",
-                parent_position_id="POS-AAPL-000",
+                parent_position_id=PositionId("POS-AAPL-000"),
                 corporate_action_adjustment_needed=False,
             )
         assert "corporate_action_adjustment_needed" in str(exc_info.value)
@@ -637,7 +638,7 @@ class TestSpinOffInvariant:
     def test_all_spinoff_fields_set_passes(self) -> None:
         p = _make_position(
             origin="SPIN",
-            parent_position_id="POS-AAPL-000",
+            parent_position_id=PositionId("POS-AAPL-000"),
             corporate_action_adjustment_needed=True,
         )
         assert p.origin == "SPIN"
@@ -657,7 +658,7 @@ def _make_live_estimate(**overrides: object) -> LiveExecutionEstimate:
         "live_adjusted_fill_price": 149.92,
     }
     kwargs.update(overrides)
-    return LiveExecutionEstimate.model_validate(kwargs)
+    return LiveExecutionEstimate(**kwargs)
 
 
 class TestLiveExecutionEstimate:
@@ -671,48 +672,48 @@ class TestLiveExecutionEstimate:
 
     def test_negative_spread_rejected(self) -> None:
         """(b) Negative estimated_spread_usd raises ValidationError."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_live_estimate(estimated_spread_usd=-0.1)
 
     def test_negative_impact_rejected(self) -> None:
         """(b) Negative estimated_impact_usd raises ValidationError."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_live_estimate(estimated_impact_usd=-0.01)
 
     def test_negative_regulatory_fees_rejected(self) -> None:
         """(b) Negative estimated_regulatory_fees_usd raises ValidationError."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_live_estimate(estimated_regulatory_fees_usd=-0.005)
 
     def test_nan_spread_rejected(self) -> None:
         """(c) nan in estimated_spread_usd raises ValidationError."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_live_estimate(estimated_spread_usd=float("nan"))
 
     def test_inf_impact_rejected(self) -> None:
         """(c) inf in estimated_impact_usd raises ValidationError."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_live_estimate(estimated_impact_usd=float("inf"))
 
     def test_nan_regulatory_fees_rejected(self) -> None:
         """(c) nan in estimated_regulatory_fees_usd raises ValidationError."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_live_estimate(estimated_regulatory_fees_usd=float("nan"))
 
     def test_inf_live_adjusted_fill_price_rejected(self) -> None:
         """(c) inf in live_adjusted_fill_price raises ValidationError."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_live_estimate(live_adjusted_fill_price=float("inf"))
 
     def test_nan_live_adjusted_fill_price_rejected(self) -> None:
         """(c) nan in live_adjusted_fill_price raises ValidationError."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_live_estimate(live_adjusted_fill_price=float("nan"))
 
     def test_frozen(self) -> None:
         """(d) Model is frozen — mutation raises ValidationError."""
         est = _make_live_estimate()
-        with pytest.raises(ValidationError):
+        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             est.estimated_spread_usd = 1.0
 
     def test_zero_cost_fields_accepted(self) -> None:
@@ -752,12 +753,12 @@ class TestResolveTicker:
         assert resolve_ticker(details) == "AAPL"
 
     def test_options_returns_underlying_ticker(self) -> None:
-        details = _make_options_details(underlying_ticker="MSFT")
+        details = _make_options_details(underlying_ticker=Symbol("MSFT"))
         assert resolve_ticker(details) == "MSFT"
 
     def test_strategy_returns_first_leg_underlying_ticker(self) -> None:
         leg = _make_strategy_leg(
-            options=_make_options_details(underlying_ticker="SPY"),
+            options=_make_options_details(underlying_ticker=Symbol("SPY")),
         )
         details = StrategyPositionDetails(
             strategy_type_label="bull_call_spread",

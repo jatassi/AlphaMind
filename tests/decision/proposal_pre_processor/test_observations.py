@@ -11,7 +11,9 @@ from typing import Any
 import pytest
 
 from alphamind._kernel.ids import (
+    PositionId,
     Symbol,
+    ThesisId,
 )
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.decision.analyst.models import (
@@ -376,9 +378,9 @@ def test_compute_book_health_summary_remedy_flag_empty_string_not_counted() -> N
     """
     empty_flag_assessment = PositionAssessment.model_construct(
         assessment_id="SA-1",
-        position_id="POS-1",
-        thesis_id="THESIS-1",
-        underlying="NVDA",
+        position_id=PositionId("POS-1"),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol("NVDA"),
         sector="tech",
         thesis_status="on-track",
         recommended_action="hold",

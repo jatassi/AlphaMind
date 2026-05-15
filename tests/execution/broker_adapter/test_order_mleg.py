@@ -26,7 +26,9 @@ from alphamind._kernel.ids import (
     ClientOrderId,
     CommandId,
     OccSymbol,
+    OrderId,
     PositionId,
+    Symbol,
 )
 from alphamind._kernel.money import money, price
 from alphamind.commands.command_models import (
@@ -890,7 +892,7 @@ async def test_open_with_equity_instrument_raises_type_error() -> None:
     equity_open = OpenCommand(
         command_id=CommandId("inv-test.ENV-SA-1.1.1"),
         command_type="open",
-        instrument=EquityInstrument(asset_type="equity", ticker="NVDA", direction="long"),
+        instrument=EquityInstrument(asset_type="equity", ticker=Symbol("NVDA"), direction="long"),
         entry_order=EntryOrder(type="market"),
         position_size=PositionSize(quantity=10, dollar_value=money(8000.0)),
         target=Target(target_type="absolute_price", price=price(850.0), order_type="limit"),
@@ -936,7 +938,7 @@ async def test_open_with_single_leg_option_instrument_raises_type_error() -> Non
         command_type="open",
         instrument=OptionInstrument(
             asset_type="option",
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             strike=price(800.0),
             expiration="2026-06-19",
             contract_type="call",
@@ -1003,7 +1005,7 @@ async def test_open_rejects_malformed_client_order_id(bad_id: str) -> None:
 @pytest.mark.asyncio
 async def test_open_constructs_occ_symbols_with_root_yymmdd_strike() -> None:
     """Each leg's OCC symbol encodes underlying + expiration + C/P + strike."""
-    command = _strategy_open_command(underlying="NVDA", legs=_vertical_spread_legs())
+    command = _strategy_open_command(underlying=Symbol("NVDA"), legs=_vertical_spread_legs())
     client = _CapturingClient(response=_fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1"))
 
     await submit_mleg_open(
@@ -1028,7 +1030,7 @@ async def test_open_returns_submitted_with_mleg_submission_payload() -> None:
     """On success returns Submitted carrying parent ID, per-leg acks, strategy_type."""
     command = _strategy_open_command(legs=_vertical_spread_legs())
     response = _fake_alpaca_order(
-        order_id="alpaca-strategy-id-42",
+        order_id=OrderId("alpaca-strategy-id-42"),
         client_order_id="inv-test.ENV-SA-1.1.1",
         status="accepted",
     )
@@ -1156,7 +1158,7 @@ async def test_open_empty_underlying_rejected() -> None:
     instrument = StrategyInstrument.model_construct(
         asset_type="strategy",
         strategy_type="vertical_spread",
-        underlying="",  # canonically rejected; bypass to exercise our guard
+        underlying=Symbol(""),  # canonically rejected; bypass to exercise our guard
         legs=legs,
     )
     command = _strategy_open_command()

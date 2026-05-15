@@ -14,6 +14,7 @@ from types import MappingProxyType
 
 import pytest
 
+from alphamind._kernel.ids import PositionId, Symbol
 from alphamind.risk_guardrails.guardrail_evaluation import (
     Action,
     AssetType,
@@ -437,7 +438,7 @@ def test_options_open_with_realized_vol_fallback_records_fallback_source() -> No
     provider = FixtureIvProvider(
         surface={},
         realized_vol={
-            "AAPL": RealizedVolEntry(underlying="AAPL", trailing_30d_realized_vol=0.30),
+            "AAPL": RealizedVolEntry(underlying=Symbol("AAPL"), trailing_30d_realized_vol=0.30),
         },
     )
     proposal = _option(
@@ -486,7 +487,7 @@ def test_strategy_long_call_spread_projects_net_delta() -> None:
     )
     proposal = _option(
         proposal_id="REC-1",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         direction=Direction.LONG,
         quantity=1.0,
         asset_type=AssetType.STRATEGY,
@@ -495,7 +496,7 @@ def test_strategy_long_call_spread_projects_net_delta() -> None:
     spread_provider = FixtureIvProvider(
         surface={
             "NVDA": IvSurfaceEntry(
-                underlying="NVDA",
+                underlying=Symbol("NVDA"),
                 quotes=(
                     IvQuote(
                         strike=100.0,
@@ -561,7 +562,7 @@ def _existing_long_equity(
 def test_close_long_equity_decreases_gross_below_state_gross() -> None:
     """An existing long position is closed: ``gross_exposure_pct.projected_after
     < state.gross_pct`` (gross decreases by the position's notional in % terms)."""
-    existing = _existing_long_equity(position_id="POS-1", notional_usd=5_000.0)
+    existing = _existing_long_equity(position_id=PositionId("POS-1"), notional_usd=5_000.0)
     state = _snapshot(
         gross_pct=78.0,
         sector_exposure_pct={
@@ -604,7 +605,7 @@ def test_close_long_equity_decreases_gross_below_state_gross() -> None:
 def test_adjust_proposal_leaves_every_rule_unchanged() -> None:
     """ADJUST is exposure-neutral: every rule's projected_after equals current,
     and the proposal's delta-adjusted entry has signed_notional_usd=0."""
-    existing = _existing_long_equity(position_id="POS-1", notional_usd=5_000.0)
+    existing = _existing_long_equity(position_id=PositionId("POS-1"), notional_usd=5_000.0)
     state = _snapshot(existing_positions={"POS-1": existing})
     proposal = _equity(
         proposal_id="REC-1",
@@ -636,8 +637,8 @@ def test_cancel_pending_order_decreases_pending_order_capital_pct() -> None:
     """A CANCEL on an existing pending order with reserved capital reduces
     ``pending_order_capital_pct`` below current; other rules unchanged."""
     existing = ExistingPosition(
-        position_id="POS-1",
-        underlying="AAPL",
+        position_id=PositionId("POS-1"),
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,
@@ -685,11 +686,11 @@ def test_mixed_batch_projects_each_action_per_documented_arithmetic() -> None:
     """One OPEN-LONG-EQUITY, one OPEN-SHORT-EQUITY, one CLOSE on existing long,
     one ADD on existing short, one ADJUST. Each is reflected in projections."""
     existing_long = _existing_long_equity(
-        position_id="POS-LONG", notional_usd=4_000.0, sector="tech"
+        position_id=PositionId("POS-LONG"), notional_usd=4_000.0, sector="tech"
     )
     existing_short = ExistingPosition(
-        position_id="POS-SHORT",
-        underlying="AAPL",
+        position_id=PositionId("POS-SHORT"),
+        underlying=Symbol("AAPL"),
         sector="semis",
         direction=Direction.SHORT,
         asset_type=AssetType.EQUITY,
@@ -700,7 +701,7 @@ def test_mixed_batch_projects_each_action_per_documented_arithmetic() -> None:
         reserves_capital_usd=0.0,
     )
     existing_adjust = _existing_long_equity(
-        position_id="POS-ADJUST", notional_usd=3_000.0, sector="financials"
+        position_id=PositionId("POS-ADJUST"), notional_usd=3_000.0, sector="financials"
     )
 
     state = _snapshot(
@@ -904,7 +905,7 @@ def test_equity_with_option_legs_raises_library_input_error() -> None:
     """An EQUITY proposal that carries option_legs raises naming the proposal id."""
     bad = ProposedDelta(
         id="REC-BAD",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,
@@ -935,7 +936,7 @@ def test_option_without_legs_raises() -> None:
     """``OPTION`` with ``option_legs=None`` raises naming the proposal id."""
     bad = ProposedDelta(
         id="REC-BAD",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.OPTION,
@@ -959,7 +960,7 @@ def test_strategy_with_single_leg_raises() -> None:
     """``STRATEGY`` with ``len(option_legs)==1`` raises naming the proposal id."""
     bad = ProposedDelta(
         id="REC-BAD",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.STRATEGY,
@@ -1067,7 +1068,7 @@ def test_options_proposal_underlying_missing_from_market_raises() -> None:
     mid-computation ``KeyError``."""
     bad = _option(
         proposal_id="REC-MISSING",
-        underlying="NOT-IN-MARKET",
+        underlying=Symbol("NOT-IN-MARKET"),
     )
     with pytest.raises(LibraryInputError, match=r"REC-MISSING.*NOT-IN-MARKET"):
         evaluate_proposals(
@@ -1084,7 +1085,7 @@ def test_equity_proposal_underlying_missing_from_market_raises() -> None:
     types so callers get a consistent ``LibraryInputError`` upfront."""
     bad = _equity(
         proposal_id="REC-MISSING",
-        underlying="NOT-IN-MARKET",
+        underlying=Symbol("NOT-IN-MARKET"),
         sector="tech",
         direction=Direction.LONG,
         notional_usd=1_000.0,
@@ -1103,7 +1104,7 @@ def test_aggregated_errors_lists_every_violation() -> None:
     ``LibraryInputError`` whose message names all three offending proposals."""
     bad1 = ProposedDelta(
         id="REC-EQ-LEGS",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,

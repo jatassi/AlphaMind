@@ -334,7 +334,7 @@ class TestScheduledTrigger:
         now = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
         # 20 minutes ago — exceeds the 15-minute interval.
         last = now - timedelta(minutes=20)
-        position = _options_position(position_id="pos-1", as_of_timestamp=last)
+        position = _options_position(position_id=PositionId("pos-1"), as_of_timestamp=last)
         symbol = occ_symbol_for_options(position.details)  # type: ignore[arg-type]
         cache = await _seeded_cache({"AAPL": 200.0}, now)
         iv_provider = FakeIVProvider(
@@ -344,7 +344,7 @@ class TestScheduledTrigger:
         activity_log = FakeActivityLog()
         states = {
             "pos-1": LastRefreshState(
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 last_refreshed_at=last,
                 underlying_price_at_last_refresh=200.0,
             )
@@ -381,7 +381,7 @@ class TestScheduledTrigger:
         now = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
         # 1 minute ago — well under the 15-minute interval.
         last = now - timedelta(minutes=1)
-        position = _options_position(position_id="pos-2", as_of_timestamp=last)
+        position = _options_position(position_id=PositionId("pos-2"), as_of_timestamp=last)
         cache = await _seeded_cache({"AAPL": 200.0}, now)
         symbol = occ_symbol_for_options(position.details)  # type: ignore[arg-type]
         iv_provider = FakeIVProvider(
@@ -391,7 +391,7 @@ class TestScheduledTrigger:
         activity_log = FakeActivityLog()
         states = {
             "pos-2": LastRefreshState(
-                position_id="pos-2",
+                position_id=PositionId("pos-2"),
                 last_refreshed_at=last,
                 underlying_price_at_last_refresh=200.0,
             )
@@ -424,7 +424,7 @@ class TestMoveTrigger:
         now = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
         # 2 minutes ago — well within the 15-minute interval.
         last = now - timedelta(minutes=2)
-        position = _options_position(position_id="pos-3", as_of_timestamp=last)
+        position = _options_position(position_id=PositionId("pos-3"), as_of_timestamp=last)
         symbol = occ_symbol_for_options(position.details)  # type: ignore[arg-type]
         # Anchor at 200.0; current spot 205.0 → 2.5% move > 2.0% threshold.
         cache = await _seeded_cache({"AAPL": 205.0}, now)
@@ -435,7 +435,7 @@ class TestMoveTrigger:
         activity_log = FakeActivityLog()
         states = {
             "pos-3": LastRefreshState(
-                position_id="pos-3",
+                position_id=PositionId("pos-3"),
                 last_refreshed_at=last,
                 underlying_price_at_last_refresh=200.0,
             )
@@ -465,7 +465,7 @@ class TestMoveTrigger:
         config = _config(interval_minutes=15, move_threshold_pct=2.0)
         now = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
         last = now - timedelta(minutes=2)
-        position = _options_position(position_id="pos-4", as_of_timestamp=last)
+        position = _options_position(position_id=PositionId("pos-4"), as_of_timestamp=last)
         # 1% move — under the 2% threshold.
         cache = await _seeded_cache({"AAPL": 202.0}, now)
         iv_provider = FakeIVProvider()
@@ -473,7 +473,7 @@ class TestMoveTrigger:
         activity_log = FakeActivityLog()
         states = {
             "pos-4": LastRefreshState(
-                position_id="pos-4",
+                position_id=PositionId("pos-4"),
                 last_refreshed_at=last,
                 underlying_price_at_last_refresh=200.0,
             )
@@ -504,7 +504,7 @@ class TestIVFetchFailure:
         config = _config(interval_minutes=15, move_threshold_pct=2.0)
         now = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
         last = now - timedelta(minutes=20)
-        position = _options_position(position_id="pos-5", as_of_timestamp=last)
+        position = _options_position(position_id=PositionId("pos-5"), as_of_timestamp=last)
         cache = await _seeded_cache({"AAPL": 200.0}, now)
         # Provider returns no quote for our position.
         iv_provider = FakeIVProvider(quotes={})
@@ -512,7 +512,7 @@ class TestIVFetchFailure:
         activity_log = FakeActivityLog()
         states = {
             "pos-5": LastRefreshState(
-                position_id="pos-5",
+                position_id=PositionId("pos-5"),
                 last_refreshed_at=last,
                 underlying_price_at_last_refresh=200.0,
             )
@@ -566,14 +566,14 @@ class TestIVFetchFailure:
         config = _config(interval_minutes=15, move_threshold_pct=2.0)
         now = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
         last = now - timedelta(minutes=20)
-        position = _options_position(position_id="pos-6", as_of_timestamp=last)
+        position = _options_position(position_id=PositionId("pos-6"), as_of_timestamp=last)
         cache = await _seeded_cache({"AAPL": 200.0}, now)
         iv_provider = FakeIVProvider(raises=RuntimeError("simulated"))
         writer = FakeGreeksWriter()
         activity_log = FakeActivityLog()
         states = {
             "pos-6": LastRefreshState(
-                position_id="pos-6",
+                position_id=PositionId("pos-6"),
                 last_refreshed_at=last,
                 underlying_price_at_last_refresh=200.0,
             )
@@ -618,14 +618,14 @@ class TestIVFetchFailure:
         config = _config(interval_minutes=15, move_threshold_pct=2.0)
         now1 = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
         last = now1 - timedelta(minutes=20)
-        position = _options_position(position_id="pos-flood", as_of_timestamp=last)
+        position = _options_position(position_id=PositionId("pos-flood"), as_of_timestamp=last)
         cache = await _seeded_cache({"AAPL": 200.0}, now1)
         iv_provider = FakeIVProvider(quotes={})  # always fails
         writer = FakeGreeksWriter()
         activity_log = FakeActivityLog()
         states = {
             "pos-flood": LastRefreshState(
-                position_id="pos-flood",
+                position_id=PositionId("pos-flood"),
                 last_refreshed_at=last,
                 underlying_price_at_last_refresh=200.0,
             )
@@ -677,14 +677,14 @@ class TestOffHours:
         config = _config(interval_minutes=15, move_threshold_pct=2.0)
         now = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
         last = now - timedelta(minutes=60)  # very stale
-        position = _options_position(position_id="pos-7", as_of_timestamp=last)
+        position = _options_position(position_id=PositionId("pos-7"), as_of_timestamp=last)
         cache = await _seeded_cache({"AAPL": 300.0}, now)  # absurd move
         iv_provider = FakeIVProvider()
         writer = FakeGreeksWriter()
         activity_log = FakeActivityLog()
         states = {
             "pos-7": LastRefreshState(
-                position_id="pos-7",
+                position_id=PositionId("pos-7"),
                 last_refreshed_at=last,
                 underlying_price_at_last_refresh=200.0,
             )
@@ -714,7 +714,7 @@ class TestStrategyRefresh:
         config = _config(interval_minutes=15, move_threshold_pct=2.0)
         now = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
         last = now - timedelta(minutes=20)
-        position = _strategy_position(position_id="strat-1", as_of_timestamp=last)
+        position = _strategy_position(position_id=PositionId("strat-1"), as_of_timestamp=last)
         cache = await _seeded_cache({"SPY": 500.0}, now)
         details = position.details
         assert isinstance(details, StrategyPositionDetails)
@@ -730,7 +730,7 @@ class TestStrategyRefresh:
         activity_log = FakeActivityLog()
         states = {
             "strat-1": LastRefreshState(
-                position_id="strat-1",
+                position_id=PositionId("strat-1"),
                 last_refreshed_at=last,
                 underlying_price_at_last_refresh=500.0,
             )
@@ -816,7 +816,7 @@ class TestRunForeverEntryPoint:
             return now_holder[0]
 
         last = now_holder[0] - timedelta(minutes=20)
-        position = _options_position(position_id="pos-loop-1", as_of_timestamp=last)
+        position = _options_position(position_id=PositionId("pos-loop-1"), as_of_timestamp=last)
         cache = await _seeded_cache({"AAPL": 200.0}, _now())
         symbol = occ_symbol_for_options(position.details)  # type: ignore[arg-type]
         iv_provider = FakeIVProvider(

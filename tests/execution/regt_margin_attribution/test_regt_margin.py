@@ -128,7 +128,7 @@ def test_long_equity_margin_is_50_percent_of_market_value() -> None:
     """Long 100 shares NVDA at $500 → 50% * 100 * 500 = 25_000.0."""
     from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
 
-    pos = _equity_position(ticker="NVDA", share_count=100.0, direction=Direction.LONG)
+    pos = _equity_position(ticker=Symbol("NVDA"), share_count=100.0, direction=Direction.LONG)
     result = compute_regt_margin((pos,), {"NVDA": 500.0})
 
     assert result == pytest.approx(25_000.0)
@@ -138,7 +138,7 @@ def test_short_equity_margin_is_150_percent_of_market_value() -> None:
     """Short 100 shares NVDA at $500 → 150% * 100 * 500 = 75_000.0."""
     from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
 
-    pos = _equity_position(ticker="NVDA", share_count=100.0, direction=Direction.SHORT)
+    pos = _equity_position(ticker=Symbol("NVDA"), share_count=100.0, direction=Direction.SHORT)
     result = compute_regt_margin((pos,), {"NVDA": 500.0})
 
     assert result == pytest.approx(75_000.0)
@@ -149,7 +149,7 @@ def test_long_option_margin_is_100_percent_of_premium_times_multiplier() -> None
     from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
 
     pos = _option_position(
-        underlying_ticker="NVDA",
+        underlying_ticker=Symbol("NVDA"),
         direction=Direction.LONG,
         contract_type=OptionContractType.CALL,
         contract_count=5.0,
@@ -167,7 +167,7 @@ def test_short_option_call_atm_uses_20_percent_branch() -> None:
     from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
 
     pos = _option_position(
-        underlying_ticker="NVDA",
+        underlying_ticker=Symbol("NVDA"),
         direction=Direction.SHORT,
         contract_type=OptionContractType.CALL,
         strike_price=500.0,
@@ -186,7 +186,7 @@ def test_short_option_call_deep_otm_uses_10_percent_floor() -> None:
     from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
 
     pos = _option_position(
-        underlying_ticker="NVDA",
+        underlying_ticker=Symbol("NVDA"),
         direction=Direction.SHORT,
         contract_type=OptionContractType.CALL,
         strike_price=600.0,
@@ -205,7 +205,7 @@ def test_short_option_call_extreme_otm_10pct_floor_wins() -> None:
     from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
 
     pos = _option_position(
-        underlying_ticker="NVDA",
+        underlying_ticker=Symbol("NVDA"),
         direction=Direction.SHORT,
         contract_type=OptionContractType.CALL,
         strike_price=1000.0,
@@ -224,7 +224,7 @@ def test_short_option_call_premium_floor_wins() -> None:
     from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
 
     pos = _option_position(
-        underlying_ticker="XYZ",
+        underlying_ticker=Symbol("XYZ"),
         direction=Direction.SHORT,
         contract_type=OptionContractType.CALL,
         strike_price=100.0,
@@ -244,7 +244,7 @@ def test_short_option_put_uses_strike_minus_underlying_for_otm() -> None:
     from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
 
     pos = _option_position(
-        underlying_ticker="NVDA",
+        underlying_ticker=Symbol("NVDA"),
         direction=Direction.SHORT,
         contract_type=OptionContractType.PUT,
         strike_price=400.0,
@@ -375,8 +375,8 @@ def test_mixed_portfolio_sums_correctly() -> None:
 
     # Long AAPL: 200 shares, price=180 → 0.50 * 200 * 180 = 18_000
     aapl = _equity_position(
-        position_id="eq_aapl",
-        ticker="AAPL",
+        position_id=PositionId("eq_aapl"),
+        ticker=Symbol("AAPL"),
         direction=Direction.LONG,
         share_count=200.0,
     )
@@ -384,8 +384,8 @@ def test_mixed_portfolio_sums_correctly() -> None:
     # Short NVDA call: strike=500, underlying=500, premium=10, 1 contract
     # ATM: max(500*0.20-0, 500*0.10, 10) * 1 * 100 = max(100,50,10) * 100 = 10_000
     nvda_call = _option_position(
-        position_id="opt_nvda",
-        underlying_ticker="NVDA",
+        position_id=PositionId("opt_nvda"),
+        underlying_ticker=Symbol("NVDA"),
         direction=Direction.SHORT,
         contract_type=OptionContractType.CALL,
         strike_price=500.0,
@@ -395,8 +395,8 @@ def test_mixed_portfolio_sums_correctly() -> None:
 
     # Long QQQ put: 3 contracts, premium=5 → 100% * 3 * 5 * 100 = 1_500
     qqq_put = _option_position(
-        position_id="opt_qqq",
-        underlying_ticker="QQQ",
+        position_id=PositionId("opt_qqq"),
+        underlying_ticker=Symbol("QQQ"),
         direction=Direction.LONG,
         contract_type=OptionContractType.PUT,
         strike_price=400.0,
@@ -415,7 +415,7 @@ def test_missing_underlying_price_raises_key_error() -> None:
     """Position with symbol 'ZZZZ' not in underlying_prices raises KeyError."""
     from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
 
-    pos = _equity_position(position_id="eq1", ticker="ZZZZ")
+    pos = _equity_position(position_id=PositionId("eq1"), ticker=Symbol("ZZZZ"))
     with pytest.raises(KeyError):
         compute_regt_margin((pos,), {})
 
@@ -425,8 +425,8 @@ def test_pending_position_excluded_from_margin() -> None:
     from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
 
     pending = _equity_position(
-        position_id="eq_pending",
-        ticker="NVDA",
+        position_id=PositionId("eq_pending"),
+        ticker=Symbol("NVDA"),
         status=PositionStatus.PENDING,
     )
     result = compute_regt_margin((pending,), {"NVDA": 500.0})

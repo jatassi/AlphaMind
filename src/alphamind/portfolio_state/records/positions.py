@@ -9,16 +9,12 @@ invocations.
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Annotated, Literal
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from alphamind._kernel.ids import BracketId, PositionId, Symbol, ThesisId
-
-_FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
-_NonNegFiniteFloat = Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
 
 
 class Direction(StrEnum):
@@ -48,7 +44,21 @@ class LocateStatus(StrEnum):
     AT_RISK_OF_RECALL = "AT_RISK_OF_RECALL"
 
 
-class OptionGreeks(BaseModel):
+def _check_finite(value: float, field_name: str) -> None:
+    if not math.isfinite(value):
+        msg = f"{field_name} must be finite; got {value}"
+        raise ValueError(msg)
+
+
+def _check_non_negative_finite(value: float, field_name: str) -> None:
+    _check_finite(value, field_name)
+    if value < 0:
+        msg = f"{field_name} must be >= 0; got {value}"
+        raise ValueError(msg)
+
+
+@dataclass(frozen=True, slots=True)
+class OptionGreeks:
     """Greeks for an options position.
 
     Sign conventions (per Black-Scholes textbook):
@@ -68,8 +78,6 @@ class OptionGreeks(BaseModel):
     that governs the freshness metadata fields below.
     """
 
-    model_config = ConfigDict(frozen=True)
-
     delta: float
     gamma: float
     theta: float
@@ -80,24 +88,19 @@ class OptionGreeks(BaseModel):
     iv_used: float | None = None
     refresh_failed: bool = False
 
-    @field_validator("as_of_timestamp")
-    @classmethod
-    def _require_tz_aware(cls, v: datetime | None) -> datetime | None:
-        if v is not None and (v.tzinfo is None or v.utcoffset() is None):
+    def __post_init__(self) -> None:
+        if self.as_of_timestamp is not None and (
+            self.as_of_timestamp.tzinfo is None or self.as_of_timestamp.utcoffset() is None
+        ):
             msg = "as_of_timestamp must be tz-aware UTC when not None"
             raise ValueError(msg)
-        return v
-
-    @field_validator("iv_used")
-    @classmethod
-    def _require_positive_iv(cls, v: float | None) -> float | None:
-        if v is not None and v <= 0:
-            msg = f"iv_used must be > 0 when not None; got {v}"
+        if self.iv_used is not None and self.iv_used <= 0:
+            msg = f"iv_used must be > 0 when not None; got {self.iv_used}"
             raise ValueError(msg)
-        return v
 
 
-class LiveExecutionEstimate(BaseModel):
+@dataclass(frozen=True, slots=True)
+class LiveExecutionEstimate:
     """Paper-mode harness estimate of live-execution drag for a single fill.
 
     Attached by the paper-evaluation harness to fills produced in paper mode.
@@ -116,15 +119,22 @@ class LiveExecutionEstimate(BaseModel):
       direction.
     """
 
-    model_config = ConfigDict(frozen=True)
+    estimated_spread_usd: float
+    estimated_impact_usd: float
+    estimated_regulatory_fees_usd: float
+    live_adjusted_fill_price: float
 
-    estimated_spread_usd: _NonNegFiniteFloat
-    estimated_impact_usd: _NonNegFiniteFloat
-    estimated_regulatory_fees_usd: _NonNegFiniteFloat
-    live_adjusted_fill_price: _FiniteFloat
+    def __post_init__(self) -> None:
+        _check_non_negative_finite(self.estimated_spread_usd, "estimated_spread_usd")
+        _check_non_negative_finite(self.estimated_impact_usd, "estimated_impact_usd")
+        _check_non_negative_finite(
+            self.estimated_regulatory_fees_usd, "estimated_regulatory_fees_usd"
+        )
+        _check_finite(self.live_adjusted_fill_price, "live_adjusted_fill_price")
 
 
-class PositionFill(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PositionFill:
     """Bare-minimum execution audit per position.
 
     Sign conventions:
@@ -137,36 +147,36 @@ class PositionFill(BaseModel):
     * fees: always positive (cost — broker, regulatory, exchange).
     """
 
-    model_config = ConfigDict(frozen=True)
-
     fill_timestamp: datetime
     fill_price: float
     fill_quantity: float
     slippage: float
-    fees: Annotated[float, Field(ge=0.0)]
+    fees: float
     live_execution_estimate: LiveExecutionEstimate | None = None
 
+    def __post_init__(self) -> None:
+        if self.fees < 0:
+            msg = f"fees must be >= 0; got {self.fees}"
+            raise ValueError(msg)
 
-class EquityPositionDetails(BaseModel):
+
+@dataclass(frozen=True, slots=True)
+class EquityPositionDetails:
     """Equity position details; short-only fields are None for long positions."""
 
-    model_config = ConfigDict(frozen=True)
-
-    instrument_type: Literal[InstrumentType.EQUITY] = InstrumentType.EQUITY
     ticker: Symbol
     share_count: float
     average_cost_basis_per_share: float
     borrow_rate_pct: float | None = None
     locate_status: LocateStatus | None = None
     margin_held_usd: float | None = None
+    instrument_type: InstrumentType = field(default=InstrumentType.EQUITY, init=False)
 
 
-class OptionsPositionDetails(BaseModel):
+@dataclass(frozen=True, slots=True)
+class OptionsPositionDetails:
     """Options contract details."""
 
-    model_config = ConfigDict(frozen=True)
-
-    instrument_type: Literal[InstrumentType.OPTIONS] = InstrumentType.OPTIONS
     underlying_ticker: Symbol
     strike_price: float
     expiration_date: date
@@ -175,24 +185,22 @@ class OptionsPositionDetails(BaseModel):
     contract_multiplier: float
     premium_paid_per_contract: float
     greeks: OptionGreeks
+    instrument_type: InstrumentType = field(default=InstrumentType.OPTIONS, init=False)
 
 
-class StrategyLeg(BaseModel):
+@dataclass(frozen=True, slots=True)
+class StrategyLeg:
     """Single leg of a multi-leg options strategy."""
 
-    model_config = ConfigDict(frozen=True)
-
     leg_id: str
-    direction: Direction | None = None
     options: OptionsPositionDetails
+    direction: Direction | None = None
 
 
-class StrategyPositionDetails(BaseModel):
+@dataclass(frozen=True, slots=True)
+class StrategyPositionDetails:
     """Multi-leg options strategy details."""
 
-    model_config = ConfigDict(frozen=True)
-
-    instrument_type: Literal[InstrumentType.STRATEGY] = InstrumentType.STRATEGY
     strategy_type_label: str
     legs: tuple[StrategyLeg, ...]
     net_premium_usd: float
@@ -200,12 +208,10 @@ class StrategyPositionDetails(BaseModel):
     max_loss_usd: float
     breakeven_levels: tuple[float, ...]
     strategy_greeks: OptionGreeks
+    instrument_type: InstrumentType = field(default=InstrumentType.STRATEGY, init=False)
 
 
-PositionDetailsPayload = Annotated[
-    EquityPositionDetails | OptionsPositionDetails | StrategyPositionDetails,
-    Field(discriminator="instrument_type"),
-]
+PositionDetailsPayload = EquityPositionDetails | OptionsPositionDetails | StrategyPositionDetails
 
 
 def resolve_ticker(
@@ -227,7 +233,8 @@ def resolve_ticker(
     return None
 
 
-class PositionRecord(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PositionRecord:
     """Persistent record for a single position across all instrument types.
 
     This record carries only state that survives across invocations. Computed
@@ -235,8 +242,6 @@ class PositionRecord(BaseModel):
     ``PositionView`` and are produced by the snapshot assembler at delivery
     time.
     """
-
-    model_config = ConfigDict(frozen=True)
 
     position_id: PositionId
     thesis_id: ThesisId | None
@@ -258,12 +263,10 @@ class PositionRecord(BaseModel):
         """Derived from the discriminated ``details`` payload."""
         return self.details.instrument_type
 
-    @model_validator(mode="after")
-    def _validate_all(self) -> PositionRecord:
+    def __post_init__(self) -> None:
         self._check_status_rules()
         self._check_equity_direction_fields()
         self._check_spinoff_invariant()
-        return self
 
     def _check_status_rules(self) -> None:
         # Strategy positions accumulate per-leg fills in execution_history while

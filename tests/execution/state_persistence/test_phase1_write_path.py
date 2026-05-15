@@ -11,6 +11,7 @@ around the call. Each test seeds the prerequisite Tier-1 entities (orders,
 positions, brackets, theses, cash, drawdown) via the same per-table codecs
 shipped in stories 04a-04e.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import (
+    AlpacaOrderId,
     BracketId,
     OrderId,
     PositionId,
@@ -257,32 +259,30 @@ def _make_pending_entry_order(
     avg_fill_price: float | None = None,
     position_id: str | None = None,
 ) -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": position_id,
-            "bracket_id": bracket_id,
-            "role": role,
-            "instrument_spec": EquityInstrumentSpec(ticker=Symbol("AAPL")),
-            "direction": direction,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": quantity,
-            "duration": OrderDuration.DAY,
-            "status": status,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": filled_quantity,
-            "avg_fill_price": avg_fill_price,
-            "remaining_quantity": quantity - filled_quantity,
-            "modification_count": 0,
-            "originating_thesis_id": "thesis-1",
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=bracket_id,
+        role=role,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
+        direction=direction,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=quantity,
+        duration=OrderDuration.DAY,
+        status=status,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=filled_quantity,
+        avg_fill_price=avg_fill_price,
+        remaining_quantity=quantity - filled_quantity,
+        modification_count=0,
+        originating_thesis_id=ThesisId("thesis-1"),
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -301,21 +301,19 @@ def _make_pending_position(
         share_count=share_count,
         average_cost_basis_per_share=average_cost_basis_per_share,
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.PENDING,
-            "direction": direction,
-            "entry_timestamp": None,
-            "details": details,
-            "execution_history": (),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.PENDING,
+        direction=direction,
+        entry_timestamp=None,
+        details=details,
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -347,21 +345,19 @@ def _make_open_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": direction,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=direction,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -509,38 +505,34 @@ def _make_thesis_with_resolved_components(
 
 
 def _make_cash_ledger(current_cash_usd: float = 100_000.0) -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": current_cash_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=current_cash_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _make_drawdown_state(
     equity_high_water_mark_usd: float = 100_000.0,
 ) -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": equity_high_water_mark_usd,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=equity_high_water_mark_usd,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -836,14 +828,14 @@ async def test_exit_fill_closes_position_and_resolves_thesis(
     _, factory = db
     await _seed_invocation_substrate(factory)
     close_order = _make_pending_entry_order(
-        order_id="ord-close-1",
+        order_id=OrderId("ord-close-1"),
         role=OrderRole.CLOSE,
         direction=OrderDirection.SELL,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
     )
     # All four entities reference each other cyclically — seed in one transaction.
-    # _make_active_bracket uses entry_order_id="ord-entry-1" and a protective leg
-    # with order_id="brk-1-ord-stop", so we need stubs for all referenced orders.
+    # _make_active_bracket uses entry_order_id=OrderId("ord-entry-1") and a protective leg
+    # with order_id=OrderId("brk-1-ord-stop"), so we need stubs for all referenced orders.
     from tests.state._fk_substrate import stub_order_row
 
     entry_order = _make_pending_entry_order()
@@ -874,7 +866,7 @@ async def test_exit_fill_closes_position_and_resolves_thesis(
         factory,
         _make_unprocessed_fill(
             fill_id="fill-close-1",
-            order_id="ord-close-1",
+            order_id=OrderId("ord-close-1"),
             fill_price=160.0,
             fill_quantity=10.0,
         ),
@@ -1040,10 +1032,10 @@ async def test_corporate_action_split_emits_events_and_ledger_anchor(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-split-1",
         action_type=CorporateActionType.SPLIT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=4.0,  # 4-for-1 split.
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -1114,9 +1106,9 @@ async def test_atomicity_exception_rolls_back_fills_and_log(
     _, factory = db
     await _seed_invocation_substrate(factory)
     short_entry_order = _make_pending_entry_order(
-        order_id="ord-short-1",
+        order_id=OrderId("ord-short-1"),
         direction=OrderDirection.SELL_TO_OPEN,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
     )
     await _seed_position_order_thesis_bracket(
         factory,
@@ -1127,7 +1119,9 @@ async def test_atomicity_exception_rolls_back_fills_and_log(
     )
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
-    await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-1", order_id="ord-short-1"))
+    await _append_fill(
+        factory, _make_unprocessed_fill(fill_id="fill-1", order_id=OrderId("ord-short-1"))
+    )
 
     ctx, handle = await _open_handle(factory)
     invocation_id = handle.invocation_id
@@ -1190,7 +1184,7 @@ async def test_quarantined_fill_excluded_without_aborting_batch(
     # by writing the row directly with a negative quantity.
     bad_fill_row = FillRecordRow(
         fill_id="fill-bad",
-        order_id="ord-entry-1",
+        order_id=OrderId("ord-entry-1"),
         fill_timestamp=(_NOW - timedelta(minutes=20)).isoformat(),
         fill_price=150.0,
         fill_quantity=-1.0,  # <— invalid
@@ -1265,20 +1259,18 @@ async def test_buy_fill_decrements_reserved_capital_to_zero(
         _make_pending_bracket(),
     )
     # Seed cash with a $1000 reservation already in place (mirroring Phase 2's OPEN).
-    seeded = CashLedger.model_validate(
-        {
-            "current_cash_usd": 100_000.0,
-            "settled_cash_usd": 100_000.0,
-            "reserved_capital_usd": 1_000.0,
-            "available_buying_power_usd": 99_000.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    seeded = CashLedger(
+        current_cash_usd=100_000.0,
+        settled_cash_usd=100_000.0,
+        reserved_capital_usd=1_000.0,
+        available_buying_power_usd=99_000.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
     await _seed_cash_ledger(factory, seeded)
     await _seed_drawdown_state(factory)
@@ -1330,20 +1322,18 @@ async def test_buy_fill_clamps_reserved_capital_decrement_at_zero(
         _make_pending_bracket(),
     )
     # Seed only $500 reserved while the fill consumes $1000.
-    seeded = CashLedger.model_validate(
-        {
-            "current_cash_usd": 100_000.0,
-            "settled_cash_usd": 100_000.0,
-            "reserved_capital_usd": 500.0,
-            "available_buying_power_usd": 99_500.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    seeded = CashLedger(
+        current_cash_usd=100_000.0,
+        settled_cash_usd=100_000.0,
+        reserved_capital_usd=500.0,
+        available_buying_power_usd=99_500.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
     await _seed_cash_ledger(factory, seeded)
     await _seed_drawdown_state(factory)
@@ -1386,7 +1376,7 @@ async def test_pending_position_with_missing_bracket_row_rejected_at_commit(
     await _seed_invocation_substrate(factory)
 
     # Attempt to commit a position row pointing at a bracket that does not exist.
-    position_row = position_record_to_row(_make_pending_position())  # bracket_id="brk-1"
+    position_row = position_record_to_row(_make_pending_position())  # bracket_id=BracketId("brk-1")
     with pytest.raises(IntegrityError):
         async with factory() as sess:
             sess.add(position_row)
@@ -1408,7 +1398,7 @@ async def test_open_position_with_missing_bracket_row_rejected_at_commit(
     await _seed_invocation_substrate(factory)
 
     # Attempt to commit an OPEN position pointing at a bracket that does not exist.
-    position_row = position_record_to_row(_make_open_position())  # bracket_id="brk-1"
+    position_row = position_record_to_row(_make_open_position())  # bracket_id=BracketId("brk-1")
     with pytest.raises(IntegrityError):
         async with factory() as sess:
             sess.add(position_row)
@@ -1429,7 +1419,7 @@ async def test_open_position_with_missing_thesis_row_rejected_at_commit(
     await _seed_invocation_substrate(factory)
 
     # Attempt to commit an OPEN position pointing at a thesis that does not exist.
-    position_row = position_record_to_row(_make_open_position())  # thesis_id="thesis-1"
+    position_row = position_record_to_row(_make_open_position())  # thesis_id=ThesisId("thesis-1")
     with pytest.raises(IntegrityError):
         async with factory() as sess:
             sess.add(position_row)
@@ -1450,7 +1440,7 @@ async def test_corporate_action_position_with_missing_bracket_row_rejected_at_co
     await _seed_invocation_substrate(factory)
 
     # Attempt to commit an OPEN position pointing at a bracket that does not exist.
-    # _make_open_position uses bracket_id="brk-1" by default.
+    # _make_open_position uses bracket_id=BracketId("brk-1") by default.
     position_row = position_record_to_row(_make_open_position(share_count=10.0))
     with pytest.raises(IntegrityError):
         async with factory() as sess:
@@ -1476,9 +1466,9 @@ async def test_short_entry_fill_raises_explicit_not_implemented(
         factory,
         _make_pending_position(),
         _make_pending_entry_order(
-            order_id="ord-short-entry",
+            order_id=OrderId("ord-short-entry"),
             direction=OrderDirection.SELL_TO_OPEN,
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
         ),
         _make_active_thesis(),
         _make_pending_bracket(),
@@ -1487,7 +1477,7 @@ async def test_short_entry_fill_raises_explicit_not_implemented(
     await _seed_drawdown_state(factory)
     await _append_fill(
         factory,
-        _make_unprocessed_fill(fill_id="fill-short-1", order_id="ord-short-entry"),
+        _make_unprocessed_fill(fill_id="fill-short-1", order_id=OrderId("ord-short-entry")),
     )
 
     ctx, handle = await _open_handle(factory)
@@ -1639,9 +1629,9 @@ async def test_fill_before_ca_reflects_pre_action_quantity_at_fill(
     await _seed_invocation_substrate(factory)
     # Open position with 10 shares + an entry order already filled.
     add_order = _make_pending_entry_order(
-        order_id="ord-add-1",
+        order_id=OrderId("ord-add-1"),
         role=OrderRole.ADD_ENTRY,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         quantity=5.0,
     )
     from tests.state._fk_substrate import stub_order_row
@@ -1675,7 +1665,7 @@ async def test_fill_before_ca_reflects_pre_action_quantity_at_fill(
         factory,
         _make_unprocessed_fill(
             fill_id="fill-add-1",
-            order_id="ord-add-1",
+            order_id=OrderId("ord-add-1"),
             fill_quantity=5.0,
             fill_price=150.0,
             fill_timestamp=fill_ts,
@@ -1687,10 +1677,10 @@ async def test_fill_before_ca_reflects_pre_action_quantity_at_fill(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-split-merge-1",
         action_type=CorporateActionType.SPLIT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=2.0,  # 2-for-1 split.
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=_NOW - timedelta(minutes=10),
     )
@@ -1734,9 +1724,9 @@ async def test_fill_after_ca_reflects_post_action_quantity_at_fill(
     _, factory = db
     await _seed_invocation_substrate(factory)
     add_order = _make_pending_entry_order(
-        order_id="ord-add-2",
+        order_id=OrderId("ord-add-2"),
         role=OrderRole.ADD_ENTRY,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         quantity=5.0,
     )
     from tests.state._fk_substrate import stub_order_row
@@ -1770,7 +1760,7 @@ async def test_fill_after_ca_reflects_post_action_quantity_at_fill(
         factory,
         _make_unprocessed_fill(
             fill_id="fill-add-2",
-            order_id="ord-add-2",
+            order_id=OrderId("ord-add-2"),
             fill_quantity=5.0,
             fill_price=75.0,  # post-split price.
             fill_timestamp=fill_ts,
@@ -1782,10 +1772,10 @@ async def test_fill_after_ca_reflects_post_action_quantity_at_fill(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-split-merge-2",
         action_type=CorporateActionType.SPLIT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=2.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=_NOW - timedelta(minutes=30),
     )

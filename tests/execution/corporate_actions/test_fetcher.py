@@ -32,6 +32,7 @@ from alpaca.data.models.corporate_actions import (
 )
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import PositionId
 from alphamind.execution.corporate_actions.config import CorporateActionsConfig
 from alphamind.execution.corporate_actions.types import (
     CorporateActionActivity,
@@ -437,19 +438,29 @@ async def test_warm_start_cursor_uses_max_processing_timestamp(
 
 
 _POSITIONS_AAPL_LONG: dict[str, PositionLookup] = {
-    "AAPL": PositionLookup(position_id="pos-aapl", direction=Direction.LONG, quantity=10.0),
+    "AAPL": PositionLookup(
+        position_id=PositionId("pos-aapl"), direction=Direction.LONG, quantity=10.0
+    ),
 }
 _POSITIONS_AAPL_SHORT: dict[str, PositionLookup] = {
-    "AAPL": PositionLookup(position_id="pos-aapl", direction=Direction.SHORT, quantity=10.0),
+    "AAPL": PositionLookup(
+        position_id=PositionId("pos-aapl"), direction=Direction.SHORT, quantity=10.0
+    ),
 }
 _POSITIONS_PARENT: dict[str, PositionLookup] = {
-    "PRNT": PositionLookup(position_id="pos-prnt", direction=Direction.LONG, quantity=8.0),
+    "PRNT": PositionLookup(
+        position_id=PositionId("pos-prnt"), direction=Direction.LONG, quantity=8.0
+    ),
 }
 _POSITIONS_ACQUIREE: dict[str, PositionLookup] = {
-    "TGT": PositionLookup(position_id="pos-tgt", direction=Direction.LONG, quantity=20.0),
+    "TGT": PositionLookup(
+        position_id=PositionId("pos-tgt"), direction=Direction.LONG, quantity=20.0
+    ),
 }
 _POSITIONS_OLDSYM: dict[str, PositionLookup] = {
-    "OLD": PositionLookup(position_id="pos-old", direction=Direction.LONG, quantity=5.0),
+    "OLD": PositionLookup(
+        position_id=PositionId("pos-old"), direction=Direction.LONG, quantity=5.0
+    ),
 }
 
 

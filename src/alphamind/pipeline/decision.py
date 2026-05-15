@@ -35,6 +35,7 @@ NOT catch and degrade.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -281,8 +282,8 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     # output so every downstream agent and state-delivery renderer reads
     # the canonical post-override view.
     assembled = assembled_snapshot
-    pydantic_snapshot = assembled.snapshot.model_copy(
-        update={"active_risk_parameters": composed_active_risk_parameters}
+    pydantic_snapshot = dataclasses.replace(
+        assembled.snapshot, active_risk_parameters=composed_active_risk_parameters
     )
 
     # 3. Translate to library shape.

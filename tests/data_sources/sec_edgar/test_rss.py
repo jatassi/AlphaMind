@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from alphamind._kernel.ids import Symbol
 from alphamind.data_sources.sec_edgar.rss import collect_8k_filings
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -81,7 +82,7 @@ def db_with_ticker(db_session_factory: sessionmaker[Session]) -> sessionmaker[Se
         sess.add(
             AssetUniverse(
                 asset_id="asset-acme-001",
-                ticker="ACME",
+                ticker=Symbol("ACME"),
                 full_name="ACME Corp",
                 asset_class="equity",
                 asset_role="universe",
@@ -103,7 +104,7 @@ def db_with_ticker_no_cik(db_session_factory: sessionmaker[Session]) -> sessionm
         sess.add(
             AssetUniverse(
                 asset_id="asset-nocik-001",
-                ticker="NOCIK",
+                ticker=Symbol("NOCIK"),
                 full_name="No CIK Corp",
                 asset_class="equity",
                 asset_role="universe",

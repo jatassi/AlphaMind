@@ -12,7 +12,6 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind._kernel.ids import (
     InvocationId,
@@ -294,7 +293,7 @@ class TestExampleOutputRoundTrip:
 
 class TestModeInvariant:
     def test_normal_requires_recommendations(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)recommendations"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)recommendations"):
             AnalystOutput(
                 invocation_id=InvocationId("inv-001"),
                 timestamp=_ts("2026-04-23T14:31:22Z"),
@@ -310,7 +309,7 @@ class TestModeInvariant:
             thesis_summary="Watching for confirmation.",
             estimated_conviction=3,
         )
-        with pytest.raises(ValidationError, match=r"(?i)watchlist"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)watchlist"):
             AnalystOutput(
                 invocation_id=InvocationId("inv-001"),
                 timestamp=_ts("2026-04-23T14:31:22Z"),
@@ -320,7 +319,7 @@ class TestModeInvariant:
             )
 
     def test_watchlist_requires_watchlist_field(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)watchlist"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)watchlist"):
             AnalystOutput(
                 invocation_id=InvocationId("inv-001"),
                 timestamp=_ts("2026-04-23T14:31:22Z"),
@@ -336,7 +335,7 @@ class TestModeInvariant:
             thesis_summary="Watching for confirmation.",
             estimated_conviction=3,
         )
-        with pytest.raises(ValidationError, match=r"(?i)recommendations"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)recommendations"):
             AnalystOutput(
                 invocation_id=InvocationId("inv-001"),
                 timestamp=_ts("2026-04-23T14:31:22Z"),
@@ -377,7 +376,7 @@ class TestTimestampTzAware:
         # The whole point of this test is to construct a naive datetime and
         # verify the model rejects it. DTZ001 fires on the naive constructor;
         # warranted suppression because the rejection is the behavior under test.
-        with pytest.raises(ValidationError, match=r"(?i)tz|timezone|aware"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)tz|timezone|aware"):
             AnalystOutput(
                 invocation_id=InvocationId("inv-001"),
                 timestamp=datetime(2026, 4, 23, 14, 31, 22),  # noqa: DTZ001
@@ -402,7 +401,7 @@ class TestTimestampTzAware:
 
 class TestEntryWindowPairing:
     def test_window_without_rationale_rejected(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)entry_window"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)entry_window"):
             _make_recommendation(
                 entry_window=EntryWindow(
                     deadline=_ts("2026-04-23T19:55:00Z"),
@@ -413,7 +412,7 @@ class TestEntryWindowPairing:
             )
 
     def test_rationale_without_window_rejected(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)entry_window"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)entry_window"):
             _make_recommendation(entry_window=None, entry_window_rationale="orphan rationale")
 
     def test_both_present_accepted(self) -> None:
@@ -447,7 +446,7 @@ class TestEntryOrderInvariant:
         assert eo.stop_price is None
 
     def test_limit_requires_limit_price(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)limit_price"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)limit_price"):
             EntryOrder(type="limit")
 
     def test_limit_with_limit_price_accepted(self) -> None:
@@ -455,9 +454,9 @@ class TestEntryOrderInvariant:
         assert eo.limit_price == 100.0
 
     def test_stop_limit_requires_both_prices(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)stop_price|limit_price"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)stop_price|limit_price"):
             EntryOrder(type="stop_limit", limit_price=price(100.0))
-        with pytest.raises(ValidationError, match=r"(?i)limit_price|stop_price"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)limit_price|stop_price"):
             EntryOrder(type="stop_limit", stop_price=price(99.0))
 
     def test_stop_limit_with_both_prices_accepted(self) -> None:
@@ -478,7 +477,7 @@ class TestTargetInvariant:
         assert t.pl_dollar is None
 
     def test_pl_percentage_requires_pct(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)pl_percentage"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)pl_percentage"):
             Target(target_type="pl_percentage", price=price(890.0), dollar_pl_target=money(190.0))
 
     def test_pl_percentage_with_pct_accepted(self) -> None:
@@ -491,7 +490,7 @@ class TestTargetInvariant:
         assert t.pl_percentage == 80.0
 
     def test_pl_dollar_requires_dollar(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)pl_dollar"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)pl_dollar"):
             Target(target_type="pl_dollar", price=price(890.0), dollar_pl_target=money(190.0))
 
     def test_pl_dollar_with_dollar_accepted(self) -> None:
@@ -511,7 +510,7 @@ class TestTargetInvariant:
 
 class TestInvalidationLegInvariant:
     def test_price_must_be_hard_with_order_parameters(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)is_hard|hard"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)is_hard|hard"):
             InvalidationLeg(
                 leg_id="INV-1",
                 type="price",
@@ -523,7 +522,7 @@ class TestInvalidationLegInvariant:
             )
 
     def test_price_requires_order_parameters(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)order_parameters"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)order_parameters"):
             InvalidationLeg(
                 leg_id="INV-1",
                 type="price",
@@ -547,7 +546,7 @@ class TestInvalidationLegInvariant:
         assert leg.is_hard is True
 
     def test_time_must_be_hard_with_order_parameters(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)is_hard|hard"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)is_hard|hard"):
             InvalidationLeg(
                 leg_id="INV-2",
                 type="time",
@@ -557,7 +556,7 @@ class TestInvalidationLegInvariant:
             )
 
     def test_time_requires_order_parameters(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)order_parameters"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)order_parameters"):
             InvalidationLeg(
                 leg_id="INV-2",
                 type="time",
@@ -567,7 +566,7 @@ class TestInvalidationLegInvariant:
             )
 
     def test_event_must_be_soft(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)is_hard|hard|soft"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)is_hard|hard|soft"):
             InvalidationLeg(
                 leg_id="INV-3",
                 type="event",
@@ -576,7 +575,7 @@ class TestInvalidationLegInvariant:
             )
 
     def test_event_forbids_order_parameters(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)order_parameters"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)order_parameters"):
             InvalidationLeg(
                 leg_id="INV-3",
                 type="event",
@@ -607,7 +606,7 @@ class TestPatterns:
             rec = _make_recommendation(recommendation_id=valid)
             assert rec.recommendation_id == valid
         for invalid in ("rec-1", "REC1", "INV-1", "REC-"):
-            with pytest.raises(ValidationError):
+            with pytest.raises((ValueError, TypeError)):
                 _make_recommendation(recommendation_id=invalid)
 
     def test_invalidation_leg_id_pattern(self) -> None:
@@ -620,7 +619,7 @@ class TestPatterns:
             )
             assert leg.leg_id == valid
         for invalid in ("inv-1", "INV1", "REC-1", "INV-"):
-            with pytest.raises(ValidationError):
+            with pytest.raises((ValueError, TypeError)):
                 InvalidationLeg(
                     leg_id=invalid,
                     type="event",
@@ -642,11 +641,11 @@ class TestSectorEnum:
 
     def test_three_way_value_rejected(self) -> None:
         """tech_semis is the analysis-side 3-way taxonomy; not allowed here."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_recommendation(sector="tech_semis")
 
     def test_unknown_sector_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_recommendation(sector="healthcare")
 
 
@@ -662,7 +661,7 @@ class TestWatchlistEntrySector:
             assert we.sector == s
 
     def test_three_way_value_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             WatchlistEntry(
                 ticker=Symbol("NVDA"),
                 sector="tech_semis",  # type: ignore[arg-type]  # deliberate runtime rejection
@@ -728,7 +727,7 @@ class TestInstrumentUnion:
         assert len(rec.instrument.legs) == 2
 
     def test_strategy_requires_two_legs_minimum(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             InstrumentStrategy(
                 asset_type="strategy",
                 strategy_type="vertical_spread",
@@ -772,15 +771,15 @@ class TestNumericBounds:
 
     @pytest.mark.parametrize("level", [0, 6, -1])
     def test_conviction_level_out_of_range_rejected(self, level: int) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_recommendation(conviction_level=level)
 
     def test_time_expectation_hours_zero_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_recommendation(time_expectation_hours=0.0)
 
     def test_time_expectation_hours_above_72_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_recommendation(time_expectation_hours=73.0)
 
     def test_time_expectation_hours_72_accepted(self) -> None:
@@ -795,7 +794,7 @@ class TestNumericBounds:
 
 class TestInvalidationLegsMinimum:
     def test_empty_invalidation_legs_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_recommendation(invalidation_legs=())
 
 

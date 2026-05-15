@@ -26,6 +26,7 @@ runs the full sequence inside a single invocation cycle to guard against
 read/write surfaces drifting out of contract once Phase 1 + Phase 2 share
 real state.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -40,6 +41,7 @@ from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import (
+    AlpacaOrderId,
     BracketId,
     EnvelopeId,
     InvocationId,
@@ -293,32 +295,30 @@ def _pending_entry_order(
     position_id: str,
     order_id: str = "ord-entry-six",
 ) -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": position_id,
-            "bracket_id": bracket_id,
-            "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=Symbol("AAPL")),
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": 10.0,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": "thesis-six",
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=bracket_id,
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=ThesisId("thesis-six"),
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -331,21 +331,19 @@ def _pending_position(
     details = EquityPositionDetails(
         ticker=Symbol("AAPL"), share_count=0.0, average_cost_basis_per_share=0.0
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.PENDING,
-            "direction": Direction.LONG,
-            "entry_timestamp": None,
-            "details": details,
-            "execution_history": (),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.PENDING,
+        direction=Direction.LONG,
+        entry_timestamp=None,
+        details=details,
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -422,43 +420,39 @@ def _active_thesis(
 
 
 def _cash_ledger() -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": 100_000.0,
-            "settled_cash_usd": 100_000.0,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": 100_000.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=100_000.0,
+        settled_cash_usd=100_000.0,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=100_000.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _drawdown_state() -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": 100_000.0,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=100_000.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
 def _unprocessed_fill() -> FillRecord:
     return FillRecord(
         fill_id="fill-six-1",
-        order_id="ord-entry-six",
+        order_id=OrderId("ord-entry-six"),
         fill_timestamp=_NOW - timedelta(minutes=10),
         fill_price=price(150.0),
         fill_quantity=10.0,
@@ -485,37 +479,35 @@ def _pending_protective_stop_order(
 ) -> OrderRecord:
     """Companion stop-leg order satisfying the bracket-leg→order FK.
 
-    The seeded ``BracketLeg`` carries ``order_id=f"{bracket_id}-ord-stop"``;
+    The seeded ``BracketLeg`` carries ``order_id=OrderId(f"{bracket_id}-ord-stop")``;
     on the FK-tightened schema that reference must resolve. The order is
     minimally shaped (PENDING protective stop) — Phase 1's fill integration
     only mutates the entry order, so this row sits inert through the test.
     """
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": position_id,
-            "bracket_id": bracket_id,
-            "role": OrderRole.PRICE_STOP,
-            "instrument_spec": EquityInstrumentSpec(ticker=Symbol("AAPL")),
-            "direction": OrderDirection.SELL,
-            "order_type": OrderType.STOP,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(stop_trigger_price=140.0),
-            "quantity": 10.0,
-            "duration": OrderDuration.GTC,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": "thesis-six",
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=bracket_id,
+        role=OrderRole.PRICE_STOP,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(stop_trigger_price=140.0),
+        quantity=10.0,
+        duration=OrderDuration.GTC,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=ThesisId("thesis-six"),
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -528,9 +520,13 @@ async def _seed_initial_state(factory: async_sessionmaker[AsyncSession]) -> None
     """
     await _seed_invocation_substrate(factory)
     async with factory() as sess:
-        entry_order = _pending_entry_order(bracket_id="brk-six", position_id="pos-six")
+        entry_order = _pending_entry_order(
+            bracket_id=BracketId("brk-six"), position_id=PositionId("pos-six")
+        )
         stop_order = _pending_protective_stop_order(
-            bracket_id="brk-six", position_id="pos-six", order_id="brk-six-ord-stop"
+            bracket_id=BracketId("brk-six"),
+            position_id=PositionId("pos-six"),
+            order_id=OrderId("brk-six-ord-stop"),
         )
         sess.add(order_record_to_row(entry_order))
         sess.add(order_record_to_row(stop_order))
@@ -578,25 +574,21 @@ async def _open_handle_for_existing_invocation(
 
 
 def _active_risk_parameters() -> ActiveRiskParameterSet:
-    entry = ActiveRiskParameterEntry.model_validate(
-        {
-            "rule_id": "max_position_size_usd",
-            "rule_label": "Max position size (USD)",
-            "value": 1_000.0,
-            "unit": "USD",
-            "regime_multiplier_applied": 1.0,
-            "base_value": 1_000.0,
-        }
+    entry = ActiveRiskParameterEntry(
+        rule_id="max_position_size_usd",
+        rule_label="Max position size (USD)",
+        value=1_000.0,
+        unit="USD",
+        regime_multiplier_applied=1.0,
+        base_value=1_000.0,
     )
-    return ActiveRiskParameterSet.model_validate(
-        {
-            "regime_label": RegimeLabel.NORMAL,
-            "transition_state": RegimeTransitionState.STABLE,
-            "transition_invocations_remaining": 0,
-            "parameter_change_flag": False,
-            "entries": (entry,),
-            "active_overlays": (),
-        }
+    return ActiveRiskParameterSet(
+        regime_label=RegimeLabel.NORMAL,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        parameter_change_flag=False,
+        entries=(entry,),
+        active_overlays=(),
     )
 
 
@@ -644,7 +636,9 @@ def _open_envelope(envelope_id: str = "ENV-REC-7") -> PMEnvelope:
         commands=(
             OpenCommand(
                 command_type="open",
-                instrument=EquityInstrument(asset_type="equity", ticker="NVDA", direction="long"),
+                instrument=EquityInstrument(
+                    asset_type="equity", ticker=Symbol("NVDA"), direction="long"
+                ),
                 entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
                 position_size=PositionSize(quantity=10.0, dollar_value=money(10_000.0)),
                 target=Target(

@@ -1,23 +1,23 @@
 """Round-trip codec between ``BracketRecord`` and ``brackets`` /
 ``bracket_legs`` SQL rows (story 04d / ALP-361).
 
-The typed records are the source of truth; this module is the only place
-that knows the row shape. Callers operate on the records and let the
-codec materialize / hydrate rows.
+The typed frozen-dataclass records are the source of truth; this module is the
+only place that knows the row shape. Callers operate on the records and let
+the codec materialize / hydrate rows.
 
 The discriminated trigger union (``PriceTrigger | TimeTrigger | EventTrigger``)
-and the optional ``PLAnchorSpec`` round-trip via Pydantic ``TypeAdapter`` so
+and the optional ``PLAnchorSpec`` round-trip via hand-written JSON helpers so
 the JSON payloads remain validated against the same vocabularies the typed
 records enforce.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
+from typing import Any
 
-from pydantic import TypeAdapter
-
-from alphamind._kernel.ids import BracketId, OrderId, PositionId
+from alphamind._kernel.ids import BracketId, CommandId, OrderId, PositionId, Symbol
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegEnforcement,
@@ -26,17 +26,99 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    EventTrigger,
     PLAnchorSpec,
+    PriceTrigger,
+    TimeTrigger,
     TriggerPayload,
 )
 from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
 
-_TRIGGER_ADAPTER: TypeAdapter[TriggerPayload] = TypeAdapter(TriggerPayload)
-_PL_ANCHOR_ADAPTER: TypeAdapter[PLAnchorSpec] = TypeAdapter(PLAnchorSpec)
-_MODIFICATION_HISTORY_ADAPTER: TypeAdapter[tuple[BracketLegModification, ...]] = TypeAdapter(
-    tuple[BracketLegModification, ...]
-)
+
+def _trigger_to_dict(trigger: TriggerPayload) -> dict[str, Any]:
+    if isinstance(trigger, PriceTrigger):
+        return {
+            "trigger_type": trigger.trigger_type,
+            "underlying_ticker": trigger.underlying_ticker,
+            "threshold_usd": trigger.threshold_usd,
+            "direction": trigger.direction,
+        }
+    if isinstance(trigger, TimeTrigger):
+        return {
+            "trigger_type": trigger.trigger_type,
+            "deadline": trigger.deadline.isoformat(),
+        }
+    # EventTrigger
+    return {
+        "trigger_type": trigger.trigger_type,
+        "description": trigger.description,
+        "condition_evaluator_id": trigger.condition_evaluator_id,
+    }
+
+
+def _trigger_from_dict(payload: dict[str, Any]) -> TriggerPayload:
+    kind = payload["trigger_type"]
+    if kind == "price":
+        return PriceTrigger(
+            underlying_ticker=Symbol(payload["underlying_ticker"]),
+            threshold_usd=payload["threshold_usd"],
+            direction=payload["direction"],
+        )
+    if kind == "time":
+        return TimeTrigger(deadline=datetime.fromisoformat(payload["deadline"]))
+    if kind == "event":
+        return EventTrigger(
+            description=payload["description"],
+            condition_evaluator_id=payload.get("condition_evaluator_id"),
+        )
+    msg = f"unknown trigger_type discriminator: {kind!r}"
+    raise ValueError(msg)
+
+
+def _pl_anchor_to_dict(anchor: PLAnchorSpec) -> dict[str, Any]:
+    return {
+        "spec_type": anchor.spec_type,
+        "pct": anchor.pct,
+        "planned_entry_price": anchor.planned_entry_price,
+        "actual_entry_price": anchor.actual_entry_price,
+        "recalculated_at_fill": anchor.recalculated_at_fill,
+    }
+
+
+def _pl_anchor_from_dict(payload: dict[str, Any]) -> PLAnchorSpec:
+    return PLAnchorSpec(
+        spec_type=payload["spec_type"],
+        pct=payload["pct"],
+        planned_entry_price=payload["planned_entry_price"],
+        actual_entry_price=payload.get("actual_entry_price"),
+        recalculated_at_fill=payload.get("recalculated_at_fill", False),
+    )
+
+
+def _modification_to_dict(mod: BracketLegModification) -> dict[str, Any]:
+    return {
+        "timestamp": mod.timestamp.isoformat(),
+        "pm_command_id": mod.pm_command_id,
+        "source": mod.source,
+        "field_changed": mod.field_changed,
+        "old_value": mod.old_value,
+        "new_value": mod.new_value,
+        "rationale": mod.rationale,
+    }
+
+
+def _modification_from_dict(payload: dict[str, Any]) -> BracketLegModification:
+    raw_id = payload.get("pm_command_id")
+    return BracketLegModification(
+        timestamp=datetime.fromisoformat(payload["timestamp"]),
+        pm_command_id=CommandId(raw_id) if raw_id is not None else None,
+        source=payload["source"],
+        field_changed=payload["field_changed"],
+        old_value=payload["old_value"],
+        new_value=payload["new_value"],
+        rationale=payload["rationale"],
+    )
 
 
 def record_to_rows(record: BracketRecord) -> tuple[BracketRow, tuple[BracketLegRow, ...]]:
@@ -56,9 +138,9 @@ def record_to_rows(record: BracketRecord) -> tuple[BracketRow, tuple[BracketLegR
             else None
         ),
         corporate_action_cancellation_reason=record.corporate_action_cancellation_reason,
-        modification_history_json=_MODIFICATION_HISTORY_ADAPTER.dump_json(
-            record.modification_history
-        ).decode(),
+        modification_history_json=json.dumps(
+            [_modification_to_dict(m) for m in record.modification_history]
+        ),
     )
     leg_rows = tuple(
         _leg_to_row(leg, bracket_id=record.bracket_id, leg_index=idx)
@@ -75,7 +157,9 @@ def rows_to_record(bracket_row: BracketRow, leg_rows: tuple[BracketLegRow, ...])
     ``ORDER BY leg_index`` clause.
     """
     legs = tuple(_row_to_leg(row) for row in leg_rows)
-    history = _MODIFICATION_HISTORY_ADAPTER.validate_json(bracket_row.modification_history_json)
+    history = tuple(
+        _modification_from_dict(m) for m in json.loads(bracket_row.modification_history_json)
+    )
     return BracketRecord(
         bracket_id=BracketId(bracket_row.bracket_id),
         position_id=PositionId(bracket_row.position_id),
@@ -96,11 +180,9 @@ def _leg_to_row(leg: BracketLeg, *, bracket_id: str, leg_index: int) -> BracketL
         leg_type=leg.leg_type.value,
         order_id=leg.order_id,
         trigger_kind=leg.trigger.trigger_type.upper(),
-        trigger_payload_json=_TRIGGER_ADAPTER.dump_json(leg.trigger).decode(),
+        trigger_payload_json=json.dumps(_trigger_to_dict(leg.trigger)),
         pl_anchor_json=(
-            _PL_ANCHOR_ADAPTER.dump_json(leg.pl_anchor).decode()
-            if leg.pl_anchor is not None
-            else None
+            json.dumps(_pl_anchor_to_dict(leg.pl_anchor)) if leg.pl_anchor is not None else None
         ),
         enforcement=leg.enforcement.value,
         leg_status=leg.status.value,
@@ -109,7 +191,7 @@ def _leg_to_row(leg: BracketLeg, *, bracket_id: str, leg_index: int) -> BracketL
 
 def _row_to_leg(row: BracketLegRow) -> BracketLeg:
     pl_anchor = (
-        _PL_ANCHOR_ADAPTER.validate_json(row.pl_anchor_json)
+        _pl_anchor_from_dict(json.loads(row.pl_anchor_json))
         if row.pl_anchor_json is not None
         else None
     )
@@ -117,7 +199,7 @@ def _row_to_leg(row: BracketLegRow) -> BracketLeg:
         leg_id=row.bracket_leg_id,
         leg_type=BracketLegType(row.leg_type),
         order_id=OrderId(row.order_id) if row.order_id is not None else None,
-        trigger=_TRIGGER_ADAPTER.validate_json(row.trigger_payload_json),
+        trigger=_trigger_from_dict(json.loads(row.trigger_payload_json)),
         enforcement=BracketLegEnforcement(row.enforcement),
         status=BracketLegStatus(row.leg_status),
         pl_anchor=pl_anchor,

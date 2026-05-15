@@ -244,7 +244,7 @@ class TestUnderlyingMatchesInstrument:
             instrument=InstrumentEquity(
                 asset_type="equity", ticker=Symbol("AMD"), direction="long"
             ),
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
         )
         output = _make_output(recommendations=(rec,))
         result = validate_analyst_output(
@@ -266,7 +266,7 @@ class TestUnderlyingMatchesInstrument:
                 contract_type="call",
                 direction="long",
             ),
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             position_size=PositionSize(
                 quantity=4,
                 dollar_value=money(3370.0),
@@ -307,7 +307,7 @@ class TestUnderlyingMatchesInstrument:
                     ),
                 ),
             ),
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             position_size=PositionSize(
                 quantity=4,
                 dollar_value=money(3370.0),
@@ -441,7 +441,7 @@ class TestAssetTypePermitted:
                 contract_type="call",
                 direction="long",
             ),
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             position_size=PositionSize(
                 quantity=1,
                 dollar_value=money(2000.0),
@@ -474,7 +474,7 @@ class TestAssetTypePermitted:
                 contract_type="call",
                 direction="long",
             ),
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             position_size=PositionSize(
                 quantity=1,
                 dollar_value=money(2000.0),

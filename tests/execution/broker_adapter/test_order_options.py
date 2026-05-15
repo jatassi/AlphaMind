@@ -29,6 +29,7 @@ from alpaca.trading.requests import (
 
 from alphamind._kernel.ids import (
     PositionId,
+    Symbol,
 )
 from alphamind._kernel.money import money, price
 from alphamind.commands.command_models import (
@@ -113,7 +114,7 @@ def _option_instrument(
 
 
 def _equity_instrument() -> EquityInstrument:
-    return EquityInstrument(asset_type="equity", ticker="NVDA", direction="long")
+    return EquityInstrument(asset_type="equity", ticker=Symbol("NVDA"), direction="long")
 
 
 def _thesis() -> Thesis:

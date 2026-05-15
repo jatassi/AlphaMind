@@ -667,8 +667,8 @@ def build_fixture_normal_view() -> tuple[StrategistView, tuple[ThesisHealthSnaps
     """Normal scenario — 4 positions across 3 sectors, full thesis, 1 pending order."""
     paired = (
         _make_position_view(
-            position_id="POS-NVDA",
-            ticker="NVDA",
+            position_id=PositionId("POS-NVDA"),
+            ticker=Symbol("NVDA"),
             direction=Direction.LONG,
             share_count=5.0,
             avg_cost=820.0,
@@ -679,8 +679,8 @@ def build_fixture_normal_view() -> tuple[StrategistView, tuple[ThesisHealthSnaps
             pending_order=True,
         ),
         _make_position_view(
-            position_id="POS-JPM",
-            ticker="JPM",
+            position_id=PositionId("POS-JPM"),
+            ticker=Symbol("JPM"),
             direction=Direction.LONG,
             share_count=15.0,
             avg_cost=180.0,
@@ -690,8 +690,8 @@ def build_fixture_normal_view() -> tuple[StrategistView, tuple[ThesisHealthSnaps
             weight_pct=3.0,
         ),
         _make_position_view(
-            position_id="POS-XOM",
-            ticker="XOM",
+            position_id=PositionId("POS-XOM"),
+            ticker=Symbol("XOM"),
             direction=Direction.LONG,
             share_count=20.0,
             avg_cost=105.0,
@@ -701,8 +701,8 @@ def build_fixture_normal_view() -> tuple[StrategistView, tuple[ThesisHealthSnaps
             weight_pct=2.2,
         ),
         _make_position_view(
-            position_id="POS-AAPL",
-            ticker="AAPL",
+            position_id=PositionId("POS-AAPL"),
+            ticker=Symbol("AAPL"),
             direction=Direction.LONG,
             share_count=10.0,
             avg_cost=170.0,
@@ -745,8 +745,8 @@ def build_fixture_defensive_posture_view() -> tuple[
     """
     paired = (
         _make_position_view(
-            position_id="POS-NVDA",
-            ticker="NVDA",
+            position_id=PositionId("POS-NVDA"),
+            ticker=Symbol("NVDA"),
             direction=Direction.LONG,
             share_count=5.0,
             avg_cost=820.0,
@@ -756,8 +756,8 @@ def build_fixture_defensive_posture_view() -> tuple[
             weight_pct=4.3,
         ),
         _make_position_view(
-            position_id="POS-MSFT",
-            ticker="MSFT",
+            position_id=PositionId("POS-MSFT"),
+            ticker=Symbol("MSFT"),
             direction=Direction.LONG,
             share_count=8.0,
             avg_cost=410.0,
@@ -767,8 +767,8 @@ def build_fixture_defensive_posture_view() -> tuple[
             weight_pct=3.4,
         ),
         _make_position_view(
-            position_id="POS-GOOGL",
-            ticker="GOOGL",
+            position_id=PositionId("POS-GOOGL"),
+            ticker=Symbol("GOOGL"),
             direction=Direction.LONG,
             share_count=12.0,
             avg_cost=170.0,
@@ -778,8 +778,8 @@ def build_fixture_defensive_posture_view() -> tuple[
             weight_pct=2.1,
         ),
         _make_position_view(
-            position_id="POS-JPM",
-            ticker="JPM",
+            position_id=PositionId("POS-JPM"),
+            ticker=Symbol("JPM"),
             direction=Direction.LONG,
             share_count=15.0,
             avg_cost=180.0,
@@ -789,8 +789,8 @@ def build_fixture_defensive_posture_view() -> tuple[
             weight_pct=3.0,
         ),
         _make_position_view(
-            position_id="POS-XOM",
-            ticker="XOM",
+            position_id=PositionId("POS-XOM"),
+            ticker=Symbol("XOM"),
             direction=Direction.LONG,
             share_count=20.0,
             avg_cost=105.0,
@@ -800,8 +800,8 @@ def build_fixture_defensive_posture_view() -> tuple[
             weight_pct=2.2,
         ),
         _make_position_view(
-            position_id="POS-AAPL",
-            ticker="AAPL",
+            position_id=PositionId("POS-AAPL"),
+            ticker=Symbol("AAPL"),
             direction=Direction.LONG,
             share_count=10.0,
             avg_cost=170.0,
@@ -826,9 +826,9 @@ def build_fixture_defensive_posture_view() -> tuple[
         timestamp=_AS_OF - timedelta(minutes=15),
         event_type=EventType.POSITION_CLOSED,
         event_group=EventGroup.POSITION_LIFECYCLE,
-        position_id="POS-MSFT",
+        position_id=PositionId("POS-MSFT"),
         order_id=None,
-        thesis_id="THESIS-POS-MSFT",
+        thesis_id=ThesisId("THESIS-POS-MSFT"),
         source=EventSource.GUARDRAIL_LAYER,
         detail=PositionClosedDetail(
             exit_method=PositionExitMethod.PM_DECISION,
@@ -863,8 +863,8 @@ def build_fixture_emergency_view() -> tuple[StrategistView, tuple[ThesisHealthSn
     """
     paired = (
         _make_position_view(
-            position_id="POS-NVDA",
-            ticker="NVDA",
+            position_id=PositionId("POS-NVDA"),
+            ticker=Symbol("NVDA"),
             direction=Direction.LONG,
             share_count=5.0,
             avg_cost=820.0,
@@ -875,8 +875,8 @@ def build_fixture_emergency_view() -> tuple[StrategistView, tuple[ThesisHealthSn
             weight_pct=4.5,
         ),
         _make_position_view(
-            position_id="POS-JPM",
-            ticker="JPM",
+            position_id=PositionId("POS-JPM"),
+            ticker=Symbol("JPM"),
             direction=Direction.LONG,
             share_count=15.0,
             avg_cost=180.0,
@@ -886,8 +886,8 @@ def build_fixture_emergency_view() -> tuple[StrategistView, tuple[ThesisHealthSn
             weight_pct=3.0,
         ),
         _make_position_view(
-            position_id="POS-XOM",
-            ticker="XOM",
+            position_id=PositionId("POS-XOM"),
+            ticker=Symbol("XOM"),
             direction=Direction.LONG,
             share_count=20.0,
             avg_cost=105.0,
@@ -897,8 +897,8 @@ def build_fixture_emergency_view() -> tuple[StrategistView, tuple[ThesisHealthSn
             weight_pct=2.2,
         ),
         _make_position_view(
-            position_id="POS-AAPL",
-            ticker="AAPL",
+            position_id=PositionId("POS-AAPL"),
+            ticker=Symbol("AAPL"),
             direction=Direction.LONG,
             share_count=10.0,
             avg_cost=170.0,
@@ -937,7 +937,7 @@ def build_fixture_regime_transition_breach() -> RegimeTransitionBreach:
     ``position_max_size_pct`` to 3.5%; overage is 1.0 percentage points.
     """
     return RegimeTransitionBreach(
-        position_id="POS-NVDA",
+        position_id=PositionId("POS-NVDA"),
         rule_id="position_max_size_pct",
         rule_label="Per-position max size",
         current_value=4.5,

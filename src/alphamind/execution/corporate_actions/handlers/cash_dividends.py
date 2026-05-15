@@ -12,6 +12,8 @@ per the cancel-and-review policy.
 
 from __future__ import annotations
 
+import dataclasses
+
 from alphamind.execution.write_paths.ca_integration_ledger import (
     mark_ca_activity_processed,
 )
@@ -78,7 +80,7 @@ async def _apply_cash_dividend(
         position_id=activity.position_id,
     )
 
-    updated = position.model_copy(update={"corporate_action_adjustment_needed": True})
+    updated = dataclasses.replace(position, corporate_action_adjustment_needed=True)
     _persist_position_update(pos_row, updated)
 
     await _emit_corporate_action_applied(

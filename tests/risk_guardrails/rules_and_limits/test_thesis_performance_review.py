@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind.config.loaders import load_profiles
 from alphamind.config.models.main import Profile
@@ -284,18 +283,18 @@ def test_non_positive_starting_capital_raises(
 
 
 def test_config_rejects_zero_trade_count_threshold() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         ThesisPerformanceReviewConfig(trade_count_threshold=0, loss_pct_threshold=0.15)
 
 
 def test_config_rejects_negative_loss_pct_threshold() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         ThesisPerformanceReviewConfig(trade_count_threshold=20, loss_pct_threshold=-0.05)
 
 
 def test_config_rejects_loss_pct_above_one() -> None:
     """The fraction-space invariant: 0 < loss_pct_threshold <= 1."""
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         ThesisPerformanceReviewConfig(trade_count_threshold=20, loss_pct_threshold=1.5)
 
 

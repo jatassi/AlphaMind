@@ -5,7 +5,6 @@ from typing import Any
 
 import pytest
 import yaml
-from pydantic import ValidationError
 
 from alphamind.config.loaders import load_modes
 from alphamind.config.models import (
@@ -114,21 +113,21 @@ def test_halt_excludes_open_and_add_command_types() -> None:
 def test_strategist_mode_rejects_empty_allowed_actions() -> None:
     raw = _halt_raw()["strategist"]
     raw["allowed_actions"] = []
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         StrategistMode.model_validate(raw)
 
 
 def test_strategist_mode_rejects_duplicate_allowed_actions() -> None:
     raw = _halt_raw()["strategist"]
     raw["allowed_actions"] = ["hold", "hold"]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         StrategistMode.model_validate(raw)
 
 
 def test_strategist_mode_rejects_unknown_action() -> None:
     raw = _halt_raw()["strategist"]
     raw["allowed_actions"] = ["pivot"]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         StrategistMode.model_validate(raw)
 
 
@@ -148,21 +147,21 @@ def test_strategist_mode_maps_hyphenated_yaml_value_to_underscore_member() -> No
 def test_pm_mode_rejects_empty_allowed_command_types() -> None:
     raw = _halt_raw()["pm"]
     raw["allowed_command_types"] = []
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         PmMode.model_validate(raw)
 
 
 def test_pm_mode_rejects_duplicate_allowed_command_types() -> None:
     raw = _halt_raw()["pm"]
     raw["allowed_command_types"] = ["CLOSE", "CLOSE"]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         PmMode.model_validate(raw)
 
 
 def test_pm_mode_rejects_lowercase_command_type() -> None:
     raw = _halt_raw()["pm"]
     raw["allowed_command_types"] = ["open"]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         PmMode.model_validate(raw)
 
 
@@ -172,7 +171,7 @@ def test_pm_mode_rejects_lowercase_command_type() -> None:
 
 
 def test_analyst_mode_rejects_unknown_output_mode() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         AnalystMode.model_validate({"output_mode": "trade"})
 
 
@@ -198,11 +197,11 @@ def test_load_modes_raises_when_file_missing(tmp_path: Path) -> None:
 def test_mode_models_are_frozen() -> None:
     modes = load_modes(CONFIG_DIR)
     halt = modes[Mode.halt]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         halt.__setattr__("analyst", halt.analyst)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         halt.analyst.__setattr__("output_mode", AnalystOutputMode.proposals)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         halt.strategist.__setattr__("pending_orders_default", PendingOrdersDefault.maintain)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         halt.pm.__setattr__("emphasis", PmEmphasis.normal)

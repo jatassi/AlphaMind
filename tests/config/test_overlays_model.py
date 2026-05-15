@@ -5,7 +5,6 @@ from typing import Any, cast
 
 import pytest
 import yaml
-from pydantic import ValidationError
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 CONFIG_DIR = REPO_ROOT / "config"
@@ -56,7 +55,7 @@ def test_pre_event_overlay_rejects_unknown_event_type() -> None:
 
     raw = _valid_pre_event_payload()
     raw["activation"]["events"] = ["eclipse"]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         PreEventOverlay.model_validate(raw)
 
 
@@ -65,7 +64,7 @@ def test_pre_event_overlay_rejects_zero_windows_before_event() -> None:
 
     raw = _valid_pre_event_payload()
     raw["activation"]["windows_before_event"] = 0
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         PreEventOverlay.model_validate(raw)
 
 
@@ -74,7 +73,7 @@ def test_pre_event_overlay_rejects_empty_multipliers() -> None:
 
     raw = _valid_pre_event_payload()
     raw["multipliers"] = {}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         PreEventOverlay.model_validate(raw)
 
 
@@ -83,7 +82,7 @@ def test_pre_event_overlay_rejects_zero_multiplier() -> None:
 
     raw = _valid_pre_event_payload()
     raw["multipliers"] = {"position_max_size_pct": 0}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         PreEventOverlay.model_validate(raw)
 
 
@@ -92,7 +91,7 @@ def test_pre_event_overlay_rejects_negative_multiplier() -> None:
 
     raw = _valid_pre_event_payload()
     raw["multipliers"] = {"position_max_size_pct": -0.5}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         PreEventOverlay.model_validate(raw)
 
 
@@ -101,7 +100,7 @@ def test_pre_event_overlay_rejects_uppercase_multiplier_key() -> None:
 
     raw = _valid_pre_event_payload()
     raw["multipliers"] = {"PositionMaxSize": 0.8}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         PreEventOverlay.model_validate(raw)
 
 
@@ -109,7 +108,7 @@ def test_pre_event_overlay_is_frozen() -> None:
     from alphamind.config.models import PreEventOverlay
 
     overlay = PreEventOverlay.model_validate(_valid_pre_event_payload())
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         overlay.multipliers = {"position_max_size_pct": 0.5}
 
 
@@ -131,7 +130,7 @@ def test_stress_overlay_rejects_unknown_trigger() -> None:
 
     raw = _valid_stress_payload()
     raw["activation"]["triggers"] = ["scary_news"]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         StressOverlay.model_validate(raw)
 
 
@@ -140,7 +139,7 @@ def test_stress_overlay_rejects_empty_multipliers() -> None:
 
     raw = _valid_stress_payload()
     raw["multipliers"] = {}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         StressOverlay.model_validate(raw)
 
 
@@ -149,7 +148,7 @@ def test_stress_overlay_rejects_negative_multiplier() -> None:
 
     raw = _valid_stress_payload()
     raw["multipliers"] = {"sector_concentration_pct": -0.5}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         StressOverlay.model_validate(raw)
 
 

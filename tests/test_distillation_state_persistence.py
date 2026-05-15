@@ -20,6 +20,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,
@@ -60,7 +61,7 @@ def seeded_universe(session: Session) -> AssetUniverse:
     """Insert minimal AssetUniverse rows (AAPL, MSFT) for FK satisfaction."""
     aapl = AssetUniverse(
         asset_id="asset-aapl",
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         full_name="Apple Inc.",
         asset_class="equity",
         asset_role="universe",
@@ -71,7 +72,7 @@ def seeded_universe(session: Session) -> AssetUniverse:
     )
     msft = AssetUniverse(
         asset_id="asset-msft",
-        ticker="MSFT",
+        ticker=Symbol("MSFT"),
         full_name="Microsoft Corp.",
         asset_class="equity",
         asset_role="universe",
@@ -111,7 +112,7 @@ class TestRoundTrips:
         self, session: Session, seeded_universe: AssetUniverse
     ) -> None:
         row = DistillationTickerBaseline(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             baseline_kind="volume",
             as_of="2026-04-25T00:00:00Z",
             mean=50_000_000.0,
@@ -175,7 +176,7 @@ class TestRoundTrips:
         self, session: Session, seeded_universe: AssetUniverse
     ) -> None:
         row = DistillationEventHistory(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_kind="gap",
             event_ts="2026-04-25T13:30:00Z",
             direction="up",
@@ -201,7 +202,7 @@ class TestRoundTrips:
     ) -> None:
         """outcome_observed_at is nullable until the outcome resolves."""
         row = DistillationEventHistory(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_kind="extended_hours",
             event_ts="2026-04-25T20:00:00Z",
             direction="down",
@@ -274,7 +275,7 @@ class TestCompositeKeyUniqueness:
     ) -> None:
         def make_row() -> DistillationTickerBaseline:
             return DistillationTickerBaseline(
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 baseline_kind="volume",
                 as_of="2026-04-25T00:00:00Z",
                 mean=50_000_000.0,
@@ -337,7 +338,7 @@ class TestCompositeKeyUniqueness:
     ) -> None:
         def make_row() -> DistillationEventHistory:
             return DistillationEventHistory(
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 event_kind="gap",
                 event_ts="2026-04-25T13:30:00Z",
                 direction="up",
@@ -402,7 +403,7 @@ class TestCompositeKeyUniqueness:
 class TestForeignKeyConstraints:
     def test_ticker_baseline_fk_ticker(self, session: Session) -> None:
         row = DistillationTickerBaseline(
-            ticker="NONEXISTENT",
+            ticker=Symbol("NONEXISTENT"),
             baseline_kind="volume",
             as_of="2026-04-25T00:00:00Z",
             mean=1.0,
@@ -450,7 +451,7 @@ class TestForeignKeyConstraints:
 
     def test_event_history_fk_ticker(self, session: Session) -> None:
         row = DistillationEventHistory(
-            ticker="NONEXISTENT",
+            ticker=Symbol("NONEXISTENT"),
             event_kind="gap",
             event_ts="2026-04-25T13:30:00Z",
             direction="up",
@@ -487,7 +488,7 @@ class TestCheckConstraints:
         self, session: Session, seeded_universe: AssetUniverse
     ) -> None:
         row = DistillationTickerBaseline(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             baseline_kind="volume",
             as_of="2026-04-25T00:00:00Z",
             mean=1.0,
@@ -541,7 +542,7 @@ class TestCheckConstraints:
         self, session: Session, seeded_universe: AssetUniverse
     ) -> None:
         row = DistillationTickerBaseline(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             baseline_kind="not_a_real_kind",
             as_of="2026-04-25T00:00:00Z",
             mean=1.0,
@@ -559,7 +560,7 @@ class TestCheckConstraints:
         self, session: Session, seeded_universe: AssetUniverse
     ) -> None:
         row = DistillationEventHistory(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_kind="not_a_real_event_kind",
             event_ts="2026-04-25T13:30:00Z",
             direction="up",

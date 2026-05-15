@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import PositionId, Symbol
 from alphamind.portfolio_state.events.activity_log import (
     CashCreditedDetail,
     CashCreditReason,
@@ -77,10 +78,10 @@ async def test_reverse_split_scales_equity_quantity_and_basis(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-rsplit-1",
         action_type=CorporateActionType.REVERSE_SPLIT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=10.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -122,10 +123,10 @@ async def test_reverse_split_credits_fractional_cash_out_when_cash_impact_positi
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-rsplit-cash-1",
         action_type=CorporateActionType.REVERSE_SPLIT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=10.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=2.50,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -178,10 +179,10 @@ async def test_reverse_split_no_cash_credit_when_impact_zero(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-rsplit-zero-1",
         action_type=CorporateActionType.REVERSE_SPLIT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=10.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -238,10 +239,10 @@ async def test_reverse_split_options_projects_alpaca_state_and_clears_greeks(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-rsplit-opt-1",
         action_type=CorporateActionType.REVERSE_SPLIT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=5.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -292,10 +293,10 @@ async def test_reverse_split_strategy_applies_per_leg_projection(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-rsplit-strat-1",
         action_type=CorporateActionType.REVERSE_SPLIT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=5.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -353,10 +354,10 @@ async def test_reverse_split_emits_corporate_action_applied(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-rsplit-applied-1",
         action_type=CorporateActionType.REVERSE_SPLIT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=10.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -403,10 +404,10 @@ async def test_reverse_split_cancels_bracket(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-rsplit-bracket-1",
         action_type=CorporateActionType.REVERSE_SPLIT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=10.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -459,10 +460,10 @@ async def test_reverse_split_writes_dedup_ledger(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-rsplit-ledger-1",
         action_type=CorporateActionType.REVERSE_SPLIT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=10.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -503,10 +504,10 @@ async def test_reverse_split_raises_on_missing_position(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-rsplit-missing-1",
         action_type=CorporateActionType.REVERSE_SPLIT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=10.0,
-        position_id="pos-missing",
+        position_id=PositionId("pos-missing"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )

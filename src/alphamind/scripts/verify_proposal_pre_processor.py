@@ -650,8 +650,8 @@ def build_fixture_portfolio_state_snapshot_near_limit() -> PortfolioStateSnapsho
     # Four LONG equity positions representing ~49.5% total net_long
     _existing = {
         "POS-NVDA": ExistingPosition(
-            position_id="POS-NVDA",
-            underlying="NVDA",
+            position_id=PositionId("POS-NVDA"),
+            underlying=Symbol("NVDA"),
             sector="semis",
             direction=Direction.LONG,
             asset_type=AssetType.EQUITY,
@@ -663,8 +663,8 @@ def build_fixture_portfolio_state_snapshot_near_limit() -> PortfolioStateSnapsho
             quantity=17.4,
         ),
         "POS-JPM": ExistingPosition(
-            position_id="POS-JPM",
-            underlying="JPM",
+            position_id=PositionId("POS-JPM"),
+            underlying=Symbol("JPM"),
             sector="financials",
             direction=Direction.LONG,
             asset_type=AssetType.EQUITY,
@@ -676,8 +676,8 @@ def build_fixture_portfolio_state_snapshot_near_limit() -> PortfolioStateSnapsho
             quantity=50.0,
         ),
         "POS-XOM": ExistingPosition(
-            position_id="POS-XOM",
-            underlying="XOM",
+            position_id=PositionId("POS-XOM"),
+            underlying=Symbol("XOM"),
             sector="energy",
             direction=Direction.LONG,
             asset_type=AssetType.EQUITY,
@@ -689,8 +689,8 @@ def build_fixture_portfolio_state_snapshot_near_limit() -> PortfolioStateSnapsho
             quantity=40.9,
         ),
         "POS-AAPL": ExistingPosition(
-            position_id="POS-AAPL",
-            underlying="AAPL",
+            position_id=PositionId("POS-AAPL"),
+            underlying=Symbol("AAPL"),
             sector="tech",
             direction=Direction.LONG,
             asset_type=AssetType.EQUITY,

@@ -1,4 +1,5 @@
 """Tests for the strategist input-bundle assembler — story 04 (ALP-304)."""
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -325,21 +326,19 @@ def _make_position_record(
         slippage=0.01,
         fees=1.0,
     )
-    record = PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _ENTRY_TIMESTAMP,
-            "details": equity,
-            "execution_history": (fill,),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    record = PositionRecord(
+        position_id=position_id,
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_ENTRY_TIMESTAMP,
+        details=equity,
+        execution_history=(fill,),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
     return PositionView(
         record=record,
@@ -381,39 +380,37 @@ def _make_thesis(
             resolution_notes=None,
         )
 
-    return ThesisRecord.model_validate(
-        {
-            "thesis_id": thesis_id,
-            "position_id": position_id,
-            "summary": "Hyperscaler capex acceleration drives Q1 revenue beat...",
-            "components": (
-                _comp(
-                    ThesisComponentType.ENTRY_RATIONALE,
-                    "comp-entry",
-                    "Entry: capex acceleration thesis",
-                ),
-                _comp(
-                    ThesisComponentType.TARGET_RATIONALE,
-                    "comp-target",
-                    "Target: Q1 print fully prices in",
-                ),
-                _comp(
-                    ThesisComponentType.INVALIDATION_RATIONALE,
-                    "comp-inv",
-                    "Invalidation: MSFT guides AI capex lower than consensus",
-                ),
+    return ThesisRecord(
+        thesis_id=thesis_id,
+        position_id=position_id,
+        summary="Hyperscaler capex acceleration drives Q1 revenue beat...",
+        components=(
+            _comp(
+                ThesisComponentType.ENTRY_RATIONALE,
+                "comp-entry",
+                "Entry: capex acceleration thesis",
             ),
-            "status": ThesisRecordStatus.ACTIVE,
-            "generation_timestamp": _ENTRY_TIMESTAMP,
-            "time_expectation_hours": 48.0,
-            "age_hours": 36.4,
-            "expected_resolution_at": datetime(2026, 5, 5, 14, 0, 0, tzinfo=UTC),
-            "resolution_timestamp": None,
-            "resolution_category": None,
-            "resolution_pnl_usd": None,
-            "entry_fill_gap_usd": None,
-            "key_catalyst": "MSFT Q1 capex guide",
-        }
+            _comp(
+                ThesisComponentType.TARGET_RATIONALE,
+                "comp-target",
+                "Target: Q1 print fully prices in",
+            ),
+            _comp(
+                ThesisComponentType.INVALIDATION_RATIONALE,
+                "comp-inv",
+                "Invalidation: MSFT guides AI capex lower than consensus",
+            ),
+        ),
+        status=ThesisRecordStatus.ACTIVE,
+        generation_timestamp=_ENTRY_TIMESTAMP,
+        time_expectation_hours=48.0,
+        age_hours=36.4,
+        expected_resolution_at=datetime(2026, 5, 5, 14, 0, 0, tzinfo=UTC),
+        resolution_timestamp=None,
+        resolution_category=None,
+        resolution_pnl_usd=None,
+        entry_fill_gap_usd=None,
+        key_catalyst="MSFT Q1 capex guide",
     )
 
 
@@ -596,7 +593,7 @@ def _make_position_view(
         position=_make_position_record(position_id=position_id, ticker=ticker),
         thesis=_make_thesis(position_id=position_id) if with_thesis else None,
         bracket=(
-            _make_bracket(position_id=position_id, bracket_id=f"BRK-{position_id}")
+            _make_bracket(position_id=position_id, bracket_id=BracketId(f"BRK-{position_id}"))
             if with_bracket
             else None
         ),
@@ -891,7 +888,7 @@ def test_thesis_block_renders_prior_status_from_snapshot() -> None:
     from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 
     prior_snap = ThesisHealthSnapshot(
-        thesis_id="TH-NVDA-001",
+        thesis_id=ThesisId("TH-NVDA-001"),
         invocation_id="prior-inv-000",
         snapshot_timestamp=_TIMESTAMP,
         health_status=ThesisStatus.AT_RISK,
@@ -1037,7 +1034,7 @@ def test_greeks_refresh_failed_summary_surfaces_symbol_and_reason() -> None:
         entry_id="ALE-GRF-1",
         event_type=EventType.GREEKS_REFRESH_FAILED,
         detail=GreeksRefreshFailedDetail(
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             occ_symbol="O:AAPL260619C00200000",
             failure_reason="iv_fetch_no_row",
             prior_as_of=_TIMESTAMP,

@@ -22,7 +22,6 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind.config import load_full_config
 from alphamind.config.models import Mode, Regime, RuntimeDimensions, RunType
@@ -105,7 +104,7 @@ class TestContinuousMonitorConfigModel:
 
     def test_model_is_frozen(self) -> None:
         cfg = ContinuousMonitorConfig(**self._valid_payload())  # type: ignore[arg-type]
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             cfg.breach_evaluation_cadence_seconds = 30
 
     @pytest.mark.parametrize(
@@ -122,19 +121,19 @@ class TestContinuousMonitorConfigModel:
     def test_non_positive_int_fields_rejected(self, field: str) -> None:
         payload = self._valid_payload()
         payload[field] = 0
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             ContinuousMonitorConfig(**payload)  # type: ignore[arg-type]
 
     def test_non_positive_move_threshold_rejected(self) -> None:
         payload = self._valid_payload()
         payload["greeks_refresh_underlying_move_threshold_pct"] = 0.0
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             ContinuousMonitorConfig(**payload)  # type: ignore[arg-type]
 
     def test_underlying_stream_provider_must_be_alpaca_iex(self) -> None:
         payload = self._valid_payload()
         payload["underlying_stream_provider"] = "polygon-stream"
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             ContinuousMonitorConfig(**payload)  # type: ignore[arg-type]
 
 
@@ -188,7 +187,7 @@ class TestContinuousMonitorYamlWiring:
         assert broken != payload
         cm_yaml.write_text(broken)
 
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             load_full_config(
                 config_dir=fixture_config,
                 env_path=env_path,

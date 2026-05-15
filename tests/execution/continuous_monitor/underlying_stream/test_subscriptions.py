@@ -169,24 +169,24 @@ class TestComputeTargetUnderlyings:
         assert await compute_target_underlyings(reader) == frozenset()
 
     async def test_equity_position_contributes_ticker(self) -> None:
-        reader = _FakeReader((_equity(position_id="p1", ticker="SPY"),))
+        reader = _FakeReader((_equity(position_id=PositionId("p1"), ticker=Symbol("SPY")),))
         assert await compute_target_underlyings(reader) == frozenset({"SPY"})
 
     async def test_options_position_contributes_underlying_ticker(self) -> None:
-        reader = _FakeReader((_options(position_id="p1", underlying="AAPL"),))
+        reader = _FakeReader((_options(position_id=PositionId("p1"), underlying=Symbol("AAPL")),))
         assert await compute_target_underlyings(reader) == frozenset({"AAPL"})
 
     async def test_strategy_position_contributes_every_leg_underlying(self) -> None:
-        strategy = _strategy(position_id="p1", leg_underlyings=("AAPL", "AAPL", "MSFT"))
+        strategy = _strategy(position_id=PositionId("p1"), leg_underlyings=("AAPL", "AAPL", "MSFT"))
         reader = _FakeReader((strategy,))
         assert await compute_target_underlyings(reader) == frozenset({"AAPL", "MSFT"})
 
     async def test_multiple_positions_on_same_underlying_collapse_to_single_entry(self) -> None:
         reader = _FakeReader(
             (
-                _equity(position_id="p1", ticker="SPY"),
-                _equity(position_id="p2", ticker="SPY"),
-                _options(position_id="p3", underlying="SPY"),
+                _equity(position_id=PositionId("p1"), ticker=Symbol("SPY")),
+                _equity(position_id=PositionId("p2"), ticker=Symbol("SPY")),
+                _options(position_id=PositionId("p3"), underlying=Symbol("SPY")),
             )
         )
         assert await compute_target_underlyings(reader) == frozenset({"SPY"})
@@ -194,9 +194,9 @@ class TestComputeTargetUnderlyings:
     async def test_union_across_instrument_types(self) -> None:
         reader = _FakeReader(
             (
-                _equity(position_id="p1", ticker="SPY"),
-                _options(position_id="p2", underlying="AAPL"),
-                _strategy(position_id="p3", leg_underlyings=("MSFT", "NVDA")),
+                _equity(position_id=PositionId("p1"), ticker=Symbol("SPY")),
+                _options(position_id=PositionId("p2"), underlying=Symbol("AAPL")),
+                _strategy(position_id=PositionId("p3"), leg_underlyings=("MSFT", "NVDA")),
             )
         )
         targets = await compute_target_underlyings(reader)

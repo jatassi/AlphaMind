@@ -22,7 +22,6 @@ from typing import Any, cast
 
 import pytest
 import yaml
-from pydantic import ValidationError
 
 from alphamind.config.models.scheduler import SchedulerConfig
 
@@ -61,29 +60,29 @@ class TestNewFieldValidation:
     def test_rejects_emergency_poll_interval_zero(self) -> None:
         raw = _valid_raw()
         raw["emergency_poll_interval_seconds"] = 0
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             SchedulerConfig.model_validate(raw)
 
     def test_rejects_emergency_poll_interval_negative(self) -> None:
         raw = _valid_raw()
         raw["emergency_poll_interval_seconds"] = -3
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             SchedulerConfig.model_validate(raw)
 
     def test_rejects_empty_market_calendar_exchange(self) -> None:
         raw = _valid_raw()
         raw["market_calendar_exchange"] = ""
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             SchedulerConfig.model_validate(raw)
 
     def test_rejects_supervisor_shutdown_timeout_zero(self) -> None:
         raw = _valid_raw()
         raw["supervisor_shutdown_timeout_seconds"] = 0
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             SchedulerConfig.model_validate(raw)
 
     def test_rejects_supervisor_shutdown_timeout_negative(self) -> None:
         raw = _valid_raw()
         raw["supervisor_shutdown_timeout_seconds"] = -1
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             SchedulerConfig.model_validate(raw)

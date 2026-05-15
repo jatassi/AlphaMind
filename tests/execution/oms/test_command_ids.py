@@ -15,6 +15,7 @@ import pytest
 from alphamind._kernel.ids import (
     EnvelopeId,
     InvocationId,
+    Symbol,
 )
 from alphamind._kernel.money import money, price
 from alphamind.commands.command_models import (
@@ -69,7 +70,7 @@ def _thesis_eval_all_pass() -> ThesisQualityEvaluation:
 def _open_command() -> OpenCommand:
     return OpenCommand(
         command_type="open",
-        instrument=EquityInstrument(asset_type="equity", ticker="NVDA", direction="long"),
+        instrument=EquityInstrument(asset_type="equity", ticker=Symbol("NVDA"), direction="long"),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
         position_size=PositionSize(quantity=10.0, dollar_value=money(10_000.0)),
         target=Target(

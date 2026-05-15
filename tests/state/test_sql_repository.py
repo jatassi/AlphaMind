@@ -6,6 +6,7 @@ Every test exercises the public Protocol surface — no internal state is
 inspected — so the tests survive an internal refactor of the codecs or
 query strategy.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import (
+    AlpacaOrderId,
     BracketId,
     OrderId,
     PositionId,
@@ -192,25 +194,21 @@ def _make_active_risk_parameters(
     rule_value: float = 1000.0,
     parameter_change_flag: bool = False,
 ) -> ActiveRiskParameterSet:
-    entry = ActiveRiskParameterEntry.model_validate(
-        {
-            "rule_id": "max_position_size_usd",
-            "rule_label": "Max position size (USD)",
-            "value": rule_value,
-            "unit": "USD",
-            "regime_multiplier_applied": 1.0,
-            "base_value": rule_value,
-        }
+    entry = ActiveRiskParameterEntry(
+        rule_id="max_position_size_usd",
+        rule_label="Max position size (USD)",
+        value=rule_value,
+        unit="USD",
+        regime_multiplier_applied=1.0,
+        base_value=rule_value,
     )
-    return ActiveRiskParameterSet.model_validate(
-        {
-            "regime_label": RegimeLabel.NORMAL,
-            "transition_state": RegimeTransitionState.STABLE,
-            "transition_invocations_remaining": 0,
-            "parameter_change_flag": parameter_change_flag,
-            "entries": (entry,),
-            "active_overlays": (),
-        }
+    return ActiveRiskParameterSet(
+        regime_label=RegimeLabel.NORMAL,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        parameter_change_flag=parameter_change_flag,
+        entries=(entry,),
+        active_overlays=(),
     )
 
 
@@ -299,21 +297,19 @@ def _make_open_position(
             ),
         )
     entry_at = None if status == PositionStatus.PENDING else _NOW - timedelta(hours=3)
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": status,
-            "direction": Direction.LONG,
-            "entry_timestamp": entry_at,
-            "details": details,
-            "execution_history": fills,
-            "realized_pnl_to_date_usd": realized_pnl_to_date_usd,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=None,
+        bracket_id=None,
+        status=status,
+        direction=Direction.LONG,
+        entry_timestamp=entry_at,
+        details=details,
+        execution_history=fills,
+        realized_pnl_to_date_usd=realized_pnl_to_date_usd,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -424,66 +420,60 @@ def _make_pending_order(
     status: OrderStatus = OrderStatus.PENDING,
     bracket_id: str = "brk-1",
 ) -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": None,
-            "bracket_id": bracket_id,
-            "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=Symbol("AAPL")),
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": 10.0,
-            "duration": OrderDuration.DAY,
-            "status": status,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=10),
-            "last_update_timestamp": _NOW - timedelta(minutes=5),
-            "filled_quantity": 0.0 if status == OrderStatus.PENDING else 4.0,
-            "avg_fill_price": None if status == OrderStatus.PENDING else 150.0,
-            "remaining_quantity": 10.0 if status == OrderStatus.PENDING else 6.0,
-            "modification_count": 0,
-            "originating_thesis_id": None,
-            "originating_pm_command_id": None,
-            "age_hours": 0.0,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=None,
+        bracket_id=bracket_id,
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=status,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=10),
+        last_update_timestamp=_NOW - timedelta(minutes=5),
+        filled_quantity=0.0 if status == OrderStatus.PENDING else 4.0,
+        avg_fill_price=None if status == OrderStatus.PENDING else 150.0,
+        remaining_quantity=10.0 if status == OrderStatus.PENDING else 6.0,
+        modification_count=0,
+        originating_thesis_id=None,
+        originating_pm_command_id=None,
+        age_hours=0.0,
     )
 
 
 def _make_cash_ledger() -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": 10000.0,
-            "settled_cash_usd": 9000.0,
-            "reserved_capital_usd": 500.0,
-            "available_buying_power_usd": 8500.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=10000.0,
+        settled_cash_usd=9000.0,
+        reserved_capital_usd=500.0,
+        available_buying_power_usd=8500.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _make_drawdown_state() -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 2.5,
-            "equity_high_water_mark_usd": 100000.0,
-            "drawdown_duration_hours": 12.0,
-            "lifetime_max_drawdown_pct": 5.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=2.5,
+        equity_high_water_mark_usd=100000.0,
+        drawdown_duration_hours=12.0,
+        lifetime_max_drawdown_pct=5.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -533,7 +523,7 @@ def _make_position_opened_entry(
         thesis_id=None,
         source=EventSource.FILL_PROCESSOR,
         detail=PositionOpenedDetail(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             direction="LONG",
             fill_price=price("150.0"),
             quantity=10.0,
@@ -909,10 +899,12 @@ async def test_get_open_positions_returns_only_open_status(
 ) -> None:
     _, factory = db
     await _seed_minimal_invocation(factory)
-    open_pos = _make_open_position(position_id="pos-open", status=PositionStatus.OPEN)
-    pending_pos = _make_open_position(position_id="pos-pending", status=PositionStatus.PENDING)
+    open_pos = _make_open_position(position_id=PositionId("pos-open"), status=PositionStatus.OPEN)
+    pending_pos = _make_open_position(
+        position_id=PositionId("pos-pending"), status=PositionStatus.PENDING
+    )
     closed_pos = _make_open_position(
-        position_id="pos-closed",
+        position_id=PositionId("pos-closed"),
         status=PositionStatus.CLOSED,
         realized_pnl_to_date_usd=100.0,
         closed_at=_NOW - timedelta(hours=1),
@@ -934,8 +926,10 @@ async def test_get_pending_positions_returns_only_pending_status(
 ) -> None:
     _, factory = db
     await _seed_minimal_invocation(factory)
-    open_pos = _make_open_position(position_id="pos-open", status=PositionStatus.OPEN)
-    pending_pos = _make_open_position(position_id="pos-pending", status=PositionStatus.PENDING)
+    open_pos = _make_open_position(position_id=PositionId("pos-open"), status=PositionStatus.OPEN)
+    pending_pos = _make_open_position(
+        position_id=PositionId("pos-pending"), status=PositionStatus.PENDING
+    )
     await _seed_position(factory, open_pos)
     await _seed_position(factory, pending_pos)
 
@@ -952,10 +946,12 @@ async def test_get_active_theses_returns_active_with_components(
 ) -> None:
     _, factory = db
     await _seed_minimal_invocation(factory)
-    active = _make_thesis_record(thesis_id="thesis-active", position_id="pos-1")
+    active = _make_thesis_record(
+        thesis_id=ThesisId("thesis-active"), position_id=PositionId("pos-1")
+    )
     resolved = _make_thesis_record(
-        thesis_id="thesis-resolved",
-        position_id="pos-2",
+        thesis_id=ThesisId("thesis-resolved"),
+        position_id=PositionId("pos-2"),
         status=ThesisRecordStatus.RESOLVED,
         resolution_timestamp=_NOW - timedelta(hours=1),
         resolution_category=ThesisResolutionCategory.VALIDATED,
@@ -978,10 +974,12 @@ async def test_get_recent_thesis_resolutions_projects_resolved(
 ) -> None:
     _, factory = db
     await _seed_minimal_invocation(factory)
-    active = _make_thesis_record(thesis_id="thesis-active", position_id="pos-1")
+    active = _make_thesis_record(
+        thesis_id=ThesisId("thesis-active"), position_id=PositionId("pos-1")
+    )
     resolved = _make_thesis_record(
-        thesis_id="thesis-resolved",
-        position_id="pos-2",
+        thesis_id=ThesisId("thesis-resolved"),
+        position_id=PositionId("pos-2"),
         status=ThesisRecordStatus.RESOLVED,
         resolution_timestamp=_NOW - timedelta(hours=1),
         resolution_category=ThesisResolutionCategory.VALIDATED,
@@ -1186,10 +1184,12 @@ async def test_get_pending_orders_returns_pending_and_partially_filled(
 ) -> None:
     _, factory = db
     await _seed_minimal_invocation(factory)
-    pending = _make_pending_order(order_id="ord-pending", status=OrderStatus.PENDING)
-    partially = _make_pending_order(order_id="ord-partial", status=OrderStatus.PARTIALLY_FILLED)
-    filled = _make_pending_order(order_id="ord-filled", status=OrderStatus.FILLED)
-    cancelled = _make_pending_order(order_id="ord-cancelled", status=OrderStatus.CANCELLED)
+    pending = _make_pending_order(order_id=OrderId("ord-pending"), status=OrderStatus.PENDING)
+    partially = _make_pending_order(
+        order_id=OrderId("ord-partial"), status=OrderStatus.PARTIALLY_FILLED
+    )
+    filled = _make_pending_order(order_id=OrderId("ord-filled"), status=OrderStatus.FILLED)
+    cancelled = _make_pending_order(order_id=OrderId("ord-cancelled"), status=OrderStatus.CANCELLED)
     await _seed_order_cluster(factory, pending, partially, filled, cancelled)
 
     repo = _build_repo(factory)
@@ -1203,8 +1203,8 @@ async def test_get_brackets_for_positions_returns_bracket_with_legs(
 ) -> None:
     _, factory = db
     await _seed_minimal_invocation(factory)
-    bracket = _make_bracket_record(bracket_id="brk-1", position_id="pos-1")
-    other = _make_bracket_record(bracket_id="brk-2", position_id="pos-2")
+    bracket = _make_bracket_record(bracket_id=BracketId("brk-1"), position_id=PositionId("pos-1"))
+    other = _make_bracket_record(bracket_id=BracketId("brk-2"), position_id=PositionId("pos-2"))
     await _seed_bracket_cluster(factory, bracket)
     await _seed_bracket_cluster(factory, other)
 
@@ -1268,7 +1268,7 @@ async def test_get_recent_pm_decision_log_returns_pm_decisions_in_window(
     pm_prior = _make_pm_decision_entry(
         entry_id="pm-prior", invocation_id=_PRIOR_INV_ID, timestamp=_PRIOR_START
     )
-    non_pm = _make_position_opened_entry(entry_id="opened-1", position_id="pos-1")
+    non_pm = _make_position_opened_entry(entry_id="opened-1", position_id=PositionId("pos-1"))
     await _seed_activity_log_entry(factory, pm_current)
     await _seed_activity_log_entry(factory, pm_prior)
     await _seed_activity_log_entry(factory, non_pm)
@@ -1285,8 +1285,8 @@ async def test_get_position_modification_trail_groups_by_position(
     _, factory = db
     await _seed_minimal_invocation(factory)
     await _seed_stub_positions(factory, "pos-1", "pos-2")
-    e1 = _make_position_opened_entry(entry_id="pos-1-open", position_id="pos-1")
-    e2 = _make_position_opened_entry(entry_id="pos-2-open", position_id="pos-2")
+    e1 = _make_position_opened_entry(entry_id="pos-1-open", position_id=PositionId("pos-1"))
+    e2 = _make_position_opened_entry(entry_id="pos-2-open", position_id=PositionId("pos-2"))
     await _seed_activity_log_entry(factory, e1)
     await _seed_activity_log_entry(factory, e2)
 
@@ -1443,7 +1443,7 @@ async def test_get_portfolio_pnl_inputs_aggregates_realized_over_closed(
     await _seed_position(
         factory,
         _make_open_position(
-            position_id="closed-1",
+            position_id=PositionId("closed-1"),
             status=PositionStatus.CLOSED,
             realized_pnl_to_date_usd=200.0,
             closed_at=_NOW - timedelta(hours=1),
@@ -1452,7 +1452,7 @@ async def test_get_portfolio_pnl_inputs_aggregates_realized_over_closed(
     await _seed_position(
         factory,
         _make_open_position(
-            position_id="closed-2",
+            position_id=PositionId("closed-2"),
             status=PositionStatus.CLOSED,
             realized_pnl_to_date_usd=-50.0,
             closed_at=_NOW - timedelta(hours=2),
@@ -1460,7 +1460,7 @@ async def test_get_portfolio_pnl_inputs_aggregates_realized_over_closed(
     )
     # Open position should NOT contribute to realized PnL aggregation.
     await _seed_position(
-        factory, _make_open_position(position_id="open-1", status=PositionStatus.OPEN)
+        factory, _make_open_position(position_id=PositionId("open-1"), status=PositionStatus.OPEN)
     )
 
     repo = _build_repo(factory)
@@ -1559,19 +1559,31 @@ class _ParityFixture:
     pos_entry: ActivityLogEntry
 
     def __init__(self) -> None:
-        self.open_pos = _make_open_position(position_id="pos-1", status=PositionStatus.OPEN)
-        self.pending_pos = _make_open_position(position_id="pos-2", status=PositionStatus.PENDING)
+        self.open_pos = _make_open_position(
+            position_id=PositionId("pos-1"), status=PositionStatus.OPEN
+        )
+        self.pending_pos = _make_open_position(
+            position_id=PositionId("pos-2"), status=PositionStatus.PENDING
+        )
         self.closed_pos = _make_open_position(
-            position_id="pos-3",
+            position_id=PositionId("pos-3"),
             status=PositionStatus.CLOSED,
             realized_pnl_to_date_usd=120.0,
             closed_at=_NOW - timedelta(hours=1),
         )
-        self.active_thesis = _make_thesis_record(thesis_id="thesis-active", position_id="pos-1")
-        self.bracket = _make_bracket_record(bracket_id="brk-1", position_id="pos-1")
-        self.pending_order = _make_pending_order(order_id="ord-1", status=OrderStatus.PENDING)
+        self.active_thesis = _make_thesis_record(
+            thesis_id=ThesisId("thesis-active"), position_id=PositionId("pos-1")
+        )
+        self.bracket = _make_bracket_record(
+            bracket_id=BracketId("brk-1"), position_id=PositionId("pos-1")
+        )
+        self.pending_order = _make_pending_order(
+            order_id=OrderId("ord-1"), status=OrderStatus.PENDING
+        )
         self.pm_entry = _make_pm_decision_entry(entry_id="pm-1")
-        self.pos_entry = _make_position_opened_entry(entry_id="pos-1-open", position_id="pos-1")
+        self.pos_entry = _make_position_opened_entry(
+            entry_id="pos-1-open", position_id=PositionId("pos-1")
+        )
 
 
 async def _seed_parity_fixture(
@@ -1730,22 +1742,22 @@ async def test_assemble_snapshot_against_sql_repo_produces_populated_snapshot(
     await _seed_minimal_invocation(factory)
     await _seed_position(
         factory,
-        _make_open_position(position_id="pos-1", status=PositionStatus.OPEN),
+        _make_open_position(position_id=PositionId("pos-1"), status=PositionStatus.OPEN),
     )
     await _seed_position(
         factory,
-        _make_open_position(position_id="pos-pending", status=PositionStatus.PENDING),
+        _make_open_position(position_id=PositionId("pos-pending"), status=PositionStatus.PENDING),
     )
     await _seed_thesis(
         factory,
-        _make_thesis_record(thesis_id="thesis-1", position_id="pos-1"),
+        _make_thesis_record(thesis_id=ThesisId("thesis-1"), position_id=PositionId("pos-1")),
     )
     # Bracket and test order seeded atomically: bracket.entry_order_id and
     # the test order both reference brk-1, so they must commit together.
     from tests.state._fk_substrate import stub_order_row
 
-    bracket = _make_bracket_record(bracket_id="brk-1", position_id="pos-1")
-    test_order = _make_pending_order(order_id="ord-1")
+    bracket = _make_bracket_record(bracket_id=BracketId("brk-1"), position_id=PositionId("pos-1"))
+    test_order = _make_pending_order(order_id=OrderId("ord-1"))
     bracket_parent, leg_rows = bracket_record_to_rows(bracket)
     stub_ids_needed = [bracket_parent.entry_order_id] + [
         lrow.order_id for lrow in leg_rows if lrow.order_id is not None
@@ -1767,17 +1779,15 @@ async def test_assemble_snapshot_against_sql_repo_produces_populated_snapshot(
 
     repo = _build_repo(factory)
 
-    config = PortfolioStateConfig.model_validate(
-        {
-            "pm_decision_log_sliding_window_invocations": 5,
-            "thesis_resolutions_lookback_trading_days": 10,
-            "thesis_quality_aggregates_trailing_windows_days": (5, 20),
-            "snapshot_freshness_max_phase1_to_snapshot_seconds": 300.0,
-            "snapshot_freshness_max_price_age_seconds": 60.0,
-        }
+    config = PortfolioStateConfig(
+        pm_decision_log_sliding_window_invocations=5,
+        thesis_resolutions_lookback_trading_days=10,
+        thesis_quality_aggregates_trailing_windows_days=(5, 20),
+        snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
+        snapshot_freshness_max_price_age_seconds=60.0,
     )
     quote = PriceQuote(
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         price_usd=160.0,
         as_of_timestamp=_NOW,
         source=PriceSource.INTRADAY_QUOTE,

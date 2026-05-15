@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -347,7 +348,7 @@ async def test_pass_advances_cell_so_second_call_notes_prior() -> None:
     assert "No prior proposals" in p1["cumulative_impact_note"]
 
     text2, _ = await _invoke_mcp_tool(
-        server, "validate_guardrail", _equity_open_args(ticker="NVDA")
+        server, "validate_guardrail", _equity_open_args(ticker=Symbol("NVDA"))
     )
     p2 = json.loads(text2)
     assert "Cumulative impact of proposals #1-1" in p2["cumulative_impact_note"]
@@ -382,7 +383,7 @@ async def test_fail_does_not_advance_cell() -> None:
     assert p2["overall"] == "FAIL"
 
     text3, _ = await _invoke_mcp_tool(
-        server, "validate_guardrail", _equity_open_args(ticker="NVDA")
+        server, "validate_guardrail", _equity_open_args(ticker=Symbol("NVDA"))
     )
     p3 = json.loads(text3)
     # The PASS at step #1 advanced cell to next-index=2; the FAIL did NOT

@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.analysis._shared import Sector, SignalQuality, TokensUsed
 from alphamind.analysis.adaptive_research.harness import (
     ContextOverflowFailure,
@@ -177,7 +178,7 @@ def _sector_brief(sector: Sector, prefix: str) -> SectorBrief:
         thesis_candidates=(
             ThesisCandidate(
                 thesis_candidate_id=f"{prefix}-TC-1",
-                ticker="NVDA",
+                ticker=Symbol("NVDA"),
                 direction=Direction.LONG,
                 setup_type=SetupType.CATALYST,
                 catalyst="Earnings",
@@ -225,7 +226,7 @@ def qualitative_brief() -> QualitativeBrief:
         catalyst_watches=(
             CatalystWatch(
                 catalyst_id="QR-CW-1",
-                ticker="NVDA",
+                ticker=Symbol("NVDA"),
                 catalyst_name="Earnings",
                 hours_to_event=12,
                 thesis_impact="Impact.",

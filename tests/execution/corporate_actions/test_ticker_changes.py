@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import PositionId, Symbol
 from alphamind.portfolio_state.events.activity_log import (
     CorporateActionType,
     EventType,
@@ -68,10 +69,10 @@ async def test_symbol_change_renames_equity_ticker(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-symchg-1",
         action_type=CorporateActionType.SYMBOL_CHANGE,
-        ticker="FB",
+        ticker=Symbol("FB"),
         new_ticker="META",
         ratio_or_amount=1.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -104,7 +105,7 @@ async def test_symbol_change_renames_options_underlying(
     await seed_position_cluster(
         factory,
         make_open_options_position(
-            underlying_ticker="FB",
+            underlying_ticker=Symbol("FB"),
             strike=180.0,
             contract_count=3.0,
             premium_paid_per_contract=125.0,
@@ -119,10 +120,10 @@ async def test_symbol_change_renames_options_underlying(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-symchg-opt-1",
         action_type=CorporateActionType.SYMBOL_CHANGE,
-        ticker="FB",
+        ticker=Symbol("FB"),
         new_ticker="META",
         ratio_or_amount=1.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -155,7 +156,7 @@ async def test_symbol_change_renames_each_strategy_leg(
     await seed_invocation_substrate(factory)
     await seed_position_cluster(
         factory,
-        make_open_strategy_position(underlying_ticker="FB"),
+        make_open_strategy_position(underlying_ticker=Symbol("FB")),
         make_pending_entry_order(),
         make_active_thesis(),
         make_active_bracket(),
@@ -166,10 +167,10 @@ async def test_symbol_change_renames_each_strategy_leg(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-symchg-strat-1",
         action_type=CorporateActionType.SYMBOL_CHANGE,
-        ticker="FB",
+        ticker=Symbol("FB"),
         new_ticker="META",
         ratio_or_amount=1.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -225,10 +226,10 @@ async def test_symbol_change_no_cash_movement(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-symchg-cash-1",
         action_type=CorporateActionType.SYMBOL_CHANGE,
-        ticker="FB",
+        ticker=Symbol("FB"),
         new_ticker="META",
         ratio_or_amount=1.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -276,10 +277,10 @@ async def test_symbol_change_cancels_bracket_and_writes_ledger(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-symchg-bracket-1",
         action_type=CorporateActionType.SYMBOL_CHANGE,
-        ticker="FB",
+        ticker=Symbol("FB"),
         new_ticker="META",
         ratio_or_amount=1.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -333,10 +334,10 @@ async def test_symbol_change_emits_corporate_action_applied(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-symchg-applied-1",
         action_type=CorporateActionType.SYMBOL_CHANGE,
-        ticker="FB",
+        ticker=Symbol("FB"),
         new_ticker="META",
         ratio_or_amount=1.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )
@@ -383,10 +384,10 @@ async def test_symbol_change_requires_new_ticker(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-symchg-missing-1",
         action_type=CorporateActionType.SYMBOL_CHANGE,
-        ticker="FB",
+        ticker=Symbol("FB"),
         new_ticker=None,
         ratio_or_amount=1.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=NOW - timedelta(minutes=5),
     )

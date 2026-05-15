@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
 from alphamind.analysis._shared import Sector, SignalQuality
 from alphamind.analysis.adaptive_research.models import (
     AdaptiveBrief,
@@ -242,7 +243,7 @@ def _make_qualitative_brief() -> QualitativeBrief:
         catalyst_watches=(
             CatalystWatch(
                 catalyst_id="QR-CW-1",
-                ticker="NVDA",
+                ticker=Symbol("NVDA"),
                 catalyst_name="Q1 earnings",
                 hours_to_event=18,
                 thesis_impact="Direct test of momentum setup.",

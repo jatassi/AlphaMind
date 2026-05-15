@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.config.models.distillation import (
     AnomalyDetection,
     DistillationConfig,
@@ -223,7 +224,7 @@ def test_pure_path_matches_session_path_on_populated_universe(
 ) -> None:
     """The pure path returns the exact same blocks as the legacy session path."""
     _add_ticker(session, "AAPL", sector="tech", etf="XLK")
-    _add_bars(session, ticker="AAPL", days=30)
+    _add_bars(session, ticker=Symbol("AAPL"), days=30)
     session.commit()
     config = _build_test_config()
     as_of = datetime(2026, 4, 25, tzinfo=UTC)

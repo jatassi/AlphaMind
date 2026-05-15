@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.analysis.tools._envelope import ToolQuality
 from alphamind.analysis.tools.earnings_calendar import (
     EarningsCalendarInput,
@@ -139,9 +140,9 @@ def _add_revision(
 def test_earnings_calendar_happy_path_complete(session: Session) -> None:
     """Happy path: forward event + past event returns COMPLETE quality."""
     _add_ticker(session, "NVDA")
-    _add_earnings_event(session, event_id="ev-future", ticker="NVDA", scheduled_at=_FUTURE)
+    _add_earnings_event(session, event_id="ev-future", ticker=Symbol("NVDA"), scheduled_at=_FUTURE)
     _add_earnings_event(
-        session, event_id="ev-past", ticker="NVDA", scheduled_at=_PAST, reported_at=_PAST
+        session, event_id="ev-past", ticker=Symbol("NVDA"), scheduled_at=_PAST, reported_at=_PAST
     )
     session.commit()
 
@@ -160,7 +161,7 @@ def test_earnings_calendar_happy_path_complete(session: Session) -> None:
 def test_earnings_calendar_next_report_date_is_future(session: Session) -> None:
     """next_report_date is the ISO date of the future-scheduled event."""
     _add_ticker(session, "TSLA")
-    _add_earnings_event(session, event_id="ev-next", ticker="TSLA", scheduled_at=_FUTURE)
+    _add_earnings_event(session, event_id="ev-next", ticker=Symbol("TSLA"), scheduled_at=_FUTURE)
     session.commit()
 
     fn = earnings_calendar_factory(session)
@@ -174,7 +175,7 @@ def test_earnings_calendar_last_report_date_is_past(session: Session) -> None:
     """last_report_date is the ISO date of the most recent past reported event."""
     _add_ticker(session, "AAPL")
     _add_earnings_event(
-        session, event_id="ev-past", ticker="AAPL", scheduled_at=_PAST, reported_at=_PAST
+        session, event_id="ev-past", ticker=Symbol("AAPL"), scheduled_at=_PAST, reported_at=_PAST
     )
     session.commit()
 
@@ -189,7 +190,7 @@ def test_earnings_calendar_consensus_eps_populated(session: Session) -> None:
     """consensus_eps is the latest consensus from the forward event."""
     _add_ticker(session, "MSFT")
     _add_earnings_event(
-        session, event_id="ev-msft", ticker="MSFT", scheduled_at=_FUTURE, eps_consensus=2.75
+        session, event_id="ev-msft", ticker=Symbol("MSFT"), scheduled_at=_FUTURE, eps_consensus=2.75
     )
     session.commit()
 
@@ -202,7 +203,7 @@ def test_earnings_calendar_consensus_eps_populated(session: Session) -> None:
 def test_earnings_calendar_whisper_number_is_none(session: Session) -> None:
     """whisper_number is always None (no whisper data source in scope)."""
     _add_ticker(session, "META")
-    _add_earnings_event(session, event_id="ev-meta", ticker="META", scheduled_at=_FUTURE)
+    _add_earnings_event(session, event_id="ev-meta", ticker=Symbol("META"), scheduled_at=_FUTURE)
     session.commit()
 
     fn = earnings_calendar_factory(session)
@@ -214,7 +215,7 @@ def test_earnings_calendar_whisper_number_is_none(session: Session) -> None:
 def test_earnings_calendar_revision_trend_up(session: Session) -> None:
     """All positive revisions within lookback_days → revision_trend='up'."""
     _add_ticker(session, "NVDA")
-    _add_earnings_event(session, event_id="ev-nvda", ticker="NVDA", scheduled_at=_FUTURE)
+    _add_earnings_event(session, event_id="ev-nvda", ticker=Symbol("NVDA"), scheduled_at=_FUTURE)
     recent = _NOW - timedelta(days=5)
     _add_revision(
         session,
@@ -241,7 +242,7 @@ def test_earnings_calendar_revision_trend_up(session: Session) -> None:
 def test_earnings_calendar_revision_trend_down(session: Session) -> None:
     """All negative revisions within lookback_days → revision_trend='down'."""
     _add_ticker(session, "GME")
-    _add_earnings_event(session, event_id="ev-gme", ticker="GME", scheduled_at=_FUTURE)
+    _add_earnings_event(session, event_id="ev-gme", ticker=Symbol("GME"), scheduled_at=_FUTURE)
     recent = _NOW - timedelta(days=5)
     _add_revision(
         session,
@@ -261,7 +262,7 @@ def test_earnings_calendar_revision_trend_down(session: Session) -> None:
 def test_earnings_calendar_revision_trend_none_when_no_revisions(session: Session) -> None:
     """No revisions in lookback → revision_trend='none'."""
     _add_ticker(session, "AMZN")
-    _add_earnings_event(session, event_id="ev-amzn", ticker="AMZN", scheduled_at=_FUTURE)
+    _add_earnings_event(session, event_id="ev-amzn", ticker=Symbol("AMZN"), scheduled_at=_FUTURE)
     session.commit()
 
     fn = earnings_calendar_factory(session)
@@ -323,7 +324,7 @@ def test_earnings_calendar_empty_tickers_returns_unavailable(session: Session) -
 def test_earnings_calendar_deterministic_output(session: Session) -> None:
     """Two calls against the same fixture data return identical payloads."""
     _add_ticker(session, "CRM")
-    _add_earnings_event(session, event_id="ev-crm", ticker="CRM", scheduled_at=_FUTURE)
+    _add_earnings_event(session, event_id="ev-crm", ticker=Symbol("CRM"), scheduled_at=_FUTURE)
     session.commit()
 
     fn = earnings_calendar_factory(session)

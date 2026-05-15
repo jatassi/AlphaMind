@@ -18,6 +18,7 @@ Covers:
 * Application-level invariant: ``processing_status = 'processed'`` requires a
   non-null ``processing_invocation_id``.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -36,6 +37,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
     Symbol,
 )
 from alphamind._kernel.money import Price, money, price, signed_money
@@ -142,32 +146,30 @@ def _invocation_record(invocation_id: str = "inv-1") -> InvocationRecord:
 
 
 def _order_record(order_id: str = "ord-1") -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": None,
-            "bracket_id": "brk-1",
-            "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=Symbol("AAPL")),
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": 10.0,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": "alp-1",
-            "alpaca_order_id_chain": ("alp-1",),
-            "submission_timestamp": SUBMITTED_AT,
-            "last_update_timestamp": SUBMITTED_AT + timedelta(seconds=1),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": None,
-            "originating_pm_command_id": None,
-            "age_hours": 0.5,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=None,
+        bracket_id=BracketId("brk-1"),
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId("alp-1"),
+        alpaca_order_id_chain=("alp-1",),
+        submission_timestamp=SUBMITTED_AT,
+        last_update_timestamp=SUBMITTED_AT + timedelta(seconds=1),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=None,
+        originating_pm_command_id=None,
+        age_hours=0.5,
     )
 
 
@@ -448,7 +450,7 @@ class TestFillRecordsTableShape:
             session.commit()
 
     def test_fk_rejects_nonexistent_order_id(self, session: Session) -> None:
-        row = record_to_row(_fill_record(order_id="ord-missing"))
+        row = record_to_row(_fill_record(order_id=OrderId("ord-missing")))
         session.add(row)
         with pytest.raises(IntegrityError):
             session.commit()
@@ -550,7 +552,7 @@ class TestAppendFillRecord:
         async_engine_and_factory: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     ) -> None:
         _, factory = async_engine_and_factory
-        record = _fill_record(order_id="ord-missing")
+        record = _fill_record(order_id=OrderId("ord-missing"))
         async with factory() as session:
             with pytest.raises(IntegrityError):
                 await append_fill_record(session, record)

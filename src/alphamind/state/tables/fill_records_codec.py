@@ -12,6 +12,7 @@ serialize via ``isoformat`` (matches the convention the orders codec uses).
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from alphamind._kernel.money import money, price, signed_money
@@ -53,7 +54,18 @@ def record_to_row(record: FillRecord) -> FillRecordRow:
             else None
         ),
         live_execution_estimate_json=(
-            record.live_execution_estimate.model_dump_json()
+            json.dumps(
+                {
+                    "estimated_spread_usd": record.live_execution_estimate.estimated_spread_usd,
+                    "estimated_impact_usd": record.live_execution_estimate.estimated_impact_usd,
+                    "estimated_regulatory_fees_usd": (
+                        record.live_execution_estimate.estimated_regulatory_fees_usd
+                    ),
+                    "live_adjusted_fill_price": (
+                        record.live_execution_estimate.live_adjusted_fill_price
+                    ),
+                }
+            )
             if record.live_execution_estimate is not None
             else None
         ),
@@ -92,10 +104,20 @@ def row_to_record(row: FillRecordRow) -> FillRecord:
             else None
         ),
         live_execution_estimate=(
-            LiveExecutionEstimate.model_validate_json(row.live_execution_estimate_json)
+            _live_estimate_from_json(row.live_execution_estimate_json)
             if row.live_execution_estimate_json is not None
             else None
         ),
+    )
+
+
+def _live_estimate_from_json(payload: str) -> LiveExecutionEstimate:
+    raw = json.loads(payload)
+    return LiveExecutionEstimate(
+        estimated_spread_usd=raw["estimated_spread_usd"],
+        estimated_impact_usd=raw["estimated_impact_usd"],
+        estimated_regulatory_fees_usd=raw["estimated_regulatory_fees_usd"],
+        live_adjusted_fill_price=raw["live_adjusted_fill_price"],
     )
 
 

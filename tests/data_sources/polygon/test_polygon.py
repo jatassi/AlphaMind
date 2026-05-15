@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,
@@ -833,7 +834,7 @@ class TestCollectReference:
         )
 
         with sf() as sess:
-            row = sess.query(AssetUniverse).filter_by(ticker="AAPL").first()
+            row = sess.query(AssetUniverse).filter_by(ticker=Symbol("AAPL")).first()
 
         assert row.market_cap_usd == pytest.approx(3_000_000_000_000.0)
         assert row.shares_outstanding == 15_000_000_000
@@ -844,7 +845,7 @@ class TestCollectReference:
         sf, _ = _make_db()
         _seed_asset_universe(sf, [], ["SPY"])
 
-        td = _make_ticker_details(ticker="SPY", market_cap=500_000_000_000.0)
+        td = _make_ticker_details(ticker=Symbol("SPY"), market_cap=500_000_000_000.0)
         client = MagicMock()
         client.get_ticker_details.return_value = td
         client.acquire_rate_limit = MagicMock()
@@ -857,7 +858,7 @@ class TestCollectReference:
         )
 
         with sf() as sess:
-            row = sess.query(AssetUniverse).filter_by(ticker="SPY").first()
+            row = sess.query(AssetUniverse).filter_by(ticker=Symbol("SPY")).first()
 
         assert row.market_cap_usd == pytest.approx(500_000_000_000.0)
 

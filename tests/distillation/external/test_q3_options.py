@@ -29,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience
 from alphamind.persistence.models import (
@@ -192,13 +193,13 @@ class TestLowOiVolumeAnomaly:
         from alphamind.distillation.q3 import detect_low_oi_volume_anomalies
 
         _add_ticker(session, "AAPL")
-        _add_contract(session, contract_ticker="O:AAPL260515C00100000", underlying="AAPL")
+        _add_contract(session, contract_ticker="O:AAPL260515C00100000", underlying=Symbol("AAPL"))
         # 20 trailing snapshots with volume = 100 each → 20-day avg = 100.
         for day in range(1, 21):
             _add_snapshot(
                 session,
                 contract_ticker="O:AAPL260515C00100000",
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 snapshot_ts=f"2026-04-{day:02d}T20:00:00Z",
                 open_interest=50,
                 volume_today=100,
@@ -207,7 +208,7 @@ class TestLowOiVolumeAnomaly:
         _add_snapshot(
             session,
             contract_ticker="O:AAPL260515C00100000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             snapshot_ts="2026-04-25T20:00:00Z",
             open_interest=50,
             volume_today=500,
@@ -235,12 +236,12 @@ class TestLowOiVolumeAnomaly:
         from alphamind.distillation.q3 import detect_low_oi_volume_anomalies
 
         _add_ticker(session, "AAPL")
-        _add_contract(session, contract_ticker="O:AAPL260515C00100000", underlying="AAPL")
+        _add_contract(session, contract_ticker="O:AAPL260515C00100000", underlying=Symbol("AAPL"))
         for day in range(1, 21):
             _add_snapshot(
                 session,
                 contract_ticker="O:AAPL260515C00100000",
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 snapshot_ts=f"2026-04-{day:02d}T20:00:00Z",
                 open_interest=100,  # AT threshold — the spec says "OI < 100"
                 volume_today=100,
@@ -248,7 +249,7 @@ class TestLowOiVolumeAnomaly:
         _add_snapshot(
             session,
             contract_ticker="O:AAPL260515C00100000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             snapshot_ts="2026-04-25T20:00:00Z",
             open_interest=100,
             volume_today=500,
@@ -268,12 +269,12 @@ class TestLowOiVolumeAnomaly:
         from alphamind.distillation.q3 import detect_low_oi_volume_anomalies
 
         _add_ticker(session, "AAPL")
-        _add_contract(session, contract_ticker="O:AAPL260515C00100000", underlying="AAPL")
+        _add_contract(session, contract_ticker="O:AAPL260515C00100000", underlying=Symbol("AAPL"))
         for day in range(1, 21):
             _add_snapshot(
                 session,
                 contract_ticker="O:AAPL260515C00100000",
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 snapshot_ts=f"2026-04-{day:02d}T20:00:00Z",
                 open_interest=50,
                 volume_today=100,
@@ -282,7 +283,7 @@ class TestLowOiVolumeAnomaly:
         _add_snapshot(
             session,
             contract_ticker="O:AAPL260515C00100000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             snapshot_ts="2026-04-25T20:00:00Z",
             open_interest=50,
             volume_today=400,
@@ -319,14 +320,14 @@ class TestBtoStoClassificationHeuristic:
         _add_contract(
             session,
             contract_ticker="O:AAPL260515C00100000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             contract_type="call",
         )
         # Prior snapshot: OI 100, no volume.
         _add_snapshot(
             session,
             contract_ticker="O:AAPL260515C00100000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             snapshot_ts="2026-04-24T20:00:00Z",
             open_interest=100,
             volume_today=0,
@@ -335,7 +336,7 @@ class TestBtoStoClassificationHeuristic:
         _add_snapshot(
             session,
             contract_ticker="O:AAPL260515C00100000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             snapshot_ts="2026-04-25T20:00:00Z",
             open_interest=200,
             volume_today=100,
@@ -364,7 +365,7 @@ class TestBtoStoClassificationHeuristic:
         _add_contract(
             session,
             contract_ticker="O:AAPL260515P00090000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             contract_type="put",
             strike=90.0,
         )
@@ -372,7 +373,7 @@ class TestBtoStoClassificationHeuristic:
         _add_snapshot(
             session,
             contract_ticker="O:AAPL260515P00090000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             snapshot_ts="2026-04-24T20:00:00Z",
             open_interest=200,
             volume_today=0,
@@ -381,7 +382,7 @@ class TestBtoStoClassificationHeuristic:
         _add_snapshot(
             session,
             contract_ticker="O:AAPL260515P00090000",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             snapshot_ts="2026-04-25T20:00:00Z",
             open_interest=150,
             volume_today=50,
@@ -411,14 +412,14 @@ class TestBtoStoClassificationHeuristic:
             _add_contract(
                 session,
                 contract_ticker=ticker,
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 contract_type="call",
                 strike=strike,
             )
             _add_snapshot(
                 session,
                 contract_ticker=ticker,
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 snapshot_ts="2026-04-24T20:00:00Z",
                 open_interest=100,
                 volume_today=0,
@@ -426,7 +427,7 @@ class TestBtoStoClassificationHeuristic:
             _add_snapshot(
                 session,
                 contract_ticker=ticker,
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 snapshot_ts="2026-04-25T20:00:00Z",
                 open_interest=200,
                 volume_today=100,
@@ -909,7 +910,7 @@ class TestAtmIvBaselineState:
         _add_ticker(session, "AAPL")
         session.add(
             DistillationTickerBaseline(
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 baseline_kind="atm_iv",
                 as_of="2026-04-25T20:00:00Z",
                 mean=0.30,
@@ -940,7 +941,7 @@ class TestAtmIvBaselineState:
             iv = 0.20 + (day - 1) * (0.20 / 59)  # 0.20 .. 0.40
             _add_atm_iv_snapshot(
                 session,
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 snapshot_ts=_ts_for_day_offset(day),
                 implied_volatility=iv,
             )
@@ -971,7 +972,7 @@ class TestAtmIvBaselineState:
         for day in range(1, 11):
             _add_atm_iv_snapshot(
                 session,
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 snapshot_ts=_ts_for_day_offset(day),
                 implied_volatility=0.30,
             )

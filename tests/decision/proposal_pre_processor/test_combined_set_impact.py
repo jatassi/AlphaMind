@@ -412,7 +412,10 @@ def test_combined_set_two_recs_one_close_records_signed_contributors() -> None:
     Projected: 30 + 22 - 5 = 47% → FAIL. All three should appear as contributors.
     """
     existing = _existing_long_equity(
-        position_id="POS-1", underlying="AAPL", notional_usd=5_000.0, quantity=33.0
+        position_id=PositionId("POS-1"),
+        underlying=Symbol("AAPL"),
+        notional_usd=5_000.0,
+        quantity=33.0,
     )
     snap = _snapshot(
         net_long_pct=30.0,
@@ -424,7 +427,7 @@ def test_combined_set_two_recs_one_close_records_signed_contributors() -> None:
     market = _market()
     rec_1 = _equity_recommendation(rec_id="REC-1", quantity=80.0, dollar_value=12_000.0)
     rec_2 = _equity_recommendation(rec_id="REC-2", quantity=66.0, dollar_value=10_000.0)
-    close = _close_assessment(sa_id="SA-1", position_id="POS-1")
+    close = _close_assessment(sa_id="SA-1", position_id=PositionId("POS-1"))
 
     result = compute_combined_set_impact(
         recommendations=(rec_1, rec_2),
@@ -518,7 +521,7 @@ def test_zero_contribution_proposals_excluded_from_contributors() -> None:
     # Semis rec contributes 0.0 to sector_concentration_tech.
     semis_rec = _equity_recommendation(
         rec_id="REC-2",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         sector="semis",
         quantity=20.0,
         dollar_value=2_000.0,

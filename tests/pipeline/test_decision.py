@@ -143,7 +143,7 @@ def _pipeline_inputs_from_fixture(
         ),
         active_overlays=(),
     )
-    fixture = fixture.model_copy(update={"active_risk_parameters": active_risk_parameters})
+    fixture = dataclasses.replace(fixture, active_risk_parameters=active_risk_parameters)
 
     from alphamind.portfolio_state.consumers.synthesizer import adapt_ticker_sector_resolver
 

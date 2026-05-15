@@ -1,13 +1,15 @@
 """Tests for the PortfolioStateRepository protocol, stub, and value objects (story 04b)."""
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
     Symbol,
 )
 from alphamind._kernel.regime import (
@@ -39,6 +41,7 @@ from alphamind.portfolio_state.records.orders import (
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
+    EquityPositionDetails,
     PositionRecord,
     PositionStatus,
 )
@@ -89,7 +92,7 @@ _VALID_PNL = {
 
 
 def test_portfolio_pnl_inputs_valid() -> None:
-    obj = PortfolioPnLInputs.model_validate(_VALID_PNL)
+    obj = PortfolioPnLInputs(**_VALID_PNL)
     assert obj.win_rate_pct == 60.0
 
 
@@ -101,50 +104,48 @@ def test_portfolio_pnl_inputs_null_optional_fields() -> None:
         "average_loss_size_usd": None,
         "profit_factor": None,
     }
-    obj = PortfolioPnLInputs.model_validate(data)
+    obj = PortfolioPnLInputs(**data)
     assert obj.win_rate_pct is None
 
 
 def test_portfolio_pnl_inputs_win_rate_above_100_raises() -> None:
-    with pytest.raises(ValidationError):
-        PortfolioPnLInputs.model_validate({**_VALID_PNL, "win_rate_pct": 101.0})
+    with pytest.raises((ValueError, TypeError)):
+        PortfolioPnLInputs(**{**_VALID_PNL, "win_rate_pct": 101.0})
 
 
 def test_portfolio_pnl_inputs_win_rate_below_0_raises() -> None:
-    with pytest.raises(ValidationError):
-        PortfolioPnLInputs.model_validate({**_VALID_PNL, "win_rate_pct": -1.0})
+    with pytest.raises((ValueError, TypeError)):
+        PortfolioPnLInputs(**{**_VALID_PNL, "win_rate_pct": -1.0})
 
 
 def test_portfolio_pnl_inputs_negative_average_win_raises() -> None:
-    with pytest.raises(ValidationError):
-        PortfolioPnLInputs.model_validate({**_VALID_PNL, "average_win_size_usd": -0.01})
+    with pytest.raises((ValueError, TypeError)):
+        PortfolioPnLInputs(**{**_VALID_PNL, "average_win_size_usd": -0.01})
 
 
 def test_portfolio_pnl_inputs_negative_average_loss_raises() -> None:
-    with pytest.raises(ValidationError):
-        PortfolioPnLInputs.model_validate({**_VALID_PNL, "average_loss_size_usd": -0.01})
+    with pytest.raises((ValueError, TypeError)):
+        PortfolioPnLInputs(**{**_VALID_PNL, "average_loss_size_usd": -0.01})
 
 
 def test_portfolio_pnl_inputs_negative_profit_factor_raises() -> None:
-    with pytest.raises(ValidationError):
-        PortfolioPnLInputs.model_validate({**_VALID_PNL, "profit_factor": -0.01})
+    with pytest.raises((ValueError, TypeError)):
+        PortfolioPnLInputs(**{**_VALID_PNL, "profit_factor": -0.01})
 
 
 def test_portfolio_pnl_inputs_inf_daily_pnl_raises() -> None:
-    with pytest.raises(ValidationError):
-        PortfolioPnLInputs.model_validate({**_VALID_PNL, "daily_realized_pnl_usd": float("inf")})
+    with pytest.raises((ValueError, TypeError)):
+        PortfolioPnLInputs(**{**_VALID_PNL, "daily_realized_pnl_usd": float("inf")})
 
 
 def test_portfolio_pnl_inputs_nan_daily_pnl_raises() -> None:
-    with pytest.raises(ValidationError):
-        PortfolioPnLInputs.model_validate({**_VALID_PNL, "daily_realized_pnl_usd": float("nan")})
+    with pytest.raises((ValueError, TypeError)):
+        PortfolioPnLInputs(**{**_VALID_PNL, "daily_realized_pnl_usd": float("nan")})
 
 
 def test_portfolio_pnl_inputs_nonfinite_rolling_raises() -> None:
-    with pytest.raises(ValidationError):
-        PortfolioPnLInputs.model_validate(
-            {**_VALID_PNL, "rolling_realized_pnl": {"1d": float("inf")}}
-        )
+    with pytest.raises((ValueError, TypeError)):
+        PortfolioPnLInputs(**{**_VALID_PNL, "rolling_realized_pnl": {"1d": float("inf")}})
 
 
 # ---------------------------------------------------------------------------
@@ -153,57 +154,43 @@ def test_portfolio_pnl_inputs_nonfinite_rolling_raises() -> None:
 
 
 def test_current_invocation_metadata_valid() -> None:
-    obj = CurrentInvocationMetadata.model_validate(
-        {
-            "invocation_id": "inv-001",
-            "phase1_committed_at": _NOW_UTC,
-            "pipeline_invocation_started_at": _NOW_UTC,
-        }
+    obj = CurrentInvocationMetadata(
+        invocation_id="inv-001",
+        phase1_committed_at=_NOW_UTC,
+        pipeline_invocation_started_at=_NOW_UTC,
     )
     assert obj.invocation_id == "inv-001"
 
 
 def test_current_invocation_metadata_nullable_started_at() -> None:
-    obj = CurrentInvocationMetadata.model_validate(
-        {
-            "invocation_id": "inv-001",
-            "phase1_committed_at": _NOW_UTC,
-            "pipeline_invocation_started_at": None,
-        }
+    obj = CurrentInvocationMetadata(
+        invocation_id="inv-001", phase1_committed_at=_NOW_UTC, pipeline_invocation_started_at=None
     )
     assert obj.pipeline_invocation_started_at is None
 
 
 def test_current_invocation_metadata_empty_id_raises() -> None:
-    with pytest.raises(ValidationError):
-        CurrentInvocationMetadata.model_validate(
-            {
-                "invocation_id": "",
-                "phase1_committed_at": _NOW_UTC,
-                "pipeline_invocation_started_at": None,
-            }
+    with pytest.raises((ValueError, TypeError)):
+        CurrentInvocationMetadata(
+            invocation_id="", phase1_committed_at=_NOW_UTC, pipeline_invocation_started_at=None
         )
 
 
 def test_current_invocation_metadata_naive_phase1_raises() -> None:
-    with pytest.raises(ValidationError):
-        CurrentInvocationMetadata.model_validate(
-            {
-                "invocation_id": "inv-001",
-                "phase1_committed_at": _NAIVE_DT,
-                "pipeline_invocation_started_at": None,
-            }
+    with pytest.raises((ValueError, TypeError)):
+        CurrentInvocationMetadata(
+            invocation_id="inv-001",
+            phase1_committed_at=_NAIVE_DT,
+            pipeline_invocation_started_at=None,
         )
 
 
 def test_current_invocation_metadata_naive_started_at_raises() -> None:
-    with pytest.raises(ValidationError):
-        CurrentInvocationMetadata.model_validate(
-            {
-                "invocation_id": "inv-001",
-                "phase1_committed_at": _NOW_UTC,
-                "pipeline_invocation_started_at": _NAIVE_DT,
-            }
+    with pytest.raises((ValueError, TypeError)):
+        CurrentInvocationMetadata(
+            invocation_id="inv-001",
+            phase1_committed_at=_NOW_UTC,
+            pipeline_invocation_started_at=_NAIVE_DT,
         )
 
 
@@ -213,73 +200,59 @@ def test_current_invocation_metadata_naive_started_at_raises() -> None:
 
 
 def _make_active_risk_params() -> ActiveRiskParameterSet:
-    return ActiveRiskParameterSet.model_validate(
-        {
-            "regime_label": RegimeLabel.NORMAL,
-            "transition_state": RegimeTransitionState.STABLE,
-            "transition_invocations_remaining": 0,
-            "parameter_change_flag": False,
-            "entries": [],
-            "active_overlays": [],
-        }
+    return ActiveRiskParameterSet(
+        regime_label=RegimeLabel.NORMAL,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        parameter_change_flag=False,
+        entries=[],
+        active_overlays=[],
     )
 
 
 def test_prior_invocation_context_both_none() -> None:
-    obj = PriorInvocationContext.model_validate(
-        {
-            "prior_invocation_id": None,
-            "prior_active_risk_parameters": None,
-            "prior_phase1_committed_at": None,
-        }
+    obj = PriorInvocationContext(
+        prior_invocation_id=None, prior_active_risk_parameters=None, prior_phase1_committed_at=None
     )
     assert obj.prior_invocation_id is None
 
 
 def test_prior_invocation_context_both_non_none() -> None:
     params = _make_active_risk_params()
-    obj = PriorInvocationContext.model_validate(
-        {
-            "prior_invocation_id": "inv-000",
-            "prior_active_risk_parameters": params,
-            "prior_phase1_committed_at": _NOW_UTC,
-        }
+    obj = PriorInvocationContext(
+        prior_invocation_id="inv-000",
+        prior_active_risk_parameters=params,
+        prior_phase1_committed_at=_NOW_UTC,
     )
     assert obj.prior_invocation_id == "inv-000"
 
 
 def test_prior_invocation_context_id_none_params_set_raises() -> None:
     params = _make_active_risk_params()
-    with pytest.raises(ValidationError):
-        PriorInvocationContext.model_validate(
-            {
-                "prior_invocation_id": None,
-                "prior_active_risk_parameters": params,
-                "prior_phase1_committed_at": None,
-            }
+    with pytest.raises((ValueError, TypeError)):
+        PriorInvocationContext(
+            prior_invocation_id=None,
+            prior_active_risk_parameters=params,
+            prior_phase1_committed_at=None,
         )
 
 
 def test_prior_invocation_context_id_set_params_none_raises() -> None:
-    with pytest.raises(ValidationError):
-        PriorInvocationContext.model_validate(
-            {
-                "prior_invocation_id": "inv-000",
-                "prior_active_risk_parameters": None,
-                "prior_phase1_committed_at": _NOW_UTC,
-            }
+    with pytest.raises((ValueError, TypeError)):
+        PriorInvocationContext(
+            prior_invocation_id="inv-000",
+            prior_active_risk_parameters=None,
+            prior_phase1_committed_at=_NOW_UTC,
         )
 
 
 def test_prior_invocation_context_naive_committed_at_raises() -> None:
     params = _make_active_risk_params()
-    with pytest.raises(ValidationError):
-        PriorInvocationContext.model_validate(
-            {
-                "prior_invocation_id": "inv-000",
-                "prior_active_risk_parameters": params,
-                "prior_phase1_committed_at": _NAIVE_DT,
-            }
+    with pytest.raises((ValueError, TypeError)):
+        PriorInvocationContext(
+            prior_invocation_id="inv-000",
+            prior_active_risk_parameters=params,
+            prior_phase1_committed_at=_NAIVE_DT,
         )
 
 
@@ -289,45 +262,41 @@ def test_prior_invocation_context_naive_committed_at_raises() -> None:
 
 
 def _make_pnl_inputs() -> PortfolioPnLInputs:
-    return PortfolioPnLInputs.model_validate(_VALID_PNL)
+    return PortfolioPnLInputs(**_VALID_PNL)
 
 
 def _make_cash_ledger() -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": 10000.0,
-            "settled_cash_usd": 9000.0,
-            "reserved_capital_usd": 500.0,
-            "available_buying_power_usd": 8500.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": [],
-            "cash_pct_of_portfolio": 80.0,
-            "true_deployable_capital_usd": 8000.0,
-            "regt_excess_trailing_30d_usd": 100.0,
-            "regt_excess_trailing_90d_usd": 300.0,
-            "regt_excess_lifetime_usd": 500.0,
-        }
+    return CashLedger(
+        current_cash_usd=10000.0,
+        settled_cash_usd=9000.0,
+        reserved_capital_usd=500.0,
+        available_buying_power_usd=8500.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=[],
+        cash_pct_of_portfolio=80.0,
+        true_deployable_capital_usd=8000.0,
+        regt_excess_trailing_30d_usd=100.0,
+        regt_excess_trailing_90d_usd=300.0,
+        regt_excess_lifetime_usd=500.0,
     )
 
 
 def _make_drawdown_state() -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": 100000.0,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 5.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=100000.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=5.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
 def _make_risk_budget() -> RiskBudgetConsumption:
-    return RiskBudgetConsumption.model_validate({"entries": []})
+    return RiskBudgetConsumption(entries=())
 
 
 def _make_active_risk_parameters() -> ActiveRiskParameterSet:
@@ -335,53 +304,38 @@ def _make_active_risk_parameters() -> ActiveRiskParameterSet:
 
 
 def _make_thesis_quality_aggregate() -> ThesisQualityAggregate:
-    return ThesisQualityAggregate.model_validate(
-        {
-            "as_of_timestamp": _NOW_UTC,
-            "resolution_counts_by_window": [],
-            "duration_stats_by_window": [],
-            "invalidation_timing_stats_by_window": [],
-            "signal_hit_rates": [],
-            "signal_to_thesis_conversions": [],
-            "conviction_calibration": [],
-            "conviction_sizing_deviation_by_window": [],
-            "performance_attribution": [],
-            "alpha_beta_decomposition_by_window": [],
-        }
+    return ThesisQualityAggregate(
+        as_of_timestamp=_NOW_UTC,
+        resolution_counts_by_window=(),
+        duration_stats_by_window=(),
+        invalidation_timing_stats_by_window=(),
+        signal_hit_rates=(),
+        signal_to_thesis_conversions=(),
+        conviction_calibration=(),
+        conviction_sizing_deviation_by_window=(),
+        performance_attribution=(),
+        alpha_beta_decomposition_by_window=(),
     )
 
 
 def _make_position_record(position_id: str) -> PositionRecord:
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": None,
-            "bracket_id": None,
-            "status": PositionStatus.PENDING,
-            "direction": Direction.LONG,
-            "entry_timestamp": None,
-            "details": {
-                "instrument_type": "EQUITY",
-                "ticker": "AAPL",
-                "share_count": 10.0,
-                "average_cost_basis_per_share": 150.0,
-            },
-            "execution_history": [],
-            "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": 1500.0,
-            "unrealized_pnl_usd": 0.0,
-            "unrealized_pnl_pct": 0.0,
-            "position_weight_pct": 5.0,
-            "position_age_hours": 0.0,
-            "notional_exposure_usd": 1500.0,
-            "delta_adjusted_exposure_usd": 1500.0,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.PENDING,
+        direction=Direction.LONG,
+        entry_timestamp=None,
+        details=EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=10.0,
+            average_cost_basis_per_share=150.0,
+        ),
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -408,48 +362,36 @@ def _make_activity_log_entry(entry_id: str, position_id: str | None = None) -> A
 
 
 def _make_bracket_record(position_id: str) -> BracketRecord:
-    leg = BracketLeg.model_validate(
-        {
-            "leg_id": "leg-1",
-            "leg_type": BracketLegType.PRICE_STOP,
-            "order_id": "ord-1",
-            "trigger": PriceTrigger(
-                underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
-            ),
-            "enforcement": BracketLegEnforcement.MECHANICAL,
-            "status": BracketLegStatus.ACTIVE,
-        }
+    leg = BracketLeg(
+        leg_id="leg-1",
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=OrderId("ord-1"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.ACTIVE,
     )
-    return BracketRecord.model_validate(
-        {
-            "bracket_id": "brk-1",
-            "position_id": position_id,
-            "status": BracketStatus.ACTIVE,
-            "entry_order_id": "ord-0",
-            "protective_legs": [leg],
-            "modification_history": [],
-            "corporate_action_cancellation_reason": None,
-        }
+    return BracketRecord(
+        bracket_id=BracketId("brk-1"),
+        position_id=position_id,
+        status=BracketStatus.ACTIVE,
+        entry_order_id=OrderId("ord-0"),
+        protective_legs=[leg],
+        modification_history=[],
+        corporate_action_cancellation_reason=None,
     )
 
 
 def _make_current_invocation_metadata() -> CurrentInvocationMetadata:
-    return CurrentInvocationMetadata.model_validate(
-        {
-            "invocation_id": "inv-001",
-            "phase1_committed_at": _NOW_UTC,
-            "pipeline_invocation_started_at": None,
-        }
+    return CurrentInvocationMetadata(
+        invocation_id="inv-001", phase1_committed_at=_NOW_UTC, pipeline_invocation_started_at=None
     )
 
 
 def _make_prior_invocation_context() -> PriorInvocationContext:
-    return PriorInvocationContext.model_validate(
-        {
-            "prior_invocation_id": None,
-            "prior_active_risk_parameters": None,
-            "prior_phase1_committed_at": None,
-        }
+    return PriorInvocationContext(
+        prior_invocation_id=None, prior_active_risk_parameters=None, prior_phase1_committed_at=None
     )
 
 
@@ -464,26 +406,24 @@ def _make_fixture(
     position_modification_trail: dict[str, tuple[ActivityLogEntry, ...]] | None = None,
     brackets: tuple[BracketRecord, ...] = (),
 ) -> RepositoryFixture:
-    return RepositoryFixture.model_validate(
-        {
-            "open_positions": open_positions,
-            "pending_positions": pending_positions,
-            "drawdown_state": _make_drawdown_state(),
-            "portfolio_pnl_inputs": _make_pnl_inputs(),
-            "active_theses": active_theses,
-            "recent_thesis_resolutions": recent_thesis_resolutions,
-            "cash_ledger": _make_cash_ledger(),
-            "pending_orders": pending_orders,
-            "risk_budget": _make_risk_budget(),
-            "active_risk_parameters": _make_active_risk_parameters(),
-            "intra_invocation_changelog": intra_invocation_changelog,
-            "recent_pm_decision_log": recent_pm_decision_log,
-            "position_modification_trail": position_modification_trail or {},
-            "thesis_quality_aggregates": _make_thesis_quality_aggregate(),
-            "brackets": brackets,
-            "current_invocation_metadata": _make_current_invocation_metadata(),
-            "prior_invocation_context": _make_prior_invocation_context(),
-        }
+    return RepositoryFixture(
+        open_positions=open_positions,
+        pending_positions=pending_positions,
+        drawdown_state=_make_drawdown_state(),
+        portfolio_pnl_inputs=_make_pnl_inputs(),
+        active_theses=active_theses,
+        recent_thesis_resolutions=recent_thesis_resolutions,
+        cash_ledger=_make_cash_ledger(),
+        pending_orders=pending_orders,
+        risk_budget=_make_risk_budget(),
+        active_risk_parameters=_make_active_risk_parameters(),
+        intra_invocation_changelog=intra_invocation_changelog,
+        recent_pm_decision_log=recent_pm_decision_log,
+        position_modification_trail=position_modification_trail or {},
+        thesis_quality_aggregates=_make_thesis_quality_aggregate(),
+        brackets=brackets,
+        current_invocation_metadata=_make_current_invocation_metadata(),
+        prior_invocation_context=_make_prior_invocation_context(),
     )
 
 
@@ -497,29 +437,33 @@ def test_repository_fixture_valid() -> None:
     assert fixture.open_positions == ()
 
 
-def test_repository_fixture_non_tuple_open_positions_raises() -> None:
-    with pytest.raises(ValidationError):
-        RepositoryFixture.model_validate(
-            {
-                "open_positions": [_make_position_record("pos-1")],  # list not tuple
-                "pending_positions": (),
-                "drawdown_state": _make_drawdown_state(),
-                "portfolio_pnl_inputs": _make_pnl_inputs(),
-                "active_theses": (),
-                "recent_thesis_resolutions": (),
-                "cash_ledger": _make_cash_ledger(),
-                "pending_orders": (),
-                "risk_budget": _make_risk_budget(),
-                "active_risk_parameters": _make_active_risk_parameters(),
-                "intra_invocation_changelog": (),
-                "recent_pm_decision_log": (),
-                "position_modification_trail": {},
-                "thesis_quality_aggregates": _make_thesis_quality_aggregate(),
-                "brackets": (),
-                "current_invocation_metadata": _make_current_invocation_metadata(),
-                "prior_invocation_context": _make_prior_invocation_context(),
-            }
-        )
+def test_repository_fixture_list_open_positions_stored_as_is() -> None:
+    """Post-Pydantic dataclass: tuple-vs-list strictness lives at the codec / consumer
+    boundary, not at construction. The frozen dataclass stores whatever sequence
+    type the caller passes — downstream code uses :class:`tuple` annotations and
+    will fail loudly if it relies on tuple semantics. Documenting the behavior
+    change so callers don't accidentally rely on construction-time conversion.
+    """
+    fixture = RepositoryFixture(
+        open_positions=[_make_position_record("pos-1")],  # type: ignore[arg-type]
+        pending_positions=(),
+        drawdown_state=_make_drawdown_state(),
+        portfolio_pnl_inputs=_make_pnl_inputs(),
+        active_theses=(),
+        recent_thesis_resolutions=(),
+        cash_ledger=_make_cash_ledger(),
+        pending_orders=(),
+        risk_budget=_make_risk_budget(),
+        active_risk_parameters=_make_active_risk_parameters(),
+        intra_invocation_changelog=(),
+        recent_pm_decision_log=(),
+        position_modification_trail={},
+        thesis_quality_aggregates=_make_thesis_quality_aggregate(),
+        brackets=(),
+        current_invocation_metadata=_make_current_invocation_metadata(),
+        prior_invocation_context=_make_prior_invocation_context(),
+    )
+    assert isinstance(fixture.open_positions, list)
 
 
 # ---------------------------------------------------------------------------

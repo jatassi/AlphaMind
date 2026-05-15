@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import (
     Base,
     BorrowCostDaily,
@@ -368,7 +369,7 @@ class TestCollectBorrowCostDaily:
             collect_borrow_cost(_session_factory=sf, _repo=_FakeRunRepo())
 
         with sf() as sess:
-            rows = sess.query(BorrowCostDaily).filter_by(ticker="AAPL").all()
+            rows = sess.query(BorrowCostDaily).filter_by(ticker=Symbol("AAPL")).all()
             assert len(rows) == 2
 
 
@@ -421,7 +422,7 @@ class TestCollectBorrowCostIntraday:
             collect_borrow_cost(_session_factory=sf, _repo=_FakeRunRepo())
 
         with sf() as sess:
-            rows = sess.query(BorrowCostIntraday).filter_by(ticker="AAPL").all()
+            rows = sess.query(BorrowCostIntraday).filter_by(ticker=Symbol("AAPL")).all()
             assert len(rows) == 2
 
 
@@ -442,7 +443,7 @@ class TestCoverageErrorHandling:
         def _side_effect(ticker: str) -> dict[str, Any]:
             if ticker == "UNKN":
                 raise IBorrowDeskCoverageError("UNKN not in coverage")
-            return _make_response(ticker="AAPL")
+            return _make_response(ticker=Symbol("AAPL"))
 
         with (
             patch(_FETCH_TICKER, side_effect=_side_effect),
@@ -456,7 +457,7 @@ class TestCoverageErrorHandling:
 
         # AAPL rows still written despite UNKN failure
         with sf() as sess:
-            rows = sess.query(BorrowCostDaily).filter_by(ticker="AAPL").all()
+            rows = sess.query(BorrowCostDaily).filter_by(ticker=Symbol("AAPL")).all()
             assert len(rows) == 1
 
         assert any("UNKN" in r.message for r in caplog.records)
@@ -569,7 +570,7 @@ class TestIdempotency:
                 collect_borrow_cost(_session_factory=sf, _repo=_FakeRunRepo())
 
         with sf() as sess:
-            assert sess.query(BorrowCostDaily).filter_by(ticker="AAPL").count() == 1
+            assert sess.query(BorrowCostDaily).filter_by(ticker=Symbol("AAPL")).count() == 1
 
     def test_rerun_does_not_duplicate_intraday_rows(self) -> None:
         _engine, sf = _make_db()
@@ -586,7 +587,7 @@ class TestIdempotency:
                 collect_borrow_cost(_session_factory=sf, _repo=_FakeRunRepo())
 
         with sf() as sess:
-            assert sess.query(BorrowCostIntraday).filter_by(ticker="AAPL").count() == 1
+            assert sess.query(BorrowCostIntraday).filter_by(ticker=Symbol("AAPL")).count() == 1
 
 
 # ---------------------------------------------------------------------------
@@ -608,8 +609,8 @@ class TestRefreshTicker:
             freshness = refresh_ticker("AAPL", _session_factory=sf, _repo=_FakeRunRepo())
 
         with sf() as sess:
-            assert sess.query(BorrowCostDaily).filter_by(ticker="AAPL").count() == 1
-            assert sess.query(BorrowCostIntraday).filter_by(ticker="AAPL").count() == 1
+            assert sess.query(BorrowCostDaily).filter_by(ticker=Symbol("AAPL")).count() == 1
+            assert sess.query(BorrowCostIntraday).filter_by(ticker=Symbol("AAPL")).count() == 1
 
         # Returns the most recent real_time.datetime
         assert freshness == "2026-04-25T15:45:00Z"

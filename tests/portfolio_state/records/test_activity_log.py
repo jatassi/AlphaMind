@@ -8,6 +8,7 @@ from typing import Literal, get_args
 
 import pytest
 
+from alphamind._kernel.ids import BracketId, OrderId, PositionId, Symbol, ThesisId
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.portfolio_state.events.codec import decode_detail, encode_detail
 from alphamind.portfolio_state.records.activity_log import (
@@ -333,12 +334,12 @@ class TestDetailClassHappyPaths:
 
     def test_position_opened_detail(self) -> None:
         d = PositionOpenedDetail(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             direction="LONG",
             fill_price=price("150.0"),
             quantity=10.0,
-            thesis_id="th-001",
-            bracket_id="br-001",
+            thesis_id=ThesisId("th-001"),
+            bracket_id=BracketId("br-001"),
             mechanism=PositionOpenMechanism.ORDER_FILL,
             parent_position_id=None,
         )
@@ -346,14 +347,14 @@ class TestDetailClassHappyPaths:
 
     def test_position_opened_detail_spin_off(self) -> None:
         d = PositionOpenedDetail(
-            ticker="SPIN",
+            ticker=Symbol("SPIN"),
             direction="LONG",
             fill_price=price("50.0"),
             quantity=5.0,
             thesis_id=None,
             bracket_id=None,
             mechanism=PositionOpenMechanism.SPIN_OFF_FROM_PARENT,
-            parent_position_id="pos-parent-001",
+            parent_position_id=PositionId("pos-parent-001"),
         )
         assert d.parent_position_id == "pos-parent-001"
 
@@ -435,7 +436,7 @@ class TestDetailClassHappyPaths:
 
     def test_bracket_activated_detail(self) -> None:
         d = BracketActivatedDetail(
-            bracket_id="br-001",
+            bracket_id=BracketId("br-001"),
             protective_leg_order_ids=("ord-sl-001", "ord-tp-001"),
         )
         assert len(d.protective_leg_order_ids) == 2
@@ -480,14 +481,14 @@ class TestDetailClassHappyPaths:
 
     def test_bracket_cancelled_corporate_action_detail(self) -> None:
         d = BracketCancelledCorporateActionDetail(
-            bracket_id="br-001",
+            bracket_id=BracketId("br-001"),
             cancellation_reason="CASH_MERGER",
             cancelled_leg_order_ids=("ord-sl-001", "ord-tp-001"),
         )
         assert d.bracket_id == "br-001"
 
     def test_thesis_created_detail(self) -> None:
-        d = ThesisCreatedDetail(thesis_id="th-001", summary="Bullish on earnings beat")
+        d = ThesisCreatedDetail(thesis_id=ThesisId("th-001"), summary="Bullish on earnings beat")
         assert d.thesis_id == "th-001"
 
     def test_thesis_component_added_detail(self) -> None:
@@ -531,16 +532,16 @@ class TestDetailClassHappyPaths:
         assert d.reason == CashCreditReason.EXIT_FILL
 
     def test_capital_reserved_detail(self) -> None:
-        d = CapitalReservedDetail(order_id="ord-001", amount_usd=money("1500.0"))
+        d = CapitalReservedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0"))
         assert d.amount_usd == 1500.0
 
     def test_capital_released_detail(self) -> None:
-        d = CapitalReleasedDetail(order_id="ord-001", amount_usd=money("1500.0"))
+        d = CapitalReleasedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0"))
         assert d.amount_usd == 1500.0
 
     def test_margin_call_detail(self) -> None:
         d = MarginCallDetail(
-            position_id="pos-001",
+            position_id=PositionId("pos-001"),
             margin_required_usd=money("5000.0"),
             margin_available_usd=money("3000.0"),
             deficit_usd=money("2000.0"),
@@ -553,7 +554,7 @@ class TestDetailClassHappyPaths:
 
     def test_margin_liquidation_detail(self) -> None:
         d = MarginLiquidationDetail(
-            position_id="pos-001",
+            position_id=PositionId("pos-001"),
             liquidation_price=price("140.0"),
             loss_usd=signed_money("1000.0"),
         )
@@ -641,7 +642,7 @@ class TestDetailClassHappyPaths:
         d = CorporateActionAppliedDetail(
             action_type=CorporateActionType.SPLIT,
             alpaca_activity_id="act-001",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             new_ticker=None,
             ratio_or_amount=2.0,
             pre_action_quantity=10.0,
@@ -819,20 +820,20 @@ class TestPositionOpenedDetailValidator:
     def test_order_fill_with_parent_position_id_raises(self) -> None:
         with pytest.raises((ValueError, TypeError)):
             PositionOpenedDetail(
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 direction="LONG",
                 fill_price=price("150.0"),
                 quantity=10.0,
                 thesis_id=None,
                 bracket_id=None,
                 mechanism=PositionOpenMechanism.ORDER_FILL,
-                parent_position_id="pos-parent-001",
+                parent_position_id=PositionId("pos-parent-001"),
             )
 
     def test_spin_off_with_none_parent_allowed(self) -> None:
         # spin-off with None parent_position_id is valid per the spec
         d = PositionOpenedDetail(
-            ticker="SPIN",
+            ticker=Symbol("SPIN"),
             direction="LONG",
             fill_price=price("50.0"),
             quantity=5.0,
@@ -902,7 +903,7 @@ class TestActivityLogEntryHappyPath:
 
     def test_position_opened(self) -> None:
         detail = PositionOpenedDetail(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             direction="LONG",
             fill_price=price("150.0"),
             quantity=10.0,
@@ -999,7 +1000,7 @@ class TestActivityLogEntryHappyPath:
 
     def test_bracket_activated(self) -> None:
         detail = BracketActivatedDetail(
-            bracket_id="br-001",
+            bracket_id=BracketId("br-001"),
             protective_leg_order_ids=("ord-sl-001",),
         )
         e = self._make_entry(
@@ -1064,7 +1065,7 @@ class TestActivityLogEntryHappyPath:
 
     def test_bracket_cancelled_corporate_action(self) -> None:
         detail = BracketCancelledCorporateActionDetail(
-            bracket_id="br-001",
+            bracket_id=BracketId("br-001"),
             cancellation_reason="CASH_MERGER",
             cancelled_leg_order_ids=("ord-sl-001",),
         )
@@ -1077,7 +1078,7 @@ class TestActivityLogEntryHappyPath:
         assert e.event_type == EventType.BRACKET_CANCELLED_CORPORATE_ACTION
 
     def test_thesis_created(self) -> None:
-        detail = ThesisCreatedDetail(thesis_id="th-001", summary="Bullish on earnings")
+        detail = ThesisCreatedDetail(thesis_id=ThesisId("th-001"), summary="Bullish on earnings")
         e = self._make_entry(EventType.THESIS_CREATED, EventGroup.THESIS, detail)
         assert e.event_type == EventType.THESIS_CREATED
 
@@ -1138,7 +1139,7 @@ class TestActivityLogEntryHappyPath:
         assert e.event_type == EventType.CASH_CREDITED
 
     def test_capital_reserved(self) -> None:
-        detail = CapitalReservedDetail(order_id="ord-001", amount_usd=money("1500.0"))
+        detail = CapitalReservedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0"))
         e = self._make_entry(
             EventType.CAPITAL_RESERVED,
             EventGroup.CASH_AND_MARGIN,
@@ -1148,7 +1149,7 @@ class TestActivityLogEntryHappyPath:
         assert e.event_type == EventType.CAPITAL_RESERVED
 
     def test_capital_released(self) -> None:
-        detail = CapitalReleasedDetail(order_id="ord-001", amount_usd=money("1500.0"))
+        detail = CapitalReleasedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0"))
         e = self._make_entry(
             EventType.CAPITAL_RELEASED,
             EventGroup.CASH_AND_MARGIN,
@@ -1159,7 +1160,7 @@ class TestActivityLogEntryHappyPath:
 
     def test_margin_call(self) -> None:
         detail = MarginCallDetail(
-            position_id="pos-001",
+            position_id=PositionId("pos-001"),
             margin_required_usd=money("5000.0"),
             margin_available_usd=money("3000.0"),
             deficit_usd=money("2000.0"),
@@ -1184,7 +1185,7 @@ class TestActivityLogEntryHappyPath:
 
     def test_margin_liquidation(self) -> None:
         detail = MarginLiquidationDetail(
-            position_id="pos-001",
+            position_id=PositionId("pos-001"),
             liquidation_price=price("140.0"),
             loss_usd=signed_money("1000.0"),
         )
@@ -1279,7 +1280,7 @@ class TestActivityLogEntryHappyPath:
         detail = CorporateActionAppliedDetail(
             action_type=CorporateActionType.SPLIT,
             alpaca_activity_id="act-001",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             new_ticker=None,
             ratio_or_amount=2.0,
             pre_action_quantity=10.0,
@@ -1335,7 +1336,7 @@ class TestActivityLogEntryValidation:
     def test_mismatched_event_group_raises(self) -> None:
         """event_group mismatch raises ValidationError naming both groups."""
         detail = PositionOpenedDetail(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             direction="LONG",
             fill_price=price("150.0"),
             quantity=10.0,
@@ -1364,7 +1365,7 @@ class TestActivityLogEntryValidation:
     def test_naive_timestamp_raises(self) -> None:
         """naive timestamp raises ValidationError."""
         detail = PositionOpenedDetail(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             direction="LONG",
             fill_price=price("150.0"),
             quantity=10.0,
@@ -1391,7 +1392,7 @@ class TestActivityLogEntryValidation:
     def test_empty_entry_id_raises(self) -> None:
         """empty entry_id raises ValidationError."""
         detail = PositionOpenedDetail(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             direction="LONG",
             fill_price=price("150.0"),
             quantity=10.0,
@@ -1417,7 +1418,7 @@ class TestActivityLogEntryValidation:
     def test_empty_invocation_id_raises(self) -> None:
         """empty invocation_id raises ValidationError."""
         detail = PositionOpenedDetail(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             direction="LONG",
             fill_price=price("150.0"),
             quantity=10.0,
@@ -1943,7 +1944,7 @@ class TestReconciliationAlertEvent:
             timestamp=_UTC_TS,
             event_type=_EventType.RECONCILIATION_ALERT,
             event_group=_EventGroup.RECONCILIATION,
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             order_id=None,
             thesis_id=None,
             source=EventSource.CORPORATE_ACTION_PROCESSOR,

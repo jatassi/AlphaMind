@@ -18,6 +18,9 @@ dedup ledger row through ``mark_ca_activity_processed``.
 
 from __future__ import annotations
 
+import dataclasses
+
+from alphamind._kernel.ids import Symbol
 from alphamind._kernel.money import money, signed_money
 from alphamind.execution.broker_adapter.queries import PositionSnapshot
 from alphamind.execution.write_paths.ca_integration_ledger import (
@@ -90,12 +93,11 @@ async def handle_cash_merger(
 
     pre_qty, pre_basis, realized_pnl, new_details = _close_for_cash_merger(position, activity)
 
-    updated = position.model_copy(
-        update={
-            "details": new_details,
-            "status": PositionStatus.CLOSED,
-            "realized_pnl_to_date_usd": (position.realized_pnl_to_date_usd or 0.0) + realized_pnl,
-        }
+    updated = dataclasses.replace(
+        position,
+        details=new_details,
+        status=PositionStatus.CLOSED,
+        realized_pnl_to_date_usd=(position.realized_pnl_to_date_usd or 0.0) + realized_pnl,
     )
     _persist_position_update(pos_row, updated)
 
@@ -157,12 +159,22 @@ def _close_for_cash_merger(
         pre_qty = details.share_count
         pre_basis = details.average_cost_basis_per_share
         realized = proceeds - (pre_qty * pre_basis)
-        return pre_qty, pre_basis, realized, details.model_copy(update={"share_count": 0.0})
+        return (
+            pre_qty,
+            pre_basis,
+            realized,
+            dataclasses.replace(details, share_count=0.0),
+        )
     if isinstance(details, OptionsPositionDetails):
         pre_qty = details.contract_count
         pre_basis = details.premium_paid_per_contract
         realized = proceeds - (pre_qty * pre_basis * details.contract_multiplier)
-        return pre_qty, pre_basis, realized, details.model_copy(update={"contract_count": 0.0})
+        return (
+            pre_qty,
+            pre_basis,
+            realized,
+            dataclasses.replace(details, contract_count=0.0),
+        )
     if isinstance(details, StrategyPositionDetails):
         # Aggregate entry cost across legs (signed by per-leg direction).
         entry_cost = sum(
@@ -178,11 +190,11 @@ def _close_for_cash_merger(
             StrategyLeg(
                 leg_id=leg.leg_id,
                 direction=leg.direction,
-                options=leg.options.model_copy(update={"contract_count": 0.0}),
+                options=dataclasses.replace(leg.options, contract_count=0.0),
             )
             for leg in details.legs
         )
-        return pre_qty, entry_cost, realized, details.model_copy(update={"legs": zeroed_legs})
+        return pre_qty, entry_cost, realized, dataclasses.replace(details, legs=zeroed_legs)
     msg = f"unsupported instrument_type for cash merger: {type(details).__name__}"
     raise NotImplementedError(msg)
 
@@ -255,11 +267,8 @@ async def handle_stock_merger(
         position, activity.new_ticker, snapshot
     )
 
-    updated = position.model_copy(
-        update={
-            "details": new_details,
-            "corporate_action_adjustment_needed": True,
-        }
+    updated = dataclasses.replace(
+        position, details=new_details, corporate_action_adjustment_needed=True
     )
     _persist_position_update(pos_row, updated)
 
@@ -291,10 +300,11 @@ async def handle_stock_merger(
 
 def _swap_for_stock_merger(
     position: PositionRecord,
-    new_ticker: str,
+    new_ticker_str: str,
     snapshot: PositionSnapshot,
 ) -> tuple[float, float, float, float, _PositionDetails]:
     """Project the post-merger Alpaca snapshot onto the position's details."""
+    new_ticker = Symbol(new_ticker_str)
     details = position.details
     # Stock-merger creates a new OCC contract whose underlying differs from
     # the prior contract — prior greeks were computed against a different
@@ -311,24 +321,22 @@ def _swap_for_stock_merger(
     if isinstance(details, EquityPositionDetails):
         pre_qty = details.share_count
         pre_basis = details.average_cost_basis_per_share
-        new_equity = details.model_copy(
-            update={
-                "ticker": new_ticker,
-                "share_count": snapshot.qty,
-                "average_cost_basis_per_share": new_avg_entry_price,
-            }
+        new_equity = dataclasses.replace(
+            details,
+            ticker=new_ticker,
+            share_count=snapshot.qty,
+            average_cost_basis_per_share=new_avg_entry_price,
         )
         return pre_qty, pre_basis, snapshot.qty, new_avg_entry_price, new_equity
     if isinstance(details, OptionsPositionDetails):
         pre_qty = details.contract_count
         pre_basis = details.premium_paid_per_contract
-        new_options = details.model_copy(
-            update={
-                "underlying_ticker": new_ticker,
-                "contract_count": snapshot.qty,
-                "premium_paid_per_contract": new_avg_entry_price,
-                "greeks": stale_greeks,
-            }
+        new_options = dataclasses.replace(
+            details,
+            underlying_ticker=new_ticker,
+            contract_count=snapshot.qty,
+            premium_paid_per_contract=new_avg_entry_price,
+            greeks=stale_greeks,
         )
         return pre_qty, pre_basis, snapshot.qty, new_avg_entry_price, new_options
     if isinstance(details, StrategyPositionDetails):

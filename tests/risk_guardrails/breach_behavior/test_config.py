@@ -3,7 +3,6 @@ from typing import Any
 
 import pytest
 import yaml
-from pydantic import ValidationError
 
 from alphamind.risk_guardrails.breach_behavior.config import (
     BreachBehaviorConfig,
@@ -58,7 +57,7 @@ def test_yaml_parses_documented_defaults() -> None:
 def test_non_positive_value_fails_with_field_path(field: str, value: float) -> None:
     payload = _valid_flat_payload()
     payload[field] = value
-    with pytest.raises(ValidationError) as exc_info:
+    with pytest.raises((ValueError, TypeError)) as exc_info:
         BreachBehaviorConfig.model_validate(payload)
     assert field in str(exc_info.value)
 
@@ -66,7 +65,7 @@ def test_non_positive_value_fails_with_field_path(field: str, value: float) -> N
 def test_total_short_immediate_threshold_at_exactly_100_fails() -> None:
     payload = _valid_flat_payload()
     payload["forced_reduction_total_short_immediate_threshold_pct_of_limit"] = 100.0
-    with pytest.raises(ValidationError) as exc_info:
+    with pytest.raises((ValueError, TypeError)) as exc_info:
         BreachBehaviorConfig.model_validate(payload)
     assert "forced_reduction_total_short_immediate_threshold_pct_of_limit" in str(exc_info.value)
 
@@ -74,7 +73,7 @@ def test_total_short_immediate_threshold_at_exactly_100_fails() -> None:
 def test_multi_rule_breach_simultaneous_deferred_rules_count_at_1_fails() -> None:
     payload = _valid_flat_payload()
     payload["multi_rule_breach_simultaneous_deferred_rules_count"] = 1
-    with pytest.raises(ValidationError) as exc_info:
+    with pytest.raises((ValueError, TypeError)) as exc_info:
         BreachBehaviorConfig.model_validate(payload)
     assert "multi_rule_breach_simultaneous_deferred_rules_count" in str(exc_info.value)
 

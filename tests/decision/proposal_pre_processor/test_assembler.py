@@ -320,7 +320,13 @@ def test_invocation_id_mismatch_raises() -> None:
 
 def test_held_direction_resolver_resolves_long() -> None:
     snap = _snapshot_with_positions(
-        {"POS-LONG": _existing(position_id="POS-LONG", underlying="AAPL", direction=Direction.LONG)}
+        {
+            "POS-LONG": _existing(
+                position_id=PositionId("POS-LONG"),
+                underlying=Symbol("AAPL"),
+                direction=Direction.LONG,
+            )
+        }
     )
     resolver = build_held_direction_resolver(snap)
     assert resolver("POS-LONG") == "long"
@@ -328,7 +334,13 @@ def test_held_direction_resolver_resolves_long() -> None:
 
 def test_held_direction_resolver_resolves_short() -> None:
     snap = _snapshot_with_positions(
-        {"POS-S": _existing(position_id="POS-S", underlying="AAPL", direction=Direction.SHORT)}
+        {
+            "POS-S": _existing(
+                position_id=PositionId("POS-S"),
+                underlying=Symbol("AAPL"),
+                direction=Direction.SHORT,
+            )
+        }
     )
     resolver = build_held_direction_resolver(snap)
     assert resolver("POS-S") == "short"
@@ -340,8 +352,12 @@ def test_held_direction_resolver_resolves_short() -> None:
 
 
 def test_strategist_section_preserves_order_and_passes_through_observations() -> None:
-    sa1 = _close_assessment(sa_id="SA-1", position_id="POS-1", underlying="AAPL")
-    sa2 = _close_assessment(sa_id="SA-2", position_id="POS-2", underlying="MSFT")
+    sa1 = _close_assessment(
+        sa_id="SA-1", position_id=PositionId("POS-1"), underlying=Symbol("AAPL")
+    )
+    sa2 = _close_assessment(
+        sa_id="SA-2", position_id=PositionId("POS-2"), underlying=Symbol("MSFT")
+    )
     output = _strategist_output(position_assessments=(sa1, sa2))
 
     section = build_strategist_section(output, _empty_conflicts())
@@ -361,7 +377,7 @@ def test_strategist_section_threads_provided_conflicts() -> None:
 
     conflict = StrategistSideConflict(
         with_recommendation_id="REC-7",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         conflict_type=ConflictType.entry_vs_close,
     )
     conflicts = ConflictDetectionResult(
@@ -401,7 +417,7 @@ def test_analyst_section_normal_threads_conflicts() -> None:
 
     conflict = AnalystSideConflict(
         with_assessment_id="SA-9",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         conflict_type=ConflictType.entry_vs_close,
     )
     conflicts = ConflictDetectionResult(
@@ -446,7 +462,7 @@ def test_analyst_section_watchlist_ignores_conflicts() -> None:
         "REC-1": (
             AnalystSideConflict(
                 with_assessment_id="SA-1",
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 conflict_type=ConflictType.entry_vs_close,
             ),
         )

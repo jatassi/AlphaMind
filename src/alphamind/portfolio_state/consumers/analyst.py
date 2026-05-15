@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
-
-from pydantic import BaseModel, ConfigDict
 
 from alphamind.portfolio_state.computations.activity_log import filter_by_event_type
 from alphamind.portfolio_state.computations.exposure import SectorResolver
@@ -28,10 +27,9 @@ from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
 _ANALYST_AGENT = "analyst"
 
 
-class AnalystHeldPosition(BaseModel):
+@dataclass(frozen=True, slots=True)
+class AnalystHeldPosition:
     """Thin per-position summary for the analyst (no P/L, no thesis content)."""
-
-    model_config = ConfigDict(frozen=True)
 
     position_id: str
     ticker: str
@@ -41,10 +39,9 @@ class AnalystHeldPosition(BaseModel):
     instrument_type: InstrumentType
 
 
-class AnalystAvailableCapital(BaseModel):
+@dataclass(frozen=True, slots=True)
+class AnalystAvailableCapital:
     """Capital availability summary for the analyst."""
-
-    model_config = ConfigDict(frozen=True)
 
     available_for_new_positions_usd: float
     available_for_new_positions_pct: float
@@ -52,10 +49,9 @@ class AnalystAvailableCapital(BaseModel):
     per_position_max_size_pct: float
 
 
-class AnalystAbandonedOpening(BaseModel):
+@dataclass(frozen=True, slots=True)
+class AnalystAbandonedOpening:
     """An analyst-originated abandoned opening command."""
-
-    model_config = ConfigDict(frozen=True)
 
     envelope_id: str
     direction: Direction
@@ -66,10 +62,9 @@ class AnalystAbandonedOpening(BaseModel):
     failure_reason: str
 
 
-class AnalystView(BaseModel):
+@dataclass(frozen=True, slots=True)
+class AnalystView:
     """Full analyst projection bundling held positions, capital, orders, and theses."""
-
-    model_config = ConfigDict(frozen=True)
 
     held_positions: tuple[AnalystHeldPosition, ...]
     active_thesis_summaries: tuple[SynthesizerThesisSummary, ...]

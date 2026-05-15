@@ -27,6 +27,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
 from alphamind.distillation.orchestrator import DistillationOutputs
 from alphamind.distillation.output import (
@@ -154,7 +155,7 @@ def _seed_state_tables(
     if "distillation_ticker_baseline" not in skip:
         session.add(
             DistillationTickerBaseline(
-                ticker="AAA",
+                ticker=Symbol("AAA"),
                 baseline_kind="volume",
                 as_of=ts,
                 mean=1_000_000.0,
@@ -169,7 +170,7 @@ def _seed_state_tables(
         session.add(
             AssetUniverse(
                 asset_id="asset-bbb",
-                ticker="BBB",
+                ticker=Symbol("BBB"),
                 full_name="BBB",
                 asset_class="equity",
                 asset_role="universe",
@@ -220,7 +221,7 @@ def _seed_state_tables(
     if "distillation_event_history" not in skip:
         session.add(
             DistillationEventHistory(
-                ticker="AAA",
+                ticker=Symbol("AAA"),
                 event_kind="gap",
                 event_ts=ts,
                 direction="up",

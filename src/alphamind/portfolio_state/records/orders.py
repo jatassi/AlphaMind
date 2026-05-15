@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Annotated, Literal
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from typing import Literal
 
 from alphamind._kernel.ids import (
     AlpacaOrderId,
@@ -117,67 +117,67 @@ _MECHANICAL_BACKSTOP_TYPES = frozenset(
 )
 
 
-class EquityInstrumentSpec(BaseModel):
+@dataclass(frozen=True, slots=True)
+class EquityInstrumentSpec:
     """Instrument spec for an equity order, discriminated by ``instrument_type=EQUITY``."""
 
-    model_config = ConfigDict(frozen=True)
+    ticker: Symbol
+    instrument_type: InstrumentType = field(default=InstrumentType.EQUITY, init=False)
 
-    instrument_type: Literal[InstrumentType.EQUITY] = InstrumentType.EQUITY
-    ticker: Symbol = Field(min_length=1)
+    def __post_init__(self) -> None:
+        if len(self.ticker) < 1:
+            msg = "ticker must be non-empty"
+            raise ValueError(msg)
 
 
-class OptionsInstrumentSpec(BaseModel):
+@dataclass(frozen=True, slots=True)
+class OptionsInstrumentSpec:
     """Instrument spec for an options order, discriminated by ``instrument_type=OPTIONS``."""
 
-    model_config = ConfigDict(frozen=True)
-
-    instrument_type: Literal[InstrumentType.OPTIONS] = InstrumentType.OPTIONS
-    underlying: Symbol = Field(min_length=1)
+    underlying: Symbol
     strike: float
     expiration: date
     contract_type: OptionContractType
     contract_multiplier: float
+    instrument_type: InstrumentType = field(default=InstrumentType.OPTIONS, init=False)
+
+    def __post_init__(self) -> None:
+        if len(self.underlying) < 1:
+            msg = "underlying must be non-empty"
+            raise ValueError(msg)
 
 
-class StrategyInstrumentSpec(BaseModel):
+@dataclass(frozen=True, slots=True)
+class StrategyInstrumentSpec:
     """Instrument spec for a multi-leg strategy order.
 
     Legs are tightened from the prior generic ``InstrumentSpec`` to
     ``OptionsInstrumentSpec`` — strategy legs are always options.
     """
 
-    model_config = ConfigDict(frozen=True)
-
-    instrument_type: Literal[InstrumentType.STRATEGY] = InstrumentType.STRATEGY
     legs: tuple[OptionsInstrumentSpec, ...]
+    instrument_type: InstrumentType = field(default=InstrumentType.STRATEGY, init=False)
 
-    @model_validator(mode="after")
-    def _legs_non_empty(self) -> StrategyInstrumentSpec:
+    def __post_init__(self) -> None:
         if not self.legs:
             msg = "STRATEGY InstrumentSpec requires non-empty legs"
             raise ValueError(msg)
-        return self
 
 
-InstrumentSpec = Annotated[
-    EquityInstrumentSpec | OptionsInstrumentSpec | StrategyInstrumentSpec,
-    Field(discriminator="instrument_type"),
-]
+InstrumentSpec = EquityInstrumentSpec | OptionsInstrumentSpec | StrategyInstrumentSpec
 
 
-class PriceParameters(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PriceParameters:
     """Price parameters for an order; cross-validation is enforced at OrderRecord level."""
-
-    model_config = ConfigDict(frozen=True)
 
     limit_price: float | None = None
     stop_trigger_price: float | None = None
 
 
-class OrderRecord(BaseModel):
+@dataclass(frozen=True, slots=True)
+class OrderRecord:
     """Consumer-facing per-order record."""
-
-    model_config = ConfigDict(frozen=True)
 
     order_id: OrderId
     position_id: PositionId | None
@@ -186,7 +186,6 @@ class OrderRecord(BaseModel):
     instrument_spec: InstrumentSpec
     direction: OrderDirection
     order_type: OrderType
-    order_class: OrderClass = OrderClass.SIMPLE
     price_parameters: PriceParameters
     quantity: float
     duration: OrderDuration
@@ -202,15 +201,14 @@ class OrderRecord(BaseModel):
     originating_thesis_id: ThesisId | None
     originating_pm_command_id: CommandId | None
     age_hours: float
+    order_class: OrderClass = OrderClass.SIMPLE
 
-    @model_validator(mode="after")
-    def _validate_all(self) -> OrderRecord:
+    def __post_init__(self) -> None:
         self._check_mleg_requires_strategy()
         self._check_price_parameters()
         self._check_quantity_constraints()
         self._check_alpaca_chain()
         self._check_age_hours()
-        return self
 
     def _check_mleg_requires_strategy(self) -> None:
         if self.order_class != OrderClass.MLEG:
@@ -310,10 +308,9 @@ class OrderRecord(BaseModel):
             raise ValueError(msg)
 
 
-class BracketLegModification(BaseModel):
+@dataclass(frozen=True, slots=True)
+class BracketLegModification:
     """One entry per modification event in a bracket's modification history."""
-
-    model_config = ConfigDict(frozen=True)
 
     timestamp: datetime
     pm_command_id: CommandId | None
@@ -324,7 +321,8 @@ class BracketLegModification(BaseModel):
     rationale: str
 
 
-class PriceTrigger(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PriceTrigger:
     """Trigger for TAKE_PROFIT and PRICE_STOP legs.
 
     Evaluates against the underlying equity's real-time price stream
@@ -333,55 +331,62 @@ class PriceTrigger(BaseModel):
     positions, it is the option's underlying equity.
     """
 
-    model_config = ConfigDict(frozen=True)
-
-    trigger_type: Literal["price"] = "price"
-    underlying_ticker: Symbol = Field(min_length=1)
-    threshold_usd: Annotated[float, Field(gt=0, allow_inf_nan=False)]
+    underlying_ticker: Symbol
+    threshold_usd: float
     direction: Literal["GTE", "LTE"]
+    trigger_type: Literal["price"] = field(default="price", init=False)
+
+    def __post_init__(self) -> None:
+        if len(self.underlying_ticker) < 1:
+            msg = "underlying_ticker must be non-empty"
+            raise ValueError(msg)
+        if not math.isfinite(self.threshold_usd):
+            msg = f"threshold_usd must be finite; got {self.threshold_usd}"
+            raise ValueError(msg)
+        if self.threshold_usd <= 0:
+            msg = f"threshold_usd must be > 0; got {self.threshold_usd}"
+            raise ValueError(msg)
 
 
-class TimeTrigger(BaseModel):
+@dataclass(frozen=True, slots=True)
+class TimeTrigger:
     """Trigger for TIME_EXPIRATION legs.
 
     Fires when wall-clock time crosses the deadline.
     """
 
-    model_config = ConfigDict(frozen=True)
-
-    trigger_type: Literal["time"] = "time"
     deadline: datetime
+    trigger_type: Literal["time"] = field(default="time", init=False)
 
-    @field_validator("deadline")
-    @classmethod
-    def _require_tz_aware(cls, v: datetime) -> datetime:
-        if v.tzinfo is None or v.utcoffset() is None:
+    def __post_init__(self) -> None:
+        if self.deadline.tzinfo is None or self.deadline.utcoffset() is None:
             msg = "deadline must be tz-aware UTC"
             raise ValueError(msg)
-        return v
 
 
-class EventTrigger(BaseModel):
+@dataclass(frozen=True, slots=True)
+class EventTrigger:
     """Trigger for EVENT_INVALIDATION legs.
 
     Qualitative condition the analysis pipeline evaluates. The engine
     cannot enforce mechanically; the PM acts on the flag.
     """
 
-    model_config = ConfigDict(frozen=True)
-
-    trigger_type: Literal["event"] = "event"
-    description: str = Field(min_length=1)
+    description: str
     condition_evaluator_id: str | None = None
+    trigger_type: Literal["event"] = field(default="event", init=False)
+
+    def __post_init__(self) -> None:
+        if len(self.description) < 1:
+            msg = "description must be non-empty"
+            raise ValueError(msg)
 
 
-TriggerPayload = Annotated[
-    PriceTrigger | TimeTrigger | EventTrigger,
-    Field(discriminator="trigger_type"),
-]
+TriggerPayload = PriceTrigger | TimeTrigger | EventTrigger
 
 
-class PLAnchorSpec(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PLAnchorSpec:
     """P/L-anchor specification for legs defined in P/L-percentage terms.
 
     Per orders-and-brackets.md § P/L-based bracket legs:
@@ -403,23 +408,31 @@ class PLAnchorSpec(BaseModel):
       loss on equity). Always expressed as a positive magnitude.
     """
 
-    model_config = ConfigDict(frozen=True)
-
     spec_type: Literal["target", "stop"]
-    pct: Annotated[float, Field(gt=0, le=10.0, allow_inf_nan=False)]
-    planned_entry_price: Annotated[float, Field(gt=0, allow_inf_nan=False)]
+    pct: float
+    planned_entry_price: float
     actual_entry_price: float | None = None
     recalculated_at_fill: bool = False
 
-    @model_validator(mode="after")
-    def _validate_recalc_consistency(self) -> PLAnchorSpec:
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.pct):
+            msg = f"pct must be finite; got {self.pct}"
+            raise ValueError(msg)
+        if not (0 < self.pct <= 10.0):
+            msg = f"pct must satisfy 0 < pct <= 10.0; got {self.pct}"
+            raise ValueError(msg)
+        if not math.isfinite(self.planned_entry_price):
+            msg = f"planned_entry_price must be finite; got {self.planned_entry_price}"
+            raise ValueError(msg)
+        if self.planned_entry_price <= 0:
+            msg = f"planned_entry_price must be > 0; got {self.planned_entry_price}"
+            raise ValueError(msg)
         if self.recalculated_at_fill and self.actual_entry_price is None:
             msg = "recalculated_at_fill=True requires actual_entry_price to be non-None"
             raise ValueError(msg)
         if not self.recalculated_at_fill and self.actual_entry_price is not None:
             msg = "actual_entry_price must be None when recalculated_at_fill=False"
             raise ValueError(msg)
-        return self
 
 
 _LEG_TYPE_TO_TRIGGER_TYPE: dict[BracketLegType, str] = {
@@ -435,10 +448,9 @@ _LEG_TYPE_TO_PL_ANCHOR_SPEC_TYPE: dict[BracketLegType, str] = {
 }
 
 
-class BracketLeg(BaseModel):
+@dataclass(frozen=True, slots=True)
+class BracketLeg:
     """One leg definition within a bracket's protective set."""
-
-    model_config = ConfigDict(frozen=True)
 
     leg_id: str
     leg_type: BracketLegType
@@ -448,15 +460,17 @@ class BracketLeg(BaseModel):
     status: BracketLegStatus
     pl_anchor: PLAnchorSpec | None = None
 
-    @model_validator(mode="after")
-    def _validate_event_invalidation(self) -> BracketLeg:
+    def __post_init__(self) -> None:
+        self._validate_event_invalidation()
+        self._validate_trigger_matches_leg_type()
+        self._validate_pl_anchor_compatibility()
+
+    def _validate_event_invalidation(self) -> None:
         if self.leg_type == BracketLegType.EVENT_INVALIDATION and self.order_id is not None:
             msg = "EVENT_INVALIDATION leg must have order_id as None"
             raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_trigger_matches_leg_type(self) -> BracketLeg:
+    def _validate_trigger_matches_leg_type(self) -> None:
         expected = _LEG_TYPE_TO_TRIGGER_TYPE[self.leg_type]
         if self.trigger.trigger_type != expected:
             msg = (
@@ -464,12 +478,10 @@ class BracketLeg(BaseModel):
                 f"got trigger_type={self.trigger.trigger_type!r}"
             )
             raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_pl_anchor_compatibility(self) -> BracketLeg:
+    def _validate_pl_anchor_compatibility(self) -> None:
         if self.pl_anchor is None:
-            return self
+            return
         expected_spec_type = _LEG_TYPE_TO_PL_ANCHOR_SPEC_TYPE.get(self.leg_type)
         if expected_spec_type is None:
             msg = (
@@ -483,10 +495,10 @@ class BracketLeg(BaseModel):
                 f"{expected_spec_type!r}; got {self.pl_anchor.spec_type!r}"
             )
             raise ValueError(msg)
-        return self
 
 
-class BracketRecord(BaseModel):
+@dataclass(frozen=True, slots=True)
+class BracketRecord:
     """Consumer-facing per-bracket record.
 
     Lifecycle semantics for ``entry_window_deadline``:
@@ -503,8 +515,6 @@ class BracketRecord(BaseModel):
     responsible for setting it).
     """
 
-    model_config = ConfigDict(frozen=True)
-
     bracket_id: BracketId
     position_id: PositionId
     status: BracketStatus
@@ -514,21 +524,17 @@ class BracketRecord(BaseModel):
     corporate_action_cancellation_reason: str | None
     entry_window_deadline: datetime | None = None
 
-    @field_validator("entry_window_deadline")
-    @classmethod
-    def _require_tz_aware(cls, v: datetime | None) -> datetime | None:
-        if v is not None and (v.tzinfo is None or v.utcoffset() is None):
+    def __post_init__(self) -> None:
+        if self.entry_window_deadline is not None and (
+            self.entry_window_deadline.tzinfo is None
+            or self.entry_window_deadline.utcoffset() is None
+        ):
             msg = "entry_window_deadline must be tz-aware UTC when not None"
             raise ValueError(msg)
-        return v
-
-    @model_validator(mode="after")
-    def _validate_all(self) -> BracketRecord:
         self._check_protective_legs_non_empty()
         self._check_hard_backstop()
         self._check_pending_entry_rule()
         self._check_dissolved_rule()
-        return self
 
     def _check_protective_legs_non_empty(self) -> None:
         if len(self.protective_legs) == 0:

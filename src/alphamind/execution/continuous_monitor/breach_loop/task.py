@@ -39,6 +39,7 @@ Architectural invariants (per parent issue ALP-123):
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from datetime import UTC, datetime
@@ -243,8 +244,8 @@ async def _run_one_tick(  # noqa: PLR0913
     # tier from the current progressive_tiers; ``compute_halt_state`` reads
     # ``drawdown_state.cumulative_tier`` so we override it with the fresh value
     # to avoid relying on the repository's last-write classification.
-    classified_drawdown_state = drawdown_state.model_copy(
-        update={"cumulative_tier": phase1_result.drawdown_tier}
+    classified_drawdown_state = dataclasses.replace(
+        drawdown_state, cumulative_tier=phase1_result.drawdown_tier
     )
     halt_state: HaltState | None = compute_halt_state(
         drawdown_state=classified_drawdown_state,

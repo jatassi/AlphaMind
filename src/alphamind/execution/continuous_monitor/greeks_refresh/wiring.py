@@ -19,6 +19,7 @@ Two pieces:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections.abc import Iterable
 
@@ -101,8 +102,8 @@ class SqlGreeksWriter:
                     f"row; got {type(details).__name__}"
                 )
                 raise TypeError(msg)
-            new_details = details.model_copy(update={"greeks": greeks})
-            new_record = record.model_copy(update={"details": new_details})
+            new_details = dataclasses.replace(details, greeks=greeks)
+            new_record = dataclasses.replace(record, details=new_details)
             new_row = position_record_to_row(new_record)
             row.details_json = new_row.details_json
             await sess.commit()
@@ -127,15 +128,12 @@ class SqlGreeksWriter:
             new_legs: list[StrategyLeg] = []
             for leg in details.legs:
                 leg_greeks = per_leg.get(leg.leg_id, leg.options.greeks)
-                new_options = leg.options.model_copy(update={"greeks": leg_greeks})
-                new_legs.append(leg.model_copy(update={"options": new_options}))
-            new_details = details.model_copy(
-                update={
-                    "legs": tuple(new_legs),
-                    "strategy_greeks": aggregated,
-                }
+                new_options = dataclasses.replace(leg.options, greeks=leg_greeks)
+                new_legs.append(dataclasses.replace(leg, options=new_options))
+            new_details = dataclasses.replace(
+                details, legs=tuple(new_legs), strategy_greeks=aggregated
             )
-            new_record = record.model_copy(update={"details": new_details})
+            new_record = dataclasses.replace(record, details=new_details)
             new_row = position_record_to_row(new_record)
             row.details_json = new_row.details_json
             await sess.commit()

@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation._repository_sql import SqlDistillationRepository
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -125,18 +126,25 @@ class TestSqlRepositoryGapHistory:
         # 3 filled + 2 unfilled = 5 resolved, 3 filled.
         for i in range(3):
             _add_gap_event(
-                session, ticker="AAPL", event_ts=f"2026-03-01T00:0{i}:00Z", outcome="filled"
+                session, ticker=Symbol("AAPL"), event_ts=f"2026-03-01T00:0{i}:00Z", outcome="filled"
             )
         for i in range(2):
             _add_gap_event(
-                session, ticker="AAPL", event_ts=f"2026-03-02T00:0{i}:00Z", outcome="unfilled"
+                session,
+                ticker=Symbol("AAPL"),
+                event_ts=f"2026-03-02T00:0{i}:00Z",
+                outcome="unfilled",
             )
         # Pending event must not count toward resolved.
-        _add_gap_event(session, ticker="AAPL", event_ts="2026-04-01T00:00:00Z", outcome="pending")
+        _add_gap_event(
+            session, ticker=Symbol("AAPL"), event_ts="2026-04-01T00:00:00Z", outcome="pending"
+        )
         session.commit()
 
         repo = SqlDistillationRepository(session)
-        counts = repo.load_gap_fill_event_counts(ticker="AAPL", as_of="2026-04-25T00:00:00Z")
+        counts = repo.load_gap_fill_event_counts(
+            ticker=Symbol("AAPL"), as_of="2026-04-25T00:00:00Z"
+        )
         assert counts.resolved == 5
         assert counts.filled == 3
 
@@ -147,14 +155,14 @@ class TestSqlRepositoryBars:
         for day in range(1, 6):
             _add_bar(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 period_start=f"2026-04-{day:02d}T00:00:00Z",
                 close=100.0 + day,
             )
         session.commit()
 
         repo = SqlDistillationRepository(session)
-        bars = repo.load_daily_bars(ticker="AAPL", as_of="2026-04-25T00:00:00Z", days=3)
+        bars = repo.load_daily_bars(ticker=Symbol("AAPL"), as_of="2026-04-25T00:00:00Z", days=3)
         assert len(bars) == 3
         # Returned in chronological order, latest last.
         assert bars[0].period_start == "2026-04-03T00:00:00Z"

@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
-
-from pydantic import BaseModel, ConfigDict
 
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.records.positions import (
@@ -21,10 +20,9 @@ from alphamind.portfolio_state.views.positions import PositionView
 # ---------------------------------------------------------------------------
 
 
-class SynthesizerPositionSummary(BaseModel):
+@dataclass(frozen=True, slots=True)
+class SynthesizerPositionSummary:
     """Slim per-position summary for the synthesizer."""
-
-    model_config = ConfigDict(frozen=True)
 
     ticker: str
     direction: Direction
@@ -33,10 +31,9 @@ class SynthesizerPositionSummary(BaseModel):
     position_age_hours: float
 
 
-class SynthesizerThesisSummary(BaseModel):
+@dataclass(frozen=True, slots=True)
+class SynthesizerThesisSummary:
     """Slim thesis summary for the synthesizer."""
-
-    model_config = ConfigDict(frozen=True)
 
     position_id: str
     ticker: str
@@ -45,20 +42,18 @@ class SynthesizerThesisSummary(BaseModel):
     time_expectation_hours: float
 
 
-class SynthesizerExposureSnapshot(BaseModel):
+@dataclass(frozen=True, slots=True)
+class SynthesizerExposureSnapshot:
     """Portfolio exposure snapshot for the synthesizer."""
-
-    model_config = ConfigDict(frozen=True)
 
     sector_exposure_pct: dict[str, float]
     net_directional_pct: float
     gross_exposure_pct: float
 
 
-class SynthesizerView(BaseModel):
+@dataclass(frozen=True, slots=True)
+class SynthesizerView:
     """Full synthesizer projection bundling positions, theses, and exposure."""
-
-    model_config = ConfigDict(frozen=True)
 
     positions: tuple[SynthesizerPositionSummary, ...]
     theses: tuple[SynthesizerThesisSummary, ...]

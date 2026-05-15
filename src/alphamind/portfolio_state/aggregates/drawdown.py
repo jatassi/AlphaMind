@@ -7,28 +7,43 @@ consumers don't recompute drawdown statistics at snapshot time.
 
 from __future__ import annotations
 
-from typing import Annotated
-
-from pydantic import BaseModel, ConfigDict, Field
+import math
+from dataclasses import dataclass
 
 from alphamind._kernel.regime import DrawdownTier, RiskZone
 
 __all__ = ["DrawdownState"]
 
-_FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
 
-
-class DrawdownState(BaseModel):
+@dataclass(frozen=True, slots=True)
+class DrawdownState:
     """Raw state 2c — drawdown tracking."""
 
-    model_config = ConfigDict(frozen=True)
-
-    current_drawdown_pct: Annotated[float, Field(ge=0.0)]
-    equity_high_water_mark_usd: _FiniteFloat
-    drawdown_duration_hours: Annotated[float, Field(ge=0.0)]
-    lifetime_max_drawdown_pct: Annotated[float, Field(ge=0.0)]
-    intraday_drawdown_pct: Annotated[float, Field(ge=0.0)]
+    current_drawdown_pct: float
+    equity_high_water_mark_usd: float
+    drawdown_duration_hours: float
+    lifetime_max_drawdown_pct: float
+    intraday_drawdown_pct: float
     daily_zone: RiskZone
     cumulative_zone: RiskZone
     cumulative_tier: DrawdownTier | None
     drawdown_by_source_pct: dict[str, float]
+
+    def __post_init__(self) -> None:
+        if self.current_drawdown_pct < 0:
+            msg = f"current_drawdown_pct must be >= 0; got {self.current_drawdown_pct}"
+            raise ValueError(msg)
+        if not math.isfinite(self.equity_high_water_mark_usd):
+            msg = (
+                f"equity_high_water_mark_usd must be finite; got {self.equity_high_water_mark_usd}"
+            )
+            raise ValueError(msg)
+        if self.drawdown_duration_hours < 0:
+            msg = f"drawdown_duration_hours must be >= 0; got {self.drawdown_duration_hours}"
+            raise ValueError(msg)
+        if self.lifetime_max_drawdown_pct < 0:
+            msg = f"lifetime_max_drawdown_pct must be >= 0; got {self.lifetime_max_drawdown_pct}"
+            raise ValueError(msg)
+        if self.intraday_drawdown_pct < 0:
+            msg = f"intraday_drawdown_pct must be >= 0; got {self.intraday_drawdown_pct}"
+            raise ValueError(msg)

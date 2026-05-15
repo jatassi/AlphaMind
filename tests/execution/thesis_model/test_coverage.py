@@ -161,7 +161,10 @@ def _full_covered_thesis(
 
 def test_linked_bracket_leg_id_field_exists() -> None:
     """ThesisComponent must have linked_bracket_leg_id field defaulting to None."""
-    assert "linked_bracket_leg_id" in ThesisComponent.model_fields
+    import dataclasses as _dc
+
+    field_names = {f.name for f in _dc.fields(ThesisComponent)}
+    assert "linked_bracket_leg_id" in field_names
     comp = _make_component("c1", ThesisComponentType.ENTRY_RATIONALE)
     assert comp.linked_bracket_leg_id is None
 

@@ -231,7 +231,7 @@ def test_strenum_fields_serialize_as_string_value_not_member_name() -> None:
 def test_feature_flags_snapshot_returns_flat_dict_equal_to_model_dump() -> None:
     resolved = _fixture_resolved()
     snapshot = feature_flags_snapshot(resolved)
-    assert snapshot == resolved.feature_flags.model_dump()
+    assert snapshot == resolved.feature_flags.model_dump(mode="json")
     # Type contract: dict[str, bool]
     for key, value in snapshot.items():
         assert isinstance(key, str)

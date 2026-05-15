@@ -8,6 +8,7 @@ from itertools import pairwise
 import pytest
 
 from alphamind._kernel.ids import (
+    OrderId,
     PositionId,
     Symbol,
 )
@@ -550,15 +551,15 @@ def _full_system_strategist_positions() -> tuple[StrategistPositionView, ...]:
     )
     options_records = (
         _make_options_position(
-            position_id="POS-MSFT-007",
-            underlying_ticker="MSFT",
+            position_id=PositionId("POS-MSFT-007"),
+            underlying_ticker=Symbol("MSFT"),
             position_weight_pct=2.8,
             unrealized_pnl_pct=10.0,
             delta=0.45,
         ),
         _make_options_position(
-            position_id="POS-XLE-008",
-            underlying_ticker="XLE",
+            position_id=PositionId("POS-XLE-008"),
+            underlying_ticker=Symbol("XLE"),
             position_weight_pct=1.5,
             unrealized_pnl_pct=-5.0,
             delta=0.60,
@@ -591,7 +592,7 @@ def test_render_strategist_header_full_system_profile_full_fixture() -> None:
         AnalystAbandonedOpening(
             envelope_id="ENV-REC-1",
             direction=Direction.LONG,
-            ticker="MSFT",
+            ticker=Symbol("MSFT"),
             instrument_type=InstrumentType.EQUITY,
             size_pct=3.0,
             abandoned_at=datetime(2026, 4, 28, 13, 30, 0, tzinfo=UTC),
@@ -602,7 +603,7 @@ def test_render_strategist_header_full_system_profile_full_fixture() -> None:
         StrategistAbandonedAction(
             envelope_id="ENV-SA-1",
             command_type="ADD",
-            position_id="POS-NVDA-001",
+            position_id=PositionId("POS-NVDA-001"),
             order_id=None,
             abandoned_at=datetime(2026, 4, 28, 13, 35, 0, tzinfo=UTC),
             failure_reason="insufficient buying power",
@@ -610,7 +611,7 @@ def test_render_strategist_header_full_system_profile_full_fixture() -> None:
         StrategistAbandonedAction(
             envelope_id="ENV-SA-2",
             command_type="ADJUST",
-            position_id="POS-AAPL-002",
+            position_id=PositionId("POS-AAPL-002"),
             order_id=None,
             abandoned_at=datetime(2026, 4, 28, 13, 36, 0, tzinfo=UTC),
             failure_reason="market closed",
@@ -618,7 +619,7 @@ def test_render_strategist_header_full_system_profile_full_fixture() -> None:
         StrategistAbandonedAction(
             envelope_id="ENV-SA-3",
             command_type="CLOSE",
-            position_id="POS-MU-003",
+            position_id=PositionId("POS-MU-003"),
             order_id=None,
             abandoned_at=datetime(2026, 4, 28, 13, 37, 0, tzinfo=UTC),
             failure_reason="route timeout",
@@ -627,14 +628,14 @@ def test_render_strategist_header_full_system_profile_full_fixture() -> None:
             envelope_id="ENV-SA-ORD-4",
             command_type="CANCEL",
             position_id=None,
-            order_id="ORD-9001",
+            order_id=OrderId("ORD-9001"),
             abandoned_at=datetime(2026, 4, 28, 13, 38, 0, tzinfo=UTC),
             failure_reason="order already filled",
         ),
     )
     breaches = (
         RegimeTransitionBreach(
-            position_id="POS-NVDA-001",
+            position_id=PositionId("POS-NVDA-001"),
             rule_id="position_max_size_pct",
             rule_label="Per-position max size",
             current_value=4.2,
@@ -937,12 +938,12 @@ def test_render_strategist_header_renders_cumulative_tier_line(
 
 def test_render_strategist_header_groups_unclassified_position_at_end() -> None:
     classified = _make_equity_position(
-        position_id="POS-NVDA-001",
+        position_id=PositionId("POS-NVDA-001"),
         position_weight_pct=2.0,
         unrealized_pnl_pct=1.0,
     )
     unclassified = _make_equity_position(
-        position_id="POS-XYZ-099",
+        position_id=PositionId("POS-XYZ-099"),
         position_weight_pct=1.5,
         unrealized_pnl_pct=2.0,
     )
@@ -997,7 +998,7 @@ def test_render_strategist_header_emits_zone_tag_per_threshold(
     weight: float, expected_tag: str
 ) -> None:
     pos = _make_equity_position(
-        position_id="POS-NVDA-001",
+        position_id=PositionId("POS-NVDA-001"),
         position_weight_pct=weight,
     )
     view = _make_strategist_view(positions=(_make_position_view(pos),))
@@ -1077,7 +1078,7 @@ def test_render_strategist_header_omits_regime_transition_block_when_empty() -> 
 
 def test_render_strategist_header_renders_per_position_max_size_breach_row() -> None:
     breach = RegimeTransitionBreach(
-        position_id="POS-NVDA-001",
+        position_id=PositionId("POS-NVDA-001"),
         rule_id="position_max_size_pct",
         rule_label="Per-position max size",
         current_value=4.2,
@@ -1141,7 +1142,7 @@ def test_render_strategist_header_renders_aggregate_breach_row() -> None:
 
 def test_render_strategist_header_renders_per_position_non_max_size_with_label_suffix() -> None:
     breach = RegimeTransitionBreach(
-        position_id="POS-AMD-002",
+        position_id=PositionId("POS-AMD-002"),
         rule_id="single_short_max_pct",
         rule_label="Single short max size",
         current_value=3.2,
@@ -1174,7 +1175,7 @@ def test_render_strategist_header_renders_per_position_non_max_size_with_label_s
 
 def test_render_strategist_header_renders_mixed_breach_rows_in_order() -> None:
     per_pos = RegimeTransitionBreach(
-        position_id="POS-NVDA-001",
+        position_id=PositionId("POS-NVDA-001"),
         rule_id="position_max_size_pct",
         rule_label="Per-position max size",
         current_value=4.2,
@@ -1223,7 +1224,7 @@ def test_render_strategist_header_is_deterministic() -> None:
     positions = _full_system_strategist_positions()
     breaches = (
         RegimeTransitionBreach(
-            position_id="POS-NVDA-001",
+            position_id=PositionId("POS-NVDA-001"),
             rule_id="position_max_size_pct",
             rule_label="Per-position max size",
             current_value=4.2,
@@ -1325,8 +1326,8 @@ def test_render_strategist_header_raises_when_options_disabled_but_options_posit
     None
 ):
     options_pos = _make_options_position(
-        position_id="POS-MSFT-001",
-        underlying_ticker="MSFT",
+        position_id=PositionId("POS-MSFT-001"),
+        underlying_ticker=Symbol("MSFT"),
         position_weight_pct=2.0,
     )
     view = _make_strategist_view(positions=(_make_position_view(options_pos),))
@@ -1429,7 +1430,7 @@ def test_render_strategist_header_renders_position_action_against_position_id(
     action = StrategistAbandonedAction(
         envelope_id=f"ENV-SA-{command_type}",
         command_type=command_type,  # type: ignore[arg-type]
-        position_id="POS-NVDA-001",
+        position_id=PositionId("POS-NVDA-001"),
         order_id=None,
         abandoned_at=datetime(2026, 4, 28, 13, 30, 0, tzinfo=UTC),
         failure_reason="reason",
@@ -1459,7 +1460,7 @@ def test_render_strategist_header_renders_cancel_action_against_order_id() -> No
         envelope_id="ENV-SA-ORD-1",
         command_type="CANCEL",
         position_id=None,
-        order_id="ORD-9001",
+        order_id=OrderId("ORD-9001"),
         abandoned_at=datetime(2026, 4, 28, 13, 30, 0, tzinfo=UTC),
         failure_reason="reason",
     )

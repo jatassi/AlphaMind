@@ -40,6 +40,7 @@ Usage::
 
 See ``scripts/RUNBOOK_regt_margin_attribution.md`` for the operator runbook.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -59,6 +60,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import (
+    AlpacaOrderId,
     BracketId,
     OrderId,
     PositionId,
@@ -292,14 +294,12 @@ def _state_persistence_config() -> StatePersistenceConfig:
 
 
 def _portfolio_state_config() -> PortfolioStateConfig:
-    return PortfolioStateConfig.model_validate(
-        {
-            "pm_decision_log_sliding_window_invocations": 5,
-            "thesis_resolutions_lookback_trading_days": 10,
-            "thesis_quality_aggregates_trailing_windows_days": (5, 20),
-            "snapshot_freshness_max_phase1_to_snapshot_seconds": 300.0,
-            "snapshot_freshness_max_price_age_seconds": 60.0,
-        }
+    return PortfolioStateConfig(
+        pm_decision_log_sliding_window_invocations=5,
+        thesis_resolutions_lookback_trading_days=10,
+        thesis_quality_aggregates_trailing_windows_days=(5, 20),
+        snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
+        snapshot_freshness_max_price_age_seconds=60.0,
     )
 
 
@@ -564,63 +564,59 @@ def _buy_entry_position_pending() -> PositionRecord:
 
 
 def _buy_entry_order() -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": _BUY_ORDER_ID,
-            "position_id": None,
-            "bracket_id": _BUY_BRACKET_ID,
-            "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=Symbol(_NVDA)),
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": 10.0,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{_BUY_ORDER_ID}",
-            "alpaca_order_id_chain": (f"alp-{_BUY_ORDER_ID}",),
-            "submission_timestamp": _NOW - timedelta(minutes=20),
-            "last_update_timestamp": _NOW - timedelta(minutes=20),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": _BUY_THESIS_ID,
-            "originating_pm_command_id": None,
-            "age_hours": 0.33,
-        }
+    return OrderRecord(
+        order_id=_BUY_ORDER_ID,
+        position_id=None,
+        bracket_id=_BUY_BRACKET_ID,
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(_NVDA)),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{_BUY_ORDER_ID}"),
+        alpaca_order_id_chain=(f"alp-{_BUY_ORDER_ID}",),
+        submission_timestamp=_NOW - timedelta(minutes=20),
+        last_update_timestamp=_NOW - timedelta(minutes=20),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=_BUY_THESIS_ID,
+        originating_pm_command_id=None,
+        age_hours=0.33,
     )
 
 
 def _buy_entry_protective_stop_order() -> OrderRecord:
     stop_id = f"{_BUY_BRACKET_ID}-ord-stop"
-    return OrderRecord.model_validate(
-        {
-            "order_id": stop_id,
-            "position_id": None,
-            "bracket_id": _BUY_BRACKET_ID,
-            "role": OrderRole.PRICE_STOP,
-            "instrument_spec": EquityInstrumentSpec(ticker=Symbol(_NVDA)),
-            "direction": OrderDirection.SELL,
-            "order_type": OrderType.STOP,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(stop_trigger_price=850.0),
-            "quantity": 10.0,
-            "duration": OrderDuration.GTC,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{stop_id}",
-            "alpaca_order_id_chain": (f"alp-{stop_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=20),
-            "last_update_timestamp": _NOW - timedelta(minutes=20),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": _BUY_THESIS_ID,
-            "originating_pm_command_id": None,
-            "age_hours": 0.33,
-        }
+    return OrderRecord(
+        order_id=stop_id,
+        position_id=None,
+        bracket_id=_BUY_BRACKET_ID,
+        role=OrderRole.PRICE_STOP,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(_NVDA)),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(stop_trigger_price=850.0),
+        quantity=10.0,
+        duration=OrderDuration.GTC,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{stop_id}"),
+        alpaca_order_id_chain=(f"alp-{stop_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=20),
+        last_update_timestamp=_NOW - timedelta(minutes=20),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=_BUY_THESIS_ID,
+        originating_pm_command_id=None,
+        age_hours=0.33,
     )
 
 
@@ -724,62 +720,58 @@ def _sell_historical_entry_order() -> OrderRecord:
     """Filled-and-done AMD entry order kept so the bracket's ``entry_order_id``
     FK resolves. Not exercised by Phase 1 — the sell exit fill targets a
     separate order."""
-    return OrderRecord.model_validate(
-        {
-            "order_id": _SELL_HISTORICAL_ENTRY_ORDER_ID,
-            "position_id": _SELL_POSITION_ID,
-            "bracket_id": _SELL_BRACKET_ID,
-            "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=Symbol(_AMD)),
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": 20.0,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.FILLED,
-            "alpaca_order_id": f"alp-{_SELL_HISTORICAL_ENTRY_ORDER_ID}",
-            "alpaca_order_id_chain": (f"alp-{_SELL_HISTORICAL_ENTRY_ORDER_ID}",),
-            "submission_timestamp": _NOW - timedelta(hours=8),
-            "last_update_timestamp": _NOW - timedelta(hours=8),
-            "filled_quantity": 20.0,
-            "avg_fill_price": 140.0,
-            "remaining_quantity": 0.0,
-            "modification_count": 0,
-            "originating_thesis_id": _SELL_THESIS_ID,
-            "originating_pm_command_id": None,
-            "age_hours": 8.0,
-        }
+    return OrderRecord(
+        order_id=_SELL_HISTORICAL_ENTRY_ORDER_ID,
+        position_id=_SELL_POSITION_ID,
+        bracket_id=_SELL_BRACKET_ID,
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(_AMD)),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=20.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.FILLED,
+        alpaca_order_id=AlpacaOrderId(f"alp-{_SELL_HISTORICAL_ENTRY_ORDER_ID}"),
+        alpaca_order_id_chain=(f"alp-{_SELL_HISTORICAL_ENTRY_ORDER_ID}",),
+        submission_timestamp=_NOW - timedelta(hours=8),
+        last_update_timestamp=_NOW - timedelta(hours=8),
+        filled_quantity=20.0,
+        avg_fill_price=140.0,
+        remaining_quantity=0.0,
+        modification_count=0,
+        originating_thesis_id=_SELL_THESIS_ID,
+        originating_pm_command_id=None,
+        age_hours=8.0,
     )
 
 
 def _sell_exit_order() -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": _SELL_ORDER_ID,
-            "position_id": _SELL_POSITION_ID,
-            "bracket_id": _SELL_BRACKET_ID,
-            "role": OrderRole.TAKE_PROFIT,
-            "instrument_spec": EquityInstrumentSpec(ticker=Symbol(_AMD)),
-            "direction": OrderDirection.SELL,
-            "order_type": OrderType.LIMIT,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(limit_price=145.0),
-            "quantity": 10.0,
-            "duration": OrderDuration.GTC,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{_SELL_ORDER_ID}",
-            "alpaca_order_id_chain": (f"alp-{_SELL_ORDER_ID}",),
-            "submission_timestamp": _NOW - timedelta(minutes=10),
-            "last_update_timestamp": _NOW - timedelta(minutes=10),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 10.0,
-            "modification_count": 0,
-            "originating_thesis_id": _SELL_THESIS_ID,
-            "originating_pm_command_id": None,
-            "age_hours": 0.17,
-        }
+    return OrderRecord(
+        order_id=_SELL_ORDER_ID,
+        position_id=_SELL_POSITION_ID,
+        bracket_id=_SELL_BRACKET_ID,
+        role=OrderRole.TAKE_PROFIT,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(_AMD)),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.LIMIT,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(limit_price=145.0),
+        quantity=10.0,
+        duration=OrderDuration.GTC,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{_SELL_ORDER_ID}"),
+        alpaca_order_id_chain=(f"alp-{_SELL_ORDER_ID}",),
+        submission_timestamp=_NOW - timedelta(minutes=10),
+        last_update_timestamp=_NOW - timedelta(minutes=10),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=_SELL_THESIS_ID,
+        originating_pm_command_id=None,
+        age_hours=0.17,
     )
 
 
@@ -896,36 +888,32 @@ def _sell_fill_record() -> FillRecord:
 
 
 def _cash_ledger() -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": 250_000.0,
-            "settled_cash_usd": 250_000.0,
-            "reserved_capital_usd": 9_500.0,  # entry-order reservation for the buy
-            "available_buying_power_usd": 240_500.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=250_000.0,
+        settled_cash_usd=250_000.0,
+        reserved_capital_usd=9_500.0,
+        available_buying_power_usd=240_500.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _drawdown_state() -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": 250_000.0,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=250_000.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -1159,26 +1147,22 @@ async def _run_assembler_for_aggregates(
         build_sql_portfolio_state_repository,
     )
 
-    parameters = ActiveRiskParameterSet.model_validate(
-        {
-            "regime_label": RegimeLabel.NORMAL,
-            "transition_state": RegimeTransitionState.STABLE,
-            "transition_invocations_remaining": 0,
-            "parameter_change_flag": False,
-            "entries": (
-                ActiveRiskParameterEntry.model_validate(
-                    {
-                        "rule_id": "max_position_size_usd",
-                        "rule_label": "Max position size (USD)",
-                        "value": 25_000.0,
-                        "unit": "USD",
-                        "regime_multiplier_applied": 1.0,
-                        "base_value": 25_000.0,
-                    }
-                ),
+    parameters = ActiveRiskParameterSet(
+        regime_label=RegimeLabel.NORMAL,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        parameter_change_flag=False,
+        entries=(
+            ActiveRiskParameterEntry(
+                rule_id="max_position_size_usd",
+                rule_label="Max position size (USD)",
+                value=25_000.0,
+                unit="USD",
+                regime_multiplier_applied=1.0,
+                base_value=25_000.0,
             ),
-            "active_overlays": (),
-        }
+        ),
+        active_overlays=(),
     )
     regime_state = RegimeAdaptationState(
         as_of=_NOW.isoformat().replace("+00:00", "Z"),

@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.q1.gap import (
     GAP_KIND_FULL,
@@ -164,7 +165,7 @@ class TestResolveGapFillProbability:
             outcome = "filled" if i % 2 == 0 else "unfilled"
             _add_gap_event(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 event_ts=f"2026-03-01T00:{i:02d}:00Z",
                 outcome=outcome,
             )
@@ -172,7 +173,7 @@ class TestResolveGapFillProbability:
 
         result = resolve_gap_fill_probability(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             sector="tech",
             as_of="2026-04-25T00:00:00Z",
             min_events=GAP_FILL_MIN_EVENTS,
@@ -188,7 +189,7 @@ class TestResolveGapFillProbability:
         for i in range(3):
             _add_gap_event(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 event_ts=f"2026-03-{i + 1:02d}T00:00:00Z",
                 outcome="unfilled",
             )
@@ -196,7 +197,7 @@ class TestResolveGapFillProbability:
         for i in range(30):
             _add_gap_event(
                 session,
-                ticker="MSFT",
+                ticker=Symbol("MSFT"),
                 event_ts=f"2026-02-01T00:{i:02d}:00Z",
                 outcome="filled",
             )
@@ -204,7 +205,7 @@ class TestResolveGapFillProbability:
 
         result = resolve_gap_fill_probability(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             sector="tech",
             as_of="2026-04-25T00:00:00Z",
             min_events=GAP_FILL_MIN_EVENTS,
@@ -221,7 +222,7 @@ class TestResolveGapFillProbability:
         session.commit()
         result = resolve_gap_fill_probability(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             sector="tech",
             as_of="2026-04-25T00:00:00Z",
             min_events=GAP_FILL_MIN_EVENTS,
@@ -240,7 +241,7 @@ class TestRecordPendingGapEvent:
         _add_ticker(session, "AAPL")
         session.commit()
         detected = DetectedGap(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_ts="2026-04-25T00:00:00Z",
             direction="up",
             magnitude_atr_multiple=3.0,
@@ -259,7 +260,7 @@ class TestRecordPendingGapEvent:
         _add_ticker(session, "AAPL")
         session.commit()
         detected = DetectedGap(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_ts="2026-04-25T00:00:00Z",
             direction="up",
             magnitude_atr_multiple=3.0,
@@ -277,13 +278,13 @@ class TestRecordPendingGapEvent:
         # Pre-populate a resolved row.
         _add_gap_event(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_ts="2026-04-25T00:00:00Z",
             outcome="filled",
         )
         session.commit()
         detected = DetectedGap(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_ts="2026-04-25T00:00:00Z",
             direction="up",
             magnitude_atr_multiple=3.0,
@@ -304,7 +305,7 @@ class TestDetectSessionGap:
     def test_returns_none_when_open_inside_prior_range(self) -> None:
         """A small-overlap open is not a gap — no event row to write."""
         gap = detect_session_gap(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             today_open=100.5,
             prior_close=100.0,
             atr_14d=2.0,
@@ -315,7 +316,7 @@ class TestDetectSessionGap:
 
     def test_returns_detected_gap_when_open_clears_threshold(self) -> None:
         gap = detect_session_gap(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             today_open=110.0,
             prior_close=100.0,
             atr_14d=2.0,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
 
 
 def test_sector_has_three_members_with_documented_values() -> None:
@@ -35,7 +34,7 @@ def test_tokens_used_rejects_negative_values() -> None:
     for field in base_kwargs:
         kwargs = dict(base_kwargs)
         kwargs[field] = -1
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             TokensUsed(**kwargs)
 
 

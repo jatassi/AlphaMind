@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from alphamind._kernel.ids import (
+    OrderId,
     PositionId,
 )
 from alphamind._kernel.money import money, price, signed_money
@@ -239,8 +240,8 @@ class TestActionParametersMatch:
 
 class TestAssessmentIdUnique:
     def test_duplicate_assessment_id_is_failure(self) -> None:
-        a1 = _make_position_assessment(assessment_id="SA-1", position_id="POS-A")
-        a2 = _make_position_assessment(assessment_id="SA-1", position_id="POS-B")
+        a1 = _make_position_assessment(assessment_id="SA-1", position_id=PositionId("POS-A"))
+        a2 = _make_position_assessment(assessment_id="SA-1", position_id=PositionId("POS-B"))
         output = _make_output(position_assessments=(a1, a2))
         result = validate_strategist_output(
             output,
@@ -252,8 +253,8 @@ class TestAssessmentIdUnique:
         assert "assessment_id_unique" in rules
 
     def test_distinct_assessment_ids_pass(self) -> None:
-        a1 = _make_position_assessment(assessment_id="SA-1", position_id="POS-A")
-        a2 = _make_position_assessment(assessment_id="SA-2", position_id="POS-B")
+        a1 = _make_position_assessment(assessment_id="SA-1", position_id=PositionId("POS-A"))
+        a2 = _make_position_assessment(assessment_id="SA-2", position_id=PositionId("POS-B"))
         output = _make_output(position_assessments=(a1, a2))
         result = validate_strategist_output(
             output,
@@ -272,10 +273,10 @@ class TestAssessmentIdUnique:
 class TestPendingOrderAssessmentIdUnique:
     def test_duplicate_pending_order_assessment_id_is_failure(self) -> None:
         o1 = _make_pending_order_assessment(
-            pending_order_assessment_id="SA-ORD-1", order_id="ORD-A"
+            pending_order_assessment_id="SA-ORD-1", order_id=OrderId("ORD-A")
         )
         o2 = _make_pending_order_assessment(
-            pending_order_assessment_id="SA-ORD-1", order_id="ORD-B"
+            pending_order_assessment_id="SA-ORD-1", order_id=OrderId("ORD-B")
         )
         output = _make_output(pending_order_assessments=(o1, o2))
         result = validate_strategist_output(
@@ -289,10 +290,10 @@ class TestPendingOrderAssessmentIdUnique:
 
     def test_distinct_pending_order_assessment_ids_pass(self) -> None:
         o1 = _make_pending_order_assessment(
-            pending_order_assessment_id="SA-ORD-1", order_id="ORD-A"
+            pending_order_assessment_id="SA-ORD-1", order_id=OrderId("ORD-A")
         )
         o2 = _make_pending_order_assessment(
-            pending_order_assessment_id="SA-ORD-2", order_id="ORD-B"
+            pending_order_assessment_id="SA-ORD-2", order_id=OrderId("ORD-B")
         )
         output = _make_output(pending_order_assessments=(o1, o2))
         result = validate_strategist_output(
@@ -975,7 +976,7 @@ class TestSchemaValidHappyPath:
         )
         hold_assessment = _make_position_assessment(
             assessment_id="SA-2",
-            position_id="POS-JPM-002",
+            position_id=PositionId("POS-JPM-002"),
             sector="financials",
             status_rationale="Per [SA-FIN-4] thesis intact.",
         )
@@ -1100,7 +1101,7 @@ class TestAggregation:
         )
         a2 = _make_position_assessment(
             assessment_id="SA-1",  # duplicate id
-            position_id="POS-OTHER",
+            position_id=PositionId("POS-OTHER"),
             sector="semis",
         )
         output = _make_output(position_assessments=(a1, a2))

@@ -8,6 +8,7 @@ from types import MappingProxyType
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -268,7 +269,7 @@ def _option_request(
 def test_validation_instrument_options_missing_strike_raises() -> None:
     with pytest.raises(ValueError, match="OPTIONS asset_type requires"):
         ValidationInstrument(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             asset_type=InstrumentType.OPTIONS,
             direction=Direction.LONG,
             expiration=_EXPIRATION_DT,
@@ -279,7 +280,7 @@ def test_validation_instrument_options_missing_strike_raises() -> None:
 def test_validation_instrument_options_missing_expiration_raises() -> None:
     with pytest.raises(ValueError, match="OPTIONS asset_type requires"):
         ValidationInstrument(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             asset_type=InstrumentType.OPTIONS,
             direction=Direction.LONG,
             strike=100.0,
@@ -290,7 +291,7 @@ def test_validation_instrument_options_missing_expiration_raises() -> None:
 def test_validation_instrument_options_missing_contract_type_raises() -> None:
     with pytest.raises(ValueError, match="OPTIONS asset_type requires"):
         ValidationInstrument(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             asset_type=InstrumentType.OPTIONS,
             direction=Direction.LONG,
             strike=100.0,
@@ -301,7 +302,7 @@ def test_validation_instrument_options_missing_contract_type_raises() -> None:
 def test_validation_instrument_strategy_missing_legs_raises() -> None:
     with pytest.raises(ValueError, match="STRATEGY asset_type requires non-empty legs"):
         ValidationInstrument(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             asset_type=InstrumentType.STRATEGY,
             direction=Direction.LONG,
             legs=None,
@@ -311,7 +312,7 @@ def test_validation_instrument_strategy_missing_legs_raises() -> None:
 def test_validation_instrument_strategy_empty_legs_raises() -> None:
     with pytest.raises(ValueError, match="STRATEGY asset_type requires non-empty legs"):
         ValidationInstrument(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             asset_type=InstrumentType.STRATEGY,
             direction=Direction.LONG,
             legs=(),
@@ -401,7 +402,7 @@ def test_second_call_after_acceptance_increments_index_and_notes_prior() -> None
     )
     state2 = state.with_accepted_proposal(delta)
     second = validate_guardrail(
-        request=_equity_request(ticker="NVDA"),
+        request=_equity_request(ticker=Symbol("NVDA")),
         state=state2,
     )
     assert second.proposal_index_in_invocation == 2
@@ -454,7 +455,7 @@ def test_two_individually_passing_proposals_breach_cumulatively() -> None:
     state2 = state.with_accepted_proposal(delta)
 
     # Use a different ticker to avoid duplicate proposal id
-    request2 = _equity_request(ticker="NVDA", dollar_value=12_000.0)
+    request2 = _equity_request(ticker=Symbol("NVDA"), dollar_value=12_000.0)
     second = validate_guardrail(request=request2, state=state2)
     assert second.overall == "FAIL"
     by_rule = {p.rule: p for p in second.per_rule}
@@ -936,7 +937,7 @@ def test_strategy_action_returns_populated_greeks(monkeypatch: pytest.MonkeyPatc
     )
     request = ValidationRequest(
         instrument=ValidationInstrument(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             asset_type=InstrumentType.STRATEGY,
             direction=Direction.LONG,
             legs=(
@@ -1023,7 +1024,7 @@ def test_option_open_premium_at_risk_routed_as_library_notional() -> None:
     # would drop cash to 58K (58%). With premium routed: pending_order
     # contribution 0 (options reserve nothing), cash impact 6K.
     request = _option_request(
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         dollar_value=12_000.0,
         premium_at_risk_usd=6_000.0,
     )
@@ -1042,7 +1043,7 @@ def test_option_open_without_premium_falls_back_to_dollar_value() -> None:
     # Build an option request where premium_at_risk_usd is unset
     request = ValidationRequest(
         instrument=ValidationInstrument(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             asset_type=InstrumentType.OPTIONS,
             direction=Direction.LONG,
             strike=100.0,
@@ -1109,8 +1110,12 @@ def test_borrow_cost_resolver_purity_replay_determinism() -> None:
         return _state(snapshot=snapshot, borrow_cost_resolver=tracking_resolver)
 
     state = fresh_state()
-    request_a = _equity_request(ticker="AAPL", direction=Direction.SHORT, dollar_value=2_000.0)
-    request_b = _equity_request(ticker="NVDA", direction=Direction.SHORT, dollar_value=2_000.0)
+    request_a = _equity_request(
+        ticker=Symbol("AAPL"), direction=Direction.SHORT, dollar_value=2_000.0
+    )
+    request_b = _equity_request(
+        ticker=Symbol("NVDA"), direction=Direction.SHORT, dollar_value=2_000.0
+    )
 
     # Call 1: validates request_a → resolver called once for AAPL.
     result_a = validate_guardrail(request=request_a, state=state)
@@ -1169,7 +1174,9 @@ def test_borrow_cost_resolver_mutating_violates_replay_determinism() -> None:
         snapshot = _snapshot(net_long_pct=0.0, net_short_pct=0.0, gross_pct=0.0)
         return _state(snapshot=snapshot, borrow_cost_resolver=mutating_resolver)
 
-    request = _equity_request(ticker="AAPL", direction=Direction.SHORT, dollar_value=2_000.0)
+    request = _equity_request(
+        ticker=Symbol("AAPL"), direction=Direction.SHORT, dollar_value=2_000.0
+    )
 
     first = validate_guardrail(request=request, state=fresh_state())
     second = validate_guardrail(request=request, state=fresh_state())

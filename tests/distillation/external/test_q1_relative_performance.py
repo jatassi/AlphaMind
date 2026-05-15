@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.q1.relative_performance import (
     RS_REGIME_LAGGARD,
     RS_REGIME_LEADER,
@@ -59,12 +60,12 @@ class TestRankIntraSector:
             "AVGO": -0.05,
         }
         # Top of distribution → leader.
-        top = rank_intra_sector(ticker="AAPL", peer_returns=peer_returns)
+        top = rank_intra_sector(ticker=Symbol("AAPL"), peer_returns=peer_returns)
         assert top.regime_label == RS_REGIME_LEADER
         assert top.percentile >= 75.0
 
         # Bottom of distribution → laggard.
-        bottom = rank_intra_sector(ticker="AVGO", peer_returns=peer_returns)
+        bottom = rank_intra_sector(ticker=Symbol("AVGO"), peer_returns=peer_returns)
         assert bottom.regime_label == RS_REGIME_LAGGARD
         assert bottom.percentile <= 25.0
 
@@ -81,13 +82,13 @@ class TestRankIntraSector:
             "META": 0.01,
             "TSLA": 0.0,
         }
-        mid = rank_intra_sector(ticker="NVDA", peer_returns=peer_returns)
+        mid = rank_intra_sector(ticker=Symbol("NVDA"), peer_returns=peer_returns)
         assert mid.regime_label == RS_REGIME_MID
 
     def test_single_member_universe_is_mid(self) -> None:
         """A singleton sector cannot be ranked into quartiles meaningfully."""
         peer_returns = {"AAPL": 0.05}
-        result = rank_intra_sector(ticker="AAPL", peer_returns=peer_returns)
+        result = rank_intra_sector(ticker=Symbol("AAPL"), peer_returns=peer_returns)
         assert result.regime_label == RS_REGIME_MID
 
 

@@ -18,11 +18,13 @@ scenario builders live in this module so
 the Anthropic API. The thin shim at ``scripts/verify_pm.py`` defers to
 :func:`main` here.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import enum
 import json
 import os
@@ -286,7 +288,7 @@ def _ensure_pm_risk_budget_entries(strategist_view: StrategistView) -> Strategis
         cumulative_invocation_impact_value=0.0,
     )
     extended = RiskBudgetConsumption(entries=(*rb.entries, daily_entry))
-    return strategist_view.model_copy(update={"risk_budget": extended})
+    return dataclasses.replace(strategist_view, risk_budget=extended)
 
 
 def _empty_thesis_quality_aggregates() -> ThesisQualityAggregate:

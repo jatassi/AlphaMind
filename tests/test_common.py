@@ -20,6 +20,7 @@ import httpx
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
+from alphamind._kernel.ids import Symbol
 from alphamind.data_sources._common import (
     RateLimiter,
     RetryShape,
@@ -862,7 +863,7 @@ class TestActiveUniverseTickers:
                 [
                     AssetUniverse(
                         asset_id="1",
-                        ticker="AAPL",
+                        ticker=Symbol("AAPL"),
                         full_name="Apple",
                         asset_class="equity",
                         asset_role="universe",
@@ -873,7 +874,7 @@ class TestActiveUniverseTickers:
                     ),
                     AssetUniverse(
                         asset_id="2",
-                        ticker="SPY",
+                        ticker=Symbol("SPY"),
                         full_name="SPY",
                         asset_class="equity",
                         asset_role="broad_market",
@@ -884,7 +885,7 @@ class TestActiveUniverseTickers:
                     ),
                     AssetUniverse(
                         asset_id="3",
-                        ticker="DELISTED",
+                        ticker=Symbol("DELISTED"),
                         full_name="DELISTED",
                         asset_class="equity",
                         asset_role="universe",

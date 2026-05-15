@@ -13,6 +13,7 @@ absolute per-contract premium (always positive), symmetric with equity's
 (assembler, P/L formula). The contract multiplier is typically 100 (one
 contract = 100 shares of the underlying).
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import (
+    AlpacaOrderId,
     BracketId,
     OrderId,
     PositionId,
@@ -281,36 +283,34 @@ def _make_pending_options_entry_order(
     strike: float = 420.0,
     contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
 ) -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": position_id,
-            "bracket_id": bracket_id,
-            "role": role,
-            "instrument_spec": _make_options_spec(
-                contract_type=contract_type,
-                strike=strike,
-                contract_multiplier=contract_multiplier,
-            ),
-            "direction": direction,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": quantity,
-            "duration": OrderDuration.DAY,
-            "status": status,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": filled_quantity,
-            "avg_fill_price": avg_fill_price,
-            "remaining_quantity": quantity - filled_quantity,
-            "modification_count": 0,
-            "originating_thesis_id": "thesis-opt-1",
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=bracket_id,
+        role=role,
+        instrument_spec=_make_options_spec(
+            contract_type=contract_type,
+            strike=strike,
+            contract_multiplier=contract_multiplier,
+        ),
+        direction=direction,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=quantity,
+        duration=OrderDuration.DAY,
+        status=status,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=filled_quantity,
+        avg_fill_price=avg_fill_price,
+        remaining_quantity=quantity - filled_quantity,
+        modification_count=0,
+        originating_thesis_id=ThesisId("thesis-opt-1"),
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -351,21 +351,19 @@ def _make_pending_options_position(
         premium_paid_per_contract=premium_paid_per_contract,
         greeks=greeks if greeks is not None else _make_pending_greeks(),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.PENDING,
-            "direction": direction,
-            "entry_timestamp": None,
-            "details": details,
-            "execution_history": (),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.PENDING,
+        direction=direction,
+        entry_timestamp=None,
+        details=details,
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -405,21 +403,19 @@ def _make_open_options_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": direction,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=direction,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -578,38 +574,34 @@ def _make_options_thesis_with_resolved_components(
 
 
 def _make_cash_ledger(current_cash_usd: float = 100_000.0) -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": current_cash_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=current_cash_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _make_drawdown_state(
     equity_high_water_mark_usd: float = 100_000.0,
 ) -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": equity_high_water_mark_usd,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=equity_high_water_mark_usd,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -937,10 +929,10 @@ async def test_add_fill_recomputes_weighted_average_premium(
             fill_price=8.75,
         ),
         _make_pending_options_entry_order(
-            order_id="ord-opt-add-1",
+            order_id=OrderId("ord-opt-add-1"),
             role=OrderRole.ADD_ENTRY,
             quantity=3.0,
-            position_id="pos-opt-1",
+            position_id=PositionId("pos-opt-1"),
         ),
         _make_active_options_thesis(),
         _make_active_options_bracket(),
@@ -952,7 +944,7 @@ async def test_add_fill_recomputes_weighted_average_premium(
         factory,
         _make_unprocessed_fill(
             fill_id="fill-opt-add-1",
-            order_id="ord-opt-add-1",
+            order_id=OrderId("ord-opt-add-1"),
             fill_quantity=3.0,
             fill_price=9.25,
         ),
@@ -993,11 +985,11 @@ async def test_partial_close_fill_accumulates_realized_pl_and_emits_position_red
     await _seed_invocation_substrate(factory)
     # Pre-existing OPEN long position: 5 contracts at $8.75 premium.
     close_order = _make_pending_options_entry_order(
-        order_id="ord-opt-close-1",
+        order_id=OrderId("ord-opt-close-1"),
         role=OrderRole.CLOSE,
         direction=OrderDirection.SELL_TO_CLOSE,
         quantity=2.0,
-        position_id="pos-opt-1",
+        position_id=PositionId("pos-opt-1"),
     )
     await _seed_position_order_thesis_bracket(
         factory,
@@ -1018,7 +1010,7 @@ async def test_partial_close_fill_accumulates_realized_pl_and_emits_position_red
         factory,
         _make_unprocessed_fill(
             fill_id="fill-opt-close-partial",
-            order_id="ord-opt-close-1",
+            order_id=OrderId("ord-opt-close-1"),
             fill_quantity=2.0,
             fill_price=10.0,
             order_status_after=OrderStatus.FILLED,
@@ -1087,11 +1079,11 @@ async def test_full_close_fill_transitions_position_closed_and_dissolves_bracket
 
     # Cyclic substrate: position + thesis + bracket all reference each other.
     close_order = _make_pending_options_entry_order(
-        order_id="ord-opt-close-full",
+        order_id=OrderId("ord-opt-close-full"),
         role=OrderRole.CLOSE,
         direction=OrderDirection.SELL_TO_CLOSE,
         quantity=5.0,
-        position_id="pos-opt-1",
+        position_id=PositionId("pos-opt-1"),
     )
     entry_order = _make_pending_options_entry_order()
     thesis_row, component_rows = thesis_record_to_rows(
@@ -1133,7 +1125,7 @@ async def test_full_close_fill_transitions_position_closed_and_dissolves_bracket
         factory,
         _make_unprocessed_fill(
             fill_id="fill-opt-close-full",
-            order_id="ord-opt-close-full",
+            order_id=OrderId("ord-opt-close-full"),
             fill_quantity=5.0,
             fill_price=11.0,
         ),
@@ -1286,11 +1278,11 @@ async def test_buy_to_close_short_position_debits_cash_and_realizes_pnl(
         fill_price=3.50,
     )
     close_order = _make_pending_options_entry_order(
-        order_id="ord-opt-cover-1",
+        order_id=OrderId("ord-opt-cover-1"),
         role=OrderRole.CLOSE,
         direction=OrderDirection.BUY_TO_CLOSE,
         quantity=5.0,
-        position_id="pos-opt-1",
+        position_id=PositionId("pos-opt-1"),
         contract_type=OptionContractType.PUT,
         strike=415.0,
     )
@@ -1332,7 +1324,7 @@ async def test_buy_to_close_short_position_debits_cash_and_realizes_pnl(
         factory,
         _make_unprocessed_fill(
             fill_id="fill-opt-cover-1",
-            order_id="ord-opt-cover-1",
+            order_id=OrderId("ord-opt-cover-1"),
             fill_quantity=5.0,
             fill_price=1.00,
         ),
@@ -1391,11 +1383,11 @@ async def test_atomicity_exit_fill_exceeds_open_quantity_rolls_back(
     await _seed_invocation_substrate(factory)
 
     close_order = _make_pending_options_entry_order(
-        order_id="ord-opt-bad-close",
+        order_id=OrderId("ord-opt-bad-close"),
         role=OrderRole.CLOSE,
         direction=OrderDirection.SELL_TO_CLOSE,
         quantity=10.0,
-        position_id="pos-opt-1",
+        position_id=PositionId("pos-opt-1"),
     )
     entry_order = _make_pending_options_entry_order()
     thesis_row, component_rows = thesis_record_to_rows(_make_active_options_thesis())
@@ -1434,7 +1426,7 @@ async def test_atomicity_exit_fill_exceeds_open_quantity_rolls_back(
         factory,
         _make_unprocessed_fill(
             fill_id="fill-opt-bad",
-            order_id="ord-opt-bad-close",
+            order_id=OrderId("ord-opt-bad-close"),
             fill_quantity=10.0,
             fill_price=11.0,
         ),

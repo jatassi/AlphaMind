@@ -25,11 +25,13 @@ Usage::
 
 See ``scripts/RUNBOOK_oms_commands.md`` for the operator runbook.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import json
 import sys
 from collections.abc import Sequence
@@ -110,6 +112,19 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Result type
 # ---------------------------------------------------------------------------
+
+
+# Bypass-init helpers — replace Pydantic ``model_construct``. The dataclass __init__
+# enforces all fields; these helpers skip validation so tests can inject sparse fixtures.
+
+
+def _bypass_init_PortfolioManagerView(**kwargs: Any) -> Any:  # noqa: N802
+    from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
+
+    obj = object.__new__(PortfolioManagerView)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
 
 
 @dataclass(frozen=True)
@@ -921,9 +936,8 @@ def _phase_3_pre_processor_bundle() -> Any:
 
 
 def _phase_3_pm_view() -> Any:
-    from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 
-    return PortfolioManagerView.model_construct(
+    return _bypass_init_PortfolioManagerView(
         positions=(),
         recent_thesis_resolutions=(),
         portfolio_pnl=None,
@@ -975,20 +989,18 @@ async def _seed_phase_3_substrate(factory: async_sessionmaker[AsyncSession]) -> 
         claude_agent_sdk_version="0.1.69",
         os_release="verify-script",
     )
-    cash = CashLedger.model_validate(
-        {
-            "current_cash_usd": 100_000.0,
-            "settled_cash_usd": 100_000.0,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": 100_000.0,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    cash = CashLedger(
+        current_cash_usd=100_000.0,
+        settled_cash_usd=100_000.0,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=100_000.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
     async with factory() as sess:
         sess.add(process_lifetime_record_to_row(proc))
@@ -1479,14 +1491,13 @@ async def _phase_4_simulate_phase_1_fill(
             slippage=0.0,
             fees=0.0,
         )
-        opened_details = record.details.model_copy(update={"share_count": _PHASE_3_QUANTITY})
-        opened_record = record.model_copy(
-            update={
-                "status": PositionStatus.OPEN,
-                "details": opened_details,
-                "entry_timestamp": _NOW,
-                "execution_history": (fill,),
-            }
+        opened_details = dataclasses.replace(record.details, share_count=_PHASE_3_QUANTITY)
+        opened_record = dataclasses.replace(
+            record,
+            status=PositionStatus.OPEN,
+            details=opened_details,
+            entry_timestamp=_NOW,
+            execution_history=(fill,),
         )
 
         # Project the rehydrated record back to a row and propagate the

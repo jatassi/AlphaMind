@@ -21,13 +21,14 @@ from pathlib import Path
 from typing import Any, get_args
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 
 from alphamind._kernel.ids import (
     EnvelopeId,
     InvocationId,
     PositionId,
     RecommendationId,
+    Symbol,
 )
 from alphamind._kernel.money import money, price
 from alphamind.commands.command_models import (
@@ -138,7 +139,7 @@ def _hard_price_leg() -> PriceLeg:
 def _open_command_basic() -> OpenCommand:
     return OpenCommand(
         command_type="open",
-        instrument=EquityInstrument(asset_type="equity", ticker="NVDA", direction="long"),
+        instrument=EquityInstrument(asset_type="equity", ticker=Symbol("NVDA"), direction="long"),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
         position_size=PositionSize(quantity=10.0, dollar_value=money(10_000.0)),
         target=Target(
@@ -303,7 +304,7 @@ class TestVerdictInvariants:
         assert envelope.verdict == "approve"
 
     def test_approve_with_modifications_rejected(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)approve.*modifications"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)approve.*modifications"):
             _make_analyst_envelope(
                 verdict="approve",
                 modifications=(
@@ -337,7 +338,7 @@ class TestVerdictInvariants:
         assert len(envelope.commands) == 1
 
     def test_approve_with_modification_requires_modifications(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)modification"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)modification"):
             _make_analyst_envelope(
                 verdict="approve_with_modification",
                 modifications=(),
@@ -345,7 +346,7 @@ class TestVerdictInvariants:
             )
 
     def test_approve_with_modification_requires_commands(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)command"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)command"):
             _make_analyst_envelope(
                 verdict="approve_with_modification",
                 modifications=(
@@ -372,7 +373,7 @@ class TestVerdictInvariants:
         assert envelope.commands == ()
 
     def test_reject_with_commands_rejected(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)reject.*command"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)reject.*command"):
             _make_analyst_envelope(
                 verdict="reject",
                 modifications=(),
@@ -381,7 +382,7 @@ class TestVerdictInvariants:
             )
 
     def test_reject_with_modifications_rejected(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)reject.*modification"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)reject.*modification"):
             _make_analyst_envelope(
                 verdict="reject",
                 modifications=(
@@ -399,7 +400,7 @@ class TestVerdictInvariants:
             )
 
     def test_reject_without_concerns_rejected(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)reject.*concern"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)reject.*concern"):
             _make_analyst_envelope(verdict="reject", modifications=(), commands=(), concerns=())
 
 
@@ -434,7 +435,7 @@ class TestModificationInvariants:
         assert rec.triggering_rule == "sector_concentration"
 
     def test_pre_submission_with_guardrail_response_rejected(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)post_rejection"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)post_rejection"):
             ModificationRecord(
                 phase="pre_submission",
                 field_changed="position_size.quantity",
@@ -446,7 +447,7 @@ class TestModificationInvariants:
             )
 
     def test_post_rejection_with_risk_reduction_rejected(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)pre_submission"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)pre_submission"):
             ModificationRecord(
                 phase="post_rejection",
                 field_changed="position_size.quantity",
@@ -457,7 +458,7 @@ class TestModificationInvariants:
             )
 
     def test_guardrail_response_without_triggering_rule_rejected(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)triggering_rule"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)triggering_rule"):
             ModificationRecord(
                 phase="post_rejection",
                 field_changed="position_size.quantity",
@@ -498,7 +499,7 @@ class TestEnvelopeIdSourceProvenance:
 
     def test_env_rec_with_pm_strategist_rejected(self) -> None:
         """An ENV-REC-* envelope cannot have source_provenance=pm_strategist."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             PMStrategistEnvelope(
                 envelope_id=EnvelopeId("ENV-REC-1"),
                 invocation_id=InvocationId("inv-2026-05-05"),
@@ -517,7 +518,7 @@ class TestEnvelopeIdSourceProvenance:
 
     def test_env_sa_with_pm_analyst_rejected(self) -> None:
         """An ENV-SA-* envelope cannot have source_provenance=pm_analyst."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             PMAnalystEnvelope(
                 envelope_id=EnvelopeId("ENV-SA-1"),
                 invocation_id=InvocationId("inv-2026-05-05"),
@@ -535,8 +536,8 @@ class TestEnvelopeIdSourceProvenance:
 
     def test_pm_analyst_envelope_with_position_id_rejected(self) -> None:
         """pm_analyst envelopes forbid a populated position_id (schema's `false`)."""
-        with pytest.raises(ValidationError):
-            _make_analyst_envelope(position_id="POS-1")
+        with pytest.raises((ValueError, TypeError)):
+            _make_analyst_envelope(position_id=PositionId("POS-1"))
 
 
 # ---------------------------------------------------------------------------
@@ -619,7 +620,7 @@ class TestPMCompletionRecord:
         assert record.envelopes_submitted == 0
 
     def test_sum_mismatch_rejected(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)sum"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)sum"):
             PMCompletionRecord(
                 invocation_id=InvocationId("inv-1"),
                 timestamp=_NOW,
@@ -628,7 +629,7 @@ class TestPMCompletionRecord:
             )
 
     def test_negative_count_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             VerdictSummary(approve=-1, approve_with_modification=0, reject=0)
 
 
@@ -639,7 +640,7 @@ class TestPMCompletionRecord:
 
 class TestCloseCommandInvariants:
     def test_risk_management_without_subtype_rejected(self) -> None:
-        with pytest.raises(ValidationError, match=r"(?i)risk_management_subtype"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)risk_management_subtype"):
             CloseCommand(
                 command_type="close",
                 position_id=PositionId("POS-1"),
@@ -738,7 +739,7 @@ class TestAntiPattern:
         assert envelope.anti_patterns_identified == canonical
 
     def test_unknown_anti_pattern_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_analyst_envelope(anti_patterns_identified=("not_a_canonical_string",))
 
     def test_anti_pattern_literal_accepts_canonical_set(self) -> None:
@@ -1059,7 +1060,7 @@ class TestTransitionalArtifactsDeleted:
 class TestFrozen:
     def test_envelope_is_frozen(self) -> None:
         envelope = _make_analyst_envelope()
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             envelope.envelope_id = EnvelopeId("ENV-REC-99")
 
     def test_completion_record_is_frozen(self) -> None:
@@ -1069,7 +1070,7 @@ class TestFrozen:
             envelopes_submitted=0,
             verdict_summary=VerdictSummary(approve=0, approve_with_modification=0, reject=0),
         )
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             record.invocation_id = InvocationId("inv-2")
 
 

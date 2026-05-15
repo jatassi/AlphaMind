@@ -17,6 +17,7 @@ from typing import Any, cast
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.guardrails import BreachResponse, ProgressiveTier
 from alphamind.execution.continuous_monitor.breach_loop import (
@@ -296,7 +297,7 @@ def _cache() -> UnderlyingPriceCache:
 def _populated_cache() -> UnderlyingPriceCache:
     cache = UnderlyingPriceCache()
     quote = UnderlyingQuote(
-        ticker="AAPL", price=150.0, as_of=datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+        ticker=Symbol("AAPL"), price=150.0, as_of=datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
     )
     asyncio.run(cache.update(quote))
     return cache

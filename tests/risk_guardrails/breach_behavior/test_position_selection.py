@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind._kernel.ids import (
     PositionId,
@@ -158,26 +157,26 @@ def _make_short_position(
 
 
 def test_position_liquidity_constructs_with_required_fields() -> None:
-    liq = PositionLiquidity(position_id="POS-1", adv_to_position_size_ratio=1.5)
+    liq = PositionLiquidity(position_id=PositionId("POS-1"), adv_to_position_size_ratio=1.5)
     assert liq.position_id == "POS-1"
     assert liq.adv_to_position_size_ratio == 1.5
 
 
 def test_position_liquidity_rejects_negative_ratio() -> None:
-    with pytest.raises(ValidationError) as exc_info:
-        PositionLiquidity(position_id="POS-1", adv_to_position_size_ratio=-0.1)
+    with pytest.raises((ValueError, TypeError)) as exc_info:
+        PositionLiquidity(position_id=PositionId("POS-1"), adv_to_position_size_ratio=-0.1)
     assert "adv_to_position_size_ratio" in str(exc_info.value)
 
 
 def test_position_liquidity_zero_ratio_allowed() -> None:
     """An illiquid position (zero ADV) is permitted; selection still uses ratio as tiebreaker."""
-    liq = PositionLiquidity(position_id="POS-1", adv_to_position_size_ratio=0.0)
+    liq = PositionLiquidity(position_id=PositionId("POS-1"), adv_to_position_size_ratio=0.0)
     assert liq.adv_to_position_size_ratio == 0.0
 
 
 def test_position_liquidity_is_frozen() -> None:
-    liq = PositionLiquidity(position_id="POS-1", adv_to_position_size_ratio=1.0)
-    with pytest.raises(ValidationError):
+    liq = PositionLiquidity(position_id=PositionId("POS-1"), adv_to_position_size_ratio=1.0)
+    with pytest.raises((ValueError, TypeError)):
         liq.adv_to_position_size_ratio = 2.0
 
 
@@ -188,10 +187,16 @@ def test_position_liquidity_is_frozen() -> None:
 
 def test_drawdown_selects_single_losing_position() -> None:
     """One position with a negative P/L is selected; rationale names ticker and loss."""
-    losing = _make_long_position(position_id="P-LOSS", ticker="NVDA", unrealized_pnl_usd=-300.0)
+    losing = _make_long_position(
+        position_id=PositionId("P-LOSS"), ticker=Symbol("NVDA"), unrealized_pnl_usd=-300.0
+    )
     winners = (
-        _make_long_position(position_id="P-1", ticker="AAPL", unrealized_pnl_usd=100.0),
-        _make_long_position(position_id="P-2", ticker="MSFT", unrealized_pnl_usd=50.0),
+        _make_long_position(
+            position_id=PositionId("P-1"), ticker=Symbol("AAPL"), unrealized_pnl_usd=100.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-2"), ticker=Symbol("MSFT"), unrealized_pnl_usd=50.0
+        ),
     )
     open_positions = (losing, *winners)
     liquidity = tuple(
@@ -211,9 +216,15 @@ def test_drawdown_selects_single_losing_position() -> None:
 def test_drawdown_largest_loss_wins_among_multiple_losers() -> None:
     """When several positions have negative P/L, the most-negative is selected."""
     positions = (
-        _make_long_position(position_id="P-A", ticker="AAA", unrealized_pnl_usd=-100.0),
-        _make_long_position(position_id="P-B", ticker="BBB", unrealized_pnl_usd=-300.0),
-        _make_long_position(position_id="P-C", ticker="CCC", unrealized_pnl_usd=-150.0),
+        _make_long_position(
+            position_id=PositionId("P-A"), ticker=Symbol("AAA"), unrealized_pnl_usd=-100.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-B"), ticker=Symbol("BBB"), unrealized_pnl_usd=-300.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-C"), ticker=Symbol("CCC"), unrealized_pnl_usd=-150.0
+        ),
     )
     liquidity = tuple(
         PositionLiquidity(position_id=p.position_id, adv_to_position_size_ratio=1.0)
@@ -229,12 +240,16 @@ def test_drawdown_largest_loss_wins_among_multiple_losers() -> None:
 def test_drawdown_liquidity_tiebreaker_when_losses_tie() -> None:
     """When P/L ties, the more-liquid position (higher ratio) is selected."""
     positions = (
-        _make_long_position(position_id="P-A", ticker="AAA", unrealized_pnl_usd=-300.0),
-        _make_long_position(position_id="P-B", ticker="BBB", unrealized_pnl_usd=-300.0),
+        _make_long_position(
+            position_id=PositionId("P-A"), ticker=Symbol("AAA"), unrealized_pnl_usd=-300.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-B"), ticker=Symbol("BBB"), unrealized_pnl_usd=-300.0
+        ),
     )
     liquidity = (
-        PositionLiquidity(position_id="P-A", adv_to_position_size_ratio=0.5),
-        PositionLiquidity(position_id="P-B", adv_to_position_size_ratio=1.2),
+        PositionLiquidity(position_id=PositionId("P-A"), adv_to_position_size_ratio=0.5),
+        PositionLiquidity(position_id=PositionId("P-B"), adv_to_position_size_ratio=1.2),
     )
 
     result = select_for_drawdown_breach(open_positions=positions, liquidity=liquidity)
@@ -247,12 +262,16 @@ def test_drawdown_liquidity_tiebreaker_when_losses_tie() -> None:
 def test_drawdown_position_id_tiebreaker_when_loss_and_liquidity_tie() -> None:
     """When P/L and liquidity both tie, lexicographically smallest position_id wins."""
     positions = (
-        _make_long_position(position_id="P-Z", ticker="ZZZ", unrealized_pnl_usd=-300.0),
-        _make_long_position(position_id="P-A", ticker="AAA", unrealized_pnl_usd=-300.0),
+        _make_long_position(
+            position_id=PositionId("P-Z"), ticker=Symbol("ZZZ"), unrealized_pnl_usd=-300.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-A"), ticker=Symbol("AAA"), unrealized_pnl_usd=-300.0
+        ),
     )
     liquidity = (
-        PositionLiquidity(position_id="P-Z", adv_to_position_size_ratio=1.0),
-        PositionLiquidity(position_id="P-A", adv_to_position_size_ratio=1.0),
+        PositionLiquidity(position_id=PositionId("P-Z"), adv_to_position_size_ratio=1.0),
+        PositionLiquidity(position_id=PositionId("P-A"), adv_to_position_size_ratio=1.0),
     )
 
     result = select_for_drawdown_breach(open_positions=positions, liquidity=liquidity)
@@ -263,8 +282,12 @@ def test_drawdown_position_id_tiebreaker_when_loss_and_liquidity_tie() -> None:
 def test_drawdown_no_losing_positions_raises() -> None:
     """A drawdown breach with no losing position is a structural error."""
     positions = (
-        _make_long_position(position_id="P-A", ticker="AAA", unrealized_pnl_usd=100.0),
-        _make_long_position(position_id="P-B", ticker="BBB", unrealized_pnl_usd=50.0),
+        _make_long_position(
+            position_id=PositionId("P-A"), ticker=Symbol("AAA"), unrealized_pnl_usd=100.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-B"), ticker=Symbol("BBB"), unrealized_pnl_usd=50.0
+        ),
     )
     liquidity = tuple(
         PositionLiquidity(position_id=p.position_id, adv_to_position_size_ratio=1.0)
@@ -284,12 +307,16 @@ def test_drawdown_empty_open_positions_raises() -> None:
 
 def test_drawdown_missing_liquidity_entry_raises() -> None:
     positions = (
-        _make_long_position(position_id="P-A", ticker="AAA", unrealized_pnl_usd=-100.0),
-        _make_long_position(position_id="P-B", ticker="BBB", unrealized_pnl_usd=-200.0),
+        _make_long_position(
+            position_id=PositionId("P-A"), ticker=Symbol("AAA"), unrealized_pnl_usd=-100.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-B"), ticker=Symbol("BBB"), unrealized_pnl_usd=-200.0
+        ),
     )
     liquidity = (
         # missing P-B
-        PositionLiquidity(position_id="P-A", adv_to_position_size_ratio=1.0),
+        PositionLiquidity(position_id=PositionId("P-A"), adv_to_position_size_ratio=1.0),
     )
 
     with pytest.raises(ValueError) as exc_info:
@@ -304,8 +331,14 @@ def test_drawdown_missing_liquidity_entry_raises() -> None:
 
 def test_position_max_loss_selects_breaching_position() -> None:
     """Position-level max loss selector returns the breaching position with FULL_CLOSE."""
-    breaching = _make_long_position(position_id="P-LOSS", ticker="NVDA", unrealized_pnl_usd=-500.0)
-    others = (_make_long_position(position_id="P-1", ticker="AAPL", unrealized_pnl_usd=10.0),)
+    breaching = _make_long_position(
+        position_id=PositionId("P-LOSS"), ticker=Symbol("NVDA"), unrealized_pnl_usd=-500.0
+    )
+    others = (
+        _make_long_position(
+            position_id=PositionId("P-1"), ticker=Symbol("AAPL"), unrealized_pnl_usd=10.0
+        ),
+    )
     open_positions = (breaching, *others)
 
     result = select_for_position_max_loss(
@@ -325,7 +358,9 @@ def test_position_max_loss_selects_breaching_position() -> None:
 
 def test_position_max_loss_missing_breaching_id_raises() -> None:
     open_positions = (
-        _make_long_position(position_id="P-1", ticker="AAA", unrealized_pnl_usd=-100.0),
+        _make_long_position(
+            position_id=PositionId("P-1"), ticker=Symbol("AAA"), unrealized_pnl_usd=-100.0
+        ),
     )
 
     with pytest.raises(ValueError) as exc_info:
@@ -350,10 +385,18 @@ def test_total_short_exposure_happy_path_with_shipped_defaults() -> None:
     short (12%) is selected. Trim target = 30 * 0.95 - (11 + 10 + 5) = 28.5 - 26 = 2.5%.
     """
     shorts = (
-        _make_short_position(position_id="S-A", ticker="AAA", position_weight_pct=12.0),
-        _make_short_position(position_id="S-B", ticker="BBB", position_weight_pct=11.0),
-        _make_short_position(position_id="S-C", ticker="CCC", position_weight_pct=10.0),
-        _make_short_position(position_id="S-D", ticker="DDD", position_weight_pct=5.0),
+        _make_short_position(
+            position_id=PositionId("S-A"), ticker=Symbol("AAA"), position_weight_pct=12.0
+        ),
+        _make_short_position(
+            position_id=PositionId("S-B"), ticker=Symbol("BBB"), position_weight_pct=11.0
+        ),
+        _make_short_position(
+            position_id=PositionId("S-C"), ticker=Symbol("CCC"), position_weight_pct=10.0
+        ),
+        _make_short_position(
+            position_id=PositionId("S-D"), ticker=Symbol("DDD"), position_weight_pct=5.0
+        ),
     )
     liquidity = tuple(
         PositionLiquidity(position_id=p.position_id, adv_to_position_size_ratio=1.0) for p in shorts
@@ -377,14 +420,20 @@ def test_total_short_exposure_happy_path_with_shipped_defaults() -> None:
 def test_total_short_exposure_liquidity_tiebreak_when_sizes_tie() -> None:
     """Two shorts at the same size: more-liquid is selected."""
     shorts = (
-        _make_short_position(position_id="S-A", ticker="AAA", position_weight_pct=12.0),
-        _make_short_position(position_id="S-B", ticker="BBB", position_weight_pct=12.0),
-        _make_short_position(position_id="S-C", ticker="CCC", position_weight_pct=10.0),
+        _make_short_position(
+            position_id=PositionId("S-A"), ticker=Symbol("AAA"), position_weight_pct=12.0
+        ),
+        _make_short_position(
+            position_id=PositionId("S-B"), ticker=Symbol("BBB"), position_weight_pct=12.0
+        ),
+        _make_short_position(
+            position_id=PositionId("S-C"), ticker=Symbol("CCC"), position_weight_pct=10.0
+        ),
     )
     liquidity = (
-        PositionLiquidity(position_id="S-A", adv_to_position_size_ratio=0.5),
-        PositionLiquidity(position_id="S-B", adv_to_position_size_ratio=1.5),
-        PositionLiquidity(position_id="S-C", adv_to_position_size_ratio=1.0),
+        PositionLiquidity(position_id=PositionId("S-A"), adv_to_position_size_ratio=0.5),
+        PositionLiquidity(position_id=PositionId("S-B"), adv_to_position_size_ratio=1.5),
+        PositionLiquidity(position_id=PositionId("S-C"), adv_to_position_size_ratio=1.0),
     )
 
     result = select_for_total_short_exposure_breach(
@@ -404,10 +453,18 @@ def test_total_short_exposure_non_positive_target_raises() -> None:
     already > 30 * 0.95 = 28.5% — even a full close of the largest short cannot cure.
     """
     shorts = (
-        _make_short_position(position_id="S-A", ticker="AAA", position_weight_pct=14.0),
-        _make_short_position(position_id="S-B", ticker="BBB", position_weight_pct=14.0),
-        _make_short_position(position_id="S-C", ticker="CCC", position_weight_pct=14.0),
-        _make_short_position(position_id="S-D", ticker="DDD", position_weight_pct=5.0),
+        _make_short_position(
+            position_id=PositionId("S-A"), ticker=Symbol("AAA"), position_weight_pct=14.0
+        ),
+        _make_short_position(
+            position_id=PositionId("S-B"), ticker=Symbol("BBB"), position_weight_pct=14.0
+        ),
+        _make_short_position(
+            position_id=PositionId("S-C"), ticker=Symbol("CCC"), position_weight_pct=14.0
+        ),
+        _make_short_position(
+            position_id=PositionId("S-D"), ticker=Symbol("DDD"), position_weight_pct=5.0
+        ),
     )
     liquidity = tuple(
         PositionLiquidity(position_id=p.position_id, adv_to_position_size_ratio=1.0) for p in shorts
@@ -441,7 +498,9 @@ def test_total_short_exposure_empty_short_positions_raises() -> None:
 
 def test_single_short_max_size_happy_path() -> None:
     """Breaching short at 3.5% trims to 2.85% (3.0 * 0.95) under shipped defaults."""
-    breaching = _make_short_position(position_id="S-1", ticker="GME", position_weight_pct=3.5)
+    breaching = _make_short_position(
+        position_id=PositionId("S-1"), ticker=Symbol("GME"), position_weight_pct=3.5
+    )
     open_positions = (breaching,)
 
     result = select_for_single_short_max_size_breach(
@@ -460,7 +519,7 @@ def test_single_short_max_size_happy_path() -> None:
 
 
 def test_single_short_max_size_missing_breaching_id_raises() -> None:
-    open_positions = (_make_short_position(position_id="S-1", ticker="GME"),)
+    open_positions = (_make_short_position(position_id=PositionId("S-1"), ticker=Symbol("GME")),)
 
     with pytest.raises(ValueError) as exc_info:
         select_for_single_short_max_size_breach(
@@ -478,20 +537,20 @@ def test_single_short_max_size_missing_breaching_id_raises() -> None:
 
 
 def test_position_risk_reward_constructs_with_required_fields() -> None:
-    rr = PositionRiskReward(position_id="P-1", risk_reward_ratio=1.5)
+    rr = PositionRiskReward(position_id=PositionId("P-1"), risk_reward_ratio=1.5)
     assert rr.position_id == "P-1"
     assert rr.risk_reward_ratio == 1.5
 
 
 def test_position_risk_reward_negative_ratio_allowed() -> None:
     """Negative R/R is pathological-but-possible (price past invalidation); model permits it."""
-    rr = PositionRiskReward(position_id="P-1", risk_reward_ratio=-0.2)
+    rr = PositionRiskReward(position_id=PositionId("P-1"), risk_reward_ratio=-0.2)
     assert rr.risk_reward_ratio == -0.2
 
 
 def test_position_risk_reward_is_frozen() -> None:
-    rr = PositionRiskReward(position_id="P-1", risk_reward_ratio=1.0)
-    with pytest.raises(ValidationError):
+    rr = PositionRiskReward(position_id=PositionId("P-1"), risk_reward_ratio=1.0)
+    with pytest.raises((ValueError, TypeError)):
         rr.risk_reward_ratio = 2.0
 
 
@@ -503,18 +562,24 @@ def test_position_risk_reward_is_frozen() -> None:
 def test_margin_call_selects_worst_risk_reward() -> None:
     """Three positions with R/R [1.5, 0.4, 2.0]; worst (0.4) is selected."""
     positions = (
-        _make_long_position(position_id="P-A", ticker="AAA", unrealized_pnl_usd=0.0),
-        _make_long_position(position_id="P-B", ticker="BBB", unrealized_pnl_usd=0.0),
-        _make_long_position(position_id="P-C", ticker="CCC", unrealized_pnl_usd=0.0),
+        _make_long_position(
+            position_id=PositionId("P-A"), ticker=Symbol("AAA"), unrealized_pnl_usd=0.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-B"), ticker=Symbol("BBB"), unrealized_pnl_usd=0.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-C"), ticker=Symbol("CCC"), unrealized_pnl_usd=0.0
+        ),
     )
     liquidity = tuple(
         PositionLiquidity(position_id=p.position_id, adv_to_position_size_ratio=1.0)
         for p in positions
     )
     rr = (
-        PositionRiskReward(position_id="P-A", risk_reward_ratio=1.5),
-        PositionRiskReward(position_id="P-B", risk_reward_ratio=0.4),
-        PositionRiskReward(position_id="P-C", risk_reward_ratio=2.0),
+        PositionRiskReward(position_id=PositionId("P-A"), risk_reward_ratio=1.5),
+        PositionRiskReward(position_id=PositionId("P-B"), risk_reward_ratio=0.4),
+        PositionRiskReward(position_id=PositionId("P-C"), risk_reward_ratio=2.0),
     )
 
     result = select_for_margin_call(
@@ -535,16 +600,20 @@ def test_margin_call_selects_worst_risk_reward() -> None:
 def test_margin_call_liquidity_tiebreak_when_risk_reward_ties() -> None:
     """Two positions tie on R/R; more-liquid is selected."""
     positions = (
-        _make_long_position(position_id="P-A", ticker="AAA", unrealized_pnl_usd=0.0),
-        _make_long_position(position_id="P-B", ticker="BBB", unrealized_pnl_usd=0.0),
+        _make_long_position(
+            position_id=PositionId("P-A"), ticker=Symbol("AAA"), unrealized_pnl_usd=0.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-B"), ticker=Symbol("BBB"), unrealized_pnl_usd=0.0
+        ),
     )
     liquidity = (
-        PositionLiquidity(position_id="P-A", adv_to_position_size_ratio=0.5),
-        PositionLiquidity(position_id="P-B", adv_to_position_size_ratio=1.5),
+        PositionLiquidity(position_id=PositionId("P-A"), adv_to_position_size_ratio=0.5),
+        PositionLiquidity(position_id=PositionId("P-B"), adv_to_position_size_ratio=1.5),
     )
     rr = (
-        PositionRiskReward(position_id="P-A", risk_reward_ratio=0.5),
-        PositionRiskReward(position_id="P-B", risk_reward_ratio=0.5),
+        PositionRiskReward(position_id=PositionId("P-A"), risk_reward_ratio=0.5),
+        PositionRiskReward(position_id=PositionId("P-B"), risk_reward_ratio=0.5),
     )
 
     result = select_for_margin_call(
@@ -560,18 +629,24 @@ def test_margin_call_liquidity_tiebreak_when_risk_reward_ties() -> None:
 def test_margin_call_negative_risk_reward_is_worst() -> None:
     """Negative R/R means past invalidation; treated as worst-of-worst."""
     positions = (
-        _make_long_position(position_id="P-A", ticker="AAA", unrealized_pnl_usd=0.0),
-        _make_long_position(position_id="P-B", ticker="BBB", unrealized_pnl_usd=0.0),
-        _make_long_position(position_id="P-C", ticker="CCC", unrealized_pnl_usd=0.0),
+        _make_long_position(
+            position_id=PositionId("P-A"), ticker=Symbol("AAA"), unrealized_pnl_usd=0.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-B"), ticker=Symbol("BBB"), unrealized_pnl_usd=0.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-C"), ticker=Symbol("CCC"), unrealized_pnl_usd=0.0
+        ),
     )
     liquidity = tuple(
         PositionLiquidity(position_id=p.position_id, adv_to_position_size_ratio=1.0)
         for p in positions
     )
     rr = (
-        PositionRiskReward(position_id="P-A", risk_reward_ratio=0.5),
-        PositionRiskReward(position_id="P-B", risk_reward_ratio=-0.2),
-        PositionRiskReward(position_id="P-C", risk_reward_ratio=1.0),
+        PositionRiskReward(position_id=PositionId("P-A"), risk_reward_ratio=0.5),
+        PositionRiskReward(position_id=PositionId("P-B"), risk_reward_ratio=-0.2),
+        PositionRiskReward(position_id=PositionId("P-C"), risk_reward_ratio=1.0),
     )
 
     result = select_for_margin_call(
@@ -585,8 +660,12 @@ def test_margin_call_negative_risk_reward_is_worst() -> None:
 
 def test_margin_call_missing_risk_reward_entry_raises() -> None:
     positions = (
-        _make_long_position(position_id="P-A", ticker="AAA", unrealized_pnl_usd=0.0),
-        _make_long_position(position_id="P-B", ticker="BBB", unrealized_pnl_usd=0.0),
+        _make_long_position(
+            position_id=PositionId("P-A"), ticker=Symbol("AAA"), unrealized_pnl_usd=0.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-B"), ticker=Symbol("BBB"), unrealized_pnl_usd=0.0
+        ),
     )
     liquidity = tuple(
         PositionLiquidity(position_id=p.position_id, adv_to_position_size_ratio=1.0)
@@ -594,7 +673,7 @@ def test_margin_call_missing_risk_reward_entry_raises() -> None:
     )
     rr = (
         # missing P-B
-        PositionRiskReward(position_id="P-A", risk_reward_ratio=0.5),
+        PositionRiskReward(position_id=PositionId("P-A"), risk_reward_ratio=0.5),
     )
 
     with pytest.raises(ValueError) as exc_info:
@@ -620,16 +699,20 @@ def test_margin_call_empty_open_positions_raises() -> None:
 
 def test_margin_call_missing_liquidity_entry_raises() -> None:
     positions = (
-        _make_long_position(position_id="P-A", ticker="AAA", unrealized_pnl_usd=0.0),
-        _make_long_position(position_id="P-B", ticker="BBB", unrealized_pnl_usd=0.0),
+        _make_long_position(
+            position_id=PositionId("P-A"), ticker=Symbol("AAA"), unrealized_pnl_usd=0.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-B"), ticker=Symbol("BBB"), unrealized_pnl_usd=0.0
+        ),
     )
     liquidity = (
         # missing P-B
-        PositionLiquidity(position_id="P-A", adv_to_position_size_ratio=1.0),
+        PositionLiquidity(position_id=PositionId("P-A"), adv_to_position_size_ratio=1.0),
     )
     rr = (
-        PositionRiskReward(position_id="P-A", risk_reward_ratio=0.5),
-        PositionRiskReward(position_id="P-B", risk_reward_ratio=0.4),
+        PositionRiskReward(position_id=PositionId("P-A"), risk_reward_ratio=0.5),
+        PositionRiskReward(position_id=PositionId("P-B"), risk_reward_ratio=0.4),
     )
 
     with pytest.raises(ValueError) as exc_info:
@@ -650,9 +733,15 @@ def test_margin_call_missing_liquidity_entry_raises() -> None:
 def test_drawdown_selector_is_deterministic_across_repeated_calls() -> None:
     """100 repeated calls with identical inputs produce identical outputs."""
     positions = (
-        _make_long_position(position_id="P-A", ticker="AAA", unrealized_pnl_usd=-100.0),
-        _make_long_position(position_id="P-B", ticker="BBB", unrealized_pnl_usd=-200.0),
-        _make_long_position(position_id="P-C", ticker="CCC", unrealized_pnl_usd=-150.0),
+        _make_long_position(
+            position_id=PositionId("P-A"), ticker=Symbol("AAA"), unrealized_pnl_usd=-100.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-B"), ticker=Symbol("BBB"), unrealized_pnl_usd=-200.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-C"), ticker=Symbol("CCC"), unrealized_pnl_usd=-150.0
+        ),
     )
     liquidity = tuple(
         PositionLiquidity(position_id=p.position_id, adv_to_position_size_ratio=1.0)
@@ -669,16 +758,20 @@ def test_drawdown_selector_is_deterministic_across_repeated_calls() -> None:
 
 def test_margin_call_selector_is_deterministic_across_repeated_calls() -> None:
     positions = (
-        _make_long_position(position_id="P-A", ticker="AAA", unrealized_pnl_usd=0.0),
-        _make_long_position(position_id="P-B", ticker="BBB", unrealized_pnl_usd=0.0),
+        _make_long_position(
+            position_id=PositionId("P-A"), ticker=Symbol("AAA"), unrealized_pnl_usd=0.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-B"), ticker=Symbol("BBB"), unrealized_pnl_usd=0.0
+        ),
     )
     liquidity = tuple(
         PositionLiquidity(position_id=p.position_id, adv_to_position_size_ratio=1.0)
         for p in positions
     )
     rr = (
-        PositionRiskReward(position_id="P-A", risk_reward_ratio=0.5),
-        PositionRiskReward(position_id="P-B", risk_reward_ratio=0.4),
+        PositionRiskReward(position_id=PositionId("P-A"), risk_reward_ratio=0.5),
+        PositionRiskReward(position_id=PositionId("P-B"), risk_reward_ratio=0.4),
     )
 
     results = [
@@ -695,21 +788,29 @@ def test_margin_call_selector_is_deterministic_across_repeated_calls() -> None:
 
 def test_returned_position_selection_result_is_frozen() -> None:
     """Output is immutable; assigning to a field raises ValidationError."""
-    losing = _make_long_position(position_id="P-LOSS", ticker="X", unrealized_pnl_usd=-100.0)
-    liquidity = (PositionLiquidity(position_id="P-LOSS", adv_to_position_size_ratio=1.0),)
+    losing = _make_long_position(
+        position_id=PositionId("P-LOSS"), ticker=Symbol("X"), unrealized_pnl_usd=-100.0
+    )
+    liquidity = (
+        PositionLiquidity(position_id=PositionId("P-LOSS"), adv_to_position_size_ratio=1.0),
+    )
     result = select_for_drawdown_breach(open_positions=(losing,), liquidity=liquidity)
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         result.position_id = "OTHER"
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         result.action = PositionSelectionAction.PARTIAL_TRIM
 
 
 def test_rationale_format_drawdown_uniquely_most_loss() -> None:
     """Drawdown rationale states 'no tiebreaker' when uniquely most-loss."""
     positions = (
-        _make_long_position(position_id="P-A", ticker="AAA", unrealized_pnl_usd=-100.0),
-        _make_long_position(position_id="P-B", ticker="BBB", unrealized_pnl_usd=-300.0),
+        _make_long_position(
+            position_id=PositionId("P-A"), ticker=Symbol("AAA"), unrealized_pnl_usd=-100.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-B"), ticker=Symbol("BBB"), unrealized_pnl_usd=-300.0
+        ),
     )
     liquidity = tuple(
         PositionLiquidity(position_id=p.position_id, adv_to_position_size_ratio=1.0)
@@ -723,12 +824,16 @@ def test_rationale_format_drawdown_uniquely_most_loss() -> None:
 def test_drawdown_selector_does_not_mutate_inputs() -> None:
     """Input tuples are unchanged after selection (pure function)."""
     positions = (
-        _make_long_position(position_id="P-A", ticker="AAA", unrealized_pnl_usd=-100.0),
-        _make_long_position(position_id="P-B", ticker="BBB", unrealized_pnl_usd=-300.0),
+        _make_long_position(
+            position_id=PositionId("P-A"), ticker=Symbol("AAA"), unrealized_pnl_usd=-100.0
+        ),
+        _make_long_position(
+            position_id=PositionId("P-B"), ticker=Symbol("BBB"), unrealized_pnl_usd=-300.0
+        ),
     )
     liquidity = (
-        PositionLiquidity(position_id="P-A", adv_to_position_size_ratio=1.0),
-        PositionLiquidity(position_id="P-B", adv_to_position_size_ratio=1.0),
+        PositionLiquidity(position_id=PositionId("P-A"), adv_to_position_size_ratio=1.0),
+        PositionLiquidity(position_id=PositionId("P-B"), adv_to_position_size_ratio=1.0),
     )
     positions_before = positions
     liquidity_before = liquidity
@@ -740,10 +845,18 @@ def test_drawdown_selector_does_not_mutate_inputs() -> None:
 def test_total_short_selector_uses_config_trim_target_not_hardcoded() -> None:
     """Config-driven trim target: changing the config value changes the result."""
     shorts = (
-        _make_short_position(position_id="S-A", ticker="AAA", position_weight_pct=12.0),
-        _make_short_position(position_id="S-B", ticker="BBB", position_weight_pct=11.0),
-        _make_short_position(position_id="S-C", ticker="CCC", position_weight_pct=10.0),
-        _make_short_position(position_id="S-D", ticker="DDD", position_weight_pct=5.0),
+        _make_short_position(
+            position_id=PositionId("S-A"), ticker=Symbol("AAA"), position_weight_pct=12.0
+        ),
+        _make_short_position(
+            position_id=PositionId("S-B"), ticker=Symbol("BBB"), position_weight_pct=11.0
+        ),
+        _make_short_position(
+            position_id=PositionId("S-C"), ticker=Symbol("CCC"), position_weight_pct=10.0
+        ),
+        _make_short_position(
+            position_id=PositionId("S-D"), ticker=Symbol("DDD"), position_weight_pct=5.0
+        ),
     )
     liquidity = tuple(
         PositionLiquidity(position_id=p.position_id, adv_to_position_size_ratio=1.0) for p in shorts
@@ -770,7 +883,9 @@ def test_total_short_selector_uses_config_trim_target_not_hardcoded() -> None:
 
 def test_single_short_selector_uses_config_trim_target_not_hardcoded() -> None:
     """Config-driven trim target: tuning to 90% yields 3.0 * 0.90 = 2.70%."""
-    breaching = _make_short_position(position_id="S-1", ticker="GME", position_weight_pct=3.5)
+    breaching = _make_short_position(
+        position_id=PositionId("S-1"), ticker=Symbol("GME"), position_weight_pct=3.5
+    )
     tuned_config = BreachBehaviorConfig(
         forced_reduction_short_trim_target_pct_of_limit=90.0,
         forced_reduction_total_short_immediate_threshold_pct_of_limit=110.0,

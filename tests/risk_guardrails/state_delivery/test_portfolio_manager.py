@@ -474,15 +474,15 @@ def test_render_pm_header_renders_sector_and_directional_headroom_blocks() -> No
 def test_render_pm_header_renders_position_level_constraint_proximity_block() -> None:
     positions = (
         _make_position(
-            position_id="POS-NVDA-001",
-            ticker="NVDA",
+            position_id=PositionId("POS-NVDA-001"),
+            ticker=Symbol("NVDA"),
             sector="tech",
             weight_pct=4.2,
             unrealized_pnl_pct=-18.0,
         ),
         _make_position(
-            position_id="POS-AMD-002",
-            ticker="AMD",
+            position_id=PositionId("POS-AMD-002"),
+            ticker=Symbol("AMD"),
             sector="tech",
             weight_pct=2.1,
             unrealized_pnl_pct=5.0,
@@ -520,22 +520,22 @@ def test_render_pm_header_renders_position_level_constraint_proximity_block() ->
 def test_render_pm_header_renders_sector_exposure_breakdown_per_position() -> None:
     positions = (
         _make_position(
-            position_id="POS-NVDA-001",
-            ticker="NVDA",
+            position_id=PositionId("POS-NVDA-001"),
+            ticker=Symbol("NVDA"),
             sector="tech",
             weight_pct=4.2,
             unrealized_pnl_pct=-1.0,
         ),
         _make_position(
-            position_id="POS-AAPL-002",
-            ticker="AAPL",
+            position_id=PositionId("POS-AAPL-002"),
+            ticker=Symbol("AAPL"),
             sector="tech",
             weight_pct=3.1,
             unrealized_pnl_pct=2.0,
         ),
         _make_position(
-            position_id="POS-MU-003",
-            ticker="MU",
+            position_id=PositionId("POS-MU-003"),
+            ticker=Symbol("MU"),
             sector="semis",
             weight_pct=2.5,
             unrealized_pnl_pct=4.0,
@@ -841,7 +841,7 @@ def test_render_pm_header_regime_transition_breaches_block_present_when_breaches
         available_capital_after_usd=300_000.0,
     )
     breach = RegimeTransitionBreach(
-        position_id="POS-NVDA-001",
+        position_id=PositionId("POS-NVDA-001"),
         rule_id="position_max_size_pct",
         rule_label="Per-position max size",
         current_value=4.2,
@@ -1109,9 +1109,18 @@ def test_render_pm_header_active_regime_overrides_block_without_expiry_no_suffix
 
 def _three_position_view() -> PortfolioManagerView:
     positions = (
-        _make_position(position_id="POS-NVDA-001", ticker="NVDA", weight_pct=4.2),
-        _make_position(position_id="POS-AAPL-002", ticker="AAPL", weight_pct=3.1),
-        _make_position(position_id="POS-MU-003", ticker="MU", sector="semis", weight_pct=2.5),
+        _make_position(
+            position_id=PositionId("POS-NVDA-001"), ticker=Symbol("NVDA"), weight_pct=4.2
+        ),
+        _make_position(
+            position_id=PositionId("POS-AAPL-002"), ticker=Symbol("AAPL"), weight_pct=3.1
+        ),
+        _make_position(
+            position_id=PositionId("POS-MU-003"),
+            ticker=Symbol("MU"),
+            sector="semis",
+            weight_pct=2.5,
+        ),
     )
     return _make_pm_view(positions=positions)
 
@@ -1145,8 +1154,12 @@ def test_render_pm_header_correlation_state_block_omitted_when_state_is_none() -
 def test_render_pm_header_correlation_state_block_omitted_when_below_position_threshold() -> None:
     view = _make_pm_view(
         positions=(
-            _make_position(position_id="POS-NVDA-001", ticker="NVDA", weight_pct=4.2),
-            _make_position(position_id="POS-AAPL-002", ticker="AAPL", weight_pct=3.1),
+            _make_position(
+                position_id=PositionId("POS-NVDA-001"), ticker=Symbol("NVDA"), weight_pct=4.2
+            ),
+            _make_position(
+                position_id=PositionId("POS-AAPL-002"), ticker=Symbol("AAPL"), weight_pct=3.1
+            ),
         ),
     )
     impact = CrossConstraintImpact(
@@ -1252,8 +1265,12 @@ def test_render_pm_header_dependency_risk_flag_block_omitted_when_none_or_below_
     )
     two_position_view = _make_pm_view(
         positions=(
-            _make_position(position_id="POS-NVDA-001", ticker="NVDA", weight_pct=4.2),
-            _make_position(position_id="POS-AAPL-002", ticker="AAPL", weight_pct=3.1),
+            _make_position(
+                position_id=PositionId("POS-NVDA-001"), ticker=Symbol("NVDA"), weight_pct=4.2
+            ),
+            _make_position(
+                position_id=PositionId("POS-AAPL-002"), ticker=Symbol("AAPL"), weight_pct=3.1
+            ),
         ),
     )
     rendered_below = render_pm_header(
@@ -1711,11 +1728,25 @@ def test_render_pm_header_full_system_fixture_full_render() -> None:
     correlation in WARNING, dependency-risk in NORMAL.
     """
     positions = (
-        _make_position(position_id="POS-NVDA-001", ticker="NVDA", weight_pct=4.2),
-        _make_position(position_id="POS-AAPL-002", ticker="AAPL", weight_pct=3.5),
-        _make_position(position_id="POS-AMD-003", ticker="AMD", weight_pct=2.1),
-        _make_position(position_id="POS-AVGO-004", ticker="AVGO", sector="semis", weight_pct=3.0),
-        _make_position(position_id="POS-MU-005", ticker="MU", sector="semis", weight_pct=2.5),
+        _make_position(
+            position_id=PositionId("POS-NVDA-001"), ticker=Symbol("NVDA"), weight_pct=4.2
+        ),
+        _make_position(
+            position_id=PositionId("POS-AAPL-002"), ticker=Symbol("AAPL"), weight_pct=3.5
+        ),
+        _make_position(position_id=PositionId("POS-AMD-003"), ticker=Symbol("AMD"), weight_pct=2.1),
+        _make_position(
+            position_id=PositionId("POS-AVGO-004"),
+            ticker=Symbol("AVGO"),
+            sector="semis",
+            weight_pct=3.0,
+        ),
+        _make_position(
+            position_id=PositionId("POS-MU-005"),
+            ticker=Symbol("MU"),
+            sector="semis",
+            weight_pct=2.5,
+        ),
     )
     full_risk_budget = RiskBudgetConsumption(
         entries=(

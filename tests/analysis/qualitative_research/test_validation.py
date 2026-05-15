@@ -7,6 +7,7 @@ the invalid state needed to exercise the structural validator.
 
 from __future__ import annotations
 
+from alphamind._kernel.ids import Symbol
 from alphamind.analysis.qualitative_research.models import (
     CatalystWatch,
     EvidenceLine,
@@ -260,7 +261,7 @@ def test_catalyst_watch_wrong_prefix_fails() -> None:
     # Use model_construct to bypass.
     bad_watch = CatalystWatch.model_construct(
         catalyst_id="QR-1",
-        ticker="NVDA",
+        ticker=Symbol("NVDA"),
         catalyst_name="Earnings",
         hours_to_event=12,
         thesis_impact="Impact text",
@@ -285,7 +286,7 @@ def test_catalyst_watch_wrong_prefix_fails() -> None:
 
 
 def test_ticker_not_in_universe_fails() -> None:
-    brief = _make_brief(catalyst_watches=(_make_catalyst_watch(ticker="UNKNOWN"),))
+    brief = _make_brief(catalyst_watches=(_make_catalyst_watch(ticker=Symbol("UNKNOWN")),))
     universe = frozenset({"NVDA", "AAPL", "MSFT"})
     result = validate_qualitative_brief(brief, universe=universe)
     assert result.is_valid is False
@@ -294,13 +295,13 @@ def test_ticker_not_in_universe_fails() -> None:
 
 
 def test_ticker_not_in_universe_with_none_universe_passes() -> None:
-    brief = _make_brief(catalyst_watches=(_make_catalyst_watch(ticker="UNKNOWN"),))
+    brief = _make_brief(catalyst_watches=(_make_catalyst_watch(ticker=Symbol("UNKNOWN")),))
     result = validate_qualitative_brief(brief, universe=None)
     assert result.is_valid is True
 
 
 def test_ticker_in_universe_passes() -> None:
-    brief = _make_brief(catalyst_watches=(_make_catalyst_watch(ticker="NVDA"),))
+    brief = _make_brief(catalyst_watches=(_make_catalyst_watch(ticker=Symbol("NVDA")),))
     universe = frozenset({"NVDA", "AAPL"})
     result = validate_qualitative_brief(brief, universe=universe)
     assert result.is_valid is True

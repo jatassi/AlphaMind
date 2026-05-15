@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Protocol, runtime_checkable
-
-from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import Protocol, runtime_checkable
 
 from alphamind.execution.regt_margin_attribution.aggregates import RegTExcessAggregates
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
@@ -44,67 +43,81 @@ def _require_tz_aware(v: datetime, field_name: str) -> datetime:
     return v
 
 
+def _check_finite(value: float, field_name: str) -> None:
+    if not math.isfinite(value):
+        msg = f"{field_name} must be finite; got {value}"
+        raise ValueError(msg)
+
+
 # ---------------------------------------------------------------------------
 # Helper value objects
 # ---------------------------------------------------------------------------
 
 
-class PortfolioPnLInputs(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PortfolioPnLInputs:
     """OMS-aggregate inputs needed for portfolio-pnl rollup (category 2b)."""
 
-    model_config = {"frozen": True}
-
-    daily_realized_pnl_usd: Annotated[float, Field(allow_inf_nan=False)]
-    cumulative_realized_pnl_usd: Annotated[float, Field(allow_inf_nan=False)]
+    daily_realized_pnl_usd: float
+    cumulative_realized_pnl_usd: float
     rolling_realized_pnl: dict[str, float]
-    win_rate_pct: Annotated[float, Field(ge=0.0, le=100.0)] | None
-    average_win_size_usd: Annotated[float, Field(ge=0.0)] | None
-    average_loss_size_usd: Annotated[float, Field(ge=0.0)] | None
-    profit_factor: Annotated[float, Field(ge=0.0)] | None
+    win_rate_pct: float | None
+    average_win_size_usd: float | None
+    average_loss_size_usd: float | None
+    profit_factor: float | None
 
-    @field_validator("rolling_realized_pnl")
-    @classmethod
-    def _validate_rolling_finite(cls, v: dict[str, float]) -> dict[str, float]:
-        for key, val in v.items():
+    def __post_init__(self) -> None:
+        _check_finite(self.daily_realized_pnl_usd, "daily_realized_pnl_usd")
+        _check_finite(self.cumulative_realized_pnl_usd, "cumulative_realized_pnl_usd")
+        for key, val in self.rolling_realized_pnl.items():
             if not math.isfinite(val):
                 msg = f"rolling_realized_pnl[{key!r}] must be a finite float, got {val!r}"
                 raise ValueError(msg)
-        return v
+        if self.win_rate_pct is not None and not (0.0 <= self.win_rate_pct <= 100.0):
+            msg = f"win_rate_pct must satisfy 0 <= value <= 100; got {self.win_rate_pct}"
+            raise ValueError(msg)
+        if self.average_win_size_usd is not None and self.average_win_size_usd < 0:
+            msg = (
+                f"average_win_size_usd must be >= 0 when not None; got {self.average_win_size_usd}"
+            )
+            raise ValueError(msg)
+        if self.average_loss_size_usd is not None and self.average_loss_size_usd < 0:
+            msg = (
+                f"average_loss_size_usd must be >= 0 when not None; "
+                f"got {self.average_loss_size_usd}"
+            )
+            raise ValueError(msg)
+        if self.profit_factor is not None and self.profit_factor < 0:
+            msg = f"profit_factor must be >= 0 when not None; got {self.profit_factor}"
+            raise ValueError(msg)
 
 
-class CurrentInvocationMetadata(BaseModel):
+@dataclass(frozen=True, slots=True)
+class CurrentInvocationMetadata:
     """Identity fields for the currently running pipeline invocation."""
 
-    model_config = {"frozen": True}
-
-    invocation_id: str = Field(min_length=1)
+    invocation_id: str
     phase1_committed_at: datetime
     pipeline_invocation_started_at: datetime | None
 
-    @field_validator("phase1_committed_at")
-    @classmethod
-    def _phase1_tz_aware(cls, v: datetime) -> datetime:
-        return _require_tz_aware(v, "phase1_committed_at")
-
-    @field_validator("pipeline_invocation_started_at")
-    @classmethod
-    def _started_at_tz_aware(cls, v: datetime | None) -> datetime | None:
-        if v is None:
-            return v
-        return _require_tz_aware(v, "pipeline_invocation_started_at")
+    def __post_init__(self) -> None:
+        if len(self.invocation_id) < 1:
+            msg = "invocation_id must be non-empty"
+            raise ValueError(msg)
+        _require_tz_aware(self.phase1_committed_at, "phase1_committed_at")
+        if self.pipeline_invocation_started_at is not None:
+            _require_tz_aware(self.pipeline_invocation_started_at, "pipeline_invocation_started_at")
 
 
-class PriorInvocationContext(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PriorInvocationContext:
     """Prior-invocation state used to compute parameter_change_flag."""
-
-    model_config = {"frozen": True}
 
     prior_invocation_id: str | None
     prior_active_risk_parameters: ActiveRiskParameterSet | None
     prior_phase1_committed_at: datetime | None
 
-    @model_validator(mode="after")
-    def _co_null_invariant(self) -> PriorInvocationContext:
+    def __post_init__(self) -> None:
         id_is_none = self.prior_invocation_id is None
         params_is_none = self.prior_active_risk_parameters is None
         if id_is_none != params_is_none:
@@ -113,14 +126,8 @@ class PriorInvocationContext(BaseModel):
                 "or both be non-None"
             )
             raise ValueError(msg)
-        return self
-
-    @field_validator("prior_phase1_committed_at")
-    @classmethod
-    def _prior_committed_at_tz_aware(cls, v: datetime | None) -> datetime | None:
-        if v is None:
-            return v
-        return _require_tz_aware(v, "prior_phase1_committed_at")
+        if self.prior_phase1_committed_at is not None:
+            _require_tz_aware(self.prior_phase1_committed_at, "prior_phase1_committed_at")
 
 
 # ---------------------------------------------------------------------------
@@ -199,10 +206,17 @@ class PortfolioStateRepository(Protocol):
 # ---------------------------------------------------------------------------
 
 
-class RepositoryFixture(BaseModel):
-    """Frozen value object carrying every field the Protocol returns; used by the stub."""
+def _default_regt_aggregates() -> RegTExcessAggregates:
+    return RegTExcessAggregates(
+        trailing_30d_usd=0.0,
+        trailing_90d_usd=0.0,
+        lifetime_usd=0.0,
+    )
 
-    model_config = {"frozen": True, "strict": True}
+
+@dataclass(frozen=True, slots=True)
+class RepositoryFixture:
+    """Frozen value object carrying every field the Protocol returns; used by the stub."""
 
     open_positions: tuple[PositionRecord, ...]
     pending_positions: tuple[PositionRecord, ...]
@@ -211,11 +225,6 @@ class RepositoryFixture(BaseModel):
     active_theses: tuple[ThesisRecord, ...]
     recent_thesis_resolutions: tuple[RecentThesisResolution, ...]
     cash_ledger: CashLedger
-    regt_excess_aggregates: RegTExcessAggregates = RegTExcessAggregates(
-        trailing_30d_usd=0.0,
-        trailing_90d_usd=0.0,
-        lifetime_usd=0.0,
-    )
     pending_orders: tuple[OrderRecord, ...]
     risk_budget: RiskBudgetConsumption
     active_risk_parameters: ActiveRiskParameterSet
@@ -226,6 +235,7 @@ class RepositoryFixture(BaseModel):
     brackets: tuple[BracketRecord, ...]
     current_invocation_metadata: CurrentInvocationMetadata
     prior_invocation_context: PriorInvocationContext
+    regt_excess_aggregates: RegTExcessAggregates = field(default_factory=_default_regt_aggregates)
 
 
 # ---------------------------------------------------------------------------

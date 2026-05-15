@@ -21,6 +21,7 @@ this case "messier" with no explicit spec); the handler raises
 
 from __future__ import annotations
 
+import dataclasses
 import uuid
 
 from alphamind._kernel.ids import PositionId, Symbol
@@ -183,14 +184,13 @@ async def handle_spin_off(
     _, post_basis = _require_lookup_position(lookup, activity.ticker, role="parent")
     child_qty, child_basis = _require_lookup_position(lookup, activity.new_ticker, role="child")
 
-    new_parent_details = parent_details.model_copy(
-        update={"average_cost_basis_per_share": post_basis}
+    new_parent_details = dataclasses.replace(
+        parent_details, average_cost_basis_per_share=post_basis
     )
-    updated_parent = parent.model_copy(
-        update={
-            "details": new_parent_details,
-            "corporate_action_adjustment_needed": True,
-        }
+    updated_parent = dataclasses.replace(
+        parent,
+        details=new_parent_details,
+        corporate_action_adjustment_needed=True,
     )
     _persist_position_update(pos_row, updated_parent)
 

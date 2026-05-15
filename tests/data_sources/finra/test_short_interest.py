@@ -9,6 +9,7 @@ import httpx
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
+from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import AssetUniverse, Base, ShortInterestSnapshot
 from alphamind.persistence.session import make_engine, make_session_factory
 
@@ -30,7 +31,7 @@ def session_factory() -> sessionmaker[Session]:
         sess.add(
             AssetUniverse(
                 asset_id="u1",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 full_name="Apple Inc.",
                 asset_class="equity",
                 asset_role="universe",

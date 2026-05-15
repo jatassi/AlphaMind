@@ -284,7 +284,7 @@ class TestPositionsTableSchema:
     def test_check_rejects_unknown_status(self, session: Session) -> None:
         session.add(
             PositionRow(
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 thesis_id=None,
                 bracket_id=None,
                 status="UNKNOWN",
@@ -305,7 +305,7 @@ class TestPositionsTableSchema:
     def test_check_rejects_unknown_direction(self, session: Session) -> None:
         session.add(
             PositionRow(
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 thesis_id=None,
                 bracket_id=None,
                 status=PositionStatus.PENDING.value,
@@ -326,7 +326,7 @@ class TestPositionsTableSchema:
     def test_check_rejects_unknown_instrument_type(self, session: Session) -> None:
         session.add(
             PositionRow(
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 thesis_id=None,
                 bracket_id=None,
                 status=PositionStatus.PENDING.value,

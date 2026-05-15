@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from alphamind._kernel.ids import PositionId, Symbol
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -139,7 +140,7 @@ def _make_abandoned_opening() -> AnalystAbandonedOpening:
     return AnalystAbandonedOpening(
         envelope_id="ENV-REC-1",
         direction=Direction.LONG,
-        ticker="MSFT",
+        ticker=Symbol("MSFT"),
         instrument_type=InstrumentType.EQUITY,
         size_pct=3.0,
         abandoned_at=datetime(2026, 5, 3, 13, 30, 0, tzinfo=UTC),
@@ -308,10 +309,10 @@ def test_normal_mode_empty_held_positions_renders_none_line() -> None:
 
 def test_normal_mode_populated_held_positions_appear() -> None:
     held = (
-        _make_held_position(position_id="POS-NVDA-001", ticker="NVDA"),
+        _make_held_position(position_id=PositionId("POS-NVDA-001"), ticker=Symbol("NVDA")),
         _make_held_position(
-            position_id="POS-MU-002",
-            ticker="MU",
+            position_id=PositionId("POS-MU-002"),
+            ticker=Symbol("MU"),
             sector="semis",
             size_pct=2.5,
         ),

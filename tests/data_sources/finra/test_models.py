@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
+from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,
@@ -54,7 +55,7 @@ def test_short_interest_snapshot_insert_and_query(session_factory: sessionmaker[
         sess.add(
             ShortInterestSnapshot(
                 settlement_date="2026-01-15",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 current_short_shares=100000,
                 previous_short_shares=90000,
                 avg_daily_volume_shares=50000000,
@@ -78,7 +79,7 @@ def test_short_volume_daily_insert_and_query(session_factory: sessionmaker[Sessi
         sess.add(
             ShortVolumeDaily(
                 trade_date="2026-01-24",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 market="cnms",
                 short_volume=2000000,
                 short_exempt_volume=10000,

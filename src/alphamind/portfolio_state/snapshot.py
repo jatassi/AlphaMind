@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Literal
-
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from typing import Literal
 
 from alphamind._kernel.money import Money
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
@@ -24,7 +23,8 @@ from alphamind.portfolio_state.views.positions import PositionView
 # ---------------------------------------------------------------------------
 
 
-class PortfolioPnL(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PortfolioPnL:
     """Snapshot-time P/L rollup (raw state category 2b).
 
     ALP-462 — USD aggregate fields carry :class:`Money` (Decimal-backed) so
@@ -33,8 +33,6 @@ class PortfolioPnL(BaseModel):
     ``float`` because they are derived ratios, not money preservation
     quantities.
     """
-
-    model_config = ConfigDict(frozen=True)
 
     total_unrealized_pnl_usd: Money
     total_unrealized_pnl_pct_of_portfolio: float
@@ -48,13 +46,12 @@ class PortfolioPnL(BaseModel):
     profit_factor: float | None
 
 
-class SectorExposureEntry(BaseModel):
+@dataclass(frozen=True, slots=True)
+class SectorExposureEntry:
     """Per-sector long/short rollup (raw state 1b sector allocation).
 
     ALP-462 — USD aggregates carry :class:`Money`; pct/ratio fields stay float.
     """
-
-    model_config = ConfigDict(frozen=True)
 
     sector: str
     long_delta_adjusted_usd: Money
@@ -64,18 +61,22 @@ class SectorExposureEntry(BaseModel):
     long_short_ratio: float | None
 
 
-class DirectionalExposure(BaseModel):
+@dataclass(frozen=True, slots=True)
+class DirectionalExposure:
     """Portfolio-level directional rollup (raw state 1b net directional and gross exposure).
 
     ALP-462 — USD aggregates carry :class:`Money`; pct fields stay float.
     """
 
-    model_config = ConfigDict(frozen=True)
-
     total_long_delta_adjusted_usd: Money
     total_short_delta_adjusted_usd: Money
     net_directional_pct_of_portfolio: float
-    gross_pct_of_portfolio: Annotated[float, Field(ge=0.0)]
+    gross_pct_of_portfolio: float
+
+    def __post_init__(self) -> None:
+        if self.gross_pct_of_portfolio < 0:
+            msg = f"gross_pct_of_portfolio must be >= 0; got {self.gross_pct_of_portfolio}"
+            raise ValueError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -85,16 +86,14 @@ class DirectionalExposure(BaseModel):
 _PENDING_ORDER_STATUSES = frozenset({OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED})
 
 
-class PortfolioStateSnapshot(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PortfolioStateSnapshot:
     """Frozen point-in-time aggregate of all raw portfolio state categories 1-6."""
 
-    model_config = ConfigDict(frozen=True)
-
     # Identity / scaffolding
-    invocation_id: str = Field(min_length=1)
+    invocation_id: str
     phase1_committed_at: datetime
     snapshot_assembled_at: datetime
-    pipeline_invocation_started_at: datetime | None = None
 
     # Category 1 — Position inventory
     open_positions: tuple[PositionView, ...]
@@ -127,12 +126,29 @@ class PortfolioStateSnapshot(BaseModel):
     # Cross-cutting brackets reference
     brackets: tuple[BracketRecord, ...]
 
+    pipeline_invocation_started_at: datetime | None = None
+
     # ------------------------------------------------------------------
-    # Validators
+    # Validators — coalesced into one __post_init__ calling private checks
     # ------------------------------------------------------------------
 
-    @model_validator(mode="after")
-    def _validate_timestamp_tz_awareness(self) -> PortfolioStateSnapshot:
+    def __post_init__(self) -> None:
+        if len(self.invocation_id) < 1:
+            msg = "invocation_id must be non-empty"
+            raise ValueError(msg)
+        self._check_timestamp_tz_awareness()
+        self._check_timestamp_ordering()
+        self._check_open_position_statuses()
+        self._check_pending_position_statuses()
+        self._check_pending_order_statuses()
+        self._check_position_id_uniqueness()
+        self._check_bracket_id_uniqueness()
+        self._check_orphan_free_brackets()
+        self._check_position_modification_trail()
+        self._check_intra_invocation_changelog()
+        self._check_pm_decision_log()
+
+    def _check_timestamp_tz_awareness(self) -> None:
         for name, value in [
             ("phase1_committed_at", self.phase1_committed_at),
             ("snapshot_assembled_at", self.snapshot_assembled_at),
@@ -145,10 +161,8 @@ class PortfolioStateSnapshot(BaseModel):
             if v.tzinfo is None or v.utcoffset() is None:
                 msg = "pipeline_invocation_started_at must be tz-aware UTC when non-None"
                 raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_timestamp_ordering(self) -> PortfolioStateSnapshot:
+    def _check_timestamp_ordering(self) -> None:
         if self.phase1_committed_at > self.snapshot_assembled_at:
             msg = (
                 "phase1_committed_at must be <= snapshot_assembled_at; "
@@ -164,26 +178,20 @@ class PortfolioStateSnapshot(BaseModel):
                 f"got {self.pipeline_invocation_started_at} < {self.snapshot_assembled_at}"
             )
             raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_open_position_statuses(self) -> PortfolioStateSnapshot:
+    def _check_open_position_statuses(self) -> None:
         bad = [p.position_id for p in self.open_positions if p.status != PositionStatus.OPEN]
         if bad:
             msg = f"open_positions contains positions with status != OPEN: {bad}"
             raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_pending_position_statuses(self) -> PortfolioStateSnapshot:
+    def _check_pending_position_statuses(self) -> None:
         bad = [p.position_id for p in self.pending_positions if p.status != PositionStatus.PENDING]
         if bad:
             msg = f"pending_positions contains positions with status != PENDING: {bad}"
             raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_pending_order_statuses(self) -> PortfolioStateSnapshot:
+    def _check_pending_order_statuses(self) -> None:
         bad = [o.order_id for o in self.pending_orders if o.status not in _PENDING_ORDER_STATUSES]
         if bad:
             msg = (
@@ -191,10 +199,8 @@ class PortfolioStateSnapshot(BaseModel):
                 f"{{PENDING, PARTIALLY_FILLED}}: {bad}"
             )
             raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_position_id_uniqueness(self) -> PortfolioStateSnapshot:
+    def _check_position_id_uniqueness(self) -> None:
         seen: set[str] = set()
         dupes: list[str] = []
         for pos in (*self.open_positions, *self.pending_positions):
@@ -208,10 +214,8 @@ class PortfolioStateSnapshot(BaseModel):
                 f"duplicates: {dupes}"
             )
             raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_bracket_id_uniqueness(self) -> PortfolioStateSnapshot:
+    def _check_bracket_id_uniqueness(self) -> None:
         seen: set[str] = set()
         dupes: list[str] = []
         for brk in self.brackets:
@@ -222,10 +226,8 @@ class PortfolioStateSnapshot(BaseModel):
         if dupes:
             msg = f"bracket_id values must be unique across brackets; duplicates: {dupes}"
             raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_orphan_free_brackets(self) -> PortfolioStateSnapshot:
+    def _check_orphan_free_brackets(self) -> None:
         orphans = [
             b.bracket_id for b in self.brackets if self.position_by_id(b.position_id) is None
         ]
@@ -235,10 +237,8 @@ class PortfolioStateSnapshot(BaseModel):
                 f"pending_positions: {orphans}"
             )
             raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_position_modification_trail(self) -> PortfolioStateSnapshot:
+    def _check_position_modification_trail(self) -> None:
         unresolvable = [
             pid for pid in self.position_modification_trail if self.position_by_id(pid) is None
         ]
@@ -248,10 +248,8 @@ class PortfolioStateSnapshot(BaseModel):
                 f"open_positions or pending_positions: {unresolvable}"
             )
             raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_intra_invocation_changelog(self) -> PortfolioStateSnapshot:
+    def _check_intra_invocation_changelog(self) -> None:
         bad = [
             entry.entry_id
             for entry in self.intra_invocation_changelog
@@ -263,10 +261,8 @@ class PortfolioStateSnapshot(BaseModel):
                 f"{self.invocation_id!r}; offending entry_ids: {bad}"
             )
             raise ValueError(msg)
-        return self
 
-    @model_validator(mode="after")
-    def _validate_pm_decision_log(self) -> PortfolioStateSnapshot:
+    def _check_pm_decision_log(self) -> None:
         bad = [
             entry.entry_id
             for entry in self.recent_pm_decision_log
@@ -278,7 +274,6 @@ class PortfolioStateSnapshot(BaseModel):
                 f"offending entry_ids: {bad}"
             )
             raise ValueError(msg)
-        return self
 
     # ------------------------------------------------------------------
     # Helper methods

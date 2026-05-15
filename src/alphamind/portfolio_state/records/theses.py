@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Annotated
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from alphamind._kernel.ids import PositionId, ThesisId
 from alphamind.portfolio_state.records.orders import BracketLegType
@@ -53,25 +51,24 @@ class SupportingSignalStatus(StrEnum):
     REVERSED = "REVERSED"
 
 
-class KeyAssumption(BaseModel):
+@dataclass(frozen=True, slots=True)
+class KeyAssumption:
     """A short structured falsifiable claim within a thesis component."""
-
-    model_config = ConfigDict(frozen=True)
 
     text: str
     outcome: ThesisComponentOutcome | None
 
 
-class SupportingSignal(BaseModel):
+@dataclass(frozen=True, slots=True)
+class SupportingSignal:
     """A named signal and its current strategist-assessed status."""
-
-    model_config = ConfigDict(frozen=True)
 
     name: str
     status: SupportingSignalStatus
 
 
-class ThesisComponent(BaseModel):
+@dataclass(frozen=True, slots=True)
+class ThesisComponent:
     """A typed, individually-addressable component linked to a specific order or bracket leg.
 
     Carries entry-time component data only. Per-invocation supporting-signal
@@ -79,22 +76,21 @@ class ThesisComponent(BaseModel):
     :class:`alphamind.portfolio_state.views.thesis_health.ComponentHealthEntry`.
     """
 
-    model_config = ConfigDict(frozen=True)
-
     component_id: str
     thesis_id: ThesisId
     component_type: ThesisComponentType
     linked_bracket_leg_type: BracketLegType | None
-    linked_bracket_leg_id: str | None = None
     instrument_reference: str
     narrative: str
     key_assumptions: tuple[KeyAssumption, ...]
     generation_timestamp: datetime
     resolution_outcome: ThesisComponentOutcome | None
     resolution_notes: str | None
+    linked_bracket_leg_id: str | None = None
 
 
-class ThesisRecord(BaseModel):
+@dataclass(frozen=True, slots=True)
+class ThesisRecord:
     """Full consumer-facing thesis record, one-to-one with a position.
 
     Carries entry-time + lifecycle thesis data only. Per-invocation
@@ -102,38 +98,33 @@ class ThesisRecord(BaseModel):
     :class:`alphamind.portfolio_state.views.thesis_health.ThesisHealthSnapshot`.
     """
 
-    model_config = ConfigDict(frozen=True)
-
     thesis_id: ThesisId
     position_id: PositionId
     summary: str
     key_catalyst: str
-    # The analyst's prose rationale for *why this size at this conviction*.
-    # Read by the PM's sizing-proportionality evaluation criterion.
-    # Persisted from the analyst's proposal at OPEN time; not modified by
-    # ADJUST or ADD (those have their own per-action rationale fields).
-    position_size_rationale: str | None = None
     components: tuple[ThesisComponent, ...]
     status: ThesisRecordStatus
     generation_timestamp: datetime
-    time_expectation_hours: Annotated[float, Field(gt=0)]
+    time_expectation_hours: float
     age_hours: float
     expected_resolution_at: datetime
     resolution_timestamp: datetime | None
     resolution_category: ThesisResolutionCategory | None
     resolution_pnl_usd: float | None
     entry_fill_gap_usd: float | None
+    # The analyst's prose rationale for *why this size at this conviction*.
+    # Read by the PM's sizing-proportionality evaluation criterion.
+    # Persisted from the analyst's proposal at OPEN time; not modified by
+    # ADJUST or ADD (those have their own per-action rationale fields).
+    position_size_rationale: str | None = None
 
-    @field_validator("position_size_rationale")
-    @classmethod
-    def _require_non_empty_when_populated(cls, v: str | None) -> str | None:
-        if v is not None and not v.strip():
+    def __post_init__(self) -> None:
+        if self.position_size_rationale is not None and not self.position_size_rationale.strip():
             msg = "position_size_rationale must be non-empty when not None"
             raise ValueError(msg)
-        return v
-
-    @model_validator(mode="after")
-    def _validate_all(self) -> ThesisRecord:
+        if self.time_expectation_hours <= 0:
+            msg = f"time_expectation_hours must be > 0; got {self.time_expectation_hours}"
+            raise ValueError(msg)
         self._check_summary_non_empty()
         self._check_time_expectation_consistency()
         self._check_age_hours()
@@ -141,7 +132,6 @@ class ThesisRecord(BaseModel):
         self._check_mandatory_coverage()
         self._check_active_resolution_fields()
         self._check_resolved_fields()
-        return self
 
     def _check_summary_non_empty(self) -> None:
         if not self.summary:
@@ -223,10 +213,9 @@ class ThesisRecord(BaseModel):
             raise ValueError(msg)
 
 
-class RecentThesisResolution(BaseModel):
+@dataclass(frozen=True, slots=True)
+class RecentThesisResolution:
     """Compact projection for the rolling-window delivery in category 3c."""
-
-    model_config = ConfigDict(frozen=True)
 
     thesis_id: ThesisId
     position_id: PositionId

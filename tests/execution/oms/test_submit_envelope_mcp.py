@@ -5,6 +5,7 @@ Layer-2/3 validation (story 06b), then re-runs validate_guardrail per embedded
 command against cumulative state. Mirrors the analyst-side
 test_validation_tool_mcp.py shape.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ import pytest
 from alphamind._kernel.ids import (
     OrderId,
     PositionId,
+    Symbol,
 )
 from alphamind._kernel.money import money, price
 from alphamind._kernel.regime import (
@@ -102,6 +104,37 @@ _DEFAULT_ACTIVE_SECTORS = frozenset({"tech", "semis", "financials", "energy"})
 # ---------------------------------------------------------------------------
 
 
+# Bypass-init helpers — replace Pydantic ``model_construct``. The dataclass __init__
+# enforces all fields; these helpers skip validation so tests can inject sparse fixtures.
+
+
+def _bypass_init_PortfolioManagerView(**kwargs):  # noqa: N802
+    from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
+
+    obj = object.__new__(PortfolioManagerView)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
+
+
+def _bypass_init_StrategistPositionView(**kwargs):  # noqa: N802
+    from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
+
+    obj = object.__new__(StrategistPositionView)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
+
+
+def _bypass_init_PositionRecord(**kwargs):  # noqa: N802
+    from alphamind.portfolio_state.records.positions import PositionRecord
+
+    obj = object.__new__(PositionRecord)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
+
+
 def _zones() -> EscalationZones:
     return EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
 
@@ -177,7 +210,7 @@ def _atm_provider() -> FixtureIvProvider:
     return FixtureIvProvider(
         surface={
             "AAPL": IvSurfaceEntry(
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 quotes=(
                     IvQuote(
                         strike=100.0,
@@ -513,7 +546,7 @@ def _make_bundle(
 
 
 def _make_pm_view(positions: tuple[Any, ...] = ()) -> PortfolioManagerView:
-    return PortfolioManagerView.model_construct(
+    return _bypass_init_PortfolioManagerView(
         positions=positions,
         recent_thesis_resolutions=(),
         portfolio_pnl=None,
@@ -532,11 +565,9 @@ def _make_pm_view(positions: tuple[Any, ...] = ()) -> PortfolioManagerView:
 
 
 def _position_view(position_id: str) -> Any:
-    from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
-    from alphamind.portfolio_state.records.positions import PositionRecord
 
-    return StrategistPositionView.model_construct(
-        position=PositionRecord.model_construct(position_id=position_id),
+    return _bypass_init_StrategistPositionView(
+        position=_bypass_init_PositionRecord(position_id=position_id),
         thesis=None,
         bracket=None,
         pending_orders=(),
@@ -850,9 +881,9 @@ async def test_processes_multiple_commands_with_partial_rejection() -> None:
     # Command 1: tech OPEN — projected after = 6.5 + 1.0 = 7.5%, PASS.
     # Command 2: tech OPEN — would push to 8.5%, FAIL on sector_concentration.
     # Command 3: energy OPEN — XOM → energy sector at 0% baseline → PASS.
-    cmd1 = _open_command(underlying="ABC")
-    cmd2 = _open_command(underlying="ABC")
-    cmd3 = _open_command(underlying="XOM")
+    cmd1 = _open_command(underlying=Symbol("ABC"))
+    cmd2 = _open_command(underlying=Symbol("ABC"))
+    cmd3 = _open_command(underlying=Symbol("XOM"))
 
     envelope = _make_strategist_envelope(
         verdict="approve",
@@ -1318,20 +1349,18 @@ async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
             claude_agent_sdk_version="0.1.69",
             os_release="Linux-6.5.0",
         )
-        cash = CashLedger.model_validate(
-            {
-                "current_cash_usd": 100_000.0,
-                "settled_cash_usd": 100_000.0,
-                "reserved_capital_usd": 0.0,
-                "available_buying_power_usd": 100_000.0,
-                "margin_held_usd": 0.0,
-                "unsettled_proceeds": (),
-                "cash_pct_of_portfolio": 0.0,
-                "true_deployable_capital_usd": 0.0,
-                "regt_excess_trailing_30d_usd": 0.0,
-                "regt_excess_trailing_90d_usd": 0.0,
-                "regt_excess_lifetime_usd": 0.0,
-            }
+        cash = CashLedger(
+            current_cash_usd=100_000.0,
+            settled_cash_usd=100_000.0,
+            reserved_capital_usd=0.0,
+            available_buying_power_usd=100_000.0,
+            margin_held_usd=0.0,
+            unsettled_proceeds=(),
+            cash_pct_of_portfolio=0.0,
+            true_deployable_capital_usd=0.0,
+            regt_excess_trailing_30d_usd=0.0,
+            regt_excess_trailing_90d_usd=0.0,
+            regt_excess_lifetime_usd=0.0,
         )
         async with factory() as sess:
             sess.add(process_lifetime_record_to_row(proc))

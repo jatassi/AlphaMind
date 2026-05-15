@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
 
+from alphamind._kernel.ids import Symbol
 from alphamind.analysis._shared import Sector
 from alphamind.analysis.domain_researchers.models import (
     SECTOR_PREFIX,
@@ -71,7 +71,7 @@ def _make_anomaly(**kwargs: Any) -> Anomaly:
 def _make_thesis(**kwargs: Any) -> ThesisCandidate:
     defaults: dict[str, Any] = dict(
         thesis_candidate_id="SA-TECH-TC-1",
-        ticker="NVDA",
+        ticker=Symbol("NVDA"),
         direction=Direction.LONG,
         setup_type=SetupType.CATALYST,
         catalyst="Earnings beat",
@@ -149,7 +149,7 @@ def test_signal_quality_members() -> None:
 
 
 def test_sector_brief_degraded_requires_reason() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_brief(signal_quality=SignalQuality.DEGRADED, signal_quality_reason=None)
 
 
@@ -161,17 +161,17 @@ def test_sector_brief_degraded_with_reason_accepts() -> None:
 
 
 def test_sector_brief_non_degraded_rejects_reason_high() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_brief(signal_quality=SignalQuality.HIGH, signal_quality_reason="should not be here")
 
 
 def test_sector_brief_non_degraded_rejects_reason_moderate() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_brief(signal_quality=SignalQuality.MODERATE, signal_quality_reason="oops")
 
 
 def test_sector_brief_non_degraded_rejects_reason_low() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_brief(signal_quality=SignalQuality.LOW, signal_quality_reason="oops")
 
 
@@ -181,7 +181,7 @@ def test_sector_brief_non_degraded_rejects_reason_low() -> None:
 
 
 def test_finding_rejects_empty_tickers() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_finding(tickers=())
 
 
@@ -192,22 +192,22 @@ def test_finding_id_regex_accepts_valid() -> None:
 
 
 def test_finding_id_regex_rejects_lowercase_sector() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_finding(finding_id="SA-tech-1")
 
 
 def test_finding_id_regex_rejects_unknown_sector() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_finding(finding_id="SA-FOO-1")
 
 
 def test_finding_id_regex_rejects_anom_format() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_finding(finding_id="SA-TECH-ANOM-1")
 
 
 def test_finding_id_regex_rejects_missing_digit() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_finding(finding_id="SA-TECH-")
 
 
@@ -223,17 +223,17 @@ def test_anomaly_id_regex_accepts_valid() -> None:
 
 
 def test_anomaly_id_regex_rejects_lowercase_sector() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_anomaly(anomaly_id="SA-tech-ANOM-1")
 
 
 def test_anomaly_id_regex_rejects_unknown_sector() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_anomaly(anomaly_id="SA-FOO-ANOM-1")
 
 
 def test_anomaly_id_regex_rejects_finding_format() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_anomaly(anomaly_id="SA-TECH-1")
 
 
@@ -243,8 +243,8 @@ def test_anomaly_id_regex_rejects_finding_format() -> None:
 
 
 def test_thesis_candidate_rejects_empty_ticker() -> None:
-    with pytest.raises(ValidationError):
-        _make_thesis(ticker="")
+    with pytest.raises((ValueError, TypeError)):
+        _make_thesis(ticker=Symbol(""))
 
 
 def test_thesis_candidate_id_regex_accepts_valid() -> None:
@@ -254,17 +254,17 @@ def test_thesis_candidate_id_regex_accepts_valid() -> None:
 
 
 def test_thesis_candidate_id_regex_rejects_lowercase_sector() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_thesis(thesis_candidate_id="SA-tech-TC-1")
 
 
 def test_thesis_candidate_id_regex_rejects_unknown_sector() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_thesis(thesis_candidate_id="SA-FOO-TC-1")
 
 
 def test_thesis_candidate_id_regex_rejects_finding_format() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_thesis(thesis_candidate_id="SA-TECH-1")
 
 

@@ -8,6 +8,11 @@ modules (post-merge).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+from alphamind._kernel.ids import Symbol
+from alphamind._kernel.money import price
+
 
 class TestBackwardCompatReexport:
     """The legacy ``events.activity_log`` import surface re-exports every public symbol."""
@@ -49,9 +54,7 @@ class TestBackwardCompatReexport:
         assert EVENT_TYPE_TO_GROUP[EventType.POSITION_OPENED].value == "POSITION_LIFECYCLE"
 
     def test_activity_log_entry_importable_and_constructible(self) -> None:
-        from datetime import UTC, datetime
 
-        from alphamind._kernel.money import price
         from alphamind.portfolio_state.events.activity_log import (
             ActivityLogEntry,
             EventGroup,
@@ -62,7 +65,7 @@ class TestBackwardCompatReexport:
         )
 
         detail = PositionOpenedDetail(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             direction="LONG",
             fill_price=price("150.0"),
             quantity=10.0,

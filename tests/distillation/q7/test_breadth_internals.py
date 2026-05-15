@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.output import OutputAudience
 from alphamind.distillation.q7 import compute_breadth_internals
 from alphamind.persistence.models import (
@@ -126,12 +127,12 @@ class TestBreadthPctAboveEMA:
         _add_ticker(session, "AAPL", sector="tech")
         _add_ticker(session, "MSFT", sector="tech")
         _add_ticker(session, "GOOG", sector="tech")
-        _seed_path(session, ticker="AAPL", closes=rising, start_day=start_day)
-        _seed_path(session, ticker="MSFT", closes=rising, start_day=start_day)
-        _seed_path(session, ticker="GOOG", closes=falling, start_day=start_day)
+        _seed_path(session, ticker=Symbol("AAPL"), closes=rising, start_day=start_day)
+        _seed_path(session, ticker=Symbol("MSFT"), closes=rising, start_day=start_day)
+        _seed_path(session, ticker=Symbol("GOOG"), closes=falling, start_day=start_day)
         # Add SPY for cap-weight reference.
         _add_ticker(session, "SPY", sector="tech")
-        _seed_path(session, ticker="SPY", closes=rising, start_day=start_day)
+        _seed_path(session, ticker=Symbol("SPY"), closes=rising, start_day=start_day)
         session.commit()
 
         blocks = compute_breadth_internals(
@@ -174,12 +175,12 @@ class TestBreadthPctAboveEMA:
         for ticker in ("AAPL", "MSFT", "GOOG", "JPM", "BAC", "SPY"):
             _add_close(session, ticker=ticker, period_start=prev_iso, close=100.0)
         # Today's closes — direction varies.
-        _add_close(session, ticker="AAPL", period_start=as_of_iso, close=101.0)
-        _add_close(session, ticker="MSFT", period_start=as_of_iso, close=102.0)
-        _add_close(session, ticker="GOOG", period_start=as_of_iso, close=99.0)
-        _add_close(session, ticker="JPM", period_start=as_of_iso, close=101.0)
-        _add_close(session, ticker="BAC", period_start=as_of_iso, close=98.0)
-        _add_close(session, ticker="SPY", period_start=as_of_iso, close=101.0)
+        _add_close(session, ticker=Symbol("AAPL"), period_start=as_of_iso, close=101.0)
+        _add_close(session, ticker=Symbol("MSFT"), period_start=as_of_iso, close=102.0)
+        _add_close(session, ticker=Symbol("GOOG"), period_start=as_of_iso, close=99.0)
+        _add_close(session, ticker=Symbol("JPM"), period_start=as_of_iso, close=101.0)
+        _add_close(session, ticker=Symbol("BAC"), period_start=as_of_iso, close=98.0)
+        _add_close(session, ticker=Symbol("SPY"), period_start=as_of_iso, close=101.0)
         session.commit()
 
         blocks = compute_breadth_internals(
@@ -215,10 +216,10 @@ class TestBreadthPctAboveEMA:
         for ticker in ("AAPL", "MSFT", "SPY"):
             _add_close(session, ticker=ticker, period_start=prev_iso, close=100.0)
         # AAPL +2%, MSFT +4% → equal-weight return = (0.02 + 0.04) / 2 = 0.03.
-        _add_close(session, ticker="AAPL", period_start=as_of_iso, close=102.0)
-        _add_close(session, ticker="MSFT", period_start=as_of_iso, close=104.0)
+        _add_close(session, ticker=Symbol("AAPL"), period_start=as_of_iso, close=102.0)
+        _add_close(session, ticker=Symbol("MSFT"), period_start=as_of_iso, close=104.0)
         # SPY +1% → cap-weight proxy = 0.01.
-        _add_close(session, ticker="SPY", period_start=as_of_iso, close=101.0)
+        _add_close(session, ticker=Symbol("SPY"), period_start=as_of_iso, close=101.0)
         session.commit()
 
         blocks = compute_breadth_internals(

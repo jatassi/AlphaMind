@@ -364,8 +364,8 @@ def test_strategy_recommendation_legs() -> None:
 def test_short_equity_with_snapshot_picks_up_borrow_cost() -> None:
     """AC-4: SHORT EQUITY with matching snapshot position picks up daily_borrow_cost_usd."""
     existing = _existing_equity(
-        position_id="POS-SHORT-1",
-        underlying="NVDA",
+        position_id=PositionId("POS-SHORT-1"),
+        underlying=Symbol("NVDA"),
         sector="semis",
         direction=Direction.SHORT,
         daily_borrow_cost_usd=12.50,
@@ -373,7 +373,7 @@ def test_short_equity_with_snapshot_picks_up_borrow_cost() -> None:
     snap = _snapshot(existing_positions={"POS-SHORT-1": existing})
     rec = _equity_recommendation(
         rec_id="REC-10",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         sector="semis",
         direction="short",
     )
@@ -388,7 +388,7 @@ def test_short_equity_no_snapshot_raises_translator_error() -> None:
     snap = _snapshot()  # empty existing_positions
     rec = _equity_recommendation(
         rec_id="REC-11",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         sector="semis",
         direction="short",
     )
@@ -661,7 +661,7 @@ def test_hold_assessment_raises_translator_error() -> None:
 def test_missing_position_id_raises_translator_error() -> None:
     """AC-12: position_id not in snapshot raises TranslatorError."""
     snap = _snapshot()  # empty existing_positions
-    assessment = _close_assessment(position_id="POS-MISSING")
+    assessment = _close_assessment(position_id=PositionId("POS-MISSING"))
     with pytest.raises(TranslatorError, match="POS-MISSING"):
         translate_position_assessment_to_proposed_delta(assessment, snapshot=snap)
 
@@ -692,7 +692,7 @@ def test_translator_output_accepted_by_evaluate_proposals() -> None:
 
     # Build a minimal snapshot with one existing LONG EQUITY position
     existing = _existing_equity(
-        position_id="POS-1",
+        position_id=PositionId("POS-1"),
         underlying=underlying,
         notional_usd=15_000.0,
         quantity=100.0,
@@ -779,7 +779,11 @@ def test_translator_output_accepted_by_evaluate_proposals() -> None:
     open_delta = translate_recommendation_to_proposed_delta(rec, snapshot=snap)
 
     close_assessment = _close_assessment(
-        sa_id="SA-1", position_id="POS-1", underlying=underlying, sector="tech", quantity="all"
+        sa_id="SA-1",
+        position_id=PositionId("POS-1"),
+        underlying=underlying,
+        sector="tech",
+        quantity="all",
     )
     close_delta = translate_position_assessment_to_proposed_delta(close_assessment, snapshot=snap)
 

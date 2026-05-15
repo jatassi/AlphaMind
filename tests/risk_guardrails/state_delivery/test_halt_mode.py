@@ -587,8 +587,12 @@ def test_halt_state_construction_requires_at_least_one_active() -> None:
 
 def test_render_analyst_header_halt_mode_full_fixture() -> None:
     held = (
-        _make_held_position(position_id="POS-NVDA-001", ticker="NVDA", sector="tech"),
-        _make_held_position(position_id="POS-MU-002", ticker="MU", sector="semis", size_pct=2.5),
+        _make_held_position(
+            position_id=PositionId("POS-NVDA-001"), ticker=Symbol("NVDA"), sector="tech"
+        ),
+        _make_held_position(
+            position_id=PositionId("POS-MU-002"), ticker=Symbol("MU"), sector="semis", size_pct=2.5
+        ),
     )
     view = _make_analyst_view(held_positions=held)
     rendered = render_analyst_header_halt_mode(
@@ -645,8 +649,12 @@ def test_render_analyst_header_halt_mode_full_fixture() -> None:
 def test_render_analyst_header_halt_mode_preserves_other_blocks() -> None:
     """Regression: halt-mode output (banner + capital block stripped) matches normal output."""
     held = (
-        _make_held_position(position_id="POS-NVDA-001", ticker="NVDA", sector="tech"),
-        _make_held_position(position_id="POS-MU-002", ticker="MU", sector="semis", size_pct=2.5),
+        _make_held_position(
+            position_id=PositionId("POS-NVDA-001"), ticker=Symbol("NVDA"), sector="tech"
+        ),
+        _make_held_position(
+            position_id=PositionId("POS-MU-002"), ticker=Symbol("MU"), sector="semis", size_pct=2.5
+        ),
     )
     view = _make_analyst_view(held_positions=held)
     common_kwargs: dict[str, Any] = {
@@ -805,9 +813,9 @@ def test_render_pm_header_halt_mode_full_fixture() -> None:
     view = _make_pm_view(positions=positions)
     pending_orders = (
         _make_pm_pending_order(
-            order_id="ORD-1001",
+            order_id=OrderId("ORD-1001"),
             direction=OrderDirection.BUY_TO_OPEN,
-            ticker="NVDA",
+            ticker=Symbol("NVDA"),
             limit_price=100.0,
             quantity=50.0,
             age_hours=1.5,
@@ -885,8 +893,8 @@ def test_render_pm_header_halt_mode_missing_price_raises_value_error() -> None:
     view = _make_pm_view()
     pending_orders = (
         _make_pm_pending_order(
-            order_id="ORD-1001",
-            ticker="MISSING",
+            order_id=OrderId("ORD-1001"),
+            ticker=Symbol("MISSING"),
             limit_price=100.0,
         ),
     )

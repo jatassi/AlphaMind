@@ -4,7 +4,7 @@ The persistence schema follows the design's three consumption modes — the
 parent ``theses`` row carries metadata cheap to filter on, and the child
 ``thesis_components`` rows carry per-component bodies loadable selectively.
 
-Some Pydantic fields (``key_catalyst``, ``age_hours``,
+Some dataclass fields (``key_catalyst``, ``age_hours``,
 ``expected_resolution_at``, ``resolution_pnl_usd``, ``entry_fill_gap_usd``,
 plus per-component ``linked_bracket_leg_type`` and ``generation_timestamp``)
 have no dedicated SQL column; they round-trip via the parent's
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Any
 
 from alphamind._kernel.ids import PositionId, ThesisId
 from alphamind.portfolio_state.records.orders import BracketLegType
@@ -40,6 +41,21 @@ def _parse_isoformat(text: str) -> datetime:
     return datetime.fromisoformat(text)
 
 
+def _key_assumption_to_dict(ka: KeyAssumption) -> dict[str, Any]:
+    return {
+        "text": ka.text,
+        "outcome": ka.outcome.value if ka.outcome is not None else None,
+    }
+
+
+def _key_assumption_from_dict(payload: dict[str, Any]) -> KeyAssumption:
+    raw = payload.get("outcome")
+    return KeyAssumption(
+        text=payload["text"],
+        outcome=ThesisComponentOutcome(raw) if raw is not None else None,
+    )
+
+
 def record_to_rows(
     record: ThesisRecord,
 ) -> tuple[ThesisRow, tuple[ThesisComponentRow, ...]]:
@@ -59,7 +75,9 @@ def record_to_rows(
                 linked_bracket_leg=comp.linked_bracket_leg_id,
                 instrument_reference=comp.instrument_reference,
                 narrative=comp.narrative,
-                key_assumptions_json=json.dumps([ka.model_dump() for ka in comp.key_assumptions]),
+                key_assumptions_json=json.dumps(
+                    [_key_assumption_to_dict(ka) for ka in comp.key_assumptions]
+                ),
                 supporting_signals_json="[]",
                 resolution_outcome=(
                     None if comp.resolution_outcome is None else comp.resolution_outcome.value
@@ -174,7 +192,7 @@ def _component_from_row(
         raise ValueError(msg)
 
     key_assumptions = tuple(
-        KeyAssumption.model_validate(item) for item in json.loads(row.key_assumptions_json)
+        _key_assumption_from_dict(item) for item in json.loads(row.key_assumptions_json)
     )
     return ThesisComponent(
         component_id=row.component_id,

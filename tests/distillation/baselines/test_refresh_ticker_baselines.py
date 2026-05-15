@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.baselines import refresh_ticker_baselines
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.persistence.models import (
@@ -129,7 +130,7 @@ class TestRefreshTickerBaselinesVolumeCalibrated:
         for day in range(1, 26):
             _add_ohlcv(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 period_start=f"2026-04-{day:02d}T00:00:00Z",
                 volume=day * 100_000,
             )
@@ -180,7 +181,7 @@ class TestRefreshTickerBaselinesBootstrapPath:
         for day in (1, 2, 3):
             _add_ohlcv(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 period_start=f"2026-04-2{day}T00:00:00Z",
                 volume=day * 1_000_000,
             )
@@ -223,7 +224,7 @@ class TestRefreshTickerBaselinesIdempotent:
         for day in range(1, 26):
             _add_ohlcv(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 period_start=f"2026-04-{day:02d}T00:00:00Z",
                 volume=day * 100_000,
             )
@@ -273,13 +274,13 @@ class TestRefreshTickerBaselinesFaultInjection:
         for day in range(1, 26):
             _add_ohlcv(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 period_start=f"2026-04-{day:02d}T00:00:00Z",
                 volume=day * 100_000,
             )
             _add_ohlcv(
                 session,
-                ticker="MSFT",
+                ticker=Symbol("MSFT"),
                 period_start=f"2026-04-{day:02d}T00:00:00Z",
                 volume=day * 200_000,
             )
@@ -336,7 +337,7 @@ class TestRefreshTickerBaselinesWelfordIncremental:
         for day in range(1, 26):
             _add_ohlcv(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 period_start=f"2026-04-{day:02d}T00:00:00Z",
                 volume=day * 100_000,
             )
@@ -371,7 +372,7 @@ class TestRefreshTickerBaselinesWelfordIncremental:
         for day in range(1, 26):
             _add_ohlcv(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 period_start=f"2026-04-{day:02d}T00:00:00Z",
                 volume=day * 100_000,
             )
@@ -393,7 +394,7 @@ class TestRefreshTickerBaselinesWelfordIncremental:
         for day in (26, 27):
             _add_ohlcv(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 period_start=f"2026-04-{day:02d}T00:00:00Z",
                 volume=day * 100_000,
             )
@@ -471,7 +472,7 @@ class TestRefreshTickerBaselinesWelfordIncremental:
         for day in range(1, 26):
             _add_ohlcv(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 period_start=f"2026-04-{day:02d}T00:00:00Z",
                 volume=day * 100_000,
             )
@@ -489,7 +490,7 @@ class TestRefreshTickerBaselinesWelfordIncremental:
         for day in (26, 27):
             _add_ohlcv(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 period_start=f"2026-04-{day:02d}T00:00:00Z",
                 volume=day * 100_000,
             )
@@ -509,7 +510,7 @@ class TestRefreshTickerBaselinesWelfordIncremental:
         for day in range(1, 28):
             _add_ohlcv(
                 session,
-                ticker="MSFT",
+                ticker=Symbol("MSFT"),
                 period_start=f"2026-04-{day:02d}T00:00:00Z",
                 volume=day * 100_000,
             )
@@ -539,7 +540,7 @@ class TestRefreshTickerBaselinesWelfordIncremental:
         for day in range(1, 26):
             _add_ohlcv(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 period_start=f"2026-04-{day:02d}T00:00:00Z",
                 volume=day * 100_000,
             )
@@ -585,7 +586,7 @@ class TestRefreshTickerBaselinesWelfordIncremental:
             current_dt = first_day + timedelta(days=day_offset)
             _add_ohlcv(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 period_start=current_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 volume=(day_offset + 1) * 100_000,
             )
@@ -634,7 +635,7 @@ class TestRefreshTickerBaselinesAtrKind:
         for day in range(1, 21):
             _add_ohlcv(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 period_start=f"2026-04-{day:02d}T00:00:00Z",
                 high=110.0,
                 low=100.0,
@@ -668,7 +669,7 @@ class TestRefreshTickerBaselinesSpreadKind:
         for day in range(1, 21):
             _add_ohlcv(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 period_start=f"2026-04-{day:02d}T00:00:00Z",
                 high=102.0,
                 low=98.0,
@@ -742,7 +743,7 @@ class TestRefreshTickerBaselinesSentimentKind:
             _add_news_article(
                 session,
                 article_id=f"art-{i:03d}",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 published_at=f"2026-03-{(i % 28) + 1:02d}T0{i % 10}:00:00Z",
                 sentiment_score=0.1 + 0.01 * (i % 5),
             )

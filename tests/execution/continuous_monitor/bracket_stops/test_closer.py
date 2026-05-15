@@ -361,7 +361,7 @@ class TestStrategyClose:
         log = FakeActivityLog()
         await submit_options_bracket_close(
             position=position,
-            bracket=_bracket(position_id="pos-st"),
+            bracket=_bracket(position_id=PositionId("pos-st")),
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
             activity_log=log.emit,
@@ -390,7 +390,7 @@ class TestStrategyClose:
         log = FakeActivityLog()
         await submit_options_bracket_close(
             position=position,
-            bracket=_bracket(position_id="pos-st"),
+            bracket=_bracket(position_id=PositionId("pos-st")),
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
             activity_log=log.emit,
@@ -446,7 +446,7 @@ class TestUnsupportedInstrument:
         with pytest.raises(TypeError):
             await submit_options_bracket_close(
                 position=equity,
-                bracket=_bracket(position_id="pos-eq"),
+                bracket=_bracket(position_id=PositionId("pos-eq")),
                 trigger_reason=PositionExitMethod.STOP_TRIGGERED,
                 submitter=submitter,
                 activity_log=log.emit,

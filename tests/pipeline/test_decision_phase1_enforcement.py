@@ -51,18 +51,16 @@ def _progressive_tiers() -> tuple[ProgressiveTier, ...]:
 
 
 def _drawdown_state(*, current_drawdown_pct: float = 0.0) -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": current_drawdown_pct,
-            "equity_high_water_mark_usd": 100_000.0,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": current_drawdown_pct,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=current_drawdown_pct,
+        equity_high_water_mark_usd=100_000.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=current_drawdown_pct,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 

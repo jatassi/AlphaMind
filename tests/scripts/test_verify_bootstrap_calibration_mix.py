@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import (
     AssetUniverse,
     DistillationPairLag,
@@ -313,7 +314,7 @@ def test_cold_start_skipped_when_window_already_filled(session: Session) -> None
     for i in range(10):
         _seed_baseline(
             session,
-            ticker=f"T{i:02d}",
+            ticker=Symbol(f"T{i:02d}"),
             kind="volume",
             state="bootstrap",
             n_obs=252,
@@ -338,7 +339,7 @@ def test_cold_start_skipped_when_a_row_is_calibrated(session: Session) -> None:
         state = "calibrated" if i < 5 else "bootstrap"
         _seed_baseline(
             session,
-            ticker=f"T{i:02d}",
+            ticker=Symbol(f"T{i:02d}"),
             kind="volume",
             state=state,
             n_obs=5 if state == "bootstrap" else 200,
@@ -394,7 +395,7 @@ def test_fully_calibrated_sentiment_defers_upper_bound(session: Session) -> None
     for i in range(10):
         _seed_baseline(
             session,
-            ticker=f"T{i:02d}",
+            ticker=Symbol(f"T{i:02d}"),
             kind="sentiment",
             state="calibrated",
             n_obs=200,
@@ -454,7 +455,7 @@ def test_post_bootstrap_renderer_shows_deferred(session: Session) -> None:
     # Need at least one ticker baseline row so the empty-table failure
     # doesn't fire and clobber the PASS we want to assert.
     _seed_baseline(
-        session, ticker="T00", kind="volume", state="calibrated", n_obs=200, window_days=20
+        session, ticker=Symbol("T00"), kind="volume", state="calibrated", n_obs=200, window_days=20
     )
     session.commit()
 

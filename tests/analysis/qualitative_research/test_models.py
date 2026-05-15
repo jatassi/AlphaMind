@@ -6,8 +6,8 @@ Exercises every invariant via direct construction (not parser round-trip).
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
 
+from alphamind._kernel.ids import Symbol
 from alphamind.analysis.qualitative_research.models import (
     CatalystWatch,
     EvidenceLine,
@@ -158,20 +158,20 @@ class TestEvidenceLine:
         assert e.citation == "[ND-M1]"
 
     def test_empty_source_type_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_evidence(source_type="")
 
     def test_empty_observation_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_evidence(observation="")
 
     def test_empty_citation_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_evidence(citation="")
 
     def test_immutable(self) -> None:
         e = _make_evidence()
-        with pytest.raises((ValidationError, TypeError)):
+        with pytest.raises((ValueError, TypeError, TypeError)):
             e.source_type = "other"  # type: ignore[misc]
 
 
@@ -193,20 +193,20 @@ class TestNarrativeThread:
 
     def test_wrong_prefix_rejected(self) -> None:
         """QR-CW-1 does not match ^QR-\\d+$."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_thread(thread_id="QR-CW-1")
 
     def test_non_qr_prefix_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_thread(thread_id="SA-TECH-1")
 
     def test_single_evidence_line_rejected(self) -> None:
         """Design doc requires minimum two input sources per thread."""
-        with pytest.raises(ValidationError, match="two"):
+        with pytest.raises((ValueError, TypeError), match="two"):
             _make_thread(evidence=(_make_evidence(),))
 
     def test_zero_evidence_lines_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_thread(evidence=())
 
     def test_two_evidence_lines_accepted(self) -> None:
@@ -223,24 +223,24 @@ class TestNarrativeThread:
         assert len(t.evidence) == 3
 
     def test_empty_summary_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_thread(summary="")
 
     def test_empty_relevance_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_thread(relevance="")
 
     def test_empty_subject_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_thread(subject="")
 
     def test_empty_implication_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_thread(implication="")
 
     def test_immutable(self) -> None:
         t = _make_thread()
-        with pytest.raises((ValidationError, TypeError)):
+        with pytest.raises((ValueError, TypeError, TypeError)):
             t.summary = "changed"  # type: ignore[misc]
 
 
@@ -263,15 +263,15 @@ class TestCatalystWatch:
 
     def test_wrong_prefix_qr_only_rejected(self) -> None:
         """QR-1 does not match ^QR-CW-\\d+$."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_catalyst_watch(catalyst_id="QR-1")
 
     def test_wrong_prefix_sa_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_catalyst_watch(catalyst_id="SA-TECH-1")
 
     def test_negative_hours_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_catalyst_watch(hours_to_event=-1)
 
     def test_zero_hours_accepted(self) -> None:
@@ -279,12 +279,12 @@ class TestCatalystWatch:
         assert c.hours_to_event == 0
 
     def test_empty_ticker_rejected(self) -> None:
-        with pytest.raises(ValidationError):
-            _make_catalyst_watch(ticker="")
+        with pytest.raises((ValueError, TypeError)):
+            _make_catalyst_watch(ticker=Symbol(""))
 
     def test_immutable(self) -> None:
         c = _make_catalyst_watch()
-        with pytest.raises((ValidationError, TypeError)):
+        with pytest.raises((ValueError, TypeError, TypeError)):
             c.ticker = "AAPL"  # type: ignore[misc]
 
 
@@ -308,20 +308,20 @@ class TestSentimentSnapshot:
         assert s.extremes == "none"
 
     def test_empty_extremes_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             SentimentSnapshot(extremes="", divergences="none", regime="neutral")
 
     def test_empty_divergences_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             SentimentSnapshot(extremes="none", divergences="", regime="neutral")
 
     def test_empty_regime_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             SentimentSnapshot(extremes="none", divergences="none", regime="")
 
     def test_immutable(self) -> None:
         s = _make_sentiment()
-        with pytest.raises((ValidationError, TypeError)):
+        with pytest.raises((ValueError, TypeError, TypeError)):
             s.regime = "changed"  # type: ignore[misc]
 
 
@@ -338,7 +338,7 @@ class TestQualitativeBrief:
 
     def test_degraded_requires_reason(self) -> None:
         """DEGRADED signal quality must carry a reason string."""
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             _make_brief(signal_quality=SignalQuality.DEGRADED, signal_quality_reason=None)
 
     def test_degraded_with_reason_accepted(self) -> None:
@@ -352,12 +352,12 @@ class TestQualitativeBrief:
     def test_non_degraded_with_reason_rejected(self) -> None:
         """Reason must be None when quality is not DEGRADED."""
         for quality in (SignalQuality.HIGH, SignalQuality.MODERATE, SignalQuality.LOW):
-            with pytest.raises(ValidationError):
+            with pytest.raises((ValueError, TypeError)):
                 _make_brief(signal_quality=quality, signal_quality_reason="some reason")
 
     def test_empty_threads_rejected(self) -> None:
         """At least one narrative thread is always required."""
-        with pytest.raises(ValidationError, match=r"(?i)thread"):
+        with pytest.raises((ValueError, TypeError), match=r"(?i)thread"):
             _make_brief(threads=())
 
     def test_empty_catalyst_watches_accepted(self) -> None:
@@ -367,7 +367,7 @@ class TestQualitativeBrief:
 
     def test_immutable(self) -> None:
         b = _make_brief()
-        with pytest.raises((ValidationError, TypeError)):
+        with pytest.raises((ValueError, TypeError, TypeError)):
             b.invocation_id = "changed"  # type: ignore[misc]
 
 

@@ -10,6 +10,7 @@ Tests use ``unittest.mock.MagicMock`` for the alpaca-py client so the suite
 runs offline. Mirrors the sibling ``tests/execution/broker_adapter/test_*``
 fixture pattern.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -226,20 +227,18 @@ async def _seed_cash_ledger(
     current_cash_usd: float = 100_000.0,
     reserved_capital_usd: float = 0.0,
 ) -> None:
-    record = CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": reserved_capital_usd,
-            "available_buying_power_usd": current_cash_usd - reserved_capital_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    record = CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=reserved_capital_usd,
+        available_buying_power_usd=current_cash_usd - reserved_capital_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
     async with factory() as sess:
         sess.add(cash_ledger_record_to_row(record, last_updated_at=_NOW))
@@ -269,21 +268,19 @@ def _open_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -405,20 +402,18 @@ async def _seed_substrate_with_cash(
     cash_usd: float = 100_000.0,
 ) -> None:
     """Seed process lifetime + cash ledger in one transaction."""
-    cash = CashLedger.model_validate(
-        {
-            "current_cash_usd": cash_usd,
-            "settled_cash_usd": cash_usd,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": cash_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    cash = CashLedger(
+        current_cash_usd=cash_usd,
+        settled_cash_usd=cash_usd,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=cash_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
     async with factory() as sess:
         sess.add(process_lifetime_record_to_row(_make_process_lifetime()))
@@ -1029,7 +1024,7 @@ async def test_pm_envelope_close_equity_routes_through_dispatcher(
 
         envelope = _make_strategist_envelope(
             verdict="approve",
-            commands=(_close_command(position_id="POS-NVDA-001"),),
+            commands=(_close_command(position_id=PositionId("POS-NVDA-001")),),
         )
         validation_state = _make_validation_state()
         state = build_initial_submit_envelope_state(
@@ -1298,21 +1293,19 @@ def _options_open_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": "THE-OPT-1",
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=ThesisId("THE-OPT-1"),
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -1400,21 +1393,19 @@ def _strategy_open_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": "THE-STRAT-1",
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=ThesisId("THE-STRAT-1"),
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -1536,14 +1527,16 @@ async def test_adjust_command_context_options_position_routes_us_option_simple(
         await _seed_position_cluster(
             factory,
             _options_open_position(),
-            _active_thesis(thesis_id="THE-OPT-1", position_id="POS-OPT-001"),
-            _active_bracket(bracket_id="BRK-OPT-1", position_id="POS-OPT-001"),
+            _active_thesis(thesis_id=ThesisId("THE-OPT-1"), position_id=PositionId("POS-OPT-001")),
+            _active_bracket(
+                bracket_id=BracketId("BRK-OPT-1"), position_id=PositionId("POS-OPT-001")
+            ),
         )
         await _seed_pending_protective_orders(
             factory,
-            bracket_id="BRK-OPT-1",
-            position_id="POS-OPT-001",
-            thesis_id="THE-OPT-1",
+            bracket_id=BracketId("BRK-OPT-1"),
+            position_id=PositionId("POS-OPT-001"),
+            thesis_id=ThesisId("THE-OPT-1"),
         )
 
         ctx, handle = await _open_handle(factory)
@@ -1578,14 +1571,18 @@ async def test_adjust_command_context_strategy_position_routes_mleg(
         await _seed_position_cluster(
             factory,
             _strategy_open_position(),
-            _active_thesis(thesis_id="THE-STRAT-1", position_id="POS-STRAT-001"),
-            _active_bracket(bracket_id="BRK-STRAT-1", position_id="POS-STRAT-001"),
+            _active_thesis(
+                thesis_id=ThesisId("THE-STRAT-1"), position_id=PositionId("POS-STRAT-001")
+            ),
+            _active_bracket(
+                bracket_id=BracketId("BRK-STRAT-1"), position_id=PositionId("POS-STRAT-001")
+            ),
         )
         await _seed_pending_protective_orders(
             factory,
-            bracket_id="BRK-STRAT-1",
-            position_id="POS-STRAT-001",
-            thesis_id="THE-STRAT-1",
+            bracket_id=BracketId("BRK-STRAT-1"),
+            position_id=PositionId("POS-STRAT-001"),
+            thesis_id=ThesisId("THE-STRAT-1"),
         )
 
         ctx, handle = await _open_handle(factory)
@@ -1625,9 +1622,9 @@ async def test_adjust_command_context_targets_take_profit_when_target_change(
         )
         await _seed_pending_protective_orders(
             factory,
-            bracket_id="BRK-NVDA-1",
-            position_id="POS-NVDA-001",
-            thesis_id="THE-NVDA-1",
+            bracket_id=BracketId("BRK-NVDA-1"),
+            position_id=PositionId("POS-NVDA-001"),
+            thesis_id=ThesisId("THE-NVDA-1"),
         )
 
         ctx, handle = await _open_handle(factory)

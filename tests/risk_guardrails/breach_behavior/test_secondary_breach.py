@@ -13,8 +13,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
 
+from alphamind._kernel.ids import PositionId, Symbol
 from alphamind.risk_guardrails.breach_behavior import (
     BreachBehaviorConfig,
     ProposedClose,
@@ -138,8 +138,8 @@ def default_config() -> BreachBehaviorConfig:
 def proposed_close() -> ProposedClose:
     """A garden-variety partial trim of a long equity position."""
     return ProposedClose(
-        position_id="pos_long_aapl_001",
-        ticker="AAPL",
+        position_id=PositionId("pos_long_aapl_001"),
+        ticker=Symbol("AAPL"),
         asset_type="equity",
         direction="long",
         pre_close_size_pct_of_portfolio=10.0,
@@ -225,8 +225,8 @@ def test_deferred_to_pm_when_close_introduces_new_fail(
 ) -> None:
     """Closing a $30K short pushes net long from 20% to 50% over a 25% limit."""
     proposed = ProposedClose(
-        position_id="pos_short_xyz_001",
-        ticker="XYZ",
+        position_id=PositionId("pos_short_xyz_001"),
+        ticker=Symbol("XYZ"),
         asset_type="equity",
         direction="short",
         pre_close_size_pct_of_portfolio=30.0,
@@ -419,10 +419,10 @@ def test_library_evaluation_error_propagates_with_wrapper(
 
 
 def test_proposed_close_rejects_close_pct_exceeding_pre_close_pct() -> None:
-    with pytest.raises(ValidationError, match=r"close_size_pct_of_portfolio"):
+    with pytest.raises((ValueError, TypeError), match=r"close_size_pct_of_portfolio"):
         ProposedClose(
-            position_id="pos",
-            ticker="AAPL",
+            position_id=PositionId("pos"),
+            ticker=Symbol("AAPL"),
             asset_type="equity",
             direction="long",
             pre_close_size_pct_of_portfolio=10.0,
@@ -433,10 +433,10 @@ def test_proposed_close_rejects_close_pct_exceeding_pre_close_pct() -> None:
 
 
 def test_proposed_close_rejects_close_usd_exceeding_pre_close_usd() -> None:
-    with pytest.raises(ValidationError, match=r"close_size_usd"):
+    with pytest.raises((ValueError, TypeError), match=r"close_size_usd"):
         ProposedClose(
-            position_id="pos",
-            ticker="AAPL",
+            position_id=PositionId("pos"),
+            ticker=Symbol("AAPL"),
             asset_type="equity",
             direction="long",
             pre_close_size_pct_of_portfolio=10.0,
@@ -447,10 +447,10 @@ def test_proposed_close_rejects_close_usd_exceeding_pre_close_usd() -> None:
 
 
 def test_proposed_close_rejects_zero_or_negative_close_pct() -> None:
-    with pytest.raises(ValidationError, match=r"must be > 0"):
+    with pytest.raises((ValueError, TypeError), match=r"must be > 0"):
         ProposedClose(
-            position_id="pos",
-            ticker="AAPL",
+            position_id=PositionId("pos"),
+            ticker=Symbol("AAPL"),
             asset_type="equity",
             direction="long",
             pre_close_size_pct_of_portfolio=10.0,
@@ -463,8 +463,8 @@ def test_proposed_close_rejects_zero_or_negative_close_pct() -> None:
 def test_proposed_close_full_close_round_trip() -> None:
     """A FULL_CLOSE has close_size == pre_close_size; construction succeeds."""
     pc = ProposedClose(
-        position_id="pos_full",
-        ticker="AAPL",
+        position_id=PositionId("pos_full"),
+        ticker=Symbol("AAPL"),
         asset_type="equity",
         direction="long",
         pre_close_size_pct_of_portfolio=10.0,
@@ -478,8 +478,8 @@ def test_proposed_close_full_close_round_trip() -> None:
 def test_proposed_close_partial_trim_round_trip() -> None:
     """A PARTIAL_TRIM has close_size < pre_close_size; construction succeeds."""
     pc = ProposedClose(
-        position_id="pos_trim",
-        ticker="AAPL",
+        position_id=PositionId("pos_trim"),
+        ticker=Symbol("AAPL"),
         asset_type="equity",
         direction="long",
         pre_close_size_pct_of_portfolio=10.0,
@@ -537,8 +537,8 @@ def test_a6_short_squeeze_protective_close_no_secondary(
 ) -> None:
     """A6 from scenario-tests.md: closing a max-loss short reduces risk; no secondary."""
     proposed = ProposedClose(
-        position_id="pos_short_breached",
-        ticker="GME",
+        position_id=PositionId("pos_short_breached"),
+        ticker=Symbol("GME"),
         asset_type="equity",
         direction="short",
         pre_close_size_pct_of_portfolio=4.0,
@@ -592,8 +592,8 @@ def test_constructed_short_close_pushes_net_long_over_limit(
 ) -> None:
     """$30K short on $100K portfolio; closing brings net long from 20% to 50% over 25%."""
     proposed = ProposedClose(
-        position_id="pos_short_30k",
-        ticker="XYZ",
+        position_id=PositionId("pos_short_30k"),
+        ticker=Symbol("XYZ"),
         asset_type="equity",
         direction="short",
         pre_close_size_pct_of_portfolio=30.0,
@@ -695,7 +695,7 @@ def test_returned_result_is_frozen(
         evaluate_proposals=library,
     )
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         result.result = SecondaryBreachOutcome.DEFERRED_TO_PM
 
 

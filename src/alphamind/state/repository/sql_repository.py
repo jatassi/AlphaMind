@@ -162,19 +162,17 @@ def _empty_thesis_quality_aggregate(now: datetime) -> ThesisQualityAggregate:
     this story serves an empty default so the snapshot assembler can produce
     a valid ``PortfolioStateSnapshot`` without aggregate data.
     """
-    return ThesisQualityAggregate.model_validate(
-        {
-            "as_of_timestamp": now,
-            "resolution_counts_by_window": (),
-            "duration_stats_by_window": (),
-            "invalidation_timing_stats_by_window": (),
-            "signal_hit_rates": (),
-            "signal_to_thesis_conversions": (),
-            "conviction_calibration": (),
-            "conviction_sizing_deviation_by_window": (),
-            "performance_attribution": (),
-            "alpha_beta_decomposition_by_window": (),
-        }
+    return ThesisQualityAggregate(
+        as_of_timestamp=now,
+        resolution_counts_by_window=(),
+        duration_stats_by_window=(),
+        invalidation_timing_stats_by_window=(),
+        signal_hit_rates=(),
+        signal_to_thesis_conversions=(),
+        conviction_calibration=(),
+        conviction_sizing_deviation_by_window=(),
+        performance_attribution=(),
+        alpha_beta_decomposition_by_window=(),
     )
 
 

@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.config.models.distillation import LeadLag, LeadLagPair, PredictionMarket
 from alphamind.distillation._config_domain import (
     LeadLagDomainConfig,
@@ -333,13 +334,13 @@ class TestSectorPooledVolumeBaseline:
     """Pool calibrated per-ticker volume baselines across a sector."""
 
     def test_returns_mean_and_stdev_across_sector_tickers(self, session: Session) -> None:
-        _add_universe_ticker(session, ticker="AAPL", sector="tech")
-        _add_universe_ticker(session, ticker="MSFT", sector="tech")
-        _add_universe_ticker(session, ticker="JPM", sector="financials")
+        _add_universe_ticker(session, ticker=Symbol("AAPL"), sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("MSFT"), sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("JPM"), sector="financials")
         as_of = "2026-04-25T00:00:00Z"
         _add_ticker_baseline(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             baseline_kind="volume",
             as_of=as_of,
             mean=10.0,
@@ -347,7 +348,7 @@ class TestSectorPooledVolumeBaseline:
         )
         _add_ticker_baseline(
             session,
-            ticker="MSFT",
+            ticker=Symbol("MSFT"),
             baseline_kind="volume",
             as_of=as_of,
             mean=20.0,
@@ -355,7 +356,7 @@ class TestSectorPooledVolumeBaseline:
         )
         _add_ticker_baseline(
             session,
-            ticker="JPM",
+            ticker=Symbol("JPM"),
             baseline_kind="volume",
             as_of=as_of,
             mean=50.0,
@@ -377,12 +378,12 @@ class TestSectorPooledVolumeBaseline:
     def test_excludes_uncalibrated_baselines_from_pool(self, session: Session) -> None:
         """Bootstrap-tagged baselines do not seed the pool — they are themselves
         downstream of a fallback and would inject circular noise."""
-        _add_universe_ticker(session, ticker="AAPL", sector="tech")
-        _add_universe_ticker(session, ticker="MSFT", sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("AAPL"), sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("MSFT"), sector="tech")
         as_of = "2026-04-25T00:00:00Z"
         _add_ticker_baseline(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             baseline_kind="volume",
             as_of=as_of,
             mean=10.0,
@@ -391,7 +392,7 @@ class TestSectorPooledVolumeBaseline:
         )
         _add_ticker_baseline(
             session,
-            ticker="MSFT",
+            ticker=Symbol("MSFT"),
             baseline_kind="volume",
             as_of=as_of,
             mean=999.0,
@@ -410,11 +411,11 @@ class TestSectorPooledVolumeBaseline:
     def test_returns_none_when_only_other_sector_tickers_have_baselines(
         self, session: Session
     ) -> None:
-        _add_universe_ticker(session, ticker="JPM", sector="financials")
+        _add_universe_ticker(session, ticker=Symbol("JPM"), sector="financials")
         as_of = "2026-04-25T00:00:00Z"
         _add_ticker_baseline(
             session,
-            ticker="JPM",
+            ticker=Symbol("JPM"),
             baseline_kind="volume",
             as_of=as_of,
             mean=50.0,
@@ -431,12 +432,12 @@ class TestSectorPooledAtrBaseline:
     """Same shape as the volume baseline; reads the ``atr`` baseline kind."""
 
     def test_returns_mean_and_stdev_across_sector_tickers(self, session: Session) -> None:
-        _add_universe_ticker(session, ticker="AAPL", sector="tech")
-        _add_universe_ticker(session, ticker="MSFT", sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("AAPL"), sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("MSFT"), sector="tech")
         as_of = "2026-04-25T00:00:00Z"
         _add_ticker_baseline(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             baseline_kind="atr",
             as_of=as_of,
             mean=2.0,
@@ -444,7 +445,7 @@ class TestSectorPooledAtrBaseline:
         )
         _add_ticker_baseline(
             session,
-            ticker="MSFT",
+            ticker=Symbol("MSFT"),
             baseline_kind="atr",
             as_of=as_of,
             mean=4.0,
@@ -465,11 +466,11 @@ class TestSectorPooledAtrBaseline:
 
     def test_does_not_blend_volume_into_atr_pool(self, session: Session) -> None:
         """Different ``baseline_kind`` rows are isolated; the pool is per-kind."""
-        _add_universe_ticker(session, ticker="AAPL", sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("AAPL"), sector="tech")
         as_of = "2026-04-25T00:00:00Z"
         _add_ticker_baseline(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             baseline_kind="volume",
             as_of=as_of,
             mean=999.0,
@@ -485,12 +486,12 @@ class TestUniversePooledSentimentDistribution:
     """Pool calibrated per-ticker sentiment baselines across the whole universe."""
 
     def test_returns_pooled_mean_and_stdev_across_universe(self, session: Session) -> None:
-        _add_universe_ticker(session, ticker="AAPL", sector="tech")
-        _add_universe_ticker(session, ticker="JPM", sector="financials")
+        _add_universe_ticker(session, ticker=Symbol("AAPL"), sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("JPM"), sector="financials")
         as_of = "2026-04-25T00:00:00Z"
         _add_ticker_baseline(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             baseline_kind="sentiment",
             as_of=as_of,
             mean=0.20,
@@ -498,7 +499,7 @@ class TestUniversePooledSentimentDistribution:
         )
         _add_ticker_baseline(
             session,
-            ticker="JPM",
+            ticker=Symbol("JPM"),
             baseline_kind="sentiment",
             as_of=as_of,
             mean=0.10,
@@ -519,9 +520,9 @@ class TestUniversePooledSentimentDistribution:
 
     def test_pool_spans_sectors(self, session: Session) -> None:
         """Sentiment is universe-wide, not sector-segmented."""
-        _add_universe_ticker(session, ticker="AAPL", sector="tech")
-        _add_universe_ticker(session, ticker="JPM", sector="financials")
-        _add_universe_ticker(session, ticker="XOM", sector="energy")
+        _add_universe_ticker(session, ticker=Symbol("AAPL"), sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("JPM"), sector="financials")
+        _add_universe_ticker(session, ticker=Symbol("XOM"), sector="energy")
         as_of = "2026-04-25T00:00:00Z"
         for ticker in ("AAPL", "JPM", "XOM"):
             _add_ticker_baseline(
@@ -551,13 +552,13 @@ class TestSectorPooledGapFillRate:
     """``count(filled) / count(*)`` over sector gap events at or before ``as_of``."""
 
     def test_returns_fill_rate_across_sector_gap_events(self, session: Session) -> None:
-        _add_universe_ticker(session, ticker="AAPL", sector="tech")
-        _add_universe_ticker(session, ticker="MSFT", sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("AAPL"), sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("MSFT"), sector="tech")
         # AAPL: 2 of 4 gaps filled. MSFT: 2 of 2 filled. Sector rate = 4/6.
         for i, outcome in enumerate(("filled", "unfilled", "filled", "unfilled")):
             _add_event(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 event_kind="gap",
                 event_ts=f"2026-04-2{i}T13:30:00Z",
                 outcome=outcome,
@@ -565,7 +566,7 @@ class TestSectorPooledGapFillRate:
         for i, outcome in enumerate(("filled", "filled")):
             _add_event(
                 session,
-                ticker="MSFT",
+                ticker=Symbol("MSFT"),
                 event_kind="gap",
                 event_ts=f"2026-04-1{i}T13:30:00Z",
                 outcome=outcome,
@@ -582,10 +583,10 @@ class TestSectorPooledGapFillRate:
 
     def test_excludes_extended_hours_events_from_gap_pool(self, session: Session) -> None:
         """Different ``event_kind``s do not pool together."""
-        _add_universe_ticker(session, ticker="AAPL", sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("AAPL"), sector="tech")
         _add_event(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_kind="extended_hours",
             event_ts="2026-04-25T20:00:00Z",
             outcome="confirmed",
@@ -596,10 +597,10 @@ class TestSectorPooledGapFillRate:
         assert rate is None
 
     def test_excludes_other_sectors(self, session: Session) -> None:
-        _add_universe_ticker(session, ticker="JPM", sector="financials")
+        _add_universe_ticker(session, ticker=Symbol("JPM"), sector="financials")
         _add_event(
             session,
-            ticker="JPM",
+            ticker=Symbol("JPM"),
             event_kind="gap",
             event_ts="2026-04-25T13:30:00Z",
             outcome="filled",
@@ -611,10 +612,10 @@ class TestSectorPooledGapFillRate:
 
     def test_excludes_events_after_as_of(self, session: Session) -> None:
         """Events after ``as_of`` are not yet observable."""
-        _add_universe_ticker(session, ticker="AAPL", sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("AAPL"), sector="tech")
         _add_event(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_kind="gap",
             event_ts="2026-05-01T13:30:00Z",
             outcome="filled",
@@ -640,12 +641,12 @@ class TestUniversePooledExtendedHoursConfirmationRate:
         assert rate == EXTENDED_HOURS_BOOTSTRAP_RATE
 
     def test_returns_observed_rate_across_universe(self, session: Session) -> None:
-        _add_universe_ticker(session, ticker="AAPL", sector="tech")
-        _add_universe_ticker(session, ticker="JPM", sector="financials")
+        _add_universe_ticker(session, ticker=Symbol("AAPL"), sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("JPM"), sector="financials")
         for i, outcome in enumerate(("confirmed", "confirmed", "rejected")):
             _add_event(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 event_kind="extended_hours",
                 event_ts=f"2026-04-2{i}T20:00:00Z",
                 outcome=outcome,
@@ -653,7 +654,7 @@ class TestUniversePooledExtendedHoursConfirmationRate:
         # JPM contributes one rejected event.
         _add_event(
             session,
-            ticker="JPM",
+            ticker=Symbol("JPM"),
             event_kind="extended_hours",
             event_ts="2026-04-25T20:00:00Z",
             outcome="rejected",
@@ -667,11 +668,11 @@ class TestUniversePooledExtendedHoursConfirmationRate:
         assert rate == pytest.approx(0.5)
 
     def test_observed_rate_distinguishable_from_prior(self, session: Session) -> None:
-        _add_universe_ticker(session, ticker="AAPL", sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("AAPL"), sector="tech")
         for i, outcome in enumerate(("confirmed", "confirmed", "confirmed", "rejected")):
             _add_event(
                 session,
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 event_kind="extended_hours",
                 event_ts=f"2026-04-2{i}T20:00:00Z",
                 outcome=outcome,
@@ -685,10 +686,10 @@ class TestUniversePooledExtendedHoursConfirmationRate:
 
     def test_excludes_gap_events(self, session: Session) -> None:
         """Different ``event_kind``s do not pool together."""
-        _add_universe_ticker(session, ticker="AAPL", sector="tech")
+        _add_universe_ticker(session, ticker=Symbol("AAPL"), sector="tech")
         _add_event(
             session,
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             event_kind="gap",
             event_ts="2026-04-25T13:30:00Z",
             outcome="filled",

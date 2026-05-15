@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience
 from alphamind.distillation.q7 import compute_intra_sector_correlation
@@ -138,8 +139,8 @@ class TestIntraSectorCorrelationHappyPath:
         _add_ticker(session, "AAPL")
         _add_ticker(session, "MSFT")
         log_returns = [0.01, -0.02, 0.015]
-        _seed_synthetic_log_returns(session, ticker="AAPL", log_returns=log_returns)
-        _seed_synthetic_log_returns(session, ticker="MSFT", log_returns=log_returns)
+        _seed_synthetic_log_returns(session, ticker=Symbol("AAPL"), log_returns=log_returns)
+        _seed_synthetic_log_returns(session, ticker=Symbol("MSFT"), log_returns=log_returns)
         session.commit()
 
         as_of = datetime(2026, 4, 4, tzinfo=UTC)

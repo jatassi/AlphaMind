@@ -486,7 +486,7 @@ class TestTighteningWithBreaches:
     ) -> None:
         _persist_prior(session, active_regime=Regime.normal)
         # crisis position_max_size_pct: 5.0 * 0.40 = 2.0; position is at 4.0
-        breaching = _equity_position(position_id="POS-1", position_weight_pct=4.0)
+        breaching = _equity_position(position_id=PositionId("POS-1"), position_weight_pct=4.0)
         inputs = _build_inputs(
             loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,
@@ -1152,7 +1152,7 @@ class TestAggregateBreachOnTightening:
         budget = RiskBudgetConsumption(
             entries=(_budget_entry("gross_exposure_pct", current_value=80.0),)
         )
-        anchor = _equity_position(position_id="ANCHOR", position_weight_pct=1.0)
+        anchor = _equity_position(position_id=PositionId("ANCHOR"), position_weight_pct=1.0)
         inputs = _build_inputs(
             loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,

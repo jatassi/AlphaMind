@@ -17,6 +17,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,
@@ -76,7 +77,7 @@ def seeded_universe(session: Session) -> AssetUniverse:
     """Insert a minimal AssetUniverse row so FK constraints can be satisfied."""
     row = AssetUniverse(
         asset_id="asset-aapl",
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         full_name="Apple Inc.",
         asset_class="equity",
         asset_role="universe",
@@ -174,7 +175,7 @@ class TestRoundTrips:
 
     def test_sector_classification(self, session: Session, seeded_universe: AssetUniverse) -> None:
         row = SectorClassification(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             asset_id="asset-aapl",
             alphamind_sector="tech",
             domain_researcher="tech_semis",
@@ -190,7 +191,7 @@ class TestRoundTrips:
 
     def test_etf_membership(self, session: Session, seeded_universe: AssetUniverse) -> None:
         row = EtfMembership(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             etf_ticker="XLK",
             etf_name="Tech Select Sector SPDR",
             weight_pct=22.5,
@@ -219,7 +220,7 @@ class TestRoundTrips:
 
     def test_ohlcv_bars(self, session: Session, seeded_universe: AssetUniverse) -> None:
         row = OhlcvBars(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             timeframe="1d",
             period_start="2026-04-25T09:30:00Z",
             period_end="2026-04-25T16:00:00Z",
@@ -246,7 +247,7 @@ class TestRoundTrips:
     def test_corporate_actions(self, session: Session, seeded_universe: AssetUniverse) -> None:
         row = CorporateActions(
             action_id="act-001",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             action_type="split",
             ex_date="2026-03-01",
             source="polygon",
@@ -261,7 +262,7 @@ class TestRoundTrips:
     def test_options_contracts(self, session: Session, seeded_universe: AssetUniverse) -> None:
         row = OptionsContracts(
             contract_ticker="O:AAPL250117C00200000",
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             expiration_date="2025-01-17",
             strike_price=200.0,
             contract_type="call",
@@ -281,7 +282,7 @@ class TestRoundTrips:
         # Requires parent options contract
         contract = OptionsContracts(
             contract_ticker="O:AAPL250117C00200000",
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             expiration_date="2025-01-17",
             strike_price=200.0,
             contract_type="call",
@@ -294,7 +295,7 @@ class TestRoundTrips:
         row = OptionsContractSnapshots(
             snapshot_ts="2026-04-26T15:00:00Z",
             contract_ticker="O:AAPL250117C00200000",
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             source="polygon",
             ingested_at="2026-04-26T15:01:00Z",
         )
@@ -367,7 +368,7 @@ class TestRoundTrips:
         session.flush()
         detail = EarningsEventDetails(
             event_id="evt-earn-001",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             fiscal_period="Q1",
             fiscal_year=2026,
             source="finnhub",
@@ -406,7 +407,7 @@ class TestRoundTrips:
         session.flush()
         link = NewsArticleTickers(
             article_id="art-002",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             is_primary=1,
         )
         session.add(link)
@@ -478,7 +479,7 @@ class TestCompositeKeyUniqueness:
     ) -> None:
         def make_bar() -> OhlcvBars:
             return OhlcvBars(
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 timeframe="1d",
                 period_start="2026-04-25T09:30:00Z",
                 period_end="2026-04-25T16:00:00Z",
@@ -525,7 +526,7 @@ class TestCompositeKeyUniqueness:
     ) -> None:
         contract = OptionsContracts(
             contract_ticker="O:AAPL250117C00200000",
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             expiration_date="2025-01-17",
             strike_price=200.0,
             contract_type="call",
@@ -540,7 +541,7 @@ class TestCompositeKeyUniqueness:
             return OptionsContractSnapshots(
                 snapshot_ts="2026-04-26T15:00:00Z",
                 contract_ticker="O:AAPL250117C00200000",
-                underlying_ticker="AAPL",
+                underlying_ticker=Symbol("AAPL"),
                 source="polygon",
                 ingested_at="2026-04-26T15:01:00Z",
             )
@@ -561,7 +562,7 @@ class TestForeignKeyConstraints:
     def test_sector_classification_fk_ticker(self, session: Session) -> None:
         """ticker must exist in asset_universe."""
         row = SectorClassification(
-            ticker="NONEXISTENT",
+            ticker=Symbol("NONEXISTENT"),
             asset_id="asset-xxx",
             alphamind_sector="tech",
             domain_researcher="tech_semis",
@@ -576,7 +577,7 @@ class TestForeignKeyConstraints:
     def test_ohlcv_bars_fk_ticker(self, session: Session) -> None:
         """ticker must exist in asset_universe."""
         row = OhlcvBars(
-            ticker="NONEXISTENT",
+            ticker=Symbol("NONEXISTENT"),
             timeframe="1d",
             period_start="2026-04-25T09:30:00Z",
             period_end="2026-04-25T16:00:00Z",
@@ -622,7 +623,7 @@ class TestForeignKeyConstraints:
             sess.flush()
             link = NewsArticleTickers(
                 article_id="art-cascade",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 is_primary=1,
             )
             sess.add(link)

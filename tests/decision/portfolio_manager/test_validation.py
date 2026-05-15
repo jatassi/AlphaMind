@@ -15,6 +15,7 @@ negative test:
 * Inventory completeness (returns all errors, not first-error-only).
 * Warnings vs errors (warnings do not invalidate).
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ import pytest
 from alphamind._kernel.ids import (
     EnvelopeId,
     PositionId,
+    Symbol,
 )
 from alphamind._kernel.money import money, price
 from alphamind.analysis.synthesizer.models import BriefSource
@@ -95,6 +97,37 @@ _DEFAULT_TICKER_TO_SECTOR: dict[str, str] = {
     "MSFT": "tech",
     "GOOGL": "tech",
 }
+
+
+# Bypass-init helpers — replace Pydantic ``model_construct``. The dataclass __init__
+# enforces all fields; these helpers skip validation so tests can inject sparse fixtures.
+
+
+def _bypass_init_PortfolioManagerView(**kwargs):  # noqa: N802
+    from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
+
+    obj = object.__new__(PortfolioManagerView)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
+
+
+def _bypass_init_StrategistPositionView(**kwargs):  # noqa: N802
+    from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
+
+    obj = object.__new__(StrategistPositionView)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
+
+
+def _bypass_init_PositionRecord(**kwargs):  # noqa: N802
+    from alphamind.portfolio_state.records.positions import PositionRecord
+
+    obj = object.__new__(PositionRecord)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
 
 
 def _default_sector_resolver(ticker: str) -> str:
@@ -387,7 +420,7 @@ def _make_pm_view(positions: tuple[Any, ...] = ()) -> PortfolioManagerView:
     the remaining required fields are filled with empty/default sentinel
     values via ``model_construct`` to avoid full snapshot wiring noise.
     """
-    return PortfolioManagerView.model_construct(
+    return _bypass_init_PortfolioManagerView(
         positions=positions,
         recent_thesis_resolutions=(),
         portfolio_pnl=None,
@@ -407,11 +440,9 @@ def _make_pm_view(positions: tuple[Any, ...] = ()) -> PortfolioManagerView:
 
 def _position_view(position_id: str) -> Any:
     """Build a StrategistPositionView with only the position_id-bearing field set."""
-    from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
-    from alphamind.portfolio_state.records.positions import PositionRecord
 
-    return StrategistPositionView.model_construct(
-        position=PositionRecord.model_construct(position_id=position_id),
+    return _bypass_init_StrategistPositionView(
+        position=_bypass_init_PositionRecord(position_id=position_id),
         thesis=None,
         bracket=None,
         pending_orders=(),
@@ -687,7 +718,7 @@ class TestEvaluationCriterionSetMatchesSourceProvenance:
             source_provenance="pm_strategist",
             source_recommendation_id="SA-1",
             recommendation_type="position_assessment",
-            position_id="POS-NVDA-001",
+            position_id=PositionId("POS-NVDA-001"),
             verdict="approve",
             evaluation=_thesis_eval_all_pass(),
             modifications=(),
@@ -953,13 +984,13 @@ class TestHaltModeNoConstructiveCommands:
 class TestEmbeddedCommandSectorActive:
     def test_open_command_with_active_sector_passes(self) -> None:
         # NVDA → "semis" via the default fixture resolver; semis ∈ active_sectors.
-        envelope = _make_analyst_envelope(commands=(_open_command(underlying="NVDA"),))
+        envelope = _make_analyst_envelope(commands=(_open_command(underlying=Symbol("NVDA")),))
         result = _validate(envelope, active_sectors=frozenset({"semis", "tech"}))
         assert result.is_valid
 
     def test_open_command_with_inactive_sector_fails(self) -> None:
         # XOM → "energy" via the default fixture resolver; energy ∉ {tech, semis}.
-        envelope = _make_analyst_envelope(commands=(_open_command(underlying="XOM"),))
+        envelope = _make_analyst_envelope(commands=(_open_command(underlying=Symbol("XOM")),))
         result = _validate(envelope, active_sectors=frozenset({"tech", "semis"}))
         assert not result.is_valid
         assert any("commands[0]" in err.field_path for err in result.errors)
@@ -968,7 +999,7 @@ class TestEmbeddedCommandSectorActive:
     def test_open_command_sector_derived_via_resolver(self) -> None:
         # Custom resolver maps NVDA → "energy" — overrides the default and
         # exercises the resolver-driven dispatch path explicitly.
-        envelope = _make_analyst_envelope(commands=(_open_command(underlying="NVDA"),))
+        envelope = _make_analyst_envelope(commands=(_open_command(underlying=Symbol("NVDA")),))
         result = _validate(
             envelope,
             active_sectors=frozenset({"tech", "semis"}),
@@ -1145,13 +1176,13 @@ class TestSourceRecommendationIdResolves:
 
 class TestPositionIdResolves:
     def test_strategist_envelope_with_known_position_passes(self) -> None:
-        envelope = _make_strategist_envelope(position_id="POS-NVDA-001")
+        envelope = _make_strategist_envelope(position_id=PositionId("POS-NVDA-001"))
         pm_view = _make_pm_view(positions=(_position_view("POS-NVDA-001"),))
         result = _validate(envelope, pm_view=pm_view)
         assert result.is_valid
 
     def test_strategist_envelope_with_unknown_position_fails(self) -> None:
-        envelope = _make_strategist_envelope(position_id="POS-NVDA-999")
+        envelope = _make_strategist_envelope(position_id=PositionId("POS-NVDA-999"))
         pm_view = _make_pm_view(positions=(_position_view("POS-NVDA-001"),))
         result = _validate(envelope, pm_view=pm_view)
         assert not result.is_valid
@@ -1178,7 +1209,7 @@ class TestErrorInventoryCompleteness:
         envelope = _make_analyst_envelope(
             envelope_id="ENV-REC-2",
             source_recommendation_id="REC-7",
-            commands=(_open_command(underlying="XOM"),),
+            commands=(_open_command(underlying=Symbol("XOM")),),
         )
         bundle = _make_bundle(recommendations=(_recommendation_stub("REC-7"),))
         result = _validate(

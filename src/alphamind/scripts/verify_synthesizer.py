@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from alphamind._kernel.ids import PositionId, Symbol
 from alphamind.analysis._shared import Sector, SignalQuality
 from alphamind.analysis.adaptive_research.models import (
     AdaptiveBrief,
@@ -359,7 +360,7 @@ def build_fixture_qualitative_brief(invocation_id: str) -> QualitativeBrief:
         catalyst_watches=(
             CatalystWatch(
                 catalyst_id="QR-CW-1",
-                ticker="NVDA",
+                ticker=Symbol("NVDA"),
                 catalyst_name="Q1 earnings",
                 hours_to_event=18,
                 thesis_impact="Direct test of the SA-TECH-TC-1 momentum setup.",
@@ -428,14 +429,14 @@ class _FixturePortfolioReader:
     def __init__(self) -> None:
         self._positions: tuple[SynthesizerPositionSummary, ...] = (
             SynthesizerPositionSummary(
-                ticker="NVDA",
+                ticker=Symbol("NVDA"),
                 direction=PositionDirection.LONG,
                 sector="tech_semis",
                 size_pct=4.5,
                 position_age_hours=36.0,
             ),
             SynthesizerPositionSummary(
-                ticker="JPM",
+                ticker=Symbol("JPM"),
                 direction=PositionDirection.LONG,
                 sector="financials",
                 size_pct=2.0,
@@ -444,8 +445,8 @@ class _FixturePortfolioReader:
         )
         self._theses: tuple[SynthesizerThesisSummary, ...] = (
             SynthesizerThesisSummary(
-                position_id="pos-nvda-001",
-                ticker="NVDA",
+                position_id=PositionId("pos-nvda-001"),
+                ticker=Symbol("NVDA"),
                 summary="AI-capex acceleration via hyperscaler reads.",
                 key_catalyst="Q1 earnings",
                 time_expectation_hours=48.0,

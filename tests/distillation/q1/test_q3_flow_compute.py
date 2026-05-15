@@ -8,6 +8,7 @@ proves the propagation of the pilot pattern to a second category.
 
 from __future__ import annotations
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation._repository import (
     OptionsContractRow,
     OptionsContractSnapshotRow,
@@ -23,7 +24,7 @@ def test_options_flow_classifies_bto_when_oi_rises() -> None:
     """Today's volume on a contract whose OI rose since prior snapshot = BTO."""
     contract = OptionsContractRow(
         contract_ticker="AAPL240419C150",
-        underlying_ticker="AAPL",
+        underlying_ticker=Symbol("AAPL"),
         contract_type="call",
     )
     today = OptionsContractSnapshotRow(
@@ -58,7 +59,7 @@ def test_options_flow_classifies_sto_when_oi_flat_or_falls() -> None:
     """Today's volume on a contract whose OI is flat-or-falling = STO."""
     contract = OptionsContractRow(
         contract_ticker="AAPL240419P150",
-        underlying_ticker="AAPL",
+        underlying_ticker=Symbol("AAPL"),
         contract_type="put",
     )
     today = OptionsContractSnapshotRow(
@@ -93,7 +94,7 @@ def test_options_flow_skips_zero_volume_contracts() -> None:
     """Contracts with zero today-volume contribute nothing to the aggregate."""
     contract = OptionsContractRow(
         contract_ticker="AAPL240419C150",
-        underlying_ticker="AAPL",
+        underlying_ticker=Symbol("AAPL"),
         contract_type="call",
     )
     today = OptionsContractSnapshotRow(

@@ -29,6 +29,7 @@ from alphamind._kernel.ids import (
     AlpacaOrderId,
     ClientOrderId,
     PositionId,
+    Symbol,
 )
 from alphamind._kernel.money import money, price
 from alphamind.commands.command_models import (
@@ -593,7 +594,7 @@ async def test_add_always_produces_simple_order_class() -> None:
     client = MagicMock()
     client.submit_order = fake_submit
 
-    cmd = _make_add_command(ticker="AAPL", entry_type="market")
+    cmd = _make_add_command(ticker=Symbol("AAPL"), entry_type="market")
     await submit_equity_add(
         cmd,
         client=client,
@@ -938,7 +939,7 @@ async def test_open_market_order_symbol_from_instrument() -> None:
     client = MagicMock()
     client.submit_order = fake_submit
 
-    cmd = _make_open_command(ticker="NVDA")
+    cmd = _make_open_command(ticker=Symbol("NVDA"))
     await submit_equity_open(
         cmd,
         client=client,

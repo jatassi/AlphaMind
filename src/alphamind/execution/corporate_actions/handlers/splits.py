@@ -10,6 +10,8 @@ under this package.
 
 from __future__ import annotations
 
+import dataclasses
+
 from alphamind.execution.write_paths.ca_integration_ledger import (
     mark_ca_activity_processed,
 )
@@ -67,11 +69,11 @@ async def handle_split(
     new_qty = pre_qty * activity.ratio_or_amount
     new_basis = pre_basis / activity.ratio_or_amount
 
-    new_details = details.model_copy(
-        update={"share_count": new_qty, "average_cost_basis_per_share": new_basis}
+    new_details = dataclasses.replace(
+        details, share_count=new_qty, average_cost_basis_per_share=new_basis
     )
-    updated = position.model_copy(
-        update={"details": new_details, "corporate_action_adjustment_needed": True}
+    updated = dataclasses.replace(
+        position, details=new_details, corporate_action_adjustment_needed=True
     )
     _persist_position_update(pos_row, updated)
 

@@ -11,6 +11,7 @@ All writes join the open ``InvocationContext`` transaction so the surrounding
 context commits or rolls back atomically per the design doc's Phase 2
 contract.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -144,6 +145,19 @@ _PROCESS_ID = "proc-1"
 # ---------------------------------------------------------------------------
 
 
+# Bypass-init helpers — replace Pydantic ``model_construct``. The dataclass __init__
+# enforces all fields; these helpers skip validation so tests can inject sparse fixtures.
+
+
+def _bypass_init_PortfolioManagerView(**kwargs):  # noqa: N802
+    from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
+
+    obj = object.__new__(PortfolioManagerView)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
+
+
 @pytest.fixture()
 async def db(
     tmp_path: Path,
@@ -243,20 +257,18 @@ async def _seed_cash_ledger(
     current_cash_usd: float = 100_000.0,
     reserved_capital_usd: float = 0.0,
 ) -> None:
-    record = CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": reserved_capital_usd,
-            "available_buying_power_usd": current_cash_usd - reserved_capital_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    record = CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=reserved_capital_usd,
+        available_buying_power_usd=current_cash_usd - reserved_capital_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
     async with factory() as sess:
         sess.add(cash_ledger_record_to_row(record, last_updated_at=_NOW))
@@ -577,21 +589,19 @@ def _open_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": Direction.LONG,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -812,7 +822,9 @@ async def test_persist_envelope_rejection_nullifies_orphan_position_id_on_fk_sch
     try:
         await _seed_invocation_substrate(factory)
 
-        envelope = _make_strategist_envelope(envelope_id="ENV-SA-99", position_id="POS-NONEXISTENT")
+        envelope = _make_strategist_envelope(
+            envelope_id="ENV-SA-99", position_id=PositionId("POS-NONEXISTENT")
+        )
         errors = (
             PMValError(
                 field_path="position_id",
@@ -911,7 +923,7 @@ async def test_open_command_writes_position_thesis_bracket_orders_and_events(
     await _seed_invocation_substrate(factory)
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
 
-    envelope = _make_analyst_envelope(commands=(_open_command(underlying="NVDA"),))
+    envelope = _make_analyst_envelope(commands=(_open_command(underlying=Symbol("NVDA")),))
     results = (
         _accepted_result(
             command_ordinal=0,
@@ -982,7 +994,7 @@ async def test_open_command_persists_real_position_size_and_capital_reservation(
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
 
     # _open_command builds quantity=10.0, dollar_value=10_000.0.
-    cmd = _open_command(underlying="NVDA")
+    cmd = _open_command(underlying=Symbol("NVDA"))
     envelope = _make_analyst_envelope(commands=(cmd,))
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
 
@@ -1031,7 +1043,7 @@ async def test_persist_envelope_outcome_stamps_phase2_completion_on_invocation_r
     await _seed_invocation_substrate(factory)
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
 
-    envelope = _make_analyst_envelope(commands=(_open_command(underlying="NVDA"),))
+    envelope = _make_analyst_envelope(commands=(_open_command(underlying=Symbol("NVDA")),))
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
 
     ctx, handle = await _open_handle(factory)
@@ -1203,7 +1215,9 @@ async def test_close_command_writes_close_order_and_emits_order_submitted(
     await _seed_cash_ledger(factory)
     await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
 
-    envelope = _make_strategist_envelope(commands=(_close_command(position_id="POS-NVDA-001"),))
+    envelope = _make_strategist_envelope(
+        commands=(_close_command(position_id=PositionId("POS-NVDA-001")),)
+    )
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
 
     ctx, handle = await _open_handle(factory)
@@ -1241,7 +1255,7 @@ async def test_close_command_surfaces_rationale_metadata_on_order_submitted(
     await _seed_cash_ledger(factory)
     await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
 
-    cmd = _close_command(position_id="POS-NVDA-001")
+    cmd = _close_command(position_id=PositionId("POS-NVDA-001"))
     envelope = _make_strategist_envelope(commands=(cmd,))
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
 
@@ -1318,29 +1332,29 @@ async def test_close_all_against_pending_position_raises(
     await _seed_invocation_substrate(factory)
     await _seed_cash_ledger(factory)
     # PENDING position has zero fills; share_count=0 so close-all → close_qty=0.
-    pending_position = PositionRecord.model_validate(
-        {
-            "position_id": "POS-NVDA-001",
-            "thesis_id": "THE-NVDA-1",
-            "bracket_id": "BRK-NVDA-1",
-            "status": PositionStatus.PENDING,
-            "direction": Direction.LONG,
-            "entry_timestamp": None,
-            "details": EquityPositionDetails(
-                ticker=Symbol("NVDA"),
-                share_count=0.0,
-                average_cost_basis_per_share=0.0,
-            ),
-            "execution_history": (),
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    pending_position = PositionRecord(
+        position_id=PositionId("POS-NVDA-001"),
+        thesis_id=ThesisId("THE-NVDA-1"),
+        bracket_id=BracketId("BRK-NVDA-1"),
+        status=PositionStatus.PENDING,
+        direction=Direction.LONG,
+        entry_timestamp=None,
+        details=EquityPositionDetails(
+            ticker=Symbol("NVDA"),
+            share_count=0.0,
+            average_cost_basis_per_share=0.0,
+        ),
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
     await _seed_position_cluster(factory, pending_position, _active_thesis(), _active_bracket())
 
-    envelope = _make_strategist_envelope(commands=(_close_command(position_id="POS-NVDA-001"),))
+    envelope = _make_strategist_envelope(
+        commands=(_close_command(position_id=PositionId("POS-NVDA-001")),)
+    )
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
 
     ctx, handle = await _open_handle(factory)
@@ -1367,7 +1381,7 @@ async def test_adjust_command_dispatches_on_thesis_only(
     await _seed_cash_ledger(factory)
     await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
 
-    cmd = _adjust_command(position_id="POS-NVDA-001", with_stop_level=False)
+    cmd = _adjust_command(position_id=PositionId("POS-NVDA-001"), with_stop_level=False)
     envelope = _make_strategist_envelope(commands=(cmd,))
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
 
@@ -1485,7 +1499,9 @@ async def test_cancel_command_releases_capital_from_order_notional(
         entry_rec,
     )
 
-    envelope = _make_strategist_envelope(commands=(_cancel_command(order_id="ord-entry-bigsize"),))
+    envelope = _make_strategist_envelope(
+        commands=(_cancel_command(order_id=OrderId("ord-entry-bigsize")),)
+    )
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
 
     ctx, handle = await _open_handle(factory)
@@ -1569,7 +1585,7 @@ async def test_cancel_command_on_protective_leg_does_not_release_capital(
     )
 
     envelope = _make_strategist_envelope(
-        commands=(_cancel_command(order_id="ord-protective-stop"),)
+        commands=(_cancel_command(order_id=OrderId("ord-protective-stop")),)
     )
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
 
@@ -1611,7 +1627,7 @@ async def test_add_command_persists_real_quantity_and_dollar_value(
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
     await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
 
-    cmd = _add_command(position_id="POS-NVDA-001")
+    cmd = _add_command(position_id=PositionId("POS-NVDA-001"))
     envelope = _make_strategist_envelope(commands=(cmd,))
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
 
@@ -1650,7 +1666,7 @@ async def test_open_command_persists_target_and_invalidation_legs(
     await _seed_invocation_substrate(factory)
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
 
-    envelope = _make_analyst_envelope(commands=(_open_command(underlying="NVDA"),))
+    envelope = _make_analyst_envelope(commands=(_open_command(underlying=Symbol("NVDA")),))
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
 
     ctx, handle = await _open_handle(factory)
@@ -1722,7 +1738,9 @@ async def test_adjust_command_cancels_old_protective_order_and_submits_new(
         factory, _open_position(), _active_thesis(), _active_bracket(), old_stop
     )
 
-    envelope = _make_strategist_envelope(commands=(_adjust_command(position_id="POS-NVDA-001"),))
+    envelope = _make_strategist_envelope(
+        commands=(_adjust_command(position_id=PositionId("POS-NVDA-001")),)
+    )
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
 
     ctx, handle = await _open_handle(factory)
@@ -1840,7 +1858,9 @@ async def test_adjust_stop_only_leaves_take_profit_leg_pending(
         old_target,
     )
 
-    envelope = _make_strategist_envelope(commands=(_adjust_command(position_id="POS-NVDA-001"),))
+    envelope = _make_strategist_envelope(
+        commands=(_adjust_command(position_id=PositionId("POS-NVDA-001")),)
+    )
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
 
     ctx, handle = await _open_handle(factory)
@@ -1982,7 +2002,9 @@ async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(
         old_stop_rec,
     )
 
-    envelope = _make_strategist_envelope(commands=(_cancel_command(order_id="ord-entry-1"),))
+    envelope = _make_strategist_envelope(
+        commands=(_cancel_command(order_id=OrderId("ord-entry-1")),)
+    )
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
 
     ctx, handle = await _open_handle(factory)
@@ -2037,7 +2059,9 @@ async def test_add_command_writes_add_entry_order_thesis_component_capital_reser
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
     await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
 
-    envelope = _make_strategist_envelope(commands=(_add_command(position_id="POS-NVDA-001"),))
+    envelope = _make_strategist_envelope(
+        commands=(_add_command(position_id=PositionId("POS-NVDA-001")),)
+    )
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
 
     ctx, handle = await _open_handle(factory)
@@ -2085,9 +2109,9 @@ async def test_multi_command_envelope_emits_single_pm_decision(
 
     envelope = _make_strategist_envelope(
         commands=(
-            _close_command(position_id="POS-NVDA-001"),
-            _close_command(position_id="POS-NVDA-001"),
-            _close_command(position_id="POS-NVDA-001"),
+            _close_command(position_id=PositionId("POS-NVDA-001")),
+            _close_command(position_id=PositionId("POS-NVDA-001")),
+            _close_command(position_id=PositionId("POS-NVDA-001")),
         )
     )
     results = tuple(
@@ -2283,7 +2307,7 @@ async def test_handle_submit_envelope_wires_sql_writeback_on_accepted_envelope(
     # Use a small position size so the OPEN passes per-rule guardrails against
     # the minimal validation-state's $100k portfolio + 10% per-position limit.
     envelope = _make_analyst_envelope(
-        commands=(_open_command(underlying="NVDA", quantity=1.0, dollar_value=1_000.0),)
+        commands=(_open_command(underlying=Symbol("NVDA"), quantity=1.0, dollar_value=1_000.0),)
     )
     bundle = _bundle_with_recommendation("REC-1")
 
@@ -2392,7 +2416,7 @@ def _minimal_validation_state() -> Any:
         iv_provider=FixtureIvProvider(
             surface={
                 "NVDA": IvSurfaceEntry(
-                    underlying="NVDA",
+                    underlying=Symbol("NVDA"),
                     quotes=(
                         IvQuote(
                             strike=100.0,
@@ -2558,9 +2582,8 @@ def _bundle_with_recommendation(recommendation_id: str) -> Any:
 
 
 def _minimal_pm_view() -> Any:
-    from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 
-    return PortfolioManagerView.model_construct(
+    return _bypass_init_PortfolioManagerView(
         positions=(),
         recent_thesis_resolutions=(),
         portfolio_pnl=None,

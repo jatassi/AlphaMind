@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 import yaml
-from pydantic import ValidationError
 
 from alphamind.state import (
     StatePersistenceConfig,
@@ -54,7 +53,7 @@ def test_load_state_persistence_config_raises_value_error_when_section_missing()
 def test_state_persistence_config_is_frozen_and_rejects_mutation() -> None:
     cfg = StatePersistenceConfig.model_validate(_valid_payload())
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         cfg.pm_decision_log_sliding_window_invocations = 5
 
 
@@ -74,7 +73,7 @@ def test_state_persistence_config_rejects_zero_window_size() -> None:
     payload = _valid_payload()
     payload["pm_decision_log_sliding_window_invocations"] = 0
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         StatePersistenceConfig.model_validate(payload)
 
 
@@ -82,5 +81,5 @@ def test_state_persistence_config_rejects_non_positive_snapshot_timeout() -> Non
     payload = _valid_payload()
     payload["snapshot_read_timeout_seconds"] = 0.0
 
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         StatePersistenceConfig.model_validate(payload)

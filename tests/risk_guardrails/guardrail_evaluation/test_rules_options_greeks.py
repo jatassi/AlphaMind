@@ -13,6 +13,7 @@ from types import MappingProxyType
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
 from alphamind.risk_guardrails.guardrail_evaluation import (
     Action,
     AssetType,
@@ -93,7 +94,7 @@ def _option_proposal(
 ) -> ProposedDelta:
     return ProposedDelta(
         id=proposal_id,
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=asset_type,
@@ -108,7 +109,7 @@ def _option_proposal(
 def _equity_proposal() -> ProposedDelta:
     return ProposedDelta(
         id="P-EQ",
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,
@@ -147,7 +148,7 @@ def _existing_option_position(
 ) -> ExistingPosition:
     return ExistingPosition(
         position_id=position_id,
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.OPTION,

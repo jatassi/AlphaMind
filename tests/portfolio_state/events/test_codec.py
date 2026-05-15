@@ -13,6 +13,7 @@ from decimal import Decimal
 
 import pytest
 
+from alphamind._kernel.ids import BracketId, OrderId, PositionId, Symbol, ThesisId
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.portfolio_state.events import (
     EVENT_TYPE_TO_DETAIL_CLASS,
@@ -87,12 +88,12 @@ def _all_detail_instances() -> list[tuple[type, object]]:
         (
             PositionOpenedDetail,
             PositionOpenedDetail(
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 direction="LONG",
                 fill_price=price("150.25"),
                 quantity=10.0,
-                thesis_id="th-001",
-                bracket_id="br-001",
+                thesis_id=ThesisId("th-001"),
+                bracket_id=BracketId("br-001"),
                 mechanism=PositionOpenMechanism.ORDER_FILL,
                 parent_position_id=None,
             ),
@@ -173,7 +174,7 @@ def _all_detail_instances() -> list[tuple[type, object]]:
         (
             BracketActivatedDetail,
             BracketActivatedDetail(
-                bracket_id="br-001",
+                bracket_id=BracketId("br-001"),
                 protective_leg_order_ids=("ord-sl-001", "ord-tp-001"),
             ),
         ),
@@ -208,14 +209,14 @@ def _all_detail_instances() -> list[tuple[type, object]]:
         (
             BracketCancelledCorporateActionDetail,
             BracketCancelledCorporateActionDetail(
-                bracket_id="br-001",
+                bracket_id=BracketId("br-001"),
                 cancellation_reason="CASH_MERGER",
                 cancelled_leg_order_ids=("ord-sl-001", "ord-tp-001"),
             ),
         ),
         (
             ThesisCreatedDetail,
-            ThesisCreatedDetail(thesis_id="th-001", summary="Bullish on earnings"),
+            ThesisCreatedDetail(thesis_id=ThesisId("th-001"), summary="Bullish on earnings"),
         ),
         (
             ThesisComponentAddedDetail,
@@ -259,16 +260,16 @@ def _all_detail_instances() -> list[tuple[type, object]]:
         ),
         (
             CapitalReservedDetail,
-            CapitalReservedDetail(order_id="ord-001", amount_usd=money("1500.00")),
+            CapitalReservedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.00")),
         ),
         (
             CapitalReleasedDetail,
-            CapitalReleasedDetail(order_id="ord-001", amount_usd=money("1500.00")),
+            CapitalReleasedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.00")),
         ),
         (
             MarginCallDetail,
             MarginCallDetail(
-                position_id="pos-001",
+                position_id=PositionId("pos-001"),
                 margin_required_usd=money("5000.00"),
                 margin_available_usd=money("3000.00"),
                 deficit_usd=money("2000.00"),
@@ -281,7 +282,7 @@ def _all_detail_instances() -> list[tuple[type, object]]:
         (
             MarginLiquidationDetail,
             MarginLiquidationDetail(
-                position_id="pos-001",
+                position_id=PositionId("pos-001"),
                 liquidation_price=price("140.05"),
                 loss_usd=signed_money("-1000.25"),
             ),
@@ -341,7 +342,7 @@ def _all_detail_instances() -> list[tuple[type, object]]:
         (
             GreeksRefreshFailedDetail,
             GreeksRefreshFailedDetail(
-                underlying_ticker="SPY",
+                underlying_ticker=Symbol("SPY"),
                 occ_symbol="SPY240115C00500000",
                 failure_reason="iv_fetch_timeout",
                 prior_as_of=_UTC_TS,
@@ -393,7 +394,7 @@ def _all_detail_instances() -> list[tuple[type, object]]:
             CorporateActionAppliedDetail(
                 action_type=CorporateActionType.SPLIT,
                 alpaca_activity_id="act-001",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 new_ticker=None,
                 ratio_or_amount=2.0,
                 pre_action_quantity=10.0,

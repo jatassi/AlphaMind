@@ -281,13 +281,13 @@ def _market(
 
 def test_equity_only_class_group_worst_loss_is_shock_pct_times_market_value() -> None:
     """Long equity, shock 15% → worst loss = 0.15 * |quantity| * current_price."""
-    aapl = _equity_position(position_id="p1", ticker="AAPL", share_count=10.0)
+    aapl = _equity_position(position_id=PositionId("p1"), ticker=Symbol("AAPL"), share_count=10.0)
     group = ClassGroup(underlying_symbol="AAPL", positions=(aapl,))
     cfg = _config(per_symbol_overrides={"AAPL": 0.15})
 
     margin = stress_class_group(
         class_group=group,
-        market_inputs=_market(underlying="AAPL", spot=100.0),
+        market_inputs=_market(underlying=Symbol("AAPL"), spot=100.0),
         config=cfg,
     )
 
@@ -298,8 +298,8 @@ def test_equity_only_class_group_worst_loss_is_shock_pct_times_market_value() ->
 def test_short_equity_only_class_group_worst_loss_on_up_shock() -> None:
     """Short equity, shock 15% → worst loss = 0.15 * |quantity| * current_price (up-shock)."""
     aapl_short = _equity_position(
-        position_id="p1",
-        ticker="AAPL",
+        position_id=PositionId("p1"),
+        ticker=Symbol("AAPL"),
         share_count=10.0,
         direction=Direction.SHORT,
     )
@@ -308,7 +308,7 @@ def test_short_equity_only_class_group_worst_loss_on_up_shock() -> None:
 
     margin = stress_class_group(
         class_group=group,
-        market_inputs=_market(underlying="AAPL", spot=100.0),
+        market_inputs=_market(underlying=Symbol("AAPL"), spot=100.0),
         config=cfg,
     )
 
@@ -319,8 +319,8 @@ def test_short_equity_only_class_group_worst_loss_on_up_shock() -> None:
 def test_long_call_only_class_group_worst_loss_on_down_shock() -> None:
     """Long call (positive delta) -> worst loss on -shock direction; magnitude < premium."""
     call = _option_position(
-        position_id="p1",
-        underlying_ticker="AAPL",
+        position_id=PositionId("p1"),
+        underlying_ticker=Symbol("AAPL"),
         strike=100.0,
         contract_count=1.0,
         contract_type=OptionContractType.CALL,
@@ -332,7 +332,7 @@ def test_long_call_only_class_group_worst_loss_on_down_shock() -> None:
 
     margin = stress_class_group(
         class_group=group,
-        market_inputs=_market(underlying="AAPL", spot=100.0),
+        market_inputs=_market(underlying=Symbol("AAPL"), spot=100.0),
         config=cfg,
     )
 
@@ -371,8 +371,8 @@ def test_long_call_only_class_group_worst_loss_on_down_shock() -> None:
 def test_long_put_only_class_group_worst_loss_on_up_shock() -> None:
     """Long put (negative delta) → worst loss on +shock direction."""
     put = _option_position(
-        position_id="p1",
-        underlying_ticker="AAPL",
+        position_id=PositionId("p1"),
+        underlying_ticker=Symbol("AAPL"),
         strike=100.0,
         contract_count=1.0,
         contract_type=OptionContractType.PUT,
@@ -384,7 +384,7 @@ def test_long_put_only_class_group_worst_loss_on_up_shock() -> None:
 
     margin = stress_class_group(
         class_group=group,
-        market_inputs=_market(underlying="AAPL", spot=100.0),
+        market_inputs=_market(underlying=Symbol("AAPL"), spot=100.0),
         config=cfg,
     )
 
@@ -414,8 +414,8 @@ def test_long_put_only_class_group_worst_loss_on_up_shock() -> None:
 def test_short_call_class_group_worst_loss_on_up_shock() -> None:
     """Short call → worst loss on +shock (call value rises, short loses)."""
     short_call = _option_position(
-        position_id="p1",
-        underlying_ticker="AAPL",
+        position_id=PositionId("p1"),
+        underlying_ticker=Symbol("AAPL"),
         strike=100.0,
         contract_count=1.0,
         contract_type=OptionContractType.CALL,
@@ -427,7 +427,7 @@ def test_short_call_class_group_worst_loss_on_up_shock() -> None:
 
     margin = stress_class_group(
         class_group=group,
-        market_inputs=_market(underlying="AAPL", spot=100.0),
+        market_inputs=_market(underlying=Symbol("AAPL"), spot=100.0),
         config=cfg,
     )
 
@@ -470,14 +470,14 @@ def test_hedged_equity_plus_long_call_class_group_smaller_than_unhedged_call() -
 
     # Standalone short equity.
     short_equity = _equity_position(
-        position_id="p1",
-        ticker="AAPL",
+        position_id=PositionId("p1"),
+        ticker=Symbol("AAPL"),
         share_count=10.0,
         direction=Direction.SHORT,
     )
     standalone_margin = stress_class_group(
         class_group=ClassGroup(underlying_symbol="AAPL", positions=(short_equity,)),
-        market_inputs=_market(underlying="AAPL", spot=100.0),
+        market_inputs=_market(underlying=Symbol("AAPL"), spot=100.0),
         config=cfg,
     )
 
@@ -485,8 +485,8 @@ def test_hedged_equity_plus_long_call_class_group_smaller_than_unhedged_call() -
     # long ATM call (10x100-multiplier = 100 deltas on the call side covers
     # the short stock's 10 shares).
     long_call = _option_position(
-        position_id="p2",
-        underlying_ticker="AAPL",
+        position_id=PositionId("p2"),
+        underlying_ticker=Symbol("AAPL"),
         strike=100.0,
         contract_count=1.0,
         contract_type=OptionContractType.CALL,
@@ -494,7 +494,7 @@ def test_hedged_equity_plus_long_call_class_group_smaller_than_unhedged_call() -
     )
     combined_margin = stress_class_group(
         class_group=ClassGroup(underlying_symbol="AAPL", positions=(short_equity, long_call)),
-        market_inputs=_market(underlying="AAPL", spot=100.0),
+        market_inputs=_market(underlying=Symbol("AAPL"), spot=100.0),
         config=cfg,
     )
 
@@ -514,8 +514,8 @@ def test_iv_shock_paired_to_price_shock_direction() -> None:
     ``baseline_iv * worst_down_multiplier`` (used at -1.0).
     """
     call = _option_position(
-        position_id="p1",
-        underlying_ticker="AAPL",
+        position_id=PositionId("p1"),
+        underlying_ticker=Symbol("AAPL"),
         strike=100.0,
         contract_count=1.0,
         contract_type=OptionContractType.CALL,
@@ -538,7 +538,7 @@ def test_iv_shock_paired_to_price_shock_direction() -> None:
     ):
         stress_class_group(
             class_group=group,
-            market_inputs=_market(underlying="AAPL", spot=100.0),
+            market_inputs=_market(underlying=Symbol("AAPL"), spot=100.0),
             config=cfg,
         )
 
@@ -558,8 +558,8 @@ def test_grid_has_ten_points() -> None:
     one leg, the total is ``1 + 10 == 11``.
     """
     call = _option_position(
-        position_id="p1",
-        underlying_ticker="AAPL",
+        position_id=PositionId("p1"),
+        underlying_ticker=Symbol("AAPL"),
         strike=100.0,
         contract_count=1.0,
         contract_type=OptionContractType.CALL,
@@ -581,7 +581,7 @@ def test_grid_has_ten_points() -> None:
     ):
         stress_class_group(
             class_group=group,
-            market_inputs=_market(underlying="AAPL", spot=100.0),
+            market_inputs=_market(underlying=Symbol("AAPL"), spot=100.0),
             config=cfg,
         )
 
@@ -591,7 +591,7 @@ def test_grid_has_ten_points() -> None:
 
 def test_unknown_underlying_raises_key_error() -> None:
     """Class group with underlying absent from market_inputs.underlying_prices raises KeyError."""
-    aapl = _equity_position(position_id="p1", ticker="AAPL", share_count=10.0)
+    aapl = _equity_position(position_id=PositionId("p1"), ticker=Symbol("AAPL"), share_count=10.0)
     group = ClassGroup(underlying_symbol="AAPL", positions=(aapl,))
     cfg = _config(per_symbol_overrides={"AAPL": 0.15})
 
@@ -616,8 +616,8 @@ def test_strategy_position_sums_per_leg_pl_at_each_grid_point() -> None:
     take ``abs(min(...))`` over the grid).
     """
     spread = _bull_call_spread_position(
-        position_id="p1",
-        underlying_ticker="NVDA",
+        position_id=PositionId("p1"),
+        underlying_ticker=Symbol("NVDA"),
         long_strike=100.0,
         short_strike=105.0,
     )
@@ -629,7 +629,7 @@ def test_strategy_position_sums_per_leg_pl_at_each_grid_point() -> None:
     margin = stress_class_group(
         class_group=group,
         market_inputs=_market(
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             spot=spot,
             strikes=(100.0, 105.0),
         ),
@@ -720,16 +720,16 @@ def test_lookup_iv_called_once_per_option_leg() -> None:
             )
 
     long_call = _option_position(
-        position_id="p1",
-        underlying_ticker="AAPL",
+        position_id=PositionId("p1"),
+        underlying_ticker=Symbol("AAPL"),
         strike=100.0,
         contract_count=1.0,
         contract_type=OptionContractType.CALL,
         direction=Direction.LONG,
     )
     short_put = _option_position(
-        position_id="p2",
-        underlying_ticker="AAPL",
+        position_id=PositionId("p2"),
+        underlying_ticker=Symbol("AAPL"),
         strike=95.0,
         contract_count=1.0,
         contract_type=OptionContractType.PUT,
@@ -741,7 +741,7 @@ def test_lookup_iv_called_once_per_option_leg() -> None:
 
     stress_class_group(
         class_group=group,
-        market_inputs=_market(underlying="AAPL", spot=100.0, iv_provider=provider),
+        market_inputs=_market(underlying=Symbol("AAPL"), spot=100.0, iv_provider=provider),
         config=cfg,
     )
 
@@ -752,8 +752,8 @@ def test_lookup_iv_called_once_per_option_leg() -> None:
 def test_missing_iv_propagates_iv_lookup_error() -> None:
     """Missing IV (no surface entry, no realized-vol fallback) propagates IvLookupError."""
     call = _option_position(
-        position_id="p1",
-        underlying_ticker="AAPL",
+        position_id=PositionId("p1"),
+        underlying_ticker=Symbol("AAPL"),
         strike=100.0,
         contract_count=1.0,
         contract_type=OptionContractType.CALL,
@@ -778,14 +778,14 @@ def test_missing_iv_propagates_iv_lookup_error() -> None:
 
 def test_unmapped_symbol_falls_through_to_unmapped_default() -> None:
     """Underlying with no per_symbol_overrides entry uses unmapped_default for shock_pct."""
-    aapl = _equity_position(position_id="p1", ticker="AAPL", share_count=10.0)
+    aapl = _equity_position(position_id=PositionId("p1"), ticker=Symbol("AAPL"), share_count=10.0)
     group = ClassGroup(underlying_symbol="AAPL", positions=(aapl,))
     # No per-symbol override for AAPL; unmapped_default = 0.25.
     cfg = _config(per_symbol_overrides={}, unmapped_default=0.25)
 
     margin = stress_class_group(
         class_group=group,
-        market_inputs=_market(underlying="AAPL", spot=100.0),
+        market_inputs=_market(underlying=Symbol("AAPL"), spot=100.0),
         config=cfg,
     )
 
@@ -804,8 +804,8 @@ def test_lower_case_underlying_ticker_resolves_both_price_and_iv() -> None:
     the surface entry. This regression test confirms the lookups are unified.
     """
     call = _option_position(
-        position_id="p1",
-        underlying_ticker="aapl",  # lower-case — class-group symbol is upper-case
+        position_id=PositionId("p1"),
+        underlying_ticker=Symbol("aapl"),  # lower-case — class-group symbol is upper-case
         strike=100.0,
         contract_count=1.0,
         contract_type=OptionContractType.CALL,
@@ -820,7 +820,7 @@ def test_lower_case_underlying_ticker_resolves_both_price_and_iv() -> None:
     # raw lower-case ticker and raise IvLookupError.
     margin = stress_class_group(
         class_group=group,
-        market_inputs=_market(underlying="AAPL", spot=100.0),
+        market_inputs=_market(underlying=Symbol("AAPL"), spot=100.0),
         config=cfg,
     )
 

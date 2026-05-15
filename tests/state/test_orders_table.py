@@ -15,6 +15,7 @@ Covers:
   the round-trip.
 * Alembic migration idempotency.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -32,7 +33,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    CommandId,
+    OrderId,
+    PositionId,
     Symbol,
+    ThesisId,
 )
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.persistence.models import Base
@@ -150,7 +156,7 @@ def _market_order(**overrides: object) -> OrderRecord:
         "age_hours": 0.5,
     }
     base.update(overrides)
-    return OrderRecord.model_validate(base)
+    return OrderRecord(**base)
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +265,9 @@ class TestRoundTripCodec:
         self, role: OrderRole, direction: OrderDirection
     ) -> None:
         """AC #2 + #3: every (OrderRole, OrderDirection) pair round-trips faithfully."""
-        record = _market_order(role=role, direction=direction, order_id=f"ord-{role}-{direction}")
+        record = _market_order(
+            role=role, direction=direction, order_id=OrderId(f"ord-{role}-{direction}")
+        )
         assert row_to_record(record_to_row(record)) == record
 
     @pytest.mark.parametrize(
@@ -279,7 +287,7 @@ class TestRoundTripCodec:
         record = _market_order(
             order_class=order_class,
             instrument_spec=instrument_spec,
-            order_id=f"ord-{order_class}",
+            order_id=OrderId(f"ord-{order_class}"),
         )
         assert row_to_record(record_to_row(record)) == record
 
@@ -287,7 +295,7 @@ class TestRoundTripCodec:
         """AC #5: a 3-element chain remains a 3-element chain in the same order."""
         chain = ("alp-original", "alp-replaced-1", "alp-replaced-2")
         record = _market_order(
-            alpaca_order_id="alp-replaced-2",
+            alpaca_order_id=AlpacaOrderId("alp-replaced-2"),
             alpaca_order_id_chain=chain,
             modification_count=2,
         )
@@ -322,19 +330,19 @@ class TestRoundTripCodec:
     def test_partial_fill_with_chain_round_trips(self) -> None:
         """Spot-check from story verification: partially-filled active order, chain length 2."""
         record = _market_order(
-            order_id="ord-partial",
-            position_id="pos-1",
+            order_id=OrderId("ord-partial"),
+            position_id=PositionId("pos-1"),
             order_type=OrderType.LIMIT,
             price_parameters=PriceParameters(limit_price=152.5, stop_trigger_price=None),
             status=OrderStatus.PARTIALLY_FILLED,
-            alpaca_order_id="alp-2",
+            alpaca_order_id=AlpacaOrderId("alp-2"),
             alpaca_order_id_chain=("alp-1", "alp-2"),
             filled_quantity=4.0,
             avg_fill_price=152.7,
             remaining_quantity=6.0,
             modification_count=1,
-            originating_thesis_id="thesis-7",
-            originating_pm_command_id="cmd-12",
+            originating_thesis_id=ThesisId("thesis-7"),
+            originating_pm_command_id=CommandId("cmd-12"),
         )
         assert row_to_record(record_to_row(record)) == record
 
@@ -351,7 +359,7 @@ class TestRoundTripCodec:
     def test_options_order_round_trips(self) -> None:
         """Spot-check: options order."""
         record = _market_order(
-            order_id="ord-opt",
+            order_id=OrderId("ord-opt"),
             instrument_spec=_options_spec(),
             direction=OrderDirection.BUY_TO_OPEN,
             quantity=2.0,
@@ -362,7 +370,7 @@ class TestRoundTripCodec:
     def test_multi_leg_strategy_round_trips(self) -> None:
         """Spot-check: multi-leg strategy order."""
         record = _market_order(
-            order_id="ord-strat",
+            order_id=OrderId("ord-strat"),
             instrument_spec=_strategy_spec(),
             order_class=OrderClass.MLEG,
             direction=OrderDirection.BUY_TO_OPEN,

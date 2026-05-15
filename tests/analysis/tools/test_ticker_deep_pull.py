@@ -31,6 +31,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.analysis.tools._envelope import ToolEnvelope, ToolQuality
 from alphamind.analysis.tools.ticker_deep_pull import (
     TickerDeepPullCategory,
@@ -314,7 +315,7 @@ def test_all_four_categories_happy_path(session: Session) -> None:
     fn = ticker_deep_pull_factory(session)
     result = fn(
         TickerDeepPullInput(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             categories=(
                 "price_volume",
                 "short_data",
@@ -335,7 +336,7 @@ def test_price_volume_payload_fields(session: Session) -> None:
     """price_volume payload carries expected fields with plausible values."""
     _populate_all(session)
     fn = ticker_deep_pull_factory(session)
-    result = fn(TickerDeepPullInput(ticker="AAPL", categories=("price_volume",)))
+    result = fn(TickerDeepPullInput(ticker=Symbol("AAPL"), categories=("price_volume",)))
 
     pv = result.price_volume
     assert pv is not None
@@ -349,7 +350,7 @@ def test_short_data_payload_fields(session: Session) -> None:
     """short_data payload carries expected fields with plausible values."""
     _populate_all(session)
     fn = ticker_deep_pull_factory(session)
-    result = fn(TickerDeepPullInput(ticker="AAPL", categories=("short_data",)))
+    result = fn(TickerDeepPullInput(ticker=Symbol("AAPL"), categories=("short_data",)))
 
     sd = result.short_data
     assert sd is not None
@@ -362,7 +363,7 @@ def test_earnings_payload_fields(session: Session) -> None:
     """earnings payload carries expected fields."""
     _populate_all(session)
     fn = ticker_deep_pull_factory(session)
-    result = fn(TickerDeepPullInput(ticker="AAPL", categories=("earnings",)))
+    result = fn(TickerDeepPullInput(ticker=Symbol("AAPL"), categories=("earnings",)))
 
     ea = result.earnings
     assert ea is not None
@@ -376,7 +377,7 @@ def test_macro_context_payload_fields(session: Session) -> None:
     """macro_context payload carries treasury yields."""
     _populate_all(session)
     fn = ticker_deep_pull_factory(session)
-    result = fn(TickerDeepPullInput(ticker="AAPL", categories=("macro_context",)))
+    result = fn(TickerDeepPullInput(ticker=Symbol("AAPL"), categories=("macro_context",)))
 
     mc = result.macro_context
     assert mc is not None
@@ -395,7 +396,7 @@ def test_single_category_price_volume_only(session: Session) -> None:
     """AC5: only price_volume → other three fields are None."""
     _populate_all(session)
     fn = ticker_deep_pull_factory(session)
-    result = fn(TickerDeepPullInput(ticker="AAPL", categories=("price_volume",)))
+    result = fn(TickerDeepPullInput(ticker=Symbol("AAPL"), categories=("price_volume",)))
 
     assert result.price_volume is not None
     assert result.short_data is None
@@ -414,7 +415,7 @@ def test_unknown_ticker_returns_unavailable(session: Session) -> None:
     fn = ticker_deep_pull_factory(session)
     result = fn(
         TickerDeepPullInput(
-            ticker="ZZZZ",
+            ticker=Symbol("ZZZZ"),
             categories=("price_volume", "short_data", "earnings", "macro_context"),
         )
     )
@@ -436,7 +437,9 @@ def test_unknown_category_silently_skipped(session: Session) -> None:
     _populate_all(session)
     fn = ticker_deep_pull_factory(session)
     # price_volume is valid; options_flow is unknown
-    result = fn(TickerDeepPullInput(ticker="AAPL", categories=("price_volume", "options_flow")))
+    result = fn(
+        TickerDeepPullInput(ticker=Symbol("AAPL"), categories=("price_volume", "options_flow"))
+    )
 
     # No raise; price_volume is populated; unknown is not present
     assert result.price_volume is not None
@@ -448,7 +451,7 @@ def test_only_unknown_categories_returns_unavailable(session: Session) -> None:
     """AC7 edge: only unknown categories → quality=UNAVAILABLE."""
     _populate_all(session)
     fn = ticker_deep_pull_factory(session)
-    result = fn(TickerDeepPullInput(ticker="AAPL", categories=("options_flow",)))
+    result = fn(TickerDeepPullInput(ticker=Symbol("AAPL"), categories=("options_flow",)))
 
     assert result.quality == ToolQuality.UNAVAILABLE
 
@@ -462,7 +465,7 @@ def test_empty_categories_returns_unavailable(session: Session) -> None:
     """AC8: categories=() → quality=UNAVAILABLE."""
     _populate_all(session)
     fn = ticker_deep_pull_factory(session)
-    result = fn(TickerDeepPullInput(ticker="AAPL", categories=()))
+    result = fn(TickerDeepPullInput(ticker=Symbol("AAPL"), categories=()))
 
     assert result.quality == ToolQuality.UNAVAILABLE
     assert result.price_volume is None
@@ -489,7 +492,7 @@ def test_partial_no_short_data_rows(session: Session) -> None:
     fn = ticker_deep_pull_factory(session)
     result = fn(
         TickerDeepPullInput(
-            ticker="MSFT",
+            ticker=Symbol("MSFT"),
             categories=("price_volume", "short_data", "earnings", "macro_context"),
         )
     )
@@ -513,7 +516,7 @@ def test_deterministic_output(session: Session) -> None:
     _populate_all(session)
     fn = ticker_deep_pull_factory(session)
     inp = TickerDeepPullInput(
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         categories=("price_volume", "short_data", "earnings", "macro_context"),
     )
     r1 = fn(inp)

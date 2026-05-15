@@ -75,7 +75,7 @@ class TestEquityFillEvent:
     def test_filled_event_translates_to_fill_record(self) -> None:
         report = _equity_fill_report(
             client_order_id="oms-order-1",
-            alpaca_order_id="alp-abc",
+            alpaca_order_id=AlpacaOrderId("alp-abc"),
             event_type="filled",
             fill_price=189.42,
             fill_quantity=100.0,
@@ -237,7 +237,7 @@ class TestMlegEvents:
         record = fill_report_to_fill_record(
             self._mleg_leg_child(
                 client_order_id="strategy-1-leg-1",
-                alpaca_order_id="alp-leg-1",
+                alpaca_order_id=AlpacaOrderId("alp-leg-1"),
                 parent_client_order_id="strategy-1",
                 parent_alpaca_order_id="alp-parent",
             )

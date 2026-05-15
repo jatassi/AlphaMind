@@ -36,6 +36,7 @@ from alphamind._kernel.ids import (
     OccSymbol,
     OrderId,
     PositionId,
+    Symbol,
 )
 from alphamind._kernel.money import money, price
 from alphamind.commands.command_models import (
@@ -570,7 +571,7 @@ async def test_dispatch_add_options_routes_to_submit_options_add() -> None:
 
     instrument = OptionInstrument(
         asset_type="option",
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         strike=price(900.0),
         expiration="2026-06-19",
         contract_type="call",

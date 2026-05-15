@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol, ThesisId
 from alphamind.analysis._shared import Sector
 from alphamind.analysis.qualitative_research.loaders import (
     ActiveThesis,
@@ -297,12 +298,12 @@ class TestLoadCalendarEvents72h:
             event_type="earnings",
             description="NVDA earnings",
             scheduled_at=event_time,
-            ticker="NVDA",
+            ticker=Symbol("NVDA"),
         )
         session.add(
             EarningsEventDetails(
                 event_id="evt-earnings",
-                ticker="NVDA",
+                ticker=Symbol("NVDA"),
                 fiscal_period="Q1",
                 fiscal_year=2026,
                 expected_call_time=None,
@@ -750,8 +751,8 @@ class TestImmutability:
 
     def test_active_thesis_is_frozen(self) -> None:
         thesis = ActiveThesis(
-            thesis_id="t1",
-            ticker="NVDA",
+            thesis_id=ThesisId("t1"),
+            ticker=Symbol("NVDA"),
             summary="Bull thesis",
             key_catalyst="Earnings beat",
             time_expectation_hours=72,

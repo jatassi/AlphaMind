@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.analysis._shared import Sector
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -535,7 +536,7 @@ def test_earnings_section_renders_when_universe_reports(session: Session) -> Non
         EventCalendar(
             event_id="evt-nvda-earnings",
             event_type="earnings",
-            ticker="NVDA",
+            ticker=Symbol("NVDA"),
             scheduled_at=_iso(reported_at),
             description="NVDA Q1 earnings",
             status="completed",
@@ -548,7 +549,7 @@ def test_earnings_section_renders_when_universe_reports(session: Session) -> Non
     session.add(
         EarningsEventDetails(
             event_id="evt-nvda-earnings",
-            ticker="NVDA",
+            ticker=Symbol("NVDA"),
             fiscal_period="Q1",
             fiscal_year=2026,
             eps_consensus=4.25,
@@ -625,7 +626,7 @@ def test_byte_identical_digest_text_on_identical_inputs(session: Session) -> Non
         EventCalendar(
             event_id="evt-nvda-earnings",
             event_type="earnings",
-            ticker="NVDA",
+            ticker=Symbol("NVDA"),
             scheduled_at=_iso(base_time),
             description="NVDA Q1 earnings",
             status="completed",
@@ -638,7 +639,7 @@ def test_byte_identical_digest_text_on_identical_inputs(session: Session) -> Non
     session.add(
         EarningsEventDetails(
             event_id="evt-nvda-earnings",
-            ticker="NVDA",
+            ticker=Symbol("NVDA"),
             fiscal_period="Q1",
             fiscal_year=2026,
             eps_consensus=4.25,

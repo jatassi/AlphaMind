@@ -5,6 +5,7 @@ shared by every instrument type. Consumers reasoning generically about
 positions can annotate against the Protocol; per
 ``docs/design/05-execution-layer/position-model.md`` § Base position.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -62,7 +63,7 @@ def _make_record(**overrides: object) -> PositionRecord:
         "origin": None,
     }
     kwargs.update(overrides)
-    return PositionRecord.model_validate(kwargs)
+    return PositionRecord(**kwargs)
 
 
 def _make_view(**overrides: object) -> PositionView:
@@ -81,7 +82,7 @@ def _make_view(**overrides: object) -> PositionView:
         "risk_reward_at_current": None,
     }
     kwargs.update(overrides)
-    return PositionView.model_validate(kwargs)
+    return PositionView(**kwargs)
 
 
 # ---------------------------------------------------------------------------

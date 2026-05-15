@@ -178,7 +178,7 @@ def test_empty_positions_returns_zero() -> None:
 def test_single_class_group_equals_stress_class_group_result() -> None:
     """Single equity-only AAPL position → result equals stress_class_group for that group."""
     cfg = _config(per_symbol_overrides={"AAPL": 0.15})
-    aapl = _equity_position(position_id="p1", ticker="AAPL", share_count=10.0)
+    aapl = _equity_position(position_id=PositionId("p1"), ticker=Symbol("AAPL"), share_count=10.0)
     market = _market(underlying_prices={"AAPL": _SPOT_AAPL})
 
     result = compute_pm_equivalent_margin((aapl,), market, cfg)
@@ -194,8 +194,8 @@ def test_single_class_group_equals_stress_class_group_result() -> None:
 def test_two_class_groups_sum_correctly() -> None:
     """Long AAPL + long NVDA (two class groups) → result equals sum of both stress results."""
     cfg = _config(per_symbol_overrides={"AAPL": 0.15, "NVDA": 0.20})
-    aapl = _equity_position(position_id="p1", ticker="AAPL", share_count=10.0)
-    nvda = _equity_position(position_id="p2", ticker="NVDA", share_count=5.0)
+    aapl = _equity_position(position_id=PositionId("p1"), ticker=Symbol("AAPL"), share_count=10.0)
+    nvda = _equity_position(position_id=PositionId("p2"), ticker=Symbol("NVDA"), share_count=5.0)
     market = _market(underlying_prices={"AAPL": _SPOT_AAPL, "NVDA": _SPOT_NVDA})
 
     result = compute_pm_equivalent_margin((aapl, nvda), market, cfg)
@@ -222,10 +222,16 @@ def test_hedged_book_no_correlation_offset_applied() -> None:
     """
     cfg = _config(per_symbol_overrides={"AAPL": 0.15, "NVDA": 0.20})
     long_aapl = _equity_position(
-        position_id="p1", ticker="AAPL", share_count=10.0, direction=Direction.LONG
+        position_id=PositionId("p1"),
+        ticker=Symbol("AAPL"),
+        share_count=10.0,
+        direction=Direction.LONG,
     )
     short_nvda = _equity_position(
-        position_id="p2", ticker="NVDA", share_count=5.0, direction=Direction.SHORT
+        position_id=PositionId("p2"),
+        ticker=Symbol("NVDA"),
+        share_count=5.0,
+        direction=Direction.SHORT,
     )
     market = _market(underlying_prices={"AAPL": _SPOT_AAPL, "NVDA": _SPOT_NVDA})
 
@@ -249,10 +255,16 @@ def test_pending_positions_excluded() -> None:
     """One OPEN NVDA + one PENDING AAPL → result equals only NVDA class group stress."""
     cfg = _config(per_symbol_overrides={"AAPL": 0.15, "NVDA": 0.20})
     open_nvda = _equity_position(
-        position_id="p1", ticker="NVDA", share_count=5.0, status=PositionStatus.OPEN
+        position_id=PositionId("p1"),
+        ticker=Symbol("NVDA"),
+        share_count=5.0,
+        status=PositionStatus.OPEN,
     )
     pending_aapl = _equity_position(
-        position_id="p2", ticker="AAPL", share_count=10.0, status=PositionStatus.PENDING
+        position_id=PositionId("p2"),
+        ticker=Symbol("AAPL"),
+        share_count=10.0,
+        status=PositionStatus.PENDING,
     )
     market = _market(underlying_prices={"AAPL": _SPOT_AAPL, "NVDA": _SPOT_NVDA})
 

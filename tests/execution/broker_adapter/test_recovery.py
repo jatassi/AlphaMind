@@ -18,6 +18,7 @@ from typing import Any, Literal
 
 import pytest
 
+from alphamind._kernel.ids import OrderId
 from alphamind._kernel.money import price
 from alphamind.execution.broker_adapter import (
     FillReport,
@@ -123,7 +124,7 @@ class TestFilledOrder:
     async def test_yields_filled_fill_report(self) -> None:
         snap = _build_order_snapshot(
             client_order_id="inv-001",
-            order_id="alpaca-001",
+            order_id=OrderId("alpaca-001"),
             qty=100.0,
             filled_qty=100.0,
             filled_avg_price=189.42,
@@ -209,7 +210,7 @@ class TestTerminalStatuses:
 
     async def test_replaced_uses_replaced_by_as_alpaca_order_id(self) -> None:
         snap = _build_order_snapshot(
-            order_id="alp-original",
+            order_id=OrderId("alp-original"),
             replaced_by="alp-replacement",
             status="replaced",
             qty=10.0,
@@ -307,21 +308,21 @@ class TestMlegOrders:
     def _three_filled_legs(self) -> list[OrderLegSnapshot]:
         return [
             _build_mleg_leg(
-                order_id="leg-1-id",
+                order_id=OrderId("leg-1-id"),
                 occ_symbol="AAPL250620C00200000",
                 position_intent="buy_to_open",
                 side="buy",
                 filled_avg_price=2.10,
             ),
             _build_mleg_leg(
-                order_id="leg-2-id",
+                order_id=OrderId("leg-2-id"),
                 occ_symbol="AAPL250620C00210000",
                 position_intent="sell_to_open",
                 side="sell",
                 filled_avg_price=1.05,
             ),
             _build_mleg_leg(
-                order_id="leg-3-id",
+                order_id=OrderId("leg-3-id"),
                 occ_symbol="AAPL250620P00190000",
                 position_intent="sell_to_open",
                 side="sell",
@@ -333,7 +334,7 @@ class TestMlegOrders:
         legs = self._three_filled_legs()
         parent = _build_order_snapshot(
             client_order_id="strategy-1",
-            order_id="parent-id",
+            order_id=OrderId("parent-id"),
             symbol="",
             asset_class="us_option",
             order_class="mleg",
@@ -375,7 +376,7 @@ class TestMlegOrders:
         still open; each leg's report carries that leg's individual status."""
         legs = [
             _build_mleg_leg(
-                order_id="leg-1-id",
+                order_id=OrderId("leg-1-id"),
                 occ_symbol="AAPL250620C00200000",
                 position_intent="buy_to_open",
                 side="buy",
@@ -385,7 +386,7 @@ class TestMlegOrders:
                 qty=1.0,
             ),
             _build_mleg_leg(
-                order_id="leg-2-id",
+                order_id=OrderId("leg-2-id"),
                 occ_symbol="AAPL250620C00210000",
                 position_intent="sell_to_open",
                 side="sell",
@@ -396,7 +397,7 @@ class TestMlegOrders:
         ]
         parent = _build_order_snapshot(
             client_order_id="strategy-mixed",
-            order_id="parent-id",
+            order_id=OrderId("parent-id"),
             symbol="",
             asset_class="us_option",
             order_class="mleg",
@@ -431,7 +432,7 @@ class TestOrdering:
         back in arbitrary cursor order."""
         late = _build_order_snapshot(
             client_order_id="inv-late",
-            order_id="alp-late",
+            order_id=OrderId("alp-late"),
             qty=1.0,
             filled_qty=1.0,
             filled_avg_price=10.0,
@@ -440,7 +441,7 @@ class TestOrdering:
         )
         early = _build_order_snapshot(
             client_order_id="inv-early",
-            order_id="alp-early",
+            order_id=OrderId("alp-early"),
             qty=1.0,
             filled_qty=1.0,
             filled_avg_price=10.0,
@@ -449,7 +450,7 @@ class TestOrdering:
         )
         middle = _build_order_snapshot(
             client_order_id="inv-mid",
-            order_id="alp-mid",
+            order_id=OrderId("alp-mid"),
             qty=1.0,
             filled_qty=0.0,
             status="canceled",
@@ -469,7 +470,7 @@ class TestOrdering:
         same_ts = _ts(20)
         snap_b = _build_order_snapshot(
             client_order_id="inv-b",
-            order_id="alp-b",
+            order_id=OrderId("alp-b"),
             qty=1.0,
             filled_qty=1.0,
             filled_avg_price=10.0,
@@ -478,7 +479,7 @@ class TestOrdering:
         )
         snap_a = _build_order_snapshot(
             client_order_id="inv-a",
-            order_id="alp-a",
+            order_id=OrderId("alp-a"),
             qty=1.0,
             filled_qty=1.0,
             filled_avg_price=10.0,
@@ -496,7 +497,7 @@ class TestOrdering:
         uses ``submitted_at`` as the ordering key."""
         early_submitted = _build_order_snapshot(
             client_order_id="inv-early",
-            order_id="alp-early",
+            order_id=OrderId("alp-early"),
             qty=1.0,
             filled_qty=0.0,
             status="new",
@@ -505,7 +506,7 @@ class TestOrdering:
         )
         late_submitted = _build_order_snapshot(
             client_order_id="inv-late",
-            order_id="alp-late",
+            order_id=OrderId("alp-late"),
             qty=1.0,
             filled_qty=0.0,
             status="new",
@@ -563,7 +564,7 @@ class TestSinceUntilParameters:
         before yielding."""
         in_window = _build_order_snapshot(
             client_order_id="inv-in",
-            order_id="alp-in",
+            order_id=OrderId("alp-in"),
             qty=1.0,
             filled_qty=1.0,
             filled_avg_price=10.0,
@@ -573,7 +574,7 @@ class TestSinceUntilParameters:
         )
         leaked = _build_order_snapshot(
             client_order_id="inv-leaked",
-            order_id="alp-leaked",
+            order_id=OrderId("alp-leaked"),
             qty=1.0,
             filled_qty=1.0,
             filled_avg_price=10.0,
@@ -608,7 +609,7 @@ class TestIdempotencyFriendlyEmission:
         was already processed via the websocket re-emits during recovery."""
         snap_one = _build_order_snapshot(
             client_order_id="inv-1",
-            order_id="alp-1",
+            order_id=OrderId("alp-1"),
             status="new",
             qty=1.0,
             filled_qty=0.0,
@@ -617,7 +618,7 @@ class TestIdempotencyFriendlyEmission:
         )
         snap_two = _build_order_snapshot(
             client_order_id="inv-2",
-            order_id="alp-2",
+            order_id=OrderId("alp-2"),
             status="filled",
             qty=1.0,
             filled_qty=1.0,

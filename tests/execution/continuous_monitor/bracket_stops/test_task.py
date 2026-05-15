@@ -650,9 +650,8 @@ class TestConfigKnob:
         assert cfg.bracket_stop_evaluation_cadence_seconds == 1.0
 
     def test_bracket_stop_evaluation_cadence_seconds_positive_required(self) -> None:
-        from pydantic import ValidationError
 
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             ContinuousMonitorConfig(
                 breach_evaluation_cadence_seconds=60,
                 greeks_refresh_interval_minutes=15,
@@ -664,7 +663,7 @@ class TestConfigKnob:
                 supervisor_shutdown_timeout_seconds=5,
             )
 
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             ContinuousMonitorConfig(
                 breach_evaluation_cadence_seconds=60,
                 greeks_refresh_interval_minutes=15,

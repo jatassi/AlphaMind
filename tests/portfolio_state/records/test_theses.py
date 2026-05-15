@@ -1,11 +1,12 @@
 """Tests for thesis records (story 03b)."""
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind._kernel.ids import (
     PositionId,
@@ -98,13 +99,13 @@ def test_key_assumption_valid_resolved() -> None:
 
 def test_key_assumption_frozen() -> None:
     ka = KeyAssumption(text="test", outcome=None)
-    with pytest.raises((AttributeError, TypeError, ValidationError)):
+    with pytest.raises((FrozenInstanceError, AttributeError, TypeError, ValueError)):
         ka.text = "changed"
 
 
 def test_key_assumption_requires_text() -> None:
-    with pytest.raises(ValidationError):
-        KeyAssumption.model_validate({"outcome": None})
+    with pytest.raises((ValueError, TypeError)):
+        KeyAssumption(outcome=None)
 
 
 def test_supporting_signal_valid() -> None:
@@ -114,13 +115,13 @@ def test_supporting_signal_valid() -> None:
 
 
 def test_supporting_signal_requires_name() -> None:
-    with pytest.raises(ValidationError):
-        SupportingSignal.model_validate({"status": "PRESENT"})
+    with pytest.raises((ValueError, TypeError)):
+        SupportingSignal(status="PRESENT")
 
 
 def test_supporting_signal_requires_status() -> None:
-    with pytest.raises(ValidationError):
-        SupportingSignal.model_validate({"name": "earnings revision"})
+    with pytest.raises((ValueError, TypeError)):
+        SupportingSignal(name="earnings revision")
 
 
 def _make_component(
@@ -201,7 +202,7 @@ def _make_thesis_record(**overrides: object) -> ThesisRecord:
         "key_catalyst": "earnings beat",
     }
     base.update(overrides)
-    return ThesisRecord.model_validate(base)
+    return ThesisRecord(**base)
 
 
 def test_thesis_component_valid() -> None:
@@ -221,24 +222,22 @@ def test_thesis_component_with_bracket_leg() -> None:
 
 def test_thesis_component_frozen() -> None:
     comp = _make_component()
-    with pytest.raises((AttributeError, TypeError, ValidationError)):
+    with pytest.raises((FrozenInstanceError, AttributeError, TypeError, ValueError)):
         comp.narrative = "changed"
 
 
 def test_thesis_component_requires_component_id() -> None:
-    with pytest.raises(ValidationError):
-        ThesisComponent.model_validate(
-            {
-                "thesis_id": "t1",
-                "component_type": "ENTRY_RATIONALE",
-                "linked_bracket_leg_type": None,
-                "instrument_reference": "AAPL",
-                "narrative": "x",
-                "key_assumptions": [],
-                "generation_timestamp": NOW.isoformat(),
-                "resolution_outcome": None,
-                "resolution_notes": None,
-            }
+    with pytest.raises((ValueError, TypeError)):
+        ThesisComponent(
+            thesis_id=ThesisId("t1"),
+            component_type="ENTRY_RATIONALE",
+            linked_bracket_leg_type=None,
+            instrument_reference="AAPL",
+            narrative="x",
+            key_assumptions=[],
+            generation_timestamp=NOW.isoformat(),
+            resolution_outcome=None,
+            resolution_notes=None,
         )
 
 
@@ -251,12 +250,12 @@ def test_thesis_record_valid_active() -> None:
 
 def test_thesis_record_frozen() -> None:
     rec = _make_thesis_record()
-    with pytest.raises((AttributeError, TypeError, ValidationError)):
+    with pytest.raises((FrozenInstanceError, AttributeError, TypeError, ValueError)):
         rec.summary = "changed"
 
 
 def test_active_thesis_empty_components_rejected() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_thesis_record(components=())
 
 
@@ -266,7 +265,7 @@ def test_active_thesis_non_empty_components_accepted() -> None:
 
 
 def test_resolved_thesis_empty_components_rejected() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_thesis_record(
             components=(),
             status=ThesisRecordStatus.RESOLVED,
@@ -299,7 +298,7 @@ def test_mandatory_coverage_missing_entry_rationale_rejected() -> None:
         for c in _make_full_components()
         if c.component_type != ThesisComponentType.ENTRY_RATIONALE
     )
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_thesis_record(components=comps)
 
 
@@ -309,7 +308,7 @@ def test_mandatory_coverage_missing_target_rationale_rejected() -> None:
         for c in _make_full_components()
         if c.component_type != ThesisComponentType.TARGET_RATIONALE
     )
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_thesis_record(components=comps)
 
 
@@ -319,7 +318,7 @@ def test_mandatory_coverage_missing_invalidation_rationale_rejected() -> None:
         for c in _make_full_components()
         if c.component_type != ThesisComponentType.INVALIDATION_RATIONALE
     )
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_thesis_record(components=comps)
 
 
@@ -331,17 +330,17 @@ def test_active_resolution_fields_none_passes() -> None:
 
 
 def test_active_with_resolution_timestamp_rejected() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_thesis_record(resolution_timestamp=NOW)
 
 
 def test_active_with_resolution_category_rejected() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_thesis_record(resolution_category=ThesisResolutionCategory.VALIDATED)
 
 
 def test_active_with_resolution_pnl_rejected() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_thesis_record(resolution_pnl_usd=100.0)
 
 
@@ -365,24 +364,24 @@ def test_resolved_all_fields_populated_passes() -> None:
 
 
 def test_resolved_missing_timestamp_rejected() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_resolved_thesis(resolution_timestamp=None)
 
 
 def test_resolved_missing_category_rejected() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_resolved_thesis(resolution_category=None)
 
 
 def test_resolved_missing_pnl_rejected() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_resolved_thesis(resolution_pnl_usd=None)
 
 
 def test_resolved_unresolved_component_rejected() -> None:
     """RESOLVED thesis must raise when any component has resolution_outcome=None."""
     comps = _make_full_components(resolved=False)
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_resolved_thesis(components=comps)
 
 
@@ -397,7 +396,7 @@ def test_age_hours_positive_accepted() -> None:
 
 
 def test_age_hours_negative_rejected() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_thesis_record(age_hours=-1.0)
 
 
@@ -407,7 +406,7 @@ def test_summary_non_empty_passes() -> None:
 
 
 def test_summary_empty_rejected() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_thesis_record(summary="")
 
 
@@ -417,16 +416,14 @@ def test_summary_empty_rejected() -> None:
 
 
 def test_time_expectation_field_type() -> None:
-    """time_expectation_hours must be typed as float with gt=0 constraint."""
-    import alphamind.portfolio_state.records.theses as theses_mod
+    """time_expectation_hours must be typed as float; gt=0 is enforced in __post_init__."""
+    import dataclasses as _dc
 
-    field_info = theses_mod.ThesisRecord.model_fields["time_expectation_hours"]
-    assert field_info.annotation is float, (
-        f"Expected float annotation, got: {field_info.annotation}"
+    fields = {f.name: f for f in _dc.fields(ThesisRecord)}
+    assert fields["time_expectation_hours"].type in (float, "float"), (
+        f"Expected float annotation, got: {fields['time_expectation_hours'].type}"
     )
-    assert any(getattr(m, "gt", None) == 0 for m in (field_info.metadata or [])), (
-        f"Expected gt=0 constraint in metadata, got: {field_info.metadata}"
-    )
+    # gt=0 enforcement lives in __post_init__ instead of Pydantic Field metadata.
 
 
 def test_time_expectation_valid_float_passes() -> None:
@@ -437,13 +434,13 @@ def test_time_expectation_valid_float_passes() -> None:
 
 def test_time_expectation_zero_rejected() -> None:
     """time_expectation_hours=0 must raise ValidationError (gt=0 constraint)."""
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_thesis_record(time_expectation_hours=0, expected_resolution_at=NOW)
 
 
 def test_time_expectation_negative_rejected() -> None:
     """time_expectation_hours=-5.0 must raise ValidationError."""
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_thesis_record(time_expectation_hours=-5.0, expected_resolution_at=NOW)
 
 
@@ -471,7 +468,7 @@ def test_time_expectation_consistency_validator_fails_and_names_delta() -> None:
     gen_ts = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
     # 24h off — expected_resolution_at is 24h earlier than generation + 48h
     bad_resolution = datetime(2026, 5, 2, 12, 0, 0, tzinfo=UTC)
-    with pytest.raises(ValidationError) as exc_info:
+    with pytest.raises((ValueError, TypeError)) as exc_info:
         _make_thesis_record(
             generation_timestamp=gen_ts,
             time_expectation_hours=48.0,
@@ -499,7 +496,7 @@ def test_time_expectation_exactly_61s_off_fails() -> None:
     """61 seconds beyond tolerance must be rejected."""
     gen_ts = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
     expected_at = gen_ts + timedelta(hours=48) + timedelta(seconds=61)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         _make_thesis_record(
             generation_timestamp=gen_ts,
             time_expectation_hours=48.0,
@@ -537,17 +534,15 @@ def test_recent_thesis_resolution_invalidated_with_post_mortem() -> None:
 
 
 def test_recent_thesis_resolution_requires_thesis_id() -> None:
-    with pytest.raises(ValidationError):
-        RecentThesisResolution.model_validate(
-            {
-                "position_id": "pos-1",
-                "resolution_category": "VALIDATED",
-                "component_outcomes": [],
-                "resolution_pnl_usd": 0.0,
-                "active_duration_hours": 1.0,
-                "expected_duration_hours": 24.0,
-                "signal_post_mortem": None,
-            }
+    with pytest.raises((ValueError, TypeError)):
+        RecentThesisResolution(
+            position_id=PositionId("pos-1"),
+            resolution_category="VALIDATED",
+            component_outcomes=[],
+            resolution_pnl_usd=0.0,
+            active_duration_hours=1.0,
+            expected_duration_hours=24.0,
+            signal_post_mortem=None,
         )
 
 
@@ -574,13 +569,13 @@ def test_position_size_rationale_non_empty_string_accepted() -> None:
 
 def test_position_size_rationale_empty_string_rejected() -> None:
     """(c) An empty string is rejected by the field validator."""
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_thesis_record(position_size_rationale="")
 
 
 def test_position_size_rationale_whitespace_only_rejected() -> None:
     """(d) A whitespace-only string is rejected by the field validator."""
-    with pytest.raises(ValidationError):
+    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
         _make_thesis_record(position_size_rationale="   ")
 
 
@@ -589,16 +584,23 @@ def test_position_size_rationale_whitespace_only_rejected() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _dataclass_field_names(cls: type) -> set[str]:
+    """Return the set of dataclass field names for *cls*."""
+    import dataclasses as _dc
+
+    return {f.name for f in _dc.fields(cls)}
+
+
 def test_supporting_signals_removed_from_thesis_component() -> None:
     """ThesisComponent must no longer carry supporting_signals — moved to ThesisHealthSnapshot."""
-    assert "supporting_signals" not in ThesisComponent.model_fields
+    assert "supporting_signals" not in _dataclass_field_names(ThesisComponent)
 
 
 def test_health_status_removed_from_thesis_record() -> None:
     """ThesisRecord must no longer carry health_status — moved to ThesisHealthSnapshot."""
-    assert "health_status" not in ThesisRecord.model_fields
+    assert "health_status" not in _dataclass_field_names(ThesisRecord)
 
 
 def test_prior_health_status_removed_from_thesis_record() -> None:
     """ThesisRecord must no longer carry prior_health_status — moved to ThesisHealthSnapshot."""
-    assert "prior_health_status" not in ThesisRecord.model_fields
+    assert "prior_health_status" not in _dataclass_field_names(ThesisRecord)

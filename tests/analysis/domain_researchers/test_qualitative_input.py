@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import Symbol
 from alphamind.analysis._shared import Sector
 from alphamind.analysis.domain_researchers.qualitative_input import (
     EventEntry,
@@ -418,7 +419,7 @@ class TestEventSelection:
             description="AAPL earnings",
             scheduled_at=as_of + timedelta(hours=24),
             sectors="tech_semis",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
         )
         _add_event(
             session,
@@ -427,7 +428,7 @@ class TestEventSelection:
             description="NVDA earnings",
             scheduled_at=as_of + timedelta(hours=36),
             sectors="tech_semis",
-            ticker="NVDA",
+            ticker=Symbol("NVDA"),
         )
         session.commit()
 
@@ -450,13 +451,13 @@ class TestEventSelection:
             description="AAPL Q1 earnings",
             scheduled_at=as_of + timedelta(hours=24),
             sectors="tech_semis",
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
         )
         session.flush()
         session.add(
             EarningsEventDetails(
                 event_id="earn-aapl-q1",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 fiscal_period="Q1",
                 fiscal_year=2026,
                 eps_consensus=1.23,

@@ -333,7 +333,7 @@ async def run_scenario_a_stream_caches_quote() -> ScenarioResult:
     second (the asyncio-only lock path).
     """
     cache = UnderlyingPriceCache()
-    quote = UnderlyingQuote(ticker="SPY", price=520.50, as_of=_NOW)
+    quote = UnderlyingQuote(ticker=Symbol("SPY"), price=520.50, as_of=_NOW)
     try:
         await asyncio.wait_for(cache.update(quote), timeout=1.0)
     except TimeoutError:
@@ -403,7 +403,7 @@ async def run_scenario_b_fill_persists() -> ScenarioResult:
         # ALP-462 — wrap fixture floats at the FillRecord boundary.
         fill = FillRecord(
             fill_id="FILL-001",
-            order_id="ORD-001",
+            order_id=OrderId("ORD-001"),
             fill_timestamp=_NOW,
             fill_price=price("150"),
             fill_quantity=10.0,
@@ -995,7 +995,7 @@ def _make_dispatch_context(
 ) -> BreachDispatchContext:
     breaching = _equity_position_view(
         position_id=breaching_position_id,
-        ticker="NVDA",
+        ticker=Symbol("NVDA"),
         unrealized_pnl_usd=-3_500.0,
     )
     positions = (breaching,)
@@ -1319,14 +1319,14 @@ async def run_scenario_i_bracket_stop_fires() -> ScenarioResult:
     ``event_source=BRACKET_MANAGER`` and ``exit_method=STOP_TRIGGERED``.
     """
     position = _options_position(
-        position_id="POS-OPT-NVDA-BR",
-        bracket_id="BRK-OPT-NVDA-BR",
+        position_id=PositionId("POS-OPT-NVDA-BR"),
+        bracket_id=BracketId("BRK-OPT-NVDA-BR"),
     )
     bracket = _price_stop_bracket(
-        bracket_id="BRK-OPT-NVDA-BR",
-        position_id="POS-OPT-NVDA-BR",
+        bracket_id=BracketId("BRK-OPT-NVDA-BR"),
+        position_id=PositionId("POS-OPT-NVDA-BR"),
         threshold=865.0,
-        underlying="NVDA",
+        underlying=Symbol("NVDA"),
         direction="LTE",
     )
     cache = await _seed_underlying_cache({"NVDA": 860.0})  # below threshold
@@ -1432,16 +1432,16 @@ async def run_scenario_j_strategist_visibility() -> ScenarioResult:
     cascade_closure_at = _NOW
     bracket_closure_at = _NOW + timedelta(minutes=1)
     cascade_closure = _between_invocation_closure(
-        position_id="POS-NVDA-1",
-        ticker="NVDA",
+        position_id=PositionId("POS-NVDA-1"),
+        ticker=Symbol("NVDA"),
         closed_at=cascade_closure_at,
         origin="engine_guardrail",
         exit_method=PositionExitMethod.MARGIN_LIQUIDATION,
         closing_order_id="MON.monsession-verify.1.0",
     )
     bracket_closure = _between_invocation_closure(
-        position_id="POS-OPT-NVDA-BR",
-        ticker="NVDA",
+        position_id=PositionId("POS-OPT-NVDA-BR"),
+        ticker=Symbol("NVDA"),
         closed_at=bracket_closure_at,
         origin="bracket_manager",
         exit_method=PositionExitMethod.STOP_TRIGGERED,

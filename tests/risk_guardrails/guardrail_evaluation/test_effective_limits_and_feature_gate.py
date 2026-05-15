@@ -23,6 +23,7 @@ from typing import Any, cast
 import pytest
 import yaml
 
+from alphamind._kernel.ids import Symbol
 from alphamind.config.loaders import (
     load_modes,
     load_overlays,
@@ -304,7 +305,7 @@ def _proposed_delta(
     ``direction`` (and ``action`` for the action-agnosticism test) are read."""
     return ProposedDelta(
         id=proposal_id,
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="tech",
         direction=direction,
         asset_type=asset_type,

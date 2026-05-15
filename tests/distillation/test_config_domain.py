@@ -325,7 +325,7 @@ def test_yaml_to_pydantic_to_domain_preserves_every_field() -> None:
 
     # Exhaustive check: every Pydantic ``model_dump`` field maps to an equal
     # value on the dataclass mirror.
-    pyd_dump = pydantic_cfg.model_dump()
+    pyd_dump = pydantic_cfg.model_dump(mode="json")
     for top_field, pyd_section in pyd_dump.items():
         dom_section = getattr(domain, top_field)
         if isinstance(pyd_section, dict):
@@ -388,7 +388,7 @@ def test_pure_q1_compute_accepts_domain_config_without_pydantic_instances() -> N
 
 def test_dataclasses_replace_overrides_one_field_like_model_copy_update() -> None:
     """``dataclasses.replace(domain, anomaly_detection=...)`` matches
-    ``pydantic.model_copy(update={"anomaly_detection": ...})`` semantically."""
+    ``dataclasses.replace(pydantic, anomaly_detection=...)`` semantically."""
     pydantic_cfg = _build_test_pydantic_config()
     domain = pydantic_cfg.to_domain()
 

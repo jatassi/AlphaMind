@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import Symbol
 from alphamind._kernel.money import money
 from alphamind._kernel.regime import (
     RegimeLabel,
@@ -168,7 +169,7 @@ def _market_inputs(underlyings: Sequence[str] = ("AAPL", "NVDA", "ABC")) -> Mark
         iv_provider=FixtureIvProvider(
             surface={
                 "AAPL": IvSurfaceEntry(
-                    underlying="AAPL",
+                    underlying=Symbol("AAPL"),
                     quotes=(
                         IvQuote(
                             strike=100.0,

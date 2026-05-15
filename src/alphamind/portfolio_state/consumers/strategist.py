@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
-
-from pydantic import BaseModel, ConfigDict
 
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
@@ -42,10 +41,9 @@ from alphamind.portfolio_state.views.positions import PositionView
 _STRATEGIST_AGENT = "strategist"
 
 
-class StrategistPositionView(BaseModel):
+@dataclass(frozen=True, slots=True)
+class StrategistPositionView:
     """Per-position bundle for the strategist — position + thesis + bracket + orders + trail."""
-
-    model_config = ConfigDict(frozen=True)
 
     position: PositionView
     thesis: ThesisRecord | None
@@ -54,10 +52,9 @@ class StrategistPositionView(BaseModel):
     modification_trail: tuple[ActivityLogEntry, ...]
 
 
-class StrategistAbandonedAction(BaseModel):
+@dataclass(frozen=True, slots=True)
+class StrategistAbandonedAction:
     """An abandoned command from the strategist."""
-
-    model_config = ConfigDict(frozen=True)
 
     envelope_id: str
     command_type: Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"]
@@ -75,7 +72,8 @@ BetweenInvocationClosureOrigin = Literal[
 ]
 
 
-class BetweenInvocationClosure(BaseModel):
+@dataclass(frozen=True, slots=True)
+class BetweenInvocationClosure:
     """A position closure recorded by the continuous monitor between invocations.
 
     Surfaces both (a) story 04c's direct-broker-call closures (price-based
@@ -89,8 +87,6 @@ class BetweenInvocationClosure(BaseModel):
     :class:`StrategistView` provides the single surface.
     """
 
-    model_config = ConfigDict(frozen=True)
-
     position_id: str
     ticker: str
     instrument_type: InstrumentType
@@ -101,10 +97,9 @@ class BetweenInvocationClosure(BaseModel):
     rationale: str
 
 
-class StrategistView(BaseModel):
+@dataclass(frozen=True, slots=True)
+class StrategistView:
     """Full strategist projection — all positions bundled, P/L, drawdown, activity logs."""
-
-    model_config = ConfigDict(frozen=True)
 
     positions: tuple[StrategistPositionView, ...]
     recent_thesis_resolutions: tuple[RecentThesisResolution, ...]
@@ -118,7 +113,7 @@ class StrategistView(BaseModel):
     recent_pm_decision_log: tuple[ActivityLogEntry, ...]
     abandoned_openings: tuple[AnalystAbandonedOpening, ...]
     abandoned_actions: tuple[StrategistAbandonedAction, ...]
-    between_invocation_closures: tuple[BetweenInvocationClosure, ...] = ()
+    between_invocation_closures: tuple[BetweenInvocationClosure, ...] = field(default=())
 
 
 # ---------------------------------------------------------------------------

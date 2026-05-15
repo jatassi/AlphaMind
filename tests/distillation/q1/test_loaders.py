@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from alphamind._kernel.ids import Symbol
 from alphamind.distillation._repository import (
     DailyBarRow,
     DistillationRepository,
@@ -106,9 +107,9 @@ def test_repository_protocol_is_satisfied_by_stub() -> None:
     repo: DistillationRepository = _assert_is_repository(stub)
     assert repo.load_default_ticker_scope() == ()
     assert stub.load_sector_classifications(tickers=["AAPL"]) == {}
-    assert stub.load_daily_bars(ticker="AAPL", as_of="x", days=5) == ()
-    assert stub.load_latest_baseline(ticker="AAPL", kind="atr", as_of="x") is None
-    counts = stub.load_gap_fill_event_counts(ticker="AAPL", as_of="x")
+    assert stub.load_daily_bars(ticker=Symbol("AAPL"), as_of="x", days=5) == ()
+    assert stub.load_latest_baseline(ticker=Symbol("AAPL"), kind="atr", as_of="x") is None
+    counts = stub.load_gap_fill_event_counts(ticker=Symbol("AAPL"), as_of="x")
     assert counts.resolved == 0 and counts.filled == 0
     sector_counts = stub.load_sector_pooled_gap_fill_counts(sector="tech", as_of="x")
     assert sector_counts.resolved == 0 and sector_counts.filled == 0
@@ -118,7 +119,7 @@ def test_stub_returns_loaded_bars_in_chronological_order() -> None:
     """Stub honors the days=N tail slice the production loader implements."""
     bars = [
         DailyBarRow(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             period_start=f"2026-04-{day:02d}T00:00:00Z",
             adj_open=100.0,
             adj_high=101.0,
@@ -129,7 +130,7 @@ def test_stub_returns_loaded_bars_in_chronological_order() -> None:
         for day in range(1, 11)
     ]
     stub = _StubDistillationRepository(bars={"AAPL": bars})
-    loaded = stub.load_daily_bars(ticker="AAPL", as_of="x", days=3)
+    loaded = stub.load_daily_bars(ticker=Symbol("AAPL"), as_of="x", days=3)
     assert len(loaded) == 3
     # Most recent three bars.
     assert loaded[-1].period_start == "2026-04-10T00:00:00Z"

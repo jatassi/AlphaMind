@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from alphamind._kernel.ids import OrderId, PositionId, Symbol, ThesisId
 from alphamind._kernel.money import price
 from alphamind.config.models.distillation import (
     AnomalyDetection,
@@ -49,7 +50,7 @@ def _pm_detail() -> PMDecisionDetail:
 
 def _pos_detail() -> PositionOpenedDetail:
     return PositionOpenedDetail(
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         direction="LONG",
         fill_price=price("150.0"),
         quantity=100.0,
@@ -287,9 +288,9 @@ def test_filter_by_source_empty_input() -> None:
 def test_filter_by_position_id_happy_path() -> None:
     from alphamind.portfolio_state.computations.activity_log import filter_by_position_id
 
-    e1 = _pm_entry(entry_id="e1", position_id="pos-A")
-    e2 = _pos_entry(entry_id="e2", position_id="pos-B")
-    e3 = _pm_entry(entry_id="e3", position_id="pos-A")
+    e1 = _pm_entry(entry_id="e1", position_id=PositionId("pos-A"))
+    e2 = _pos_entry(entry_id="e2", position_id=PositionId("pos-B"))
+    e3 = _pm_entry(entry_id="e3", position_id=PositionId("pos-A"))
     entries = (e1, e2, e3)
 
     result = filter_by_position_id(entries, "pos-A")
@@ -300,7 +301,7 @@ def test_filter_by_position_id_happy_path() -> None:
 def test_filter_by_position_id_excludes_none() -> None:
     from alphamind.portfolio_state.computations.activity_log import filter_by_position_id
 
-    e_with = _pm_entry(entry_id="e1", position_id="pos-A")
+    e_with = _pm_entry(entry_id="e1", position_id=PositionId("pos-A"))
     e_none = _pm_entry(entry_id="e2", position_id=None)
     entries = (e_with, e_none)
 
@@ -325,8 +326,8 @@ def test_filter_by_position_id_empty_input() -> None:
 def test_filter_by_order_id_happy_path() -> None:
     from alphamind.portfolio_state.computations.activity_log import filter_by_order_id
 
-    e1 = _pos_entry(entry_id="e1", order_id="ord-1")
-    e2 = _pos_entry(entry_id="e2", order_id="ord-2")
+    e1 = _pos_entry(entry_id="e1", order_id=OrderId("ord-1"))
+    e2 = _pos_entry(entry_id="e2", order_id=OrderId("ord-2"))
     e3 = _pm_entry(entry_id="e3", order_id=None)
     entries = (e1, e2, e3)
 
@@ -356,8 +357,8 @@ def test_filter_by_order_id_empty_input() -> None:
 def test_filter_by_thesis_id_happy_path() -> None:
     from alphamind.portfolio_state.computations.activity_log import filter_by_thesis_id
 
-    e1 = _pos_entry(entry_id="e1", thesis_id="thesis-X")
-    e2 = _pos_entry(entry_id="e2", thesis_id="thesis-Y")
+    e1 = _pos_entry(entry_id="e1", thesis_id=ThesisId("thesis-X"))
+    e2 = _pos_entry(entry_id="e2", thesis_id=ThesisId("thesis-Y"))
     e3 = _pm_entry(entry_id="e3", thesis_id=None)
     entries = (e1, e2, e3)
 
@@ -526,9 +527,9 @@ def test_position_modification_trail_happy_path() -> None:
         position_modification_trail,
     )
 
-    e1 = _pm_entry(entry_id="e1", position_id="pos-A")
-    e2 = _pos_entry(entry_id="e2", position_id="pos-B")
-    e3 = _pm_entry(entry_id="e3", position_id="pos-A")
+    e1 = _pm_entry(entry_id="e1", position_id=PositionId("pos-A"))
+    e2 = _pos_entry(entry_id="e2", position_id=PositionId("pos-B"))
+    e3 = _pm_entry(entry_id="e3", position_id=PositionId("pos-A"))
     entries = (e1, e2, e3)
 
     result = position_modification_trail(entries, ("pos-A", "pos-B"))
@@ -542,7 +543,7 @@ def test_position_modification_trail_unknown_id_absent() -> None:
         position_modification_trail,
     )
 
-    e1 = _pm_entry(position_id="pos-A")
+    e1 = _pm_entry(position_id=PositionId("pos-A"))
     entries = (e1,)
 
     result = position_modification_trail(entries, ("pos-A", "pos-UNKNOWN"))
@@ -556,7 +557,7 @@ def test_position_modification_trail_empty_position_ids() -> None:
         position_modification_trail,
     )
 
-    e1 = _pm_entry(position_id="pos-A")
+    e1 = _pm_entry(position_id=PositionId("pos-A"))
     assert position_modification_trail((e1,), ()) == {}
 
 
@@ -581,10 +582,16 @@ def test_recent_pm_decisions_for_position_happy_path() -> None:
     )
 
     base = datetime(2024, 1, 1, 10, 0, 0, tzinfo=_UTC)
-    e1 = _pm_entry(entry_id="e1", position_id="pos-A", timestamp=base)
-    e2 = _pm_entry(entry_id="e2", position_id="pos-A", timestamp=base + timedelta(hours=1))
-    e3 = _pm_entry(entry_id="e3", position_id="pos-A", timestamp=base + timedelta(hours=2))
-    e4 = _pos_entry(entry_id="e4", position_id="pos-A", timestamp=base + timedelta(hours=3))
+    e1 = _pm_entry(entry_id="e1", position_id=PositionId("pos-A"), timestamp=base)
+    e2 = _pm_entry(
+        entry_id="e2", position_id=PositionId("pos-A"), timestamp=base + timedelta(hours=1)
+    )
+    e3 = _pm_entry(
+        entry_id="e3", position_id=PositionId("pos-A"), timestamp=base + timedelta(hours=2)
+    )
+    e4 = _pos_entry(
+        entry_id="e4", position_id=PositionId("pos-A"), timestamp=base + timedelta(hours=3)
+    )
     entries = (e1, e2, e3, e4)
 
     result = recent_pm_decisions_for_position(entries, "pos-A", limit=2)
@@ -598,7 +605,7 @@ def test_recent_pm_decisions_for_position_limit_exceeds_matches() -> None:
         recent_pm_decisions_for_position,
     )
 
-    e1 = _pm_entry(entry_id="e1", position_id="pos-A")
+    e1 = _pm_entry(entry_id="e1", position_id=PositionId("pos-A"))
     entries = (e1,)
 
     result = recent_pm_decisions_for_position(entries, "pos-A", limit=10)
@@ -611,7 +618,7 @@ def test_recent_pm_decisions_for_position_no_matches() -> None:
         recent_pm_decisions_for_position,
     )
 
-    e1 = _pos_entry(entry_id="e1", position_id="pos-A")
+    e1 = _pos_entry(entry_id="e1", position_id=PositionId("pos-A"))
     assert recent_pm_decisions_for_position((e1,), "pos-A", limit=2) == ()
 
 

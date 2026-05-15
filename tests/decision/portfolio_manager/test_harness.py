@@ -6,6 +6,7 @@ Tests are behaviour-driven through the public interface only:
 Anthropic API. Mirrors the structure of
 ``tests/decision/strategist/test_harness.py``.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ from alphamind._kernel.ids import (
     OrderId,
     PositionId,
     RecommendationId,
+    Symbol,
 )
 from alphamind._kernel.money import money, price
 from alphamind._kernel.regime import (
@@ -320,23 +322,31 @@ def pre_processor_bundle() -> ProposalPreProcessorBundle:
 
 @pytest.fixture()
 def pm_view() -> PortfolioManagerView:
-    """Minimal PortfolioManagerView for harness tests."""
-    return PortfolioManagerView.model_construct(
-        positions=(),
-        recent_thesis_resolutions=(),
-        portfolio_pnl=None,
-        drawdown=None,
-        sector_exposure=(),
-        directional_exposure=None,
-        risk_budget=None,
-        active_risk_parameters=None,
-        intra_invocation_changelog=(),
-        recent_pm_decision_log=(),
-        abandoned_openings=(),
-        abandoned_actions=(),
-        thesis_quality_aggregates=None,
-        position_modification_trail={},
-    )
+    """Minimal PortfolioManagerView for harness tests.
+
+    Bypasses the dataclass __init__ via ``object.__new__`` because the test
+    harness only consumes a handful of fields and the full ctor demands every
+    sub-aggregate. Mirrors the pre-conversion ``model_construct`` shortcut.
+    """
+    view = object.__new__(PortfolioManagerView)
+    for name, value in {
+        "positions": (),
+        "recent_thesis_resolutions": (),
+        "portfolio_pnl": None,
+        "drawdown": None,
+        "sector_exposure": (),
+        "directional_exposure": None,
+        "risk_budget": None,
+        "active_risk_parameters": None,
+        "intra_invocation_changelog": (),
+        "recent_pm_decision_log": (),
+        "abandoned_openings": (),
+        "abandoned_actions": (),
+        "thesis_quality_aggregates": None,
+        "position_modification_trail": {},
+    }.items():
+        object.__setattr__(view, name, value)
+    return view
 
 
 @pytest.fixture()
@@ -1183,7 +1193,9 @@ async def test_submission_log_threads_from_engine_stub_state_cell(
         commands=(
             OpenCommand(
                 command_type="open",
-                instrument=EquityInstrument(asset_type="equity", ticker="NVDA", direction="long"),
+                instrument=EquityInstrument(
+                    asset_type="equity", ticker=Symbol("NVDA"), direction="long"
+                ),
                 entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
                 position_size=PositionSize(quantity=10.0, dollar_value=money(10_000.0)),
                 target=Target(

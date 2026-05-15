@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import (
     Base,
     EarningsEventDetails,
@@ -724,8 +725,8 @@ class TestEarningsCalendar:
     ) -> None:
         """Finnhub hour field maps: bmo->bmo, amc->amc, dmh->dmh."""
         items = [
-            self._make_earnings_item(ticker="AAPL", date="2026-04-30", hour="bmo"),
-            self._make_earnings_item(ticker="MSFT", date="2026-05-01", hour="amc"),
+            self._make_earnings_item(ticker=Symbol("AAPL"), date="2026-04-30", hour="bmo"),
+            self._make_earnings_item(ticker=Symbol("MSFT"), date="2026-05-01", hour="amc"),
         ]
 
         with patch("finnhub.Client") as mock_client:

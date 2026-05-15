@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import BracketId, OrderId, PositionId, Symbol, ThesisId
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
@@ -251,7 +252,7 @@ def _position_opened_entry(
     bracket_id: str = "bracket-1",
 ) -> ActivityLogEntry:
     detail = PositionOpenedDetail(
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         direction="long",
         fill_price=price("150.25"),
         quantity=100.0,
@@ -428,7 +429,7 @@ def _all_event_group_entries(invocation_id: str) -> list[ActivityLogEntry]:
             entry_id="entry-pos",
             invocation_id=invocation_id,
             timestamp=_T0,
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
         ),
         # ORDER_LIFECYCLE
         _entry(
@@ -443,7 +444,7 @@ def _all_event_group_entries(invocation_id: str) -> list[ActivityLogEntry]:
                 slippage=signed_money("0.05"),
                 fees=money("1.25"),
             ),
-            order_id="ord-1",
+            order_id=OrderId("ord-1"),
             source=EventSource.FILL_PROCESSOR,
         ),
         # BRACKET
@@ -454,7 +455,7 @@ def _all_event_group_entries(invocation_id: str) -> list[ActivityLogEntry]:
             event_type=EventType.BRACKET_ACTIVATED,
             event_group=EventGroup.BRACKET,
             detail=BracketActivatedDetail(
-                bracket_id="bracket-1",
+                bracket_id=BracketId("bracket-1"),
                 protective_leg_order_ids=("ord-stop", "ord-target"),
             ),
             source=EventSource.BRACKET_MANAGER,
@@ -466,8 +467,10 @@ def _all_event_group_entries(invocation_id: str) -> list[ActivityLogEntry]:
             timestamp=_T0,
             event_type=EventType.THESIS_CREATED,
             event_group=EventGroup.THESIS,
-            detail=ThesisCreatedDetail(thesis_id="thesis-1", summary="Reversal at support"),
-            thesis_id="thesis-1",
+            detail=ThesisCreatedDetail(
+                thesis_id=ThesisId("thesis-1"), summary="Reversal at support"
+            ),
+            thesis_id=ThesisId("thesis-1"),
             source=EventSource.COMMAND_EXECUTOR,
         ),
         # CASH_AND_MARGIN
@@ -529,7 +532,7 @@ def _all_event_group_entries(invocation_id: str) -> list[ActivityLogEntry]:
             detail=CorporateActionAppliedDetail(
                 action_type=CorporateActionType.SPLIT,
                 alpaca_activity_id="ca-1",
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 new_ticker=None,
                 ratio_or_amount=2.0,
                 pre_action_quantity=100.0,
@@ -578,7 +581,7 @@ def _all_event_group_entries(invocation_id: str) -> list[ActivityLogEntry]:
                 alpaca_value=9.5,
                 delta_description="AAPL: local share_count=10.0 vs Alpaca qty=9.5",
             ),
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             source=EventSource.CORPORATE_ACTION_PROCESSOR,
         ),
     ]
@@ -662,12 +665,12 @@ class TestActivityLogCodecRoundTrip:
                 event_type=EventType.GREEKS_REFRESH_FAILED,
                 event_group=EventGroup.RISK_AND_GUARDRAIL,
                 detail=GreeksRefreshFailedDetail(
-                    underlying_ticker="AAPL",
+                    underlying_ticker=Symbol("AAPL"),
                     occ_symbol="O:AAPL260619C00150000",
                     failure_reason="iv_fetch_no_row",
                     prior_as_of=_T0,
                 ),
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 source=EventSource.GUARDRAIL_LAYER,
             ),
             _entry(
@@ -719,7 +722,7 @@ class TestAppendActivityLogEntry:
                 entry_id="entry-mismatch",
                 invocation_id="inv-other",
                 timestamp=_T0,
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
             )
             with pytest.raises(ValueError, match="invocation_id"):
                 append_activity_log_entry(handle, wrong_entry)
@@ -741,7 +744,7 @@ class TestAppendActivityLogEntry:
                     entry_id="entry-rolled-back",
                     invocation_id="inv-rollback",
                     timestamp=_T0,
-                    position_id="pos-1",
+                    position_id=PositionId("pos-1"),
                 )
                 append_activity_log_entry(handle, entry)
                 raise _BoomError("simulated downstream failure")
@@ -773,19 +776,19 @@ class TestReadIntraInvocationChangelog:
             entry_id="entry-a-late",
             invocation_id="inv-a",
             timestamp=datetime(2026, 5, 7, 14, 32, 0, tzinfo=UTC),
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
         )
         e_a_early = _position_opened_entry(
             entry_id="entry-a-early",
             invocation_id="inv-a",
             timestamp=datetime(2026, 5, 7, 14, 31, 0, tzinfo=UTC),
-            position_id="pos-2",
+            position_id=PositionId("pos-2"),
         )
         e_b = _position_opened_entry(
             entry_id="entry-b",
             invocation_id="inv-b",
             timestamp=datetime(2026, 5, 7, 15, 1, 0, tzinfo=UTC),
-            position_id="pos-3",
+            position_id=PositionId("pos-3"),
         )
 
         async with InvocationContext(session_factory=factory, record=rec_a) as h:
@@ -844,7 +847,7 @@ class TestReadRecentPmDecisionLog:
                             entry_id="entry-non-pm",
                             invocation_id=rec.invocation_id,
                             timestamp=datetime(2026, 5, 7, 14, 31, 30, tzinfo=UTC),
-                            position_id="pos-1",
+                            position_id=PositionId("pos-1"),
                         ),
                     )
 
@@ -891,31 +894,31 @@ class TestReadPositionModificationTrail:
             entry_id="e1",
             invocation_id=rec.invocation_id,
             timestamp=datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC),
-            position_id="pos-A",
+            position_id=PositionId("pos-A"),
         )
         e2 = _position_opened_entry(
             entry_id="e2",
             invocation_id=rec.invocation_id,
             timestamp=datetime(2026, 5, 7, 14, 32, 0, tzinfo=UTC),
-            position_id="pos-A",
+            position_id=PositionId("pos-A"),
         )
         e3 = _position_opened_entry(
             entry_id="e3",
             invocation_id=rec.invocation_id,
             timestamp=datetime(2026, 5, 7, 14, 31, 0, tzinfo=UTC),
-            position_id="pos-A",
+            position_id=PositionId("pos-A"),
         )
         e_b = _position_opened_entry(
             entry_id="e_b",
             invocation_id=rec.invocation_id,
             timestamp=datetime(2026, 5, 7, 14, 30, 30, tzinfo=UTC),
-            position_id="pos-B",
+            position_id=PositionId("pos-B"),
         )
         e_other = _position_opened_entry(
             entry_id="e_other",
             invocation_id=rec.invocation_id,
             timestamp=datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC),
-            position_id="pos-C",
+            position_id=PositionId("pos-C"),
         )
 
         async with InvocationContext(session_factory=factory, record=rec) as h:

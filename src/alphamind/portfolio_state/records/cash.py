@@ -8,50 +8,69 @@ in-flight settlements.
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 __all__ = [
     "CashLedger",
     "UnsettledProceedsEntry",
 ]
 
-_FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
+
+def _check_finite(value: float, field_name: str) -> None:
+    if not math.isfinite(value):
+        msg = f"{field_name} must be finite; got {value}"
+        raise ValueError(msg)
 
 
-class UnsettledProceedsEntry(BaseModel):
+@dataclass(frozen=True, slots=True)
+class UnsettledProceedsEntry:
     """A single in-flight settlement."""
 
-    model_config = ConfigDict(frozen=True)
-
     settlement_date: datetime
-    amount_usd: _FiniteFloat
+    amount_usd: float
     source_transaction_id: str
 
-    @field_validator("settlement_date")
-    @classmethod
-    def _require_tz_aware(cls, v: datetime) -> datetime:
-        if v.tzinfo is None or v.utcoffset() is None:
+    def __post_init__(self) -> None:
+        if self.settlement_date.tzinfo is None or self.settlement_date.utcoffset() is None:
             msg = "settlement_date must be timezone-aware"
             raise ValueError(msg)
-        return v
+        _check_finite(self.amount_usd, "amount_usd")
 
 
-class CashLedger(BaseModel):
+@dataclass(frozen=True, slots=True)
+class CashLedger:
     """Raw state 4a — cash and buying power."""
 
-    model_config = ConfigDict(frozen=True)
-
-    current_cash_usd: _FiniteFloat
-    settled_cash_usd: _FiniteFloat
-    reserved_capital_usd: _FiniteFloat
-    available_buying_power_usd: _FiniteFloat
-    margin_held_usd: _FiniteFloat
+    current_cash_usd: float
+    settled_cash_usd: float
+    reserved_capital_usd: float
+    available_buying_power_usd: float
+    margin_held_usd: float
     unsettled_proceeds: tuple[UnsettledProceedsEntry, ...]
-    cash_pct_of_portfolio: Annotated[float, Field(ge=0.0, le=100.0)]
-    true_deployable_capital_usd: _FiniteFloat
-    regt_excess_trailing_30d_usd: _FiniteFloat
-    regt_excess_trailing_90d_usd: _FiniteFloat
-    regt_excess_lifetime_usd: _FiniteFloat
+    cash_pct_of_portfolio: float
+    true_deployable_capital_usd: float
+    regt_excess_trailing_30d_usd: float
+    regt_excess_trailing_90d_usd: float
+    regt_excess_lifetime_usd: float
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "current_cash_usd",
+            "settled_cash_usd",
+            "reserved_capital_usd",
+            "available_buying_power_usd",
+            "margin_held_usd",
+            "true_deployable_capital_usd",
+            "regt_excess_trailing_30d_usd",
+            "regt_excess_trailing_90d_usd",
+            "regt_excess_lifetime_usd",
+        ):
+            _check_finite(getattr(self, field_name), field_name)
+        if not (0.0 <= self.cash_pct_of_portfolio <= 100.0):
+            msg = (
+                f"cash_pct_of_portfolio must satisfy 0 <= value <= 100; "
+                f"got {self.cash_pct_of_portfolio}"
+            )
+            raise ValueError(msg)

@@ -181,7 +181,7 @@ def test_tightening_with_no_positions_and_empty_budget_returns_empty() -> None:
 
 def test_stable_transition_returns_empty_even_with_breaching_positions() -> None:
     """STABLE means no change; no regime-transition breaches can arise."""
-    breaching_position = _equity_position(position_id="POS-1", position_weight_pct=4.5)
+    breaching_position = _equity_position(position_id=PositionId("POS-1"), position_weight_pct=4.5)
     limits = _full_limits()
     limits["position_max_size_pct"] = 3.5
     assert (
@@ -196,7 +196,7 @@ def test_stable_transition_returns_empty_even_with_breaching_positions() -> None
 
 def test_loosening_transition_returns_empty_even_with_breaching_positions() -> None:
     """LOOSENING relaxes limits gradually; cannot create new breaches."""
-    breaching_position = _equity_position(position_id="POS-1", position_weight_pct=4.5)
+    breaching_position = _equity_position(position_id=PositionId("POS-1"), position_weight_pct=4.5)
     limits = _full_limits()
     limits["position_max_size_pct"] = 3.5
     assert (
@@ -212,9 +212,9 @@ def test_loosening_transition_returns_empty_even_with_breaching_positions() -> N
 def test_per_position_no_breaches_when_all_under_limit() -> None:
     """Three positions all under the new effective limit → empty tuple."""
     positions = (
-        _equity_position(position_id="POS-A", position_weight_pct=2.0),
-        _equity_position(position_id="POS-B", position_weight_pct=3.0),
-        _equity_position(position_id="POS-C", position_weight_pct=3.4),
+        _equity_position(position_id=PositionId("POS-A"), position_weight_pct=2.0),
+        _equity_position(position_id=PositionId("POS-B"), position_weight_pct=3.0),
+        _equity_position(position_id=PositionId("POS-C"), position_weight_pct=3.4),
     )
     limits = _full_limits()
     limits["position_max_size_pct"] = 3.5
@@ -230,9 +230,9 @@ def test_per_position_no_breaches_when_all_under_limit() -> None:
 def test_per_position_breach_across_multiple_positions_only_breachers_emit() -> None:
     """Three positions at 4.0%, 5.0%, 3.0% with limit 3.5% → two breach records."""
     positions = (
-        _equity_position(position_id="POS-A", position_weight_pct=4.0),
-        _equity_position(position_id="POS-B", position_weight_pct=5.0),
-        _equity_position(position_id="POS-C", position_weight_pct=3.0),
+        _equity_position(position_id=PositionId("POS-A"), position_weight_pct=4.0),
+        _equity_position(position_id=PositionId("POS-B"), position_weight_pct=5.0),
+        _equity_position(position_id=PositionId("POS-C"), position_weight_pct=3.0),
     )
     limits = _full_limits()
     limits["position_max_size_pct"] = 3.5
@@ -250,7 +250,7 @@ def test_per_position_breach_across_multiple_positions_only_breachers_emit() -> 
 
 def test_per_position_breach_emits_one_record_with_position_id() -> None:
     """One position at 4.5% with new effective limit 3.5% → one breach record."""
-    breaching = _equity_position(position_id="POS-NVDA", position_weight_pct=4.5)
+    breaching = _equity_position(position_id=PositionId("POS-NVDA"), position_weight_pct=4.5)
     limits = _full_limits()
     limits["position_max_size_pct"] = 3.5
     metadata = _full_metadata()
@@ -264,7 +264,7 @@ def test_per_position_breach_emits_one_record_with_position_id() -> None:
     )
     assert breaches == (
         RegimeTransitionBreach(
-            position_id="POS-NVDA",
+            position_id=PositionId("POS-NVDA"),
             rule_id="position_max_size_pct",
             rule_label="Per-position max size",
             current_value=4.5,
@@ -282,7 +282,7 @@ def test_aggregate_sector_concentration_no_breach_when_under_limit() -> None:
     )
     limits = _full_limits()
     limits["sector_concentration_tech"] = 20.0
-    held = (_equity_position(position_id="POS-A", position_weight_pct=2.0),)
+    held = (_equity_position(position_id=PositionId("POS-A"), position_weight_pct=2.0),)
     assert (
         _call(
             held_positions=held,
@@ -302,7 +302,7 @@ def test_net_long_aggregate_breach_emits_one_record() -> None:
     limits["net_long_pct"] = 45.0
     metadata = _full_metadata()
     metadata["net_long_pct"] = _metadata("net_long_pct", label="Net long", unit="pct")
-    held = (_equity_position(position_id="POS-A", position_weight_pct=2.0),)
+    held = (_equity_position(position_id=PositionId("POS-A"), position_weight_pct=2.0),)
     breaches = _call(
         held_positions=held,
         risk_budget=budget,
@@ -328,7 +328,7 @@ def test_gross_exposure_aggregate_breach_emits_one_record() -> None:
     )
     limits = _full_limits()
     limits["gross_exposure_pct"] = 150.0
-    held = (_equity_position(position_id="POS-A", position_weight_pct=2.0),)
+    held = (_equity_position(position_id=PositionId("POS-A"), position_weight_pct=2.0),)
     breaches = _call(
         held_positions=held,
         risk_budget=budget,
@@ -347,10 +347,10 @@ def test_single_short_max_breach_emits_per_position_record_only_for_shorts() -> 
     sized 5% IS flagged.
     """
     long_at_five = _equity_position(
-        position_id="POS-LONG", position_weight_pct=5.0, direction=Direction.LONG
+        position_id=PositionId("POS-LONG"), position_weight_pct=5.0, direction=Direction.LONG
     )
     short_at_five = _equity_position(
-        position_id="POS-SHORT", position_weight_pct=5.0, direction=Direction.SHORT
+        position_id=PositionId("POS-SHORT"), position_weight_pct=5.0, direction=Direction.SHORT
     )
     limits = _full_limits()
     # Set position_max_size_pct above 5 so the LONG position doesn't trip on
@@ -370,7 +370,7 @@ def test_single_short_max_breach_emits_per_position_record_only_for_shorts() -> 
 
 def test_single_short_max_no_breach_when_short_under_limit() -> None:
     short_compliant = _equity_position(
-        position_id="POS-SHORT", position_weight_pct=2.0, direction=Direction.SHORT
+        position_id=PositionId("POS-SHORT"), position_weight_pct=2.0, direction=Direction.SHORT
     )
     limits = _full_limits()
     limits["single_short_max_pct"] = 3.0
@@ -396,8 +396,8 @@ def test_output_sorted_by_rule_id_then_position_id_with_aggregates_first() -> No
     #  - sector_concentration_tech (aggregate): one breach
     # Note: position_max_size_pct alphabetizes after net_long_pct and after
     # sector_concentration_tech.
-    pos_b = _equity_position(position_id="POS-B", position_weight_pct=4.0)
-    pos_a = _equity_position(position_id="POS-A", position_weight_pct=5.0)
+    pos_b = _equity_position(position_id=PositionId("POS-B"), position_weight_pct=4.0)
+    pos_a = _equity_position(position_id=PositionId("POS-A"), position_weight_pct=5.0)
     budget = RiskBudgetConsumption(
         entries=(
             _budget_entry(rule_id="net_long_pct", current_value=65.0),
@@ -445,7 +445,7 @@ def test_excluded_rules_not_in_deferred_set() -> None:
 def test_missing_rule_in_new_effective_limits_for_per_position_raises() -> None:
     """If ``new_effective_limits`` is missing a per-position deferred rule, the
     detector raises ValueError mentioning the rule id."""
-    held = (_equity_position(position_id="POS-A", position_weight_pct=4.0),)
+    held = (_equity_position(position_id=PositionId("POS-A"), position_weight_pct=4.0),)
     limits = _full_limits()
     del limits["position_max_size_pct"]
     with pytest.raises(ValueError, match="position_max_size_pct"):
@@ -458,13 +458,13 @@ def test_missing_rule_in_new_effective_limits_for_aggregate_raises() -> None:
     )
     limits = _full_limits()
     del limits["net_long_pct"]
-    held = (_equity_position(position_id="POS-A", position_weight_pct=2.0),)
+    held = (_equity_position(position_id=PositionId("POS-A"), position_weight_pct=2.0),)
     with pytest.raises(ValueError, match="net_long_pct"):
         _call(held_positions=held, risk_budget=budget, new_effective_limits=limits)
 
 
 def test_missing_rule_in_rule_metadata_raises() -> None:
-    held = (_equity_position(position_id="POS-A", position_weight_pct=4.0),)
+    held = (_equity_position(position_id=PositionId("POS-A"), position_weight_pct=4.0),)
     limits = _full_limits()
     limits["position_max_size_pct"] = 3.5
     metadata = _full_metadata()
@@ -480,7 +480,7 @@ def test_missing_rule_in_risk_budget_is_silently_skipped() -> None:
     # Empty budget; aggregate scan iterates entries — there are none, so no
     # breaches and no errors. Per-position scan still applies for
     # position_max_size_pct.
-    held = (_equity_position(position_id="POS-A", position_weight_pct=2.0),)
+    held = (_equity_position(position_id=PositionId("POS-A"), position_weight_pct=2.0),)
     limits = _full_limits()
     limits["position_max_size_pct"] = 3.5
     # Verify silent skip works even when limits/metadata are present for the
@@ -511,7 +511,7 @@ def test_invariants_hold_for_every_emitted_record() -> None:
     invariants: ``overage > 0`` and ``overage ≈ current_value -
     new_limit_value``. The dataclass's ``__post_init__`` raises if violated;
     the test verifies that valid emissions are produced and invariants hold."""
-    pos = _equity_position(position_id="POS-A", position_weight_pct=4.0)
+    pos = _equity_position(position_id=PositionId("POS-A"), position_weight_pct=4.0)
     budget = RiskBudgetConsumption(
         entries=(_budget_entry(rule_id="net_long_pct", current_value=65.0),)
     )
@@ -532,7 +532,7 @@ def test_invariants_hold_for_every_emitted_record() -> None:
 def test_aggregate_kind_records_have_none_position_id_per_position_kind_have_string() -> None:
     """Aggregate emissions carry ``position_id=None``; per-position emissions
     carry a non-empty ``position_id``."""
-    pos = _equity_position(position_id="POS-A", position_weight_pct=4.0)
+    pos = _equity_position(position_id=PositionId("POS-A"), position_weight_pct=4.0)
     budget = RiskBudgetConsumption(
         entries=(_budget_entry(rule_id="net_long_pct", current_value=65.0),)
     )
@@ -552,7 +552,7 @@ def test_aggregate_kind_records_have_none_position_id_per_position_kind_have_str
 def test_purity_equal_inputs_produce_equal_outputs_and_inputs_unmutated() -> None:
     """Calling the detector twice with equal inputs produces equal outputs;
     no input collection is mutated."""
-    pos = _equity_position(position_id="POS-A", position_weight_pct=4.0)
+    pos = _equity_position(position_id=PositionId("POS-A"), position_weight_pct=4.0)
     held = (pos,)
     budget = RiskBudgetConsumption(
         entries=(_budget_entry(rule_id="net_long_pct", current_value=65.0),)
@@ -606,7 +606,7 @@ def test_excluded_rule_in_risk_budget_does_not_emit_breach() -> None:
     limits["position_max_loss_equity_pct"] = 30.0
     limits["total_short_pct"] = 40.0
     limits["correlation_max"] = 0.85
-    held = (_equity_position(position_id="POS-A", position_weight_pct=2.0),)
+    held = (_equity_position(position_id=PositionId("POS-A"), position_weight_pct=2.0),)
     assert (
         _call(
             held_positions=held,
@@ -623,7 +623,7 @@ def test_net_short_aggregate_breach_emits_one_record() -> None:
     )
     limits = _full_limits()
     limits["net_short_pct"] = 30.0
-    held = (_equity_position(position_id="POS-A", position_weight_pct=2.0),)
+    held = (_equity_position(position_id=PositionId("POS-A"), position_weight_pct=2.0),)
     breaches = _call(
         held_positions=held,
         risk_budget=budget,
@@ -649,7 +649,7 @@ def test_options_delta_aggregate_breach_emits_one_record() -> None:
     )
     limits = _full_limits()
     limits["options_delta_pct"] = 30.0
-    held = (_equity_position(position_id="POS-A", position_weight_pct=2.0),)
+    held = (_equity_position(position_id=PositionId("POS-A"), position_weight_pct=2.0),)
     breaches = _call(
         held_positions=held,
         risk_budget=budget,
@@ -672,7 +672,7 @@ def test_multiple_sectors_each_emit_one_aggregate_record() -> None:
     limits = _full_limits()
     limits["sector_concentration_tech"] = 20.0
     limits["sector_concentration_semis"] = 15.0
-    held = (_equity_position(position_id="POS-A", position_weight_pct=2.0),)
+    held = (_equity_position(position_id=PositionId("POS-A"), position_weight_pct=2.0),)
     breaches = _call(
         held_positions=held,
         risk_budget=budget,
@@ -687,9 +687,9 @@ def test_multiple_sectors_each_emit_one_aggregate_record() -> None:
 def test_aggregate_sector_concentration_breach_emits_one_record_with_no_position_id() -> None:
     """Sector tech total at 28% with new limit 20%; multiple contributing tech
     positions; emits exactly one record with ``position_id=None``."""
-    tech_a = _equity_position(position_id="POS-NVDA", position_weight_pct=12.0)
-    tech_b = _equity_position(position_id="POS-AMD", position_weight_pct=10.0)
-    tech_c = _equity_position(position_id="POS-MSFT", position_weight_pct=6.0)
+    tech_a = _equity_position(position_id=PositionId("POS-NVDA"), position_weight_pct=12.0)
+    tech_b = _equity_position(position_id=PositionId("POS-AMD"), position_weight_pct=10.0)
+    tech_c = _equity_position(position_id=PositionId("POS-MSFT"), position_weight_pct=6.0)
     budget = RiskBudgetConsumption(
         entries=(_budget_entry(rule_id="sector_concentration_tech", current_value=28.0),)
     )

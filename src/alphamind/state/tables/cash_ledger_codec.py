@@ -26,16 +26,31 @@ from alphamind.state.tables.cash_ledger import (
 def _serialize_unsettled_proceeds(proceeds: tuple[UnsettledProceedsEntry, ...]) -> str:
     """Encode an unsettled-proceeds tuple as a JSON array.
 
-    Each entry round-trips through Pydantic's ``model_dump`` so any future
-    field additions to ``UnsettledProceedsEntry`` propagate without codec
-    edits.
+    Hand-rolled JSON; mirrors :class:`UnsettledProceedsEntry`'s frozen-dataclass
+    field set. Any future field additions require a matching codec update.
     """
-    return json.dumps([entry.model_dump(mode="json") for entry in proceeds])
+    return json.dumps(
+        [
+            {
+                "settlement_date": entry.settlement_date.isoformat(),
+                "amount_usd": entry.amount_usd,
+                "source_transaction_id": entry.source_transaction_id,
+            }
+            for entry in proceeds
+        ]
+    )
 
 
 def _deserialize_unsettled_proceeds(payload: str) -> tuple[UnsettledProceedsEntry, ...]:
     raw = json.loads(payload)
-    return tuple(UnsettledProceedsEntry.model_validate(item) for item in raw)
+    return tuple(
+        UnsettledProceedsEntry(
+            settlement_date=datetime.fromisoformat(item["settlement_date"]),
+            amount_usd=item["amount_usd"],
+            source_transaction_id=item["source_transaction_id"],
+        )
+        for item in raw
+    )
 
 
 def cash_ledger_record_to_row(
@@ -79,8 +94,8 @@ def cash_ledger_record_from_row(
     # ALP-462 — the DecimalText columns hand back ``Decimal`` values, but the
     # typed ``CashLedger`` record (in portfolio_state.records.cash) is out of
     # ALP-462's file list and still carries ``float`` fields. Cast at the
-    # codec boundary; Pydantic would coerce silently otherwise, and the
-    # explicit cast keeps the round-trip readable to maintainers.
+    # codec boundary so the dataclass receives the expected types; without the
+    # cast the dataclass would carry ``Decimal`` values silently.
     return CashLedger(
         current_cash_usd=float(row.current_cash_usd),
         settled_cash_usd=float(row.settled_cash_usd),

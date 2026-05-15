@@ -242,8 +242,8 @@ class TestStartupSubscribesInitialTargets:
     ) -> None:
         reader = _MutableReader(
             (
-                _equity_position(position_id="p1", ticker="SPY"),
-                _equity_position(position_id="p2", ticker="AAPL"),
+                _equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),
+                _equity_position(position_id=PositionId("p2"), ticker=Symbol("AAPL")),
             )
         )
         factory = _FakeFactory()
@@ -295,7 +295,9 @@ class TestStartupSubscribesInitialTargets:
 
 class TestQuoteToCache:
     async def test_quote_writes_mid_price_with_tz_aware_timestamp(self) -> None:
-        reader = _MutableReader((_equity_position(position_id="p1", ticker="SPY"),))
+        reader = _MutableReader(
+            (_equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),)
+        )
         factory = _FakeFactory()
         cache = UnderlyingPriceCache()
         task = asyncio.create_task(
@@ -335,7 +337,9 @@ class TestQuoteToCache:
 
 class TestSubscriptionRediffOnCadence:
     async def test_added_position_triggers_subscribe_quotes(self) -> None:
-        reader = _MutableReader((_equity_position(position_id="p1", ticker="SPY"),))
+        reader = _MutableReader(
+            (_equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),)
+        )
         factory = _FakeFactory()
         cache = UnderlyingPriceCache()
         task = asyncio.create_task(
@@ -358,8 +362,8 @@ class TestSubscriptionRediffOnCadence:
             # Simulate a position being opened on AAPL.
             reader.set_positions(
                 (
-                    _equity_position(position_id="p1", ticker="SPY"),
-                    _equity_position(position_id="p2", ticker="AAPL"),
+                    _equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),
+                    _equity_position(position_id=PositionId("p2"), ticker=Symbol("AAPL")),
                 )
             )
             await asyncio.wait_for(
@@ -375,8 +379,8 @@ class TestSubscriptionRediffOnCadence:
     async def test_removed_position_triggers_unsubscribe_quotes(self) -> None:
         reader = _MutableReader(
             (
-                _equity_position(position_id="p1", ticker="SPY"),
-                _equity_position(position_id="p2", ticker="AAPL"),
+                _equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),
+                _equity_position(position_id=PositionId("p2"), ticker=Symbol("AAPL")),
             )
         )
         factory = _FakeFactory()
@@ -398,7 +402,9 @@ class TestSubscriptionRediffOnCadence:
                 timeout=1.0,
             )
             # Close the AAPL position.
-            reader.set_positions((_equity_position(position_id="p1", ticker="SPY"),))
+            reader.set_positions(
+                (_equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),)
+            )
             await asyncio.wait_for(
                 _eventually(lambda: "AAPL" not in stream.subscribed),
                 timeout=3.0,
@@ -411,7 +417,9 @@ class TestSubscriptionRediffOnCadence:
 
 class TestReconnect:
     async def test_disconnect_triggers_reconnect_and_cache_survives(self) -> None:
-        reader = _MutableReader((_equity_position(position_id="p1", ticker="SPY"),))
+        reader = _MutableReader(
+            (_equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),)
+        )
         factory = _FakeFactory()
         cache = UnderlyingPriceCache()
         task = asyncio.create_task(
@@ -459,7 +467,9 @@ class TestReconnect:
             await asyncio.gather(task, return_exceptions=True)
 
     async def test_reconnect_budget_exhausted_propagates(self) -> None:
-        reader = _MutableReader((_equity_position(position_id="p1", ticker="SPY"),))
+        reader = _MutableReader(
+            (_equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),)
+        )
         factory = _FakeFactory()
         cache = UnderlyingPriceCache()
         # Budget=1: the first connect counts as attempt 1, the first disconnect
@@ -484,7 +494,9 @@ class TestReconnect:
 
 class TestCancellation:
     async def test_cancel_calls_stop_ws_and_exits_cleanly(self) -> None:
-        reader = _MutableReader((_equity_position(position_id="p1", ticker="SPY"),))
+        reader = _MutableReader(
+            (_equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),)
+        )
         factory = _FakeFactory()
         cache = UnderlyingPriceCache()
         task = asyncio.create_task(

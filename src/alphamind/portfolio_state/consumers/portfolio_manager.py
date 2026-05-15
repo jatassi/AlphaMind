@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
-
-from pydantic import BaseModel, ConfigDict
 
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
@@ -46,10 +45,9 @@ class PortfolioManagerThesisComponentReader(Protocol):
 # ---------------------------------------------------------------------------
 
 
-class PortfolioManagerView(BaseModel):
+@dataclass(frozen=True, slots=True)
+class PortfolioManagerView:
     """Full PM projection — all strategist fields plus thesis quality + trail dict."""
-
-    model_config = ConfigDict(frozen=True)
 
     # Strategist fields (re-declared; no inheritance per story notes)
     positions: tuple[StrategistPositionView, ...]

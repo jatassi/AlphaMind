@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import AlpacaOrderId
 from alphamind.portfolio_state.records.orders import (
     BracketStatus,
     OrderClass,
@@ -105,7 +106,7 @@ def stub_order_row(
         price_parameters_json="{}",
         duration=OrderDuration.DAY.value,
         status=status,
-        alpaca_order_id=f"alp-{order_id}",
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
         alpaca_order_id_chain_json=f'["alp-{order_id}"]',
         submission_timestamp=_TS,
         last_update_timestamp=_TS,

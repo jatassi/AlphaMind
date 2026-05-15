@@ -5,7 +5,6 @@ from typing import Any, cast
 
 import pytest
 import yaml
-from pydantic import ValidationError
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 CONFIG_DIR = REPO_ROOT / "config"
@@ -70,19 +69,19 @@ def test_run_type_models_are_frozen() -> None:
     config = RunTypeConfig.model_validate(_valid_run_type_raw())
 
     assert isinstance(config, RunTypeConfig)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.__setattr__("agents", None)
 
     assert isinstance(config.agents, AgentsSection)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.agents.__setattr__("enabled", [])
 
     assert isinstance(config.qualitative_researcher, QualitativeResearcherSection)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.qualitative_researcher.__setattr__("news_digest", None)
 
     assert isinstance(config.qualitative_researcher.news_digest, NewsDigestConfig)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.qualitative_researcher.news_digest.__setattr__("top_n_per_sector", 0)
 
 
@@ -91,7 +90,7 @@ def test_run_type_rejects_missing_analyst_in_enabled() -> None:
 
     raw = _valid_run_type_raw()
     raw["agents"]["enabled"] = [a for a in raw["agents"]["enabled"] if a != "analyst"]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         RunTypeConfig.model_validate(raw)
 
 
@@ -100,7 +99,7 @@ def test_run_type_rejects_missing_strategist_in_enabled() -> None:
 
     raw = _valid_run_type_raw()
     raw["agents"]["enabled"] = [a for a in raw["agents"]["enabled"] if a != "strategist"]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         RunTypeConfig.model_validate(raw)
 
 
@@ -109,7 +108,7 @@ def test_run_type_rejects_missing_portfolio_manager_in_enabled() -> None:
 
     raw = _valid_run_type_raw()
     raw["agents"]["enabled"] = [a for a in raw["agents"]["enabled"] if a != "portfolio_manager"]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         RunTypeConfig.model_validate(raw)
 
 
@@ -118,7 +117,7 @@ def test_run_type_rejects_missing_synthesizer_in_enabled() -> None:
 
     raw = _valid_run_type_raw()
     raw["agents"]["enabled"] = [a for a in raw["agents"]["enabled"] if a != "synthesizer"]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         RunTypeConfig.model_validate(raw)
 
 
@@ -128,7 +127,7 @@ def test_run_type_rejects_empty_enabled_list() -> None:
     raw = _valid_run_type_raw()
     raw["agents"]["enabled"] = []
     raw["agents"]["overrides"] = {}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         RunTypeConfig.model_validate(raw)
 
 
@@ -137,7 +136,7 @@ def test_run_type_rejects_duplicate_in_enabled() -> None:
 
     raw = _valid_run_type_raw()
     raw["agents"]["enabled"] = [*_full_roster(), "analyst"]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         RunTypeConfig.model_validate(raw)
 
 
@@ -146,7 +145,7 @@ def test_run_type_rejects_unknown_override_field() -> None:
 
     raw = _valid_run_type_raw()
     raw["agents"]["overrides"]["adaptive_researcher"]["unknown_field"] = 1
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         RunTypeConfig.model_validate(raw)
 
 
@@ -155,7 +154,7 @@ def test_run_type_rejects_adaptive_only_field_on_non_adaptive_agent() -> None:
 
     raw = _valid_run_type_raw()
     raw["agents"]["overrides"]["analyst"] = {"cumulative_tool_call_limit": 25}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         RunTypeConfig.model_validate(raw)
 
 
@@ -164,7 +163,7 @@ def test_run_type_rejects_adaptive_only_token_budget_on_non_adaptive_agent() -> 
 
     raw = _valid_run_type_raw()
     raw["agents"]["overrides"]["strategist"] = {"cumulative_tool_token_budget": 1000}
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         RunTypeConfig.model_validate(raw)
 
 
@@ -200,7 +199,7 @@ def test_run_type_rejects_override_for_disabled_agent() -> None:
 
     raw = _valid_run_type_raw()
     raw["agents"]["enabled"] = [a for a in _full_roster() if a != "adaptive_researcher"]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         RunTypeConfig.model_validate(raw)
 
 
@@ -209,7 +208,7 @@ def test_news_digest_rejects_zero_top_n_per_sector() -> None:
 
     raw = _valid_run_type_raw()
     raw["qualitative_researcher"]["news_digest"]["top_n_per_sector"] = 0
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         RunTypeConfig.model_validate(raw)
 
 
@@ -227,7 +226,7 @@ def test_run_type_rejects_unknown_agent_name_in_enabled() -> None:
 
     raw = _valid_run_type_raw()
     raw["agents"]["enabled"] = [*_full_roster(), "unknown_agent"]
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         RunTypeConfig.model_validate(raw)
 
 

@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import PositionId, Symbol
 from alphamind.analysis.synthesizer.portfolio_tools import build_portfolio_state_mcp_server
 from alphamind.portfolio_state.consumers.synthesizer import (
     SynthesizerExposureSnapshot,
@@ -115,14 +116,14 @@ async def test_positions_handler_returns_text() -> None:
     reader = _StubReader(
         positions=(
             SynthesizerPositionSummary(
-                ticker="NVDA",
+                ticker=Symbol("NVDA"),
                 direction=Direction.LONG,
                 sector="TECH",
                 size_pct=4.5,
                 position_age_hours=72.0,
             ),
             SynthesizerPositionSummary(
-                ticker="XOM",
+                ticker=Symbol("XOM"),
                 direction=Direction.SHORT,
                 sector="ENERGY",
                 size_pct=2.1,
@@ -151,8 +152,8 @@ async def test_theses_handler_returns_text() -> None:
     reader = _StubReader(
         theses=(
             SynthesizerThesisSummary(
-                position_id="pos-001",
-                ticker="NVDA",
+                position_id=PositionId("pos-001"),
+                ticker=Symbol("NVDA"),
                 summary=summary,
                 key_catalyst="Earnings on 2026-05-22",
                 time_expectation_hours=48.0,

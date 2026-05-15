@@ -18,6 +18,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from alphamind._kernel.ids import Symbol
 from alphamind.config.models.distillation import (
     AnomalyDetection,
     DistillationConfig,
@@ -291,8 +292,8 @@ def test_per_ticker_payload_sorted_and_audience_pinned(session: Session) -> None
     _seed_universe(session, tickers=("NVDA", "AMD"))
     # Seed enough ATM-IV history that the IV-rank block calibrates and
     # carries the per-ticker payload for both NVDA and AMD.
-    _seed_atm_iv_history(session, ticker="NVDA", days=70)
-    _seed_atm_iv_history(session, ticker="AMD", days=70)
+    _seed_atm_iv_history(session, ticker=Symbol("NVDA"), days=70)
+    _seed_atm_iv_history(session, ticker=Symbol("AMD"), days=70)
 
     blocks = assemble_q3_blocks(
         session,
@@ -336,7 +337,7 @@ def test_iv_rank_bootstrap_when_history_below_minimum(session: Session) -> None:
 
     _seed_universe(session, tickers=("NVDA",))
     # Only 10 days of history; the config's minimum is 60.
-    _seed_atm_iv_history(session, ticker="NVDA", days=10)
+    _seed_atm_iv_history(session, ticker=Symbol("NVDA"), days=10)
 
     blocks = assemble_q3_blocks(
         session,
@@ -482,8 +483,8 @@ def test_two_calls_produce_byte_identical_lists(session: Session) -> None:
     from alphamind.distillation.output import format_block
 
     _seed_universe(session, tickers=("NVDA", "AMD"))
-    _seed_atm_iv_history(session, ticker="NVDA", days=70)
-    _seed_atm_iv_history(session, ticker="AMD", days=70)
+    _seed_atm_iv_history(session, ticker=Symbol("NVDA"), days=70)
+    _seed_atm_iv_history(session, ticker=Symbol("AMD"), days=70)
 
     config = _build_distillation_config()
     first = assemble_q3_blocks(session, config=config, as_of=_AS_OF)

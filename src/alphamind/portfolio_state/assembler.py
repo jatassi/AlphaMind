@@ -32,7 +32,9 @@ Known limitation — option pricing (Steps 5/6):
 
 from __future__ import annotations
 
+import dataclasses
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 
 from alphamind.execution.regt_margin_attribution.aggregates import RegTExcessAggregates
@@ -217,33 +219,24 @@ def _resolve_pricing_tickers(
     return tuple(seen)
 
 
+@dataclass(frozen=True, slots=True)
 class _PriceFields:
     """Value object carrying the five price-derived fields for one position."""
 
-    __slots__ = (
-        "cost_basis",
-        "current_market_value_usd",
-        "current_price_usd",
-        "delta_adjusted_exposure_usd",
-        "notional_exposure_usd",
-    )
-
-    def __init__(
-        self,
-        current_market_value_usd: float,
-        notional_exposure_usd: float,
-        delta_adjusted_exposure_usd: float,
-        cost_basis: float,
-        current_price_usd: float,
-    ) -> None:
-        self.current_market_value_usd = current_market_value_usd
-        self.notional_exposure_usd = notional_exposure_usd
-        self.delta_adjusted_exposure_usd = delta_adjusted_exposure_usd
-        self.cost_basis = cost_basis
-        self.current_price_usd = current_price_usd
+    current_market_value_usd: float
+    notional_exposure_usd: float
+    delta_adjusted_exposure_usd: float
+    cost_basis: float
+    current_price_usd: float
 
 
-_ZERO_PRICE_FIELDS = _PriceFields(0.0, 0.0, 0.0, 0.0, 0.0)
+_ZERO_PRICE_FIELDS = _PriceFields(
+    current_market_value_usd=0.0,
+    notional_exposure_usd=0.0,
+    delta_adjusted_exposure_usd=0.0,
+    cost_basis=0.0,
+    current_price_usd=0.0,
+)
 
 
 def _price_fields_equity(
@@ -291,7 +284,7 @@ def _price_fields_options(
     if raw_underlying.is_stale:
         return _ZERO_PRICE_FIELDS
     premium = details.premium_paid_per_contract
-    mv_quote = raw_underlying.model_copy(update={"price_usd": premium})
+    mv_quote = dataclasses.replace(raw_underlying, price_usd=premium)
     cost_basis = details.contract_count * details.contract_multiplier * premium
     return _PriceFields(
         current_market_value_usd=compute_market_value_usd(position, mv_quote),
@@ -323,8 +316,8 @@ def _price_fields_strategy(
         leg_prices[leg.leg_id] = raw_leg
 
     premium_prices: dict[str, PriceQuote] = {
-        leg.leg_id: leg_prices[leg.leg_id].model_copy(
-            update={"price_usd": leg.options.premium_paid_per_contract}
+        leg.leg_id: dataclasses.replace(
+            leg_prices[leg.leg_id], price_usd=leg.options.premium_paid_per_contract
         )
         for leg in details.legs
     }
@@ -539,12 +532,11 @@ def assemble_snapshot(
     # ------------------------------------------------------------------
     final_open: list[PositionView] = sorted(
         (
-            view.model_copy(
-                update={
-                    "position_weight_pct": compute_position_weight_pct(
-                        view.current_market_value_usd, total_portfolio_value
-                    )
-                }
+            dataclasses.replace(
+                view,
+                position_weight_pct=compute_position_weight_pct(
+                    view.current_market_value_usd, total_portfolio_value
+                ),
             )
             for view in enriched_open
         ),
@@ -553,12 +545,11 @@ def assemble_snapshot(
 
     final_pending: list[PositionView] = sorted(
         (
-            view.model_copy(
-                update={
-                    "position_weight_pct": compute_position_weight_pct(
-                        view.current_market_value_usd, total_portfolio_value
-                    )
-                }
+            dataclasses.replace(
+                view,
+                position_weight_pct=compute_position_weight_pct(
+                    view.current_market_value_usd, total_portfolio_value
+                ),
             )
             for view in enriched_pending
         ),
@@ -570,8 +561,8 @@ def assemble_snapshot(
     # ------------------------------------------------------------------
     enriched_orders: list[OrderRecord] = sorted(
         (
-            order.model_copy(
-                update={"age_hours": compute_order_age_hours(order.submission_timestamp, now)}
+            dataclasses.replace(
+                order, age_hours=compute_order_age_hours(order.submission_timestamp, now)
             )
             for order in pending_orders_raw
         ),
@@ -601,17 +592,16 @@ def assemble_snapshot(
     # across calendar-day-anchored windows; see
     # ``regt-margin-attribution.md § Aggregation and delivery``).
     true_deployable = compute_true_deployable_capital_usd(cash_ledger_raw)
-    enriched_cash: CashLedger = cash_ledger_raw.model_copy(
-        update={
-            "cash_pct_of_portfolio": compute_cash_pct_of_portfolio(
-                cash_ledger_raw.current_cash_usd, total_portfolio_value
-            ),
-            "true_deployable_capital_usd": true_deployable,
-            "available_buying_power_usd": true_deployable,
-            "regt_excess_trailing_30d_usd": regt_excess_aggregates.trailing_30d_usd,
-            "regt_excess_trailing_90d_usd": regt_excess_aggregates.trailing_90d_usd,
-            "regt_excess_lifetime_usd": regt_excess_aggregates.lifetime_usd,
-        }
+    enriched_cash: CashLedger = dataclasses.replace(
+        cash_ledger_raw,
+        cash_pct_of_portfolio=compute_cash_pct_of_portfolio(
+            cash_ledger_raw.current_cash_usd, total_portfolio_value
+        ),
+        true_deployable_capital_usd=true_deployable,
+        available_buying_power_usd=true_deployable,
+        regt_excess_trailing_30d_usd=regt_excess_aggregates.trailing_30d_usd,
+        regt_excess_trailing_90d_usd=regt_excess_aggregates.trailing_90d_usd,
+        regt_excess_lifetime_usd=regt_excess_aggregates.lifetime_usd,
     )
 
     # ------------------------------------------------------------------
@@ -622,13 +612,12 @@ def assemble_snapshot(
         drawdown_state_raw.drawdown_by_source_pct == {}
         and drawdown_state_raw.current_drawdown_pct > 0
     ):
-        enriched_drawdown = drawdown_state_raw.model_copy(
-            update={
-                "drawdown_by_source_pct": compute_drawdown_by_source_pct(
-                    open_positions=tuple(final_open),
-                    current_drawdown_pct=drawdown_state_raw.current_drawdown_pct,
-                )
-            }
+        enriched_drawdown = dataclasses.replace(
+            drawdown_state_raw,
+            drawdown_by_source_pct=compute_drawdown_by_source_pct(
+                open_positions=tuple(final_open),
+                current_drawdown_pct=drawdown_state_raw.current_drawdown_pct,
+            ),
         )
     else:
         enriched_drawdown = drawdown_state_raw
@@ -649,13 +638,12 @@ def assemble_snapshot(
     # ------------------------------------------------------------------
     # Step 14 — Compute parameter change flag
     # ------------------------------------------------------------------
-    enriched_risk_parameters = active_risk_parameters_raw.model_copy(
-        update={
-            "parameter_change_flag": compute_parameter_change_flag(
-                current=active_risk_parameters_raw,
-                prior=prior_context.prior_active_risk_parameters,
-            )
-        }
+    enriched_risk_parameters = dataclasses.replace(
+        active_risk_parameters_raw,
+        parameter_change_flag=compute_parameter_change_flag(
+            current=active_risk_parameters_raw,
+            prior=prior_context.prior_active_risk_parameters,
+        ),
     )
 
     # ------------------------------------------------------------------

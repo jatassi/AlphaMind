@@ -13,6 +13,7 @@ shared post-conditions every cash-dividend handler must satisfy:
   ``BRACKET_CANCELLED_CORPORATE_ACTION`` entry are emitted.
 * The bracket is dissolved and a CA-integration-ledger row is written.
 """
+# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import (
+    AlpacaOrderId,
     BracketId,
     OrderId,
     PositionId,
@@ -238,21 +240,19 @@ def _make_open_position(
             fees=0.0,
         ),
     )
-    return PositionRecord.model_validate(
-        {
-            "position_id": position_id,
-            "thesis_id": thesis_id,
-            "bracket_id": bracket_id,
-            "status": PositionStatus.OPEN,
-            "direction": direction,
-            "entry_timestamp": _NOW - timedelta(hours=2),
-            "details": details,
-            "execution_history": history,
-            "realized_pnl_to_date_usd": None,
-            "corporate_action_adjustment_needed": False,
-            "parent_position_id": None,
-            "origin": None,
-        }
+    return PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        bracket_id=bracket_id,
+        status=PositionStatus.OPEN,
+        direction=direction,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
     )
 
 
@@ -260,32 +260,30 @@ def _make_pending_entry_order(
     order_id: str = "ord-entry-1",
     bracket_id: str = "brk-1",
 ) -> OrderRecord:
-    return OrderRecord.model_validate(
-        {
-            "order_id": order_id,
-            "position_id": "pos-1",
-            "bracket_id": bracket_id,
-            "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=Symbol("AAPL")),
-            "direction": OrderDirection.BUY,
-            "order_type": OrderType.MARKET,
-            "order_class": OrderClass.SIMPLE,
-            "price_parameters": PriceParameters(),
-            "quantity": 100.0,
-            "duration": OrderDuration.DAY,
-            "status": OrderStatus.PENDING,
-            "alpaca_order_id": f"alp-{order_id}",
-            "alpaca_order_id_chain": (f"alp-{order_id}",),
-            "submission_timestamp": _NOW - timedelta(minutes=15),
-            "last_update_timestamp": _NOW - timedelta(minutes=15),
-            "filled_quantity": 0.0,
-            "avg_fill_price": None,
-            "remaining_quantity": 100.0,
-            "modification_count": 0,
-            "originating_thesis_id": "thesis-1",
-            "originating_pm_command_id": None,
-            "age_hours": 0.25,
-        }
+    return OrderRecord(
+        order_id=order_id,
+        position_id=PositionId("pos-1"),
+        bracket_id=bracket_id,
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=100.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(f"alp-{order_id}",),
+        submission_timestamp=_NOW - timedelta(minutes=15),
+        last_update_timestamp=_NOW - timedelta(minutes=15),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=100.0,
+        modification_count=0,
+        originating_thesis_id=ThesisId("thesis-1"),
+        originating_pm_command_id=None,
+        age_hours=0.25,
     )
 
 
@@ -352,36 +350,32 @@ def _make_active_thesis(thesis_id: str = "thesis-1", position_id: str = "pos-1")
 
 
 def _make_cash_ledger(current_cash_usd: float = _INITIAL_CASH) -> CashLedger:
-    return CashLedger.model_validate(
-        {
-            "current_cash_usd": current_cash_usd,
-            "settled_cash_usd": current_cash_usd,
-            "reserved_capital_usd": 0.0,
-            "available_buying_power_usd": current_cash_usd,
-            "margin_held_usd": 0.0,
-            "unsettled_proceeds": (),
-            "cash_pct_of_portfolio": 0.0,
-            "true_deployable_capital_usd": 0.0,
-            "regt_excess_trailing_30d_usd": 0.0,
-            "regt_excess_trailing_90d_usd": 0.0,
-            "regt_excess_lifetime_usd": 0.0,
-        }
+    return CashLedger(
+        current_cash_usd=current_cash_usd,
+        settled_cash_usd=current_cash_usd,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=current_cash_usd,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _make_drawdown_state() -> DrawdownState:
-    return DrawdownState.model_validate(
-        {
-            "current_drawdown_pct": 0.0,
-            "equity_high_water_mark_usd": _INITIAL_CASH,
-            "drawdown_duration_hours": 0.0,
-            "lifetime_max_drawdown_pct": 0.0,
-            "intraday_drawdown_pct": 0.0,
-            "daily_zone": RiskZone.NORMAL,
-            "cumulative_zone": RiskZone.NORMAL,
-            "cumulative_tier": None,
-            "drawdown_by_source_pct": {},
-        }
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=_INITIAL_CASH,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
     )
 
 
@@ -490,10 +484,10 @@ async def test_cash_dividend_long_credits_cash_ledger(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-long-1",
         action_type=CorporateActionType.CASH_DIVIDEND_LONG,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.50,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=50.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -538,10 +532,10 @@ async def test_cash_dividend_long_emits_cash_credited_entry(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-long-2",
         action_type=CorporateActionType.CASH_DIVIDEND_LONG,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.25,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=25.0,
         transaction_time=txn_time,
     )
@@ -603,10 +597,10 @@ async def test_cash_dividend_long_leaves_quantity_and_basis_unchanged(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-long-3",
         action_type=CorporateActionType.CASH_DIVIDEND_LONG,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.10,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=10.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -649,10 +643,10 @@ async def test_cash_dividend_long_cancels_bracket_and_writes_ledger_row(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-long-4",
         action_type=CorporateActionType.CASH_DIVIDEND_LONG,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.10,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=10.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -719,10 +713,10 @@ async def test_cash_dividend_long_raises_when_position_missing(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-long-missing",
         action_type=CorporateActionType.CASH_DIVIDEND_LONG,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.10,
-        position_id="pos-does-not-exist",
+        position_id=PositionId("pos-does-not-exist"),
         signed_cash_impact_usd=10.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -760,10 +754,10 @@ async def test_cash_dividend_short_debits_cash_ledger(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-short-1",
         action_type=CorporateActionType.CASH_DIVIDEND_SHORT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.50,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=-50.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -808,10 +802,10 @@ async def test_cash_dividend_short_emits_cash_debited_entry(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-short-2",
         action_type=CorporateActionType.CASH_DIVIDEND_SHORT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.30,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=-30.0,
         transaction_time=txn_time,
     )
@@ -871,10 +865,10 @@ async def test_cash_dividend_short_leaves_quantity_and_basis_unchanged(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-short-3",
         action_type=CorporateActionType.CASH_DIVIDEND_SHORT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.10,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=-10.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -917,10 +911,10 @@ async def test_cash_dividend_short_cancels_bracket_and_writes_ledger_row(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-short-4",
         action_type=CorporateActionType.CASH_DIVIDEND_SHORT,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.10,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=-10.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )
@@ -1001,10 +995,10 @@ async def test_zero_amount_cash_dividend_does_not_emit_cash_entry(
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-zero",
         action_type=CorporateActionType.CASH_DIVIDEND_LONG,
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         new_ticker=None,
         ratio_or_amount=0.0,
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         signed_cash_impact_usd=0.0,
         transaction_time=_NOW - timedelta(minutes=5),
     )

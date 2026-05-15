@@ -5,7 +5,6 @@ from typing import Any, cast
 
 import pytest
 import yaml
-from pydantic import ValidationError
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 CONFIG_DIR = REPO_ROOT / "config"
@@ -39,7 +38,7 @@ def test_regime_rejects_inverted_vix_range() -> None:
 
     raw = _valid_regime_raw()
     raw["vix_range"] = [22, 14]
-    with pytest.raises(ValidationError, match="vix_range"):
+    with pytest.raises((ValueError, TypeError), match="vix_range"):
         RegimeConfig.model_validate(raw)
 
 
@@ -48,7 +47,7 @@ def test_regime_rejects_negative_vix_range() -> None:
 
     raw = _valid_regime_raw()
     raw["vix_range"] = [-1, 22]
-    with pytest.raises(ValidationError, match="vix_range"):
+    with pytest.raises((ValueError, TypeError), match="vix_range"):
         RegimeConfig.model_validate(raw)
 
 
@@ -57,7 +56,7 @@ def test_regime_rejects_zero_multiplier() -> None:
 
     raw = _valid_regime_raw()
     raw["multipliers"] = {"position_max_size_pct": 0}
-    with pytest.raises(ValidationError, match="multiplier"):
+    with pytest.raises((ValueError, TypeError), match="multiplier"):
         RegimeConfig.model_validate(raw)
 
 
@@ -66,7 +65,7 @@ def test_regime_rejects_negative_multiplier() -> None:
 
     raw = _valid_regime_raw()
     raw["multipliers"] = {"position_max_size_pct": -0.5}
-    with pytest.raises(ValidationError, match="multiplier"):
+    with pytest.raises((ValueError, TypeError), match="multiplier"):
         RegimeConfig.model_validate(raw)
 
 
@@ -75,7 +74,7 @@ def test_regime_rejects_empty_multipliers() -> None:
 
     raw = _valid_regime_raw()
     raw["multipliers"] = {}
-    with pytest.raises(ValidationError, match="multipliers"):
+    with pytest.raises((ValueError, TypeError), match="multipliers"):
         RegimeConfig.model_validate(raw)
 
 
@@ -84,7 +83,7 @@ def test_regime_rejects_capitalized_multiplier_key() -> None:
 
     raw = _valid_regime_raw()
     raw["multipliers"] = {"Position_Max_Size_Pct": 1.0}
-    with pytest.raises(ValidationError, match="does not match"):
+    with pytest.raises((ValueError, TypeError), match="does not match"):
         RegimeConfig.model_validate(raw)
 
 
@@ -93,7 +92,7 @@ def test_regime_rejects_unknown_tighten_on_entry() -> None:
 
     raw = _valid_regime_raw()
     raw["transition"]["tighten_on_entry"] = "tightening"
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         RegimeConfig.model_validate(raw)
 
 
@@ -102,7 +101,7 @@ def test_regime_rejects_unknown_loosen_on_exit() -> None:
 
     raw = _valid_regime_raw()
     raw["transition"]["loosen_on_exit"] = "linear_over_invocations_5"
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         RegimeConfig.model_validate(raw)
 
 
@@ -112,11 +111,11 @@ def test_regime_models_are_frozen() -> None:
     config = RegimeConfig.model_validate(_valid_regime_raw())
 
     assert isinstance(config, RegimeConfig)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.__setattr__("vix_range", (0.0, 0.0))
 
     assert isinstance(config.transition, TransitionPolicy)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValueError, TypeError)):
         config.transition.__setattr__("tighten_on_entry", "immediate")
 
 

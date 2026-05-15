@@ -231,8 +231,8 @@ class TestThesesTable:
 
         session.add(
             ThesisRow(
-                thesis_id="t-1",
-                position_id="pos-1",
+                thesis_id=ThesisId("t-1"),
+                position_id=PositionId("pos-1"),
                 status="DRAFT",
                 resolution_timestamp=None,
                 resolution_category=None,
@@ -251,8 +251,8 @@ class TestThesesTable:
 
         session.add(
             ThesisRow(
-                thesis_id="t-1",
-                position_id="pos-1",
+                thesis_id=ThesisId("t-1"),
+                position_id=PositionId("pos-1"),
                 status="RESOLVED",
                 resolution_timestamp="2026-05-07T15:30:00Z",
                 resolution_category="MAYBE_WORKED",
@@ -273,8 +273,8 @@ class TestThesesTable:
         session.add(stub_position_row("pos-1"))
         session.add(
             ThesisRow(
-                thesis_id="t-1",
-                position_id="pos-1",
+                thesis_id=ThesisId("t-1"),
+                position_id=PositionId("pos-1"),
                 status="CANCELLED",
                 resolution_timestamp="2026-05-07T15:30:00Z",
                 resolution_category="CANCELLED_NEVER_ENTERED",
@@ -328,7 +328,7 @@ class TestThesisComponentsTable:
         session.add(
             ThesisComponentRow(
                 component_id="c-1",
-                thesis_id="does-not-exist",
+                thesis_id=ThesisId("does-not-exist"),
                 component_type="ENTRY_RATIONALE",
                 linked_bracket_leg=None,
                 instrument_reference="AAPL",
@@ -352,8 +352,8 @@ class TestThesisComponentsTable:
         session.add(stub_position_row("pos-1"))
         session.add(
             ThesisRow(
-                thesis_id="t-1",
-                position_id="pos-1",
+                thesis_id=ThesisId("t-1"),
+                position_id=PositionId("pos-1"),
                 status="ACTIVE",
                 resolution_timestamp=None,
                 resolution_category=None,
@@ -368,7 +368,7 @@ class TestThesisComponentsTable:
         session.add(
             ThesisComponentRow(
                 component_id="c-1",
-                thesis_id="t-1",
+                thesis_id=ThesisId("t-1"),
                 component_type="ENTRY_RATIONALE",
                 linked_bracket_leg=None,
                 instrument_reference="AAPL",
@@ -395,8 +395,8 @@ class TestThesisComponentsTable:
         session.add(stub_position_row("pos-1"))
         session.add(
             ThesisRow(
-                thesis_id="t-1",
-                position_id="pos-1",
+                thesis_id=ThesisId("t-1"),
+                position_id=PositionId("pos-1"),
                 status="ACTIVE",
                 resolution_timestamp=None,
                 resolution_category=None,
@@ -411,7 +411,7 @@ class TestThesisComponentsTable:
         session.add(
             ThesisComponentRow(
                 component_id="c-1",
-                thesis_id="t-1",
+                thesis_id=ThesisId("t-1"),
                 component_type="OTHER_RATIONALE",
                 linked_bracket_leg=None,
                 instrument_reference="AAPL",
@@ -435,8 +435,8 @@ class TestThesisComponentsTable:
         session.add(stub_position_row("pos-1"))
         session.add(
             ThesisRow(
-                thesis_id="t-1",
-                position_id="pos-1",
+                thesis_id=ThesisId("t-1"),
+                position_id=PositionId("pos-1"),
                 status="RESOLVED",
                 resolution_timestamp="2026-05-07T15:30:00Z",
                 resolution_category="VALIDATED",
@@ -451,7 +451,7 @@ class TestThesisComponentsTable:
         session.add(
             ThesisComponentRow(
                 component_id="c-1",
-                thesis_id="t-1",
+                thesis_id=ThesisId("t-1"),
                 component_type="ENTRY_RATIONALE",
                 linked_bracket_leg=None,
                 instrument_reference="AAPL",
@@ -600,9 +600,8 @@ class TestThesisCodec:
 class TestActiveThesisValidator:
     def test_active_with_non_null_resolution_timestamp_is_rejected(self) -> None:
         """ACTIVE thesis with non-null ``resolution_timestamp`` rejected by the typed validator."""
-        from pydantic import ValidationError
 
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             ThesisRecord(
                 thesis_id=ThesisId("thesis-1"),
                 position_id=PositionId("pos-1"),

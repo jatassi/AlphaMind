@@ -38,6 +38,7 @@ from alpaca.trading.models import Order, TradeUpdate
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import BracketId, OrderId, PositionId, ThesisId
 from alphamind._kernel.money import money, price
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.broker_adapter import OrderSnapshot
@@ -230,15 +231,15 @@ async def session_factory(
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
-    # Seed the order_id="order-1" cluster so the fill_records.order_id FK
+    # Seed the order_id=OrderId("order-1") cluster so the fill_records.order_id FK
     # is satisfied; tests reuse this id for every injected fill.
     with make_session_factory(sync_engine)() as sess:
         seed_position_cluster(
             sess,
-            position_id="pos-1",
-            thesis_id="thesis-1",
-            bracket_id="bracket-1",
-            entry_order_id="order-1",
+            position_id=PositionId("pos-1"),
+            thesis_id=ThesisId("thesis-1"),
+            bracket_id=BracketId("bracket-1"),
+            entry_order_id=OrderId("order-1"),
         )
         sess.commit()
     sync_engine.dispose()
@@ -390,7 +391,7 @@ class TestStartupRecovery:
         queries = _FakeAccountStateQueries(
             snapshots=[
                 _order_snapshot(
-                    order_id="alp-recovery-1",
+                    order_id=OrderId("alp-recovery-1"),
                     client_order_id="order-1",
                     filled_avg_price=99.0,
                     filled_qty=1.0,
@@ -653,7 +654,7 @@ async def _seed_prior_fill(
 
     record = FillRecord(
         fill_id="prior-fill-1",
-        order_id="order-1",
+        order_id=OrderId("order-1"),
         fill_timestamp=fill_timestamp,
         fill_price=price(100.0),
         fill_quantity=1.0,

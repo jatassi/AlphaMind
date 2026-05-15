@@ -12,7 +12,6 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 import pytest
-from pydantic import ValidationError
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -100,7 +99,7 @@ def _make_invocation_record(
 class TestProcessLifetimeRecord:
     def test_record_is_frozen(self) -> None:
         rec = _make_process_lifetime_record()
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             rec.process_role = "monitor"
 
     def test_round_trip_through_sqlalchemy(self, session: Session) -> None:
@@ -121,14 +120,14 @@ class TestProcessLifetimeRecord:
 
     def test_record_rejects_unknown_role(self) -> None:
         bad = _make_process_lifetime_record().model_dump() | {"process_role": "rogue_process"}
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             ProcessLifetimeRecord.model_validate(bad)
 
 
 class TestInvocationRecord:
     def test_record_is_frozen(self) -> None:
         rec = _make_invocation_record()
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             rec.trigger_type = "manual"
 
     def test_round_trip_through_sqlalchemy(self, session: Session) -> None:
@@ -166,13 +165,13 @@ class TestInvocationRecord:
         assert re_readback.staleness_flag is False
 
     def test_record_rejects_unknown_trigger_type(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             InvocationRecord.model_validate(
                 _make_invocation_record().model_dump() | {"trigger_type": "automated"}
             )
 
     def test_record_rejects_unknown_active_mode(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValueError, TypeError)):
             InvocationRecord.model_validate(
                 _make_invocation_record().model_dump() | {"active_mode": "frozen"}
             )

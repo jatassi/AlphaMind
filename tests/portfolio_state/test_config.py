@@ -2,7 +2,6 @@ import pathlib
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind.portfolio_state import PortfolioStateConfig, load_portfolio_state_config
 
@@ -40,14 +39,14 @@ def test_non_positive_value_fails_with_field_path(field: str, value: int | float
         "snapshot_freshness_max_price_age_seconds": 900.0,
     }
     valid[field] = value
-    with pytest.raises(ValidationError) as exc_info:
-        PortfolioStateConfig.model_validate(valid)
+    with pytest.raises((ValueError, TypeError)) as exc_info:
+        PortfolioStateConfig(**valid)
     error_text = str(exc_info.value)
     assert field in error_text
 
 
 def test_empty_trailing_windows_days_fails() -> None:
-    with pytest.raises(ValidationError) as exc_info:
+    with pytest.raises((ValueError, TypeError)) as exc_info:
         PortfolioStateConfig(
             pm_decision_log_sliding_window_invocations=3,
             thesis_resolutions_lookback_trading_days=20,
@@ -59,7 +58,7 @@ def test_empty_trailing_windows_days_fails() -> None:
 
 
 def test_negative_element_in_trailing_windows_days_fails() -> None:
-    with pytest.raises(ValidationError) as exc_info:
+    with pytest.raises((ValueError, TypeError)) as exc_info:
         PortfolioStateConfig(
             pm_decision_log_sliding_window_invocations=3,
             thesis_resolutions_lookback_trading_days=20,

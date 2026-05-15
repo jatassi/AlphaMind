@@ -28,6 +28,7 @@ from alpaca.trading.models import (
     TradeAccount,
 )
 
+from alphamind._kernel.ids import Symbol
 from alphamind._kernel.money import money, price, signed_money
 
 # ---------------------------------------------------------------------------
@@ -1083,7 +1084,7 @@ class TestGetOptionContracts:
 
         qs = AccountStateQueries(client)
         result = qs.get_option_contracts(
-            underlying="NVDA",
+            underlying=Symbol("NVDA"),
             expiration=date(2026, 6, 19),
         )
 
@@ -1106,7 +1107,7 @@ class TestGetOptionContracts:
         client.get_option_contracts.return_value = _make_option_contracts_response([])
 
         qs = AccountStateQueries(client)
-        qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+        qs.get_option_contracts(underlying=Symbol("NVDA"), expiration=date(2026, 6, 19))
 
         call_args = client.get_option_contracts.call_args
         # Either positional or keyword.
@@ -1124,7 +1125,7 @@ class TestGetOptionContracts:
         client.get_option_contracts.return_value = _make_option_contracts_response([])
 
         qs = AccountStateQueries(client)
-        result = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+        result = qs.get_option_contracts(underlying=Symbol("NVDA"), expiration=date(2026, 6, 19))
 
         assert result == ()
 
@@ -1141,7 +1142,7 @@ class TestGetOptionContracts:
         client.get_option_contracts.return_value.option_contracts = None
 
         qs = AccountStateQueries(client)
-        result = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+        result = qs.get_option_contracts(underlying=Symbol("NVDA"), expiration=date(2026, 6, 19))
 
         assert result == ()
 
@@ -1154,7 +1155,7 @@ class TestGetOptionContracts:
         )
 
         qs = AccountStateQueries(client)
-        (snap,) = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+        (snap,) = qs.get_option_contracts(underlying=Symbol("NVDA"), expiration=date(2026, 6, 19))
 
         assert snap.symbol == "NVDA  260619C00105000"
         # ALP-462 — strike threaded through ``price()`` for Decimal-exact compare.
@@ -1173,7 +1174,7 @@ class TestGetOptionContracts:
         )
 
         qs = AccountStateQueries(client)
-        (snap,) = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+        (snap,) = qs.get_option_contracts(underlying=Symbol("NVDA"), expiration=date(2026, 6, 19))
 
         with pytest.raises((TypeError, ValidationError)):
             snap.strike = price(200.0)
@@ -1201,7 +1202,7 @@ class TestGetOptionContracts:
         client.get_option_contracts.side_effect = responses
 
         qs = AccountStateQueries(client)
-        result = qs.get_option_contracts(underlying="SPY", expiration=date(2026, 6, 19))
+        result = qs.get_option_contracts(underlying=Symbol("SPY"), expiration=date(2026, 6, 19))
 
         assert len(result) == 250, (
             f"expected 250 contracts (3 pages of 100/100/50); "
@@ -1228,7 +1229,7 @@ class TestGetOptionContracts:
         )
 
         qs = AccountStateQueries(client)
-        result = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+        result = qs.get_option_contracts(underlying=Symbol("NVDA"), expiration=date(2026, 6, 19))
 
         assert len(result) == 1
         assert client.get_option_contracts.call_count == 1
