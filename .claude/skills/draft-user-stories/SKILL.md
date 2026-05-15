@@ -56,6 +56,14 @@ Read the feature's design docs end-to-end. Then walk the up/downstream graph:
 
 The bar for "enough context": you can write each user story's acceptance criteria without having to re-open the design doc. If you can't, keep reading.
 
+**Audit existing code when it exists.** If the feature already has substantial as-built code (the tracker-vs-as-built check in Phase 1 surfaced existing implementation, or upstream features ship typed records / modules this feature will consume), invoke `Skill("python-architecture")` in audit mode scoped to the relevant subdivision (the feature's package, or an upstream feature's package whose contract you'll lean on). Treat the audit findings as inputs to decomposition:
+
+- **Load-bearing findings** that touch the feature's surface (primitive obsession in a record this feature consumes, a shallow-module swarm in an upstream the feature extends, a layer violation crossing into the feature's intended scope) become candidate stories or constraints on story scope. A "Money should be a domain primitive" finding upstream becomes either a coordinated-edit note in the parent Issue, a hard gate on the upstream's draft tree, or — if owned by this feature — its own typed-record story.
+- **High-yield findings** (mutable defaults, naive datetimes, missing timeouts) that live inside the feature's planned scope fold into the relevant story's scope without becoming a story of their own.
+- **Findings outside the feature's scope** that the audit surfaces opportunistically are *not* this feature's job. Surface them to the operator separately as candidate follow-on Linear issues — do not silently absorb them into the work tree.
+
+Skill invocation runs in your thread (no Agent dispatch), so it's compatible with the no-delegation rule. Use the audit's punch list to sanity-check that your Phase 4 candidate stories cover the load-bearing structural work the feature actually needs.
+
 While gathering, jot down (in your working memory, not as files):
 
 - Typed value objects this feature owns vs. imports from upstream.
@@ -91,6 +99,15 @@ Indicators a candidate is too small — fold it:
 - Its acceptance criteria are entirely subsumed by a larger story's tests.
 
 Don't worry about ordering or naming conventions yet — those happen in Phase 5.
+
+**Design mode for new modules.** When the feature introduces a new package or service with non-trivial domain logic (named typed records, Protocols/adapters, a domain core distinct from its I/O shell) rather than purely extending existing modules, invoke `Skill("python-architecture")` in design mode before naming the candidate stories. The brief produces:
+
+- A concrete **package layout** (`<feature>/domain.py`, `<feature>/adapters.py`, etc., or per-component subdirectories per the `feedback_scaffold_per_component_depth` memory).
+- **Named typed records and domain primitives** (`PositionId = NewType(...)`, `Quantity = ...`, frozen-dataclass shapes) rather than abstract "use NewType for IDs".
+- The **testing seam** (which dependencies get Protocols + in-memory fakes; which get testcontainers / embedded substitutes; which are pure local-substitutable).
+- Three or four **hardest-to-reverse decisions** (persistence engine, sync-vs-async, message-bus-or-not) with tradeoffs.
+
+Anchor the Scope sections of subsequent stories to the brief's concrete names — a story's "produces `PositionRecord` with these fields" is far more useful to a dispatched subagent than "introduces a position record". When the brief surfaces a hardest-to-reverse decision the design doc hasn't settled, add it to your Phase 6 open-decisions list. Skill invocation runs in your thread (no Agent dispatch), compatible with the no-delegation rule. Skip design mode when the feature is small, purely additive to an existing module, or already fully specified at the type level by its design doc.
 
 **Always include a final story for end-to-end verification + runbook updates.** Every feature work tree concludes with one story covering three deliverables:
 

@@ -131,6 +131,8 @@ Use the `/tdd` skill (`Skill("tdd")`) to drive the work: red → green → refac
 - Each acceptance criterion that admits a programmatic test gets one.
 - Criteria that don't (file existence, doc structure, NSSM service config) are verified by post-implementation inspection.
 
+If the story scaffolds a new module, service, or package — anything beyond extending an existing file with one more function — invoke `Skill("python-architecture")` in design mode before writing code, scoped to the new component. Use the brief's package layout, named typed records, and testing seam to anchor your implementation. The story's Scope already names the concrete deliverables; the brief tells you *how* to shape them so the result is testable, deeply-modular, and respects the functional-core / imperative-shell split. Skip when the story is purely additive (one new function in an existing file, a config knob, a doc edit) — the overhead exceeds the value there.
+
 After tests are green and before your final commit, invoke the `simplify` skill (`Skill("simplify")`) to review and clean up your changes, then run `uv run ruff check .`, `uv run ruff format .`, and `uv run mypy` and address all findings from your changes only.
 
 When done — **REQUIRED — DO NOT SKIP THE COMMIT STEP. Do NOT end your work with `simplify` findings as the final action; the commit must come AFTER simplify.**
