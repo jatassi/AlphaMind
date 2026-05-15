@@ -56,6 +56,7 @@ def test_verify_connectivity_returns_false_on_exception() -> None:
     client = _make_client(sdk)
     assert client.verify_connectivity() is False
 
+
 class TestProtocolContract:
     def test_fred_client_implements_fred_api(self) -> None:
         from alphamind.data_sources.fred._protocol import FredAPI
