@@ -109,11 +109,6 @@ ignore_imports =
     alphamind.distillation.q1.gap -> sqlalchemy
     alphamind.distillation.q1.gap_loaders -> sqlalchemy
     alphamind.distillation.q3.flow_classification -> sqlalchemy
-    # Indirect via data_sources._common (punch-list #22 — split
-    # data_sources/_common into focused modules; the shared HTTP/retry
-    # primitives the q7 module wants will live in _common/retry.py and
-    # _common/rate_limit.py, neither of which imports sqlalchemy).
-    alphamind.distillation.q7.correlation_regime_change -> alphamind.data_sources._common
     # Indirect via persistence.models (also retired by punch-list #9: once
     # the distillation modules consume a loaders/repository protocol
     # instead of importing ORM declarative classes directly, the indirect

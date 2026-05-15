@@ -589,7 +589,10 @@ class TestRateLimiter:
         def advance(seconds: float) -> None:
             tick[0] += seconds
 
-        with patch("alphamind.data_sources._common.time.monotonic", side_effect=fake_time):
+        with patch(
+            "alphamind.data_sources._common.rate_limit.time.monotonic",
+            side_effect=fake_time,
+        ):
             # Drain all tokens (bucket starts full at capacity = rate_per_minute)
             # After drain, next acquire must wait
             for _ in range(6):

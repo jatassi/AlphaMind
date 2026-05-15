@@ -15,14 +15,13 @@ the file edit, with no in-process hot-reload.
 from __future__ import annotations
 
 import io
-import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ruamel.yaml import YAML
 
+from alphamind._kernel.atomic_io import atomic_write_bytes
 from alphamind.config.loaders import read_yaml_file
 from alphamind.config.models.main import MainConfig, Profile
 
@@ -119,10 +118,9 @@ def _rewrite_active_profile(main_yaml_path: Path, new_profile: Profile) -> None:
     """Atomically rewrite ``main.yaml`` with the new ``active_profile``.
 
     Uses ``ruamel.yaml`` round-trip mode to preserve comments and formatting
-    of every other field. The atomic-write pattern mirrors
-    ``alphamind.config.snapshot._atomic_write``: write to a sibling tmp file,
-    fsync the file descriptor, ``os.replace`` to the final path, then fsync
-    the parent directory so the rename is durable across power loss.
+    of every other field; delegates the durable rename to the kernel atomic-
+    write helper (write to sibling tmp + fsync + replace + parent-dir fsync
+    on POSIX).
     """
     yaml_rt = YAML(typ="rt")
     yaml_rt.preserve_quotes = True
@@ -131,22 +129,4 @@ def _rewrite_active_profile(main_yaml_path: Path, new_profile: Profile) -> None:
 
     buffer = io.StringIO()
     yaml_rt.dump(document, buffer)
-    encoded = buffer.getvalue().encode("utf-8")
-
-    tmp_path = main_yaml_path.with_suffix(main_yaml_path.suffix + ".tmp")
-    with tmp_path.open("wb") as handle:
-        handle.write(encoded)
-        handle.flush()
-        os.fsync(handle.fileno())
-
-    tmp_path.replace(main_yaml_path)
-
-    # Parent-directory fsync is a Linux-only durability primitive; Windows'
-    # POSIX shim rejects ``os.open`` against directory paths with EACCES, and
-    # ``os.replace`` already provides the in-tree atomicity Windows can offer.
-    if sys.platform != "win32":
-        parent_fd = os.open(main_yaml_path.parent, os.O_RDONLY)
-        try:
-            os.fsync(parent_fd)
-        finally:
-            os.close(parent_fd)
+    atomic_write_bytes(main_yaml_path, buffer.getvalue().encode("utf-8"))

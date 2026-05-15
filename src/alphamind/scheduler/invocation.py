@@ -29,6 +29,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.atomic_io import atomic_write_text
 from alphamind._kernel.invocations import (
     CALIBRATION_SNAPSHOT_FILENAME,
     INVOCATIONS_DIRNAME,
@@ -37,7 +38,6 @@ from alphamind.config.load import PipelineConfig, load_full_config
 from alphamind.config.models.modes import Mode
 from alphamind.config.models.run_types import RunType
 from alphamind.config.resolver import RuntimeDimensions
-from alphamind.config.snapshot import _atomic_write
 from alphamind.persistence.models import CollectionRuns
 from alphamind.state.invocation_context.context import (
     insert_invocation_row,
@@ -164,8 +164,7 @@ def _persist_data_calibration_snapshot(
     )
     payload = prior_content if prior_content is not None else "{}"
 
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_write(target_path, payload)
+    atomic_write_text(target_path, payload)
     return target_path
 
 

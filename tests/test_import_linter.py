@@ -488,18 +488,20 @@ def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
     that intentionally keep sqlalchemy; those new entries are accepted as part
     of this story.
 
-    Post-ALP-467 baseline:
+    Post-ALP-473 baseline:
     - 26 direct sqlalchemy ignores (the original 22 still-impure modules +
       ALP-467 pilot shims/shells: ``_repository_sql``, ``q1.gap``,
       ``q1.gap_loaders``, ``q3.flow_classification``).
-    - 22 indirect ignores (19 original persistence.models edges still in
-      place + 2 ALP-467 pilot shells reaching persistence.models +
-      1 q7.correlation_regime_change reaching data_sources._common).
+    - 21 indirect ignores (19 original persistence.models edges still in
+      place + 2 ALP-467 pilot shells reaching persistence.models). ALP-473
+      retired the q7.correlation_regime_change -> data_sources._common
+      edge by hoisting ``HeadlineType`` to ``data_sources.news.types`` and
+      retargeting the consumer.
 
     Regression guard: a future story tightening this contract by accident
     would drop entries here and silently re-introduce violations. Punch-list
-    items #9 (continued q-* propagation past the pilot) and #22 (ALP-473)
-    are still pending, so the remaining entries must hold until those land.
+    item #9 (continued q-* propagation past the pilot) is still pending, so
+    the remaining entries must hold until that lands.
     """
     parser = _parse_importlinter_config()
     section = _contract_section(parser, "distillation-no-sqlalchemy")
@@ -510,10 +512,10 @@ def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
         f"direct sqlalchemy ignore_imports count drifted: expected 26, got {len(direct)}.\n"
         f"entries:\n  " + "\n  ".join(direct)
     )
-    assert len(indirect) == 22, (
-        f"indirect ignore_imports count drifted: expected 22 (19 original via "
-        f"persistence.models + 2 ALP-467 pilot via persistence.models + 1 via "
-        f"data_sources._common), got {len(indirect)}.\n"
+    assert len(indirect) == 21, (
+        f"indirect ignore_imports count drifted: expected 21 (19 original via "
+        f"persistence.models + 2 ALP-467 pilot via persistence.models), "
+        f"got {len(indirect)}.\n"
         f"entries:\n  " + "\n  ".join(indirect)
     )
 

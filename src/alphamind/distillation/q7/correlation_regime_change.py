@@ -17,7 +17,7 @@ from itertools import pairwise
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from alphamind.data_sources._common import HeadlineType
+from alphamind.data_sources.news.types import HeadlineType
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import (
     AnomalyFlag,
