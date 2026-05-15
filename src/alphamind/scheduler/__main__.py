@@ -32,9 +32,6 @@ from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.scheduler import SchedulerConfig
 from alphamind.config.models.venue import VenueConfig
-from alphamind.execution.state_persistence.process_lifetime import (
-    record_process_lifetime,
-)
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.risk_guardrails.breach_behavior.config import load_breach_behavior_config
 from alphamind.scheduler.driver import run_pipeline_scheduler_task
@@ -44,6 +41,9 @@ from alphamind.scheduler.orchestrator import run_invocation
 from alphamind.scheduler.run_context import RunInvocationContext
 from alphamind.scheduler.session import PipelineMode, new_session
 from alphamind.scheduler.supervisor import PipelineSupervisor
+from alphamind.state.process_lifetime import (
+    record_process_lifetime,
+)
 
 log = logging.getLogger(__name__)
 

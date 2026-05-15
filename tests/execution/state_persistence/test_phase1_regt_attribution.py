@@ -27,38 +27,8 @@ from alphamind._kernel.ids import (
 )
 from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import RiskZone
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.brackets import BracketRow
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
-from alphamind.execution.state_persistence.tables.orders_codec import (
-    record_to_row as order_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.write_paths.fill_persistence import (
+from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    FillProcessingStatus,
-    FillRecord,
-    RegTMarginAttribution,
 )
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
@@ -90,6 +60,36 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
     MarketInputs,
 )
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+    InvocationHandle,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.records import (
+    FillProcessingStatus,
+    FillRecord,
+    RegTMarginAttribution,
+)
+from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
+)
+from alphamind.state.tables.fill_records import FillRecordRow
+from alphamind.state.tables.orders_codec import (
+    record_to_row as order_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -115,7 +115,7 @@ async def db(
     db_path = tmp_path / "alphamind.db"
 
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -454,7 +454,7 @@ async def test_processed_fill_carries_populated_attribution(
     eight-field RegTMarginAttribution with all numeric fields finite."""
     import math
 
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -501,7 +501,7 @@ async def test_quarantined_fill_retains_null_attribution(
 ) -> None:
     """A fill rejected by ``_quarantine_invalid`` (e.g., negative quantity)
     is excluded from integration and its ``regt_attribution_json`` stays NULL."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -544,7 +544,7 @@ async def test_batched_fills_have_threaded_pre_state(
     ``regt_margin_after`` — the wedge re-snapshots positions per fill so
     later fills see the cumulative effect of earlier ones.
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -616,7 +616,7 @@ async def test_phase1_summary_unchanged(
 ) -> None:
     """The wedge does not alter ``Phase1Summary`` — the four count fields are
     still populated and remain the function's only return surface."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         Phase1Summary,
         process_unprocessed_fills,
     )
@@ -665,7 +665,7 @@ async def test_missing_market_inputs_for_underlying_propagates_key_error(
     Phase 1. Surfacing the gap as a hard error prevents silent attribution
     misreporting.
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 

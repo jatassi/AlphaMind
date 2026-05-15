@@ -22,12 +22,12 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.commands.submission_log import SubmissionLogEntry
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.write_paths.phase2 import (
+from alphamind.execution.write_paths.phase2 import (
     persist_envelope_outcome,
+)
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationHandle,
 )
 
 __all__ = ["PMResultLike", "Phase2Summary", "dispatch_phase2"]

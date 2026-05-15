@@ -26,8 +26,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.config.models.run_types import RunType
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.portfolio_state.events.activity_log import (
     EmergencyInvocationRequestedDetail,
     EventType,
@@ -36,6 +34,8 @@ from alphamind.portfolio_state.events.activity_log import (
 from alphamind.scheduler.orchestrator import run_invocation
 from alphamind.scheduler.run_context import RunInvocationContext
 from alphamind.scheduler.session import PipelineSession
+from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.invocations import InvocationRow
 
 __all__ = ["run_emergency_receiver_task"]
 

@@ -1131,21 +1131,10 @@ async def test_handle_submit_envelope_persists_layer1_failure_via_phase2(
     an OMS-tree change touching the wrapper trips here too."""
     from sqlalchemy import select as _select
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
     from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
-    )
-    from alphamind.execution.state_persistence.invocation_context.context import (
-        InvocationContext,
-    )
-    from alphamind.execution.state_persistence.invocation_context.records import (
-        InvocationRecord,
-        ProcessLifetimeRecord,
-        process_lifetime_record_to_row,
-    )
-    from alphamind.execution.state_persistence.tables.activity_log import (
-        ActivityLogRow,
     )
     from alphamind.persistence.models import Base
     from alphamind.persistence.session import (
@@ -1154,6 +1143,17 @@ async def test_handle_submit_envelope_persists_layer1_failure_via_phase2(
         make_engine,
     )
     from alphamind.portfolio_state.events.activity_log import EventType
+    from alphamind.state.invocation_context.context import (
+        InvocationContext,
+    )
+    from alphamind.state.invocation_context.records import (
+        InvocationRecord,
+        ProcessLifetimeRecord,
+        process_lifetime_record_to_row,
+    )
+    from alphamind.state.tables.activity_log import (
+        ActivityLogRow,
+    )
 
     db_path = tmp_path / "test.db"
     sync_engine = make_engine(str(db_path))
@@ -1258,28 +1258,10 @@ async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
     the Phase 2 writeback runs alongside the in-memory state-cell advance."""
     from sqlalchemy import select as _select
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
     from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
-    )
-    from alphamind.execution.state_persistence.invocation_context.context import (
-        InvocationContext,
-    )
-    from alphamind.execution.state_persistence.invocation_context.records import (
-        InvocationRecord,
-        ProcessLifetimeRecord,
-        process_lifetime_record_to_row,
-    )
-    from alphamind.execution.state_persistence.tables.activity_log import (
-        ActivityLogRow,
-    )
-    from alphamind.execution.state_persistence.tables.cash_ledger import (
-        CASH_LEDGER_SINGLETON_ID,
-        CashLedgerRow,
-    )
-    from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-        cash_ledger_record_to_row,
     )
     from alphamind.persistence.models import Base
     from alphamind.persistence.session import (
@@ -1289,6 +1271,24 @@ async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
     )
     from alphamind.portfolio_state.events.activity_log import EventType
     from alphamind.portfolio_state.records.cash import CashLedger
+    from alphamind.state.invocation_context.context import (
+        InvocationContext,
+    )
+    from alphamind.state.invocation_context.records import (
+        InvocationRecord,
+        ProcessLifetimeRecord,
+        process_lifetime_record_to_row,
+    )
+    from alphamind.state.tables.activity_log import (
+        ActivityLogRow,
+    )
+    from alphamind.state.tables.cash_ledger import (
+        CASH_LEDGER_SINGLETON_ID,
+        CashLedgerRow,
+    )
+    from alphamind.state.tables.cash_ledger_codec import (
+        cash_ledger_record_to_row,
+    )
 
     db_path = tmp_path / "test.db"
     sync_engine = make_engine(str(db_path))

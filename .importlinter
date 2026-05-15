@@ -42,7 +42,7 @@ type = layers
 layers =
     alphamind.scheduler
     alphamind.pipeline
-    alphamind.analysis : alphamind.collector : alphamind.command_center : alphamind.config : alphamind.data_sources : alphamind.decision : alphamind.distillation : alphamind.execution : alphamind.feedback_loop : alphamind.persistence : alphamind.portfolio_state : alphamind.risk_guardrails
+    alphamind.analysis : alphamind.collector : alphamind.command_center : alphamind.config : alphamind.data_sources : alphamind.decision : alphamind.distillation : alphamind.execution : alphamind.feedback_loop : alphamind.persistence : alphamind.portfolio_state : alphamind.risk_guardrails : alphamind.state
 
 # Forbidden contract: ``alphamind.distillation.*`` must not import sqlalchemy.
 # Per audit finding L6, distillation is supposed to be a pure compute core
@@ -201,6 +201,7 @@ forbidden_modules =
     alphamind.risk_guardrails
     alphamind.scheduler
     alphamind.scripts
+    alphamind.state
 
 # Leaf contract: ``alphamind.commands`` is the engine/PM envelope vocabulary
 # extracted in ALP-458. It may import ``alphamind._kernel`` but no other
@@ -227,6 +228,7 @@ forbidden_modules =
     alphamind.risk_guardrails
     alphamind.scheduler
     alphamind.scripts
+    alphamind.state
 
 # Layered contract: ``alphamind.distillation`` sits above
 # ``alphamind.persistence.models``. The forbidden shape that would
@@ -253,8 +255,20 @@ layers =
 # ALP-464 (06b) decomposed the single-file ``submit_envelope.py`` into a
 # five-submodule package; the per-submodule exceptions below replace the
 # pre-decomposition single ``submit_envelope -> execution.*`` ignores.
-# See ALP-482 for the audit of whether this package should hoist to a
-# top-level ``composition_roots/`` package post-decomposition.
+# ALP-470 (08c) hoisted the cross-cutting state-persistence primitives
+# (tables, repository, invocation_context, config, process_lifetime,
+# typed record facades) out of ``execution`` and into the new top-level
+# ``alphamind.state`` package; the corresponding three ``dispatch ->
+# state.tables.*`` and one ``persist -> state.config`` edges are now
+# decision -> state crossings (not decision -> execution) and so no
+# longer require an ignore here. ALP-470 also renamed the surviving
+# OMS-only write-path subpackage from ``execution/state_persistence/
+# write_paths/`` to ``execution/write_paths/`` since nothing else
+# remained beneath ``state_persistence/``. The ``persist ->
+# execution.write_paths.phase2`` edge remains the load-bearing
+# execution-side wiring entry. See ALP-482 for the audit of whether
+# this package should hoist to a top-level ``composition_roots/``
+# package post-decomposition.
 [importlinter:contract:decision-not-execution]
 name = decision/ has no upward imports of execution/
 type = forbidden
@@ -268,15 +282,20 @@ ignore_imports =
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter.order_modify
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter.order_options
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.oms.broker_dispatch
-    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.state_persistence.tables.orders
-    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.state_persistence.tables.positions
-    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.state_persistence.tables.positions_codec
     alphamind.decision.portfolio_manager.submit_envelope.persist -> alphamind.execution.oms.broker_dispatch
-    alphamind.decision.portfolio_manager.submit_envelope.persist -> alphamind.execution.state_persistence.config
-    alphamind.decision.portfolio_manager.submit_envelope.persist -> alphamind.execution.state_persistence.write_paths.phase2
+    alphamind.decision.portfolio_manager.submit_envelope.persist -> alphamind.execution.write_paths.phase2
     alphamind.decision.portfolio_manager.submit_envelope.process -> alphamind.execution.oms.command_ids
     alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.broker_adapter
     alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.oms.broker_dispatch
+    # ALP-470 hoisted ``state.config`` out of execution but its
+    # ``CorporateActionsConfig`` field still reaches into
+    # ``execution.corporate_actions.config`` (the per-feature CA knobs).
+    # The composition-root ``submit_envelope.persist`` accordingly carries
+    # a transitive ``decision -> state.config -> execution.corporate_actions
+    # .config`` chain that import-linter reports as a decision -> execution
+    # crossing. Retires when ALP-484 (out of scope here) hoists the CA
+    # config primitive to a layer-neutral location.
+    alphamind.state.config -> alphamind.execution.corporate_actions.config
 
 # Architectural exception: ``library_snapshot.py`` is a Pydantic->dataclass
 # translator at the portfolio_state / risk_guardrails boundary

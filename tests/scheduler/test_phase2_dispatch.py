@@ -31,17 +31,17 @@ from alphamind.decision.portfolio_manager.submit_envelope import (
     SubmissionLogEntry,
     SubmissionResult,
 )
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.records import (
-    ProcessLifetimeRecord,
-    process_lifetime_record_to_row,
-)
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
     make_engine,
     make_session_factory,
+)
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.records import (
+    ProcessLifetimeRecord,
+    process_lifetime_record_to_row,
 )
 
 
@@ -69,7 +69,7 @@ async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[Asyn
     """Yield an async session factory bound to an initialized SQLite DB."""
     db_path = tmp_path / "alphamind.db"
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     try:
@@ -324,15 +324,15 @@ class TestDispatchPhase2:
         """
         from sqlalchemy import select, text
 
-        from alphamind.execution.state_persistence.invocation_context.context import (
-            insert_invocation_row,
-        )
-        from alphamind.execution.state_persistence.invocation_context.records import (
-            InvocationRecord,
-        )
-        from alphamind.execution.state_persistence.tables.invocations import InvocationRow
         from alphamind.scheduler import phase2_dispatch as module
         from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+        from alphamind.state.invocation_context.context import (
+            insert_invocation_row,
+        )
+        from alphamind.state.invocation_context.records import (
+            InvocationRecord,
+        )
+        from alphamind.state.tables.invocations import InvocationRow
 
         # Seed an invocation row that the per-envelope stubs can update as
         # their "marker" — the stub writes ``staleness_flag = <envelope_idx>``

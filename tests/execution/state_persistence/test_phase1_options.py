@@ -34,53 +34,8 @@ from alphamind._kernel.ids import (
 from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.tables.brackets import BracketRow
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger import (
-    CASH_LEDGER_SINGLETON_ID,
-    CashLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
-from alphamind.execution.state_persistence.tables.orders_codec import (
-    record_to_row as order_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
-from alphamind.execution.state_persistence.tables.theses import ThesisRow
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
-)
-from alphamind.execution.state_persistence.write_paths.fill_persistence import (
+from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    FillProcessingStatus,
-    FillRecord,
 )
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
@@ -130,6 +85,51 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     MarketInputs,
     RealizedVolEntry,
 )
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+    InvocationHandle,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.records import (
+    FillProcessingStatus,
+    FillRecord,
+)
+from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger import (
+    CASH_LEDGER_SINGLETON_ID,
+    CashLedgerRow,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
+)
+from alphamind.state.tables.fill_records import FillRecordRow
+from alphamind.state.tables.orders_codec import (
+    record_to_row as order_record_to_row,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
+)
+from alphamind.state.tables.theses import ThesisRow
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
+)
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-2026-05-08T12:00:00Z-opts"
@@ -151,7 +151,7 @@ async def db(
     db_path = tmp_path / "alphamind.db"
 
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -671,7 +671,7 @@ async def _seed_position_order_thesis_bracket(
     bracket: BracketRecord,
 ) -> None:
     """Seed a full options-position cluster in one deferred-FK transaction."""
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     thesis_row, component_rows = thesis_record_to_rows(thesis)
     bracket_row, leg_rows = bracket_record_to_rows(bracket)
@@ -748,7 +748,7 @@ async def test_long_call_entry_fill_transitions_pending_position_to_open(
 ) -> None:
     """BUY_TO_OPEN long-call entry: PENDING → OPEN with positive cost basis
     scaled by contract_multiplier; greeks preserved; bracket activates."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -833,7 +833,7 @@ async def test_short_put_entry_fill_carries_negative_cost_basis(
 ) -> None:
     """SELL_TO_OPEN short-put entry: PENDING → OPEN with negative
     ``premium_paid_per_contract`` (premium received), and cash credited."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -922,7 +922,7 @@ async def test_add_fill_recomputes_weighted_average_premium(
     """ADD-side options fill (BUY_TO_OPEN against an OPEN long position)
     increments contract_count and recomputes weighted-average premium per
     the same formula the equity path uses for share-count adds."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -985,7 +985,7 @@ async def test_partial_close_fill_accumulates_realized_pl_and_emits_position_red
     """Partial CLOSE on a long-call position: realized P/L is computed
     multiplier-scaled, contract_count drops to the remaining amount, and
     a ``position_reduced`` activity-log entry is written."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1077,10 +1077,10 @@ async def test_full_close_fill_transitions_position_closed_and_dissolves_bracket
     """Full SELL_TO_CLOSE on a long-call: OPEN → CLOSED with cumulative
     realized P/L; bracket transitions ACTIVE → DISSOLVED; thesis RESOLVED;
     activity log carries position_closed + bracket_dissolved + thesis_resolved."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -1201,10 +1201,10 @@ async def test_bracket_activation_for_monitor_managed_legs_carries_empty_order_i
     ACTIVE and the BRACKET_ACTIVATED event carries an empty
     ``protective_leg_order_ids`` tuple — the monitor work tree (ALP-123) is
     the consumer of the activation marker."""
-    from alphamind.execution.state_persistence.tables.bracket_legs import BracketLegRow
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
+    from alphamind.state.tables.bracket_legs import BracketLegRow
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -1268,10 +1268,10 @@ async def test_buy_to_close_short_position_debits_cash_and_realizes_pnl(
     """BUY_TO_CLOSE on an OPEN short-put position: cash debited by premium
     paid (covering the short); position transitions OPEN -> CLOSED with
     realized P/L = (entry_premium_received - exit_premium_paid) * qty * multiplier."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -1382,10 +1382,10 @@ async def test_atomicity_exit_fill_exceeds_open_quantity_rolls_back(
     """An options exit fill claiming more contracts than the position holds
     raises ValueError; the surrounding InvocationContext rolls back, the
     fill row remains unprocessed, and no activity-log entries persist."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     _, factory = db
     await _seed_invocation_substrate(factory)

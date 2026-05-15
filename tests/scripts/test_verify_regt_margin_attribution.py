@@ -35,7 +35,7 @@ def fresh_db(tmp_path: Path) -> Iterator[Path]:
     db_path = tmp_path / "alphamind.db"
 
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -148,12 +148,12 @@ async def test_run_verify_all_attribution_fields_finite(fresh_db: Path) -> None:
 def test_collect_assertion_failures_returns_empty_on_clean_pass() -> None:
     """The pure assertion-collector returns ``()`` when fields are finite,
     algebra holds, and the trailing-30d aggregate equals the sum."""
-    from alphamind.execution.state_persistence.write_paths.records import (
-        RegTMarginAttribution,
-    )
     from alphamind.scripts.verify_regt_margin_attribution import (
         AttributionRow,
         _collect_assertion_failures,
+    )
+    from alphamind.state.records import (
+        RegTMarginAttribution,
     )
 
     attr_a = RegTMarginAttribution(
@@ -187,12 +187,12 @@ def test_collect_assertion_failures_returns_empty_on_clean_pass() -> None:
 def test_collect_assertion_failures_flags_algebra_violation() -> None:
     """A regt_excess_over_pm not equal to (regt_marginal - pm_marginal) surfaces a
     structured FAIL message in the runbook's vocabulary."""
-    from alphamind.execution.state_persistence.write_paths.records import (
-        RegTMarginAttribution,
-    )
     from alphamind.scripts.verify_regt_margin_attribution import (
         AttributionRow,
         _collect_assertion_failures,
+    )
+    from alphamind.state.records import (
+        RegTMarginAttribution,
     )
 
     broken = RegTMarginAttribution(
@@ -228,12 +228,12 @@ def test_collect_assertion_failures_flags_algebra_violation() -> None:
 def test_collect_assertion_failures_flags_trailing_30d_mismatch() -> None:
     """A trailing-30d aggregate that disagrees with the sum of per-fill excess
     surfaces the runbook's 'trailing-30d aggregate mismatch' message."""
-    from alphamind.execution.state_persistence.write_paths.records import (
-        RegTMarginAttribution,
-    )
     from alphamind.scripts.verify_regt_margin_attribution import (
         AttributionRow,
         _collect_assertion_failures,
+    )
+    from alphamind.state.records import (
+        RegTMarginAttribution,
     )
 
     attr = RegTMarginAttribution(

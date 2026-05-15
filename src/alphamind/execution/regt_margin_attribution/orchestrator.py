@@ -17,11 +17,11 @@ from alphamind.execution.regt_margin_attribution.pm_equivalent import (
     compute_pm_equivalent_margin,
 )
 from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
-from alphamind.execution.state_persistence.write_paths.records import (
-    RegTMarginAttribution,
-)
 from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.risk_guardrails.guardrail_evaluation.types import MarketInputs
+from alphamind.state.records import (
+    RegTMarginAttribution,
+)
 
 
 def compute_attribution(

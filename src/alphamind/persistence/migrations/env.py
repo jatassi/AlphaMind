@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parents[4]))
 # must be imported here so ``Base.metadata`` is fully populated before
 # ``compare_type``/``autogenerate`` runs. The state-persistence tables ship
 # their own model files under ``execution.state_persistence.tables``.
-import alphamind.execution.state_persistence.tables  # noqa: F401
+import alphamind.state.tables  # noqa: F401
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import _resolve_path, make_engine
 

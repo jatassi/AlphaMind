@@ -47,20 +47,20 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
 from alphamind.execution.continuous_monitor.underlying_stream.subscriptions import (
     OpenPositionsReader,
 )
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
 from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
 from alphamind.portfolio_state.records.positions import (
     OptionGreeks,
     OptionsPositionDetails,
     StrategyLeg,
     StrategyPositionDetails,
+)
+from alphamind.state.tables.invocations import InvocationRow
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
 )
 
 log = logging.getLogger(__name__)
@@ -302,7 +302,7 @@ def make_activity_log_emitter(
     refresh task emits one entry per failing position; one transaction per
     emit avoids long-held locks during a chain of failures.
     """
-    from alphamind.execution.state_persistence.invocation_context.activity_log import (
+    from alphamind.state.invocation_context.activity_log import (
         activity_log_entry_to_row,
     )
 

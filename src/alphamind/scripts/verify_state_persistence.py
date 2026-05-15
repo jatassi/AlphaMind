@@ -75,41 +75,8 @@ from alphamind.decision.portfolio_manager.submit_envelope import (
     FailedSubmissionEntry,
     SubmissionResult,
 )
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
-from alphamind.execution.state_persistence.tables.orders_codec import (
-    record_to_row as order_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
-)
-from alphamind.execution.state_persistence.write_paths.fill_persistence import (
+from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    FillProcessingStatus,
-    FillRecord,
 )
 from alphamind.persistence.session import (
     make_async_engine,
@@ -153,6 +120,39 @@ from alphamind.portfolio_state.records.theses import (
 from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
     MarketInputs,
+)
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.records import (
+    FillProcessingStatus,
+    FillRecord,
+)
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
+)
+from alphamind.state.tables.invocations import InvocationRow
+from alphamind.state.tables.orders_codec import (
+    record_to_row as order_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
 )
 
 __all__ = [
@@ -278,7 +278,7 @@ async def _seed_process_lifetime(factory: async_sessionmaker[AsyncSession]) -> N
     """
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-    from alphamind.execution.state_persistence.tables.process_lifetimes import (
+    from alphamind.state.tables.process_lifetimes import (
         ProcessLifetimeRow,
     )
 
@@ -622,7 +622,7 @@ async def _seed_cash_ledger_singleton_idempotent(
     snapshot read requires it). Idempotent so phases can each call it without
     racing on the singleton's PK.
     """
-    from alphamind.execution.state_persistence.tables.cash_ledger import (
+    from alphamind.state.tables.cash_ledger import (
         CASH_LEDGER_SINGLETON_ID,
         CashLedgerRow,
     )
@@ -641,7 +641,7 @@ async def _seed_drawdown_state_singleton_idempotent(
     Symmetrical with the cash_ledger helper above; the SQL repo's snapshot
     read requires both singletons to be present.
     """
-    from alphamind.execution.state_persistence.tables.drawdown_state import (
+    from alphamind.state.tables.drawdown_state import (
         DRAWDOWN_STATE_SINGLETON_ID,
         DrawdownStateRow,
     )
@@ -716,7 +716,7 @@ def run_phase_a_schema(db_path: Path) -> PhaseResult:
 
     # Side-effect import: registers state-persistence tables on Base.metadata
     # so test DBs created from Base.metadata.create_all also see them.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     engine = make_engine(str(db_path))
     try:
@@ -764,7 +764,7 @@ async def run_phase_b_invocation_context(db_path: Path) -> PhaseResult:
     """
     from sqlalchemy import select
 
-    from alphamind.execution.state_persistence.invocation_context.context import (
+    from alphamind.state.invocation_context.context import (
         stamp_phase_completion,
     )
 
@@ -854,12 +854,12 @@ async def run_phase_c_phase1_write_path(db_path: Path) -> PhaseResult:
     PENDING→OPEN, (c) the activity log carries the documented event chain."""
     from sqlalchemy import select
 
-    from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-    from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
-    from alphamind.execution.state_persistence.tables.positions import PositionRow
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
+    from alphamind.state.tables.activity_log import ActivityLogRow
+    from alphamind.state.tables.fill_records import FillRecordRow
+    from alphamind.state.tables.positions import PositionRow
 
     engine, factory = _open_async_factory(db_path)
     try:
@@ -970,7 +970,7 @@ async def _phase_d_validate_state(
     """
     from sqlalchemy import select
 
-    from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
+    from alphamind.state.tables.activity_log import ActivityLogRow
 
     async with factory() as sess:
         log_rows = (
@@ -1013,10 +1013,10 @@ async def _phase_d_check_entities(sess: AsyncSession, position_id: str) -> str |
     *position_id*; return a failure detail or ``None``."""
     from sqlalchemy import select
 
-    from alphamind.execution.state_persistence.tables.brackets import BracketRow
-    from alphamind.execution.state_persistence.tables.orders import OrderRow
-    from alphamind.execution.state_persistence.tables.positions import PositionRow
-    from alphamind.execution.state_persistence.tables.theses import ThesisRow
+    from alphamind.state.tables.brackets import BracketRow
+    from alphamind.state.tables.orders import OrderRow
+    from alphamind.state.tables.positions import PositionRow
+    from alphamind.state.tables.theses import ThesisRow
 
     position = (
         await sess.execute(select(PositionRow).where(PositionRow.position_id == position_id))
@@ -1073,7 +1073,7 @@ async def run_phase_d_phase2_envelope(db_path: Path) -> PhaseResult:
     than by absolute table counts so the phase tolerates Phase C running
     against the same DB first.
     """
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
 
@@ -1124,10 +1124,10 @@ async def run_phase_e_layer1_parse_failure(db_path: Path) -> PhaseResult:
     from sqlalchemy import select
 
     from alphamind.decision.portfolio_manager.submit_envelope import _validate_envelope_payload
-    from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_parse_failure,
     )
+    from alphamind.state.tables.activity_log import ActivityLogRow
 
     engine, factory = _open_async_factory(db_path)
     try:
@@ -1336,10 +1336,7 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
     from alphamind.execution.guardrail_enforcement import (
         make_active_risk_parameters_provider,
     )
-    from alphamind.execution.state_persistence.repository import (
-        build_sql_portfolio_state_repository,
-    )
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
     from alphamind.portfolio_state import PortfolioStateConfig
@@ -1350,6 +1347,9 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
         StubCurrentPriceProvider,
     )
     from alphamind.portfolio_state.repository import RepositoryConsistencyError
+    from alphamind.state.repository import (
+        build_sql_portfolio_state_repository,
+    )
 
     engine, factory = _open_async_factory(db_path)
     try:

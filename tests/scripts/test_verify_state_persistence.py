@@ -30,7 +30,7 @@ def fresh_db(tmp_path: Path) -> Iterator[Path]:
     db_path = tmp_path / "alphamind.db"
 
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -76,7 +76,7 @@ def test_phase_a_fails_when_required_table_missing(tmp_path: Path) -> None:
 
     # Build a fresh DB then drop one required table to simulate a partial migration.
     db_path = tmp_path / "alphamind.db"
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -97,7 +97,7 @@ def test_main_exits_nonzero_when_table_missing(tmp_path: Path) -> None:
     from alphamind.scripts.verify_state_persistence import main
 
     db_path = tmp_path / "alphamind.db"
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)

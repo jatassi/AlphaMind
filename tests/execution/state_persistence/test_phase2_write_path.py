@@ -68,39 +68,6 @@ from alphamind.decision.portfolio_manager.submit_envelope import (
     FailedSubmissionEntry,
     SubmissionResult,
 )
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.tables.brackets import BracketRow
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger import (
-    CASH_LEDGER_SINGLETON_ID,
-    CashLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
-from alphamind.execution.state_persistence.tables.orders import OrderRow
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.theses import ThesisRow
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
-)
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -133,6 +100,39 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+    InvocationHandle,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger import (
+    CASH_LEDGER_SINGLETON_ID,
+    CashLedgerRow,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.invocations import InvocationRow
+from alphamind.state.tables.orders import OrderRow
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.theses import ThesisRow
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
+)
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-2026-05-08T12:00:00Z-aaaa"
@@ -152,7 +152,7 @@ async def db(
     db_path = tmp_path / "alphamind.db"
 
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -306,10 +306,10 @@ async def _seed_position_cluster(
     to include them in the same atomic transaction (e.g. a pre-existing
     protective order that the bracket's entry_order_id references).
     """
-    from alphamind.execution.state_persistence.tables.orders_codec import (
+    from alphamind.state.tables.orders_codec import (
         record_to_row as order_record_to_row,
     )
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     thesis_row, component_rows = thesis_record_to_rows(thesis)
     bracket_parent, leg_rows = bracket_record_to_rows(bracket)
@@ -697,7 +697,7 @@ async def test_envelope_parse_failure_writes_one_log_entry(
     """A Layer-1 ValidationError appends one ENVELOPE_PARSE_FAILED activity
     log entry whose detail carries the raw args, the error string, and the
     synthetic command_id."""
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_parse_failure,
     )
 
@@ -740,7 +740,7 @@ async def test_persist_envelope_rejection_writes_one_log_entry(
     the envelope id and the criterion ids of every blocking ValidationError.
     """
     from alphamind.decision.portfolio_manager.validation import ValidationError as PMValError
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_rejection,
     )
 
@@ -798,7 +798,7 @@ async def test_persist_envelope_rejection_nullifies_orphan_position_id_on_fk_sch
     from alembic.config import Config
 
     from alphamind.decision.portfolio_manager.validation import ValidationError as PMValError
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_rejection,
     )
 
@@ -903,7 +903,7 @@ async def test_open_command_writes_position_thesis_bracket_orders_and_events(
     """OPEN command writeback: position (PENDING) + thesis (ACTIVE) + bracket
     (PENDING_ENTRY) + entry order + protective leg orders, with capital
     reserved and the documented activity-log entries emitted."""
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
 
@@ -973,7 +973,7 @@ async def test_open_command_persists_real_position_size_and_capital_reservation(
 
     Replaces the prior $1k/share token sizing with the real PM intent.
     """
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
 
@@ -1023,7 +1023,7 @@ async def test_persist_envelope_outcome_stamps_phase2_completion_on_invocation_r
     phase2_completed_at as the final step of the open transaction so observers
     can distinguish "Phase 2 in flight" from "Phase 2 committed".
     """
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
 
@@ -1057,7 +1057,7 @@ async def test_persist_envelope_parse_failure_does_not_stamp_phase2_completion(
     activity-log entry persists but phase2_completed_at must remain NULL so
     observers can tell rejection apart from a real Phase 2 commit.
     """
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_parse_failure,
     )
 
@@ -1091,9 +1091,6 @@ async def _seed_pending_protective_order(
     position_id: str,
     thesis_id: str | None,
 ) -> None:
-    from alphamind.execution.state_persistence.tables.orders_codec import (
-        record_to_row,
-    )
     from alphamind.portfolio_state.records.orders import (
         EquityInstrumentSpec,
         OrderClass,
@@ -1104,6 +1101,9 @@ async def _seed_pending_protective_order(
         OrderStatus,
         OrderType,
         PriceParameters,
+    )
+    from alphamind.state.tables.orders_codec import (
+        record_to_row,
     )
 
     rec = OrderRecord(
@@ -1144,9 +1144,6 @@ async def _seed_pending_entry_order(
     position_id: str = "POS-NVDA-001",
     thesis_id: str | None = "THE-NVDA-1",
 ) -> None:
-    from alphamind.execution.state_persistence.tables.orders_codec import (
-        record_to_row,
-    )
     from alphamind.portfolio_state.records.orders import (
         EquityInstrumentSpec,
         OrderClass,
@@ -1157,6 +1154,9 @@ async def _seed_pending_entry_order(
         OrderStatus,
         OrderType,
         PriceParameters,
+    )
+    from alphamind.state.tables.orders_codec import (
+        record_to_row,
     )
 
     rec = OrderRecord(
@@ -1194,7 +1194,7 @@ async def test_close_command_writes_close_order_and_emits_order_submitted(
 ) -> None:
     """CLOSE command writeback: insert one PENDING close order; emit
     order_submitted + pm_decision. Position closure happens in Phase 1."""
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
 
@@ -1232,7 +1232,7 @@ async def test_close_command_surfaces_rationale_metadata_on_order_submitted(
     ``risk_management_subtype``, and the requested quantity through to the
     ``order_submitted`` activity-log detail so post-fill thesis resolution can
     classify without re-fetching the command."""
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
 
@@ -1266,7 +1266,7 @@ async def test_close_command_with_partial_quantity_uses_command_quantity(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """A partial CLOSE with ``quantity=3.0`` produces a close order of qty=3.0."""
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
 
@@ -1310,7 +1310,7 @@ async def test_close_all_against_pending_position_raises(
     """CLOSE-all against a PENDING (zero-fill) position must raise rather than
     fabricate a phantom 1-share close order — closing-before-fill is a
     structural contract violation per oms-commands.md § Command origins."""
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
 
@@ -1358,7 +1358,7 @@ async def test_adjust_command_dispatches_on_thesis_only(
     insert a new protective order; it emits BRACKET_MODIFIED with the
     ``adjustment_rationale`` and one THESIS_COMPONENT_UPDATED per updated
     component."""
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
 
@@ -1433,7 +1433,7 @@ async def test_cancel_command_releases_capital_from_order_notional(
 ) -> None:
     """CANCEL of a LIMIT entry releases capital based on the order's
     limit_price x remaining_quantity, not a hardcoded stub value."""
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
     from alphamind.portfolio_state.records.orders import (
@@ -1511,7 +1511,7 @@ async def test_cancel_command_on_protective_leg_does_not_release_capital(
     life; the ``max(... - amount_usd, 0.0)`` floor in ``_release_capital``
     would mask the symptom.
     """
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
     from alphamind.portfolio_state.records.orders import (
@@ -1602,7 +1602,7 @@ async def test_add_command_persists_real_quantity_and_dollar_value(
     """ADD writeback reads ``additional_quantity`` and ``additional_dollar_value``:
     add-entry order quantity equals the command's additional_quantity; the
     capital reservation matches additional_dollar_value."""
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
 
@@ -1641,10 +1641,10 @@ async def test_open_command_persists_target_and_invalidation_legs(
     """OPEN writeback constructs one bracket leg per ``command.invalidation_legs``
     plus a TAKE_PROFIT leg from ``command.target``. Each price/time leg has an
     associated PENDING broker order; event legs have order_id=None."""
-    from alphamind.execution.state_persistence.tables.bracket_legs import BracketLegRow
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
+    from alphamind.state.tables.bracket_legs import BracketLegRow
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -1675,7 +1675,7 @@ async def test_adjust_command_cancels_old_protective_order_and_submits_new(
     CANCELLED, a new PENDING protective order is inserted, and the bracket's
     modification history is appended to. Activity log carries order_cancelled
     + order_submitted + bracket_modified + pm_decision."""
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
     from alphamind.portfolio_state.records.orders import (
@@ -1781,7 +1781,7 @@ async def test_adjust_stop_only_leaves_take_profit_leg_pending(
     OMS-vs-broker drift where the OMS believed the take-profit leg was
     cancelled while the broker still held it live.
     """
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
     from alphamind.portfolio_state.records.orders import (
@@ -1903,7 +1903,7 @@ async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(
     CANCELLED, bracket → DISSOLVED, thesis → CANCELLED, capital released.
     Activity log carries order_cancelled + capital_released + thesis_resolved
     + bracket_dissolved + pm_decision."""
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
     from alphamind.portfolio_state.records.orders import (
@@ -2028,7 +2028,7 @@ async def test_add_command_writes_add_entry_order_thesis_component_capital_reser
     """ADD command writeback: insert PENDING add-entry order, append a new
     thesis component, reserve capital. Activity log carries order_submitted
     + thesis_component_added + capital_reserved + pm_decision."""
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
 
@@ -2074,7 +2074,7 @@ async def test_multi_command_envelope_emits_single_pm_decision(
     """A strategist envelope with three commands produces ONE pm_decision
     activity log entry whose detail's resulting_command_ids tuple references
     all three command IDs."""
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
 
@@ -2114,7 +2114,7 @@ async def test_command_abandoned_emission_survives_per_command_rollback(
     """A failed Phase 2 transaction rolls back its state mutations but a
     follow-up ``persist_command_abandoned`` (in a fresh transaction) writes
     one COMMAND_ABANDONED activity log entry that survives the rollback."""
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_command_abandoned,
         persist_envelope_outcome,
     )

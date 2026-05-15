@@ -6,7 +6,7 @@ The run-forever task composes three existing primitives:
   yields ``FillReport`` per websocket event;
 * :func:`alphamind.execution.broker_adapter.recover_missed_fills_since` —
   the GET-based recovery routine called on startup + disconnect;
-* :func:`alphamind.execution.state_persistence.write_paths.append_fill_record` —
+* :func:`alphamind.execution.write_paths.append_fill_record` —
   durable, idempotent append-only write.
 
 Tests inject fakes for the trading stream + trading client + session factory
@@ -45,7 +45,6 @@ from alphamind.execution.continuous_monitor.fill_stream_consumer import (
     run_fill_stream_consumer,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
-from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -53,7 +52,8 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
-from tests.execution.state_persistence._fk_substrate import seed_position_cluster
+from alphamind.state.tables.fill_records import FillRecordRow
+from tests.state._fk_substrate import seed_position_cluster
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -226,7 +226,7 @@ async def session_factory(
     connection.
     """
     db_path = tmp_path / "alphamind.db"
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -642,14 +642,14 @@ async def _seed_prior_fill(
     fill_timestamp: datetime,
 ) -> None:
     """Insert one fill_records row so the startup-recovery path activates."""
-    from alphamind.execution.state_persistence.tables.fill_records_codec import (
-        record_to_row,
-    )
-    from alphamind.execution.state_persistence.write_paths.records import (
+    from alphamind.portfolio_state.records.orders import OrderStatus
+    from alphamind.state.records import (
         FillProcessingStatus,
         FillRecord,
     )
-    from alphamind.portfolio_state.records.orders import OrderStatus
+    from alphamind.state.tables.fill_records_codec import (
+        record_to_row,
+    )
 
     record = FillRecord(
         fill_id="prior-fill-1",

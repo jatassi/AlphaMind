@@ -60,7 +60,7 @@ sub-second runtime. It exercises six phases:
 
    ```python
    from pathlib import Path
-   import alphamind.execution.state_persistence.tables  # noqa: F401
+   import alphamind.state.tables  # noqa: F401
    from alphamind.persistence.models import Base
    from alphamind.persistence.session import make_engine
 
@@ -132,7 +132,7 @@ The `--output json` mode emits:
 
 | Phase | Typical failure | Diagnostic | Likely fix |
 |---|---|---|---|
-| A — schema | `missing tables: <name>` | `sqlite3 <db> ".tables"` to confirm; check that `alphamind.execution.state_persistence.tables` was imported before `Base.metadata.create_all`. | Ensure the side-effect import lands; if a single table is missing, re-run the schema setup. |
+| A — schema | `missing tables: <name>` | `sqlite3 <db> ".tables"` to confirm; check that `alphamind.state.tables` was imported before `Base.metadata.create_all`. | Ensure the side-effect import lands; if a single table is missing, re-run the schema setup. |
 | B — invocation context | `clean-exit invocation row did not persist` or `rollback probe persisted the invocation row` | `InvocationContext` regression in `src/alphamind/execution/state_persistence/invocation_context/context.py` (commit/rollback path). | Re-read `__aenter__` / `__aexit__` for missing `await session.commit()` or missing `await session.rollback()`. |
 | C — Phase 1 write path | `expected 1 fill processed, got 0` (FK violation under the hood) | Inspect the `fill_records` table to confirm the fill landed; check the `_quarantine_invalid` branch isn't filtering it. | Confirm the seeded order/position/bracket FK chain; usually a missing `originating_thesis_id` on the seed order. |
 | C — Phase 1 write path | `position status is 'PENDING'` | The Phase 1 entry-fill apply path failed to transition; check `_apply_entry_fill` and the position codec round-trip. | Look for a regression in `src/alphamind/execution/state_persistence/write_paths/phase1.py` § `_apply_entry_fill`. |

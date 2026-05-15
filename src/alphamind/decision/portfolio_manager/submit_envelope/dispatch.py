@@ -33,15 +33,15 @@ from alphamind.decision.portfolio_manager.submit_envelope.types import (
     SubmissionResult,
     _BreachedRule,
 )
-from alphamind.execution.state_persistence.tables.orders import OrderRow
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as _position_row_to_record,
-)
 from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
     OptionsPositionDetails,
     StrategyPositionDetails,
+)
+from alphamind.state.tables.orders import OrderRow
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    row_to_record as _position_row_to_record,
 )
 
 if TYPE_CHECKING:

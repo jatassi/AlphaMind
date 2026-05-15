@@ -20,15 +20,7 @@ from __future__ import annotations
 
 from alphamind._kernel.money import money, signed_money
 from alphamind.execution.broker_adapter.queries import PositionSnapshot
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
-from alphamind.execution.state_persistence.tables.theses import ThesisRow
-from alphamind.execution.state_persistence.write_paths.ca_integration_ledger import (
+from alphamind.execution.write_paths.ca_integration_ledger import (
     mark_ca_activity_processed,
 )
 from alphamind.portfolio_state.events.activity_log import (
@@ -48,6 +40,14 @@ from alphamind.portfolio_state.records.positions import (
     StrategyPositionDetails,
 )
 from alphamind.portfolio_state.records.theses import ThesisRecordStatus
+from alphamind.state.invocation_context.context import (
+    InvocationHandle,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
+)
+from alphamind.state.tables.theses import ThesisRow
 
 from ..types import AlpacaPositionLookup, CorporateActionActivity
 from ._shared import (

@@ -39,11 +39,11 @@ from alphamind.execution.continuous_monitor.__main__ import _register_breach_loo
 from alphamind.execution.continuous_monitor.cascade_dispatch import TriggerIdGenerator
 from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.venue_configuration.calendar_cache import TradingCalendarCache
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.risk_guardrails.breach_behavior import BreachBehaviorConfig
+from alphamind.state.config import StatePersistenceConfig
 
 _CONFIG_DIR = Path(__file__).resolve().parents[3] / "config"
 

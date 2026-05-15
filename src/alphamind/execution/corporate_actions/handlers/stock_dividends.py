@@ -8,7 +8,7 @@ Alpaca's post-adjustment snapshot per the same skeleton as
 
 from __future__ import annotations
 
-from alphamind.execution.state_persistence.invocation_context.context import (
+from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
 

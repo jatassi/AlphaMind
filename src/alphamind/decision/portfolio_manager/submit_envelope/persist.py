@@ -2,7 +2,7 @@
 
 After ALP-458 broke the decision↔execution cycle by relocating the engine-stub
 to ``decision.portfolio_manager.submit_envelope``, the formerly-inline imports
-of :mod:`alphamind.execution.state_persistence.write_paths.phase2` (cycle
+of :mod:`alphamind.execution.write_paths.phase2` (cycle
 workarounds) become normal top-level imports — exactly one entry at the head
 of this module, used by every helper below.
 
@@ -24,7 +24,7 @@ from alphamind.decision.portfolio_manager.submit_envelope.types import (
     FailedSubmissionEntry,
     SubmissionResult,
 )
-from alphamind.execution.state_persistence.write_paths.phase2 import (
+from alphamind.execution.write_paths.phase2 import (
     persist_command_abandoned,
     persist_envelope_outcome,
     persist_envelope_parse_failure,
@@ -108,7 +108,7 @@ def _stub_state_persistence_config() -> Any:
     Phase 2 doesn't read any knob in this story; the config is part of the
     forward-shaped signature only.
     """
-    from alphamind.execution.state_persistence.config import StatePersistenceConfig
+    from alphamind.state.config import StatePersistenceConfig
 
     return StatePersistenceConfig.model_validate(
         {

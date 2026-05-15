@@ -92,13 +92,6 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
 from alphamind.execution.continuous_monitor.underlying_stream.reader import (
     SqlOpenPositionsReader,
 )
-from alphamind.execution.state_persistence.config import (
-    StatePersistenceConfig,
-    load_state_persistence_config,
-)
-from alphamind.execution.state_persistence.repository import (
-    build_sql_portfolio_state_repository,
-)
 from alphamind.execution.venue_configuration.calendar_cache import (
     TradingCalendarCache,
 )
@@ -111,6 +104,13 @@ from alphamind.risk_guardrails.breach_behavior import (
     load_breach_behavior_config,
 )
 from alphamind.risk_guardrails.guardrail_evaluation import FixtureIvProvider
+from alphamind.state.config import (
+    StatePersistenceConfig,
+    load_state_persistence_config,
+)
+from alphamind.state.repository import (
+    build_sql_portfolio_state_repository,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker

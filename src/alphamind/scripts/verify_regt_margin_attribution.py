@@ -70,44 +70,11 @@ from alphamind._kernel.regime import RiskZone
 from alphamind.execution.regt_margin_attribution import (
     load_regt_margin_attribution_config,
 )
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
-from alphamind.execution.state_persistence.tables.orders_codec import (
-    record_to_row as order_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
-)
-from alphamind.execution.state_persistence.write_paths.fill_persistence import (
+from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
 )
-from alphamind.execution.state_persistence.write_paths.phase1 import (
+from alphamind.execution.write_paths.phase1 import (
     process_unprocessed_fills,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    FillProcessingStatus,
-    FillRecord,
-    RegTMarginAttribution,
 )
 from alphamind.persistence.session import (
     make_async_engine,
@@ -170,6 +137,39 @@ from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import (
     IvSurfaceEntry,
 )
 from alphamind.risk_guardrails.guardrail_evaluation.types import ContractType
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.records import (
+    FillProcessingStatus,
+    FillRecord,
+    RegTMarginAttribution,
+)
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
+)
+from alphamind.state.tables.fill_records import FillRecordRow
+from alphamind.state.tables.orders_codec import (
+    record_to_row as order_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
+)
 
 __all__ = [
     "EXIT_FAIL",
@@ -994,7 +994,7 @@ async def _seed_process_lifetime(factory: async_sessionmaker[AsyncSession]) -> N
     """Persist the parent process_lifetime row; idempotent."""
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-    from alphamind.execution.state_persistence.tables.process_lifetimes import (
+    from alphamind.state.tables.process_lifetimes import (
         ProcessLifetimeRow,
     )
 
@@ -1147,9 +1147,6 @@ async def _run_assembler_for_aggregates(
         compose_phase_1_enforcement,
         make_active_risk_parameters_provider,
     )
-    from alphamind.execution.state_persistence.repository import (
-        build_sql_portfolio_state_repository,
-    )
     from alphamind.portfolio_state.aggregates.risk_parameters import (
         ActiveRiskParameterEntry,
         ActiveRiskParameterSet,
@@ -1157,6 +1154,9 @@ async def _run_assembler_for_aggregates(
     from alphamind.risk_guardrails.regime_adaptation import (
         RegimeAdaptationOutput,
         RegimeAdaptationState,
+    )
+    from alphamind.state.repository import (
+        build_sql_portfolio_state_repository,
     )
 
     parameters = ActiveRiskParameterSet.model_validate(
@@ -1462,7 +1462,7 @@ def _resolve_db_path(arg_db_path: Path | None) -> Path:
 
 def _migrate_db_to_head(db_path: Path) -> None:
     """Apply the state-persistence schema via ``Base.metadata.create_all``."""
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
     from alphamind.persistence.models import Base
 
     sync_engine = make_engine(str(db_path))

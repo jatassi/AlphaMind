@@ -53,8 +53,8 @@ from alphamind.execution.oms.command_ids import (
     derive_engine_command_id,
     parse_engine_command_id,
 )
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
 
@@ -261,7 +261,7 @@ async def submit_engine_envelope(
     # activity-log detail surfaces them on the order_submitted entry.
     # Inline import kept to defer SQLAlchemy load until first use; the
     # ALP-458 split eliminated the formerly-circular path through PM models.
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_engine_envelope_outcome,
     )
 
@@ -337,8 +337,8 @@ async def _dispatch_engine_close(
         PermanentRejectionError,
     )
     from alphamind.execution.oms.broker_dispatch import dispatch_command_to_broker
-    from alphamind.execution.state_persistence.tables.positions import PositionRow
-    from alphamind.execution.state_persistence.tables.positions_codec import (
+    from alphamind.state.tables.positions import PositionRow
+    from alphamind.state.tables.positions_codec import (
         row_to_record as position_row_to_record,
     )
 

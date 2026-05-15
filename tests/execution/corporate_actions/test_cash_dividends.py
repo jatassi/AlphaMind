@@ -32,50 +32,6 @@ from alphamind._kernel.ids import (
     ThesisId,
 )
 from alphamind._kernel.regime import RiskZone
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.tables.brackets import BracketRow
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger import (
-    CASH_LEDGER_SINGLETON_ID,
-    CashLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.corporate_action_integration_ledger import (
-    CorporateActionIntegrationLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.orders_codec import (
-    record_to_row as order_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    CorporateActionLedgerStatus,
-)
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -123,6 +79,50 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+    InvocationHandle,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.records import (
+    CorporateActionLedgerStatus,
+)
+from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger import (
+    CASH_LEDGER_SINGLETON_ID,
+    CashLedgerRow,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.corporate_action_integration_ledger import (
+    CorporateActionIntegrationLedgerRow,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
+)
+from alphamind.state.tables.orders_codec import (
+    record_to_row as order_record_to_row,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
+)
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
+)
 
 _NOW = datetime(2026, 5, 9, 13, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-cash-div-2026-05-09T13:00:00Z"
@@ -142,7 +142,7 @@ async def db(
     """Yield (async_engine, session_factory) over a fresh on-disk SQLite DB."""
     db_path = tmp_path / "alphamind_cash_div.db"
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401 — side-effect import
+    import alphamind.state.tables  # noqa: F401 — side-effect import
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -405,7 +405,7 @@ async def _seed_position_cluster(
     thesis: ThesisRecord,
     bracket: BracketRecord,
 ) -> None:
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     thesis_row, component_rows = thesis_record_to_rows(thesis)
     bracket_row, leg_rows = bracket_record_to_rows(bracket)
@@ -517,10 +517,10 @@ async def test_cash_dividend_long_emits_cash_credited_entry(
     """The long handler emits exactly one CASH_CREDITED entry with reason=CASH_DIVIDEND_LONG."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
     from alphamind.execution.corporate_actions.types import CorporateActionActivity
-    from alphamind.execution.state_persistence.invocation_context.activity_log import (
+    from alphamind.portfolio_state.events.activity_log import CashCreditedDetail
+    from alphamind.state.invocation_context.activity_log import (
         activity_log_entry_from_row,
     )
-    from alphamind.portfolio_state.events.activity_log import CashCreditedDetail
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -787,10 +787,10 @@ async def test_cash_dividend_short_emits_cash_debited_entry(
     """One CASH_DEBITED entry is emitted with reason=CASH_DIVIDEND_SHORT_OBLIGATION."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
     from alphamind.execution.corporate_actions.types import CorporateActionActivity
-    from alphamind.execution.state_persistence.invocation_context.activity_log import (
+    from alphamind.portfolio_state.events.activity_log import CashDebitedDetail
+    from alphamind.state.invocation_context.activity_log import (
         activity_log_entry_from_row,
     )
-    from alphamind.portfolio_state.events.activity_log import CashDebitedDetail
 
     _, factory = db
     await _seed_invocation_substrate(factory)

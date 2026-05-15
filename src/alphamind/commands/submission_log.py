@@ -6,7 +6,7 @@ The PM-side engine-stub
 to a :class:`PMEnvelope`, and one :class:`FailedSubmissionEntry` per call
 that failed Layer-1 (Pydantic) coercion. Both logs are surfaced on the
 harness's ``HarnessSuccess`` and consumed by the execution-side Phase 2
-write path (:mod:`alphamind.execution.state_persistence.write_paths.phase2`).
+write path (:mod:`alphamind.execution.write_paths.phase2`).
 
 Living in :mod:`alphamind.commands` lets both decision-side producers and
 execution-side consumers reference these shapes without re-opening the

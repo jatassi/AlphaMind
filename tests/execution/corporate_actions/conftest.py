@@ -23,7 +23,7 @@ async def db(
     """Yield (async_engine, session_factory) over a fresh on-disk SQLite DB."""
     db_path = tmp_path / "alphamind_ca.db"
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401 — side-effect import
+    import alphamind.state.tables  # noqa: F401 — side-effect import
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)

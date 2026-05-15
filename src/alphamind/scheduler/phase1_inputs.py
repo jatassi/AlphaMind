@@ -47,14 +47,14 @@ from alphamind.execution.corporate_actions.types import (
     CorporateActionActivity,
     PositionLookup,
 )
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationHandle,
-)
 from alphamind.persistence.models import MacroObservations
 from alphamind.portfolio_state.records.positions import Direction
 from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
     MarketInputs,
+)
+from alphamind.state.invocation_context.context import (
+    InvocationHandle,
 )
 
 __all__ = ["Phase1Inputs", "gather_phase1_inputs"]

@@ -20,10 +20,10 @@ from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
 )
-from alphamind.execution.state_persistence.tables.activity_log import (
+from alphamind.portfolio_state.events.activity_log import EventType
+from alphamind.state.tables.activity_log import (
     ActivityLogRow,
 )
-from alphamind.portfolio_state.events.activity_log import EventType
 
 from ._handler_substrate import (
     make_active_bracket,
@@ -383,15 +383,15 @@ async def test_reconcile_does_not_mutate_local_state(
     """Auto-correction is deferred to ALP-123; reconcile emits alerts but local
     quantities and cash balances stay exactly as seeded."""
     from alphamind.execution.corporate_actions.reconciliation import reconcile
-    from alphamind.execution.state_persistence.tables.cash_ledger import (
+    from alphamind.portfolio_state.records.positions import EquityPositionDetails
+    from alphamind.state.tables.cash_ledger import (
         CASH_LEDGER_SINGLETON_ID,
         CashLedgerRow,
     )
-    from alphamind.execution.state_persistence.tables.positions import PositionRow
-    from alphamind.execution.state_persistence.tables.positions_codec import (
+    from alphamind.state.tables.positions import PositionRow
+    from alphamind.state.tables.positions_codec import (
         row_to_record as position_row_to_record,
     )
-    from alphamind.portfolio_state.records.positions import EquityPositionDetails
 
     _, factory = db
     await seed_invocation_substrate(factory)

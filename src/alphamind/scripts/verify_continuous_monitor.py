@@ -65,7 +65,7 @@ import alphamind.decision.portfolio_manager.models
 
 # Side-effect import: register state-persistence tables on ``Base.metadata``
 # so the in-memory engine in scenario (b) has the ``fill_records`` table.
-import alphamind.execution.state_persistence.tables  # noqa: F401
+import alphamind.state.tables  # noqa: F401
 from alphamind._kernel.ids import (
     BracketId,
     OrderId,
@@ -126,13 +126,8 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
 from alphamind.execution.guardrail_enforcement.orchestrator import (
     Phase1EnforcementResult,
 )
-from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
-from alphamind.execution.state_persistence.write_paths.fill_persistence import (
+from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    FillProcessingStatus,
-    FillRecord,
 )
 from alphamind.persistence.models import Base
 from alphamind.portfolio_state.aggregates.risk_parameters import (
@@ -185,6 +180,11 @@ from alphamind.risk_guardrails.breach_behavior import (
     RegimeTransitionState,
     RiskZone,
 )
+from alphamind.state.records import (
+    FillProcessingStatus,
+    FillRecord,
+)
+from alphamind.state.tables.fill_records import FillRecordRow
 
 __all__ = [
     "ScenarioResult",

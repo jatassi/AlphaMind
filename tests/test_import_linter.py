@@ -396,8 +396,13 @@ def test_decision_not_execution_contract_with_composition_root_exception() -> No
     legitimately wire concrete implementations across layers). ALP-464 (06b)
     decomposed the single-file ``submit_envelope.py`` into a five-submodule
     package; the per-submodule edges below replace the pre-decomposition
-    single ``submit_envelope -> execution.*`` edges. The block retires when
-    ALP-482 hoists the package to a top-level ``composition_roots/``.
+    single ``submit_envelope -> execution.*`` edges. ALP-470 (08c) hoisted
+    the cross-cutting state-persistence primitives to ``alphamind.state``,
+    so the three former ``dispatch -> execution.state_persistence.tables.*``
+    and one ``persist -> execution.state_persistence.config`` edges are now
+    decision -> state crossings — they no longer require an ignore here.
+    The block retires entirely when ALP-482 hoists the composition root
+    to a top-level ``composition_roots/``.
     """
     parser = _parse_importlinter_config()
     section = _contract_section(parser, "decision-not-execution")
@@ -409,10 +414,16 @@ def test_decision_not_execution_contract_with_composition_root_exception() -> No
     assert forbidden == ["alphamind.execution"], forbidden
 
     ignored = _split_module_list(section["ignore_imports"])
-    # Per-submodule edges after ALP-464 decomposition. Each entry pairs the
-    # decomposed submodule with the concrete ``execution.*`` import it owns;
-    # the union covers the same wiring surface as the pre-decomposition single
-    # ``submit_envelope -> execution.*`` block.
+    # Per-submodule edges after ALP-464 decomposition and ALP-470's state
+    # hoist. Each entry pairs the decomposed submodule with the concrete
+    # ``execution.*`` import it still owns; edges that now target
+    # ``alphamind.state.*`` (table mappers, config) are not decision ->
+    # execution crossings and therefore are absent from this list. The
+    # single ``state.config -> execution.corporate_actions.config`` entry
+    # records the transitive chain that ALP-470 surfaced: the hoisted
+    # ``state.config`` still aggregates the per-feature CA config under
+    # ``execution.corporate_actions``, so ``submit_envelope.persist``
+    # carries a ``decision -> state.config -> execution`` indirect path.
     pkg = "alphamind.decision.portfolio_manager.submit_envelope"
     expected_edges = {
         f"{pkg}.dispatch -> alphamind.execution.broker_adapter",
@@ -420,15 +431,12 @@ def test_decision_not_execution_contract_with_composition_root_exception() -> No
         f"{pkg}.dispatch -> alphamind.execution.broker_adapter.order_modify",
         f"{pkg}.dispatch -> alphamind.execution.broker_adapter.order_options",
         f"{pkg}.dispatch -> alphamind.execution.oms.broker_dispatch",
-        f"{pkg}.dispatch -> alphamind.execution.state_persistence.tables.orders",
-        f"{pkg}.dispatch -> alphamind.execution.state_persistence.tables.positions",
-        f"{pkg}.dispatch -> alphamind.execution.state_persistence.tables.positions_codec",
         f"{pkg}.persist -> alphamind.execution.oms.broker_dispatch",
-        f"{pkg}.persist -> alphamind.execution.state_persistence.config",
-        f"{pkg}.persist -> alphamind.execution.state_persistence.write_paths.phase2",
+        f"{pkg}.persist -> alphamind.execution.write_paths.phase2",
         f"{pkg}.process -> alphamind.execution.oms.command_ids",
         f"{pkg}.server -> alphamind.execution.broker_adapter",
         f"{pkg}.server -> alphamind.execution.oms.broker_dispatch",
+        "alphamind.state.config -> alphamind.execution.corporate_actions.config",
     }
     assert set(ignored) == expected_edges, (
         "decision-not-execution ignore_imports does not match grimp-discovered edges.\n"

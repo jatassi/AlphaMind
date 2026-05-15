@@ -18,7 +18,6 @@ PHASE2 = (
     / "src"
     / "alphamind"
     / "execution"
-    / "state_persistence"
     / "write_paths"
     / "phase2"
 )
@@ -41,7 +40,7 @@ def test_phase2_is_a_package_with_prescribed_files() -> None:
 
 def test_public_entrypoints_are_importable_from_the_package_root() -> None:
     """``submit_envelope/persist.py`` and friends import these by name."""
-    from alphamind.execution.state_persistence.write_paths.phase2 import (
+    from alphamind.execution.write_paths.phase2 import (
         persist_command_abandoned,
         persist_engine_envelope_outcome,
         persist_envelope_outcome,
@@ -63,7 +62,7 @@ def test_public_entrypoints_are_importable_from_the_package_root() -> None:
 def test_each_command_kind_module_exports_its_writeback(module_name: str) -> None:
     """Each command-kind submodule defines its writeback function."""
     module = __import__(
-        f"alphamind.execution.state_persistence.write_paths.phase2.{module_name}",
+        f"alphamind.execution.write_paths.phase2.{module_name}",
         fromlist=["*"],
     )
     writeback = getattr(module, f"_writeback_{module_name}")

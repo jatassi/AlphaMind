@@ -565,7 +565,7 @@ _PHASE_3_QUANTITY = 5.0
 
 
 def _state_persistence_config() -> Any:
-    from alphamind.execution.state_persistence.config import StatePersistenceConfig
+    from alphamind.state.config import StatePersistenceConfig
 
     return StatePersistenceConfig.model_validate(
         {
@@ -950,14 +950,14 @@ def _phase_3_retrieval_store() -> Any:
 async def _seed_phase_3_substrate(factory: async_sessionmaker[AsyncSession]) -> None:
     """Seed process_lifetime + cash_ledger so the engine-stub's writeback can
     reserve capital and the activity-log writes have a valid invocation FK."""
-    from alphamind.execution.state_persistence.invocation_context.records import (
+    from alphamind.portfolio_state.records.cash import CashLedger
+    from alphamind.state.invocation_context.records import (
         ProcessLifetimeRecord,
         process_lifetime_record_to_row,
     )
-    from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
+    from alphamind.state.tables.cash_ledger_codec import (
         cash_ledger_record_to_row,
     )
-    from alphamind.portfolio_state.records.cash import CashLedger
 
     proc = ProcessLifetimeRecord(
         process_lifetime_id=_PHASE_3_PROCESS_ID,
@@ -998,7 +998,7 @@ async def _seed_phase_3_substrate(factory: async_sessionmaker[AsyncSession]) -> 
 
 
 def _phase_3_invocation_record() -> Any:
-    from alphamind.execution.state_persistence.invocation_context.records import (
+    from alphamind.state.invocation_context.records import (
         InvocationRecord,
     )
 
@@ -1072,7 +1072,7 @@ async def run_phase_3_pm_envelope_path(db_path: Path) -> PhaseResult:
         build_initial_submit_envelope_state,
         build_submit_envelope_mcp_server,
     )
-    from alphamind.execution.state_persistence.invocation_context.context import (
+    from alphamind.state.invocation_context.context import (
         InvocationContext,
     )
 
@@ -1218,7 +1218,7 @@ async def _phase_3_run_check_chain(
 
 async def _phase_3_load_activity_log(sess: AsyncSession) -> Sequence[Any]:
     """Return every ``activity_log`` row scoped to the Phase 3 invocation."""
-    from alphamind.execution.state_persistence.tables.activity_log import (
+    from alphamind.state.tables.activity_log import (
         ActivityLogRow,
     )
 
@@ -1278,7 +1278,7 @@ def _phase_3_check_capital_reserved(log_rows: Sequence[Any], expected_dollar: fl
 async def _phase_3_check_cash_ledger(sess: AsyncSession, expected_dollar: float) -> str | None:
     """Confirm the cash_ledger singleton's ``reserved_capital_usd`` matches the
     canonical command's ``dollar_value``."""
-    from alphamind.execution.state_persistence.tables.cash_ledger import (
+    from alphamind.state.tables.cash_ledger import (
         CASH_LEDGER_SINGLETON_ID,
         CashLedgerRow,
     )
@@ -1313,8 +1313,8 @@ async def _phase_3_check_thesis(
     ``ThesisComponentType``; ``>=`` lets the verify tolerate the backfill while
     still catching a regression that drops wire-side components.
     """
-    from alphamind.execution.state_persistence.tables.theses import ThesisRow
-    from alphamind.execution.state_persistence.tables.thesis_components import (
+    from alphamind.state.tables.theses import ThesisRow
+    from alphamind.state.tables.thesis_components import (
         ThesisComponentRow,
     )
 
@@ -1344,8 +1344,8 @@ async def _phase_3_check_bracket(
 ) -> str | None:
     """Confirm one bracket row for the position + the expected leg count
     (one TAKE_PROFIT + one per ``command.invalidation_legs``)."""
-    from alphamind.execution.state_persistence.tables.bracket_legs import BracketLegRow
-    from alphamind.execution.state_persistence.tables.brackets import BracketRow
+    from alphamind.state.tables.bracket_legs import BracketLegRow
+    from alphamind.state.tables.brackets import BracketRow
 
     bracket_rows = (
         (await sess.execute(select(BracketRow).where(BracketRow.position_id == position_id)))
@@ -1383,7 +1383,7 @@ _PHASE_4_RULE_BREACHED = "per_position_max_loss"
 
 
 def _phase_4_invocation_record() -> Any:
-    from alphamind.execution.state_persistence.invocation_context.records import (
+    from alphamind.state.invocation_context.records import (
         InvocationRecord,
     )
 
@@ -1420,7 +1420,7 @@ async def _phase_4_resolve_position_id(
 
     Returns ``None`` if nothing matches — the verify orchestrator catches that
     and surfaces a useful diagnostic (Phase 3 must run first)."""
-    from alphamind.execution.state_persistence.tables.positions import PositionRow
+    from alphamind.state.tables.positions import PositionRow
 
     async with factory() as sess:
         row = (
@@ -1444,17 +1444,17 @@ async def _phase_4_simulate_phase_1_fill(
     share count — so the verify script's Phase 4 can exercise the engine
     envelope path end-to-end.
     """
-    from alphamind.execution.state_persistence.tables.positions import PositionRow
-    from alphamind.execution.state_persistence.tables.positions_codec import (
-        record_to_row as position_record_to_row,
-    )
-    from alphamind.execution.state_persistence.tables.positions_codec import (
-        row_to_record as position_row_to_record,
-    )
     from alphamind.portfolio_state.records.positions import (
         EquityPositionDetails,
         PositionFill,
         PositionStatus,
+    )
+    from alphamind.state.tables.positions import PositionRow
+    from alphamind.state.tables.positions_codec import (
+        record_to_row as position_record_to_row,
+    )
+    from alphamind.state.tables.positions_codec import (
+        row_to_record as position_row_to_record,
     )
 
     async with factory() as sess:
@@ -1510,7 +1510,7 @@ async def run_phase_4_engine_envelope_path(db_path: Path) -> PhaseResult:
     ``position_selection_rationale`` + ``rule_breached``."""
     from alphamind.execution.oms import build_initial_submit_engine_envelope_state
     from alphamind.execution.oms.submit_engine_envelope import submit_engine_envelope
-    from alphamind.execution.state_persistence.invocation_context.context import (
+    from alphamind.state.invocation_context.context import (
         InvocationContext,
     )
 
@@ -1623,10 +1623,10 @@ async def _phase_4_validate_activity_log(
     whose ``source`` column is ``BRACKET_MANAGER`` and whose detail carries the
     engine-guardrail provenance + the trigger record's
     ``position_selection_rationale``."""
-    from alphamind.execution.state_persistence.tables.activity_log import (
+    from alphamind.portfolio_state.events.activity_log import EventSource, EventType
+    from alphamind.state.tables.activity_log import (
         ActivityLogRow,
     )
-    from alphamind.portfolio_state.events.activity_log import EventSource, EventType
 
     async with factory() as sess:
         rows = (

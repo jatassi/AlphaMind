@@ -25,17 +25,7 @@ import uuid
 
 from alphamind._kernel.ids import PositionId, Symbol
 from alphamind._kernel.money import price
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
-from alphamind.execution.state_persistence.write_paths.ca_integration_ledger import (
+from alphamind.execution.write_paths.ca_integration_ledger import (
     mark_ca_activity_processed,
 )
 from alphamind.portfolio_state.events.activity_log import (
@@ -50,6 +40,16 @@ from alphamind.portfolio_state.records.positions import (
     PositionFill,
     PositionRecord,
     PositionStatus,
+)
+from alphamind.state.invocation_context.context import (
+    InvocationHandle,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
 )
 
 from ..types import AlpacaPositionLookup, CorporateActionActivity

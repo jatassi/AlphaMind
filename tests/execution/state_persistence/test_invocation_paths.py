@@ -1,4 +1,4 @@
-"""Tests for ``alphamind.execution.state_persistence.invocation_paths``."""
+"""Tests for the shared invocation-path constants in ``alphamind._kernel.invocations``."""
 
 from __future__ import annotations
 

@@ -24,9 +24,6 @@ from alphamind.execution.regt_margin_attribution import (
     ShockParameters,
     compute_attribution,
 )
-from alphamind.execution.state_persistence.write_paths.records import (
-    RegTMarginAttribution,
-)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -41,6 +38,9 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     IvQuote,
     IvSurfaceEntry,
     MarketInputs,
+)
+from alphamind.state.records import (
+    RegTMarginAttribution,
 )
 
 # ---------------------------------------------------------------------------

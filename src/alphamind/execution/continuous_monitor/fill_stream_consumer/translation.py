@@ -23,11 +23,11 @@ from typing import Final
 
 from alphamind._kernel.money import money, price
 from alphamind.execution.broker_adapter import FillReport
-from alphamind.execution.state_persistence.write_paths.records import (
+from alphamind.portfolio_state.records.orders import OrderStatus
+from alphamind.state.records import (
     FillProcessingStatus,
     FillRecord,
 )
-from alphamind.portfolio_state.records.orders import OrderStatus
 
 # Map FillReport.event_type → portfolio-state OrderStatus enum. Only fill-
 # bearing events have entries here; every other event yields ``None`` from the

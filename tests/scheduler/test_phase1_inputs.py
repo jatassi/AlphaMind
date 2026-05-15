@@ -31,11 +31,6 @@ from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
 )
-from alphamind.execution.state_persistence.invocation_context.context import InvocationHandle
-from alphamind.execution.state_persistence.invocation_context.records import (
-    ProcessLifetimeRecord,
-    process_lifetime_record_to_row,
-)
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -48,6 +43,11 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     MarketInputs,
 )
 from alphamind.scheduler.invocation import insert_invocation_record
+from alphamind.state.invocation_context.context import InvocationHandle
+from alphamind.state.invocation_context.records import (
+    ProcessLifetimeRecord,
+    process_lifetime_record_to_row,
+)
 
 _NOW = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
 _VENUE_ENV_KEYS: tuple[str, ...] = (
@@ -100,7 +100,7 @@ async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[Asyn
     """Yield an async session factory bound to an initialized SQLite DB."""
     db_path = tmp_path / "alphamind.db"
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     try:

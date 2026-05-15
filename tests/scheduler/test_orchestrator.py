@@ -44,12 +44,7 @@ from alphamind.config.models.venue import (
 # Side-effect import to break the submit_envelope_mcp ↔ portfolio_manager
 # circular import: PMEnvelope first, then submit_envelope_mcp.
 from alphamind.decision.portfolio_manager.models import PMEnvelope  # noqa: F401
-from alphamind.execution.state_persistence.invocation_context.records import (
-    ProcessLifetimeRecord,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
-from alphamind.execution.state_persistence.write_paths.phase1 import Phase1Summary
+from alphamind.execution.write_paths.phase1 import Phase1Summary
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -57,6 +52,11 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
+from alphamind.state.invocation_context.records import (
+    ProcessLifetimeRecord,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.tables.invocations import InvocationRow
 
 _NOW = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -109,7 +109,7 @@ async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[Asyn
     """Yield an async session factory bound to an initialized SQLite DB."""
     db_path = tmp_path / "alphamind.db"
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     try:
@@ -141,7 +141,7 @@ async def async_factory_with_singletons(
     """
     db_path = tmp_path / "alphamind.db"
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     try:
@@ -149,10 +149,10 @@ async def async_factory_with_singletons(
         with make_session_factory(sync_engine)() as sess:
             sess.add(process_lifetime_record_to_row(_make_process_lifetime_record()))
             cash, drawdown = _singleton_records()
-            from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
+            from alphamind.state.tables.cash_ledger_codec import (
                 cash_ledger_record_to_row,
             )
-            from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
+            from alphamind.state.tables.drawdown_state_codec import (
                 drawdown_state_record_to_row,
             )
 
@@ -351,7 +351,7 @@ def _patch_no_op_pipeline(
         # effect of fill integration. The stub mirrors both so the
         # orchestrator's post-Phase-1 snapshot read finds the singletons + a
         # stamped row.
-        from alphamind.execution.state_persistence.invocation_context.context import (
+        from alphamind.state.invocation_context.context import (
             stamp_phase_completion,
         )
 
@@ -727,10 +727,10 @@ async def _seed_singletons_via_handle(handle: Any) -> None:
     effect of fill integration; joins the Phase 1 transaction so the
     singletons commit together with ``phase1_completed_at``.
     """
-    from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
+    from alphamind.state.tables.cash_ledger_codec import (
         cash_ledger_record_to_row,
     )
-    from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
+    from alphamind.state.tables.drawdown_state_codec import (
         drawdown_state_record_to_row,
     )
 

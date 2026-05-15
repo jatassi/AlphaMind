@@ -7,7 +7,7 @@ structural change).
 
 from __future__ import annotations
 
-from alphamind.execution.state_persistence.invocation_context.context import (
+from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
 

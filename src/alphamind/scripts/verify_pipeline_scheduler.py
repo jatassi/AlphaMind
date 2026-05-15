@@ -53,11 +53,11 @@ from alphamind._kernel.invocations import (
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.venue import VenueConfig
-from alphamind.execution.state_persistence.process_lifetime import (
-    record_process_lifetime,
-)
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.risk_guardrails.breach_behavior.config import load_breach_behavior_config
+from alphamind.state.process_lifetime import (
+    record_process_lifetime,
+)
 
 __all__ = [
     "CheckResult",

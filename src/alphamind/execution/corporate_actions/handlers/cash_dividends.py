@@ -12,14 +12,7 @@ per the cancel-and-review policy.
 
 from __future__ import annotations
 
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
-from alphamind.execution.state_persistence.write_paths.ca_integration_ledger import (
+from alphamind.execution.write_paths.ca_integration_ledger import (
     mark_ca_activity_processed,
 )
 from alphamind.portfolio_state.events.activity_log import (
@@ -27,6 +20,13 @@ from alphamind.portfolio_state.events.activity_log import (
     CashDebitReason,
 )
 from alphamind.portfolio_state.records.positions import EquityPositionDetails
+from alphamind.state.invocation_context.context import (
+    InvocationHandle,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
+)
 
 from ..types import AlpacaPositionLookup, CorporateActionActivity
 from ._shared import (

@@ -37,22 +37,6 @@ from alphamind.execution.corporate_actions.types import (
     CorporateActionActivity,
     PositionLookup,
 )
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.corporate_action_integration_ledger import (
-    CorporateActionIntegrationLedgerRow,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    CorporateActionLedgerStatus,
-)
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -61,6 +45,22 @@ from alphamind.persistence.session import (
 )
 from alphamind.portfolio_state.events.activity_log import CorporateActionType
 from alphamind.portfolio_state.records.positions import Direction
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+    InvocationHandle,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.records import (
+    CorporateActionLedgerStatus,
+)
+from alphamind.state.tables.corporate_action_integration_ledger import (
+    CorporateActionIntegrationLedgerRow,
+)
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 _PROCESS_ID = "proc-fetcher-1"
@@ -79,7 +79,7 @@ async def db(
     """Yield ``(async_engine, session_factory)`` over a fresh on-disk SQLite DB."""
     db_path = tmp_path / "alphamind_fetcher.db"
 
-    import alphamind.execution.state_persistence.tables  # noqa: F401 — side-effect import
+    import alphamind.state.tables  # noqa: F401 — side-effect import
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)

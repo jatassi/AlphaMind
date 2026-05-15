@@ -26,11 +26,6 @@ from alphamind.config.models.modes import Mode
 from alphamind.config.models.regimes import Regime
 from alphamind.config.models.run_types import RunType
 from alphamind.config.resolver import RuntimeDimensions
-from alphamind.execution.state_persistence.invocation_context.records import (
-    ProcessLifetimeRecord,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -39,6 +34,11 @@ from alphamind.persistence.session import (
     make_session_factory,
 )
 from alphamind.scheduler.invocation import insert_invocation_record
+from alphamind.state.invocation_context.records import (
+    ProcessLifetimeRecord,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.tables.invocations import InvocationRow
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 SHIPPED_CONFIG_DIR = REPO_ROOT / "config"
@@ -99,7 +99,7 @@ async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[Asyn
     db_path = tmp_path / "alphamind.db"
 
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     try:
@@ -236,7 +236,7 @@ class TestInsertInvocationRecord:
         """
         db_path = tmp_path / "alphamind.db"
 
-        import alphamind.execution.state_persistence.tables  # noqa: F401
+        import alphamind.state.tables  # noqa: F401
 
         sync_engine = make_engine(str(db_path))
         Base.metadata.create_all(sync_engine)

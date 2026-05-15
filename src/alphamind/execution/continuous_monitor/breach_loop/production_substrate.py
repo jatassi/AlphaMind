@@ -49,16 +49,6 @@ from alphamind.config.resolver import (
 from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
     BreachDispatchContext,
 )
-from alphamind.execution.state_persistence.config import (
-    StatePersistenceConfig,
-)
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.repository import (
-    build_sql_portfolio_state_repository,
-)
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.portfolio_state import PortfolioStateConfig
 from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
@@ -88,6 +78,16 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
 )
 from alphamind.risk_guardrails.regime_adaptation import RegimeAdaptationOutput
 from alphamind.risk_guardrails.regime_adaptation.types import RegimeAdaptationState
+from alphamind.state.config import (
+    StatePersistenceConfig,
+)
+from alphamind.state.invocation_context.context import (
+    InvocationHandle,
+)
+from alphamind.state.repository import (
+    build_sql_portfolio_state_repository,
+)
+from alphamind.state.tables.invocations import InvocationRow
 
 if TYPE_CHECKING:
     from alphamind.execution.continuous_monitor.underlying_stream.cache import (

@@ -58,7 +58,7 @@ still includes the AMD short so the pre-fill margin state covers both directions
 
    ```python
    from pathlib import Path
-   import alphamind.execution.state_persistence.tables  # noqa: F401
+   import alphamind.state.tables  # noqa: F401
    from alphamind.persistence.models import Base
    from alphamind.persistence.session import make_engine
 

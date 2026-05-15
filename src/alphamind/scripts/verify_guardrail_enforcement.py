@@ -60,22 +60,6 @@ from alphamind.execution.guardrail_enforcement import (
     compose_phase_1_enforcement,
     make_active_risk_parameters_provider,
 )
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.repository import (
-    build_sql_portfolio_state_repository,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
 from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
@@ -96,6 +80,22 @@ from alphamind.risk_guardrails.breach_behavior.types import DrawdownTier
 from alphamind.risk_guardrails.regime_adaptation import (
     RegimeAdaptationOutput,
     RegimeAdaptationState,
+)
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.repository import (
+    build_sql_portfolio_state_repository,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
 )
 
 __all__ = [
@@ -530,7 +530,7 @@ async def _seed_process_lifetime(factory: async_sessionmaker[AsyncSession]) -> N
     """Persist the parent ``process_lifetime`` row required by the FK on invocations."""
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-    from alphamind.execution.state_persistence.tables.process_lifetimes import (
+    from alphamind.state.tables.process_lifetimes import (
         ProcessLifetimeRow,
     )
 
@@ -561,7 +561,7 @@ async def _seed_invocation_with_phase1_committed(
     DB without dropping the schema first; on a re-run the existing row's
     timestamps are refreshed in-place.
     """
-    from alphamind.execution.state_persistence.tables.invocations import InvocationRow
+    from alphamind.state.tables.invocations import InvocationRow
 
     record = _invocation_record(invocation_id, start_at=start_at)
     row_template = invocation_record_to_row(record)
@@ -584,11 +584,11 @@ async def _seed_singletons(factory: async_sessionmaker[AsyncSession], *, now: da
     is absent. Idempotent so the operator can re-run the verify script against
     the same DB without dropping the schema first.
     """
-    from alphamind.execution.state_persistence.tables.cash_ledger import (
+    from alphamind.state.tables.cash_ledger import (
         CASH_LEDGER_SINGLETON_ID,
         CashLedgerRow,
     )
-    from alphamind.execution.state_persistence.tables.drawdown_state import (
+    from alphamind.state.tables.drawdown_state import (
         DRAWDOWN_STATE_SINGLETON_ID,
         DrawdownStateRow,
     )

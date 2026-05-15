@@ -62,17 +62,17 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
 from alphamind.execution.continuous_monitor.underlying_stream.subscriptions import (
     OpenPositionsReader,
 )
-from alphamind.execution.state_persistence.tables.bracket_legs import BracketLegRow
-from alphamind.execution.state_persistence.tables.brackets import BracketRow
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    rows_to_record as bracket_rows_to_record,
-)
 from alphamind.portfolio_state.records.orders import BracketRecord
 from alphamind.portfolio_state.records.positions import (
     Direction,
     OptionsPositionDetails,
     PositionRecord,
     StrategyPositionDetails,
+)
+from alphamind.state.tables.bracket_legs import BracketLegRow
+from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.brackets_codec import (
+    rows_to_record as bracket_rows_to_record,
 )
 
 log = logging.getLogger(__name__)

@@ -35,59 +35,8 @@ from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
 )
-from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-    InvocationHandle,
-)
-from alphamind.execution.state_persistence.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
-    invocation_record_to_row,
-    process_lifetime_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
-from alphamind.execution.state_persistence.tables.brackets import BracketRow
-from alphamind.execution.state_persistence.tables.brackets_codec import (
-    record_to_rows as bracket_record_to_rows,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger import (
-    CASH_LEDGER_SINGLETON_ID,
-    CashLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.corporate_action_integration_ledger import (
-    CorporateActionIntegrationLedgerRow,
-)
-from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
-from alphamind.execution.state_persistence.tables.invocations import InvocationRow
-from alphamind.execution.state_persistence.tables.orders import OrderRow
-from alphamind.execution.state_persistence.tables.orders_codec import (
-    record_to_row as order_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions import PositionRow
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.execution.state_persistence.tables.positions_codec import (
-    row_to_record as position_row_to_record,
-)
-from alphamind.execution.state_persistence.tables.theses import ThesisRow
-from alphamind.execution.state_persistence.tables.theses_codec import (
-    record_to_rows as thesis_record_to_rows,
-)
-from alphamind.execution.state_persistence.write_paths.fill_persistence import (
+from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
-)
-from alphamind.execution.state_persistence.write_paths.records import (
-    CorporateActionLedgerStatus,
-    FillProcessingStatus,
-    FillRecord,
 )
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
@@ -137,6 +86,57 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
     MarketInputs,
 )
+from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import (
+    InvocationContext,
+    InvocationHandle,
+)
+from alphamind.state.invocation_context.records import (
+    InvocationRecord,
+    ProcessLifetimeRecord,
+    invocation_record_to_row,
+    process_lifetime_record_to_row,
+)
+from alphamind.state.records import (
+    CorporateActionLedgerStatus,
+    FillProcessingStatus,
+    FillRecord,
+)
+from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.brackets_codec import (
+    record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.cash_ledger import (
+    CASH_LEDGER_SINGLETON_ID,
+    CashLedgerRow,
+)
+from alphamind.state.tables.cash_ledger_codec import (
+    cash_ledger_record_to_row,
+)
+from alphamind.state.tables.corporate_action_integration_ledger import (
+    CorporateActionIntegrationLedgerRow,
+)
+from alphamind.state.tables.drawdown_state_codec import (
+    drawdown_state_record_to_row,
+)
+from alphamind.state.tables.fill_records import FillRecordRow
+from alphamind.state.tables.invocations import InvocationRow
+from alphamind.state.tables.orders import OrderRow
+from alphamind.state.tables.orders_codec import (
+    record_to_row as order_record_to_row,
+)
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import (
+    record_to_row as position_record_to_row,
+)
+from alphamind.state.tables.positions_codec import (
+    row_to_record as position_row_to_record,
+)
+from alphamind.state.tables.theses import ThesisRow
+from alphamind.state.tables.theses_codec import (
+    record_to_rows as thesis_record_to_rows,
+)
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-2026-05-08T12:00:00Z-aaaa"
@@ -156,7 +156,7 @@ async def db(
     db_path = tmp_path / "alphamind.db"
 
     # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.execution.state_persistence.tables  # noqa: F401
+    import alphamind.state.tables  # noqa: F401
 
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -610,7 +610,7 @@ async def _seed_position_order_thesis_bracket(
     Protective-leg order_ids (deferred FK to orders) are also seeded as stub
     orders in the same transaction so the COMMIT does not raise IntegrityError.
     """
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     thesis_row, component_rows = thesis_record_to_rows(thesis)
     bracket_row, leg_rows = bracket_record_to_rows(bracket)
@@ -738,7 +738,7 @@ async def test_entry_fill_transitions_pending_position_to_open(
 ) -> None:
     """Happy-path entry fill: position PENDING → OPEN, fill marked processed,
     cash debited, activity log carries the lifecycle entries."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -829,7 +829,7 @@ async def test_exit_fill_closes_position_and_resolves_thesis(
 ) -> None:
     """Happy-path exit fill: position OPEN → CLOSED, realized P/L computed,
     bracket DISSOLVED, thesis RESOLVED."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -844,7 +844,7 @@ async def test_exit_fill_closes_position_and_resolves_thesis(
     # All four entities reference each other cyclically — seed in one transaction.
     # _make_active_bracket uses entry_order_id="ord-entry-1" and a protective leg
     # with order_id="brk-1-ord-stop", so we need stubs for all referenced orders.
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     entry_order = _make_pending_entry_order()
     thesis_row, component_rows = thesis_record_to_rows(_make_thesis_with_resolved_components())
@@ -936,7 +936,7 @@ async def test_multi_fill_ordering_produces_cumulative_state(
 ) -> None:
     """Two unprocessed fills on the same order, processed in fill-timestamp
     order, produce the right cumulative state."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1020,7 +1020,7 @@ async def test_corporate_action_split_emits_events_and_ledger_anchor(
     """A stock split's corporate_action_applied entry fires, position quantity
     and cost basis adjust per the ratio, and the CA integration ledger records
     the dedupe anchor."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         CorporateActionActivity,
         process_unprocessed_fills,
     )
@@ -1107,7 +1107,7 @@ async def test_atomicity_exception_rolls_back_fills_and_log(
     raises NotImplementedError for short-entry fills (FK enforcement makes the
     original "missing position row" scenario impossible at the seeding layer).
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1169,7 +1169,7 @@ async def test_quarantined_fill_excluded_without_aborting_batch(
 ) -> None:
     """A fill with negative quantity is marked quarantined and excluded from
     integration; other fills in the batch still process normally."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1251,7 +1251,7 @@ async def test_buy_fill_decrements_reserved_capital_to_zero(
     OPEN reserve and Phase 1's fill double-count: current_cash drops AND
     reserved_capital stays — overstating committed capital.
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1316,7 +1316,7 @@ async def test_buy_fill_clamps_reserved_capital_decrement_at_zero(
     (partial reservations, rounding, mid-flight adjustments), the
     decrement must clamp at zero rather than going negative.
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1466,7 +1466,7 @@ async def test_short_entry_fill_raises_explicit_not_implemented(
     NotImplementedError naming the missing capability, not the cryptic
     "exit fill quantity exceeds open share count" leak from ``_apply_exit_fill``.
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1510,7 +1510,7 @@ async def test_phase1_stamps_completion_timestamp_on_invocation_row(
     repository's snapshot-isolation guard reads this column and raises
     RepositoryConsistencyError when it is NULL.
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1588,7 +1588,7 @@ async def test_summary_carries_reconciliation_alert_count(
 ) -> None:
     """``Phase1Summary`` exposes ``reconciliation_alerts`` and the count reflects
     one ``RECONCILIATION_ALERT`` per unexplained delta."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
@@ -1630,7 +1630,7 @@ async def test_fill_before_ca_reflects_pre_action_quantity_at_fill(
       * pre-CA share_count = 10 + 5 = 15 (entry+add fill applied first)
       * post-CA share_count = 15 * 2 = 30 (split applied second)
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         CorporateActionActivity,
         process_unprocessed_fills,
     )
@@ -1644,7 +1644,7 @@ async def test_fill_before_ca_reflects_pre_action_quantity_at_fill(
         position_id="pos-1",
         quantity=5.0,
     )
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     entry_order = _make_pending_entry_order()
     thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
@@ -1726,7 +1726,7 @@ async def test_fill_after_ca_reflects_post_action_quantity_at_fill(
       * post-CA share_count = 10 * 2 = 20
       * post-fill share_count = 20 + 5 = 25
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
+    from alphamind.execution.write_paths.phase1 import (
         CorporateActionActivity,
         process_unprocessed_fills,
     )
@@ -1739,7 +1739,7 @@ async def test_fill_after_ca_reflects_post_action_quantity_at_fill(
         position_id="pos-1",
         quantity=5.0,
     )
-    from tests.execution.state_persistence._fk_substrate import stub_order_row
+    from tests.state._fk_substrate import stub_order_row
 
     entry_order = _make_pending_entry_order()
     thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())

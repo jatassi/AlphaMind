@@ -25,10 +25,10 @@ from alphamind.execution.broker_adapter import FillReport
 from alphamind.execution.continuous_monitor.fill_stream_consumer import (
     fill_report_to_fill_record,
 )
-from alphamind.execution.state_persistence.write_paths.records import (
+from alphamind.portfolio_state.records.orders import OrderStatus
+from alphamind.state.records import (
     FillProcessingStatus,
 )
-from alphamind.portfolio_state.records.orders import OrderStatus
 
 
 def _ts(minute: int = 0) -> datetime:

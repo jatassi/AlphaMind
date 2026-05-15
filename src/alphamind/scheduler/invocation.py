@@ -38,15 +38,15 @@ from alphamind.config.models.modes import Mode
 from alphamind.config.models.run_types import RunType
 from alphamind.config.resolver import RuntimeDimensions
 from alphamind.config.snapshot import _atomic_write
-from alphamind.execution.state_persistence.invocation_context.context import (
+from alphamind.persistence.models import CollectionRuns
+from alphamind.state.invocation_context.context import (
     insert_invocation_row,
 )
-from alphamind.execution.state_persistence.invocation_context.records import (
+from alphamind.state.invocation_context.records import (
     ActiveMode,
     InvocationRecord,
     TriggerType,
 )
-from alphamind.persistence.models import CollectionRuns
 
 
 def _mode_to_active_mode_literal(mode: Mode) -> ActiveMode:
