@@ -481,7 +481,7 @@ def test_a8_cumulative_drawdown_tier_2_overrides() -> None:
     assert pos_max.value == 2.0
     assert gross.value == 60.0
     assert "cumulative_drawdown_tier_2" in post_params.active_overlays
-    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+    with pytest.raises(FrozenInstanceError):
         post_params.active_overlays = ()
 
 

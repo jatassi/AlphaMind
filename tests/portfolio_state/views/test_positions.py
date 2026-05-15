@@ -107,7 +107,7 @@ class TestPositionViewConstruction:
 class TestPositionViewFrozen:
     def test_frozen(self) -> None:
         view = _make_view()
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             view.unrealized_pnl_usd = 9_999.0
 
 

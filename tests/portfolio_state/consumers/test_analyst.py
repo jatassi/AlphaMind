@@ -626,7 +626,7 @@ class TestAnalystValueObjects:
             size_pct=10.0,
             instrument_type=InstrumentType.EQUITY,
         )
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             hp.ticker = "MSFT"
 
     def test_available_capital_frozen(self) -> None:
@@ -636,7 +636,7 @@ class TestAnalystValueObjects:
             per_position_max_size_usd=5000.0,
             per_position_max_size_pct=5.0,
         )
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             ac.available_for_new_positions_usd = 0.0
 
     def test_abandoned_opening_frozen(self) -> None:
@@ -649,7 +649,7 @@ class TestAnalystValueObjects:
             abandoned_at=_T0,
             failure_reason="blocked",
         )
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             ao.ticker = "MSFT"
 
     def test_analyst_view_frozen(self) -> None:
@@ -665,7 +665,7 @@ class TestAnalystValueObjects:
             pending_orders=(),
             abandoned_openings=(),
         )
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             view.pending_orders = ()
 
 

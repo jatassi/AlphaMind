@@ -66,7 +66,7 @@ def test_price_quote_accepts_positive_price() -> None:
 
 def test_price_quote_is_frozen() -> None:
     q = _quote()
-    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+    with pytest.raises(FrozenInstanceError):
         q.price_usd = 999.0
 
 

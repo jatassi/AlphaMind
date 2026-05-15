@@ -94,7 +94,7 @@ class TestOptionGreeks:
 
     def test_frozen(self) -> None:
         g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3)
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             g.delta = 0.9
 
     def test_required_fields_enforced(self) -> None:
@@ -174,7 +174,7 @@ class TestOptionGreeks:
         """(f) Frozen model — can't mutate as_of_timestamp after construction."""
         ts = datetime.now(tz=UTC)
         g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, as_of_timestamp=ts)
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             g.as_of_timestamp = datetime.now(tz=UTC)
 
     def test_docstring_sign_convention_paragraphs(self) -> None:
@@ -210,7 +210,7 @@ class TestPositionFill:
             slippage=0.01,
             fees=1.50,
         )
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             fill.fill_price = 200.0
 
     def test_required_fields_enforced(self) -> None:
@@ -290,7 +290,7 @@ class TestEquityPositionDetails:
             share_count=100.0,
             average_cost_basis_per_share=150.0,
         )
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             d.ticker = Symbol("MSFT")
 
     def test_required_fields_enforced(self) -> None:
@@ -326,7 +326,7 @@ class TestOptionsPositionDetails:
 
     def test_frozen(self) -> None:
         d = _make_options_details()
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             d.underlying_ticker = Symbol("MSFT")
 
     def test_required_fields_enforced(self) -> None:
@@ -351,7 +351,7 @@ class TestStrategyLeg:
 
     def test_frozen(self) -> None:
         leg = _make_strategy_leg()
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             leg.leg_id = "leg-2"
 
 
@@ -381,7 +381,7 @@ class TestStrategyPositionDetails:
             breakeven_levels=(205.0,),
             strategy_greeks=_GREEKS,
         )
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             d.strategy_type_label = "other"
 
 
@@ -711,9 +711,9 @@ class TestLiveExecutionEstimate:
             _make_live_estimate(live_adjusted_fill_price=float("nan"))
 
     def test_frozen(self) -> None:
-        """(d) Model is frozen — mutation raises ValidationError."""
+        """(d) Model is frozen — mutation raises FrozenInstanceError."""
         est = _make_live_estimate()
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             est.estimated_spread_usd = 1.0
 
     def test_zero_cost_fields_accepted(self) -> None:

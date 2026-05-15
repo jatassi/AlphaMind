@@ -8,8 +8,10 @@ spec at ``docs/implementation/02-distillation-layer/12-distillation-orchestrator
 1. Class B refresh — refresh every rolling-state primitive before any
    computation reads from state. Refresh failure prevents any downstream
    work per ``docs/design/mid-pipeline-failure-handling.md``.
-2. Per-category indicator computations — six categories dispatched in
-   parallel via :func:`asyncio.gather`. Each category is a thin
+2. Per-category indicator computations — Q1's pure-compute path runs in
+   parallel with the legacy session-bound categories (q3, q6, q7, q12,
+   qualitative_derived, which remain internally serialized under one
+   Session) via :class:`asyncio.TaskGroup`. Each category is a thin
    module-level helper that wraps the synchronous DB-bound primitives in
    :func:`asyncio.to_thread` so the event loop does not block.
 3. Regime classification — universal-broadcast volatility regime label
@@ -285,7 +287,9 @@ def _refresh_class_b_state(
 # ---------------------------------------------------------------------------
 #
 # Each dispatcher is a thin wrapper over its category's public surface.
-# The orchestrator runs them concurrently via asyncio.gather; the
+# The orchestrator runs Q1's pure-compute path concurrently with the
+# legacy session-bound categories (q3, q6, q7, q12, qualitative_derived,
+# which stay sequential under one Session) via asyncio.TaskGroup; the
 # synchronous DB-bound work runs through asyncio.to_thread so the event
 # loop never blocks waiting for SQLite.
 #

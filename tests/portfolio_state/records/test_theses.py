@@ -99,7 +99,7 @@ def test_key_assumption_valid_resolved() -> None:
 
 def test_key_assumption_frozen() -> None:
     ka = KeyAssumption(text="test", outcome=None)
-    with pytest.raises((FrozenInstanceError, AttributeError, TypeError, ValueError)):
+    with pytest.raises(FrozenInstanceError):
         ka.text = "changed"
 
 
@@ -222,7 +222,7 @@ def test_thesis_component_with_bracket_leg() -> None:
 
 def test_thesis_component_frozen() -> None:
     comp = _make_component()
-    with pytest.raises((FrozenInstanceError, AttributeError, TypeError, ValueError)):
+    with pytest.raises(FrozenInstanceError):
         comp.narrative = "changed"
 
 
@@ -250,7 +250,7 @@ def test_thesis_record_valid_active() -> None:
 
 def test_thesis_record_frozen() -> None:
     rec = _make_thesis_record()
-    with pytest.raises((FrozenInstanceError, AttributeError, TypeError, ValueError)):
+    with pytest.raises(FrozenInstanceError):
         rec.summary = "changed"
 
 

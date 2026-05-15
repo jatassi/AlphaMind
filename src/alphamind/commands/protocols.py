@@ -1,27 +1,13 @@
-"""Injection-seam Protocols at the commands/ kernel boundary.
+"""Injection-seam Protocol at the commands/ kernel boundary.
 
-Two callable Protocols let the engine-stub
+The :class:`BrokerDispatch` callable Protocol lets the engine-stub
 (:mod:`alphamind.decision.portfolio_manager.submit_envelope`) consume
-execution-side broker routing and decision-side envelope validation
-without importing those modules directly:
-
-* :class:`BrokerDispatch` — the callable that routes a canonical
-  :class:`alphamind.commands.command_models.OMSCommand` through the
-  broker adapter. The concrete implementation lives in
-  :mod:`alphamind.execution.oms.broker_dispatch`; the composition root
-  (the pipeline runner) constructs it and passes it into the PM harness.
-
-* :class:`ValidationCallable` — the callable that runs the Layer-2/3
-  cross-field-invariant validator on a parsed :class:`PMEnvelope`. The
-  concrete implementation lives in
-  :mod:`alphamind.decision.portfolio_manager.validation`; the engine-stub
-  receives it via constructor injection.
-
-Both Protocols are :func:`typing.runtime_checkable` so test fakes pass
-:func:`isinstance` checks without inheriting; the engine-stub itself
+execution-side broker routing without importing the execution layer
+directly. The Protocol is :func:`typing.runtime_checkable` so test fakes
+pass :func:`isinstance` checks without inheriting; the engine-stub
 type-checks against the Protocol shape, not the concrete class.
 
-ALP-458 introduced these Protocols to break the decision↔execution import
+ALP-458 introduced this Protocol to break the decision↔execution import
 cycle: with dependency injection at the composition root, neither side
 needs to import the other.
 """
@@ -34,12 +20,9 @@ from alphamind._kernel.ids import ClientOrderId
 
 if TYPE_CHECKING:
     from alphamind.commands.command_models import OMSCommand
-    from alphamind.commands.pm_envelope import PMEnvelope
-    from alphamind.commands.validation_results import ValidationResult
 
 __all__ = [
     "BrokerDispatch",
-    "ValidationCallable",
 ]
 
 
@@ -72,26 +55,3 @@ class BrokerDispatch(Protocol):
         client_order_id: ClientOrderId,
         **context: Any,
     ) -> Any: ...
-
-
-@runtime_checkable
-class ValidationCallable(Protocol):
-    """Callable interface running Layer-2/3 invariants on a PMEnvelope.
-
-    The concrete implementation is
-    :func:`alphamind.decision.portfolio_manager.validation.validate_pm_envelope`.
-    Used by execution-side consumers (currently the Phase 2 write path's
-    rejection persistence) that hold a :class:`PMEnvelope` and need its
-    invariant errors without importing the decision-layer validation module.
-
-    The function's full signature on the concrete side accepts a
-    :class:`RetrievalStore` and pre-processor bundle; the Protocol leaves
-    those as ``**context`` kwargs so callers thread per-invocation state
-    without binding to the concrete implementation's parameter shape.
-    """
-
-    def __call__(
-        self,
-        envelope: PMEnvelope,
-        **context: Any,
-    ) -> ValidationResult: ...

@@ -804,9 +804,9 @@ def test_assembled_snapshot_is_frozen() -> None:
     )
     freshness = compute_snapshot_freshness(snapshot, fetch_outcomes=outcomes, config=_make_config())
     assembled = AssembledSnapshot(snapshot=snapshot, freshness=freshness, price_map={})
-    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+    with pytest.raises(FrozenInstanceError):
         assembled.snapshot = _make_snapshot()
-    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+    with pytest.raises(FrozenInstanceError):
         assembled.freshness = freshness
-    with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+    with pytest.raises(FrozenInstanceError):
         assembled.price_map = {}

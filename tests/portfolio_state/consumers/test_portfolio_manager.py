@@ -530,7 +530,7 @@ class TestPortfolioManagerValueObjects:
     def test_view_frozen(self) -> None:
         snapshot = _make_snapshot()
         view = project_portfolio_manager_view(snapshot)
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             view.positions = ()
 
 

@@ -288,8 +288,8 @@ ignore_imports =
     # The composition-root ``submit_envelope.persist`` accordingly carries
     # a transitive ``decision -> state.config -> execution.corporate_actions
     # .config`` chain that import-linter reports as a decision -> execution
-    # crossing. Retires when ALP-484 (out of scope here) hoists the CA
-    # config primitive to a layer-neutral location.
+    # crossing. Retires when ``CorporateActionsConfig`` is hoisted to a
+    # layer-neutral location (no ticket filed yet).
     alphamind.state.config -> alphamind.execution.corporate_actions.config
 
 # Architectural exception: ``library_snapshot.py`` is a Pydantic->dataclass

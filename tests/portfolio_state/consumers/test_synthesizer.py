@@ -643,7 +643,7 @@ class TestSynthesizerValueObjects:
             size_pct=10.0,
             position_age_hours=4.0,
         )
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             summary.ticker = "MSFT"
 
     def test_thesis_summary_frozen(self) -> None:
@@ -654,7 +654,7 @@ class TestSynthesizerValueObjects:
             key_catalyst="earnings beat",
             time_expectation_hours=24.0,
         )
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             summary.ticker = "MSFT"
 
     def test_exposure_snapshot_frozen(self) -> None:
@@ -663,7 +663,7 @@ class TestSynthesizerValueObjects:
             net_directional_pct=30.0,
             gross_exposure_pct=70.0,
         )
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             exp.net_directional_pct = 0.0
 
     def test_synthesizer_view_frozen(self) -> None:
@@ -674,7 +674,7 @@ class TestSynthesizerValueObjects:
                 sector_exposure_pct={}, net_directional_pct=0.0, gross_exposure_pct=0.0
             ),
         )
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             view.positions = (
                 SynthesizerPositionSummary(
                     ticker=Symbol("X"),

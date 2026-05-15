@@ -25,9 +25,8 @@ The package hosts:
 * Validation-result wire types
   (:mod:`~alphamind.commands.validation_results`) — Layer-2/3 violations
   and warnings that ride from the validator into persistence.
-* The injection-seam Protocols
-  (:mod:`~alphamind.commands.protocols`) — ``BrokerDispatch`` and
-  ``ValidationCallable``.
+* The injection-seam Protocol
+  (:mod:`~alphamind.commands.protocols`) — ``BrokerDispatch``.
 
 Per ALP-458, every module under ``alphamind.commands.*`` imports zero
 first-party ``alphamind.*`` modules outside ``alphamind._kernel.*`` and
@@ -112,7 +111,6 @@ from alphamind.commands.pm_envelope import (
 )
 from alphamind.commands.protocols import (
     BrokerDispatch,
-    ValidationCallable,
 )
 from alphamind.commands.submission_log import (
     FailedSubmissionEntry,
@@ -198,7 +196,6 @@ __all__ = [
     "ThesisQualityEvaluation",
     "TimeCondition",
     "TimeLeg",
-    "ValidationCallable",
     "ValidationError",
     "ValidationResult",
     "ValidationWarning",

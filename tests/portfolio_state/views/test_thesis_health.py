@@ -56,7 +56,7 @@ def test_thesis_health_snapshot_is_frozen() -> None:
         prior_health_status=None,
         component_health=(),
     )
-    with pytest.raises((FrozenInstanceError, AttributeError, TypeError, ValueError)):
+    with pytest.raises(FrozenInstanceError):
         snap.health_status = ThesisStatus.AT_RISK
 
 
@@ -127,7 +127,7 @@ def test_invocation_id_min_length() -> None:
 
 def test_component_health_entry_is_frozen() -> None:
     entry = _make_entry()
-    with pytest.raises((FrozenInstanceError, AttributeError, TypeError, ValueError)):
+    with pytest.raises(FrozenInstanceError):
         entry.component_id = "changed"
 
 

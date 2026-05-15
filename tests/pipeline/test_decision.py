@@ -737,6 +737,43 @@ def test_strategist_failure_cancels_analyst_and_propagates(
     assert "pm" not in log.order
 
 
+def test_analyst_and_strategist_double_failure_propagates_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Analyst + strategist both fail simultaneously → pipeline surfaces a
+    single ``SDKFailure`` (the first non-``CancelledError`` child of the
+    underlying ``BaseExceptionGroup``) rather than the group container.
+
+    Guards the TaskGroup migration: ``asyncio.TaskGroup`` always raises
+    ``BaseExceptionGroup``; without explicit unwrapping the caller would
+    suddenly receive a group container instead of an ``SDKFailure``.
+    """
+    log = _CallLog()
+    analyst_failure = SDKFailure(
+        "analyst stub failure",
+        agent_name=AgentName.analyst.value,
+        invocation_id=_INVOCATION_ID,
+    )
+    strategist_failure = SDKFailure(
+        "strategist stub failure",
+        agent_name=AgentName.strategist.value,
+        invocation_id=_INVOCATION_ID,
+    )
+    _patch_runners(
+        monkeypatch,
+        log=log,
+        analyst_raises=analyst_failure,
+        strategist_raises=strategist_failure,
+    )
+    with pytest.raises(SDKFailure) as exc_info:
+        _drive()
+    assert exc_info.value in (analyst_failure, strategist_failure)
+    # Pre-processor + PM must NOT have run; the pipeline aborted at the
+    # parallel stage.
+    assert "pre_processor" not in log.order
+    assert "pm" not in log.order
+
+
 def test_pre_processor_failure_aborts_pm(monkeypatch: pytest.MonkeyPatch) -> None:
     """If the pre-processor raises, the PM does not run."""
     log = _CallLog()

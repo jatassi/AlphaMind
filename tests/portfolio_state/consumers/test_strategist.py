@@ -606,7 +606,7 @@ class TestStrategistValueObjects:
             pending_orders=(),
             modification_trail=(),
         )
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             view.thesis = None
 
     def test_abandoned_action_frozen(self) -> None:
@@ -618,13 +618,13 @@ class TestStrategistValueObjects:
             abandoned_at=_T0,
             failure_reason="blocked",
         )
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             action.envelope_id = "other"
 
     def test_strategist_view_frozen(self) -> None:
         snapshot = _make_snapshot()
         view = project_strategist_view(snapshot)
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             view.positions = ()
 
 
@@ -1034,7 +1034,7 @@ class TestBetweenInvocationClosuresProjection:
             origin="bracket_manager",
             rationale="price-based stop fired",
         )
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             closure.position_id = "POS-002"
 
     def test_rationale_renders_em_dash_for_zero_exit_price(self) -> None:

@@ -122,7 +122,7 @@ class TestUnsettledProceedsEntry:
 
     def test_frozen(self) -> None:
         entry = self._valid()
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             entry.amount_usd = 999.0  # pyright: ignore[reportAttributeAccessIssue]
 
 
@@ -192,7 +192,7 @@ class TestCashLedger:
 
     def test_frozen(self) -> None:
         ledger = self._valid()
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             ledger.current_cash_usd = 0.0  # pyright: ignore[reportAttributeAccessIssue]
 
 
