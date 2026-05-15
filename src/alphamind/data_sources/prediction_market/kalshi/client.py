@@ -78,3 +78,9 @@ class KalshiClient:
             return False
         else:
             return True
+
+
+# Runtime contract: KalshiClient must structurally implement KalshiAPI.
+from alphamind.data_sources.prediction_market.kalshi._protocol import KalshiAPI  # noqa: E402
+
+_: KalshiAPI = KalshiClient()

@@ -98,3 +98,9 @@ class FinraClient:
             return False
         else:
             return True
+
+
+# Runtime contract: FinraClient must structurally implement FinraAPI.
+from alphamind.data_sources.finra._protocol import FinraAPI  # noqa: E402
+
+_: FinraAPI = FinraClient()

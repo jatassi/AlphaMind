@@ -232,6 +232,7 @@ def collect_estimate_revisions(
     _engine: Any = None,
     _session_factory: Any = None,
     _repo: Any = None,
+    _sdk: Any = None,
 ) -> None:
     """
     Poll Finnhub estimate endpoints for each active-universe ticker and persist
@@ -242,12 +243,15 @@ def collect_estimate_revisions(
     ticker_scope:
         Explicit list of tickers to process.  When ``None``, the active
         universe (``asset_universe.is_active=1``) is used.
+    _sdk:
+        Optional Finnhub SDK override (anything implementing ``FinnhubSDK``).
+        Defaults to a freshly-constructed ``finnhub.Client``.
     """
     engine = _engine or make_engine()
     sf = _session_factory or make_session_factory(engine)
     Base.metadata.create_all(engine)
 
-    sdk = finnhub.Client(api_key=_get_api_key())
+    sdk = _sdk if _sdk is not None else finnhub.Client(api_key=_get_api_key())
 
     if ticker_scope is None:
         ticker_scope = active_universe_tickers(include_benchmarks=False, session_factory=sf)
@@ -266,6 +270,7 @@ def bootstrap_estimate_revisions(
     _engine: Any = None,
     _session_factory: Any = None,
     _repo: Any = None,
+    _sdk: Any = None,
 ) -> None:
     """
     Seed ``earnings_estimate_revisions`` with the initial snapshot for every
@@ -279,7 +284,7 @@ def bootstrap_estimate_revisions(
     sf = _session_factory or make_session_factory(engine)
     Base.metadata.create_all(engine)
 
-    sdk = finnhub.Client(api_key=_get_api_key())
+    sdk = _sdk if _sdk is not None else finnhub.Client(api_key=_get_api_key())
     tickers = active_universe_tickers(include_benchmarks=False, session_factory=sf)
 
     with track_run("finnhub.bootstrap_estimate_revisions", _repo=_repo) as run:

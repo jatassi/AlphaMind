@@ -158,13 +158,14 @@ def collect_earnings_calendar(
     _engine: Any = None,
     _session_factory: Any = None,
     _repo: Any = None,
+    _sdk: Any = None,
 ) -> None:
     """Pull earnings calendar from ``since`` to today and persist it."""
     engine = _engine or make_engine()
     sf = _session_factory or make_session_factory(engine)
     Base.metadata.create_all(engine)
 
-    sdk = finnhub.Client(api_key=_get_api_key())
+    sdk = _sdk if _sdk is not None else finnhub.Client(api_key=_get_api_key())
     now = datetime.now(UTC)
     from_date = (since or now).strftime("%Y-%m-%d")
     to_date = now.strftime("%Y-%m-%d")
@@ -181,13 +182,14 @@ def bootstrap_earnings_calendar(
     _engine: Any = None,
     _session_factory: Any = None,
     _repo: Any = None,
+    _sdk: Any = None,
 ) -> None:
     """Pull earnings calendar forward 90 days from today."""
     engine = _engine or make_engine()
     sf = _session_factory or make_session_factory(engine)
     Base.metadata.create_all(engine)
 
-    sdk = finnhub.Client(api_key=_get_api_key())
+    sdk = _sdk if _sdk is not None else finnhub.Client(api_key=_get_api_key())
     now = datetime.now(UTC)
     from_date = now.strftime("%Y-%m-%d")
     to_date = (now + timedelta(days=_BOOTSTRAP_DAYS)).strftime("%Y-%m-%d")
@@ -243,13 +245,14 @@ def collect_economic_calendar(
     _engine: Any = None,
     _session_factory: Any = None,
     _repo: Any = None,
+    _sdk: Any = None,
 ) -> None:
     """Pull economic calendar from ``since`` to today and persist it."""
     engine = _engine or make_engine()
     sf = _session_factory or make_session_factory(engine)
     Base.metadata.create_all(engine)
 
-    sdk = finnhub.Client(api_key=_get_api_key())
+    sdk = _sdk if _sdk is not None else finnhub.Client(api_key=_get_api_key())
     now = datetime.now(UTC)
     from_date = (since or now).strftime("%Y-%m-%d")
     to_date = now.strftime("%Y-%m-%d")
@@ -266,13 +269,14 @@ def bootstrap_economic_calendar(
     _engine: Any = None,
     _session_factory: Any = None,
     _repo: Any = None,
+    _sdk: Any = None,
 ) -> None:
     """Pull economic calendar forward 90 days from today."""
     engine = _engine or make_engine()
     sf = _session_factory or make_session_factory(engine)
     Base.metadata.create_all(engine)
 
-    sdk = finnhub.Client(api_key=_get_api_key())
+    sdk = _sdk if _sdk is not None else finnhub.Client(api_key=_get_api_key())
     now = datetime.now(UTC)
     from_date = now.strftime("%Y-%m-%d")
     to_date = (now + timedelta(days=_BOOTSTRAP_DAYS)).strftime("%Y-%m-%d")
@@ -301,13 +305,14 @@ def collect_ipo_calendar(
     _engine: Any = None,
     _session_factory: Any = None,
     _repo: Any = None,
+    _sdk: Any = None,
 ) -> None:
     """Pull IPO calendar from ``since`` to today and persist it."""
     engine = _engine or make_engine()
     sf = _session_factory or make_session_factory(engine)
     Base.metadata.create_all(engine)
 
-    sdk = finnhub.Client(api_key=_get_api_key())
+    sdk = _sdk if _sdk is not None else finnhub.Client(api_key=_get_api_key())
     now = datetime.now(UTC)
     from_date = (since or now).strftime("%Y-%m-%d")
     to_date = (now + timedelta(days=_BOOTSTRAP_DAYS)).strftime("%Y-%m-%d")
@@ -352,13 +357,14 @@ def collect_fda_calendar(
     _engine: Any = None,
     _session_factory: Any = None,
     _repo: Any = None,
+    _sdk: Any = None,
 ) -> None:
     """Pull FDA advisory committee calendar and persist it."""
     engine = _engine or make_engine()
     sf = _session_factory or make_session_factory(engine)
     Base.metadata.create_all(engine)
 
-    sdk = finnhub.Client(api_key=_get_api_key())
+    sdk = _sdk if _sdk is not None else finnhub.Client(api_key=_get_api_key())
 
     with track_run("finnhub.fda_calendar", _repo=_repo) as run:
         items = _fetch_fda_calendar(sdk)

@@ -1,15 +1,15 @@
 """
 Tests for the Finnhub estimate-revisions collector — story 05m.
 
-All Finnhub SDK calls are mocked.  Tests use an in-memory SQLite database
-seeded with minimal rows so FK constraints are satisfied.
+All Finnhub SDK calls are routed through FakeFinnhubSDK.  Tests use an
+in-memory SQLite database seeded with minimal rows so FK constraints
+are satisfied.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 from sqlalchemy.engine import Engine
@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import Base, EarningsEstimateRevisions
 from alphamind.persistence.session import make_engine, make_session_factory
+from tests.data_sources._fakes.finnhub import FakeFinnhubSDK
+from tests.data_sources._fakes.run_repo import FakeRunRepo
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -67,28 +69,8 @@ def seeded_tickers(session: Session) -> None:
 
 
 @pytest.fixture()
-def fake_repo() -> Any:
-    """In-memory collection_runs repo for test isolation."""
-
-    class _Repo:
-        def __init__(self) -> None:
-            self.rows: dict[str, dict[str, Any]] = {}
-
-        def insert_running(self, run_id: str, collector: str, started_at: str) -> None:
-            self.rows[run_id] = {
-                "status": "running",
-                "collector": collector,
-                "rows_written": None,
-                "error_summary": None,
-            }
-
-        def update_success(self, run_id: str, completed_at: str, rows_written: int) -> None:
-            self.rows[run_id].update(status="success", rows_written=rows_written)
-
-        def update_failed(self, run_id: str, error_summary: str) -> None:
-            self.rows[run_id].update(status="failed", error_summary=error_summary)
-
-    return _Repo()
+def fake_repo() -> FakeRunRepo:
+    return FakeRunRepo()
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +112,22 @@ def _make_revenue_response(
     }
 
 
+def _sdk_with(
+    eps_responses: dict[str, dict[str, Any]] | None = None,
+    revenue_responses: dict[str, dict[str, Any]] | None = None,
+) -> FakeFinnhubSDK:
+    eps_responses = eps_responses or {}
+    revenue_responses = revenue_responses or {}
+
+    def eps_handler(symbol: str) -> dict[str, Any]:
+        return eps_responses.get(symbol, {"symbol": symbol, "data": [], "freq": "quarterly"})
+
+    def revenue_handler(symbol: str) -> dict[str, Any]:
+        return revenue_responses.get(symbol, {"symbol": symbol, "data": [], "freq": "quarterly"})
+
+    return FakeFinnhubSDK(eps_handler=eps_handler, revenue_handler=revenue_handler)
+
+
 def _run_collect(
     engine: Engine,
     session_factory: sessionmaker[Session],
@@ -138,29 +136,18 @@ def _run_collect(
     eps_response_map: dict[str, dict[str, Any]],
     revenue_response_map: dict[str, dict[str, Any]],
 ) -> None:
-    """Helper: run collect_estimate_revisions with mocked SDK."""
-    with patch("finnhub.Client", autospec=True) as mock_client:
-        mock_sdk = mock_client.return_value
+    """Helper: run collect_estimate_revisions with a fake SDK."""
+    sdk = _sdk_with(eps_response_map, revenue_response_map)
 
-        def _eps_side(symbol: str, **_kwargs: Any) -> dict[str, Any]:
-            return eps_response_map.get(symbol, {"symbol": symbol, "data": [], "freq": "quarterly"})
+    from alphamind.data_sources.finnhub.estimate_revisions import collect_estimate_revisions
 
-        def _rev_side(symbol: str, **_kwargs: Any) -> dict[str, Any]:
-            return revenue_response_map.get(
-                symbol, {"symbol": symbol, "data": [], "freq": "quarterly"}
-            )
-
-        mock_sdk.company_eps_estimates.side_effect = _eps_side
-        mock_sdk.company_revenue_estimates.side_effect = _rev_side
-
-        from alphamind.data_sources.finnhub.estimate_revisions import collect_estimate_revisions
-
-        collect_estimate_revisions(
-            ticker_scope=ticker_scope,
-            _engine=engine,
-            _session_factory=session_factory,
-            _repo=fake_repo,
-        )
+    collect_estimate_revisions(
+        ticker_scope=ticker_scope,
+        _engine=engine,
+        _session_factory=session_factory,
+        _repo=fake_repo,
+        _sdk=sdk,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +211,7 @@ class TestFirstObservation:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """First EPS observation inserts a row with prior_consensus_value=NULL."""
         _run_collect(
@@ -251,7 +238,7 @@ class TestFirstObservation:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """First revenue observation inserts a row with prior_consensus_value=NULL."""
         _run_collect(
@@ -280,7 +267,7 @@ class TestFirstObservation:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """num_analysts is populated from numberAnalysts when present."""
         _run_collect(
@@ -306,7 +293,7 @@ class TestFirstObservation:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """num_analysts is NULL when numberAnalysts is absent in response."""
         _run_collect(
@@ -339,7 +326,7 @@ class TestChangedConsensus:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """When consensus changes, a new row is written with prior_consensus_value set."""
         period = "2026-06-30"
@@ -389,7 +376,7 @@ class TestUnchangedConsensus:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """Re-running with the same consensus value does not write a new row."""
         period = "2026-06-30"
@@ -433,7 +420,7 @@ class TestUniverseFilter:
         engine: Engine,
         session_factory: sessionmaker[Session],
         session: Session,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """Tickers with is_active=0 are excluded from collection."""
         from alphamind.persistence.models import AssetUniverse
@@ -454,27 +441,25 @@ class TestUniverseFilter:
         session.commit()
 
         # When ticker_scope is None, only active tickers should be processed
-        with patch("finnhub.Client", autospec=True) as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.company_eps_estimates.return_value = {
-                "symbol": "INACT",
-                "data": [{"period": "2026-06-30", "epsAvg": 1.0, "numberAnalysts": 5}],
-                "freq": "quarterly",
+        sdk = FakeFinnhubSDK(
+            eps_estimates_by_symbol={
+                "INACT": {
+                    "symbol": "INACT",
+                    "data": [{"period": "2026-06-30", "epsAvg": 1.0, "numberAnalysts": 5}],
+                    "freq": "quarterly",
+                }
             }
-            mock_sdk.company_revenue_estimates.return_value = {
-                "symbol": "INACT",
-                "data": [],
-                "freq": "quarterly",
-            }
+        )
 
-            from alphamind.data_sources.finnhub.estimate_revisions import collect_estimate_revisions
+        from alphamind.data_sources.finnhub.estimate_revisions import collect_estimate_revisions
 
-            collect_estimate_revisions(
-                ticker_scope=None,  # uses asset_universe filter
-                _engine=engine,
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        collect_estimate_revisions(
+            ticker_scope=None,  # uses asset_universe filter
+            _engine=engine,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+            _sdk=sdk,
+        )
 
         rows = session.query(EarningsEstimateRevisions).filter_by(ticker=Symbol("INACT")).all()
         assert rows == [], "Inactive ticker should not produce estimate_revisions rows"
@@ -485,7 +470,7 @@ class TestUniverseFilter:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """With ticker_scope=None, active universe tickers are processed."""
         _run_collect(
@@ -560,7 +545,7 @@ class TestFiscalPeriodMapping:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """When earnings_event_details has a row for (ticker, fiscal_year, fiscal_period),
         that mapping is used for the period date."""
@@ -591,7 +576,7 @@ class TestFiscalPeriodMapping:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """When no earnings_event_details row exists, calendar-quarter mapping is used."""
         # No seed — MSFT has no fiscal calendar entry
@@ -627,25 +612,22 @@ class TestBootstrapEstimateRevisions:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """bootstrap_estimate_revisions() inserts rows with prior_consensus_value=NULL."""
-        with patch("finnhub.Client", autospec=True) as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.company_eps_estimates.return_value = _make_eps_response(
-                "AAPL", [("2026-06-30", 1.5, 10)]
-            )
-            mock_sdk.company_revenue_estimates.return_value = _make_revenue_response("AAPL", [])
+        sdk = FakeFinnhubSDK(
+            eps_estimates_by_symbol={"AAPL": _make_eps_response("AAPL", [("2026-06-30", 1.5, 10)])},
+            revenue_estimates_by_symbol={"AAPL": _make_revenue_response("AAPL", [])},
+        )
 
-            from alphamind.data_sources.finnhub.estimate_revisions import (
-                bootstrap_estimate_revisions,
-            )
+        from alphamind.data_sources.finnhub.estimate_revisions import bootstrap_estimate_revisions
 
-            bootstrap_estimate_revisions(
-                _engine=engine,
-                _session_factory=session_factory,
-                _repo=fake_repo,
-            )
+        bootstrap_estimate_revisions(
+            _engine=engine,
+            _session_factory=session_factory,
+            _repo=fake_repo,
+            _sdk=sdk,
+        )
 
         rows = session.query(EarningsEstimateRevisions).all()
         assert len(rows) > 0
@@ -660,27 +642,28 @@ class TestBootstrapEstimateRevisions:
         session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """Running bootstrap_estimate_revisions() twice does not duplicate rows."""
 
         def _run_bootstrap() -> None:
-            with patch("finnhub.Client", autospec=True) as mock_client:
-                mock_sdk = mock_client.return_value
-                mock_sdk.company_eps_estimates.return_value = _make_eps_response(
-                    "AAPL", [("2026-06-30", 1.5, 10)]
-                )
-                mock_sdk.company_revenue_estimates.return_value = _make_revenue_response("AAPL", [])
+            sdk = FakeFinnhubSDK(
+                eps_estimates_by_symbol={
+                    "AAPL": _make_eps_response("AAPL", [("2026-06-30", 1.5, 10)])
+                },
+                revenue_estimates_by_symbol={"AAPL": _make_revenue_response("AAPL", [])},
+            )
 
-                from alphamind.data_sources.finnhub.estimate_revisions import (
-                    bootstrap_estimate_revisions,
-                )
+            from alphamind.data_sources.finnhub.estimate_revisions import (
+                bootstrap_estimate_revisions,
+            )
 
-                bootstrap_estimate_revisions(
-                    _engine=engine,
-                    _session_factory=session_factory,
-                    _repo=fake_repo,
-                )
+            bootstrap_estimate_revisions(
+                _engine=engine,
+                _session_factory=session_factory,
+                _repo=fake_repo,
+                _sdk=sdk,
+            )
 
         _run_bootstrap()
         count_after_first = session.query(EarningsEstimateRevisions).count()
@@ -700,48 +683,46 @@ class TestBootstrapEstimateRevisions:
 
 class TestFailureRecording:
     def test_sdk_failure_records_failed_run(
-        self, engine: Engine, session_factory: sessionmaker[Session], fake_repo: Any
+        self, engine: Engine, session_factory: sessionmaker[Session], fake_repo: FakeRunRepo
     ) -> None:
         """When the SDK raises, collection_runs records 'failed' and no rows are written."""
-        with patch("finnhub.Client", autospec=True) as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.company_eps_estimates.side_effect = RuntimeError("API down")
-            mock_sdk.company_revenue_estimates.side_effect = RuntimeError("API down")
+        sdk = FakeFinnhubSDK(
+            eps_error=RuntimeError("API down"), revenue_error=RuntimeError("API down")
+        )
 
-            from alphamind.data_sources.finnhub.estimate_revisions import collect_estimate_revisions
+        from alphamind.data_sources.finnhub.estimate_revisions import collect_estimate_revisions
 
-            with pytest.raises(RuntimeError):
-                collect_estimate_revisions(
-                    ticker_scope=["AAPL"],
-                    _engine=engine,
-                    _session_factory=session_factory,
-                    _repo=fake_repo,
-                )
+        with pytest.raises(RuntimeError):
+            collect_estimate_revisions(
+                ticker_scope=["AAPL"],
+                _engine=engine,
+                _session_factory=session_factory,
+                _repo=fake_repo,
+                _sdk=sdk,
+            )
 
-        run = next(iter(fake_repo.rows.values()))
-        assert run["status"] == "failed"
+        assert fake_repo.failed()
 
     def test_sdk_failure_writes_no_data_rows(
         self,
         engine: Engine,
         session_factory: sessionmaker[Session],
         session: Session,
-        fake_repo: Any,
+        fake_repo: FakeRunRepo,
     ) -> None:
         """On failure, no EarningsEstimateRevisions rows are written."""
-        with patch("finnhub.Client", autospec=True) as mock_client:
-            mock_sdk = mock_client.return_value
-            mock_sdk.company_eps_estimates.side_effect = RuntimeError("API down")
+        sdk = FakeFinnhubSDK(eps_error=RuntimeError("API down"))
 
-            from alphamind.data_sources.finnhub.estimate_revisions import collect_estimate_revisions
+        from alphamind.data_sources.finnhub.estimate_revisions import collect_estimate_revisions
 
-            with pytest.raises(RuntimeError):
-                collect_estimate_revisions(
-                    ticker_scope=["AAPL"],
-                    _engine=engine,
-                    _session_factory=session_factory,
-                    _repo=fake_repo,
-                )
+        with pytest.raises(RuntimeError):
+            collect_estimate_revisions(
+                ticker_scope=["AAPL"],
+                _engine=engine,
+                _session_factory=session_factory,
+                _repo=fake_repo,
+                _sdk=sdk,
+            )
 
         rows = session.query(EarningsEstimateRevisions).all()
         assert rows == []
@@ -777,6 +758,8 @@ class TestSchedulerRegistration:
 class TestBootstrapRunAll:
     def test_run_all_invokes_bootstrap_estimate_revisions(self) -> None:
         """run_all() calls bootstrap_estimate_revisions after the calendar bootstraps."""
+        from unittest.mock import patch
+
         calls: list[str] = []
 
         from collections.abc import Callable
@@ -824,6 +807,8 @@ class TestBootstrapRunAll:
 
     def test_bootstrap_estimate_revisions_called_after_calendar(self) -> None:
         """bootstrap_estimate_revisions is called after the calendar bootstraps in step 6."""
+        from unittest.mock import patch
+
         calls: list[str] = []
 
         from collections.abc import Callable
@@ -886,46 +871,61 @@ class TestBootstrapRunAll:
 class TestSdkApiDrift:
     """The fetch helpers must call methods that actually exist on finnhub.Client.
 
-    Uses ``spec=finnhub.Client`` so accessing a non-existent attribute raises
-    AttributeError at test time. Without this, plain MagicMock auto-vivifies
-    any attribute and a typoed/renamed SDK method name slips into production
-    (root cause of ALP-405).
+    Originally guarded by a spec-constrained mock; replaced here by an
+    explicit hasattr check against the real SDK class.  Without this, a
+    typoed/renamed SDK method name would slip into production (root cause
+    of ALP-405).
     """
 
-    def test_fetch_eps_estimates_calls_real_sdk_method(self) -> None:
-        from unittest.mock import MagicMock
-
+    def test_finnhub_sdk_has_company_eps_estimates(self) -> None:
         import finnhub
 
+        assert hasattr(finnhub.Client, "company_eps_estimates"), (
+            "finnhub.Client lost the company_eps_estimates method — production code in "
+            "estimate_revisions._fetch_eps_estimates will break"
+        )
+
+    def test_finnhub_sdk_has_company_revenue_estimates(self) -> None:
+        import finnhub
+
+        assert hasattr(finnhub.Client, "company_revenue_estimates"), (
+            "finnhub.Client lost the company_revenue_estimates method — production code in "
+            "estimate_revisions._fetch_revenue_estimates will break"
+        )
+
+    def test_fetch_eps_estimates_calls_company_eps_estimates(self) -> None:
+        """The fake routes via FinnhubSDK — verifies the method name our fetcher uses."""
         from alphamind.data_sources.finnhub.estimate_revisions import _fetch_eps_estimates
 
-        sdk = MagicMock(spec=finnhub.Client)
-        sdk.company_eps_estimates.return_value = {
-            "data": [{"period": "2026-06-30", "epsAvg": 1.5, "numberAnalysts": 10}],
-            "freq": "quarterly",
-            "symbol": "AAPL",
-        }
+        sdk = FakeFinnhubSDK(
+            eps_estimates_by_symbol={
+                "AAPL": {
+                    "data": [{"period": "2026-06-30", "epsAvg": 1.5, "numberAnalysts": 10}],
+                    "freq": "quarterly",
+                    "symbol": "AAPL",
+                }
+            }
+        )
 
         result = _fetch_eps_estimates(sdk, "AAPL")
 
-        sdk.company_eps_estimates.assert_called_once_with("AAPL")
+        assert sdk.eps_calls == ["AAPL"]
         assert result == [{"period": "2026-06-30", "epsAvg": 1.5, "numberAnalysts": 10}]
 
-    def test_fetch_revenue_estimates_calls_real_sdk_method(self) -> None:
-        from unittest.mock import MagicMock
-
-        import finnhub
-
+    def test_fetch_revenue_estimates_calls_company_revenue_estimates(self) -> None:
         from alphamind.data_sources.finnhub.estimate_revisions import _fetch_revenue_estimates
 
-        sdk = MagicMock(spec=finnhub.Client)
-        sdk.company_revenue_estimates.return_value = {
-            "data": [{"period": "2026-06-30", "revenueAvg": 95e9, "numberAnalysts": 10}],
-            "freq": "quarterly",
-            "symbol": "AAPL",
-        }
+        sdk = FakeFinnhubSDK(
+            revenue_estimates_by_symbol={
+                "AAPL": {
+                    "data": [{"period": "2026-06-30", "revenueAvg": 95e9, "numberAnalysts": 10}],
+                    "freq": "quarterly",
+                    "symbol": "AAPL",
+                }
+            }
+        )
 
         result = _fetch_revenue_estimates(sdk, "AAPL")
 
-        sdk.company_revenue_estimates.assert_called_once_with("AAPL")
+        assert sdk.revenue_calls == ["AAPL"]
         assert result == [{"period": "2026-06-30", "revenueAvg": 95e9, "numberAnalysts": 10}]

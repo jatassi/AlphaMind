@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
@@ -13,6 +12,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.persistence.models import Base, CollectionRuns, MacroObservations
+from tests.data_sources._fakes.fred import FakeFredAPI, make_series_data, make_series_info
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -76,26 +76,9 @@ def mock_repo(engine: Engine) -> Any:
     return Repo()
 
 
-def _make_series_data(dates: list[date], values: list[float]) -> pd.Series:
-    """Build a pandas Series that mimics fredapi.Fred.get_series() output."""
-    return pd.Series(
-        data=values,
-        index=pd.DatetimeIndex([pd.Timestamp(d) for d in dates]),
-    )
-
-
-def _make_series_info(frequency_short: str = "D", units: str = "Percent") -> pd.Series:
-    """Build a pandas Series that mimics fredapi.Fred.get_series_info() output."""
-    return pd.Series(
-        {
-            "id": "DGS10",
-            "title": "10-Year Treasury",
-            "frequency_short": frequency_short,
-            "units": units,
-            "observation_start": "2000-01-01",
-            "observation_end": "2026-04-26",
-        }
-    )
+def _client(series_data: pd.Series, series_info: pd.Series) -> FakeFredAPI:
+    """Build a FakeFredAPI that returns the given Series for every series_id."""
+    return FakeFredAPI(default_series=series_data, default_info=series_info)
 
 
 # ---------------------------------------------------------------------------
@@ -110,17 +93,13 @@ def test_collect_series_writes_macro_observations(
     from alphamind.data_sources.fred.macro import collect_series
 
     obs_dates = [date(2026, 4, 24), date(2026, 4, 25)]
-    series_data = _make_series_data(obs_dates, [4.25, 4.30])
-    series_info = _make_series_info(frequency_short="D", units="Percent")
-
-    mock_client = MagicMock()
-    mock_client.get_series.return_value = series_data
-    mock_client.get_series_info.return_value = series_info
+    series_data = make_series_data(obs_dates, [4.25, 4.30])
+    series_info = make_series_info(frequency_short="D", units="Percent")
 
     collect_series(
         ["DGS10"],
         since=date(2026, 4, 24),
-        client=mock_client,
+        client=_client(series_data, series_info),
         session_factory=session_factory,
         _repo=mock_repo,
     )
@@ -146,17 +125,13 @@ def test_collect_series_sets_frequency_from_metadata(
     """macro_observations.frequency is populated from FRED metadata."""
     from alphamind.data_sources.fred.macro import collect_series
 
-    series_data = _make_series_data([date(2026, 4, 25)], [4.25])
-    series_info = _make_series_info(frequency_short="M", units="Percent")
-
-    mock_client = MagicMock()
-    mock_client.get_series.return_value = series_data
-    mock_client.get_series_info.return_value = series_info
+    series_data = make_series_data([date(2026, 4, 25)], [4.25])
+    series_info = make_series_info(frequency_short="M", units="Percent")
 
     collect_series(
         ["CPIAUCSL"],
         since=date(2026, 4, 1),
-        client=mock_client,
+        client=_client(series_data, series_info),
         session_factory=session_factory,
         _repo=mock_repo,
     )
@@ -197,17 +172,13 @@ def test_collect_series_normalizes_units(
     """macro_observations.units is normalized from verbose FRED units string."""
     from alphamind.data_sources.fred.macro import collect_series
 
-    series_data = _make_series_data([date(2026, 4, 25)], [1.0])
-    series_info = _make_series_info(frequency_short="D", units=fred_units)
-
-    mock_client = MagicMock()
-    mock_client.get_series.return_value = series_data
-    mock_client.get_series_info.return_value = series_info
+    series_data = make_series_data([date(2026, 4, 25)], [1.0])
+    series_info = make_series_info(frequency_short="D", units=fred_units)
 
     collect_series(
         ["TEST"],
         since=date(2026, 4, 25),
-        client=mock_client,
+        client=_client(series_data, series_info),
         session_factory=session_factory,
         _repo=mock_repo,
     )
@@ -247,17 +218,13 @@ def test_collect_series_inserts_revision_when_value_differs(
         sess.commit()
 
     # New pull returns a different value for the same date
-    series_data = _make_series_data([date(2026, 4, 24)], [4.25])
-    series_info = _make_series_info(frequency_short="D", units="Percent")
-
-    mock_client = MagicMock()
-    mock_client.get_series.return_value = series_data
-    mock_client.get_series_info.return_value = series_info
+    series_data = make_series_data([date(2026, 4, 24)], [4.25])
+    series_info = make_series_info(frequency_short="D", units="Percent")
 
     collect_series(
         ["DGS10"],
         since=date(2026, 4, 24),
-        client=mock_client,
+        client=_client(series_data, series_info),
         session_factory=session_factory,
         _repo=mock_repo,
     )
@@ -298,17 +265,13 @@ def test_collect_series_no_revision_when_value_same(
         )
         sess.commit()
 
-    series_data = _make_series_data([date(2026, 4, 24)], [4.25])
-    series_info = _make_series_info(frequency_short="D", units="Percent")
-
-    mock_client = MagicMock()
-    mock_client.get_series.return_value = series_data
-    mock_client.get_series_info.return_value = series_info
+    series_data = make_series_data([date(2026, 4, 24)], [4.25])
+    series_info = make_series_info(frequency_short="D", units="Percent")
 
     collect_series(
         ["DGS10"],
         since=date(2026, 4, 24),
-        client=mock_client,
+        client=_client(series_data, series_info),
         session_factory=session_factory,
         _repo=mock_repo,
     )
@@ -335,26 +298,19 @@ def test_collect_series_idempotent_on_same_window(
     from alphamind.data_sources.fred.macro import collect_series
 
     obs_dates = [date(2026, 4, 24), date(2026, 4, 25)]
-    series_data = _make_series_data(obs_dates, [4.25, 4.30])
-    series_info = _make_series_info(frequency_short="D", units="Percent")
-
-    mock_client = MagicMock()
-    mock_client.get_series.return_value = series_data
-    mock_client.get_series_info.return_value = series_info
+    series_data = make_series_data(obs_dates, [4.25, 4.30])
+    series_info = make_series_info(frequency_short="D", units="Percent")
+    client = _client(series_data, series_info)
 
     kwargs = dict(
         series_ids=["DGS10"],
         since=date(2026, 4, 24),
-        client=mock_client,
+        client=client,
         session_factory=session_factory,
         _repo=mock_repo,
     )
 
     collect_series(**kwargs)
-
-    # Reset mock to return same data
-    mock_client.get_series.return_value = series_data
-    mock_client.get_series_info.return_value = series_info
     collect_series(**kwargs)
 
     with session_factory() as sess:
@@ -375,15 +331,16 @@ def test_collect_series_records_failed_on_full_error(
     """On full failure, collection_runs records 'failed' and no data rows are written."""
     from alphamind.data_sources.fred.macro import collect_series
 
-    mock_client = MagicMock()
-    mock_client.get_series.side_effect = RuntimeError("FRED is down")
-    mock_client.get_series_info.side_effect = RuntimeError("FRED is down")
+    client = FakeFredAPI(
+        series_error=RuntimeError("FRED is down"),
+        info_error=RuntimeError("FRED is down"),
+    )
 
     with pytest.raises(RuntimeError, match="FRED is down"):
         collect_series(
             ["DGS10"],
             since=date(2026, 4, 24),
-            client=mock_client,
+            client=client,
             session_factory=session_factory,
             _repo=mock_repo,
         )
@@ -408,13 +365,14 @@ def test_collect_series_callable_with_no_args(
     """collect_series() is callable with no positional args (cron registry contract)."""
     from alphamind.data_sources.fred.macro import collect_series
 
-    mock_client = MagicMock()
-    mock_client.get_series.return_value = pd.Series(dtype=float)
-    mock_client.get_series_info.return_value = _make_series_info("D", "Percent")
+    client = FakeFredAPI(
+        default_series=pd.Series(dtype=float),
+        default_info=make_series_info("DGS10", "D", "Percent"),
+    )
 
     # No series_ids, no since — must not raise
     collect_series(
-        client=mock_client,
+        client=client,
         session_factory=session_factory,
         _repo=mock_repo,
     )
@@ -435,21 +393,21 @@ def test_bootstrap_series_uses_90_days_for_daily(
     )
     from alphamind.data_sources.fred.series import DAILY_SERIES
 
-    mock_client = MagicMock()
-    mock_client.get_series.return_value = pd.Series(dtype=float)
-    mock_client.get_series_info.return_value = _make_series_info("D", "Percent")
+    client = FakeFredAPI(
+        default_series=pd.Series(dtype=float),
+        default_info=make_series_info("DGS10", "D", "Percent"),
+    )
 
     bootstrap_series(
         daily_series=DAILY_SERIES[:1],  # only one series to keep the test fast
         monthly_series=[],
-        client=mock_client,
+        client=client,
         session_factory=session_factory,
         _repo=mock_repo,
     )
 
-    calls = mock_client.get_series.call_args_list
-    assert len(calls) == 1
-    obs_start = calls[0].kwargs.get("observation_start")
+    assert len(client.get_series_calls) == 1
+    obs_start = client.get_series_calls[0].get("observation_start")
     assert obs_start is not None
     # The since date should be ~90 days in the past (within a 1-day tolerance)
     expected = datetime.now(UTC).date() - timedelta(days=_DAILY_LOOKBACK_DAYS)
@@ -463,21 +421,21 @@ def test_bootstrap_series_uses_24_months_for_monthly(
     from alphamind.data_sources.fred.macro import bootstrap_series
     from alphamind.data_sources.fred.series import MONTHLY_SERIES
 
-    mock_client = MagicMock()
-    mock_client.get_series.return_value = pd.Series(dtype=float)
-    mock_client.get_series_info.return_value = _make_series_info("M", "Percent")
+    client = FakeFredAPI(
+        default_series=pd.Series(dtype=float),
+        default_info=make_series_info("CPIAUCSL", "M", "Index"),
+    )
 
     bootstrap_series(
         daily_series=[],
         monthly_series=MONTHLY_SERIES[:1],
-        client=mock_client,
+        client=client,
         session_factory=session_factory,
         _repo=mock_repo,
     )
 
-    calls = mock_client.get_series.call_args_list
-    assert len(calls) == 1
-    obs_start = calls[0].kwargs.get("observation_start")
+    assert len(client.get_series_calls) == 1
+    obs_start = client.get_series_calls[0].get("observation_start")
     assert obs_start is not None
 
     # 24 months back: obs_start should be around 2 years ago

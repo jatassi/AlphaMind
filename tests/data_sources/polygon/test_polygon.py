@@ -1,14 +1,14 @@
 """
 Tests for src/alphamind/data_sources/polygon/ — story 05a.
 
-All Polygon SDK calls are mocked. No real network traffic.
+All Polygon SDK calls are routed through the FakePolygonAPI implementing
+the PolygonAPI Protocol.  No real network traffic.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -22,6 +22,15 @@ from alphamind.persistence.models import (
     OptionsContractSnapshots,
 )
 from alphamind.persistence.session import make_engine, make_session_factory
+from tests.data_sources._fakes.polygon import (
+    FakePolygonAPI,
+    make_agg,
+    make_dividend,
+    make_option_snapshot,
+    make_split,
+    make_ticker_details,
+)
+from tests.data_sources._fakes.run_repo import FakeRunRepo
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -72,40 +81,31 @@ def _seed_asset_universe(sf: Any, tickers: list[str], benchmarks: list[str]) -> 
         sess.commit()
 
 
-def _fake_repo() -> MagicMock:
-    """Minimal track_run repo stub that records state without DB."""
-    repo = MagicMock()
-    repo.insert_running.return_value = None
-    repo.update_success.return_value = None
-    repo.update_failed.return_value = None
-    return repo
-
-
-def _make_agg(
-    ts: int,
-    o: float = 100.0,
-    h: float = 105.0,
-    lo: float = 99.0,
-    c: float = 102.0,
-    v: int = 1_000_000,
-    vw: float = 101.5,
-    n: int = 5000,
-) -> MagicMock:
-    agg = MagicMock()
-    agg.timestamp = ts
-    agg.open = o
-    agg.high = h
-    agg.low = lo
-    agg.close = c
-    agg.volume = v
-    agg.vwap = vw
-    agg.transactions = n
-    return agg
-
-
 # ---------------------------------------------------------------------------
 # client.py
 # ---------------------------------------------------------------------------
+
+
+class TestProtocolContract:
+    """PolygonClient implements the PolygonAPI Protocol."""
+
+    def test_polygon_client_implements_polygon_api(self) -> None:
+        from alphamind.data_sources.polygon._protocol import PolygonAPI
+        from alphamind.data_sources.polygon.client import PolygonClient
+
+        # Construct without hitting the SDK; we only need attribute presence.
+        client = PolygonClient.__new__(PolygonClient)
+        proto: PolygonAPI = client
+        for name in (
+            "verify_connectivity",
+            "acquire_rate_limit",
+            "get_aggs",
+            "list_snapshot_options_chain",
+            "list_dividends",
+            "list_splits",
+            "get_ticker_details",
+        ):
+            assert hasattr(proto, name), name
 
 
 class TestVerifyConnectivity:
@@ -114,11 +114,15 @@ class TestVerifyConnectivity:
     def test_success(self) -> None:
         from alphamind.data_sources.polygon.client import PolygonClient
 
-        mock_rest = MagicMock()
-        mock_rest.get_market_status.return_value = MagicMock(market="open")
+        class _OkRest:
+            def get_market_status(self) -> Any:
+                class Status:
+                    market = "open"
+
+                return Status()
 
         client = PolygonClient.__new__(PolygonClient)
-        client._rest = mock_rest
+        client._rest = _OkRest()
 
         assert client.verify_connectivity() is True
 
@@ -127,11 +131,12 @@ class TestVerifyConnectivity:
 
         from alphamind.data_sources.polygon.client import PolygonClient
 
-        mock_rest = MagicMock()
-        mock_rest.get_market_status.side_effect = AuthError("unauthorized")
+        class _ForbiddenRest:
+            def get_market_status(self) -> Any:
+                raise AuthError("unauthorized")
 
         client = PolygonClient.__new__(PolygonClient)
-        client._rest = mock_rest
+        client._rest = _ForbiddenRest()
 
         assert client.verify_connectivity() is False
 
@@ -142,12 +147,17 @@ class TestRateLimiterIntegration:
     def test_acquire_called(self) -> None:
         from alphamind.data_sources.polygon.client import PolygonClient
 
-        limiter = MagicMock()
+        acquired: list[str] = []
+
+        class _TrackingLimiter:
+            def acquire(self, provider: str) -> None:
+                acquired.append(provider)
+
         client = PolygonClient.__new__(PolygonClient)
-        client._limiter = limiter
+        client._limiter = _TrackingLimiter()  # type: ignore[assignment]
 
         client.acquire_rate_limit()
-        limiter.acquire.assert_called_once_with("polygon")
+        assert acquired == ["polygon"]
 
 
 # ---------------------------------------------------------------------------
@@ -158,12 +168,9 @@ class TestRateLimiterIntegration:
 class TestCollectUniverseBars:
     """collect_universe_bars writes paired adj/unadj rows to ohlcv_bars."""
 
-    def _make_client(self, adj_aggs: list[Any], unadj_aggs: list[Any]) -> MagicMock:
-        """Return a PolygonClient mock with get_aggs returning adj then unadj."""
-        client = MagicMock()
-        client.get_aggs.side_effect = [adj_aggs, unadj_aggs] * 100  # plenty of calls
-        client.acquire_rate_limit = MagicMock()
-        return client
+    def _make_client(self, adj_aggs: list[Any], unadj_aggs: list[Any]) -> FakePolygonAPI:
+        """Return a FakePolygonAPI with get_aggs returning adj then unadj per call."""
+        return FakePolygonAPI(aggs_responses=[adj_aggs, unadj_aggs])
 
     def test_writes_rows_for_each_ticker_timeframe(self) -> None:
         from alphamind.data_sources.polygon import equity
@@ -172,11 +179,10 @@ class TestCollectUniverseBars:
         _seed_asset_universe(sf, TICKERS, [])
 
         ts = int(datetime(2026, 4, 25, 14, 30, tzinfo=UTC).timestamp() * 1000)
-        adj_agg = _make_agg(ts)
-        unadj_agg = _make_agg(ts, o=99.0, h=104.0, lo=98.0, c=101.0)
+        adj_agg = make_agg(ts)
+        unadj_agg = make_agg(ts, o=99.0, h=104.0, lo=98.0, c=101.0)
 
         client = self._make_client([adj_agg], [unadj_agg])
-        repo = _fake_repo()
 
         since = datetime(2026, 4, 24, tzinfo=UTC)
         equity.collect_universe_bars(
@@ -185,7 +191,7 @@ class TestCollectUniverseBars:
             since=since,
             _client=client,
             _session_factory=sf,
-            _repo=repo,
+            _repo=FakeRunRepo(),
         )
 
         with sf() as sess:
@@ -205,14 +211,11 @@ class TestCollectUniverseBars:
         _seed_asset_universe(sf, TICKERS, [])
 
         ts = int(datetime(2026, 4, 25, 14, 30, tzinfo=UTC).timestamp() * 1000)
-        adj_agg = _make_agg(ts)
-        unadj_agg = _make_agg(ts, o=99.0)
+        adj_agg = make_agg(ts)
+        unadj_agg = make_agg(ts, o=99.0)
 
-        def _fresh_client() -> MagicMock:
-            c = MagicMock()
-            c.get_aggs.side_effect = [[adj_agg], [unadj_agg]] * 100
-            c.acquire_rate_limit = MagicMock()
-            return c
+        def _fresh_client() -> FakePolygonAPI:
+            return FakePolygonAPI(aggs_responses=[[adj_agg], [unadj_agg]])
 
         since = datetime(2026, 4, 24, tzinfo=UTC)
         equity.collect_universe_bars(
@@ -221,7 +224,7 @@ class TestCollectUniverseBars:
             since=since,
             _client=_fresh_client(),
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )
         equity.collect_universe_bars(
             ticker_scope=TICKERS,
@@ -229,7 +232,7 @@ class TestCollectUniverseBars:
             since=since,
             _client=_fresh_client(),
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )
 
         with sf() as sess:
@@ -245,12 +248,7 @@ class TestCollectUniverseBars:
 
         ts = int(datetime(2026, 4, 25, 14, 30, tzinfo=UTC).timestamp() * 1000)
 
-        client = MagicMock()
-        client.get_aggs.side_effect = [
-            [_make_agg(ts)],  # adj
-            [_make_agg(ts, o=99.0)],  # unadj
-        ] * 100
-        client.acquire_rate_limit = MagicMock()
+        client = FakePolygonAPI(aggs_responses=[[make_agg(ts)], [make_agg(ts, o=99.0)]])
 
         equity.collect_universe_bars(
             ticker_scope=TICKERS + BENCHMARKS,
@@ -258,7 +256,7 @@ class TestCollectUniverseBars:
             since=datetime(2026, 4, 24, tzinfo=UTC),
             _client=client,
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )
 
         with sf() as sess:
@@ -273,11 +271,11 @@ class TestCollectUniverseBars:
         sf, _ = _make_db()
         _seed_asset_universe(sf, ["AAPL"], [])
 
-        client = MagicMock()
-        client.get_aggs.side_effect = BadResponse("API down")
-        client.acquire_rate_limit = MagicMock()
+        def boom(**_kwargs: Any) -> list[Any]:
+            raise BadResponse("API down")
 
-        repo = _fake_repo()
+        client = FakePolygonAPI(aggs_handler=boom)
+        repo = FakeRunRepo()
 
         with pytest.raises(BadResponse):
             equity.collect_universe_bars(
@@ -289,7 +287,7 @@ class TestCollectUniverseBars:
                 _repo=repo,
             )
 
-        repo.update_failed.assert_called_once()
+        assert repo.failed()
         with sf() as sess:
             assert sess.query(OhlcvBars).count() == 0
 
@@ -301,9 +299,7 @@ class TestCollectUniverseBars:
         _seed_asset_universe(sf, ["AAPL"], [])
 
         ts = int(datetime(2026, 4, 25, 14, 30, tzinfo=UTC).timestamp() * 1000)
-        client = MagicMock()
-        client.get_aggs.side_effect = [[_make_agg(ts)], [_make_agg(ts, o=99.0)]] * 10
-        client.acquire_rate_limit = MagicMock()
+        client = FakePolygonAPI(aggs_responses=[[make_agg(ts)], [make_agg(ts, o=99.0)]])
 
         equity.collect_universe_bars(
             ticker_scope=["AAPL"],
@@ -311,7 +307,7 @@ class TestCollectUniverseBars:
             since=datetime(2026, 4, 24, tzinfo=UTC),
             _client=client,
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )
 
         with sf() as sess:
@@ -326,9 +322,7 @@ class TestCollectUniverseBars:
         _seed_asset_universe(sf, ["AAPL"], [])
 
         ts = int(datetime(2026, 4, 25, 10, 0, tzinfo=UTC).timestamp() * 1000)
-        client = MagicMock()
-        client.get_aggs.side_effect = [[_make_agg(ts)], [_make_agg(ts, o=99.0)]] * 10
-        client.acquire_rate_limit = MagicMock()
+        client = FakePolygonAPI(aggs_responses=[[make_agg(ts)], [make_agg(ts, o=99.0)]])
 
         equity.collect_universe_bars(
             ticker_scope=["AAPL"],
@@ -336,7 +330,7 @@ class TestCollectUniverseBars:
             since=datetime(2026, 4, 24, tzinfo=UTC),
             _client=client,
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )
 
         with sf() as sess:
@@ -352,9 +346,7 @@ class TestCollectUniverseBars:
 
         # Polygon emits daily bars at midnight ET (= 04:00 UTC)
         ts = int(datetime(2026, 4, 25, 4, 0, tzinfo=UTC).timestamp() * 1000)
-        client = MagicMock()
-        client.get_aggs.side_effect = [[_make_agg(ts)], [_make_agg(ts, o=99.0)]] * 10
-        client.acquire_rate_limit = MagicMock()
+        client = FakePolygonAPI(aggs_responses=[[make_agg(ts)], [make_agg(ts, o=99.0)]])
 
         equity.collect_universe_bars(
             ticker_scope=["AAPL"],
@@ -362,7 +354,7 @@ class TestCollectUniverseBars:
             since=datetime(2026, 4, 24, tzinfo=UTC),
             _client=client,
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )
 
         with sf() as sess:
@@ -381,18 +373,16 @@ class TestCollectUniverseBars:
         ts = int(datetime(2026, 4, 25, 14, 30, tzinfo=UTC).timestamp() * 1000)
         call_count = [0]
 
-        def _side_effect(*args: Any, **kwargs: Any) -> list[Any]:
+        def _handler(**_kwargs: Any) -> list[Any]:
             call_count[0] += 1
             # First two calls (AAPL adj+unadj) succeed; third (MSFT adj) fails
             if call_count[0] <= 2:
-                return [_make_agg(ts)]
+                return [make_agg(ts)]
             raise BadResponse("MSFT failed")
 
-        client = MagicMock()
-        client.get_aggs.side_effect = _side_effect
-        client.acquire_rate_limit = MagicMock()
+        client = FakePolygonAPI(aggs_handler=_handler)
 
-        repo = _fake_repo()
+        repo = FakeRunRepo()
         equity.collect_universe_bars(
             ticker_scope=["AAPL", "MSFT"],
             timeframes=["1d"],
@@ -408,7 +398,7 @@ class TestCollectUniverseBars:
         assert "AAPL" in tickers_in_db
         assert "MSFT" not in tickers_in_db
 
-        repo.update_success.assert_called_once()
+        assert repo.succeeded()
 
 
 class TestBootstrapUniverseBars:
@@ -420,88 +410,22 @@ class TestBootstrapUniverseBars:
         sf, _ = _make_db()
         _seed_asset_universe(sf, TICKERS, BENCHMARKS)
 
-        client = MagicMock()
-        client.get_aggs.return_value = []
-        client.acquire_rate_limit = MagicMock()
+        client = FakePolygonAPI()  # default: empty aggs
 
-        repo = _fake_repo()
         equity.bootstrap_universe_bars(
             _client=client,
             _session_factory=sf,
-            _repo=repo,
+            _repo=FakeRunRepo(),
         )
 
         # get_aggs should be called 5 timeframes * (len(TICKERS)+len(BENCHMARKS)) * 2 (adj+unadj)
         expected_calls = 5 * (len(TICKERS) + len(BENCHMARKS)) * 2
-        assert client.get_aggs.call_count == expected_calls
+        assert len(client.aggs_calls) == expected_calls
 
 
 # ---------------------------------------------------------------------------
 # options.py
 # ---------------------------------------------------------------------------
-
-
-_SNAP_DEFAULTS = {
-    "contract_ticker": "O:AAPL260117C00200000",
-    "underlying": "AAPL",
-    "exp_date": "2026-01-17",
-    "strike": 200.0,
-    "contract_type": "call",
-    "oi": 1000,
-    "volume": 500,
-    "bid": 5.0,
-    "ask": 5.5,
-    "iv": 0.30,
-    "delta": 0.45,
-    "gamma": 0.02,
-    "theta": -0.05,
-    "vega": 0.10,
-    "rho": 0.01,
-    "underlying_price": 195.0,
-}
-
-
-def _make_option_snapshot(**overrides: Any) -> MagicMock:
-    """Build a mock OptionContractSnapshot with sensible defaults."""
-    v = {**_SNAP_DEFAULTS, **overrides}
-    snap = MagicMock()
-
-    details = MagicMock()
-    details.ticker = v["contract_ticker"]
-    details.expiration_date = v["exp_date"]
-    details.strike_price = v["strike"]
-    details.contract_type = v["contract_type"]
-    snap.details = details
-
-    greeks = MagicMock()
-    greeks.delta = v["delta"]
-    greeks.gamma = v["gamma"]
-    greeks.theta = v["theta"]
-    greeks.vega = v["vega"]
-    snap.greeks = greeks
-    snap.implied_volatility = v["iv"]
-    snap.open_interest = v["oi"]
-
-    day = MagicMock()
-    day.volume = v["volume"]
-    snap.day = day
-
-    last_quote = MagicMock()
-    last_quote.bid = v["bid"]
-    last_quote.ask = v["ask"]
-    snap.last_quote = last_quote
-
-    last_trade = MagicMock()
-    last_trade.price = (v["bid"] + v["ask"]) / 2
-    snap.last_trade = last_trade
-
-    underlying_asset = MagicMock()
-    underlying_asset.price = v["underlying_price"]
-    underlying_asset.ticker = v["underlying"]
-    snap.underlying_asset = underlying_asset
-
-    snap.rho = v["rho"]
-    return snap
 
 
 class TestCollectOptionsChains:
@@ -511,16 +435,14 @@ class TestCollectOptionsChains:
         sf, _ = _make_db()
         _seed_asset_universe(sf, ["AAPL"], [])
 
-        snap = _make_option_snapshot()
-        client = MagicMock()
-        client.list_snapshot_options_chain.return_value = [snap]
-        client.acquire_rate_limit = MagicMock()
+        snap = make_option_snapshot()
+        client = FakePolygonAPI(snapshots_by_underlying={"AAPL": [snap]})
 
         options.collect_options_chains(
             ticker_scope=["AAPL"],
             _client=client,
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )
 
         with sf() as sess:
@@ -539,17 +461,14 @@ class TestCollectOptionsChains:
         sf, _ = _make_db()
         _seed_asset_universe(sf, ["AAPL"], [])
 
-        snap = _make_option_snapshot()
-        client = MagicMock()
-        client.list_snapshot_options_chain.return_value = [snap]
-        client.acquire_rate_limit = MagicMock()
+        snap = make_option_snapshot()
+        client = FakePolygonAPI(snapshots_by_underlying={"AAPL": [snap]})
 
-        repo = _fake_repo()
         options.collect_options_chains(
             ticker_scope=["AAPL"],
             _client=client,
             _session_factory=sf,
-            _repo=repo,
+            _repo=FakeRunRepo(),
         )
 
         with sf() as sess:
@@ -560,7 +479,7 @@ class TestCollectOptionsChains:
             ticker_scope=["AAPL"],
             _client=client,
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )
 
         with sf() as sess:
@@ -575,10 +494,8 @@ class TestCollectOptionsChains:
         sf, _ = _make_db()
         _seed_asset_universe(sf, ["AAPL"], [])
 
-        snap = _make_option_snapshot()
-        client = MagicMock()
-        client.list_snapshot_options_chain.return_value = [snap]
-        client.acquire_rate_limit = MagicMock()
+        snap = make_option_snapshot()
+        client = FakePolygonAPI(snapshots_by_underlying={"AAPL": [snap]})
 
         fixed_ts = "2026-04-26T12:00:00Z"
 
@@ -586,14 +503,14 @@ class TestCollectOptionsChains:
             ticker_scope=["AAPL"],
             _client=client,
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
             _snapshot_ts=fixed_ts,
         )
         options.collect_options_chains(
             ticker_scope=["AAPL"],
             _client=client,
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
             _snapshot_ts=fixed_ts,
         )
 
@@ -609,11 +526,12 @@ class TestCollectOptionsChains:
         sf, _ = _make_db()
         _seed_asset_universe(sf, ["AAPL"], [])
 
-        client = MagicMock()
-        client.list_snapshot_options_chain.side_effect = BadResponse("down")
-        client.acquire_rate_limit = MagicMock()
+        class _BadClient(FakePolygonAPI):
+            def list_snapshot_options_chain(self, underlying: str) -> list[Any]:
+                raise BadResponse("down")
 
-        repo = _fake_repo()
+        client = _BadClient()
+        repo = FakeRunRepo()
         with pytest.raises(BadResponse):
             options.collect_options_chains(
                 ticker_scope=["AAPL"],
@@ -622,7 +540,7 @@ class TestCollectOptionsChains:
                 _repo=repo,
             )
 
-        repo.update_failed.assert_called_once()
+        assert repo.failed()
         with sf() as sess:
             assert sess.query(OptionsContracts).count() == 0
 
@@ -632,44 +550,6 @@ class TestCollectOptionsChains:
 # ---------------------------------------------------------------------------
 
 
-def _make_dividend(
-    ticker: str = "AAPL",
-    div_id: str = "D001",
-    cash_amount: float = 0.25,
-    ex_date: str = "2026-03-01",
-    record_date: str = "2026-03-02",
-    pay_date: str = "2026-03-15",
-    declaration_date: str = "2026-02-15",
-    dividend_type: str = "CD",
-) -> MagicMock:
-    d = MagicMock()
-    d.id = div_id
-    d.ticker = ticker
-    d.cash_amount = cash_amount
-    d.ex_dividend_date = ex_date
-    d.record_date = record_date
-    d.pay_date = pay_date
-    d.declaration_date = declaration_date
-    d.dividend_type = dividend_type
-    return d
-
-
-def _make_split(
-    ticker: str = "AAPL",
-    split_id: str = "S001",
-    execution_date: str = "2026-02-01",
-    split_from: float = 1.0,
-    split_to: float = 4.0,
-) -> MagicMock:
-    s = MagicMock()
-    s.id = split_id
-    s.ticker = ticker
-    s.execution_date = execution_date
-    s.split_from = split_from
-    s.split_to = split_to
-    return s
-
-
 class TestCollectCorporateActions:
     def test_writes_dividend_row(self) -> None:
         from alphamind.data_sources.polygon import corporate_actions
@@ -677,17 +557,13 @@ class TestCollectCorporateActions:
         sf, _ = _make_db()
         _seed_asset_universe(sf, ["AAPL"], [])
 
-        div = _make_dividend()
-        client = MagicMock()
-        client.list_dividends.return_value = iter([div])
-        client.list_splits.return_value = iter([])
-        client.acquire_rate_limit = MagicMock()
+        client = FakePolygonAPI(dividends_by_ticker={"AAPL": [make_dividend()]})
 
         corporate_actions.collect_corporate_actions(
             ticker_scope=["AAPL"],
             _client=client,
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )
 
         with sf() as sess:
@@ -703,17 +579,13 @@ class TestCollectCorporateActions:
         sf, _ = _make_db()
         _seed_asset_universe(sf, ["AAPL"], [])
 
-        split = _make_split()
-        client = MagicMock()
-        client.list_dividends.return_value = iter([])
-        client.list_splits.return_value = iter([split])
-        client.acquire_rate_limit = MagicMock()
+        client = FakePolygonAPI(splits_by_ticker={"AAPL": [make_split()]})
 
         corporate_actions.collect_corporate_actions(
             ticker_scope=["AAPL"],
             _client=client,
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )
 
         with sf() as sess:
@@ -728,20 +600,22 @@ class TestCollectCorporateActions:
         sf, _ = _make_db()
         _seed_asset_universe(sf, ["AAPL"], [])
 
-        div = _make_dividend()
+        div = make_dividend()
 
-        def _make_client() -> MagicMock:
-            c = MagicMock()
-            c.list_dividends.return_value = iter([div])
-            c.list_splits.return_value = iter([])
-            c.acquire_rate_limit = MagicMock()
-            return c
+        def _make_client() -> FakePolygonAPI:
+            return FakePolygonAPI(dividends_by_ticker={"AAPL": [div]})
 
         corporate_actions.collect_corporate_actions(
-            ticker_scope=["AAPL"], _client=_make_client(), _session_factory=sf, _repo=_fake_repo()
+            ticker_scope=["AAPL"],
+            _client=_make_client(),
+            _session_factory=sf,
+            _repo=FakeRunRepo(),
         )
         corporate_actions.collect_corporate_actions(
-            ticker_scope=["AAPL"], _client=_make_client(), _session_factory=sf, _repo=_fake_repo()
+            ticker_scope=["AAPL"],
+            _client=_make_client(),
+            _session_factory=sf,
+            _repo=FakeRunRepo(),
         )
 
         with sf() as sess:
@@ -755,11 +629,14 @@ class TestCollectCorporateActions:
         sf, _ = _make_db()
         _seed_asset_universe(sf, ["AAPL"], [])
 
-        client = MagicMock()
-        client.list_dividends.side_effect = BadResponse("down")
-        client.acquire_rate_limit = MagicMock()
+        class _BadClient(FakePolygonAPI):
+            def list_dividends(
+                self, ticker: str, ex_dividend_date_gte: str | None = None
+            ) -> list[Any]:
+                raise BadResponse("down")
 
-        repo = _fake_repo()
+        client = _BadClient()
+        repo = FakeRunRepo()
         with pytest.raises(BadResponse):
             corporate_actions.collect_corporate_actions(
                 ticker_scope=["AAPL"],
@@ -768,7 +645,7 @@ class TestCollectCorporateActions:
                 _repo=repo,
             )
 
-        repo.update_failed.assert_called_once()
+        assert repo.failed()
         with sf() as sess:
             assert sess.query(CorporateActions).count() == 0
 
@@ -778,40 +655,21 @@ class TestCollectCorporateActions:
         sf, _ = _make_db()
         _seed_asset_universe(sf, TICKERS, [])
 
-        client = MagicMock()
-        client.list_dividends.return_value = iter([])
-        client.list_splits.return_value = iter([])
-        client.acquire_rate_limit = MagicMock()
+        client = FakePolygonAPI()  # empty dividends/splits
 
-        repo = _fake_repo()
+        repo = FakeRunRepo()
         corporate_actions.bootstrap_corporate_actions(
             _client=client, _session_factory=sf, _repo=repo
         )
 
         # list_dividends and list_splits each called once per ticker
-        assert client.list_dividends.call_count == len(TICKERS)
-        assert client.list_splits.call_count == len(TICKERS)
+        assert len(client.dividend_calls) == len(TICKERS)
+        assert len(client.split_calls) == len(TICKERS)
 
 
 # ---------------------------------------------------------------------------
 # reference.py
 # ---------------------------------------------------------------------------
-
-
-def _make_ticker_details(
-    ticker: str = "AAPL",
-    market_cap: float = 3_000_000_000_000.0,
-    shares_outstanding: int = 15_000_000_000,
-    float_shares: int = 14_800_000_000,
-    name: str = "Apple Inc.",
-) -> MagicMock:
-    td = MagicMock()
-    td.ticker = ticker
-    td.market_cap = market_cap
-    td.weighted_shares_outstanding = shares_outstanding
-    td.share_class_shares_outstanding = float_shares
-    td.name = name
-    return td
 
 
 class TestCollectReference:
@@ -821,16 +679,13 @@ class TestCollectReference:
         sf, _ = _make_db()
         _seed_asset_universe(sf, ["AAPL"], [])
 
-        td = _make_ticker_details()
-        client = MagicMock()
-        client.get_ticker_details.return_value = td
-        client.acquire_rate_limit = MagicMock()
+        client = FakePolygonAPI(ticker_details={"AAPL": make_ticker_details()})
 
         reference.collect_reference(
             ticker_scope=["AAPL"],
             _client=client,
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )
 
         with sf() as sess:
@@ -845,16 +700,14 @@ class TestCollectReference:
         sf, _ = _make_db()
         _seed_asset_universe(sf, [], ["SPY"])
 
-        td = _make_ticker_details(ticker=Symbol("SPY"), market_cap=500_000_000_000.0)
-        client = MagicMock()
-        client.get_ticker_details.return_value = td
-        client.acquire_rate_limit = MagicMock()
+        details = make_ticker_details(ticker="SPY", market_cap=500_000_000_000.0)
+        client = FakePolygonAPI(ticker_details={"SPY": details})
 
         reference.collect_reference(
             ticker_scope=["SPY"],
             _client=client,
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )
 
         with sf() as sess:
@@ -868,16 +721,13 @@ class TestCollectReference:
         sf, _ = _make_db()
         _seed_asset_universe(sf, ["AAPL"], [])
 
-        td = _make_ticker_details()
-        client = MagicMock()
-        client.get_ticker_details.return_value = td
-        client.acquire_rate_limit = MagicMock()
+        client = FakePolygonAPI(ticker_details={"AAPL": make_ticker_details()})
 
         reference.collect_reference(
-            ticker_scope=["AAPL"], _client=client, _session_factory=sf, _repo=_fake_repo()
+            ticker_scope=["AAPL"], _client=client, _session_factory=sf, _repo=FakeRunRepo()
         )
         reference.collect_reference(
-            ticker_scope=["AAPL"], _client=client, _session_factory=sf, _repo=_fake_repo()
+            ticker_scope=["AAPL"], _client=client, _session_factory=sf, _repo=FakeRunRepo()
         )
 
         with sf() as sess:
@@ -893,11 +743,13 @@ class TestCollectReference:
         sf, _ = _make_db()
         _seed_asset_universe(sf, ["AAPL"], [])
 
-        client = MagicMock()
-        client.get_ticker_details.side_effect = BadResponse("down")
-        client.acquire_rate_limit = MagicMock()
+        class _BadClient(FakePolygonAPI):
+            def get_ticker_details(self, ticker: str) -> Any:
+                raise BadResponse("down")
 
-        repo = _fake_repo()
+        client = _BadClient()
+
+        repo = FakeRunRepo()
         with pytest.raises(BadResponse):
             reference.collect_reference(
                 ticker_scope=["AAPL"],
@@ -906,7 +758,7 @@ class TestCollectReference:
                 _repo=repo,
             )
 
-        repo.update_failed.assert_called_once()
+        assert repo.failed()
 
 
 # ---------------------------------------------------------------------------
@@ -918,31 +770,6 @@ class TestNoArgsCallability:
     """Each collector is callable with no positional args when client +
     session_factory are injected and the DB is seeded."""
 
-    def _make_equity_client(self) -> MagicMock:
-        client = MagicMock()
-        client.get_aggs.return_value = []
-        client.acquire_rate_limit = MagicMock()
-        return client
-
-    def _make_options_client(self) -> MagicMock:
-        client = MagicMock()
-        client.list_snapshot_options_chain.return_value = []
-        client.acquire_rate_limit = MagicMock()
-        return client
-
-    def _make_corporate_client(self) -> MagicMock:
-        client = MagicMock()
-        client.list_dividends.return_value = iter([])
-        client.list_splits.return_value = iter([])
-        client.acquire_rate_limit = MagicMock()
-        return client
-
-    def _make_reference_client(self) -> MagicMock:
-        client = MagicMock()
-        client.get_ticker_details.return_value = _make_ticker_details()
-        client.acquire_rate_limit = MagicMock()
-        return client
-
     def test_collect_universe_bars_no_args(self) -> None:
         from alphamind.data_sources.polygon import equity
 
@@ -950,9 +777,9 @@ class TestNoArgsCallability:
         _seed_asset_universe(sf, TICKERS, BENCHMARKS)
 
         equity.collect_universe_bars(
-            _client=self._make_equity_client(),
+            _client=FakePolygonAPI(),
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )
 
     def test_collect_options_chains_no_args(self) -> None:
@@ -962,9 +789,9 @@ class TestNoArgsCallability:
         _seed_asset_universe(sf, TICKERS, BENCHMARKS)
 
         options.collect_options_chains(
-            _client=self._make_options_client(),
+            _client=FakePolygonAPI(),
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )
 
     def test_collect_corporate_actions_no_args(self) -> None:
@@ -974,9 +801,9 @@ class TestNoArgsCallability:
         _seed_asset_universe(sf, TICKERS, BENCHMARKS)
 
         corporate_actions.collect_corporate_actions(
-            _client=self._make_corporate_client(),
+            _client=FakePolygonAPI(),
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )
 
     def test_collect_reference_no_args(self) -> None:
@@ -985,8 +812,11 @@ class TestNoArgsCallability:
         sf, _ = _make_db()
         _seed_asset_universe(sf, TICKERS, BENCHMARKS)
 
+        details = make_ticker_details()
+        client = FakePolygonAPI(ticker_details={t: details for t in TICKERS + BENCHMARKS})
+
         reference.collect_reference(
-            _client=self._make_reference_client(),
+            _client=client,
             _session_factory=sf,
-            _repo=_fake_repo(),
+            _repo=FakeRunRepo(),
         )

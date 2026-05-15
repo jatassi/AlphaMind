@@ -1,20 +1,21 @@
 """
 Tests for ``src/alphamind/data_sources/prediction_market/kalshi/contracts.py``.
 
-All HTTP calls are mocked — no real network traffic.
+All Kalshi calls go through FakeKalshiAPI — no real network traffic.
 Tests use an in-memory SQLite database.
 """
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.persistence.models import Base, PredictionMarketContracts, PredictionMarketSnapshots
 from alphamind.persistence.session import make_engine, make_session_factory
+from tests.data_sources._fakes.prediction_market.kalshi import FakeKalshiAPI
+from tests.data_sources._fakes.run_repo import FakeRunRepo
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -80,12 +81,12 @@ def _make_markets_payload(
     return {"markets": [market]}
 
 
-def _make_mock_client(
+def _make_client(
     events_payload: dict[str, Any], markets_payloads: dict[str, dict[str, Any]]
-) -> MagicMock:
-    """Build a mock KalshiClient that returns given payloads."""
+) -> FakeKalshiAPI:
+    """Build a FakeKalshiAPI that returns given payloads."""
 
-    def fake_get(path: str, **params: Any) -> dict[str, Any]:
+    def handler(path: str, **params: Any) -> dict[str, Any]:
         if path == "/events":
             return events_payload
         if path == "/markets":
@@ -93,9 +94,7 @@ def _make_mock_client(
             return markets_payloads.get(st, {"markets": []})
         return {}
 
-    client = MagicMock()
-    client.get.side_effect = fake_get
-    return client
+    return FakeKalshiAPI(get_handler=handler)
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +109,7 @@ class TestCollectSnapshots:
         """Contracts derive canonical category from event.category + market.title."""
         from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
-        client = _make_mock_client(
+        client = _make_client(
             _make_events_payload(series=[("KXFED", "Politics")]),
             {
                 "KXFED": _make_markets_payload(
@@ -121,11 +120,7 @@ class TestCollectSnapshots:
             },
         )
 
-        repo = MagicMock()
-        repo.insert_running.return_value = None
-        repo.update_success.return_value = None
-
-        collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
+        collect_snapshots(client=client, session_factory=session_factory, _repo=FakeRunRepo())
 
         with session_factory() as sess:
             contracts = sess.query(PredictionMarketContracts).all()
@@ -140,7 +135,7 @@ class TestCollectSnapshots:
         """Events with off-topic event.category short-circuit to 'other'."""
         from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
-        client = _make_mock_client(
+        client = _make_client(
             _make_events_payload(series=[("KXSPORTS", "Sports")]),
             {
                 "KXSPORTS": _make_markets_payload(
@@ -151,11 +146,7 @@ class TestCollectSnapshots:
             },
         )
 
-        repo = MagicMock()
-        repo.insert_running.return_value = None
-        repo.update_success.return_value = None
-
-        collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
+        collect_snapshots(client=client, session_factory=session_factory, _repo=FakeRunRepo())
 
         with session_factory() as sess:
             contracts = sess.query(PredictionMarketContracts).all()
@@ -167,7 +158,7 @@ class TestCollectSnapshots:
     ) -> None:
         from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
-        client = _make_mock_client(
+        client = _make_client(
             _make_events_payload(series=[("KXPRES", "Elections")]),
             {
                 "KXPRES": _make_markets_payload(
@@ -178,11 +169,7 @@ class TestCollectSnapshots:
             },
         )
 
-        repo = MagicMock()
-        repo.insert_running.return_value = None
-        repo.update_success.return_value = None
-
-        collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
+        collect_snapshots(client=client, session_factory=session_factory, _repo=FakeRunRepo())
 
         with session_factory() as sess:
             contracts = sess.query(PredictionMarketContracts).all()
@@ -193,15 +180,12 @@ class TestCollectSnapshots:
     ) -> None:
         from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
-        client = _make_mock_client(
+        client = _make_client(
             _make_events_payload(),
             {"KXFED": _make_markets_payload("KXFED", "KXFED-001", yes_bid=60, yes_ask=70)},
         )
-        repo = MagicMock()
-        repo.insert_running.return_value = None
-        repo.update_success.return_value = None
 
-        collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
+        collect_snapshots(client=client, session_factory=session_factory, _repo=FakeRunRepo())
 
         with session_factory() as sess:
             snap = sess.query(PredictionMarketSnapshots).first()
@@ -211,15 +195,12 @@ class TestCollectSnapshots:
     def test_snapshot_bid_ask_in_dollars(self, session_factory: sessionmaker[Session]) -> None:
         from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
-        client = _make_mock_client(
+        client = _make_client(
             _make_events_payload(),
             {"KXFED": _make_markets_payload("KXFED", "KXFED-001", yes_bid=60, yes_ask=70)},
         )
-        repo = MagicMock()
-        repo.insert_running.return_value = None
-        repo.update_success.return_value = None
 
-        collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
+        collect_snapshots(client=client, session_factory=session_factory, _repo=FakeRunRepo())
 
         with session_factory() as sess:
             snap = sess.query(PredictionMarketSnapshots).first()
@@ -234,7 +215,7 @@ class TestCollectSnapshots:
     ) -> None:
         from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
-        client = _make_mock_client(
+        client = _make_client(
             _make_events_payload(),
             {
                 "KXFED": _make_markets_payload(
@@ -242,11 +223,8 @@ class TestCollectSnapshots:
                 )
             },
         )
-        repo = MagicMock()
-        repo.insert_running.return_value = None
-        repo.update_success.return_value = None
 
-        collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
+        collect_snapshots(client=client, session_factory=session_factory, _repo=FakeRunRepo())
 
         with session_factory() as sess:
             contract = sess.query(PredictionMarketContracts).first()
@@ -258,7 +236,7 @@ class TestCollectSnapshots:
     ) -> None:
         from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
-        client = _make_mock_client(
+        client = _make_client(
             _make_events_payload(series=[("KXPRES", "Elections")]),
             {
                 "KXPRES": _make_markets_payload(
@@ -270,11 +248,8 @@ class TestCollectSnapshots:
                 )
             },
         )
-        repo = MagicMock()
-        repo.insert_running.return_value = None
-        repo.update_success.return_value = None
 
-        collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
+        collect_snapshots(client=client, session_factory=session_factory, _repo=FakeRunRepo())
 
         with session_factory() as sess:
             contract = sess.query(PredictionMarketContracts).first()
@@ -284,24 +259,21 @@ class TestCollectSnapshots:
     def test_no_duplicate_snapshots_on_rerun(self, session_factory: sessionmaker[Session]) -> None:
         from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
-        client = _make_mock_client(
+        client = _make_client(
             _make_events_payload(),
             {"KXFED": _make_markets_payload("KXFED", "KXFED-001")},
         )
-        repo = MagicMock()
-        repo.insert_running.return_value = None
-        repo.update_success.return_value = None
 
         collect_snapshots(
             client=client,
             session_factory=session_factory,
-            _repo=repo,
+            _repo=FakeRunRepo(),
             _snapshot_ts="2024-06-01T12:00:00+00:00",
         )
         collect_snapshots(
             client=client,
             session_factory=session_factory,
-            _repo=repo,
+            _repo=FakeRunRepo(),
             _snapshot_ts="2024-06-01T12:00:00+00:00",
         )
 
@@ -314,17 +286,13 @@ class TestCollectSnapshots:
     ) -> None:
         from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
-        client = MagicMock()
-        client.get.side_effect = RuntimeError("network error")
-
-        repo = MagicMock()
-        repo.insert_running.return_value = None
-        repo.update_failed.return_value = None
+        client = FakeKalshiAPI(error=RuntimeError("network error"))
+        repo = FakeRunRepo()
 
         with pytest.raises(RuntimeError, match="network error"):
             collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
 
-        repo.update_failed.assert_called_once()
+        assert repo.failed()
         with session_factory() as sess:
             assert sess.query(PredictionMarketContracts).count() == 0
             assert sess.query(PredictionMarketSnapshots).count() == 0
@@ -343,9 +311,7 @@ class TestNoArgsCallable:
         Base.metadata.create_all(engine)
         sf = make_session_factory(engine)
 
-        mock_client = _make_mock_client({"events": []}, {})
-        repo = MagicMock()
-        repo.insert_running.return_value = None
-        repo.update_success.return_value = None
+        # Empty events response → no markets to process
+        client = FakeKalshiAPI(responses={"/events": {"events": []}})
 
-        collect_snapshots(client=mock_client, session_factory=sf, _repo=repo)
+        collect_snapshots(client=client, session_factory=sf, _repo=FakeRunRepo())

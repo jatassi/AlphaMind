@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import httpx
-
-from alphamind.data_sources.treasury.client import TreasuryClient
 
 
 class TestVerifyConnectivity:
@@ -14,16 +12,19 @@ class TestVerifyConnectivity:
 
     def test_returns_true_on_success(self) -> None:
         """verify_connectivity returns True when the API responds 200."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.raise_for_status = MagicMock()
+        from alphamind.data_sources.treasury.client import TreasuryClient
 
-        with patch("alphamind.data_sources.treasury.client.httpx.get", return_value=mock_response):
+        request = httpx.Request("GET", "https://api.fiscaldata.treasury.gov/")
+        response = httpx.Response(200, request=request)
+
+        with patch("alphamind.data_sources.treasury.client.httpx.get", return_value=response):
             client = TreasuryClient()
             assert client.verify_connectivity() is True
 
     def test_returns_false_on_network_error(self) -> None:
         """verify_connectivity returns False when network is unreachable."""
+        from alphamind.data_sources.treasury.client import TreasuryClient
+
         with patch(
             "alphamind.data_sources.treasury.client.httpx.get",
             side_effect=httpx.ConnectError("connection refused"),
@@ -33,11 +34,24 @@ class TestVerifyConnectivity:
 
     def test_returns_false_on_http_error(self) -> None:
         """verify_connectivity returns False on non-2xx response."""
-        mock_response = MagicMock()
-        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "500", request=MagicMock(), response=MagicMock()
-        )
+        from alphamind.data_sources.treasury.client import TreasuryClient
 
-        with patch("alphamind.data_sources.treasury.client.httpx.get", return_value=mock_response):
+        request = httpx.Request("GET", "https://api.fiscaldata.treasury.gov/")
+        response = httpx.Response(500, request=request)
+
+        with patch("alphamind.data_sources.treasury.client.httpx.get", return_value=response):
             client = TreasuryClient()
             assert client.verify_connectivity() is False
+
+
+class TestProtocolContract:
+    """TreasuryClient implements the TreasuryAPI Protocol."""
+
+    def test_runtime_assertion_succeeds(self) -> None:
+        """Importing the client module runs the `_: TreasuryAPI = TreasuryClient()` check."""
+        from alphamind.data_sources.treasury._protocol import TreasuryAPI
+        from alphamind.data_sources.treasury.client import TreasuryClient
+
+        client: TreasuryAPI = TreasuryClient()
+        assert hasattr(client, "get")
+        assert hasattr(client, "verify_connectivity")

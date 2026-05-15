@@ -149,3 +149,11 @@ class PolymarketClient:
             page: list[dict[str, Any]] = resp.json()
             results.extend(page)
         return results
+
+
+# Runtime contract: PolymarketClient must structurally implement PolymarketAPI.
+from alphamind.data_sources.prediction_market.polymarket._protocol import (  # noqa: E402
+    PolymarketAPI,
+)
+
+_: PolymarketAPI = PolymarketClient()

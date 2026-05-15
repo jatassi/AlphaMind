@@ -34,6 +34,7 @@ from alphamind.data_sources._common import (
     default_session_factory,
     track_run,
 )
+from alphamind.data_sources.finra._protocol import FinraAPI
 from alphamind.data_sources.finra.client import FinraClient
 from alphamind.persistence.models import ShortVolumeDaily
 
@@ -100,7 +101,7 @@ def collect_short_volume(
     since: date | None = None,
     until: date | None = None,
     *,
-    client: FinraClient | None = None,
+    client: FinraAPI | None = None,
     session_factory: Any = None,
     _repo: Any = None,
 ) -> None:
@@ -175,7 +176,7 @@ def collect_short_volume(
 def bootstrap_short_volume(
     days: int = 60,
     *,
-    client: FinraClient | None = None,
+    client: FinraAPI | None = None,
     session_factory: Any = None,
     _repo: Any = None,
 ) -> None:

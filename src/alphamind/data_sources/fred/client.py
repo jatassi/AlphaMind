@@ -103,3 +103,12 @@ class FredClient:
         """
         self._rl.acquire("fred")
         return self._fred.get_series_all_releases(series_id, **kwargs)
+
+
+# Runtime contract: FredClient must structurally implement FredAPI.
+from alphamind.data_sources.fred._protocol import FredAPI  # noqa: E402
+
+
+def _assert_protocol() -> None:
+    """Defer construction so module import doesn't hit the SDK."""
+    _: FredAPI = FredClient.__new__(FredClient)

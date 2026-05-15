@@ -24,7 +24,7 @@ _TENOR_MAP: dict[str, str] = {
     "30-Year": "30Y",
 }
 
-_client = TreasuryClient()
+_module_client = TreasuryClient()
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -37,7 +37,7 @@ def _float_or_none(value: Any) -> float | None:
         return None
 
 
-def _fetch_all_pages(since: date) -> list[dict[str, Any]]:
+def _fetch_all_pages(since: date, client: Any) -> list[dict[str, Any]]:
     """Fetch all auction records from the API for the given date window."""
     security_terms = ",".join(_TENOR_MAP.keys())
     params: dict[str, Any] = {
@@ -64,7 +64,7 @@ def _fetch_all_pages(since: date) -> list[dict[str, Any]]:
 
     while True:
         params["page[number]"] = page_num
-        response = _client.get(_AUCTIONS_PATH, params=params)
+        response = client.get(_AUCTIONS_PATH, params=params)
         data = response.get("data", [])
         all_records.extend(data)
 
@@ -126,6 +126,7 @@ def _record_to_row(record: dict[str, Any]) -> TreasuryAuctions | None:
 def collect_auctions(
     since: date | None = None,
     *,
+    _client: Any = None,
     _session_factory: Any = None,
     _repo: Any = None,
 ) -> None:
@@ -137,11 +138,16 @@ def collect_auctions(
         Start date for the collection window (inclusive).  Defaults to the
         last stored auction date minus a 7-day overlap, or 30 days ago if
         the table is empty.
+    _client:
+        Optional :class:`TreasuryAPI` override (defaults to module-level
+        :data:`_client`).
     _session_factory:
         Optional session factory override for testing.
     _repo:
         Optional repository override for testing (passed to track_run).
     """
+    if _client is None:
+        _client = _module_client
     if _session_factory is None:
         _session_factory = default_session_factory()
 
@@ -154,7 +160,7 @@ def collect_auctions(
         ).date()
 
     with track_run("treasury.auctions", _repo=_repo) as run:
-        records = _fetch_all_pages(since)
+        records = _fetch_all_pages(since, _client)
         valid_rows = [r for r in (_record_to_row(rec) for rec in records) if r is not None]
 
         inserted = 0
@@ -170,10 +176,16 @@ def collect_auctions(
 
 def bootstrap_auctions(
     *,
+    _client: Any = None,
     _session_factory: Any = None,
     _repo: Any = None,
 ) -> None:
     """Bootstrap 12 months of Treasury auction history."""
     today = datetime.now(UTC).date()
     twelve_months_ago = date(today.year - 1, today.month, today.day)
-    collect_auctions(since=twelve_months_ago, _session_factory=_session_factory, _repo=_repo)
+    collect_auctions(
+        since=twelve_months_ago,
+        _client=_client,
+        _session_factory=_session_factory,
+        _repo=_repo,
+    )

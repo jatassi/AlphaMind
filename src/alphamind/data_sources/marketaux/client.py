@@ -139,3 +139,9 @@ class MarketauxClient:
         resp.raise_for_status()
         data: list[dict[str, Any]] = resp.json().get("data", [])
         return data
+
+
+# Runtime contract: MarketauxClient must structurally implement MarketauxAPI.
+from alphamind.data_sources.marketaux._protocol import MarketauxAPI  # noqa: E402
+
+_: MarketauxAPI = MarketauxClient(api_key="<unused-for-typecheck>")

@@ -130,3 +130,9 @@ class EIAClient:
         resp = self._http.get(url, params=params)
         resp.raise_for_status()
         return True
+
+
+# Runtime contract: EIAClient must structurally implement EIAAPI.
+from alphamind.data_sources.eia._protocol import EIAAPI  # noqa: E402
+
+_: EIAAPI = EIAClient(api_key="<unused-for-typecheck>")

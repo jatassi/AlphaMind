@@ -1,15 +1,16 @@
 """
 Tests for src/alphamind/data_sources/iborrowdesk/ — story 05l.
 
-All HTTP calls are mocked. No real network access.
+All HTTP calls go through httpx.MockTransport.  No real network access.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -23,6 +24,7 @@ from alphamind.persistence.models import (
     BorrowCostIntraday,
 )
 from alphamind.persistence.session import make_engine, make_session_factory
+from tests.data_sources._fakes.run_repo import FakeRunRepo
 
 # ---------------------------------------------------------------------------
 # Helpers / fakes
@@ -90,28 +92,12 @@ def _make_response(*, ticker: str = "AAPL") -> dict[str, Any]:
     }
 
 
-class _FakeRunRepo:
-    def __init__(self) -> None:
-        self.rows: dict[str, dict[str, Any]] = {}
-
-    def insert_running(self, run_id: str, collector: str, started_at: str) -> None:
-        self.rows[run_id] = {
-            "run_id": run_id,
-            "collector": collector,
-            "started_at": started_at,
-            "status": "running",
-            "completed_at": None,
-            "rows_written": None,
-            "error_summary": None,
-        }
-
-    def update_success(self, run_id: str, completed_at: str, rows_written: int) -> None:
-        self.rows[run_id].update(
-            status="success", completed_at=completed_at, rows_written=rows_written
-        )
-
-    def update_failed(self, run_id: str, error_summary: str) -> None:
-        self.rows[run_id].update(status="failed", error_summary=error_summary)
+def _http_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
+    return httpx.Client(
+        timeout=30.0,
+        follow_redirects=True,
+        transport=httpx.MockTransport(handler),
+    )
 
 
 _NOW_TS = datetime(2026, 4, 26, 12, 0, 0, tzinfo=UTC)
@@ -127,18 +113,16 @@ class TestClientUserAgent:
         """Every request must include a browser-like User-Agent."""
         from alphamind.data_sources.iborrowdesk.client import IBorrowDeskClient
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = _make_response()
-        mock_http = MagicMock()
-        mock_http.get.return_value = mock_resp
+        captured: list[httpx.Request] = []
 
-        client = IBorrowDeskClient(http_client=mock_http)
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            return httpx.Response(200, json=_make_response())
+
+        client = IBorrowDeskClient(http_client=_http_client(handler))
         client.fetch_ticker("AAPL")
 
-        call_kwargs = mock_http.get.call_args
-        headers = call_kwargs.kwargs.get("headers", {}) or {}
-        ua = headers.get("User-Agent", "")
+        ua = captured[0].headers.get("user-agent", "")
         assert "Mozilla" in ua, f"Expected Mozilla in User-Agent, got: {ua!r}"
 
 
@@ -152,13 +136,10 @@ class TestRedirectFollowing:
         """Client must follow the apex→www 301 redirect."""
         from alphamind.data_sources.iborrowdesk.client import IBorrowDeskClient
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = _make_response()
-        mock_http = MagicMock()
-        mock_http.get.return_value = mock_resp
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_make_response())
 
-        client = IBorrowDeskClient(http_client=mock_http)
+        client = IBorrowDeskClient(http_client=_http_client(handler))
         client.fetch_ticker("AAPL")
         # httpx.Client follow_redirects=True means httpx handles it;
         # we verify the client was constructed with follow_redirects=True.
@@ -174,20 +155,18 @@ class TestVerifyConnectivity:
     def test_returns_true_on_http_200(self) -> None:
         from alphamind.data_sources.iborrowdesk.client import IBorrowDeskClient
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = _make_response()
-        mock_http = MagicMock()
-        mock_http.get.return_value = mock_resp
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_make_response())
 
-        assert IBorrowDeskClient(http_client=mock_http).verify_connectivity() is True
+        assert IBorrowDeskClient(http_client=_http_client(handler)).verify_connectivity() is True
 
     def test_returns_false_on_connection_error(self) -> None:
         from alphamind.data_sources.iborrowdesk.client import IBorrowDeskClient
 
-        mock_http = MagicMock()
-        mock_http.get.side_effect = httpx.ConnectError("unreachable")
-        assert IBorrowDeskClient(http_client=mock_http).verify_connectivity() is False
+        def handler(_request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("unreachable")
+
+        assert IBorrowDeskClient(http_client=_http_client(handler)).verify_connectivity() is False
 
 
 # ---------------------------------------------------------------------------
@@ -202,14 +181,11 @@ class TestCoverageError:
             IBorrowDeskCoverageError,
         )
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 404
-        mock_resp.json.return_value = {"errors": [{"code": "not_found"}]}
-        mock_http = MagicMock()
-        mock_http.get.return_value = mock_resp
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, json={"errors": [{"code": "not_found"}]})
 
         with pytest.raises(IBorrowDeskCoverageError):
-            IBorrowDeskClient(http_client=mock_http).fetch_ticker("UNKN")
+            IBorrowDeskClient(http_client=_http_client(handler)).fetch_ticker("UNKN")
 
     def test_generic_404_does_not_raise_coverage_error(self) -> None:
         """A 404 without the not_found body raises a plain httpx error, not coverage."""
@@ -218,17 +194,11 @@ class TestCoverageError:
             IBorrowDeskCoverageError,
         )
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 404
-        mock_resp.json.return_value = {}
-        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "404", request=MagicMock(), response=mock_resp
-        )
-        mock_http = MagicMock()
-        mock_http.get.return_value = mock_resp
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, json={})
 
         with pytest.raises(Exception) as exc_info:
-            IBorrowDeskClient(http_client=mock_http).fetch_ticker("UNKN")
+            IBorrowDeskClient(http_client=_http_client(handler)).fetch_ticker("UNKN")
         assert not isinstance(exc_info.value, IBorrowDeskCoverageError)
 
 
@@ -244,14 +214,11 @@ class TestBlockedError:
             IBorrowDeskClient,
         )
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 444
-        mock_resp.json.return_value = {}
-        mock_http = MagicMock()
-        mock_http.get.return_value = mock_resp
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(444)
 
         with pytest.raises(IBorrowDeskBlockedError):
-            IBorrowDeskClient(http_client=mock_http).fetch_ticker("AAPL")
+            IBorrowDeskClient(http_client=_http_client(handler)).fetch_ticker("AAPL")
 
     def test_raises_on_tcp_empty_reply(self) -> None:
         """RemoteProtocolError with no data simulates TCP empty-reply."""
@@ -260,13 +227,11 @@ class TestBlockedError:
             IBorrowDeskClient,
         )
 
-        mock_http = MagicMock()
-        mock_http.get.side_effect = httpx.RemoteProtocolError(
-            "Server disconnected without sending a response"
-        )
+        def handler(_request: httpx.Request) -> httpx.Response:
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response")
 
         with pytest.raises(IBorrowDeskBlockedError):
-            IBorrowDeskClient(http_client=mock_http).fetch_ticker("AAPL")
+            IBorrowDeskClient(http_client=_http_client(handler)).fetch_ticker("AAPL")
 
     def test_blocked_error_is_distinct_from_generic_http_error(self) -> None:
         """IBorrowDeskBlockedError should NOT be a subclass of generic HTTP errors."""
@@ -300,13 +265,12 @@ class TestRateLimiter:
 
         limiter.acquire = tracking  # type: ignore[method-assign]  # mock-method assignment
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = _make_response()
-        mock_http = MagicMock()
-        mock_http.get.return_value = mock_resp
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_make_response())
 
-        IBorrowDeskClient(http_client=mock_http, rate_limiter=limiter).fetch_ticker("AAPL")
+        IBorrowDeskClient(http_client=_http_client(handler), rate_limiter=limiter).fetch_ticker(
+            "AAPL"
+        )
         assert "iborrowdesk" in acquired
 
 
@@ -327,7 +291,7 @@ class TestCollectBorrowCostDaily:
         ):
             from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
 
-            collect_borrow_cost(_session_factory=sf, _repo=_FakeRunRepo())
+            collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
 
         with sf() as sess:
             row = sess.get(BorrowCostDaily, ("2026-04-25", "AAPL"))
@@ -366,7 +330,7 @@ class TestCollectBorrowCostDaily:
         ):
             from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
 
-            collect_borrow_cost(_session_factory=sf, _repo=_FakeRunRepo())
+            collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
 
         with sf() as sess:
             rows = sess.query(BorrowCostDaily).filter_by(ticker=Symbol("AAPL")).all()
@@ -390,7 +354,7 @@ class TestCollectBorrowCostIntraday:
         ):
             from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
 
-            collect_borrow_cost(_session_factory=sf, _repo=_FakeRunRepo())
+            collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
 
         with sf() as sess:
             row = sess.get(BorrowCostIntraday, ("2026-04-25T15:45:00Z", "AAPL"))
@@ -419,7 +383,7 @@ class TestCollectBorrowCostIntraday:
         ):
             from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
 
-            collect_borrow_cost(_session_factory=sf, _repo=_FakeRunRepo())
+            collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
 
         with sf() as sess:
             rows = sess.query(BorrowCostIntraday).filter_by(ticker=Symbol("AAPL")).all()
@@ -453,7 +417,7 @@ class TestCoverageErrorHandling:
         ):
             from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
 
-            collect_borrow_cost(_session_factory=sf, _repo=_FakeRunRepo())
+            collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
 
         # AAPL rows still written despite UNKN failure
         with sf() as sess:
@@ -474,7 +438,7 @@ class TestBlockedErrorHandling:
 
         _engine, sf = _make_db()
         _seed_universe(sf, ["AAPL", "MSFT"])
-        repo = _FakeRunRepo()
+        repo = FakeRunRepo()
         fetched: list[str] = []
 
         def _side_effect(ticker: str) -> dict[str, Any]:
@@ -497,15 +461,14 @@ class TestBlockedErrorHandling:
         assert "MSFT" not in fetched
 
         # collection_runs row records failed
-        run = next(iter(repo.rows.values()))
-        assert run["status"] == "failed"
+        assert repo.failed()
 
     def test_no_data_rows_written_when_blocked_on_first_ticker(self) -> None:
         from alphamind.data_sources.iborrowdesk.client import IBorrowDeskBlockedError
 
         _engine, sf = _make_db()
         _seed_universe(sf, ["AAPL"])
-        repo = _FakeRunRepo()
+        repo = FakeRunRepo()
 
         with (
             patch(_FETCH_TICKER, side_effect=IBorrowDeskBlockedError("444")),
@@ -543,7 +506,7 @@ class TestMalformedJson:
             from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
 
             # Should not raise; just writes 0 rows
-            collect_borrow_cost(_session_factory=sf, _repo=_FakeRunRepo())
+            collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
 
         with sf() as sess:
             assert sess.query(BorrowCostDaily).count() == 0
@@ -567,7 +530,7 @@ class TestIdempotency:
             ):
                 from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
 
-                collect_borrow_cost(_session_factory=sf, _repo=_FakeRunRepo())
+                collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
 
         with sf() as sess:
             assert sess.query(BorrowCostDaily).filter_by(ticker=Symbol("AAPL")).count() == 1
@@ -584,7 +547,7 @@ class TestIdempotency:
             ):
                 from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
 
-                collect_borrow_cost(_session_factory=sf, _repo=_FakeRunRepo())
+                collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
 
         with sf() as sess:
             assert sess.query(BorrowCostIntraday).filter_by(ticker=Symbol("AAPL")).count() == 1
@@ -606,7 +569,7 @@ class TestRefreshTicker:
         ):
             from alphamind.data_sources.iborrowdesk.borrow_cost import refresh_ticker
 
-            freshness = refresh_ticker("AAPL", _session_factory=sf, _repo=_FakeRunRepo())
+            freshness = refresh_ticker("AAPL", _session_factory=sf, _repo=FakeRunRepo())
 
         with sf() as sess:
             assert sess.query(BorrowCostDaily).filter_by(ticker=Symbol("AAPL")).count() == 1
@@ -638,7 +601,12 @@ class TestRefreshTicker:
         ):
             from alphamind.data_sources.iborrowdesk.borrow_cost import refresh_ticker
 
-            refresh_ticker("AAPL", _session_factory=sf, _repo=_FakeRunRepo(), _rate_limiter=limiter)
+            refresh_ticker(
+                "AAPL",
+                _session_factory=sf,
+                _repo=FakeRunRepo(),
+                _rate_limiter=limiter,
+            )
 
         assert "iborrowdesk" in acquired
 

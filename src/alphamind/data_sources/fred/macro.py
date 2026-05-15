@@ -33,6 +33,7 @@ import pandas as pd
 from sqlalchemy import select
 
 from alphamind.data_sources._common import default_session_factory, resume_since, track_run
+from alphamind.data_sources.fred._protocol import FredAPI
 from alphamind.data_sources.fred.client import FredClient
 from alphamind.data_sources.fred.series import DAILY_SERIES, MONTHLY_SERIES
 from alphamind.persistence.models import MacroObservations
@@ -155,7 +156,7 @@ def collect_series(
     series_ids: list[str] | None = None,
     since: date | None = None,
     *,
-    client: FredClient | None = None,
+    client: FredAPI | None = None,
     session_factory: Any = None,
     _repo: Any = None,
 ) -> int:
@@ -265,7 +266,7 @@ def bootstrap_series(
     *,
     daily_series: list[str] | None = None,
     monthly_series: list[str] | None = None,
-    client: FredClient | None = None,
+    client: FredAPI | None = None,
     session_factory: Any = None,
     _repo: Any = None,
 ) -> int:

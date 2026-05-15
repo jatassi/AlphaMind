@@ -155,3 +155,9 @@ class IBorrowDeskClient:
             logger.warning("iBorrowDesk connectivity check failed.", exc_info=exc)
             return False
         return True
+
+
+# Runtime contract: IBorrowDeskClient must structurally implement IBorrowDeskAPI.
+from alphamind.data_sources.iborrowdesk._protocol import IBorrowDeskAPI  # noqa: E402
+
+_: IBorrowDeskAPI = IBorrowDeskClient()

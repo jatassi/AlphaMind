@@ -24,7 +24,7 @@ from alphamind.data_sources._common import (
     resume_since,
     track_run,
 )
-from alphamind.data_sources.marketaux.client import MarketauxClient
+from alphamind.data_sources.marketaux._protocol import MarketauxAPI
 from alphamind.persistence.models import NewsArticles, NewsArticleTickers
 
 _TICKER_BATCH_SIZE = 5  # Marketaux free-tier max symbols per request
@@ -178,7 +178,7 @@ def collect_news(
     ticker_scope: list[str] | None = _UNSET,  # type: ignore[assignment]
     since: str | None = None,
     *,
-    _client: MarketauxClient | None = None,
+    _client: MarketauxAPI | None = None,
     _session_factory: Any = None,
     _repo: Any = None,
     _body_dir: str | None = None,

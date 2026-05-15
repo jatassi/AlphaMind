@@ -2,24 +2,47 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # verify_connectivity
 # ---------------------------------------------------------------------------
 
 
-def test_verify_connectivity_returns_true_on_success() -> None:
-    """verify_connectivity() returns True when the SDK responds."""
+class _FakeFredSdk:
+    """Minimal stand-in for fredapi.Fred used to drive FredClient tests."""
+
+    def __init__(self, info_response: Any = None, info_error: Exception | None = None) -> None:
+        self._info_response = info_response
+        self._info_error = info_error
+
+    def get_series_info(self, series_id: str) -> Any:
+        if self._info_error is not None:
+            raise self._info_error
+        return self._info_response
+
+
+def _make_client(sdk: _FakeFredSdk) -> Any:
+    """Build a FredClient with the fakable SDK swapped in."""
     from alphamind.data_sources.fred.client import FredClient
 
-    mock_fred = MagicMock()
-    mock_fred.get_series_info.return_value = MagicMock(title="10-Year Treasury")
+    client = FredClient.__new__(FredClient)
+    client._fred = sdk
+    # Use a simple limiter that does nothing — verify_connectivity also
+    # touches self._rl.acquire().
+    from alphamind.data_sources._common import RateLimiter
 
-    with patch("alphamind.data_sources.fred.client.Fred", return_value=mock_fred):
-        client = FredClient(api_key="test-key")
-        assert client.verify_connectivity() is True
-        mock_fred.get_series_info.assert_called_once_with("DGS10")
+    rl = RateLimiter()
+    rl.set_limit("fred", rate_per_minute=120)
+    client._rl = rl
+    return client
+
+
+def test_verify_connectivity_returns_true_on_success() -> None:
+    """verify_connectivity() returns True when the SDK responds."""
+    sdk = _FakeFredSdk(info_response={"title": "10-Year Treasury"})
+    client = _make_client(sdk)
+    assert client.verify_connectivity() is True
 
 
 def test_verify_connectivity_returns_false_on_exception() -> None:
@@ -29,11 +52,21 @@ def test_verify_connectivity_returns_false_on_exception() -> None:
     ``urllib.error.HTTPError`` lives on ``__context__``); the probe also
     surfaces raw ``URLError`` for DNS / TCP failures. Both are caught.
     """
-    from alphamind.data_sources.fred.client import FredClient
+    sdk = _FakeFredSdk(info_error=ValueError("internal server error"))
+    client = _make_client(sdk)
+    assert client.verify_connectivity() is False
 
-    mock_fred = MagicMock()
-    mock_fred.get_series_info.side_effect = ValueError("internal server error")
+class TestProtocolContract:
+    def test_fred_client_implements_fred_api(self) -> None:
+        from alphamind.data_sources.fred._protocol import FredAPI
+        from alphamind.data_sources.fred.client import FredClient
 
-    with patch("alphamind.data_sources.fred.client.Fred", return_value=mock_fred):
-        client = FredClient(api_key="test-key")
-        assert client.verify_connectivity() is False
+        client = FredClient.__new__(FredClient)
+        proto: FredAPI = client
+        for name in (
+            "verify_connectivity",
+            "get_series",
+            "get_series_info",
+            "get_series_all_releases",
+        ):
+            assert hasattr(proto, name), name

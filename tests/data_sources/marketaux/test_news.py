@@ -1,8 +1,8 @@
 """
 Tests for src/alphamind/data_sources/marketaux/news.py
 
-All HTTP calls are mocked via MarketauxClient injection.
-Persistence uses an in-memory SQLite database.
+All Marketaux SDK calls are routed through FakeMarketauxAPI; persistence
+uses an in-memory SQLite database.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from alphamind.data_sources.marketaux.news import collect_news
 from alphamind.persistence.models import Base, NewsArticles, NewsArticleTickers
 from alphamind.persistence.session import make_engine, make_session_factory
+from tests.data_sources._fakes.marketaux import FakeMarketauxAPI
+from tests.data_sources._fakes.run_repo import FakeRunRepo
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -47,31 +49,8 @@ def db_session() -> sessionmaker[Session]:
 
 
 @pytest.fixture()
-def fake_repo(db_session: sessionmaker[Session]) -> Any:
-    """Minimal repo stub that track_run can call."""
-
-    class _Repo:
-        def __init__(self) -> None:
-            self._runs: dict[str, dict[str, Any]] = {}
-
-        def insert_running(self, run_id: str, collector: str, started_at: str) -> None:
-            self._runs[run_id] = {
-                "status": "running",
-                "collector": collector,
-                "started_at": started_at,
-                "rows_written": None,
-                "error_summary": None,
-            }
-
-        def update_success(self, run_id: str, completed_at: str, rows_written: int) -> None:
-            self._runs[run_id]["status"] = "success"
-            self._runs[run_id]["rows_written"] = rows_written
-
-        def update_failed(self, run_id: str, error_summary: str) -> None:
-            self._runs[run_id]["status"] = "failed"
-            self._runs[run_id]["error_summary"] = error_summary
-
-    return _Repo()
+def fake_repo() -> FakeRunRepo:
+    return FakeRunRepo()
 
 
 def _article(
@@ -103,6 +82,10 @@ def _expected_article_id(url: str, published_at: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def _client(*articles: dict[str, Any]) -> FakeMarketauxAPI:
+    return FakeMarketauxAPI(articles=list(articles))
+
+
 # ---------------------------------------------------------------------------
 # AC: collect_news writes news_articles rows with vendor_sentiment_score
 # ---------------------------------------------------------------------------
@@ -110,16 +93,12 @@ def _expected_article_id(url: str, published_at: str) -> str:
 
 class TestCollectNewsArticles:
     def test_writes_article_row(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
-        article = _article()
-        client = MagicMock()
-        client.get_news.return_value = [article]
-
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(_article()),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -134,16 +113,14 @@ class TestCollectNewsArticles:
         assert row.vendor_sentiment_score == pytest.approx(0.42)
 
     def test_vendor_sentiment_label_positive(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         article = _article(entities=[{"symbol": "AAPL", "sentiment_score": 0.42}])
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -155,16 +132,14 @@ class TestCollectNewsArticles:
         assert row.vendor_sentiment_label == "positive"
 
     def test_vendor_sentiment_label_negative(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         article = _article(entities=[{"symbol": "AAPL", "sentiment_score": -0.30}])
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -176,16 +151,14 @@ class TestCollectNewsArticles:
         assert row.vendor_sentiment_label == "negative"
 
     def test_vendor_sentiment_label_neutral(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         article = _article(entities=[{"symbol": "AAPL", "sentiment_score": 0.05}])
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -204,16 +177,14 @@ class TestCollectNewsArticles:
 
 class TestBodyPersistence:
     def test_body_written_to_disk(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         article = _article(description="Some body content")
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -229,16 +200,14 @@ class TestBodyPersistence:
         assert body_file.read_text() == "Some body content"
 
     def test_body_path_format(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         article = _article(published_at="2024-03-07T10:00:00.000000Z")
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-01T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -263,7 +232,7 @@ class TestBodyPersistence:
 
 class TestTopicTagsNormalization:
     def test_topic_tags_canonical_after_normalization(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         """Vendor topic names are normalized to canonical HeadlineType.value strings."""
         import json as _json
@@ -271,13 +240,11 @@ class TestTopicTagsNormalization:
         article = _article(
             topics=[{"name": "earnings"}, {"name": "macro"}],
         )
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -291,17 +258,15 @@ class TestTopicTagsNormalization:
         assert tags == ["earnings_related", "macro_data"]
 
     def test_unmapped_vendor_topics_dropped_silently(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         """Unmapped vendor topics drop; if all topics drop, topic_tags is None."""
         article = _article(topics=[{"name": "unknown_vendor_topic"}])
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -313,17 +278,15 @@ class TestTopicTagsNormalization:
         assert row.topic_tags is None
 
     def test_no_topics_writes_none(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         """An article with no topics array still writes None for topic_tags."""
         article = _article(topics=[])
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -342,16 +305,14 @@ class TestTopicTagsNormalization:
 
 class TestArticleTickers:
     def test_primary_ticker_written(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         article = _article(entities=[{"symbol": "AAPL", "sentiment_score": 0.1}])
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -364,7 +325,7 @@ class TestArticleTickers:
         assert tickers[0].is_primary == 1
 
     def test_secondary_ticker_not_inserted_when_not_in_universe(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         """Tickers not in asset_universe cannot satisfy FK — they are skipped."""
         article = _article(
@@ -373,13 +334,11 @@ class TestArticleTickers:
                 {"symbol": "MSFT", "sentiment_score": 0.2},  # not in universe
             ]
         )
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -391,17 +350,15 @@ class TestArticleTickers:
         assert all(t.ticker == "AAPL" for t in tickers)
 
     def test_ticker_row_carries_vendor_sentiment_score(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         """Each news_article_tickers row has vendor_sentiment_score from entities[]."""
         article = _article(entities=[{"symbol": "AAPL", "sentiment_score": 0.55}])
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -413,16 +370,14 @@ class TestArticleTickers:
         assert row.vendor_sentiment_score == pytest.approx(0.55)
 
     def test_ticker_row_carries_vendor_sentiment_label_positive(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         article = _article(entities=[{"symbol": "AAPL", "sentiment_score": 0.55}])
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -434,16 +389,14 @@ class TestArticleTickers:
         assert row.vendor_sentiment_label == "positive"
 
     def test_ticker_row_vendor_sentiment_label_negative(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         article = _article(entities=[{"symbol": "AAPL", "sentiment_score": -0.20}])
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -455,16 +408,14 @@ class TestArticleTickers:
         assert row.vendor_sentiment_label == "negative"
 
     def test_ticker_row_vendor_sentiment_label_neutral(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         article = _article(entities=[{"symbol": "AAPL", "sentiment_score": 0.05}])
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -476,17 +427,15 @@ class TestArticleTickers:
         assert row.vendor_sentiment_label == "neutral"
 
     def test_ticker_row_null_sentiment_when_entity_has_no_score(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         """When entity lacks sentiment_score, both fields are None."""
         article = _article(entities=[{"symbol": "AAPL"}])
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -506,16 +455,14 @@ class TestArticleTickers:
 
 class TestCredibilityTier:
     def test_known_outlet_stamped(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         article = _article(source="Reuters")
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -527,16 +474,14 @@ class TestCredibilityTier:
         assert row.source_credibility_tier == "tier_1"
 
     def test_unknown_outlet_is_none(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         article = _article(source="UnknownBlog")
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-15T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -555,18 +500,16 @@ class TestCredibilityTier:
 
 class TestArticleId:
     def test_article_id_is_sha256(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         url = "https://example.com/a1"
         published_at = "2024-01-15T10:00:00.000000Z"
         article = _article(url=url, published_at=published_at)
-        client = MagicMock()
-        client.get_news.return_value = [article]
 
         collect_news(
             ticker_scope=["AAPL"],
             since="2024-01-01T00:00:00Z",
-            _client=client,
+            _client=_client(article),
             _session_factory=db_session,
             _repo=fake_repo,
             _body_dir=str(tmp_path),
@@ -587,11 +530,10 @@ class TestArticleId:
 
 class TestIdempotency:
     def test_no_duplicates_on_second_run(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         article = _article()
-        client = MagicMock()
-        client.get_news.return_value = [article]
+        client = _client(article)
 
         for _ in range(2):
             collect_news(
@@ -615,10 +557,9 @@ class TestIdempotency:
 
 class TestFailureHandling:
     def test_failed_run_recorded(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
-        client = MagicMock()
-        client.get_news.side_effect = RuntimeError("API down")
+        client = FakeMarketauxAPI(error=RuntimeError("API down"))
 
         with pytest.raises(RuntimeError):
             collect_news(
@@ -630,15 +571,13 @@ class TestFailureHandling:
                 _body_dir=str(tmp_path),
             )
 
-        run = next(iter(fake_repo._runs.values()))
-        assert run["status"] == "failed"
-        assert "API down" in run["error_summary"]
+        assert fake_repo.failed()
+        assert "API down" in (fake_repo.latest()["error_summary"] or "")
 
     def test_no_data_rows_on_failure(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
-        client = MagicMock()
-        client.get_news.side_effect = RuntimeError("API down")
+        client = FakeMarketauxAPI(error=RuntimeError("API down"))
 
         with pytest.raises(RuntimeError):
             collect_news(
@@ -662,10 +601,9 @@ class TestFailureHandling:
 
 class TestMarketWideQuery:
     def test_market_wide_calls_countries_us(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
-        client = MagicMock()
-        client.get_news.return_value = []
+        client = _client()  # empty articles
 
         collect_news(
             ticker_scope=None,
@@ -676,23 +614,20 @@ class TestMarketWideQuery:
             _body_dir=str(tmp_path),
         )
 
-        client.get_news.assert_called_once()
-        call_kwargs = client.get_news.call_args[1]
-        assert call_kwargs.get("symbols") is None
-        assert call_kwargs.get("countries") == "us"
+        assert len(client.calls) >= 1
+        call = client.calls[-1]
+        assert call.get("symbols") is None
+        assert call.get("countries") == "us"
 
 
 class TestCollectNewsNoArgs:
     def test_callable_with_no_args(
-        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+        self, db_session: sessionmaker[Session], fake_repo: FakeRunRepo, tmp_path: Path
     ) -> None:
         """collect_news() is callable with no positional args (runner-registry contract)."""
-        from unittest.mock import patch
-
-        client = MagicMock()
-        client.get_news.return_value = []
-
         from datetime import UTC, datetime
+
+        client = _client()
 
         with (
             patch(
