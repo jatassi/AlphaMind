@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from alphamind.config.models.distillation import DistillationConfig
+from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.persistence.models import (
     PredictionMarketContracts,
     PredictionMarketSnapshots,
@@ -41,7 +41,7 @@ def _format_as_of(as_of: datetime) -> str:
 def resolve_prediction_market_scope(
     session: Session,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     as_of: datetime,
 ) -> tuple[str, ...]:
     """Return the contract IDs in scope for this distillation invocation.

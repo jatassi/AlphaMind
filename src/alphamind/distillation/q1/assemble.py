@@ -40,8 +40,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from alphamind.config.models.distillation import DistillationConfig
 from alphamind.distillation._calibration_core import CalibrationState
+from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation._repository import (
     DailyBarRow,
     SectorClassificationRow,
@@ -749,7 +749,7 @@ def _assemble_anomaly_blocks(
     audience: OutputAudience,
     bars_by_ticker: Mapping[str, Sequence[DailyBarRow]],
     baselines_by_ticker: Mapping[str, TickerBaselineRow | None],
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     freshness_ts: datetime,
 ) -> list[OutputBlock]:
     """Produce zero or more anomaly blocks for ``audience``."""
@@ -814,7 +814,7 @@ def _assemble_anomaly_blocks(
 class _IndicatorGroupContext:
     """Per-audience inputs threaded into :func:`_build_indicator_group_blocks`."""
 
-    config: DistillationConfig
+    config: DistillationDomainConfig
     as_of: datetime
     sector_label: str
     tickers: Sequence[str]
@@ -970,7 +970,7 @@ def _block_state_from_baselines(
 
 def _assemble_blocks_for_audience_from_inputs(
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     inputs: Q1Inputs,
     audience: OutputAudience,
     tickers: Sequence[str],
@@ -1021,7 +1021,7 @@ def _assemble_blocks_for_audience_from_inputs(
 def assemble_q1_blocks_from_inputs(
     inputs: Q1Inputs,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
 ) -> list[OutputBlock]:
     """Pure-compute assembly of every Q1 :class:`OutputBlock`.
 
@@ -1050,7 +1050,7 @@ def assemble_q1_blocks_from_inputs(
 def assemble_q1_blocks(
     session: Session,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     as_of: datetime,
     ticker_scope: Sequence[str] | None = None,
 ) -> list[OutputBlock]:

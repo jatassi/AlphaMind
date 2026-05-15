@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -475,7 +476,11 @@ def _drive(
             invocation_id=_INVOCATION_ID,
             as_of=_AS_OF,
             last_invocation_time=_LAST_INVOCATION_TIME,
-            distillation_config=None,  # type: ignore[arg-type]  # stub doesn't read config
+            # ``to_domain()`` is called once before the stubbed
+            # ``run_external_distillation`` runs (ALP-471 boundary→domain
+            # projection); the stub immediately replaces that runner so the
+            # projected value is never consumed.
+            distillation_config=MagicMock(),
             ticker_scope=("NVDA", "JPM", "XOM"),
             universe=frozenset({"NVDA", "JPM", "XOM"}),
             agents_config=agents_config or _agents_registry(),
@@ -668,7 +673,7 @@ def test_pipeline_runs_domain_and_qualitative_in_parallel(
                 invocation_id=_INVOCATION_ID,
                 as_of=_AS_OF,
                 last_invocation_time=_LAST_INVOCATION_TIME,
-                distillation_config=None,  # type: ignore[arg-type]
+                distillation_config=MagicMock(),
                 ticker_scope=("NVDA",),
                 universe=frozenset({"NVDA"}),
                 agents_config=_agents_registry(),
@@ -698,7 +703,7 @@ def test_pipeline_forwards_archive_root_and_provenance_root(
             invocation_id=_INVOCATION_ID,
             as_of=_AS_OF,
             last_invocation_time=_LAST_INVOCATION_TIME,
-            distillation_config=None,  # type: ignore[arg-type]
+            distillation_config=MagicMock(),
             ticker_scope=("NVDA",),
             universe=frozenset({"NVDA"}),
             agents_config=_agents_registry(),
@@ -885,7 +890,7 @@ def test_pipeline_forwards_sectors_config(monkeypatch: pytest.MonkeyPatch) -> No
             invocation_id=_INVOCATION_ID,
             as_of=_AS_OF,
             last_invocation_time=_LAST_INVOCATION_TIME,
-            distillation_config=None,  # type: ignore[arg-type]
+            distillation_config=MagicMock(),
             ticker_scope=("NVDA",),
             universe=frozenset({"NVDA"}),
             agents_config=_agents_registry(),

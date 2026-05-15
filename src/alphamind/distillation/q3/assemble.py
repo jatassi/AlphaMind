@@ -25,7 +25,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from alphamind.config.models.distillation import DistillationConfig
+from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation.calibration import CalibratedValue, CalibrationState
 from alphamind.distillation.output import AnomalyFlag, OutputAudience, OutputBlock
 from alphamind.distillation.q3.anomalies import SectorWideSweep, detect_sector_wide_sweeps
@@ -56,7 +56,7 @@ from alphamind.persistence.models import (
 # The Q3 detection thresholds documented in
 # ``docs/implementation/02-distillation-layer/08b-q3-options-flow-indicators.md``
 # § Scope live here as definitional module constants rather than under
-# :class:`DistillationConfig`. Per ``threshold-calibration.md`` § Where each
+# :class:`DistillationDomainConfig`. Per ``threshold-calibration.md`` § Where each
 # threshold lives, the per-spec values that pin a detection's mathematical
 # definition (e.g. "1.5sigma" / "0.6 correlation" / "3 names" / "1sigma") are not
 # tunable knobs — moving them would rewrite the detection. The constants
@@ -844,7 +844,7 @@ def _filter_zscores_to_sector_etfs(
 def assemble_q3_blocks(
     session: Session,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     as_of: datetime,
     ticker_scope: Sequence[str] | None = None,
     pair_correlations: Mapping[tuple[str, str], float] | None = None,
@@ -877,7 +877,7 @@ def assemble_q3_blocks(
        08b Notes section.
 
     The single Class A threshold this function reads from
-    :class:`DistillationConfig` is the trailing-window length used for
+    :class:`DistillationDomainConfig` is the trailing-window length used for
     BTO-flow z-scores and the ETF/single-name baseline
     (``persistence_windows.volume_baseline_days`` and
     ``persistence_windows.correlation_long_days``). The detection sigmas

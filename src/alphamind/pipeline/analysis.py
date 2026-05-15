@@ -137,9 +137,12 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
     failures inside a ``BaseExceptionGroup``; we unwrap the first child so
     callers see the same exception type they did under ``asyncio.gather``.
     """
+    # Project the Pydantic ``DistillationConfig`` boundary type onto its
+    # frozen-dataclass mirror (ALP-471) before the orchestrator runs — the
+    # orchestrator's compute path consumes the dataclass form.
     distillation_outputs = await run_external_distillation(
         session,
-        distillation_config,
+        distillation_config.to_domain(),
         ticker_scope,
         as_of,
         invocation_id,

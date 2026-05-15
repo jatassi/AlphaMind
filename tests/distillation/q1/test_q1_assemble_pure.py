@@ -27,6 +27,7 @@ from alphamind.config.models.distillation import (
     RegimeClassification,
     RegimeTransition,
 )
+from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation._repository_sql import SqlDistillationRepository
 from alphamind.distillation.q1._loaders import load_q1_inputs
 from alphamind.distillation.q1.assemble import (
@@ -42,8 +43,13 @@ from alphamind.persistence.models import (
 from alphamind.persistence.session import make_engine, make_session_factory
 
 
-def _build_test_config() -> DistillationConfig:
-    """Minimal DistillationConfig for q1 pure-path tests."""
+def _build_test_config() -> DistillationDomainConfig:
+    """Minimal DistillationDomainConfig for q1 pure-path tests.
+
+    Builds the Pydantic ``DistillationConfig`` (the boundary type) and
+    projects it onto the frozen-dataclass mirror that distillation
+    consumers take.
+    """
     return DistillationConfig(
         anomaly_detection=AnomalyDetection(
             volume_anomaly_sigma=2.5,
@@ -118,7 +124,7 @@ def _build_test_config() -> DistillationConfig:
             tracked_default_min_volume_24h_usd=5_000,
             tracked_categories={},
         ),
-    )
+    ).to_domain()
 
 
 @pytest.fixture()

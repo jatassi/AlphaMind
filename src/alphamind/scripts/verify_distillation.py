@@ -594,10 +594,13 @@ def run_verification(
     if config is None:
         config = load_distillation_config()
 
+    # Project the Pydantic ``DistillationConfig`` boundary type onto its
+    # frozen-dataclass mirror (ALP-471) before the orchestrator runs — the
+    # orchestrator's compute path consumes the dataclass form.
     outputs = asyncio.run(
         orchestrator(
             session=session,
-            config=config,
+            config=config.to_domain(),
             ticker_scope=ticker_scope,
             as_of=as_of,
             invocation_id=invocation_id,

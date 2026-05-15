@@ -49,7 +49,10 @@ from alphamind.persistence.models import (
 )
 
 if TYPE_CHECKING:
-    from alphamind.config.models.distillation import LeadLag, PredictionMarket
+    from alphamind.distillation._config_domain import (
+        LeadLagDomainConfig,
+        PredictionMarketDomainConfig,
+    )
 
 __all__ = [
     "CALIBRATION_STATE_VALUES",
@@ -295,7 +298,7 @@ _LEAD_LAG_MAX_DAYS_FIELDS: dict[str, str] = {
 def default_lead_lag_pair_estimate(
     *,
     pair_key: str,
-    lead_lag_config: LeadLag,
+    lead_lag_config: LeadLagDomainConfig,
 ) -> int:
     """Return the Class A ``_max_days`` bound for ``pair_key`` as the prior.
 
@@ -314,7 +317,7 @@ def default_lead_lag_pair_estimate(
 
 def prediction_market_delta_default(
     *,
-    prediction_market_config: PredictionMarket,
+    prediction_market_config: PredictionMarketDomainConfig,
 ) -> float:
     """Return the universe-wide prediction-market delta threshold.
 

@@ -16,6 +16,10 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind.config.models.distillation import LeadLag, LeadLagPair, PredictionMarket
+from alphamind.distillation._config_domain import (
+    LeadLagDomainConfig,
+    PredictionMarketDomainConfig,
+)
 from alphamind.distillation.calibration import (
     CALIBRATION_STATE_VALUES,
     EXTENDED_HOURS_BOOTSTRAP_RATE,
@@ -699,7 +703,7 @@ class TestUniversePooledExtendedHoursConfirmationRate:
 
 
 @pytest.fixture()
-def lead_lag_config() -> LeadLag:
+def lead_lag_config() -> LeadLagDomainConfig:
     return LeadLag(
         pairs=(
             LeadLagPair(key="credit_to_equity", lead="HYG", lag="SPY"),
@@ -713,19 +717,21 @@ def lead_lag_config() -> LeadLag:
         lead_lag_financials_to_market_max_days=1,
         lead_lag_commodity_to_energy_equity_max_days=1,
         lead_lag_overdue_lead_sigma=1.5,
-    )
+    ).to_domain()
 
 
 class TestDefaultLeadLagPairEstimate:
     """Returns the Class A ``_max_days`` bound for the named pair as the prior."""
 
-    def test_funding_to_credit_returns_configured_max_days(self, lead_lag_config: LeadLag) -> None:
+    def test_funding_to_credit_returns_configured_max_days(
+        self, lead_lag_config: LeadLagDomainConfig
+    ) -> None:
         prior = default_lead_lag_pair_estimate(
             pair_key="funding_to_credit", lead_lag_config=lead_lag_config
         )
         assert prior == 3
 
-    def test_credit_to_equity(self, lead_lag_config: LeadLag) -> None:
+    def test_credit_to_equity(self, lead_lag_config: LeadLagDomainConfig) -> None:
         assert (
             default_lead_lag_pair_estimate(
                 pair_key="credit_to_equity", lead_lag_config=lead_lag_config
@@ -733,7 +739,7 @@ class TestDefaultLeadLagPairEstimate:
             == 3
         )
 
-    def test_semis_to_tech(self, lead_lag_config: LeadLag) -> None:
+    def test_semis_to_tech(self, lead_lag_config: LeadLagDomainConfig) -> None:
         assert (
             default_lead_lag_pair_estimate(
                 pair_key="semis_to_tech", lead_lag_config=lead_lag_config
@@ -741,7 +747,7 @@ class TestDefaultLeadLagPairEstimate:
             == 2
         )
 
-    def test_financials_to_market(self, lead_lag_config: LeadLag) -> None:
+    def test_financials_to_market(self, lead_lag_config: LeadLagDomainConfig) -> None:
         assert (
             default_lead_lag_pair_estimate(
                 pair_key="financials_to_market", lead_lag_config=lead_lag_config
@@ -749,7 +755,7 @@ class TestDefaultLeadLagPairEstimate:
             == 1
         )
 
-    def test_commodity_to_energy_equity(self, lead_lag_config: LeadLag) -> None:
+    def test_commodity_to_energy_equity(self, lead_lag_config: LeadLagDomainConfig) -> None:
         assert (
             default_lead_lag_pair_estimate(
                 pair_key="commodity_to_energy_equity", lead_lag_config=lead_lag_config
@@ -757,7 +763,7 @@ class TestDefaultLeadLagPairEstimate:
             == 1
         )
 
-    def test_unknown_pair_key_raises(self, lead_lag_config: LeadLag) -> None:
+    def test_unknown_pair_key_raises(self, lead_lag_config: LeadLagDomainConfig) -> None:
         with pytest.raises(KeyError):
             default_lead_lag_pair_estimate(
                 pair_key="not_a_real_pair", lead_lag_config=lead_lag_config
@@ -768,12 +774,12 @@ class TestPredictionMarketDeltaDefault:
     """Universe-wide threshold from config; no per-contract bootstrap."""
 
     def test_returns_configured_threshold(self) -> None:
-        prediction_market_config = PredictionMarket(
+        prediction_market_config: PredictionMarketDomainConfig = PredictionMarket(
             prediction_market_delta_pp_threshold=5.0,
             prediction_market_low_liquidity_volume_min_usd=10_000,
             tracked_default_min_volume_24h_usd=5_000,
             tracked_categories={},
-        )
+        ).to_domain()
         prior = prediction_market_delta_default(
             prediction_market_config=prediction_market_config,
         )
@@ -781,12 +787,12 @@ class TestPredictionMarketDeltaDefault:
 
     def test_reflects_operator_override(self) -> None:
         """A different operator-configured threshold flows through unchanged."""
-        prediction_market_config = PredictionMarket(
+        prediction_market_config: PredictionMarketDomainConfig = PredictionMarket(
             prediction_market_delta_pp_threshold=7.5,
             prediction_market_low_liquidity_volume_min_usd=20_000,
             tracked_default_min_volume_24h_usd=5_000,
             tracked_categories={},
-        )
+        ).to_domain()
         prior = prediction_market_delta_default(
             prediction_market_config=prediction_market_config,
         )

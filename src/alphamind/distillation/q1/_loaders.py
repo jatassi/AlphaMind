@@ -1,11 +1,12 @@
 """Q1 IO shell (ALP-467): pre-load every input the compute path consumes.
 
 The compute path is :func:`assemble_q1_blocks_from_inputs` — a pure
-function over :class:`Q1Inputs` (frozen) plus :class:`DistillationConfig`.
-This module is the only place Q1 reaches the database: it uses the
-``DistillationRepository`` Protocol to load bars, baselines, sector
-classification, gap-fill event counts, and the SPY/sector-ETF window
-returns that the relative-performance compute consumes.
+function over :class:`Q1Inputs` (frozen) plus
+:class:`DistillationDomainConfig`. This module is the only place Q1
+reaches the database: it uses the ``DistillationRepository`` Protocol to
+load bars, baselines, sector classification, gap-fill event counts, and
+the SPY/sector-ETF window returns that the relative-performance compute
+consumes.
 
 The shell-vs-core split is what lets the orchestrator Phase 2 run
 ``compute_*`` in ``asyncio.TaskGroup`` over pre-loaded frozen inputs —
@@ -19,7 +20,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from alphamind.config.models.distillation import DistillationConfig
+from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation._repository import (
     DailyBarRow,
     DistillationRepository,
@@ -160,7 +161,7 @@ def _compute_window_returns(
 def load_q1_inputs(
     repository: DistillationRepository,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     as_of: datetime,
     ticker_scope: Sequence[str] | None,
 ) -> Q1Inputs:

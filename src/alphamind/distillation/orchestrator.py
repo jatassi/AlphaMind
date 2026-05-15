@@ -47,7 +47,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from alphamind.config.models.distillation import DistillationConfig
+from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation._repository_sql import SqlDistillationRepository
 from alphamind.distillation.aggregation import (
     AnomalySummary,
@@ -203,7 +203,7 @@ def _format_as_of(as_of: datetime) -> str:
 def _refresh_class_b_state(
     session: Session,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     ticker_scope: Sequence[str],
     contract_scope: Sequence[str],
     as_of: datetime,
@@ -301,7 +301,7 @@ _PHASE_2_PLACEHOLDER_GAPS: tuple[tuple[str, str], ...] = ()
 def _compute_q1_blocks(
     session: Session,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     ticker_scope: Sequence[str],
     as_of: datetime,
 ) -> list[OutputBlock]:
@@ -323,7 +323,7 @@ def _compute_q1_blocks(
 def _load_q1_inputs_via_session(
     session: Session,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     ticker_scope: Sequence[str],
     as_of: datetime,
 ) -> Q1Inputs:
@@ -341,7 +341,7 @@ def _load_q1_inputs_via_session(
 def _compute_q1_blocks_from_inputs(
     q1_inputs: Q1Inputs,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
 ) -> list[OutputBlock]:
     """ALP-467 — pure-compute Q1 dispatch from pre-loaded inputs.
 
@@ -355,7 +355,7 @@ def _compute_q1_blocks_from_inputs(
 def _compute_legacy_phase2_blocks(
     session: Session,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     ticker_scope: Sequence[str],
     contract_scope: Sequence[str],
     as_of: datetime,
@@ -393,7 +393,7 @@ def _compute_legacy_phase2_blocks(
 def _compute_q3_blocks(
     session: Session,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     ticker_scope: Sequence[str],
     as_of: datetime,
     pair_correlations: dict[tuple[str, str], float],
@@ -418,7 +418,7 @@ def _compute_q3_blocks(
 def _compute_q6_blocks(
     session: Session,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     as_of: datetime,
 ) -> list[OutputBlock]:
     """Q6 macro / funding-stress blocks (story 08c).
@@ -433,7 +433,7 @@ def _compute_q6_blocks(
 def _compute_q7_blocks(
     session: Session,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     ticker_scope: Sequence[str],
     as_of: datetime,
 ) -> list[OutputBlock]:
@@ -456,7 +456,7 @@ def _compute_q7_blocks(
 def _compute_q12_blocks(
     session: Session,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     as_of: datetime,
 ) -> list[OutputBlock]:
     """Q12 corporate-actions blocks.
@@ -476,7 +476,7 @@ def _compute_q12_blocks(
 def _compute_qualitative_blocks(
     session: Session,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     ticker_scope: Sequence[str],
     contract_scope: Sequence[str],
     as_of: datetime,
@@ -531,7 +531,7 @@ def _compute_qualitative_blocks(
 
 
 def _build_regime_thresholds(
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
 ) -> tuple[RegimeClassificationThresholds, RegimeTransitionThresholds]:
     """Translate the YAML regime groups into the regime module's threshold dataclasses."""
     rc = config.regime_classification
@@ -618,7 +618,7 @@ def _build_regime_snapshot(session: Session) -> tuple[RegimeSnapshot, str | None
 def _refresh_regime(
     session: Session,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     as_of: datetime,
 ) -> tuple[RegimeRefreshResult, OutputBlock]:
     """Phase 3 — refresh the regime row and assemble the universal block."""
@@ -719,7 +719,7 @@ def _count_bootstrap_blocks(blocks: Iterable[OutputBlock]) -> int:
 
 async def run_external_distillation(
     session: Session,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     ticker_scope: Sequence[str],
     as_of: datetime,
     invocation_id: str,

@@ -29,6 +29,7 @@ from alphamind.config.models.distillation import (
     RegimeClassification,
     RegimeTransition,
 )
+from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation.output import OutputAudience, OutputBlock
 from alphamind.distillation.q3 import assemble_q3_blocks
 from alphamind.persistence.models import (
@@ -75,7 +76,7 @@ def session(engine: Engine) -> Iterator[Session]:
 # ---------------------------------------------------------------------------
 
 
-def _build_distillation_config() -> DistillationConfig:
+def _build_distillation_config() -> DistillationDomainConfig:
     return DistillationConfig(
         anomaly_detection=AnomalyDetection(
             volume_anomaly_sigma=2.0,
@@ -150,7 +151,7 @@ def _build_distillation_config() -> DistillationConfig:
             tracked_default_min_volume_24h_usd=5_000,
             tracked_categories={},
         ),
-    )
+    ).to_domain()
 
 
 # ---------------------------------------------------------------------------

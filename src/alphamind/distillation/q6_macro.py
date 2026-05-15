@@ -40,7 +40,7 @@ from itertools import pairwise
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from alphamind.config.models.distillation import DistillationConfig
+from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation.baselines import _refresh_transaction, refresh_composite_state
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.normalization import macro_surprise_zscore
@@ -1259,7 +1259,7 @@ def _build_bootstrap_block(
 def compute_q6_blocks(
     session: Session,
     *,
-    config: DistillationConfig,
+    config: DistillationDomainConfig,
     as_of: datetime,
 ) -> list[OutputBlock]:
     """Read upstream data and assemble the q6 macro blocks.

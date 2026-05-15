@@ -496,10 +496,13 @@ def _run_one_invocation(
     ticker_scope = _resolve_ticker_scope(session)
 
     started = time.monotonic()
+    # Project the Pydantic ``DistillationConfig`` boundary type onto its
+    # frozen-dataclass mirror (ALP-471) before the orchestrator runs — the
+    # orchestrator's compute path consumes the dataclass form.
     outputs = asyncio.run(
         run_external_distillation(
             session=session,
-            config=candidate.config,
+            config=candidate.config.to_domain(),
             ticker_scope=ticker_scope,
             as_of=as_of,
             invocation_id=invocation_id,

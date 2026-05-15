@@ -647,10 +647,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             ticker_scope = load_universe_scope()
             distillation_config = load_distillation_config()
+            # Project the Pydantic ``DistillationConfig`` boundary type onto
+            # its frozen-dataclass mirror (ALP-471) — the orchestrator's
+            # compute path consumes the dataclass form.
             distillation_outputs = asyncio.run(
                 run_external_distillation(
                     session=session,
-                    config=distillation_config,
+                    config=distillation_config.to_domain(),
                     ticker_scope=ticker_scope,
                     as_of=now,
                     invocation_id=invocation_id,

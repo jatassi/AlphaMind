@@ -42,6 +42,7 @@ from alphamind.config.models.distillation import (
     RegimeClassification,
     RegimeTransition,
 )
+from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience, OutputBlock, format_block
 from alphamind.distillation.q1 import BLOCK_ID_VOLUME_ANOMALY, assemble_q1_blocks
@@ -93,8 +94,13 @@ def _build_distillation_config(
     price_move_atr_multiple: float = 1.5,
     volume_baseline_days: int = 20,
     atr_baseline_days: int = 14,
-) -> DistillationConfig:
-    """Return a fully-populated :class:`DistillationConfig` for tests."""
+) -> DistillationDomainConfig:
+    """Return a fully-populated :class:`DistillationDomainConfig` for tests.
+
+    Builds the Pydantic ``DistillationConfig`` (the boundary type) and
+    projects it onto the frozen-dataclass mirror that distillation
+    consumers take.
+    """
     return DistillationConfig(
         anomaly_detection=AnomalyDetection(
             volume_anomaly_sigma=volume_anomaly_sigma,
@@ -169,7 +175,7 @@ def _build_distillation_config(
             tracked_default_min_volume_24h_usd=5_000,
             tracked_categories={},
         ),
-    )
+    ).to_domain()
 
 
 # ---------------------------------------------------------------------------

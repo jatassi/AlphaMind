@@ -70,8 +70,9 @@ class CorrelationRegimeChangeConfig:
     """Threshold bundle for :func:`compute_correlation_regime_change`.
 
     Packs the per-window and per-detection thresholds that the orchestrator
-    pulls out of :class:`DistillationConfig` into a single immutable record
-    so :func:`compute_correlation_regime_change` keeps a tight signature.
+    pulls out of :class:`DistillationDomainConfig` into a single immutable
+    record so :func:`compute_correlation_regime_change` keeps a tight
+    signature.
 
     ``correlation_breakdown_sigma`` gates the Fisher-z breakdown test
     (multiple-comparison-aware default in ``config/distillation.yaml``);

@@ -26,6 +26,7 @@ from alphamind.config.models.distillation import (
     RegimeTransition,
     TrackedCategoryOverride,
 )
+from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation.contract_scope import resolve_prediction_market_scope
 from alphamind.persistence.models import (
     Base,
@@ -43,7 +44,7 @@ def _build_config(
     *,
     tracked_categories: dict[str, TrackedCategoryOverride] | None = None,
     tracked_default_min_volume_24h_usd: int = 5_000,
-) -> DistillationConfig:
+) -> DistillationDomainConfig:
     return DistillationConfig(
         anomaly_detection=AnomalyDetection(
             volume_anomaly_sigma=2.0,
@@ -113,7 +114,7 @@ def _build_config(
             tracked_default_min_volume_24h_usd=tracked_default_min_volume_24h_usd,
             tracked_categories=tracked_categories or {},
         ),
-    )
+    ).to_domain()
 
 
 # ---------------------------------------------------------------------------

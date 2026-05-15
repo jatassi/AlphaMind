@@ -38,6 +38,7 @@ from alphamind.config.models.distillation import (
     RegimeClassification,
     RegimeTransition,
 )
+from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience
 from alphamind.distillation.q6_macro import (
@@ -79,8 +80,13 @@ def session(engine: Engine) -> Iterator[Session]:
 # ---------------------------------------------------------------------------
 
 
-def _build_distillation_config() -> DistillationConfig:
-    """Return a ``DistillationConfig`` with the YAML default thresholds."""
+def _build_distillation_config() -> DistillationDomainConfig:
+    """Return a ``DistillationDomainConfig`` with the YAML default thresholds.
+
+    Builds the Pydantic ``DistillationConfig`` (the boundary type) and
+    projects it onto the frozen-dataclass mirror that distillation
+    consumers take.
+    """
     return DistillationConfig(
         anomaly_detection=AnomalyDetection(
             volume_anomaly_sigma=2.5,
@@ -155,7 +161,7 @@ def _build_distillation_config() -> DistillationConfig:
             tracked_default_min_volume_24h_usd=5_000,
             tracked_categories={},
         ),
-    )
+    ).to_domain()
 
 
 # ---------------------------------------------------------------------------

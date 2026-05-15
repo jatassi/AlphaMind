@@ -43,6 +43,7 @@ from alphamind.config.models.distillation import (
     RegimeTransition,
     TrackedCategoryOverride,
 )
+from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation.orchestrator import (
     DistillationOutputs,
     run_external_distillation,
@@ -102,8 +103,13 @@ def session(engine: Engine) -> Iterator[Session]:
 # ---------------------------------------------------------------------------
 
 
-def _build_distillation_config() -> DistillationConfig:
-    """Return a fully-populated :class:`DistillationConfig` for tests."""
+def _build_distillation_config() -> DistillationDomainConfig:
+    """Return a fully-populated :class:`DistillationDomainConfig` for tests.
+
+    Builds the Pydantic ``DistillationConfig`` (the boundary type) and
+    projects it onto the frozen-dataclass mirror that distillation
+    consumers take.
+    """
     return DistillationConfig(
         anomaly_detection=AnomalyDetection(
             volume_anomaly_sigma=2.0,
@@ -178,7 +184,7 @@ def _build_distillation_config() -> DistillationConfig:
             tracked_default_min_volume_24h_usd=5_000,
             tracked_categories={},
         ),
-    )
+    ).to_domain()
 
 
 # ---------------------------------------------------------------------------
@@ -652,17 +658,18 @@ def test_orchestrator_threads_resolved_contract_scope_to_both_consumers(
 
     _seed_prediction_market_contracts(populated_session)
 
-    config = _build_distillation_config().model_copy(
-        update={
-            "prediction_market": PredictionMarket(
-                prediction_market_delta_pp_threshold=10.0,
-                prediction_market_low_liquidity_volume_min_usd=10_000,
-                tracked_default_min_volume_24h_usd=5_000,
-                tracked_categories={
-                    "monetary_policy": TrackedCategoryOverride(),
-                },
-            )
-        }
+    import dataclasses
+
+    config = dataclasses.replace(
+        _build_distillation_config(),
+        prediction_market=PredictionMarket(
+            prediction_market_delta_pp_threshold=10.0,
+            prediction_market_low_liquidity_volume_min_usd=10_000,
+            tracked_default_min_volume_24h_usd=5_000,
+            tracked_categories={
+                "monetary_policy": TrackedCategoryOverride(),
+            },
+        ).to_domain(),
     )
 
     captured: dict[str, tuple[str, ...]] = {}
