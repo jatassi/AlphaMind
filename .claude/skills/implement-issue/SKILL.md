@@ -162,7 +162,7 @@ Agent({
 
 **Then run `simplify` in the main thread.** Capture recommendations as a list — *do not apply them as edits* until `/review` returns and the two lists are merged. Simplify is a stylistic pass; it won't verify factual claims. Applying its restylings to factually-wrong prose locks in the underlying error and forces a re-edit when `/review` flags it.
 
-**Verify the working branch after `simplify` returns.** `simplify` spawns sub-agents in worktrees, and control can return to the primary on `main` instead of the feature branch. Run `git branch --show-current` and `git checkout <feature-branch>` if it doesn't match. System-reminder file snapshots taken while HEAD is on `main` will show pre-refactor file content, which can mislead the address-feedback pass into editing stale state. The destructive failure mode is applying review fixes to `main`-state files, then committing the merged result over the feature branch.
+**Verify the working branch after both passes return.** `simplify` spawns sub-agents in worktrees, and `/review` may check out the PR branch (`pr-<N>`); either path can leave the primary on something other than the feature branch when control returns. Run `git branch --show-current` and `git checkout <feature-branch>` if it doesn't match — the bar is "on the feature branch," not "not on `main`." System-reminder file snapshots taken on a different branch show that branch's file content, which can mislead the address-feedback pass into editing stale state. The destructive failure mode is applying review fixes to off-branch file content, then committing the merged result over the feature branch.
 
 Do not push commits while either pass is still running.
 
