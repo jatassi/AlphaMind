@@ -182,15 +182,7 @@ Commit (`fix: address /review and simplify findings on <issue ID>`), push.
 
 ### 5. Land PR and clean local git state
 
-Wait for CI green on the PR.
-
-**Polling pattern: `while`, not `until`.** The harness's sleep block forces a background `Bash` with a polling loop. Use `while <still-pending>; do sleep 30; done` — the loop runs while the condition is true, exits when CI is no longer pending. `until COND; do sleep 30; done` exits when COND becomes true, which is easy to invert by mistake (e.g. `until <pending-checks-exist>` exits *immediately* the first time pending checks exist, claiming "CI complete" while the run is still IN_PROGRESS). Concrete shape:
-
-```bash
-while gh pr view <PR> --json statusCheckRollup --jq '.statusCheckRollup[] | select(.status != "COMPLETED")' 2>/dev/null | grep -q .; do
-  sleep 30
-done
-```
+AlphaMind has no CI worth waiting on — merge as soon as the PR is open and the address-feedback push has landed.
 
 **Sweep stale `main`-bearing worktrees before `gh pr merge`.** `git worktree list`, look for orphans checked out to `main` (typical naming: `.claude/worktrees/<random-name>`). Confirm `git -C <path> status --short` is clean, then `git worktree remove -f -f <path>`. The double `-f` overrides the Claude agent harness's lock.
 
