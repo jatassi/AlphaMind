@@ -18,6 +18,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
+
 from alphamind.data_sources._common import default_session_factory, resume_since, track_run
 from alphamind.data_sources.prediction_market.categories import (
     OTHER,
@@ -49,7 +51,21 @@ def _fetch_markets(_since: datetime) -> list[dict[str, Any]]:
     offset = 0
     page_size = 100
     while True:
-        page = client.get_markets(limit=page_size, offset=offset)
+        try:
+            page = client.get_markets(limit=page_size, offset=offset)
+        except httpx.HTTPStatusError as exc:
+            # Gamma /markets caps pagination (observed at offset=10100 → HTTP 422).
+            # Treat that signal as end-of-pagination so we keep the markets we
+            # collected; a 422 at the first request is still a real error.
+            if exc.response.status_code == 422 and offset > 0:
+                log.warning(
+                    "polymarket: pagination capped at offset=%d (Gamma returned 422); "
+                    "%d markets collected.",
+                    offset,
+                    len(results),
+                )
+                break
+            raise
         if not page:
             break
         results.extend(page)

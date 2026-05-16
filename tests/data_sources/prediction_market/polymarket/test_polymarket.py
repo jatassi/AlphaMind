@@ -181,6 +181,109 @@ class TestClientPrimitives:
 
 
 # ---------------------------------------------------------------------------
+# _fetch_markets pagination
+# ---------------------------------------------------------------------------
+
+
+class TestFetchMarketsPagination:
+    """Pagination loop inside contracts._fetch_markets.
+
+    Gamma's ``/markets`` endpoint enforces an offset cap (observed at
+    offset=10100 returning HTTP 422). Treat that signal as
+    end-of-pagination so a healthy collection of ~10000 markets does not
+    abort with a noisy stack trace.
+    """
+
+    def test_422_after_first_page_terminates_pagination(self) -> None:
+        from alphamind.data_sources.prediction_market.polymarket import contracts
+
+        page = [_make_market(conditionId=f"cid-{i:03d}") for i in range(100)]
+        call_offsets: list[int] = []
+
+        class FakeClient:
+            def get_markets(
+                self,
+                *,
+                limit: int,
+                offset: int,
+                closed: bool | None = None,
+            ) -> list[dict[str, Any]]:
+                call_offsets.append(offset)
+                if offset == 0:
+                    return page
+                raise httpx.HTTPStatusError(
+                    "422 Unprocessable Entity",
+                    request=httpx.Request("GET", "https://example.com"),
+                    response=httpx.Response(422),
+                )
+
+        with patch(
+            "alphamind.data_sources.prediction_market.polymarket.client.PolymarketClient",
+            FakeClient,
+        ):
+            result = contracts._fetch_markets(_SINCE)
+
+        assert len(result) == 100
+        assert call_offsets == [0, 100]
+
+    def test_422_at_offset_zero_propagates(self) -> None:
+        from alphamind.data_sources.prediction_market.polymarket import contracts
+
+        class FakeClient:
+            def get_markets(
+                self,
+                *,
+                limit: int,
+                offset: int,
+                closed: bool | None = None,
+            ) -> list[dict[str, Any]]:
+                raise httpx.HTTPStatusError(
+                    "422 Unprocessable Entity",
+                    request=httpx.Request("GET", "https://example.com"),
+                    response=httpx.Response(422),
+                )
+
+        with (
+            patch(
+                "alphamind.data_sources.prediction_market.polymarket.client.PolymarketClient",
+                FakeClient,
+            ),
+            pytest.raises(httpx.HTTPStatusError),
+        ):
+            contracts._fetch_markets(_SINCE)
+
+    def test_non_422_mid_pagination_propagates(self) -> None:
+        from alphamind.data_sources.prediction_market.polymarket import contracts
+
+        page = [_make_market(conditionId=f"cid-{i:03d}") for i in range(100)]
+
+        class FakeClient:
+            def get_markets(
+                self,
+                *,
+                limit: int,
+                offset: int,
+                closed: bool | None = None,
+            ) -> list[dict[str, Any]]:
+                if offset == 0:
+                    return page
+                raise httpx.HTTPStatusError(
+                    "500 Server Error",
+                    request=httpx.Request("GET", "https://example.com"),
+                    response=httpx.Response(500),
+                )
+
+        with (
+            patch(
+                "alphamind.data_sources.prediction_market.polymarket.client.PolymarketClient",
+                FakeClient,
+            ),
+            pytest.raises(httpx.HTTPStatusError),
+        ):
+            contracts._fetch_markets(_SINCE)
+
+
+# ---------------------------------------------------------------------------
 # UPSERT contracts
 # ---------------------------------------------------------------------------
 
