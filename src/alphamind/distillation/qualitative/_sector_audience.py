@@ -1,14 +1,11 @@
-"""Sector → :class:`OutputAudience` resolution shared across qualitative loaders.
+"""Sector → :class:`OutputAudience` resolution for qualitative loaders.
 
-AlphaMind sectors in ``sector_classification.alphamind_sector`` are
-``tech``, ``semis``, ``financials``, ``energy``. The output-envelope
-audience taxonomy combines tech and semis under one researcher per
-``docs/design/03-analysis-layer/domain-researchers/tech-semis.md``, so
-the ticker → audience mapping resolves accordingly.
-
-Tickers without a ``sector_classification`` row or with a sector outside
-this map are omitted from the result; downstream compute treats them as
-missing and skips block emission.
+Reuses the canonical :data:`AUDIENCE_BY_SECTOR` mapping from
+:mod:`alphamind.distillation.q1.output_blocks` so a fifth sector ever
+added there propagates here without code change. Tickers without a
+``sector_classification`` row or with a sector outside the map are
+omitted; downstream compute treats them as missing and skips block
+emission.
 """
 
 from __future__ import annotations
@@ -17,13 +14,7 @@ from collections.abc import Sequence
 
 from alphamind.distillation._repository import DistillationRepository
 from alphamind.distillation.output import OutputAudience
-
-_SECTOR_TO_AUDIENCE: dict[str, OutputAudience] = {
-    "tech": OutputAudience.SECTOR_TECH_SEMIS,
-    "semis": OutputAudience.SECTOR_TECH_SEMIS,
-    "financials": OutputAudience.SECTOR_FINANCIALS,
-    "energy": OutputAudience.SECTOR_ENERGY,
-}
+from alphamind.distillation.q1.output_blocks import AUDIENCE_BY_SECTOR
 
 
 def sector_audience_map(
@@ -35,7 +26,7 @@ def sector_audience_map(
     rows = repository.load_sector_classifications(tickers=tuple(ticker_scope))
     out: dict[str, OutputAudience] = {}
     for ticker, row in rows.items():
-        audience = _SECTOR_TO_AUDIENCE.get(row.alphamind_sector)
+        audience = AUDIENCE_BY_SECTOR.get(row.alphamind_sector)
         if audience is not None:
             out[ticker] = audience
     return out

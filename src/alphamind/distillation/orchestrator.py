@@ -863,9 +863,8 @@ async def run_external_distillation(
 
     # Resolve prediction-market contract scope ONCE so every consumer
     # (Phase 1's refresh_contract_history and Phase 2's
-    # compute_prediction_market_deltas) sees the identical tuple. Splitting
-    # would let the writer ingest one set while the reader reports on
-    # another.
+    # load_qualitative_inputs) sees the identical tuple. Splitting would
+    # let the writer ingest one set while the reader reports on another.
     contract_scope: tuple[str, ...] = await asyncio.to_thread(
         resolve_prediction_market_scope,
         session,

@@ -28,7 +28,6 @@ from alphamind.distillation.qualitative._loaders import (
     load_qualitative_inputs,
 )
 from alphamind.distillation.qualitative.assemble import (
-    assemble_qualitative_blocks,
     assemble_qualitative_blocks_from_inputs,
 )
 from alphamind.distillation.qualitative.news_price_divergence_compute import (
@@ -47,7 +46,6 @@ __all__ = [
     "NON_NEUTRAL_DOMINANCE_THRESHOLD",
     "SENTIMENT_PROXY_WINDOW_HOURS",
     "QualitativeInputs",
-    "assemble_qualitative_blocks",
     "assemble_qualitative_blocks_from_inputs",
     "compute_news_price_divergence_blocks",
     "compute_prediction_market_delta_blocks",

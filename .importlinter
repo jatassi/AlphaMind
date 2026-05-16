@@ -121,14 +121,12 @@ ignore_imports =
     alphamind.distillation.q3.atm_iv_baseline_loaders -> sqlalchemy
     alphamind.distillation.q3.etf_iv_divergence_loaders -> sqlalchemy
     # ALP-487 piloted modules — qualitative_derived split into
-    # qualitative/ package. The package's session-bound shims
-    # (``qualitative.assemble`` for the session-accepting entry point,
-    # ``qualitative_derived`` for the legacy public API) keep sqlalchemy
-    # because they construct the production repository. The per-classifier
+    # qualitative/ package. The session-bound back-compat shim
+    # (``qualitative_derived`` for the legacy public API) keeps sqlalchemy
+    # because it constructs the production repository. The per-classifier
     # compute cores are ORM-free under
     # ``distillation-compute-no-sqlalchemy`` below; the per-classifier
     # loaders consume the Protocol only and so carry no sqlalchemy edge.
-    alphamind.distillation.qualitative.assemble -> sqlalchemy
     alphamind.distillation.qualitative_derived -> sqlalchemy
     # Indirect via persistence.models (also retired by punch-list #9: once
     # the distillation modules consume a loaders/repository protocol

@@ -486,13 +486,13 @@ def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
     longer carry those chains.
 
     Post-ALP-487 baseline:
-    - 31 direct sqlalchemy ignores (post-ALP-484 30 plus ALP-487's net +1:
-      ``qualitative_derived`` is kept as a backward-compat shim alongside
-      the new ``qualitative.assemble`` shim, so the propagation adds one
-      direct entry rather than retiring it).
+    - 30 direct sqlalchemy ignores (post-ALP-484 baseline preserved: ALP-487
+      retires the legacy ``qualitative_derived -> sqlalchemy`` entry and
+      re-adds the same single entry for the back-compat shim, for net
+      zero change in this column).
     - 21 indirect ignores (post-ALP-484 22 minus the retired
       ``qualitative_derived -> persistence.models`` chain — the shim no
-      longer imports ORM classes directly, only the repository).
+      longer imports ORM classes directly, only the repository facade).
 
     Regression guard: a future story tightening this contract by accident
     would drop entries here and silently re-introduce violations. Punch-list
@@ -505,8 +505,8 @@ def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
     ignored = _split_module_list(section["ignore_imports"])
     direct = [e for e in ignored if e.endswith("-> sqlalchemy")]
     indirect = [e for e in ignored if not e.endswith("-> sqlalchemy")]
-    assert len(direct) == 31, (
-        f"direct sqlalchemy ignore_imports count drifted: expected 31, got {len(direct)}.\n"
+    assert len(direct) == 30, (
+        f"direct sqlalchemy ignore_imports count drifted: expected 30, got {len(direct)}.\n"
         f"entries:\n  " + "\n  ".join(direct)
     )
     assert len(indirect) == 21, (
