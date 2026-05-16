@@ -220,8 +220,6 @@ class TestAudienceRouting:
         session.commit()
         blocks = compute_cross_sector_rotation(
             session,
-            sector_etfs=("XLK", "SMH", "XLF", "XLE"),
-            risk_proxies=("IWM", "SPY"),
             as_of=as_of,
             short_window_days=5,
             long_window_days=20,
@@ -237,9 +235,7 @@ class TestAudienceRouting:
         blocks = compute_breadth_internals(
             session,
             universe_tickers=("AAPL", "MSFT"),
-            sectors=("tech",),
             sector_members={"tech": ("AAPL", "MSFT")},
-            broad_market_etf="SPY",
             as_of=as_of,
         )
         assert blocks

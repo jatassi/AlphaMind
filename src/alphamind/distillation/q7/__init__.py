@@ -1,35 +1,33 @@
 """Q7 cross-asset and correlation computations — story 02-distillation-layer/08d.
 
-The implementation is split across this sub-package so each concern lives in
-its own module. The top-level entry point
-:mod:`alphamind.distillation.q7_cross_asset` re-exports the public API from
-each sub-module so call sites do not need to know the internal layout.
+ALP-486 split this sub-package along the compute/load boundary so the
+orchestrator's Phase 2 can run q7 in parallel with q1 / q3 / q6 /
+qualitative. The implementation is split across:
 
-Structure:
-
-- :mod:`alphamind.distillation.q7._helpers` — shared math primitives
-  (Pearson correlation, log returns, z-score, window queries).
-- :mod:`alphamind.distillation.q7.intra_sector_correlation` — intra-sector
-  pairwise correlation matrices and divergence detection.
-- :mod:`alphamind.distillation.q7.cross_sector_rotation` — cross-sector
-  rotation classification with narrative tagging.
-- :mod:`alphamind.distillation.q7.breadth_internals` — breadth and market
-  internals.
-- :mod:`alphamind.distillation.q7.intermarket_regime` — intermarket regime
-  signals.
-- :mod:`alphamind.distillation.q7.lead_lag` — lead-lag relationships with
-  overdue and inversion flags.
-- :mod:`alphamind.distillation.q7.correlation_regime_change` — correlation
-  breakdown, dispersion shift, and narrative-lag detection.
-- :mod:`alphamind.distillation.q7.assemble` — per-block-type assemblers and
-  the top-level :func:`assemble_q7_blocks` entry point.
+- :mod:`alphamind.distillation.q7._helpers` — shared pure math primitives
+  (correlation, log-return, z-score, lagged-correlation helpers).
+- :mod:`alphamind.distillation.q7._loaders` — IO shell: ``Q7Inputs`` +
+  ``load_q7_inputs``; owns every session-bound read plus the intra-sector
+  ``correlation_divergence`` event writes.
+- :mod:`alphamind.distillation.q7.intra_sector_correlation` and the
+  five other detection sub-modules — thin orchestration that preserves
+  the legacy session-accepting public API by delegating to the per-sub
+  ``*_compute.py`` pure cores.
+- :mod:`alphamind.distillation.q7.assemble` — pure
+  :func:`assemble_q7_blocks_from_inputs` plus the
+  ``Session``-accepting shim :func:`assemble_q7_blocks`.
 """
 
 from __future__ import annotations
 
+from alphamind.distillation.q7._loaders import (
+    Q7Inputs,
+    compute_pair_correlations,
+    load_q7_inputs,
+)
 from alphamind.distillation.q7.assemble import (
     assemble_q7_blocks,
-    compute_pair_correlations,
+    assemble_q7_blocks_from_inputs,
 )
 from alphamind.distillation.q7.breadth_internals import (
     EMA_WINDOWS_DAYS,
@@ -91,7 +89,9 @@ __all__ = [
     "XLE_TICKER",
     "CorrelationRegimeChangeConfig",
     "LeadLagPair",
+    "Q7Inputs",
     "assemble_q7_blocks",
+    "assemble_q7_blocks_from_inputs",
     "compute_breadth_internals",
     "compute_correlation_regime_change",
     "compute_cross_sector_rotation",
@@ -99,4 +99,5 @@ __all__ = [
     "compute_intra_sector_correlation",
     "compute_lead_lag",
     "compute_pair_correlations",
+    "load_q7_inputs",
 ]

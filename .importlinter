@@ -85,14 +85,6 @@ ignore_imports =
     alphamind.distillation.q3.anomalies -> sqlalchemy
     alphamind.distillation.q3.assemble -> sqlalchemy
     alphamind.distillation.q3.atm_iv_baseline -> sqlalchemy
-    alphamind.distillation.q7._helpers -> sqlalchemy
-    alphamind.distillation.q7.assemble -> sqlalchemy
-    alphamind.distillation.q7.breadth_internals -> sqlalchemy
-    alphamind.distillation.q7.correlation_regime_change -> sqlalchemy
-    alphamind.distillation.q7.cross_sector_rotation -> sqlalchemy
-    alphamind.distillation.q7.intermarket_regime -> sqlalchemy
-    alphamind.distillation.q7.intra_sector_correlation -> sqlalchemy
-    alphamind.distillation.q7.lead_lag -> sqlalchemy
     alphamind.distillation.regime -> sqlalchemy
     alphamind.distillation.replay_harness.engine -> sqlalchemy
     alphamind.distillation.sector_assembly -> sqlalchemy
@@ -127,6 +119,23 @@ ignore_imports =
     # below.
     alphamind.distillation.q6._loaders -> sqlalchemy
     alphamind.distillation.q6.assemble -> sqlalchemy
+    # ALP-486 piloted modules — q7 IO shell + per-sub orchestration shims +
+    # per-sub loader thin aliases keep sqlalchemy because ``q7._loaders``
+    # owns every session-bound read (per-ticker daily-bar closes, macro
+    # series, news_articles, distillation_pair_lag) plus the intra-sector
+    # ``correlation_divergence`` event writes. The per-sub orchestration
+    # shims (``q7/<sub>.py``) and the per-sub loader thin aliases
+    # (``q7/<sub>_loaders.py``) re-export from ``q7._loaders`` and so carry
+    # the sqlalchemy edge transitively. The per-sub ``*_compute.py`` cores
+    # are ORM-free under ``distillation-compute-no-sqlalchemy`` below.
+    alphamind.distillation.q7._loaders -> sqlalchemy
+    alphamind.distillation.q7.assemble -> sqlalchemy
+    alphamind.distillation.q7.breadth_internals -> sqlalchemy
+    alphamind.distillation.q7.correlation_regime_change -> sqlalchemy
+    alphamind.distillation.q7.cross_sector_rotation -> sqlalchemy
+    alphamind.distillation.q7.intermarket_regime -> sqlalchemy
+    alphamind.distillation.q7.intra_sector_correlation -> sqlalchemy
+    alphamind.distillation.q7.lead_lag -> sqlalchemy
     # ALP-487 piloted modules — qualitative_derived split into
     # qualitative/ package. The session-bound back-compat shim
     # (``qualitative_derived`` for the legacy public API) keeps sqlalchemy
@@ -144,12 +153,6 @@ ignore_imports =
     alphamind.distillation.contract_scope -> alphamind.persistence.models
     alphamind.distillation.orchestrator -> alphamind.persistence.models
     alphamind.distillation.q12_corporate_actions -> alphamind.persistence.models
-    alphamind.distillation.q7._helpers -> alphamind.persistence.models
-    alphamind.distillation.q7.assemble -> alphamind.persistence.models
-    alphamind.distillation.q7.correlation_regime_change -> alphamind.persistence.models
-    alphamind.distillation.q7.intermarket_regime -> alphamind.persistence.models
-    alphamind.distillation.q7.intra_sector_correlation -> alphamind.persistence.models
-    alphamind.distillation.q7.lead_lag -> alphamind.persistence.models
     alphamind.distillation.regime -> alphamind.persistence.models
     alphamind.distillation.replay_harness.engine -> alphamind.persistence.models
     alphamind.distillation.sector_assembly -> alphamind.persistence.models
@@ -175,6 +178,18 @@ ignore_imports =
     # (``DistillationCompositeState``). The pure compute cores have no such
     # edges.
     alphamind.distillation.q6._loaders -> alphamind.persistence.models
+    # ALP-486 piloted modules — q7 IO shell reaches persistence.models for
+    # the per-ticker daily-bar reads (``OhlcvBars``), the macro-series reads
+    # (``MacroObservations``), the news-article scan
+    # (``NewsArticles`` / ``NewsArticleTickers``), the persisted pair-lag
+    # estimate (``DistillationPairLag``), and the divergence-event writes
+    # (``DistillationEventHistory`` / ``AssetUniverse`` /
+    # ``SectorClassification``). The per-sub orchestration shims and
+    # per-sub loader thin aliases re-export from ``q7._loaders``; the
+    # ``intra_sector_correlation`` shim additionally reaches persistence.models
+    # via the divergence-event write helper. The pure compute cores have no
+    # such edges.
+    alphamind.distillation.q7._loaders -> alphamind.persistence.models
 
 # Forbidden contract (ALP-467 pilot): pure-compute cores split out by the
 # distillation compute/load boundary pilot must never import sqlalchemy.
@@ -205,6 +220,13 @@ source_modules =
     alphamind.distillation.q6.macro_surprise_compute
     alphamind.distillation.q6.market_liquidity_compute
     alphamind.distillation.q6.yield_curve_compute
+    alphamind.distillation.q7._helpers_compute
+    alphamind.distillation.q7.breadth_internals_compute
+    alphamind.distillation.q7.correlation_regime_change_compute
+    alphamind.distillation.q7.cross_sector_rotation_compute
+    alphamind.distillation.q7.intermarket_regime_compute
+    alphamind.distillation.q7.intra_sector_correlation_compute
+    alphamind.distillation.q7.lead_lag_compute
     alphamind.distillation.qualitative.news_price_divergence_compute
     alphamind.distillation.qualitative.prediction_market_deltas_compute
     alphamind.distillation.qualitative.sentiment_percentile_compute
