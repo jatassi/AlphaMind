@@ -261,9 +261,21 @@ layers =
 # write_paths/`` to ``execution/write_paths/`` since nothing else
 # remained beneath ``state_persistence/``. The ``persist ->
 # execution.write_paths.phase2`` edge remains the load-bearing
-# execution-side wiring entry. See ALP-482 for the audit of whether
-# this package should hoist to a top-level ``composition_roots/``
-# package post-decomposition.
+# execution-side wiring entry.
+#
+# ALP-482 audit conclusion: keep this package here rather than hoisting
+# to a top-level ``composition_roots/``. Post-06b, ``submit_envelope/``
+# is not a pure assembler — ``process``, ``dispatch``, and ``server``
+# carry PM request-routing logic alongside the wiring. The runtime
+# ``decision -> execution`` edges are two top-level imports
+# (``process -> execution.oms.command_ids``,
+# ``persist -> execution.write_paths.phase2``) plus four function-local
+# fallbacks inside ``dispatch.py``; the remaining ``submit_envelope.*``
+# entries below are ``TYPE_CHECKING``-only and carry no runtime cost.
+# These ``submit_envelope.*`` exceptions are permanent architectural
+# carve-outs, not a debt item. (The trailing ``state.config ->
+# execution.corporate_actions.config`` entry below is a separate
+# transitive chain with its own retirement note.)
 [importlinter:contract:decision-not-execution]
 name = decision/ has no upward imports of execution/
 type = forbidden
