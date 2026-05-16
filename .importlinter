@@ -85,7 +85,6 @@ ignore_imports =
     alphamind.distillation.q3.anomalies -> sqlalchemy
     alphamind.distillation.q3.assemble -> sqlalchemy
     alphamind.distillation.q3.atm_iv_baseline -> sqlalchemy
-    alphamind.distillation.q6_macro -> sqlalchemy
     alphamind.distillation.q7._helpers -> sqlalchemy
     alphamind.distillation.q7.assemble -> sqlalchemy
     alphamind.distillation.q7.breadth_internals -> sqlalchemy
@@ -120,6 +119,14 @@ ignore_imports =
     alphamind.distillation.q3.anomalies_loaders -> sqlalchemy
     alphamind.distillation.q3.atm_iv_baseline_loaders -> sqlalchemy
     alphamind.distillation.q3.etf_iv_divergence_loaders -> sqlalchemy
+    # ALP-485 piloted modules — q6 IO shell + session-accepting shim keep
+    # sqlalchemy because the loader owns the funding-stress / market-liquidity
+    # composite-refresh writes (``session.flush()``) and the assemble shim
+    # threads a ``Session`` into ``load_q6_inputs``. The per-classifier
+    # compute cores are ORM-free under ``distillation-compute-no-sqlalchemy``
+    # below.
+    alphamind.distillation.q6._loaders -> sqlalchemy
+    alphamind.distillation.q6.assemble -> sqlalchemy
     # ALP-487 piloted modules — qualitative_derived split into
     # qualitative/ package. The session-bound back-compat shim
     # (``qualitative_derived`` for the legacy public API) keeps sqlalchemy
@@ -137,7 +144,6 @@ ignore_imports =
     alphamind.distillation.contract_scope -> alphamind.persistence.models
     alphamind.distillation.orchestrator -> alphamind.persistence.models
     alphamind.distillation.q12_corporate_actions -> alphamind.persistence.models
-    alphamind.distillation.q6_macro -> alphamind.persistence.models
     alphamind.distillation.q7._helpers -> alphamind.persistence.models
     alphamind.distillation.q7.assemble -> alphamind.persistence.models
     alphamind.distillation.q7.correlation_regime_change -> alphamind.persistence.models
@@ -163,6 +169,12 @@ ignore_imports =
     alphamind.distillation.q3.anomalies_loaders -> alphamind.persistence.models
     alphamind.distillation.q3.atm_iv_baseline_loaders -> alphamind.persistence.models
     alphamind.distillation.q3.etf_iv_divergence_loaders -> alphamind.persistence.models
+    # ALP-485 piloted modules — q6 IO shell reaches persistence.models for the
+    # FRED-series reads (``MacroObservations``), the macro-release surprise
+    # scan (``EventCalendar``), and the composite-state row override
+    # (``DistillationCompositeState``). The pure compute cores have no such
+    # edges.
+    alphamind.distillation.q6._loaders -> alphamind.persistence.models
 
 # Forbidden contract (ALP-467 pilot): pure-compute cores split out by the
 # distillation compute/load boundary pilot must never import sqlalchemy.
@@ -187,6 +199,12 @@ source_modules =
     alphamind.distillation.q3.atm_iv_baseline_compute
     alphamind.distillation.q3.etf_iv_divergence_compute
     alphamind.distillation.q3.flow_classification_compute
+    alphamind.distillation.q6.dollar_attribution_compute
+    alphamind.distillation.q6.funding_stress_compute
+    alphamind.distillation.q6.inflation_compute
+    alphamind.distillation.q6.macro_surprise_compute
+    alphamind.distillation.q6.market_liquidity_compute
+    alphamind.distillation.q6.yield_curve_compute
     alphamind.distillation.qualitative.news_price_divergence_compute
     alphamind.distillation.qualitative.prediction_market_deltas_compute
     alphamind.distillation.qualitative.sentiment_percentile_compute

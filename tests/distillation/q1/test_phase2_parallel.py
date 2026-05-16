@@ -36,7 +36,8 @@ async def test_phase2_taskgroup_runs_q1_and_legacy_in_parallel() -> None:
 
     def _slow_legacy(*_args: Any, **_kwargs: Any) -> tuple[list[Any], ...]:
         time.sleep(sleep_s)
-        return ([], [], [], [], [])
+        # Legacy subtask returns (q7, q12) after ALP-485 lifted q6 out.
+        return ([], [])
 
     # Build an emulation of the TaskGroup phase identical to the
     # orchestrator's structure but isolated so the test doesn't need a
@@ -66,4 +67,4 @@ async def test_phase2_taskgroup_runs_q1_and_legacy_in_parallel() -> None:
     # Sanity: both tasks ran and returned their declared shapes.
     q1_result, legacy_result = results
     assert q1_result == []
-    assert legacy_result == ([], [], [], [], [])
+    assert legacy_result == ([], [])
