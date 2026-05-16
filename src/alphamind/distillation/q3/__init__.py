@@ -24,6 +24,7 @@ Structure:
 
 from __future__ import annotations
 
+from alphamind.distillation.q3._loaders import Q3Inputs, load_q3_inputs
 from alphamind.distillation.q3.anomalies import (
     LowOiVolumeAnomaly,
     SectorWideSweep,
@@ -32,8 +33,9 @@ from alphamind.distillation.q3.anomalies import (
     detect_sector_wide_sweeps,
 )
 from alphamind.distillation.q3.assemble import (
-    FlowClassificationInputs,
+    FlowClassificationAssemblyInputs,
     assemble_q3_blocks,
+    assemble_q3_blocks_from_inputs,
     assemble_q3_etf_iv_divergence_blocks,
     assemble_q3_flow_classification_blocks,
     assemble_q3_index_vs_sector_block,
@@ -71,17 +73,19 @@ __all__ = [
     "SNAPSHOT_OI_DELTA_ATTRIBUTION",
     "EtfIvDivergence",
     "EtfIvDivergenceDirection",
-    "FlowClassificationInputs",
+    "FlowClassificationAssemblyInputs",
     "FlowZScore",
     "IndexVsSectorClassification",
     "IndexVsSectorLabel",
     "LowOiVolumeAnomaly",
     "PairTradeSignature",
     "PutFlowIntent",
+    "Q3Inputs",
     "SectorWideSweep",
     "SweepDirection",
     "TickerOptionsFlow",
     "assemble_q3_blocks",
+    "assemble_q3_blocks_from_inputs",
     "assemble_q3_etf_iv_divergence_blocks",
     "assemble_q3_flow_classification_blocks",
     "assemble_q3_index_vs_sector_block",
@@ -95,5 +99,6 @@ __all__ = [
     "detect_low_oi_volume_anomalies",
     "detect_pair_trade_signatures",
     "detect_sector_wide_sweeps",
+    "load_q3_inputs",
     "refresh_atm_iv_baselines",
 ]

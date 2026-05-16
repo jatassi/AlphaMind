@@ -8,12 +8,13 @@ spec at ``docs/implementation/02-distillation-layer/12-distillation-orchestrator
 1. Class B refresh — refresh every rolling-state primitive before any
    computation reads from state. Refresh failure prevents any downstream
    work per ``docs/design/mid-pipeline-failure-handling.md``.
-2. Per-category indicator computations — Q1's pure-compute path runs in
-   parallel with the legacy session-bound categories (q3, q6, q7, q12,
-   qualitative_derived, which remain internally serialized under one
-   Session) via :class:`asyncio.TaskGroup`. Each category is a thin
-   module-level helper that wraps the synchronous DB-bound primitives in
-   :func:`asyncio.to_thread` so the event loop does not block.
+2. Per-category indicator computations — Q1's and Q3's pure-compute paths
+   run in parallel with each other and with the legacy session-bound
+   categories (q6, q7, q12, qualitative_derived, which remain internally
+   serialized under one Session) via :class:`asyncio.TaskGroup`. Each
+   category is a thin module-level helper that wraps the synchronous
+   DB-bound primitives in :func:`asyncio.to_thread` so the event loop
+   does not block.
 3. Regime classification — universal-broadcast volatility regime label
    per story 09.
 4. Aggregation — partition blocks by audience, collect anomaly summaries
@@ -80,7 +81,8 @@ from alphamind.distillation.output import (
 from alphamind.distillation.q1 import assemble_q1_blocks
 from alphamind.distillation.q1._loaders import Q1Inputs, load_q1_inputs
 from alphamind.distillation.q1.assemble import assemble_q1_blocks_from_inputs
-from alphamind.distillation.q3 import assemble_q3_blocks
+from alphamind.distillation.q3._loaders import Q3Inputs, load_q3_inputs
+from alphamind.distillation.q3.assemble import assemble_q3_blocks_from_inputs
 from alphamind.distillation.q6_macro import compute_q6_blocks
 from alphamind.distillation.q7 import (
     assemble_q7_blocks,
@@ -287,8 +289,8 @@ def _refresh_class_b_state(
 # ---------------------------------------------------------------------------
 #
 # Each dispatcher is a thin wrapper over its category's public surface.
-# The orchestrator runs Q1's pure-compute path concurrently with the
-# legacy session-bound categories (q3, q6, q7, q12, qualitative_derived,
+# The orchestrator runs Q1's and Q3's pure-compute paths concurrently with
+# the legacy session-bound categories (q6, q7, q12, qualitative_derived,
 # which stay sequential under one Session) via asyncio.TaskGroup; the
 # synchronous DB-bound work runs through asyncio.to_thread so the event
 # loop never blocks waiting for SQLite.
@@ -363,24 +365,16 @@ def _compute_legacy_phase2_blocks(
     ticker_scope: Sequence[str],
     contract_scope: Sequence[str],
     as_of: datetime,
-    pair_correlations: dict[tuple[str, str], float],
 ) -> tuple[list[OutputBlock], ...]:
-    """ALP-467 — sequential session-bound categories.
+    """ALP-484 — sequential session-bound categories (q6, q7, q12, qualitative).
 
-    Q3, Q6, Q7, Q12, qualitative still share the Session and remain
-    serialized inside one TaskGroup task to avoid "Session is already
-    flushing" InvalidRequestError. Each follow-up category that converts
-    to the compute/load pattern lifts out of this helper into its own
-    TaskGroup task.
+    Q6, Q7, Q12, qualitative still share the Session and remain serialized
+    inside one TaskGroup task to avoid "Session is already flushing"
+    InvalidRequestError. Q3 lifted to its own TaskGroup task in ALP-484.
+    Each follow-up category that converts to the compute/load pattern
+    lifts out of this helper into its own TaskGroup task.
     """
     return (
-        _compute_q3_blocks(
-            session,
-            config=config,
-            ticker_scope=ticker_scope,
-            as_of=as_of,
-            pair_correlations=pair_correlations,
-        ),
         _compute_q6_blocks(session, config=config, as_of=as_of),
         _compute_q7_blocks(session, config=config, ticker_scope=ticker_scope, as_of=as_of),
         _compute_q12_blocks(session, config=config, as_of=as_of),
@@ -394,29 +388,42 @@ def _compute_legacy_phase2_blocks(
     )
 
 
-def _compute_q3_blocks(
+def _load_q3_inputs_via_session(
     session: Session,
     *,
     config: DistillationDomainConfig,
     ticker_scope: Sequence[str],
     as_of: datetime,
     pair_correlations: dict[tuple[str, str], float],
-) -> list[OutputBlock]:
-    """Q3 options-flow blocks (story 08b).
+) -> Q3Inputs:
+    """ALP-484 — pre-load Q3 inputs under the shared Session.
 
-    Delegates to :func:`assemble_q3_blocks`. The ``pair_correlations``
-    mapping is sourced from :func:`compute_pair_correlations` (Q7's
-    canonical helper) so pair-trade-signature detection sees the same
-    correlation matrix Q7 reports — the orchestrator computes it once
-    and threads it through to both consumers.
+    The shell half of the q3 compute/load split. Phase 2 calls this
+    sequentially under one Session before launching the TaskGroup; the
+    returned :class:`Q3Inputs` is then handed to
+    :func:`_compute_q3_blocks_from_inputs` (pure compute, thread-safe).
+
+    The IV-rank baseline UPSERT happens inside this loader so the
+    parallel pure compute consumes already-calibrated values without any
+    further session touch.
     """
-    return assemble_q3_blocks(
+    return load_q3_inputs(
         session,
         config=config,
         as_of=as_of,
         ticker_scope=ticker_scope,
         pair_correlations=pair_correlations,
     )
+
+
+def _compute_q3_blocks_from_inputs(q3_inputs: Q3Inputs) -> list[OutputBlock]:
+    """ALP-484 — pure-compute Q3 dispatch from pre-loaded inputs.
+
+    Wraps :func:`assemble_q3_blocks_from_inputs` so the orchestrator's
+    Phase 2 TaskGroup has a single ``to_thread`` callable that takes only
+    serializable / immutable arguments — no Session, no ORM.
+    """
+    return assemble_q3_blocks_from_inputs(q3_inputs)
 
 
 def _compute_q6_blocks(
@@ -721,6 +728,102 @@ def _count_bootstrap_blocks(blocks: Iterable[OutputBlock]) -> int:
     return sum(1 for block in blocks if block.calibration_state is not CalibrationState.CALIBRATED)
 
 
+async def _run_phase_2(
+    session: Session,
+    *,
+    config: DistillationDomainConfig,
+    ticker_scope: Sequence[str],
+    contract_scope: Sequence[str],
+    as_of: datetime,
+) -> list[OutputBlock]:
+    """Phase 2 — per-category indicator computations.
+
+    ALP-467 piloted the compute/load boundary split on q1; ALP-484
+    propagated the split to q3. Q1 and Q3 inputs are pre-loaded under the
+    shared Session (the shell) and then the pure computes run in parallel
+    with each other and with the legacy session-bound categories via an
+    ``asyncio.TaskGroup``. The legacy categories (q6, q7, q12,
+    qualitative) still share the Session so they remain serialized inside
+    one task — the multi-quarter migration to per-category pure compute
+    is tracked as ALP-467 follow-ups.
+
+    Pair correlations are computed once before the dispatch so Q3's
+    pair-trade-signature detection sees the same matrix Q7 reports (Q7
+    recomputes internally; orchestrator-side pre-compute is the canonical
+    source for Q3).
+    """
+    phase_start = time.monotonic()
+    pair_correlations = await asyncio.to_thread(
+        compute_pair_correlations,
+        session,
+        ticker_scope=ticker_scope,
+        as_of=as_of,
+        window_days=config.persistence_windows.correlation_short_days,
+    )
+    # Shell: pre-load Q1 + Q3 inputs under the shared Session before the
+    # core. The Q3 loader UPSERTs the ATM-IV baseline rows synchronously
+    # so the parallel Q3 compute consumes already-calibrated IV ranks.
+    q1_inputs = await asyncio.to_thread(
+        _load_q1_inputs_via_session,
+        session,
+        config=config,
+        ticker_scope=ticker_scope,
+        as_of=as_of,
+    )
+    q3_inputs = await asyncio.to_thread(
+        _load_q3_inputs_via_session,
+        session,
+        config=config,
+        ticker_scope=ticker_scope,
+        as_of=as_of,
+        pair_correlations=pair_correlations,
+    )
+
+    # Core: TaskGroup runs Q1 + Q3 pure computes concurrently with the
+    # legacy session-bound categories (which remain internally serialized).
+    # ExceptionGroup unwrapping: TaskGroup wraps any sub-exception in a
+    # BaseExceptionGroup. Per the LLM-agents-uniformly-Critical policy,
+    # propagate the original exception so callers (and tests) see the
+    # underlying failure type, not the wrapper.
+    try:
+        async with asyncio.TaskGroup() as tg:
+            q1_task = tg.create_task(
+                asyncio.to_thread(
+                    _compute_q1_blocks_from_inputs,
+                    q1_inputs,
+                    config=config,
+                )
+            )
+            q3_task = tg.create_task(
+                asyncio.to_thread(
+                    _compute_q3_blocks_from_inputs,
+                    q3_inputs,
+                )
+            )
+            legacy_task = tg.create_task(
+                asyncio.to_thread(
+                    _compute_legacy_phase2_blocks,
+                    session,
+                    config=config,
+                    ticker_scope=ticker_scope,
+                    contract_scope=contract_scope,
+                    as_of=as_of,
+                )
+            )
+    except BaseExceptionGroup as eg:
+        raise eg.exceptions[0] from eg
+    per_category_blocks = (q1_task.result(), q3_task.result(), *legacy_task.result())
+    indicator_blocks: list[OutputBlock] = []
+    for category_blocks in per_category_blocks:
+        indicator_blocks.extend(category_blocks)
+    logger.info(
+        "phase 2 (per-category indicators) complete: blocks=%d elapsed=%.3fs",
+        len(indicator_blocks),
+        time.monotonic() - phase_start,
+    )
+    return indicator_blocks
+
+
 async def run_external_distillation(
     session: Session,
     config: DistillationDomainConfig,
@@ -780,75 +883,13 @@ async def run_external_distillation(
         time.monotonic() - phase_start,
     )
 
-    # Phase 2 — per-category indicator computations. ALP-467 piloted the
-    # compute/load boundary split on q1: Q1 inputs are pre-loaded under
-    # the shared Session (the shell) and then the pure compute runs in
-    # parallel with the legacy session-bound categories via an
-    # ``asyncio.TaskGroup``. The legacy categories (q3, q6, q7, q12,
-    # qualitative) still share the Session so they remain serialized
-    # inside one task — the multi-quarter migration to per-category pure
-    # compute is tracked as ALP-467 follow-ups. Pair correlations are
-    # computed once before the dispatch so Q3's pair-trade-signature
-    # detection sees the same matrix Q7 reports (Q7 recomputes
-    # internally; orchestrator-side pre-compute is the canonical source
-    # for Q3).
-    phase_start = time.monotonic()
-    pair_correlations = await asyncio.to_thread(
-        compute_pair_correlations,
-        session,
-        ticker_scope=ticker_scope,
-        as_of=as_of,
-        window_days=config.persistence_windows.correlation_short_days,
-    )
-    # Shell: pre-load Q1 inputs under the shared Session before the core.
-    q1_inputs = await asyncio.to_thread(
-        _load_q1_inputs_via_session,
+    # Phase 2 — per-category indicator computations.
+    indicator_blocks = await _run_phase_2(
         session,
         config=config,
         ticker_scope=ticker_scope,
+        contract_scope=contract_scope,
         as_of=as_of,
-    )
-
-    # Core: TaskGroup runs Q1's pure compute concurrently with the
-    # legacy session-bound categories (which remain internally serialized).
-    # ExceptionGroup unwrapping: TaskGroup wraps any sub-exception in a
-    # BaseExceptionGroup. Per the LLM-agents-uniformly-Critical policy,
-    # propagate the original exception so callers (and tests) see the
-    # underlying failure type, not the wrapper.
-    try:
-        async with asyncio.TaskGroup() as tg:
-            q1_task = tg.create_task(
-                asyncio.to_thread(
-                    _compute_q1_blocks_from_inputs,
-                    q1_inputs,
-                    config=config,
-                )
-            )
-            legacy_task = tg.create_task(
-                asyncio.to_thread(
-                    _compute_legacy_phase2_blocks,
-                    session,
-                    config=config,
-                    ticker_scope=ticker_scope,
-                    contract_scope=contract_scope,
-                    as_of=as_of,
-                    pair_correlations=pair_correlations,
-                )
-            )
-    except BaseExceptionGroup as eg:
-        # Surface the first underlying exception unchanged. Multiple
-        # parallel failures collapse to the first; abort semantics are
-        # preserved because the TaskGroup cancels the remaining task as
-        # soon as one raises.
-        raise eg.exceptions[0] from eg
-    per_category_blocks = (q1_task.result(), *legacy_task.result())
-    indicator_blocks: list[OutputBlock] = []
-    for category_blocks in per_category_blocks:
-        indicator_blocks.extend(category_blocks)
-    logger.info(
-        "phase 2 (per-category indicators) complete: blocks=%d elapsed=%.3fs",
-        len(indicator_blocks),
-        time.monotonic() - phase_start,
     )
 
     # Phase 3 — regime classification.

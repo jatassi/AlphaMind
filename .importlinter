@@ -109,6 +109,18 @@ ignore_imports =
     alphamind.distillation.q1.gap -> sqlalchemy
     alphamind.distillation.q1.gap_loaders -> sqlalchemy
     alphamind.distillation.q3.flow_classification -> sqlalchemy
+    # ALP-484 piloted modules — q3 anomalies / atm_iv_baseline / etf_iv_divergence
+    # IO shells keep sqlalchemy for the same reason: they own the session-bound
+    # reads + the IV-rank UPSERT. The corresponding compute cores are
+    # ORM-free under ``distillation-compute-no-sqlalchemy`` below. The
+    # whole-category ``q3._loaders`` composes the per-sub loaders plus the
+    # universe / sector-topology / flow-z-score / sector-ETF-membership
+    # reads previously embedded in ``q3.assemble`` — so it carries the
+    # session reads ``q3.assemble`` no longer does.
+    alphamind.distillation.q3._loaders -> sqlalchemy
+    alphamind.distillation.q3.anomalies_loaders -> sqlalchemy
+    alphamind.distillation.q3.atm_iv_baseline_loaders -> sqlalchemy
+    alphamind.distillation.q3.etf_iv_divergence_loaders -> sqlalchemy
     # Indirect via persistence.models (also retired by punch-list #9: once
     # the distillation modules consume a loaders/repository protocol
     # instead of importing ORM declarative classes directly, the indirect
@@ -118,9 +130,6 @@ ignore_imports =
     alphamind.distillation.contract_scope -> alphamind.persistence.models
     alphamind.distillation.orchestrator -> alphamind.persistence.models
     alphamind.distillation.q12_corporate_actions -> alphamind.persistence.models
-    alphamind.distillation.q3.anomalies -> alphamind.persistence.models
-    alphamind.distillation.q3.assemble -> alphamind.persistence.models
-    alphamind.distillation.q3.atm_iv_baseline -> alphamind.persistence.models
     alphamind.distillation.q6_macro -> alphamind.persistence.models
     alphamind.distillation.q7._helpers -> alphamind.persistence.models
     alphamind.distillation.q7.assemble -> alphamind.persistence.models
@@ -139,6 +148,15 @@ ignore_imports =
     # the SqlDistillationRepository and the gap_loaders write path.
     alphamind.distillation._repository_sql -> alphamind.persistence.models
     alphamind.distillation.q1.gap_loaders -> alphamind.persistence.models
+    # ALP-484 piloted modules — q3 IO shells reach persistence.models for the
+    # same reason: ORM queries (and the IV-rank UPSERT) live here, not in
+    # the corresponding pure compute cores. ``q3._loaders`` composes the
+    # per-sub loaders plus the legacy session-bound reads lifted out of
+    # ``q3.assemble``.
+    alphamind.distillation.q3._loaders -> alphamind.persistence.models
+    alphamind.distillation.q3.anomalies_loaders -> alphamind.persistence.models
+    alphamind.distillation.q3.atm_iv_baseline_loaders -> alphamind.persistence.models
+    alphamind.distillation.q3.etf_iv_divergence_loaders -> alphamind.persistence.models
 
 # Forbidden contract (ALP-467 pilot): pure-compute cores split out by the
 # distillation compute/load boundary pilot must never import sqlalchemy.
@@ -159,6 +177,9 @@ source_modules =
     alphamind.distillation.q1.relative_performance_compute
     alphamind.distillation.q1.trend_state_compute
     alphamind.distillation.q1.volume_profile_compute
+    alphamind.distillation.q3.anomalies_compute
+    alphamind.distillation.q3.atm_iv_baseline_compute
+    alphamind.distillation.q3.etf_iv_divergence_compute
     alphamind.distillation.q3.flow_classification_compute
 forbidden_modules =
     sqlalchemy
