@@ -392,7 +392,7 @@ def _enrich_position_first_pass(
         unrealized_pnl_pct=unrealized_pnl_pct,
         position_weight_pct=0.0,  # second pass overwrites once total portfolio value is known
         position_age_hours=position_age_hours,
-        notional_exposure_usd=money(max(pf.notional_exposure_usd, 0.0)),
+        notional_exposure_usd=money(pf.notional_exposure_usd),
         delta_adjusted_exposure_usd=signed_money(pf.delta_adjusted_exposure_usd),
         distance_to_target_usd=(
             signed_money(distance_to_target_usd) if distance_to_target_usd is not None else None

@@ -22,8 +22,10 @@ from decimal import Decimal, InvalidOperation
 from typing import NewType
 
 __all__ = [
+    "DECIMAL_ZERO",
     "Money",
     "Price",
+    "decimal_json_default",
     "money",
     "price",
     "signed_money",
@@ -32,6 +34,22 @@ __all__ = [
 
 Money = NewType("Money", Decimal)
 Price = NewType("Price", Decimal)
+
+DECIMAL_ZERO = Decimal(0)
+
+
+def decimal_json_default(obj: object) -> object:
+    """``json.dumps`` ``default=`` hook that emits ``Decimal`` as its string form.
+
+    Use as ``json.dumps(payload, default=decimal_json_default)`` whenever a
+    codec needs to round-trip ``Decimal`` values through JSON without
+    binary-float drift. The decode path reconstructs via
+    :func:`money` / :func:`price` / :func:`signed_money`.
+    """
+    if isinstance(obj, Decimal):
+        return str(obj)
+    msg = f"object of type {type(obj).__name__} is not JSON-serializable"
+    raise TypeError(msg)
 
 
 def money(value: str | int | float | Decimal) -> Money:

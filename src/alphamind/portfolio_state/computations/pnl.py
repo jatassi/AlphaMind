@@ -9,7 +9,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Literal
 
-from alphamind._kernel.money import Money, signed_money
+from alphamind._kernel.money import DECIMAL_ZERO, Money, signed_money
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.repository import PortfolioPnLInputs
 from alphamind.portfolio_state.snapshot import PortfolioPnL
@@ -21,7 +21,6 @@ _REQUIRED_ROLLING_KEYS: tuple[Literal["1d", "3d", "5d", "20d"], ...] = (
     "5d",
     "20d",
 )
-_ZERO = Decimal(0)
 
 
 def compute_portfolio_pnl(
@@ -47,7 +46,7 @@ def compute_portfolio_pnl(
         raise ValueError(msg)
 
     total_unrealized_pnl_usd = signed_money(
-        sum((p.unrealized_pnl_usd for p in open_positions), _ZERO)
+        sum((p.unrealized_pnl_usd for p in open_positions), DECIMAL_ZERO)
     )
 
     # Percentage of portfolio (zero-safe)
@@ -118,7 +117,7 @@ def compute_drawdown_by_source_pct(
         return {}
 
     negative_positions: list[tuple[str, Decimal]] = []
-    total_negative: Decimal = _ZERO
+    total_negative: Decimal = DECIMAL_ZERO
     for position in open_positions:
         if position.unrealized_pnl_usd < 0:
             magnitude = -position.unrealized_pnl_usd
@@ -151,6 +150,6 @@ def compute_total_portfolio_value_usd(
     """
     magnitudes = sum(
         (abs(p.current_market_value_usd) for p in (*open_positions, *pending_positions)),
-        _ZERO,
+        DECIMAL_ZERO,
     )
     return cash_ledger.current_cash_usd + float(magnitudes)

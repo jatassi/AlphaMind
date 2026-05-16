@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from decimal import Decimal
 
-from alphamind._kernel.money import Money, signed_money
+from alphamind._kernel.money import DECIMAL_ZERO, Money, signed_money
 from alphamind.portfolio_state.records.positions import Direction, PositionRecord
 from alphamind.portfolio_state.snapshot import DirectionalExposure, SectorExposureEntry
 from alphamind.portfolio_state.views.positions import PositionView
@@ -18,7 +18,6 @@ from alphamind.portfolio_state.views.positions import PositionView
 SectorResolver = Callable[[PositionRecord], str | None]
 
 _UNCLASSIFIED = "UNCLASSIFIED"
-_ZERO = Decimal(0)
 
 
 # ---------------------------------------------------------------------------
@@ -69,8 +68,8 @@ def compute_sector_exposure(
     _validate_total(total_portfolio_value_usd)
     _check_enriched(open_positions)
 
-    long_by_sector: dict[str, Decimal] = defaultdict(lambda: _ZERO)
-    short_by_sector: dict[str, Decimal] = defaultdict(lambda: _ZERO)
+    long_by_sector: dict[str, Decimal] = defaultdict(lambda: DECIMAL_ZERO)
+    short_by_sector: dict[str, Decimal] = defaultdict(lambda: DECIMAL_ZERO)
 
     for pos in open_positions:
         sector = resolver(pos.record) or _UNCLASSIFIED
@@ -117,18 +116,22 @@ def compute_directional_exposure(
     _validate_total(total_portfolio_value_usd)
     _check_enriched(open_positions)
 
-    long_terms = [
-        pos.delta_adjusted_exposure_usd
-        for pos in open_positions
-        if pos.delta_adjusted_exposure_usd > 0
-    ]
-    short_terms = [
-        -pos.delta_adjusted_exposure_usd
-        for pos in open_positions
-        if pos.delta_adjusted_exposure_usd < 0
-    ]
-    total_long: Decimal = sum(long_terms, _ZERO)
-    total_short: Decimal = sum(short_terms, _ZERO)
+    total_long: Decimal = sum(
+        (
+            pos.delta_adjusted_exposure_usd
+            for pos in open_positions
+            if pos.delta_adjusted_exposure_usd > 0
+        ),
+        DECIMAL_ZERO,
+    )
+    total_short: Decimal = sum(
+        (
+            -pos.delta_adjusted_exposure_usd
+            for pos in open_positions
+            if pos.delta_adjusted_exposure_usd < 0
+        ),
+        DECIMAL_ZERO,
+    )
 
     return DirectionalExposure(
         total_long_delta_adjusted_usd=signed_money(total_long),

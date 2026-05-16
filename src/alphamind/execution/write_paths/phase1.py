@@ -22,7 +22,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
-from alphamind._kernel.money import money, price, signed_money
+from alphamind._kernel.money import money, signed_money
 from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
@@ -1214,14 +1214,12 @@ def _persist_position_update(row: PositionRow, position: PositionRecord) -> None
 
 
 def _position_fill_from_record(fill: FillRecord) -> PositionFill:
-    # ALP-462 — boundary cast Price/Money → float at the legacy ``PositionFill``
-    # boundary (records.positions is outside ALP-462's file list).
     return PositionFill(
         fill_timestamp=fill.fill_timestamp,
-        fill_price=price(float(fill.fill_price)),
+        fill_price=fill.fill_price,
         fill_quantity=fill.fill_quantity,
-        slippage=signed_money(float(fill.slippage_usd) if fill.slippage_usd is not None else 0.0),
-        fees=money(max(float(fill.fees_usd), 0.0)),
+        slippage=fill.slippage_usd if fill.slippage_usd is not None else signed_money(0),
+        fees=fill.fees_usd,
         live_execution_estimate=fill.live_execution_estimate,
     )
 
@@ -1450,14 +1448,10 @@ async def _emit_fill_activity_log_entries(
         thesis_id=thesis_id,
         timestamp=fill.fill_timestamp,
         detail=OrderFilledDetail(
-            fill_price=price(fill.fill_price),
+            fill_price=fill.fill_price,
             fill_quantity=fill.fill_quantity,
-            slippage=(
-                signed_money(fill.slippage_usd)
-                if fill.slippage_usd is not None
-                else signed_money(0)
-            ),
-            fees=money(max(float(fill.fees_usd), 0.0)),
+            slippage=fill.slippage_usd if fill.slippage_usd is not None else signed_money(0),
+            fees=fill.fees_usd,
         ),
     )
 
@@ -1475,7 +1469,7 @@ async def _emit_fill_activity_log_entries(
             detail=PositionOpenedDetail(
                 ticker=_ticker_of(position_after),
                 direction=position_after.direction.value,
-                fill_price=price(fill.fill_price),
+                fill_price=fill.fill_price,
                 quantity=fill.fill_quantity,
                 thesis_id=thesis_id,
                 bracket_id=bracket_id,

@@ -624,10 +624,10 @@ class TestAlp489CodecRoundTrip:
         import json
         from decimal import Decimal
 
+        from alphamind._kernel.money import decimal_json_default
         from alphamind.state.tables.positions_codec import (
             _fill_from_dict,
             _fill_to_dict,
-            _json_default,
         )
 
         fill = PositionFill(
@@ -646,9 +646,9 @@ class TestAlp489CodecRoundTrip:
 
         # Round-trip through the same encode→JSON→decode path the codec
         # uses end-to-end (``record_to_row`` calls ``_fill_to_dict`` inside a
-        # ``json.dumps(..., default=_json_default)``; ``row_to_record`` reads
-        # ``json.loads`` and calls ``_fill_from_dict``).
-        payload = json.loads(json.dumps(_fill_to_dict(fill), default=_json_default))
+        # ``json.dumps(..., default=decimal_json_default)``; ``row_to_record``
+        # reads ``json.loads`` and calls ``_fill_from_dict``).
+        payload = json.loads(json.dumps(_fill_to_dict(fill), default=decimal_json_default))
         rehydrated = _fill_from_dict(payload)
 
         # Exact Decimal equality — the literal "100.50" must survive intact.

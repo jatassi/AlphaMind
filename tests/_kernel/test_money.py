@@ -214,8 +214,10 @@ def test_kernel_money_all_lists_every_public_name() -> None:
     from alphamind._kernel import money
 
     assert set(money.__all__) == {
+        "DECIMAL_ZERO",
         "Money",
         "Price",
+        "decimal_json_default",
         "money",
         "price",
         "signed_money",
