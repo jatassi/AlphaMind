@@ -107,13 +107,13 @@ DEFAULT_PHASE_SUMMARY: dict[str, dict[str, Any]] = {
 def _read(p: Path) -> str:
     if not p.exists():
         return ""
-    return p.read_text()
+    return p.read_text(encoding="utf-8")
 
 
 def _read_json(p: Path) -> Any:
     if not p.exists():
         return None
-    return json.loads(p.read_text())
+    return json.loads(p.read_text(encoding="utf-8"))
 
 
 def _esc(s: str) -> str:
@@ -811,7 +811,7 @@ CSS_PATH = Path(__file__).resolve().parent / "_e2e_report_assets" / "style.css"
 
 
 def _load_css() -> str:
-    return CSS_PATH.read_text()
+    return CSS_PATH.read_text(encoding="utf-8")
 
 
 def render(layout: Layout, phase_html: dict[str, str]) -> str:
@@ -951,7 +951,7 @@ def main() -> int:
 
     phase_summary: dict[str, dict[str, Any]] = {**PHASE_TEMPLATE}
     if args.phase_summary:
-        override = json.loads(args.phase_summary.read_text())
+        override = json.loads(args.phase_summary.read_text(encoding="utf-8"))
         for k, v in override.items():
             phase_summary[k] = {**phase_summary.get(k, {}), **v}
 
@@ -972,7 +972,7 @@ def main() -> int:
     }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(render(layout, phase_html))
+    output_path.write_text(render(layout, phase_html), encoding="utf-8")
     print(f"wrote {output_path}")
     return 0
 
