@@ -485,35 +485,37 @@ def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
     indirect ``persistence.models`` ignores for the slim shims that no
     longer carry those chains.
 
-    Post-ALP-487 baseline:
-    - 30 direct sqlalchemy ignores (post-ALP-484 baseline preserved: ALP-487
-      retires the legacy ``qualitative_derived -> sqlalchemy`` entry and
-      re-adds the same single entry for the back-compat shim, for net
-      zero change in this column).
+    Post-ALP-485 baseline:
+    - 31 direct sqlalchemy ignores (post-ALP-487 30, +2 q6 IO-shell entries
+      ``q6._loaders``/``q6.assemble``, -1 retired ``q6_macro`` entry — the
+      shim no longer carries an ORM import after the q6 sub-package split).
     - 21 indirect ignores (post-ALP-484 22 minus the retired
-      ``qualitative_derived -> persistence.models`` chain — the shim no
-      longer imports ORM classes directly, only the repository facade).
+      ``qualitative_derived -> persistence.models`` chain; ALP-485 retires
+      the ``q6_macro -> persistence.models`` chain and re-adds the same
+      single entry for the new ``q6._loaders`` shell, for net zero change
+      in this column).
 
     Regression guard: a future story tightening this contract by accident
     would drop entries here and silently re-introduce violations. Punch-list
-    item #9 (continued q-* propagation past q1 + q3 + qualitative) is still
-    pending for q6 and q7 — those entries must hold until those follow-ups
-    land.
+    item #9 (continued q-* propagation past q1 + q3 + q6 + qualitative) is
+    still pending for q7 — those entries must hold until that follow-up
+    lands.
     """
     parser = _parse_importlinter_config()
     section = _contract_section(parser, "distillation-no-sqlalchemy")
     ignored = _split_module_list(section["ignore_imports"])
     direct = [e for e in ignored if e.endswith("-> sqlalchemy")]
     indirect = [e for e in ignored if not e.endswith("-> sqlalchemy")]
-    assert len(direct) == 30, (
-        f"direct sqlalchemy ignore_imports count drifted: expected 30, got {len(direct)}.\n"
+    assert len(direct) == 31, (
+        f"direct sqlalchemy ignore_imports count drifted: expected 31, got {len(direct)}.\n"
         f"entries:\n  " + "\n  ".join(direct)
     )
     assert len(indirect) == 21, (
         f"indirect ignore_imports count drifted: expected 21 "
         f"(post-ALP-484 22 minus the retired "
-        f"qualitative_derived -> persistence.models chain), "
-        f"got {len(indirect)}.\n"
+        f"qualitative_derived -> persistence.models chain; ALP-485 retired "
+        f"q6_macro -> persistence.models and added q6._loaders -> "
+        f"persistence.models for net zero), got {len(indirect)}.\n"
         f"entries:\n  " + "\n  ".join(indirect)
     )
 
