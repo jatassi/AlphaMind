@@ -649,7 +649,7 @@ def _validate_setup(args: argparse.Namespace) -> tuple[str, str, dict[str, Any]]
         print(f"error: config not found at {args.config}", file=sys.stderr)
         return 2
 
-    with args.config.open() as f:
+    with args.config.open(encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
     config["__source_path__"] = str(args.config)
     if not config.get("sectors"):

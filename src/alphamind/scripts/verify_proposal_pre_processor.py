@@ -71,6 +71,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     MarketInputs,
     PortfolioStateSnapshot,
 )
+from alphamind.scripts._stdio import configure_utf8_stdio
 
 __all__ = [
     "Verdict",
@@ -1129,6 +1130,7 @@ def _render_summary_table(results: dict[str, ScenarioResult]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns exit code (0=all pass, 1=any fail)."""
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(
         description=(
             "Run proposal pre-processor verification against analyst and strategist "

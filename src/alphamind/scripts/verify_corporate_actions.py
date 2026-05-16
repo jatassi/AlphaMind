@@ -108,6 +108,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     MarketInputs,
     RealizedVolEntry,
 )
+from alphamind.scripts._stdio import configure_utf8_stdio
 from alphamind.state.config import StatePersistenceConfig
 from alphamind.state.invocation_context.context import (
     InvocationContext,
@@ -1698,6 +1699,7 @@ def _migrate_db_to_head(db_path: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns 0 on all-pass, 1 on any failure."""
+    configure_utf8_stdio()
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 

@@ -62,6 +62,7 @@ from alphamind.scripts._common import (
     load_distillation_config,
     load_universe_scope,
 )
+from alphamind.scripts._stdio import configure_utf8_stdio
 
 # ---------------------------------------------------------------------------
 # Configuration constants
@@ -641,6 +642,7 @@ def _format_invocation_id(now: datetime) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point. Returns the exit code; never raises."""
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(
         description=(
             "Run the distillation orchestrator end-to-end and verify the "

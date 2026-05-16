@@ -47,7 +47,7 @@ def _news_dir() -> Path:
 def _load_outlets() -> dict[str, str]:
     """Load news_outlets.yaml once per call; returns {outlet_name: tier}."""
     config_path = Path(__file__).parents[4] / "config" / "news_outlets.yaml"
-    with config_path.open() as fh:
+    with config_path.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
     return {name: entry["tier"] for name, entry in data.get("outlets", {}).items()}
 

@@ -97,6 +97,7 @@ from alphamind.scripts._artifact_io import (
     load_universal_regime_label,
     stage_artifacts_dir,
 )
+from alphamind.scripts._stdio import configure_utf8_stdio
 
 __all__ = [
     "ReferenceCoverage",
@@ -590,6 +591,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     the operator sees a clean failure block and exit code 1, never a
     bare stack trace.
     """
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(
         description=(
             "Run the synthesizer end-to-end against a real "

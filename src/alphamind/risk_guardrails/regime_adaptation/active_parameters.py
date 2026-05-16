@@ -154,7 +154,7 @@ def load_prior_active_risk_parameters(snapshot_path: str) -> ActiveRiskParameter
     on a corrupt snapshot — defensive fallback would mask a contract
     violation by substituting an unrelated set.
     """
-    payload = json.loads(Path(snapshot_path).read_text())
+    payload = json.loads(Path(snapshot_path).read_text(encoding="utf-8"))
     return build_active_risk_parameters(
         rule_values=payload["rule_values"],
         regime=Regime(payload["regime_label"]),

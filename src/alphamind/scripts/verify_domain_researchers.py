@@ -68,6 +68,7 @@ from alphamind.scripts._common import (
     load_distillation_config,
     load_universe_scope,
 )
+from alphamind.scripts._stdio import configure_utf8_stdio
 
 # ---------------------------------------------------------------------------
 # Repo-root resolution and config loaders
@@ -120,7 +121,7 @@ def load_budget_thresholds(agents_yaml_path: Path | None = None) -> BudgetThresh
     profiles override them; the verification reads the unprofiled defaults.
     """
     path = agents_yaml_path or _DEFAULT_AGENTS_YAML
-    with path.open() as fh:
+    with path.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     cfg = AgentsConfig.model_validate(data)
     per_agent: dict[str, BaseAgentConfig] = {
@@ -151,7 +152,7 @@ def load_sectors_config(assets_yaml_path: Path | None = None) -> dict[str, list[
     :data:`alphamind.distillation.sector_assembly.DOMAIN_RESEARCHER_BY_AUDIENCE`.
     """
     path = assets_yaml_path or _DEFAULT_ASSETS_YAML
-    with path.open() as fh:
+    with path.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     sectors_yaml = data.get("sectors", {})
     return {
@@ -520,7 +521,7 @@ def run_verification(
         archive_root=archive_root,
         budgets=budgets,
     )
-    print(format_report(report))
+    stage_dir: Path | None = None
     if report.passed:
         stage_dir = stage_artifacts_dir(archive_root, invocation_id)
         sector_briefs = (
@@ -529,6 +530,8 @@ def run_verification(
             output.energy.brief,
         )
         dump_sector_briefs(sector_briefs, stage_dir)
+    print(format_report(report))
+    if stage_dir is not None:
         print(f"[verify_domain_researchers] stage artifacts written to {stage_dir}")
     return 0 if report.passed else 1
 
@@ -581,6 +584,7 @@ def _check_oauth_token_set() -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point. Returns the exit code; never raises beyond auth."""
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(
         description=(
             "Run the domain-researcher orchestrator end-to-end against a real "

@@ -68,6 +68,7 @@ from alphamind.scripts._artifact_io import (
     stage_artifacts_dir,
 )
 from alphamind.scripts._common import AssertionFailure, load_universe_scope
+from alphamind.scripts._stdio import configure_utf8_stdio
 
 # ---------------------------------------------------------------------------
 # Repo-root resolution and config loaders
@@ -131,7 +132,7 @@ class BudgetThresholds:
 
 def _load_agents_config(agents_yaml_path: Path | None = None) -> AgentsConfig:
     path = agents_yaml_path or _DEFAULT_AGENTS_YAML
-    with path.open() as fh:
+    with path.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     return AgentsConfig.model_validate(data)
 
@@ -508,10 +509,12 @@ def run_verification(
         archive_root=archive_root,
         budgets=budgets,
     )
-    print(format_report(report))
+    stage_dir: Path | None = None
     if report.passed:
         stage_dir = stage_artifacts_dir(archive_root, invocation_id)
         dump_qualitative_brief(result.brief, stage_dir)
+    print(format_report(report))
+    if stage_dir is not None:
         print(f"[verify_qualitative_researcher] stage artifacts written to {stage_dir}")
     return 0 if report.passed else 1
 
@@ -649,6 +652,7 @@ def main(argv: Sequence[str] | None = None) -> int:
           ``qualitative_researcher`` budgets, or surface to the operator
           as a regression in the LLM, prompt, or input bundle.
     """
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(
         description=(
             "Run the qualitative-researcher runner end-to-end against a real "

@@ -38,6 +38,7 @@ from alphamind.distillation.regime import RegimeLabel, TransitionState
 from alphamind.persistence.models import DistillationRegimeState
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.scripts._common import AssertionFailure, load_distillation_config
+from alphamind.scripts._stdio import configure_utf8_stdio
 
 DEFAULT_LOOKBACK_DAYS = 7
 """Lookback window in days. Default per story 13."""
@@ -368,6 +369,7 @@ def format_regime_transition_report(report: RegimeTransitionReport) -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(
         description=(
             "Verify regime-state-machine invariants over the most recent "

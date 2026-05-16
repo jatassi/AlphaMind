@@ -180,6 +180,7 @@ from alphamind.risk_guardrails.breach_behavior import (
     RegimeTransitionState,
     RiskZone,
 )
+from alphamind.scripts._stdio import configure_utf8_stdio
 from alphamind.state.records import (
     FillProcessingStatus,
     FillRecord,
@@ -1739,6 +1740,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns 0 on all-PASS, non-zero on any FAIL."""
+    configure_utf8_stdio()
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 

@@ -43,7 +43,7 @@ def write_pip_freeze_snapshot(
     target_dir = Path(root) / "process_lifetimes" / process_lifetime_id
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / "pip_freeze.txt"
-    target.write_text(pip_freeze_text)
+    target.write_text(pip_freeze_text, encoding="utf-8")
     return str(target)
 
 
@@ -71,7 +71,9 @@ def write_invocation_provenance_snapshots(
     config_path = target_dir / RESOLVED_CONFIG_FILENAME
     calibration_path = target_dir / CALIBRATION_SNAPSHOT_FILENAME
 
-    config_path.write_text(json.dumps(resolved_config, sort_keys=True, indent=2))
-    calibration_path.write_text(json.dumps(data_calibration_state, sort_keys=True, indent=2))
+    config_path.write_text(json.dumps(resolved_config, sort_keys=True, indent=2), encoding="utf-8")
+    calibration_path.write_text(
+        json.dumps(data_calibration_state, sort_keys=True, indent=2), encoding="utf-8"
+    )
 
     return str(config_path), str(calibration_path)

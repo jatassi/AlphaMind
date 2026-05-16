@@ -558,3 +558,51 @@ def test_run_verification_skips_qualitative_brief_on_fail(tmp_path: Path) -> Non
     assert exit_code == 1
     stage_dir = stage_artifacts_dir(archive_root, _INVOCATION_ID)
     assert not (stage_dir / QUALITATIVE_BRIEF_FILENAME).exists()
+
+
+def test_run_verification_dumps_brief_before_printing_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stage artifacts must persist even when the report render fails.
+
+    ALP-491 Site 1 defensive improvement: ``print(format_report(...))`` on
+    Windows can raise ``UnicodeEncodeError`` when the brief contains UTF-8
+    glyphs the active codepage cannot encode. Dumping before printing
+    keeps the brief on disk so the operator doesn't have to re-run the
+    LLM call.
+    """
+    from alphamind.scripts import verify_qualitative_researcher as module
+    from alphamind.scripts._artifact_io import (
+        QUALITATIVE_BRIEF_FILENAME,
+        load_qualitative_brief,
+        stage_artifacts_dir,
+    )
+
+    archive_root = tmp_path / "archive"
+    _seed_archive(archive_root, _INVOCATION_ID)
+    runner_result = _make_runner_result()
+
+    async def _stub_runner(**_kwargs: Any) -> QualitativeResearcherResult:
+        return runner_result
+
+    def _exploding_format_report(_report: object) -> str:
+        # Reproduces the cp1252 UnicodeEncodeError that hit the real run
+        # on Windows. The escape spells GREEK SMALL LETTER SIGMA, the
+        # character the original brief contained.
+        raise UnicodeEncodeError("charmap", "\u03c3", 0, 1, "<undefined>")
+
+    monkeypatch.setattr(module, "format_report", _exploding_format_report)
+
+    with pytest.raises(UnicodeEncodeError):
+        run_verification(
+            invocation_id=_INVOCATION_ID,
+            as_of=_AS_OF,
+            last_invocation_time=_LAST_INVOCATION_TIME,
+            archive_root=archive_root,
+            budgets=_budgets(),
+            runner_fn=_stub_runner,
+        )
+
+    stage_dir = stage_artifacts_dir(archive_root, _INVOCATION_ID)
+    assert (stage_dir / QUALITATIVE_BRIEF_FILENAME).exists()
+    assert load_qualitative_brief(stage_dir) == runner_result.brief

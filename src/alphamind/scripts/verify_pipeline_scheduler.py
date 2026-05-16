@@ -63,6 +63,7 @@ from alphamind.persistence.session import (
     make_async_session_factory,
 )
 from alphamind.risk_guardrails.breach_behavior.config import load_breach_behavior_config
+from alphamind.scripts._stdio import configure_utf8_stdio
 from alphamind.state.process_lifetime import (
     record_process_lifetime,
 )
@@ -736,6 +737,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     directly. This keeps the env-var pre-flight check honest under both
     dev-machine and unit-test conditions.
     """
+    configure_utf8_stdio()
     args = _parse_args(argv)
     results: list[CheckResult] = []
 

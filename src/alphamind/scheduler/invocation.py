@@ -173,7 +173,7 @@ def _find_latest_prior_calibration_content(
     for candidate in candidates:
         snapshot_path = candidate / CALIBRATION_SNAPSHOT_FILENAME
         if snapshot_path.exists():
-            return snapshot_path.read_text()
+            return snapshot_path.read_text(encoding="utf-8")
     return None
 
 

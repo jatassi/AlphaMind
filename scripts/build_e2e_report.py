@@ -29,6 +29,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from alphamind.scripts._stdio import configure_utf8_stdio
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -900,6 +902,7 @@ PHASE_TEMPLATE: dict[str, dict[str, Any]] = {
 
 
 def main() -> int:
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--archive-root",

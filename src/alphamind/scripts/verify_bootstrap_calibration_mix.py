@@ -53,6 +53,7 @@ from alphamind.persistence.models import (
 )
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.scripts._common import AssertionFailure, load_universe_scope
+from alphamind.scripts._stdio import configure_utf8_stdio
 
 # ---------------------------------------------------------------------------
 # Expected calibrated-share bands per kind
@@ -469,6 +470,7 @@ def format_calibration_mix_report(report: CalibrationMixReport) -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(
         description=(
             "Verify the post-bootstrap calibration-state mix against the "

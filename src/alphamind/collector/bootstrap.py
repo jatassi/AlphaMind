@@ -100,7 +100,7 @@ def _seed_asset_universe() -> int:
     from alphamind.persistence.session import make_engine, make_session_factory
 
     assets_path = Path(__file__).parents[3] / "config" / "assets.yaml"
-    with assets_path.open() as fh:
+    with assets_path.open(encoding="utf-8") as fh:
         assets: dict[str, Any] = yaml.safe_load(fh) or {}
 
     engine = make_engine()
