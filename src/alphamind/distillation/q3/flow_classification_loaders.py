@@ -33,28 +33,28 @@ def load_flow_classification_inputs(
     them so the compute slice is pure. Contracts with no today-snapshot are
     still surfaced (with ``today_snapshot=None``) so the compute's
     "skip-zero-volume" decision is made in one place.
+
+    Today + prior snapshots are loaded per-underlying in two index-friendly
+    batched queries via
+    :meth:`DistillationRepository.load_options_snapshot_pairs_for_underlying`,
+    avoiding the N+1 per-contract lookup that previously degraded to a
+    partial scan over the 13.5M-row snapshots table.
     """
     per_ticker_pairs: dict[str, tuple[PerContractSnapshotPair, ...]] = {}
     for ticker in ticker_scope:
         contracts = repository.load_options_contracts_for_underlying(underlying=ticker)
-        pairs: list[PerContractSnapshotPair] = []
-        for contract in contracts:
-            today = repository.load_latest_options_snapshot_at(
-                contract_ticker=contract.contract_ticker,
-                as_of=as_of,
+        pair_map = repository.load_options_snapshot_pairs_for_underlying(
+            underlying=ticker,
+            as_of=as_of,
+        )
+        per_ticker_pairs[ticker] = tuple(
+            PerContractSnapshotPair(
+                contract=contract,
+                today_snapshot=pair_map.get(contract.contract_ticker, (None, None))[0],
+                prior_snapshot=pair_map.get(contract.contract_ticker, (None, None))[1],
             )
-            prior = repository.load_prior_options_snapshot(
-                contract_ticker=contract.contract_ticker,
-                as_of=as_of,
-            )
-            pairs.append(
-                PerContractSnapshotPair(
-                    contract=contract,
-                    today_snapshot=today,
-                    prior_snapshot=prior,
-                )
-            )
-        per_ticker_pairs[ticker] = tuple(pairs)
+            for contract in contracts
+        )
     return FlowClassificationInputs(per_ticker_pairs=per_ticker_pairs)
 
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import statistics
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -218,44 +218,69 @@ class SqlDistillationRepository(DistillationRepository):
             for row in rows
         )
 
-    def load_latest_options_snapshot_at(
-        self, *, contract_ticker: str, as_of: str
-    ) -> OptionsContractSnapshotRow | None:
-        stmt = select(OptionsContractSnapshots).where(
-            OptionsContractSnapshots.contract_ticker == contract_ticker,
+    def load_options_snapshot_pairs_for_underlying(
+        self, *, underlying: str, as_of: str
+    ) -> Mapping[str, tuple[OptionsContractSnapshotRow | None, OptionsContractSnapshotRow | None]]:
+        # Today's snapshots — equality on (underlying_ticker, snapshot_ts), hits index.
+        today_stmt = select(
+            OptionsContractSnapshots.contract_ticker,
+            OptionsContractSnapshots.snapshot_ts,
+            OptionsContractSnapshots.volume_today,
+            OptionsContractSnapshots.open_interest,
+        ).where(
+            OptionsContractSnapshots.underlying_ticker == underlying,
             OptionsContractSnapshots.snapshot_ts == as_of,
         )
-        row = self._session.execute(stmt).scalar_one_or_none()
-        if row is None:
-            return None
-        return OptionsContractSnapshotRow(
-            contract_ticker=row.contract_ticker,
-            snapshot_ts=row.snapshot_ts,
-            volume_today=int(row.volume_today) if row.volume_today is not None else None,
-            open_interest=int(row.open_interest) if row.open_interest is not None else None,
-        )
+        today_by_contract: dict[str, OptionsContractSnapshotRow] = {
+            row.contract_ticker: OptionsContractSnapshotRow(
+                contract_ticker=row.contract_ticker,
+                snapshot_ts=row.snapshot_ts,
+                volume_today=int(row.volume_today) if row.volume_today is not None else None,
+                open_interest=int(row.open_interest) if row.open_interest is not None else None,
+            )
+            for row in self._session.execute(today_stmt)
+        }
 
-    def load_prior_options_snapshot(
-        self, *, contract_ticker: str, as_of: str
-    ) -> OptionsContractSnapshotRow | None:
-        stmt = (
-            select(OptionsContractSnapshots)
+        # Most-recent-prior — GROUP BY MAX self-join. Outer query also filters by
+        # underlying so the planner can hit the index on both sides.
+        max_ts_subq = (
+            select(
+                OptionsContractSnapshots.contract_ticker,
+                func.max(OptionsContractSnapshots.snapshot_ts).label("max_ts"),
+            )
             .where(
-                OptionsContractSnapshots.contract_ticker == contract_ticker,
+                OptionsContractSnapshots.underlying_ticker == underlying,
                 OptionsContractSnapshots.snapshot_ts < as_of,
             )
-            .order_by(OptionsContractSnapshots.snapshot_ts.desc())
-            .limit(1)
+            .group_by(OptionsContractSnapshots.contract_ticker)
+            .subquery()
         )
-        row = self._session.execute(stmt).scalar_one_or_none()
-        if row is None:
-            return None
-        return OptionsContractSnapshotRow(
-            contract_ticker=row.contract_ticker,
-            snapshot_ts=row.snapshot_ts,
-            volume_today=int(row.volume_today) if row.volume_today is not None else None,
-            open_interest=int(row.open_interest) if row.open_interest is not None else None,
+        prior_stmt = (
+            select(
+                OptionsContractSnapshots.contract_ticker,
+                OptionsContractSnapshots.snapshot_ts,
+                OptionsContractSnapshots.volume_today,
+                OptionsContractSnapshots.open_interest,
+            )
+            .join(
+                max_ts_subq,
+                (OptionsContractSnapshots.contract_ticker == max_ts_subq.c.contract_ticker)
+                & (OptionsContractSnapshots.snapshot_ts == max_ts_subq.c.max_ts),
+            )
+            .where(OptionsContractSnapshots.underlying_ticker == underlying)
         )
+        prior_by_contract: dict[str, OptionsContractSnapshotRow] = {
+            row.contract_ticker: OptionsContractSnapshotRow(
+                contract_ticker=row.contract_ticker,
+                snapshot_ts=row.snapshot_ts,
+                volume_today=int(row.volume_today) if row.volume_today is not None else None,
+                open_interest=int(row.open_interest) if row.open_interest is not None else None,
+            )
+            for row in self._session.execute(prior_stmt)
+        }
+
+        all_contracts = today_by_contract.keys() | prior_by_contract.keys()
+        return {ct: (today_by_contract.get(ct), prior_by_contract.get(ct)) for ct in all_contracts}
 
     def load_ticker_adv(self, *, ticker: str) -> TickerADVRow | None:
         # One query selecting both the ticker key (presence sentinel) and

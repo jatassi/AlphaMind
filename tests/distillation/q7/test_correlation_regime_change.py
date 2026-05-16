@@ -440,7 +440,7 @@ class TestNarrativeLagFlag:
             article_id="art-malformed",
             published_at=as_of - timedelta(hours=1),
             ticker=Symbol("A"),
-            topic_tags='[not valid json',
+            topic_tags="[not valid json",
         )
         session.commit()
 
