@@ -42,7 +42,7 @@ from alphamind._kernel.ids import (
     ThesisId,
 )
 from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
-from alphamind._kernel.money import money, signed_money
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -309,10 +309,10 @@ def _make_equity_position(
     """Build an OPEN equity PositionView with one prior fill."""
     fill = PositionFill(
         fill_timestamp=_AS_OF - timedelta(hours=age_hours),
-        fill_price=avg_cost,
+        fill_price=price(avg_cost),
         fill_quantity=share_count,
-        slippage=0.0,
-        fees=1.0,
+        slippage=signed_money(0.0),
+        fees=money(1.0),
     )
     notional = share_count * _current_price_lookup(ticker)
     record = PositionRecord(
@@ -335,13 +335,13 @@ def _make_equity_position(
     )
     return PositionView(
         record=record,
-        current_market_value_usd=notional,
-        unrealized_pnl_usd=0.0,
+        current_market_value_usd=signed_money(notional),
+        unrealized_pnl_usd=signed_money(0.0),
         unrealized_pnl_pct=0.0,
         position_weight_pct=weight_pct,
         position_age_hours=age_hours,
-        notional_exposure_usd=notional,
-        delta_adjusted_exposure_usd=notional,
+        notional_exposure_usd=money(notional),
+        delta_adjusted_exposure_usd=signed_money(notional),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,

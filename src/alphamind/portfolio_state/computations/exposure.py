@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
+from decimal import Decimal
 
-from alphamind._kernel.money import signed_money
+from alphamind._kernel.money import Money, signed_money
 from alphamind.portfolio_state.records.positions import Direction, PositionRecord
 from alphamind.portfolio_state.snapshot import DirectionalExposure, SectorExposureEntry
 from alphamind.portfolio_state.views.positions import PositionView
@@ -17,6 +18,7 @@ from alphamind.portfolio_state.views.positions import PositionView
 SectorResolver = Callable[[PositionRecord], str | None]
 
 _UNCLASSIFIED = "UNCLASSIFIED"
+_ZERO = Decimal(0)
 
 
 # ---------------------------------------------------------------------------
@@ -40,8 +42,8 @@ def _check_enriched(positions: tuple[PositionView, ...]) -> None:
             raise ValueError(msg)
 
 
-def _pct(value: float, total: float) -> float:
-    return (value / total * 100) if total > 0 else 0.0
+def _pct(value: Money | Decimal, total: float) -> float:
+    return (float(value) / total * 100) if total > 0 else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -59,16 +61,20 @@ def compute_sector_exposure(
     Positions where resolver returns None are aggregated under "UNCLASSIFIED".
     Bucket assignment uses Direction (LONG -> long, SHORT -> abs into short).
     Returns entries sorted by sector label ascending.
+
+    ALP-489 — accumulators sum ``Money`` values via Decimal arithmetic; no
+    float→Decimal post-hoc wrap. ``long_short_ratio`` and pct fields remain
+    floats (derived ratios).
     """
     _validate_total(total_portfolio_value_usd)
     _check_enriched(open_positions)
 
-    long_by_sector: dict[str, float] = defaultdict(float)
-    short_by_sector: dict[str, float] = defaultdict(float)
+    long_by_sector: dict[str, Decimal] = defaultdict(lambda: _ZERO)
+    short_by_sector: dict[str, Decimal] = defaultdict(lambda: _ZERO)
 
     for pos in open_positions:
         sector = resolver(pos.record) or _UNCLASSIFIED
-        dae: float = pos.delta_adjusted_exposure_usd
+        dae = pos.delta_adjusted_exposure_usd
         if pos.direction == Direction.LONG:
             long_by_sector[sector] += dae
         else:
@@ -80,14 +86,14 @@ def compute_sector_exposure(
     for sector in all_sectors:
         long_usd = long_by_sector[sector]
         short_usd = short_by_sector[sector]
-        ratio: float | None = long_usd / short_usd if short_usd > 0 and long_usd > 0 else None
-        # ALP-462 — snapshot fields carry ``Money``; wrap the float computation
-        # via ``signed_money`` (handles the zero/negative degenerate cases).
+        ratio: float | None = (
+            float(long_usd) / float(short_usd) if short_usd > 0 and long_usd > 0 else None
+        )
         entries.append(
             SectorExposureEntry(
                 sector=sector,
-                long_delta_adjusted_usd=signed_money(str(long_usd)),
-                short_delta_adjusted_usd=signed_money(str(short_usd)),
+                long_delta_adjusted_usd=signed_money(long_usd),
+                short_delta_adjusted_usd=signed_money(short_usd),
                 long_pct_of_portfolio=_pct(long_usd, total_portfolio_value_usd),
                 short_pct_of_portfolio=_pct(short_usd, total_portfolio_value_usd),
                 long_short_ratio=ratio,
@@ -105,25 +111,28 @@ def compute_directional_exposure(
 
     Bucket assignment uses sign of delta_adjusted_exposure_usd (not Direction).
     Positive values go into the long bucket; negative values (absolute) into short.
+
+    ALP-489 — accumulators sum ``Money`` values via Decimal arithmetic.
     """
     _validate_total(total_portfolio_value_usd)
     _check_enriched(open_positions)
 
-    total_long = sum(
+    long_terms = [
         pos.delta_adjusted_exposure_usd
         for pos in open_positions
         if pos.delta_adjusted_exposure_usd > 0
-    )
-    total_short = sum(
+    ]
+    short_terms = [
         -pos.delta_adjusted_exposure_usd
         for pos in open_positions
         if pos.delta_adjusted_exposure_usd < 0
-    )
+    ]
+    total_long: Decimal = sum(long_terms, _ZERO)
+    total_short: Decimal = sum(short_terms, _ZERO)
 
-    # ALP-462 — snapshot fields carry ``Money``; wrap accumulators here.
     return DirectionalExposure(
-        total_long_delta_adjusted_usd=signed_money(str(total_long)),
-        total_short_delta_adjusted_usd=signed_money(str(total_short)),
+        total_long_delta_adjusted_usd=signed_money(total_long),
+        total_short_delta_adjusted_usd=signed_money(total_short),
         net_directional_pct_of_portfolio=_pct(total_long - total_short, total_portfolio_value_usd),
         gross_pct_of_portfolio=_pct(total_long + total_short, total_portfolio_value_usd),
     )

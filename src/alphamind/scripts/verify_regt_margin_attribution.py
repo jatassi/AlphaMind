@@ -66,7 +66,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
-from alphamind._kernel.money import money, price
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.regt_margin_attribution import (
     load_regt_margin_attribution_config,
@@ -365,10 +365,10 @@ def _execution_history_fill(
 ) -> PositionFill:
     return PositionFill(
         fill_timestamp=fill_timestamp,
-        fill_price=fill_price,
+        fill_price=price(fill_price),
         fill_quantity=fill_quantity,
-        slippage=0.0,
-        fees=0.0,
+        slippage=signed_money(0.0),
+        fees=money(0.0),
     )
 
 

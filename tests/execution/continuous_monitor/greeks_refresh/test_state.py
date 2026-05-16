@@ -11,6 +11,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.continuous_monitor.greeks_refresh import LastRefreshState
 from alphamind.execution.continuous_monitor.greeks_refresh.state import (
     seed_last_refresh_states,
@@ -45,10 +46,10 @@ def _options_position(
     )
     fill = PositionFill(
         fill_timestamp=datetime(2026, 5, 1, 14, 30, tzinfo=UTC),
-        fill_price=2.5,
+        fill_price=price(2.5),
         fill_quantity=1.0,
-        slippage=0.0,
-        fees=0.0,
+        slippage=signed_money(0.0),
+        fees=money(0.0),
     )
     return PositionRecord(
         position_id=PositionId(position_id),
@@ -103,10 +104,10 @@ def _strategy_position(*, position_id: str, as_of_timestamp: datetime | None) ->
     )
     fill = PositionFill(
         fill_timestamp=datetime(2026, 5, 1, 14, 30, tzinfo=UTC),
-        fill_price=5.0,
+        fill_price=price(5.0),
         fill_quantity=1.0,
-        slippage=0.0,
-        fees=0.0,
+        slippage=signed_money(0.0),
+        fees=money(0.0),
     )
     return PositionRecord(
         position_id=PositionId(position_id),

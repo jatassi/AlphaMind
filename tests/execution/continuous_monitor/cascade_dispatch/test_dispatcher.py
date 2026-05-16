@@ -28,6 +28,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.commands.engine_envelope import (
     EngineEnvelope as OmsEngineEnvelope,
@@ -176,10 +177,10 @@ def _equity_position_view(
         execution_history=(
             PositionFill(
                 fill_timestamp=_NOW,
-                fill_price=cost_basis,
+                fill_price=price(cost_basis),
                 fill_quantity=share_count,
-                slippage=0.0,
-                fees=0.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -190,15 +191,15 @@ def _equity_position_view(
     sign = 1.0 if direction == Direction.LONG else -1.0
     return PositionView(
         record=record,
-        current_market_value_usd=market_value_usd,
-        unrealized_pnl_usd=unrealized_pnl_usd,
+        current_market_value_usd=signed_money(market_value_usd),
+        unrealized_pnl_usd=signed_money(unrealized_pnl_usd),
         unrealized_pnl_pct=unrealized_pnl_usd / (cost_basis * share_count) * 100.0,
         position_weight_pct=position_weight_pct * sign,
         position_age_hours=2.0,
-        notional_exposure_usd=market_value_usd,
-        delta_adjusted_exposure_usd=market_value_usd * sign,
-        distance_to_target_usd=10.0,
-        distance_to_stop_usd=5.0,
+        notional_exposure_usd=money(market_value_usd),
+        delta_adjusted_exposure_usd=signed_money(market_value_usd * sign),
+        distance_to_target_usd=signed_money(10.0),
+        distance_to_stop_usd=signed_money(5.0),
         risk_reward_at_current=2.0,
     )
 

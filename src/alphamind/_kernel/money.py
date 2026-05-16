@@ -87,19 +87,29 @@ def _to_decimal(value: str | int | float | Decimal, *, label: str) -> Decimal:
     Wraps :class:`decimal.InvalidOperation` (the underlying parse failure)
     in a :class:`ValueError` carrying the constructor label so the error
     message points at the boundary that rejected the value.
+
+    ALP-489 — rejects ``NaN`` and ``Infinity`` at the boundary so internal
+    Money/Price values are guaranteed finite (Decimal happily round-trips
+    ``"Infinity"``/``"NaN"``; the previous float-typed records relied on a
+    per-field ``math.isfinite`` check, which the Decimal migration retires).
     """
     if isinstance(value, Decimal):
-        return value
-    if isinstance(value, float):
+        decimal_value = value
+    elif isinstance(value, float):
         # Convert via str to avoid binary-float drift
         # (Decimal(0.1) == Decimal('0.1000000000000000055511151231257827021181583404541015625')).
         try:
-            return Decimal(str(value))
+            decimal_value = Decimal(str(value))
         except (InvalidOperation, ValueError) as exc:
             msg = f"{label} value cannot be parsed as Decimal: {value!r}"
             raise ValueError(msg) from exc
-    try:
-        return Decimal(value)
-    except (InvalidOperation, ValueError, TypeError) as exc:
-        msg = f"{label} value cannot be parsed as Decimal: {value!r}"
-        raise ValueError(msg) from exc
+    else:
+        try:
+            decimal_value = Decimal(value)
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            msg = f"{label} value cannot be parsed as Decimal: {value!r}"
+            raise ValueError(msg) from exc
+    if not decimal_value.is_finite():
+        msg = f"{label} value must be finite; got {decimal_value}"
+        raise ValueError(msg)
+    return decimal_value

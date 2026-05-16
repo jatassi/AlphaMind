@@ -37,6 +37,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 
+from alphamind._kernel.money import money, signed_money
 from alphamind.execution.regt_margin_attribution.aggregates import RegTExcessAggregates
 from alphamind.portfolio_state import PortfolioStateConfig
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
@@ -386,15 +387,19 @@ def _enrich_position_first_pass(
 
     return PositionView(
         record=position,
-        current_market_value_usd=pf.current_market_value_usd,
-        unrealized_pnl_usd=unrealized_pnl_usd,
+        current_market_value_usd=signed_money(pf.current_market_value_usd),
+        unrealized_pnl_usd=signed_money(unrealized_pnl_usd),
         unrealized_pnl_pct=unrealized_pnl_pct,
         position_weight_pct=0.0,  # second pass overwrites once total portfolio value is known
         position_age_hours=position_age_hours,
-        notional_exposure_usd=pf.notional_exposure_usd,
-        delta_adjusted_exposure_usd=pf.delta_adjusted_exposure_usd,
-        distance_to_target_usd=distance_to_target_usd,
-        distance_to_stop_usd=distance_to_stop_usd,
+        notional_exposure_usd=money(max(pf.notional_exposure_usd, 0.0)),
+        delta_adjusted_exposure_usd=signed_money(pf.delta_adjusted_exposure_usd),
+        distance_to_target_usd=(
+            signed_money(distance_to_target_usd) if distance_to_target_usd is not None else None
+        ),
+        distance_to_stop_usd=(
+            signed_money(distance_to_stop_usd) if distance_to_stop_usd is not None else None
+        ),
         risk_reward_at_current=risk_reward_at_current,
     )
 
@@ -535,7 +540,7 @@ def assemble_snapshot(
             dataclasses.replace(
                 view,
                 position_weight_pct=compute_position_weight_pct(
-                    view.current_market_value_usd, total_portfolio_value
+                    float(view.current_market_value_usd), total_portfolio_value
                 ),
             )
             for view in enriched_open
@@ -548,7 +553,7 @@ def assemble_snapshot(
             dataclasses.replace(
                 view,
                 position_weight_pct=compute_position_weight_pct(
-                    view.current_market_value_usd, total_portfolio_value
+                    float(view.current_market_value_usd), total_portfolio_value
                 ),
             )
             for view in enriched_pending

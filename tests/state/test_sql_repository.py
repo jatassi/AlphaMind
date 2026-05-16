@@ -289,10 +289,10 @@ def _make_open_position(
         fills = (
             PositionFill(
                 fill_timestamp=fill_at,
-                fill_price=150.0,
+                fill_price=price(150.0),
                 fill_quantity=10.0,
-                slippage=0.01,
-                fees=1.0,
+                slippage=signed_money(0.01),
+                fees=money(1.0),
             ),
         )
     entry_at = None if status == PositionStatus.PENDING else _NOW - timedelta(hours=3)

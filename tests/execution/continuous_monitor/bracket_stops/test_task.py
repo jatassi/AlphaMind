@@ -20,6 +20,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     CloseSubmissionResult,
@@ -132,10 +133,10 @@ def _options_position(
         execution_history=(
             PositionFill(
                 fill_timestamp=_NOW,
-                fill_price=premium_paid,
+                fill_price=price(premium_paid),
                 fill_quantity=1.0,
-                slippage=0.0,
-                fees=0.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -266,8 +267,8 @@ class FakeActivityLog:
 
 async def _seed_cache(prices: dict[str, float]) -> UnderlyingPriceCache:
     cache = UnderlyingPriceCache()
-    for ticker, price in prices.items():
-        await cache.update(UnderlyingQuote(ticker=ticker, price=price, as_of=_NOW))
+    for ticker, value in prices.items():
+        await cache.update(UnderlyingQuote(ticker=ticker, price=value, as_of=_NOW))
     return cache
 
 
@@ -484,10 +485,10 @@ class TestEquityPositionsSkipped:
             execution_history=(
                 PositionFill(
                     fill_timestamp=_NOW,
-                    fill_price=150.0,
+                    fill_price=price(150.0),
                     fill_quantity=100.0,
-                    slippage=0.0,
-                    fees=0.0,
+                    slippage=signed_money(0.0),
+                    fees=money(0.0),
                 ),
             ),
             realized_pnl_to_date_usd=None,

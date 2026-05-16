@@ -148,7 +148,7 @@ def _estimated_exit_price_for(position: PositionRecord, spot: float) -> tuple[fl
         # If the position has fills, derive realised P/L from the difference
         # (placeholder — actual fill cascade overwrites this).
         if position.execution_history:
-            entry_price = position.execution_history[0].fill_price
+            entry_price = float(position.execution_history[0].fill_price)
             qty = details.contract_count * details.contract_multiplier
             pnl = (estimated_exit - entry_price) * qty
             return estimated_exit, pnl

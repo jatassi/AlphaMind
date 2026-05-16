@@ -44,7 +44,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
-from alphamind._kernel.money import money, price
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
@@ -411,10 +411,10 @@ def _equity_long_position(
     history = (
         PositionFill(
             fill_timestamp=_NOW - timedelta(hours=2),
-            fill_price=average_cost_basis_per_share,
+            fill_price=price(average_cost_basis_per_share),
             fill_quantity=share_count,
-            slippage=0.0,
-            fees=0.0,
+            slippage=signed_money(0.0),
+            fees=money(0.0),
         ),
     )
     return PositionRecord(
@@ -453,10 +453,10 @@ def _equity_short_position(
     history = (
         PositionFill(
             fill_timestamp=_NOW - timedelta(hours=2),
-            fill_price=average_cost_basis_per_share,
+            fill_price=price(average_cost_basis_per_share),
             fill_quantity=share_count,
-            slippage=0.0,
-            fees=0.0,
+            slippage=signed_money(0.0),
+            fees=money(0.0),
         ),
     )
     return PositionRecord(
@@ -497,10 +497,10 @@ def _options_long_position(
     history = (
         PositionFill(
             fill_timestamp=_NOW - timedelta(hours=2),
-            fill_price=premium_paid_per_contract / 100.0,
+            fill_price=price(premium_paid_per_contract / 100.0),
             fill_quantity=contract_count,
-            slippage=0.0,
-            fees=0.0,
+            slippage=signed_money(0.0),
+            fees=money(0.0),
         ),
     )
     return PositionRecord(
@@ -566,10 +566,10 @@ def _strategy_position(
     history = (
         PositionFill(
             fill_timestamp=_NOW - timedelta(hours=2),
-            fill_price=1.30,
+            fill_price=price(1.30),
             fill_quantity=_STRATEGY_LEG_CONTRACTS,
-            slippage=0.0,
-            fees=0.0,
+            slippage=signed_money(0.0),
+            fees=money(0.0),
         ),
     )
     return PositionRecord(

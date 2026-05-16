@@ -17,7 +17,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
-from alphamind._kernel.money import money
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.regt_margin_attribution import (
     IvShockMultipliers,
     RegTMarginAttributionConfig,
@@ -82,10 +82,10 @@ def _config(
 def _fill() -> PositionFill:
     return PositionFill(
         fill_timestamp=datetime(2026, 1, 1, 14, 30, tzinfo=UTC),
-        fill_price=100.0,
+        fill_price=price(100.0),
         fill_quantity=10.0,
-        slippage=0.0,
-        fees=1.0,
+        slippage=signed_money(0.0),
+        fees=money(1.0),
     )
 
 

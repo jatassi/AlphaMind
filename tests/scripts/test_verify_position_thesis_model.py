@@ -36,6 +36,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -221,10 +222,10 @@ def test_wave2_position_weight_pct_negative() -> None:
     )
     fill = PositionFill(
         fill_timestamp=now,
-        fill_price=150.0,
+        fill_price=price(150.0),
         fill_quantity=100.0,
-        slippage=0.0,
-        fees=0.0,
+        slippage=signed_money(0.0),
+        fees=money(0.0),
     )
     record = PositionRecord(
         position_id=PositionId("pos1"),
@@ -242,13 +243,13 @@ def test_wave2_position_weight_pct_negative() -> None:
     )
     view = PositionView(
         record=record,
-        current_market_value_usd=10000.0,
-        unrealized_pnl_usd=200.0,
+        current_market_value_usd=signed_money(10000.0),
+        unrealized_pnl_usd=signed_money(200.0),
         unrealized_pnl_pct=0.02,
         position_weight_pct=-3.5,
         position_age_hours=2.0,
-        notional_exposure_usd=10000.0,
-        delta_adjusted_exposure_usd=-10000.0,
+        notional_exposure_usd=money(10000.0),
+        delta_adjusted_exposure_usd=signed_money(-10000.0),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -289,17 +290,17 @@ def test_wave2_position_fill_live_estimate() -> None:
 
     now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
     est = LiveExecutionEstimate(
-        estimated_spread_usd=0.05,
-        estimated_impact_usd=0.02,
-        estimated_regulatory_fees_usd=0.01,
-        live_adjusted_fill_price=149.92,
+        estimated_spread_usd=money(0.05),
+        estimated_impact_usd=money(0.02),
+        estimated_regulatory_fees_usd=money(0.01),
+        live_adjusted_fill_price=price(149.92),
     )
     fill = PositionFill(
         fill_timestamp=now,
-        fill_price=150.0,
+        fill_price=price(150.0),
         fill_quantity=100.0,
-        slippage=0.0,
-        fees=1.0,
+        slippage=signed_money(0.0),
+        fees=money(1.0),
         live_execution_estimate=est,
     )
     assert fill.live_execution_estimate == est
@@ -307,10 +308,10 @@ def test_wave2_position_fill_live_estimate() -> None:
     with pytest.raises((ValueError, TypeError)):
         PositionFill(
             fill_timestamp=now,
-            fill_price=150.0,
+            fill_price=price(150.0),
             fill_quantity=100.0,
-            slippage=0.0,
-            fees=-1.0,
+            slippage=signed_money(0.0),
+            fees=money(-1.0),
         )
 
 
@@ -622,10 +623,10 @@ def test_wave6_base_position_protocol_isinstance() -> None:
     )
     fill = PositionFill(
         fill_timestamp=now,
-        fill_price=150.0,
+        fill_price=price(150.0),
         fill_quantity=100.0,
-        slippage=0.0,
-        fees=0.0,
+        slippage=signed_money(0.0),
+        fees=money(0.0),
     )
     record = PositionRecord(
         position_id=PositionId("pos1"),

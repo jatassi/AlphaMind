@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from decimal import Decimal
 
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.portfolio_state.records.orders import OrderStatus
@@ -24,6 +25,14 @@ from alphamind.state.records import (
     RegTMarginAttribution,
 )
 from alphamind.state.tables.fill_records import FillRecordRow
+
+
+def _decimal_json_default(obj: object) -> object:
+    """Encode ``Decimal`` as a JSON string to preserve full precision."""
+    if isinstance(obj, Decimal):
+        return str(obj)
+    msg = f"object of type {type(obj).__name__} is not JSON-serializable"
+    raise TypeError(msg)
 
 
 def record_to_row(record: FillRecord) -> FillRecordRow:
@@ -64,7 +73,8 @@ def record_to_row(record: FillRecord) -> FillRecordRow:
                     "live_adjusted_fill_price": (
                         record.live_execution_estimate.live_adjusted_fill_price
                     ),
-                }
+                },
+                default=_decimal_json_default,
             )
             if record.live_execution_estimate is not None
             else None
@@ -112,12 +122,14 @@ def row_to_record(row: FillRecordRow) -> FillRecord:
 
 
 def _live_estimate_from_json(payload: str) -> LiveExecutionEstimate:
+    # ALP-489 — Money/Price fields encoded as Decimal-as-text; rewrap via the
+    # boundary constructors so the typed record carries Money/Price.
     raw = json.loads(payload)
     return LiveExecutionEstimate(
-        estimated_spread_usd=raw["estimated_spread_usd"],
-        estimated_impact_usd=raw["estimated_impact_usd"],
-        estimated_regulatory_fees_usd=raw["estimated_regulatory_fees_usd"],
-        live_adjusted_fill_price=raw["live_adjusted_fill_price"],
+        estimated_spread_usd=money(raw["estimated_spread_usd"]),
+        estimated_impact_usd=money(raw["estimated_impact_usd"]),
+        estimated_regulatory_fees_usd=money(raw["estimated_regulatory_fees_usd"]),
+        live_adjusted_fill_price=price(raw["live_adjusted_fill_price"]),
     )
 
 

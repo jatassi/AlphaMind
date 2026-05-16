@@ -358,7 +358,7 @@ def _resolve_position_ticker(pos: PositionRecord | PositionView) -> str:
 
 
 def _render_size_line(pos: PositionView) -> str:
-    market_value = format_dollar(pos.current_market_value_usd)
+    market_value = format_dollar(float(pos.current_market_value_usd))
     weight = format_pct(pos.position_weight_pct)
     details = pos.details
     if isinstance(details, EquityPositionDetails):
@@ -371,7 +371,7 @@ def _render_size_line(pos: PositionView) -> str:
 
 
 def _render_pnl_line(pos: PositionView) -> str:
-    pnl_abs = _format_signed_dollar(pos.unrealized_pnl_usd)
+    pnl_abs = _format_signed_dollar(float(pos.unrealized_pnl_usd))
     pnl_pct = _format_signed_pct(pos.unrealized_pnl_pct)
     return f"  P/L:           {pnl_abs} since open ({pnl_pct})"
 
@@ -381,8 +381,14 @@ def _render_age_line(pos: PositionView) -> str:
 
 
 def _render_distance_line(pos: PositionView, bracket: BracketRecord | None) -> str:
-    target_str = _format_distance_pct(pos.distance_to_target_usd, pos.current_market_value_usd)
-    stop_str = _format_distance_pct(pos.distance_to_stop_usd, pos.current_market_value_usd)
+    target_str = _format_distance_pct(
+        None if pos.distance_to_target_usd is None else float(pos.distance_to_target_usd),
+        float(pos.current_market_value_usd),
+    )
+    stop_str = _format_distance_pct(
+        None if pos.distance_to_stop_usd is None else float(pos.distance_to_stop_usd),
+        float(pos.current_market_value_usd),
+    )
     bracket_legs: list[str] = []
     if bracket is not None:
         target_leg = _find_leg(bracket, BracketLegType.TAKE_PROFIT)

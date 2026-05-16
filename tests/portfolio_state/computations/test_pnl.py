@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -11,6 +12,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.portfolio_state.computations.pnl import (
     compute_drawdown_by_source_pct,
     compute_portfolio_pnl,
@@ -36,10 +38,10 @@ from alphamind.portfolio_state.views.positions import PositionView
 _NOW = datetime.now(tz=UTC)
 _FILL = PositionFill(
     fill_timestamp=_NOW,
-    fill_price=100.0,
+    fill_price=price(100.0),
     fill_quantity=10.0,
-    slippage=0.0,
-    fees=0.0,
+    slippage=signed_money(0.0),
+    fees=money(0.0),
 )
 _LONG_EQUITY = EquityPositionDetails(
     ticker=Symbol("AAPL"),
@@ -79,13 +81,13 @@ def _make_open_position(
     )
     return PositionView(
         record=record,
-        current_market_value_usd=current_market_value_usd,
-        unrealized_pnl_usd=unrealized_pnl_usd,
+        current_market_value_usd=signed_money(current_market_value_usd),
+        unrealized_pnl_usd=signed_money(unrealized_pnl_usd),
         unrealized_pnl_pct=0.0,
         position_weight_pct=10.0,
         position_age_hours=1.0,
-        notional_exposure_usd=abs(current_market_value_usd),
-        delta_adjusted_exposure_usd=current_market_value_usd,
+        notional_exposure_usd=money(abs(current_market_value_usd)),
+        delta_adjusted_exposure_usd=signed_money(current_market_value_usd),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -112,13 +114,13 @@ def _make_pending_position(
     )
     return PositionView(
         record=record,
-        current_market_value_usd=current_market_value_usd,
-        unrealized_pnl_usd=0.0,
+        current_market_value_usd=signed_money(current_market_value_usd),
+        unrealized_pnl_usd=signed_money(0.0),
         unrealized_pnl_pct=0.0,
         position_weight_pct=5.0,
         position_age_hours=0.0,
-        notional_exposure_usd=current_market_value_usd,
-        delta_adjusted_exposure_usd=current_market_value_usd,
+        notional_exposure_usd=money(current_market_value_usd),
+        delta_adjusted_exposure_usd=signed_money(current_market_value_usd),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -427,3 +429,32 @@ class TestDeterminism:
         r1 = compute_total_portfolio_value_usd((pos1,), (pending1,), cash)
         r2 = compute_total_portfolio_value_usd((pos1,), (pending1,), cash)
         assert r1 == r2
+
+
+# ---------------------------------------------------------------------------
+# ALP-489 — synthetic-precision acceptance: 7 x signed_money("0.1") sums to
+# signed_money("0.7") exactly. The float-typed predecessor of
+# ``PositionView.unrealized_pnl_usd`` accumulated 0.7000000000000001 under
+# binary-float drift; the Money-typed migration aggregates via Decimal
+# arithmetic and is exact.
+# ---------------------------------------------------------------------------
+
+
+class TestAlp489SyntheticPrecision:
+    def test_seven_positions_at_zero_point_one_sum_exactly(self) -> None:
+        positions = tuple(_make_open_position(f"P{i}", unrealized_pnl_usd=0.0) for i in range(7))
+        # Override unrealized_pnl_usd directly with Decimal-exact ``signed_money``
+        # values; can't pass via _make_open_position because its parameter is
+        # float-typed (the helper wraps internally).
+        import dataclasses
+
+        positions = tuple(
+            dataclasses.replace(p, unrealized_pnl_usd=signed_money("0.1")) for p in positions
+        )
+        inputs = _make_pnl_inputs(
+            rolling_realized_pnl={"1d": 0.0, "3d": 0.0, "5d": 0.0, "20d": 0.0}
+        )
+        result = compute_portfolio_pnl(positions, inputs, total_portfolio_value_usd=10_000.0)
+        # Exact-equal: no binary drift.
+        assert result.total_unrealized_pnl_usd == signed_money("0.7")
+        assert repr(Decimal(result.total_unrealized_pnl_usd)) == repr(Decimal("0.7"))

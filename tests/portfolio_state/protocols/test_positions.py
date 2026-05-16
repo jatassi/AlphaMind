@@ -17,6 +17,7 @@ from alphamind._kernel.ids import (
     OrderId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.portfolio_state.protocols.positions import BasePositionProtocol
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -34,10 +35,10 @@ from alphamind.portfolio_state.views.positions import PositionView
 _NOW = datetime.now(tz=UTC)
 _FILL = PositionFill(
     fill_timestamp=_NOW,
-    fill_price=150.0,
+    fill_price=price(150.0),
     fill_quantity=100.0,
-    slippage=0.01,
-    fees=1.0,
+    slippage=signed_money(0.01),
+    fees=money(1.0),
 )
 _LONG_EQUITY = EquityPositionDetails(
     ticker=Symbol("AAPL"),

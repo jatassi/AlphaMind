@@ -22,6 +22,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.greeks_refresh import (
     IVQuote,
@@ -141,10 +142,10 @@ def _options_position(
         execution_history=(
             PositionFill(
                 fill_timestamp=datetime(2026, 5, 1, 14, 30, tzinfo=UTC),
-                fill_price=2.5,
+                fill_price=price(2.5),
                 fill_quantity=1.0,
-                slippage=0.0,
-                fees=0.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -204,10 +205,10 @@ def _strategy_position(*, position_id: str, as_of_timestamp: datetime) -> Positi
         execution_history=(
             PositionFill(
                 fill_timestamp=datetime(2026, 5, 1, 14, 30, tzinfo=UTC),
-                fill_price=3.0,
+                fill_price=price(3.0),
                 fill_quantity=1.0,
-                slippage=0.0,
-                fees=0.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -321,8 +322,8 @@ class TestOccSymbolForOptions:
 
 async def _seeded_cache(prices: dict[str, float], as_of: datetime) -> UnderlyingPriceCache:
     cache = UnderlyingPriceCache()
-    for ticker, price in prices.items():
-        await cache.update(UnderlyingQuote(ticker=ticker, price=price, as_of=as_of))
+    for ticker, value in prices.items():
+        await cache.update(UnderlyingQuote(ticker=ticker, price=value, as_of=as_of))
     return cache
 
 

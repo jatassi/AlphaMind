@@ -338,10 +338,10 @@ def _make_open_position(
     history = (
         PositionFill(
             fill_timestamp=_NOW - timedelta(hours=2),
-            fill_price=fill_price,
+            fill_price=price(fill_price),
             fill_quantity=share_count,
-            slippage=0.0,
-            fees=0.0,
+            slippage=signed_money(0.0),
+            fees=money(0.0),
         ),
     )
     return PositionRecord(

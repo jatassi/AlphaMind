@@ -31,6 +31,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 
 # ---------------------------------------------------------------------------
 # Result helpers
@@ -764,7 +765,11 @@ def _wave2_01e_position_weight(now: datetime) -> list[dict[str, Any]]:
         ticker=Symbol("AAPL"), share_count=100.0, average_cost_basis_per_share=150.0
     )
     fill = PositionFill(
-        fill_timestamp=now, fill_price=150.0, fill_quantity=100.0, slippage=0.0, fees=0.0
+        fill_timestamp=now,
+        fill_price=price(150.0),
+        fill_quantity=100.0,
+        slippage=signed_money(0.0),
+        fees=money(0.0),
     )
     record = PositionRecord(
         position_id=PositionId("pos1"),
@@ -784,13 +789,13 @@ def _wave2_01e_position_weight(now: datetime) -> list[dict[str, Any]]:
     def _check_negative_weight() -> None:
         view = PositionView(
             record=record,
-            current_market_value_usd=10000.0,
-            unrealized_pnl_usd=200.0,
+            current_market_value_usd=signed_money(10000.0),
+            unrealized_pnl_usd=signed_money(200.0),
             unrealized_pnl_pct=0.02,
             position_weight_pct=-3.5,
             position_age_hours=2.0,
-            notional_exposure_usd=10000.0,
-            delta_adjusted_exposure_usd=-10000.0,
+            notional_exposure_usd=money(10000.0),
+            delta_adjusted_exposure_usd=signed_money(-10000.0),
             distance_to_target_usd=None,
             distance_to_stop_usd=None,
             risk_reward_at_current=None,
@@ -801,13 +806,13 @@ def _wave2_01e_position_weight(now: datetime) -> list[dict[str, Any]]:
         with _raises(ValidationError):
             PositionView(
                 record=record,
-                current_market_value_usd=10000.0,
-                unrealized_pnl_usd=200.0,
+                current_market_value_usd=signed_money(10000.0),
+                unrealized_pnl_usd=signed_money(200.0),
                 unrealized_pnl_pct=0.02,
                 position_weight_pct=float("inf"),
                 position_age_hours=2.0,
-                notional_exposure_usd=10000.0,
-                delta_adjusted_exposure_usd=0.0,
+                notional_exposure_usd=money(10000.0),
+                delta_adjusted_exposure_usd=signed_money(0.0),
                 distance_to_target_usd=None,
                 distance_to_stop_usd=None,
                 risk_reward_at_current=None,
@@ -852,26 +857,30 @@ def _wave2_01g_position_fill(now: datetime) -> list[dict[str, Any]]:
 
     def _check_fill_with_estimate() -> None:
         est = LiveExecutionEstimate(
-            estimated_spread_usd=0.05,
-            estimated_impact_usd=0.02,
-            estimated_regulatory_fees_usd=0.01,
-            live_adjusted_fill_price=149.92,
+            estimated_spread_usd=money(0.05),
+            estimated_impact_usd=money(0.02),
+            estimated_regulatory_fees_usd=money(0.01),
+            live_adjusted_fill_price=price(149.92),
         )
         f = PositionFill(
             fill_timestamp=now,
-            fill_price=150.0,
+            fill_price=price(150.0),
             fill_quantity=100.0,
-            slippage=0.0,
-            fees=1.0,
+            slippage=signed_money(0.0),
+            fees=money(1.0),
             live_execution_estimate=est,
         )
         assert f.live_execution_estimate is not None
-        assert f.live_execution_estimate.estimated_spread_usd == 0.05
+        assert f.live_execution_estimate.estimated_spread_usd == money(0.05)
 
     def _check_fill_negative_fees_rejected() -> None:
         with _raises(ValidationError):
             PositionFill(
-                fill_timestamp=now, fill_price=150.0, fill_quantity=100.0, slippage=0.0, fees=-1.0
+                fill_timestamp=now,
+                fill_price=price(150.0),
+                fill_quantity=100.0,
+                slippage=signed_money(0.0),
+                fees=money(-1.0),
             )
 
     return [
@@ -1415,10 +1424,10 @@ def wave6_architectural(verbose: bool = False) -> tuple[int, int, list[dict[str,
         )
         fill = PositionFill(
             fill_timestamp=now,
-            fill_price=150.0,
+            fill_price=price(150.0),
             fill_quantity=100.0,
-            slippage=0.0,
-            fees=0.0,
+            slippage=signed_money(0.0),
+            fees=money(0.0),
         )
         record = PositionRecord(
             position_id=PositionId("pos1"),

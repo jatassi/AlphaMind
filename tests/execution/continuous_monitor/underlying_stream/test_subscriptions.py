@@ -21,6 +21,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.continuous_monitor.underlying_stream import (
     compute_target_underlyings,
 )
@@ -45,13 +46,13 @@ from alphamind.portfolio_state.records.positions import (
 # ---------------------------------------------------------------------------
 
 
-def _fill(ts: datetime, price: float = 100.0) -> PositionFill:
+def _fill(ts: datetime, at_price: float = 100.0) -> PositionFill:
     return PositionFill(
         fill_timestamp=ts,
-        fill_price=price,
+        fill_price=price(at_price),
         fill_quantity=10.0,
-        slippage=0.0,
-        fees=0.0,
+        slippage=signed_money(0.0),
+        fees=money(0.0),
     )
 
 

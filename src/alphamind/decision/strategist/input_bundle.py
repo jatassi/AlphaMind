@@ -400,7 +400,7 @@ def _render_underlying_line(pos: PositionView, ticker: str) -> str:
 
 
 def _render_size_line(pos: PositionView) -> str:
-    market_value = format_dollar(pos.current_market_value_usd)
+    market_value = format_dollar(float(pos.current_market_value_usd))
     weight = format_pct(pos.position_weight_pct)
     details = pos.details
     if isinstance(details, EquityPositionDetails):
@@ -413,7 +413,7 @@ def _render_size_line(pos: PositionView) -> str:
 
 
 def _render_pnl_line(pos: PositionView) -> str:
-    pnl_abs = _format_signed_dollar(pos.unrealized_pnl_usd)
+    pnl_abs = _format_signed_dollar(float(pos.unrealized_pnl_usd))
     pnl_pct = _format_signed_pct(pos.unrealized_pnl_pct)
     return f"  P/L:           {pnl_abs} since open ({pnl_pct})"
 

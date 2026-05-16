@@ -10,6 +10,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -56,10 +57,10 @@ def _short_mara_position() -> PositionView:
         execution_history=(
             PositionFill(
                 fill_timestamp=fill_ts,
-                fill_price=20.0,
+                fill_price=price(20.0),
                 fill_quantity=140.0,
-                slippage=0.01,
-                fees=1.0,
+                slippage=signed_money(0.01),
+                fees=money(1.0),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -69,13 +70,13 @@ def _short_mara_position() -> PositionView:
     )
     return PositionView(
         record=record,
-        current_market_value_usd=3920.0,
-        unrealized_pnl_usd=-1120.0,
+        current_market_value_usd=signed_money(3920.0),
+        unrealized_pnl_usd=signed_money(-1120.0),
         unrealized_pnl_pct=-40.0,
         position_weight_pct=3.92,
         position_age_hours=24.0,
-        notional_exposure_usd=3920.0,
-        delta_adjusted_exposure_usd=3920.0,
+        notional_exposure_usd=money(3920.0),
+        delta_adjusted_exposure_usd=signed_money(3920.0),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,

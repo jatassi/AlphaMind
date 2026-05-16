@@ -20,6 +20,7 @@ from decimal import Decimal
 from typing import Any
 
 from alphamind._kernel.ids import BracketId, PositionId, Symbol, ThesisId
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -94,11 +95,14 @@ def _live_estimate_to_dict(le: LiveExecutionEstimate) -> dict[str, Any]:
 
 
 def _live_estimate_from_dict(payload: dict[str, Any]) -> LiveExecutionEstimate:
+    # ALP-489 — Money/Price fields land as Decimal-as-text JSON values (see
+    # ``_json_default``). Wrap via the boundary constructors so the typed
+    # record carries the NewType alias rather than a bare ``Decimal``.
     return LiveExecutionEstimate(
-        estimated_spread_usd=payload["estimated_spread_usd"],
-        estimated_impact_usd=payload["estimated_impact_usd"],
-        estimated_regulatory_fees_usd=payload["estimated_regulatory_fees_usd"],
-        live_adjusted_fill_price=payload["live_adjusted_fill_price"],
+        estimated_spread_usd=money(payload["estimated_spread_usd"]),
+        estimated_impact_usd=money(payload["estimated_impact_usd"]),
+        estimated_regulatory_fees_usd=money(payload["estimated_regulatory_fees_usd"]),
+        live_adjusted_fill_price=price(payload["live_adjusted_fill_price"]),
     )
 
 
@@ -121,10 +125,10 @@ def _fill_from_dict(payload: dict[str, Any]) -> PositionFill:
     live = payload.get("live_execution_estimate")
     return PositionFill(
         fill_timestamp=datetime.fromisoformat(payload["fill_timestamp"]),
-        fill_price=payload["fill_price"],
+        fill_price=price(payload["fill_price"]),
         fill_quantity=payload["fill_quantity"],
-        slippage=payload["slippage"],
-        fees=payload["fees"],
+        slippage=signed_money(payload["slippage"]),
+        fees=money(payload["fees"]),
         live_execution_estimate=_live_estimate_from_dict(live) if live is not None else None,
     )
 

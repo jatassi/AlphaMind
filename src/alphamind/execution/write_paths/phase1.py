@@ -1218,10 +1218,10 @@ def _position_fill_from_record(fill: FillRecord) -> PositionFill:
     # boundary (records.positions is outside ALP-462's file list).
     return PositionFill(
         fill_timestamp=fill.fill_timestamp,
-        fill_price=float(fill.fill_price),
+        fill_price=price(float(fill.fill_price)),
         fill_quantity=fill.fill_quantity,
-        slippage=float(fill.slippage_usd) if fill.slippage_usd is not None else 0.0,
-        fees=max(float(fill.fees_usd), 0.0),
+        slippage=signed_money(float(fill.slippage_usd) if fill.slippage_usd is not None else 0.0),
+        fees=money(max(float(fill.fees_usd), 0.0)),
         live_execution_estimate=fill.live_execution_estimate,
     )
 

@@ -10,6 +10,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.computations.exposure import (
     SectorResolver,
@@ -46,10 +47,10 @@ def _resolve_none(_: PositionRecord) -> str | None:
 _NOW = datetime.now(tz=UTC)
 _FILL = PositionFill(
     fill_timestamp=_NOW,
-    fill_price=150.0,
+    fill_price=price(150.0),
     fill_quantity=100.0,
-    slippage=0.01,
-    fees=1.0,
+    slippage=signed_money(0.01),
+    fees=money(1.0),
 )
 
 
@@ -79,13 +80,13 @@ def _make_long_equity(
     )
     return PositionView(
         record=record,
-        current_market_value_usd=notional,
-        unrealized_pnl_usd=0.0,
+        current_market_value_usd=signed_money(notional),
+        unrealized_pnl_usd=signed_money(0.0),
         unrealized_pnl_pct=0.0,
         position_weight_pct=10.0,
         position_age_hours=24.0,
-        notional_exposure_usd=notional,
-        delta_adjusted_exposure_usd=delta_adjusted_exposure_usd,
+        notional_exposure_usd=money(notional),
+        delta_adjusted_exposure_usd=signed_money(delta_adjusted_exposure_usd),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -121,13 +122,13 @@ def _make_short_equity(
     )
     return PositionView(
         record=record,
-        current_market_value_usd=notional,
-        unrealized_pnl_usd=0.0,
+        current_market_value_usd=signed_money(notional),
+        unrealized_pnl_usd=signed_money(0.0),
         unrealized_pnl_pct=0.0,
         position_weight_pct=5.0,
         position_age_hours=24.0,
-        notional_exposure_usd=notional,
-        delta_adjusted_exposure_usd=delta_adjusted_exposure_usd,
+        notional_exposure_usd=money(notional),
+        delta_adjusted_exposure_usd=signed_money(delta_adjusted_exposure_usd),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -168,13 +169,13 @@ def _make_long_option(
     )
     return PositionView(
         record=record,
-        current_market_value_usd=1_000.0,
-        unrealized_pnl_usd=0.0,
+        current_market_value_usd=signed_money(1_000.0),
+        unrealized_pnl_usd=signed_money(0.0),
         unrealized_pnl_pct=0.0,
         position_weight_pct=2.0,
         position_age_hours=10.0,
-        notional_exposure_usd=8_000.0,
-        delta_adjusted_exposure_usd=delta_adjusted_exposure_usd,
+        notional_exposure_usd=money(8_000.0),
+        delta_adjusted_exposure_usd=signed_money(delta_adjusted_exposure_usd),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,

@@ -20,6 +20,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     DrawdownTier,
     RegimeLabel,
@@ -99,10 +100,10 @@ def make_position_record(
         execution_history=(
             PositionFill(
                 fill_timestamp=fill_timestamp,
-                fill_price=100.0,
+                fill_price=price(100.0),
                 fill_quantity=share_count,
-                slippage=0.01,
-                fees=1.0,
+                slippage=signed_money(0.01),
+                fees=money(1.0),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -112,13 +113,13 @@ def make_position_record(
     )
     return PositionView(
         record=record,
-        current_market_value_usd=size_usd,
-        unrealized_pnl_usd=unrealized_pnl_usd,
+        current_market_value_usd=signed_money(size_usd),
+        unrealized_pnl_usd=signed_money(unrealized_pnl_usd),
         unrealized_pnl_pct=unrealized_pnl_pct,
         position_weight_pct=size_pct,
         position_age_hours=24.0,
-        notional_exposure_usd=size_usd,
-        delta_adjusted_exposure_usd=delta_signed,
+        notional_exposure_usd=money(size_usd),
+        delta_adjusted_exposure_usd=signed_money(delta_signed),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,

@@ -19,6 +19,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.config.models.guardrails import BreachResponse
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -225,10 +226,10 @@ def _short_position(
         execution_history=(
             PositionFill(
                 fill_timestamp=fill_ts,
-                fill_price=market_value_usd / 100.0,
+                fill_price=price(market_value_usd / 100.0),
                 fill_quantity=100.0,
-                slippage=0.01,
-                fees=1.0,
+                slippage=signed_money(0.01),
+                fees=money(1.0),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -238,13 +239,13 @@ def _short_position(
     )
     return PositionView(
         record=record,
-        current_market_value_usd=market_value_usd,
-        unrealized_pnl_usd=-market_value_usd * 0.1,
+        current_market_value_usd=signed_money(market_value_usd),
+        unrealized_pnl_usd=signed_money(-market_value_usd * 0.1),
         unrealized_pnl_pct=-10.0,
         position_weight_pct=weight_pct,
         position_age_hours=24.0,
-        notional_exposure_usd=market_value_usd,
-        delta_adjusted_exposure_usd=market_value_usd,
+        notional_exposure_usd=money(market_value_usd),
+        delta_adjusted_exposure_usd=signed_money(market_value_usd),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -274,10 +275,10 @@ def _long_position(
         execution_history=(
             PositionFill(
                 fill_timestamp=fill_ts,
-                fill_price=market_value_usd / 100.0,
+                fill_price=price(market_value_usd / 100.0),
                 fill_quantity=100.0,
-                slippage=0.01,
-                fees=1.0,
+                slippage=signed_money(0.01),
+                fees=money(1.0),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -287,13 +288,13 @@ def _long_position(
     )
     return PositionView(
         record=record,
-        current_market_value_usd=market_value_usd,
-        unrealized_pnl_usd=market_value_usd * 0.05,
+        current_market_value_usd=signed_money(market_value_usd),
+        unrealized_pnl_usd=signed_money(market_value_usd * 0.05),
         unrealized_pnl_pct=5.0,
         position_weight_pct=weight_pct,
         position_age_hours=24.0,
-        notional_exposure_usd=market_value_usd,
-        delta_adjusted_exposure_usd=market_value_usd,
+        notional_exposure_usd=money(market_value_usd),
+        delta_adjusted_exposure_usd=signed_money(market_value_usd),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,

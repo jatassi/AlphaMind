@@ -937,17 +937,17 @@ def _vertical_long_call_history() -> tuple[PositionFill, ...]:
     return (
         PositionFill(
             fill_timestamp=_NOW - timedelta(hours=2),
-            fill_price=5.00,
+            fill_price=price(5.00),
             fill_quantity=2.0,
-            slippage=0.0,
-            fees=0.0,
+            slippage=signed_money(0.0),
+            fees=money(0.0),
         ),
         PositionFill(
             fill_timestamp=_NOW - timedelta(hours=2),
-            fill_price=2.00,
+            fill_price=price(2.00),
             fill_quantity=2.0,
-            slippage=0.0,
-            fees=0.0,
+            slippage=signed_money(0.0),
+            fees=money(0.0),
         ),
     )
 

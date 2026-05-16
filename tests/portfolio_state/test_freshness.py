@@ -11,7 +11,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
-from alphamind._kernel.money import money
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -81,10 +81,10 @@ def _make_open_position(position_id: str = "POS-001", ticker: str = "NVDA") -> P
     )
     fill = PositionFill(
         fill_timestamp=_ENTRY_AT,
-        fill_price=500.0,
+        fill_price=price(500.0),
         fill_quantity=100.0,
-        slippage=0.0,
-        fees=1.0,
+        slippage=signed_money(0.0),
+        fees=money(1.0),
     )
     record = PositionRecord(
         position_id=PositionId(position_id),
@@ -102,13 +102,13 @@ def _make_open_position(position_id: str = "POS-001", ticker: str = "NVDA") -> P
     )
     return PositionView(
         record=record,
-        current_market_value_usd=52000.0,
-        unrealized_pnl_usd=2000.0,
+        current_market_value_usd=signed_money(52000.0),
+        unrealized_pnl_usd=signed_money(2000.0),
         unrealized_pnl_pct=4.0,
         position_weight_pct=100.0,
         position_age_hours=1.5,
-        notional_exposure_usd=52000.0,
-        delta_adjusted_exposure_usd=52000.0,
+        notional_exposure_usd=money(52000.0),
+        delta_adjusted_exposure_usd=signed_money(52000.0),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -140,13 +140,13 @@ def _make_pending_position(position_id: str = "PEND-001", ticker: str = "AAPL") 
     )
     return PositionView(
         record=record,
-        current_market_value_usd=1600.0,
-        unrealized_pnl_usd=100.0,
+        current_market_value_usd=signed_money(1600.0),
+        unrealized_pnl_usd=signed_money(100.0),
         unrealized_pnl_pct=6.7,
         position_weight_pct=3.0,
         position_age_hours=0.0,
-        notional_exposure_usd=1600.0,
-        delta_adjusted_exposure_usd=1600.0,
+        notional_exposure_usd=money(1600.0),
+        delta_adjusted_exposure_usd=signed_money(1600.0),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,

@@ -191,7 +191,7 @@ def _fill_record(
         fill_id=fill_id,
         order_id=order_id,
         fill_timestamp=fill_timestamp,
-        fill_price=fill_price,
+        fill_price=price(fill_price),
         fill_quantity=fill_quantity,
         remaining_quantity_after=10.0 - fill_quantity,
         order_status_after=OrderStatus.PARTIALLY_FILLED,
@@ -324,10 +324,10 @@ class TestFillRecordRoundTrip:
 
     def test_paper_mode_live_execution_estimate_round_trips(self, session: Session) -> None:
         estimate = LiveExecutionEstimate(
-            estimated_spread_usd=0.02,
-            estimated_impact_usd=0.05,
-            estimated_regulatory_fees_usd=0.01,
-            live_adjusted_fill_price=150.30,
+            estimated_spread_usd=money(0.02),
+            estimated_impact_usd=money(0.05),
+            estimated_regulatory_fees_usd=money(0.01),
+            live_adjusted_fill_price=price(150.30),
         )
         record = _fill_record(live_execution_estimate=estimate)
         session.add(record_to_row(record))
