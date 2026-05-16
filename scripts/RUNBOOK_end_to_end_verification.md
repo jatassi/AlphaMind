@@ -65,6 +65,13 @@ Before running anything, confirm:
    `set -a && source .env && set +a && uv run python scripts/...`
 4. **`uv sync` completed** — `uv run` is the entry point for every
    script.
+5. **No extra env vars** beyond `CLAUDE_CODE_OAUTH_TOKEN` (item 3) are
+   required on either platform. The verify scripts call
+   `configure_utf8_stdio()` at the top of `main()` so Windows runs
+   accept UTF-8 output (Greek letters, em-dashes, smart quotes in
+   LLM-produced briefs) without setting `PYTHONIOENCODING=utf-8`
+   manually. The legacy workaround — `$env:PYTHONIOENCODING = "utf-8"`
+   in PowerShell — is still safe but no longer needed.
 
 Pick the shell variables once at the top so the per-phase commands
 stay short and every phase shares the same archive + invocation-id

@@ -63,6 +63,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
 )
 from alphamind.risk_guardrails.state_delivery.portfolio_manager import CrossConstraintImpact
 from alphamind.scripts._artifact_io import load_retrieval_store, stage_artifacts_dir
+from alphamind.scripts._stdio import configure_utf8_stdio
 from alphamind.scripts.verify_strategist import (
     _AS_OF as _STRATEGIST_AS_OF,
 )
@@ -881,6 +882,7 @@ def main(
     tests: when supplied, the runner uses it instead of the real SDK.
     Operator runs leave it ``None`` so the real Anthropic API is hit.
     """
+    configure_utf8_stdio()
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 

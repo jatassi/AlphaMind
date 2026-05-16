@@ -32,6 +32,7 @@ from alphamind._kernel.ids import (
     ThesisId,
 )
 from alphamind._kernel.money import money, price, signed_money
+from alphamind.scripts._stdio import configure_utf8_stdio
 
 # ---------------------------------------------------------------------------
 # Result helpers
@@ -1543,6 +1544,7 @@ def run_all_waves(verbose: bool = False) -> tuple[int, int]:
 
 
 def main() -> int:
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(
         description="Offline E2E verification for the position-thesis-model work tree (ALP-122). "
         "Exercises all 15 predecessor story deliverables. No SDK; no DB. "

@@ -78,6 +78,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
 )
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 from alphamind.scripts._artifact_io import load_retrieval_store, stage_artifacts_dir
+from alphamind.scripts._stdio import configure_utf8_stdio
 
 __all__ = [
     "Verdict",
@@ -761,6 +762,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     Both must produce non-FAIL verdicts for ``--save-fixtures`` to write.
     A FAIL on the first scenario aborts before the second runs.
     """
+    configure_utf8_stdio()
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 

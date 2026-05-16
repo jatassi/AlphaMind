@@ -136,6 +136,7 @@ from alphamind.portfolio_state.repository import (
     StubPortfolioStateRepository,
 )
 from alphamind.risk_guardrails.library_snapshot import LibrarySnapshot
+from alphamind.scripts._stdio import configure_utf8_stdio
 from alphamind.scripts.verify_strategist import (
     build_fixture_library_config,
     build_fixture_market_inputs,
@@ -674,7 +675,7 @@ def _load_decision_layer_agents(
     pipeline.
     """
     path = agents_yaml_path or _AGENTS_YAML_DEFAULT
-    with path.open() as fh:
+    with path.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     cfg = AgentsConfig.model_validate(data)
     return {
@@ -1131,6 +1132,7 @@ def _build_verify_regime_output(*, invocation_id: str) -> Any:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point. Returns 0 on PASS, 1 on FAIL."""
+    configure_utf8_stdio()
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 

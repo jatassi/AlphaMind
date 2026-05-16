@@ -71,7 +71,7 @@ def load_config(
 
     def _read(name: str) -> dict[str, Any]:
         path = cfg_dir / name
-        with path.open() as fh:
+        with path.open(encoding="utf-8") as fh:
             return yaml.safe_load(fh) or {}
 
     collector_schedule = CollectorScheduleConfig.model_validate(_read("collector_schedule.yaml"))

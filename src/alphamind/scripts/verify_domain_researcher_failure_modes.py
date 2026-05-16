@@ -39,6 +39,7 @@ from alphamind.analysis.domain_researchers.harness import (
     invoke_domain_researcher,
 )
 from alphamind.config.models.agents import AgentName, AllowedModel, BaseAgentConfig
+from alphamind.scripts._stdio import configure_utf8_stdio
 
 __all__ = [
     "ScenarioOutcome",
@@ -503,6 +504,7 @@ def render_summary(outcomes: Sequence[ScenarioOutcome]) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point. Returns an exit code; never raises."""
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(
         description=(
             "Run the deterministic domain-researcher failure-mode harness — "

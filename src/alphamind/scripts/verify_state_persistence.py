@@ -122,6 +122,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
     MarketInputs,
 )
+from alphamind.scripts._stdio import configure_utf8_stdio
 from alphamind.state.config import StatePersistenceConfig
 from alphamind.state.invocation_context.context import (
     InvocationContext,
@@ -1570,6 +1571,7 @@ async def _run_all_phases(db_path: Path) -> list[PhaseResult]:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns 0 on all-PASS, 1 if any phase FAILed."""
+    configure_utf8_stdio()
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 

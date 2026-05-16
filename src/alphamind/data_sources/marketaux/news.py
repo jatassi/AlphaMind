@@ -39,7 +39,7 @@ def _load_outlets() -> dict[str, str]:
     """Load news_outlets.yaml and return {outlet_name: tier} mapping."""
     config_dir = Path(__file__).parents[4] / "config"
     path = config_dir / "news_outlets.yaml"
-    with path.open() as fh:
+    with path.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
     return {name: entry["tier"] for name, entry in data.get("outlets", {}).items()}
 

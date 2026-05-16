@@ -59,7 +59,7 @@ def _load_headline_tag_mapping() -> dict[str, dict[str, HeadlineType]]:
     import yaml
 
     path = Path(__file__).parents[4] / "config" / "headline_tag_mapping.yaml"
-    with path.open() as fh:
+    with path.open(encoding="utf-8") as fh:
         raw: dict[str, dict[str, str]] = yaml.safe_load(fh) or {}
 
     mapping: dict[str, dict[str, HeadlineType]] = {}

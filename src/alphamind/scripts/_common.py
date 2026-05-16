@@ -39,7 +39,7 @@ class AssertionFailure:
 def load_distillation_config(config_path: Path | None = None) -> DistillationConfig:
     """Read ``config/distillation.yaml`` and return the parsed config."""
     path = config_path or _DEFAULT_DISTILLATION_PATH
-    with path.open() as fh:
+    with path.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     return DistillationConfig.model_validate(data)
 
@@ -52,7 +52,7 @@ def load_universe_scope(assets_path: Path | None = None) -> tuple[str, ...]:
     sees the full universe the operator validates.
     """
     path = assets_path or _DEFAULT_ASSETS_PATH
-    with path.open() as fh:
+    with path.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     tickers: set[str] = set()
     for sector_tickers in data.get("sectors", {}).values():

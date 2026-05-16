@@ -138,6 +138,7 @@ from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import (
     IvSurfaceEntry,
 )
 from alphamind.risk_guardrails.guardrail_evaluation.types import ContractType
+from alphamind.scripts._stdio import configure_utf8_stdio
 from alphamind.state.config import StatePersistenceConfig
 from alphamind.state.invocation_context.context import (
     InvocationContext,
@@ -1467,6 +1468,7 @@ def _print_verbose_preamble(args: argparse.Namespace, db_path: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns 0 on PASS, 1 on FAIL."""
+    configure_utf8_stdio()
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 

@@ -97,6 +97,7 @@ from alphamind.execution.oms.command_ids import (
 )
 from alphamind.persistence.session import make_engine
 from alphamind.portfolio_state.events.activity_log import EventType
+from alphamind.scripts._stdio import configure_utf8_stdio
 
 __all__ = [
     "PhaseResult",
@@ -1771,6 +1772,7 @@ async def _run_all_phases(db_path: Path) -> list[PhaseResult]:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns 0 on all-PASS, 1 if any phase FAILed."""
+    configure_utf8_stdio()
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 

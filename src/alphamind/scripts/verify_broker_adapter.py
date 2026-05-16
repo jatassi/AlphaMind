@@ -83,6 +83,7 @@ from alphamind.execution.broker_adapter import (
     recover_missed_fills_since,
     submit_with_retry,
 )
+from alphamind.scripts._stdio import configure_utf8_stdio
 
 # Per-check probe failures narrow to ``(APIError, httpx.HTTPError, OSError)`` —
 # the broker adapter exposes these three classes for Alpaca SDK errors,
@@ -1493,6 +1494,7 @@ def main(argv: list[str] | None = None) -> int:
     as failures per the spec ("DEFERRED for any path the script intentionally
     skips, e.g., live-mode-specific assertions").
     """
+    configure_utf8_stdio()
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 

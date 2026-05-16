@@ -43,6 +43,8 @@ import pandas as pd
 import yaml
 from dotenv import load_dotenv
 
+from alphamind.scripts._stdio import configure_utf8_stdio
+
 # --- Thresholds (mirror docs/design/asset-universe-validation.md) -----------
 
 ADV_LOOKBACK_TRADING_DAYS = 60
@@ -649,7 +651,7 @@ def _validate_setup(args: argparse.Namespace) -> tuple[str, str, dict[str, Any]]
         print(f"error: config not found at {args.config}", file=sys.stderr)
         return 2
 
-    with args.config.open() as f:
+    with args.config.open(encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
     config["__source_path__"] = str(args.config)
     if not config.get("sectors"):
@@ -662,6 +664,7 @@ def _validate_setup(args: argparse.Namespace) -> tuple[str, str, dict[str, Any]]
 
 
 def main() -> int:
+    configure_utf8_stdio()
     args = _parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True)  # stream per-ticker progress when piped

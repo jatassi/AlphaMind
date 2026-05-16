@@ -206,7 +206,7 @@ def _make_job(cid: str, callable_fn: Callable[..., object]) -> Callable[[], None
 
 def register_jobs(scheduler: BlockingScheduler) -> None:
     """Register one cron job per entry in ``collector_schedule.yaml``."""
-    with _SCHEDULE_PATH.open() as fh:
+    with _SCHEDULE_PATH.open(encoding="utf-8") as fh:
         config: dict[str, Any] = yaml.safe_load(fh)
 
     timezone: str = config.get("timezone", "US/Eastern")
