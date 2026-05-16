@@ -32,12 +32,7 @@ from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.scheduler import SchedulerConfig
 from alphamind.config.models.venue import VenueConfig
-from alphamind.persistence.session import (
-    make_async_engine,
-    make_async_session_factory,
-    make_engine,
-    make_session_factory,
-)
+from alphamind.persistence.session import engine_pair_context
 from alphamind.risk_guardrails.breach_behavior.config import load_breach_behavior_config
 from alphamind.scheduler.driver import run_pipeline_scheduler_task
 from alphamind.scheduler.emergency import run_emergency_receiver_task
@@ -119,19 +114,15 @@ async def _run_once(args: argparse.Namespace) -> None:
     venue_config = _load_venue_config(_CONFIG_DIR)
     execution_mode = ExecutionMode.live if args.mode == "live" else ExecutionMode.paper
 
-    engine = make_async_engine()
-    session_factory = make_async_session_factory(engine)
-    sync_engine = make_engine()
-    sync_session_factory = make_session_factory(sync_engine)
-    try:
+    async with engine_pair_context() as engines:
         process_lifetime_id = await record_process_lifetime(
-            session_factory=session_factory,
+            session_factory=engines.async_session_factory,
             process_role="pipeline",
             archive_root=archive_root,
         )
         context = RunInvocationContext(
-            session_factory=session_factory,
-            sync_session_factory=sync_session_factory,
+            session_factory=engines.async_session_factory,
+            sync_session_factory=engines.sync_session_factory,
             process_lifetime_id=process_lifetime_id,
             archive_root=archive_root,
             config_dir=_CONFIG_DIR,
@@ -147,9 +138,6 @@ async def _run_once(args: argparse.Namespace) -> None:
             firing_run_type=RunType(args.once),
             now=datetime.now(UTC),
         )
-    finally:
-        sync_engine.dispose()
-        await engine.dispose()
 
     # The dataclass-asdict path produces a plain dict; ``default=str`` covers
     # the embedded ``RunType`` enum and the ``Phase1Summary`` slots so the
@@ -174,19 +162,15 @@ async def _run_daemon(*, mode: PipelineMode) -> None:
     archive_root = _DEFAULT_ARCHIVE_ROOT
     archive_root.mkdir(parents=True, exist_ok=True)
 
-    engine = make_async_engine()
-    session_factory = make_async_session_factory(engine)
-    sync_engine = make_engine()
-    sync_session_factory = make_session_factory(sync_engine)
-    try:
+    async with engine_pair_context() as engines:
         process_lifetime_id = await record_process_lifetime(
-            session_factory=session_factory,
+            session_factory=engines.async_session_factory,
             process_role="pipeline",
             archive_root=archive_root,
         )
         context = RunInvocationContext(
-            session_factory=session_factory,
-            sync_session_factory=sync_session_factory,
+            session_factory=engines.async_session_factory,
+            sync_session_factory=engines.sync_session_factory,
             process_lifetime_id=process_lifetime_id,
             archive_root=archive_root,
             config_dir=_CONFIG_DIR,
@@ -223,9 +207,6 @@ async def _run_daemon(*, mode: PipelineMode) -> None:
         )
         await supervisor.run()
         log.info("pipeline scheduler session end: process_lifetime_id=%s", process_lifetime_id)
-    finally:
-        sync_engine.dispose()
-        await engine.dispose()
 
 
 def main(argv: Sequence[str] | None = None) -> None:

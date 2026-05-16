@@ -256,3 +256,14 @@ class TestCapturePipFreeze:
             _patch_distributions(),
         ):
             assert _capture_pip_freeze() == "pkg-a==1.0\npkg-b==2.0\n"
+
+    def test_dedupes_shadowed_packages_keeping_first_seen(self) -> None:
+        """Editable install + stale site-packages copy yields one row per name."""
+        with _patch_distributions(
+            (
+                _StubDistribution("alpha", "2.0"),  # first wins
+                _StubDistribution("beta", "0.1"),
+                _StubDistribution("alpha", "1.0"),  # shadowed copy
+            )
+        ):
+            assert _capture_pip_freeze() == "alpha==2.0\nbeta==0.1\n"

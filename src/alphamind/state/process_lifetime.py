@@ -66,12 +66,16 @@ def _capture_pip_freeze() -> str:
     Uses :func:`importlib.metadata.distributions` directly rather than shelling
     out to ``python -m pip freeze`` so the helper works in any environment that
     can import its own metadata — notably ``uv``-managed venvs, which do not
-    install pip by default. Output is sorted case-insensitively to match pip's
-    own ordering convention.
+    install pip by default. Shadowed packages (e.g. an editable install plus a
+    stale copy in site-packages) yield one row per name — the first metadata
+    entry found wins, matching pip freeze's path-precedence behavior.
     """
+    by_name: dict[str, str] = {}
+    for dist in importlib.metadata.distributions():
+        by_name.setdefault(dist.name, dist.version)
     lines = sorted(
-        (f"{dist.name}=={dist.version}" for dist in importlib.metadata.distributions()),
-        key=str.lower,
+        (f"{name}=={version}" for name, version in by_name.items()),
+        key=lambda line: line.split("==", 1)[0].lower(),
     )
     if not lines:
         return ""

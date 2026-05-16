@@ -15,7 +15,10 @@ it runs three separate transactions per invocation:
      via the repository factory; it now correctly sees the committed
      ``phase1_completed_at`` and produces a real :class:`AssembledSnapshot`.
      The snapshot feeds :class:`SnapshotBackedSynthesizerReader` (consumed by
-     the analysis pipeline) and the decision pipeline.
+     the analysis pipeline) and the decision pipeline. The analysis subtree
+     opens its own sync ``Session`` (the distillation orchestrator threads it
+     through ``asyncio.to_thread`` into sync SQLAlchemy callsites) from the
+     context's ``sync_session_factory``.
   4. Phase 2: one transaction wrapping envelope dispatch + the
      ``phase2_completed_at`` stamp + row summary writeback.
 
@@ -472,10 +475,6 @@ async def run_invocation(
     )
 
     # Step 5 — Read-only analysis + decision pipelines.
-    # The analysis subtree consumes a sync ``Session`` (the distillation
-    # orchestrator threads it through ``asyncio.to_thread`` into sync
-    # SQLAlchemy callsites); the sync factory is bound to the same SQLite
-    # file as the async one via the context.
     analysis_result = await _run_analysis(
         invocation_id=invocation_id,
         sync_session_factory=context.sync_session_factory,

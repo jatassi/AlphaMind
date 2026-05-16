@@ -18,6 +18,7 @@ at a time across reload cycles.
 """
 
 from collections.abc import Mapping
+from typing import assert_never
 
 from alphamind.config.models.agents import (
     AdaptiveAgentConfig,
@@ -198,8 +199,10 @@ def _check_venue_env_refs(
     """
     if execution_mode is ExecutionMode.paper:
         active_creds = venue.alpaca.paper
-    else:
+    elif execution_mode is ExecutionMode.live:
         active_creds = venue.alpaca.live
+    else:
+        assert_never(execution_mode)
     label = execution_mode.value
     failures: list[str] = []
     for field_name in ("api_key_env", "api_secret_env"):

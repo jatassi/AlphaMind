@@ -18,13 +18,13 @@ exercised end-to-end without hitting the Anthropic API.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import Engine, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import (
@@ -193,6 +193,19 @@ def _make_venue_config() -> VenueConfig:
     )
 
 
+# Sync engines built inside ``_make_context`` register here; the autouse
+# ``_dispose_make_context_engines`` fixture disposes them after every test so
+# Windows SQLite file handles release before pytest's tmp_path teardown runs.
+_MAKE_CONTEXT_ENGINES: list[Engine] = []
+
+
+@pytest.fixture(autouse=True)
+def _dispose_make_context_engines() -> Iterator[None]:
+    yield
+    while _MAKE_CONTEXT_ENGINES:
+        _MAKE_CONTEXT_ENGINES.pop().dispose()
+
+
 def _make_context(
     *,
     session_factory: async_sessionmaker[AsyncSession],
@@ -211,6 +224,7 @@ def _make_context(
 
     sync_path = db_path if db_path is not None else env_path.parent / "alphamind.db"
     sync_engine = make_engine(str(sync_path))
+    _MAKE_CONTEXT_ENGINES.append(sync_engine)
     sync_session_factory = make_session_factory(sync_engine)
 
     return RunInvocationContext(
