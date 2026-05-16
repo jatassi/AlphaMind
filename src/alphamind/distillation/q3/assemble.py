@@ -121,12 +121,13 @@ collide with ``options_low_oi_volume_multiple = 5.0``.
 
 
 @dataclass(frozen=True)
-class FlowClassificationInputs:
+class FlowClassificationAssemblyInputs:
     """Bundle the per-sector inputs the flow-classification assembler needs.
 
-    The assembly-level bundle (distinct from the
+    Distinct from the compute-level
     :class:`alphamind.distillation.q3.flow_classification_compute.FlowClassificationInputs`
-    compute-level bundle): pivots tickers into sectors via
+    (which carries ``per_ticker_pairs`` for :func:`compute_options_flow`):
+    this assembly-level bundle pivots tickers into sectors via
     ``sector_to_tickers`` and matches them to audiences via
     ``sector_to_audience``. The dataclass is the single function input so
     the assembler signature does not balloon as the payload shape evolves.
@@ -166,7 +167,7 @@ def _calibration_for_per_ticker(
 
 def assemble_q3_flow_classification_blocks(
     *,
-    inputs: FlowClassificationInputs,
+    inputs: FlowClassificationAssemblyInputs,
     freshness_ts: datetime,
 ) -> list[OutputBlock]:
     """Build one ``q3.flow_classification`` :class:`OutputBlock` per sector."""
@@ -475,18 +476,17 @@ def _assemble_index_vs_sector_if_classified(
     ]
 
 
-def assemble_q3_blocks_from_inputs(
-    inputs: Q3Inputs,
-    *,
-    config: DistillationDomainConfig,
-) -> list[OutputBlock]:
+def assemble_q3_blocks_from_inputs(inputs: Q3Inputs) -> list[OutputBlock]:
     """Pure-compute assembly of every Q3 :class:`OutputBlock`.
 
     Operates entirely on the pre-loaded :class:`Q3Inputs`; no DB access.
     This is the function the orchestrator's Phase 2 calls under
     ``asyncio.TaskGroup`` + ``asyncio.to_thread`` parallel with q1.
+
+    Detection thresholds are pinned by the spec as module constants
+    (``_PAIR_FLOW_SIGMA_THRESHOLD`` etc.), so :class:`DistillationDomainConfig`
+    is not threaded through here — q3 carries no Class A knobs.
     """
-    del config  # detection thresholds are pinned by the spec; no Class A knobs threaded through
     if not inputs.ticker_scope:
         return []
     blocks: list[OutputBlock] = []
@@ -495,7 +495,7 @@ def assemble_q3_blocks_from_inputs(
     per_ticker_payload = _build_per_ticker_payload(inputs=inputs)
     blocks.extend(
         assemble_q3_flow_classification_blocks(
-            inputs=FlowClassificationInputs(
+            inputs=FlowClassificationAssemblyInputs(
                 sector_to_tickers=inputs.sector_to_tickers,
                 per_ticker_payload=per_ticker_payload,
                 sector_to_audience=inputs.sector_to_audience,
@@ -510,7 +510,7 @@ def assemble_q3_blocks_from_inputs(
     # Sector-wide sweep — per sector audience.
     sweeps = compute_sector_wide_sweeps(
         SectorSweepInputs(
-            sector_membership=inputs.sector_membership,
+            sector_membership=inputs.ticker_to_sector,
             flow_zscores=inputs.flow_zscores,
         ),
         sigma_threshold=_PAIR_FLOW_SIGMA_THRESHOLD,
@@ -587,11 +587,11 @@ def assemble_q3_blocks(
         pair_correlations=pair_correlations,
         system_long_positions=system_long_positions,
     )
-    return assemble_q3_blocks_from_inputs(inputs, config=config)
+    return assemble_q3_blocks_from_inputs(inputs)
 
 
 __all__ = [
-    "FlowClassificationInputs",
+    "FlowClassificationAssemblyInputs",
     "Q3Inputs",
     "assemble_q3_blocks",
     "assemble_q3_blocks_from_inputs",

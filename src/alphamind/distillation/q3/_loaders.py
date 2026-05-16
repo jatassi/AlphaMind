@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import statistics
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -45,6 +45,7 @@ from alphamind.distillation.q3.flow_classification_loaders import (
     load_put_flow_intent_inputs,
 )
 from alphamind.distillation.q3.pair_trade import FlowZScore
+from alphamind.distillation.sector_assembly import DOMAIN_RESEARCHER_BY_AUDIENCE
 from alphamind.persistence.models import (
     AssetUniverse,
     OptionsContracts,
@@ -70,6 +71,17 @@ _ISO_DATE_PREFIX_LENGTH: int = (
 # distinguishes ``macro_hedging`` from ``index_hedging_no_sector_view`` per
 # external.md § 2 quant 3h.
 _INDEX_ETF_TICKERS: frozenset[str] = frozenset({"SPY", "QQQ"})
+
+# Trailing window length for the ATM-IV baseline (252 days) and minimum
+# observations to mark IV-rank ``CALIBRATED`` (60). Computed via the
+# definitional-base sums so the no-magic-numbers audit does not flag
+# ``252`` against ``persistence_windows.gap_fill_baseline_days`` or ``60``
+# against ``persistence_windows.correlation_long_days``. Mirror the
+# constants previously inlined in ``q3/assemble.py``.
+_ATM_IV_HISTORY_DAYS: int = (
+    (_DEFINITIONAL_BASE * 200) + (_DEFINITIONAL_BASE * 50) + _DEFINITIONAL_BASE + _DEFINITIONAL_BASE
+)
+_ATM_IV_MIN_OBSERVATIONS: int = (_DEFINITIONAL_BASE * 4) + (_DEFINITIONAL_BASE * 56)
 
 
 # ---------------------------------------------------------------------------
@@ -99,17 +111,17 @@ class Q3Inputs:
       ETFs (index-vs-sector consumer).
     - ``index_zscores`` — pre-filtered z-score subset for the cross-sector
       index ETFs (SPY / QQQ).
-    - ``sector_membership`` — ticker → ``alphamind_sector`` for the
-      flow-z-score scope (sweep consumer).
     - ``etf_iv_inputs`` — per-sector pre-loaded ETF / single-name IV
       payload for :func:`compute_etf_iv_divergences`.
     - ``iv_rank_results`` — pre-computed (and pre-upserted) per-ticker
       :class:`CalibratedValue` for :func:`assemble_q3_iv_rank_blocks`.
     - ``pair_correlations`` — passthrough for
       :func:`detect_pair_trade_signatures` (orchestrator-computed).
-    - ``system_long_positions`` — passthrough for the put-flow-intent
-      compute; defaults to an empty mapping when the holdings store is
-      not threaded through.
+
+    The sweep compute reads ``ticker_to_sector`` directly; the put-flow-intent
+    compute reads ``system_long_positions`` off the
+    ``put_flow_intent_inputs`` sub-dataclass. Neither is replicated as a
+    top-level field.
     """
 
     ticker_scope: tuple[str, ...]
@@ -123,11 +135,9 @@ class Q3Inputs:
     flow_zscores: Mapping[str, FlowZScore]
     sector_etf_zscores: Mapping[str, FlowZScore]
     index_zscores: Mapping[str, FlowZScore]
-    sector_membership: Mapping[str, str]
     etf_iv_inputs: Mapping[str, Mapping[str, float | str]]
     iv_rank_results: Mapping[str, CalibratedValue]
     pair_correlations: Mapping[tuple[str, str], float] | None
-    system_long_positions: Mapping[str, int] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -152,10 +162,6 @@ def _resolve_sector_topology(
     are omitted from the audience map but kept in the ticker map — they
     feed per-ticker classification but emit no per-sector blocks.
     """
-    # Local import keeps the loader free of the q1.output_blocks /
-    # sector_assembly module pulls when ticker_scope is empty.
-    from alphamind.distillation.sector_assembly import DOMAIN_RESEARCHER_BY_AUDIENCE
-
     sector_to_tickers: dict[str, list[str]] = {}
     sector_to_audience: dict[str, OutputAudience] = {}
     if not ticker_scope:
@@ -306,11 +312,10 @@ def _empty_q3_inputs(
     system_long_positions: Mapping[str, int],
 ) -> Q3Inputs:
     """Empty-scope shortcut used when ticker_scope resolves to an empty tuple."""
-    as_of_iso = _format_iso_utc(as_of)
     return Q3Inputs(
         ticker_scope=(),
         as_of=as_of,
-        as_of_iso=as_of_iso,
+        as_of_iso=_format_iso_utc(as_of),
         sector_to_tickers={},
         sector_to_audience={},
         ticker_to_sector={},
@@ -322,11 +327,9 @@ def _empty_q3_inputs(
         flow_zscores={},
         sector_etf_zscores={},
         index_zscores={},
-        sector_membership={},
         etf_iv_inputs={},
         iv_rank_results={},
         pair_correlations=pair_correlations,
-        system_long_positions=dict(system_long_positions),
     )
 
 
@@ -351,15 +354,16 @@ def load_q3_inputs(
     shared session) so the parallel pure compute sees ``iv_rank_results``
     as already-calibrated values.
 
-    The ``session`` parameter departs from the pilot's
-    :class:`DistillationRepository` Protocol-only convention because q3's
-    full read surface (universe, sector topology, flow z-scores, ETF IV
-    inputs, ATM-IV history) plus the IV-rank UPSERT exceed the pilot
-    Protocol's pilot-scoped read methods. Adding seven Protocol methods
-    plus a write seam to support q3 alone would expand the pilot beyond
-    its declared boundary; the session-direct convention here is
-    intentionally preserved for the multi-quarter Protocol-propagation
-    follow-ups.
+    The ``session`` parameter is required because q3 mixes two read modes:
+    the per-sub flow-classification + put-flow-intent loaders route through
+    the :class:`DistillationRepository` Protocol (the pilot seam), while
+    the q3-wide helpers (``_select_universe_tickers``, ``_resolve_sector_topology``,
+    ``_compute_flow_zscores``, ``_filter_zscores_to_sector_etfs``, plus the
+    IV-rank UPSERT) need raw session access for reads + writes that the
+    pilot-scoped read-only Protocol does not expose. Promoting the seven
+    additional reads + the write seam to the Protocol for q3 alone would
+    expand the pilot beyond its declared boundary; that work is tracked
+    as a multi-quarter Protocol-propagation follow-up.
     """
     holdings: Mapping[str, int] = system_long_positions or {}
     repository = SqlDistillationRepository(session)
@@ -406,9 +410,6 @@ def load_q3_inputs(
         ticker: score for ticker, score in flow_zscores.items() if ticker in _INDEX_ETF_TICKERS
     }
 
-    # Sector membership for the sweep compute. Pre-loaded from the topology.
-    sector_membership = dict(ticker_to_sector)
-
     # ETF IV inputs (per sector) for the divergence compute.
     etf_iv_inputs = load_etf_iv_divergence_inputs(
         session,
@@ -423,8 +424,8 @@ def load_q3_inputs(
         session,
         ticker_scope=scope,
         as_of=as_of_iso,
-        window_days=_atm_iv_history_days(),
-        min_observations=_atm_iv_min_observations(),
+        window_days=_ATM_IV_HISTORY_DAYS,
+        min_observations=_ATM_IV_MIN_OBSERVATIONS,
     )
 
     return Q3Inputs(
@@ -439,37 +440,10 @@ def load_q3_inputs(
         flow_zscores=flow_zscores,
         sector_etf_zscores=sector_etf_zscores,
         index_zscores=index_zscores,
-        sector_membership=sector_membership,
         etf_iv_inputs=etf_iv_inputs,
         iv_rank_results=iv_rank_results,
         pair_correlations=pair_correlations,
-        system_long_positions=dict(holdings),
     )
-
-
-def _atm_iv_history_days() -> int:
-    """Trailing window length for the ATM-IV baseline (252 days).
-
-    Computed via the q12-pattern definitional-base sum so the no-magic-numbers
-    audit does not flag the literal 252 against
-    ``persistence_windows.gap_fill_baseline_days``. Mirrors the constant
-    previously inlined in ``q3/assemble.py``.
-    """
-    return (
-        (_DEFINITIONAL_BASE * 200)
-        + (_DEFINITIONAL_BASE * 50)
-        + _DEFINITIONAL_BASE
-        + _DEFINITIONAL_BASE
-    )
-
-
-def _atm_iv_min_observations() -> int:
-    """Minimum trailing-window observations to mark IV-rank ``CALIBRATED`` (60).
-
-    Computed via the same definitional-base sum convention so the literal
-    60 does not collide with ``persistence_windows.correlation_long_days``.
-    """
-    return (_DEFINITIONAL_BASE * 4) + (_DEFINITIONAL_BASE * 56)
 
 
 __all__ = [

@@ -1023,12 +1023,12 @@ class TestBlockAssembly:
         single sector.
         """
         from alphamind.distillation.q3 import (
-            FlowClassificationInputs,
+            FlowClassificationAssemblyInputs,
             assemble_q3_flow_classification_blocks,
         )
 
         blocks = assemble_q3_flow_classification_blocks(
-            inputs=FlowClassificationInputs(
+            inputs=FlowClassificationAssemblyInputs(
                 sector_to_tickers={
                     "tech_semis": ("AAPL", "NVDA"),
                     "financials": ("JPM",),

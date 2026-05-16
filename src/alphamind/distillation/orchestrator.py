@@ -81,7 +81,6 @@ from alphamind.distillation.output import (
 from alphamind.distillation.q1 import assemble_q1_blocks
 from alphamind.distillation.q1._loaders import Q1Inputs, load_q1_inputs
 from alphamind.distillation.q1.assemble import assemble_q1_blocks_from_inputs
-from alphamind.distillation.q3 import assemble_q3_blocks
 from alphamind.distillation.q3._loaders import Q3Inputs, load_q3_inputs
 from alphamind.distillation.q3.assemble import assemble_q3_blocks_from_inputs
 from alphamind.distillation.q6_macro import compute_q6_blocks
@@ -389,30 +388,6 @@ def _compute_legacy_phase2_blocks(
     )
 
 
-def _compute_q3_blocks(
-    session: Session,
-    *,
-    config: DistillationDomainConfig,
-    ticker_scope: Sequence[str],
-    as_of: datetime,
-    pair_correlations: dict[tuple[str, str], float],
-) -> list[OutputBlock]:
-    """Q3 options-flow blocks (story 08b) — legacy session-bound entry.
-
-    Preserved for any consumer not yet routed through the orchestrator's
-    Phase 2 TaskGroup. The orchestrator's Phase 2 calls
-    :func:`_load_q3_inputs_via_session` + :func:`_compute_q3_blocks_from_inputs`
-    instead so q3 runs in parallel with q1 over pre-loaded frozen inputs.
-    """
-    return assemble_q3_blocks(
-        session,
-        config=config,
-        as_of=as_of,
-        ticker_scope=ticker_scope,
-        pair_correlations=pair_correlations,
-    )
-
-
 def _load_q3_inputs_via_session(
     session: Session,
     *,
@@ -441,18 +416,14 @@ def _load_q3_inputs_via_session(
     )
 
 
-def _compute_q3_blocks_from_inputs(
-    q3_inputs: Q3Inputs,
-    *,
-    config: DistillationDomainConfig,
-) -> list[OutputBlock]:
+def _compute_q3_blocks_from_inputs(q3_inputs: Q3Inputs) -> list[OutputBlock]:
     """ALP-484 — pure-compute Q3 dispatch from pre-loaded inputs.
 
     Wraps :func:`assemble_q3_blocks_from_inputs` so the orchestrator's
     Phase 2 TaskGroup has a single ``to_thread`` callable that takes only
     serializable / immutable arguments — no Session, no ORM.
     """
-    return assemble_q3_blocks_from_inputs(q3_inputs, config=config)
+    return assemble_q3_blocks_from_inputs(q3_inputs)
 
 
 def _compute_q6_blocks(
@@ -827,7 +798,6 @@ async def _run_phase_2(
                 asyncio.to_thread(
                     _compute_q3_blocks_from_inputs,
                     q3_inputs,
-                    config=config,
                 )
             )
             legacy_task = tg.create_task(

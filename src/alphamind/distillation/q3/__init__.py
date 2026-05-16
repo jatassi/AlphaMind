@@ -33,7 +33,7 @@ from alphamind.distillation.q3.anomalies import (
     detect_sector_wide_sweeps,
 )
 from alphamind.distillation.q3.assemble import (
-    FlowClassificationInputs,
+    FlowClassificationAssemblyInputs,
     assemble_q3_blocks,
     assemble_q3_blocks_from_inputs,
     assemble_q3_etf_iv_divergence_blocks,
@@ -73,7 +73,7 @@ __all__ = [
     "SNAPSHOT_OI_DELTA_ATTRIBUTION",
     "EtfIvDivergence",
     "EtfIvDivergenceDirection",
-    "FlowClassificationInputs",
+    "FlowClassificationAssemblyInputs",
     "FlowZScore",
     "IndexVsSectorClassification",
     "IndexVsSectorLabel",

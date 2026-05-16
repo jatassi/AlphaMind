@@ -5,11 +5,6 @@ The pure compute lives in :mod:`.atm_iv_baseline_compute`; the IO shell
 :mod:`.atm_iv_baseline_loaders`. This module preserves the legacy
 session-accepting public API plus exports the canonical
 :data:`ATM_IV_BASELINE_KIND` constant.
-
-The cross-module helper :func:`_select_atm_iv_history` is re-exported under
-its private name for the assembly module's
-``_select_etf_iv_spread_baseline``, which still consumes it directly until
-the etf_iv_divergence loader fully owns the spread baseline read.
 """
 
 from __future__ import annotations
@@ -20,10 +15,7 @@ from sqlalchemy.orm import Session
 
 from alphamind.distillation._calibration_core import CalibratedValue
 from alphamind.distillation.q3.atm_iv_baseline_compute import ATM_IV_BASELINE_KIND
-from alphamind.distillation.q3.atm_iv_baseline_loaders import (
-    _select_atm_iv_history,
-    load_and_refresh_atm_iv_baselines,
-)
+from alphamind.distillation.q3.atm_iv_baseline_loaders import load_and_refresh_atm_iv_baselines
 
 
 def refresh_atm_iv_baselines(
@@ -51,6 +43,5 @@ def refresh_atm_iv_baselines(
 
 __all__ = [
     "ATM_IV_BASELINE_KIND",
-    "_select_atm_iv_history",
     "refresh_atm_iv_baselines",
 ]
