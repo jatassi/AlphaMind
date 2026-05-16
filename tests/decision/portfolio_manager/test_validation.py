@@ -15,13 +15,16 @@ negative test:
 * Inventory completeness (returns all errors, not first-error-only).
 * Warnings vs errors (warnings do not invalidate).
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 import dataclasses
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
+    from alphamind.portfolio_state.records.positions import PositionRecord
 
 import pytest
 
@@ -103,7 +106,7 @@ _DEFAULT_TICKER_TO_SECTOR: dict[str, str] = {
 # enforces all fields; these helpers skip validation so tests can inject sparse fixtures.
 
 
-def _bypass_init_PortfolioManagerView(**kwargs):  # noqa: N802
+def _bypass_init_PortfolioManagerView(**kwargs: object) -> PortfolioManagerView:  # noqa: N802
     from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 
     obj = object.__new__(PortfolioManagerView)
@@ -112,7 +115,7 @@ def _bypass_init_PortfolioManagerView(**kwargs):  # noqa: N802
     return obj
 
 
-def _bypass_init_StrategistPositionView(**kwargs):  # noqa: N802
+def _bypass_init_StrategistPositionView(**kwargs: object) -> StrategistPositionView:  # noqa: N802
     from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
 
     obj = object.__new__(StrategistPositionView)
@@ -121,7 +124,7 @@ def _bypass_init_StrategistPositionView(**kwargs):  # noqa: N802
     return obj
 
 
-def _bypass_init_PositionRecord(**kwargs):  # noqa: N802
+def _bypass_init_PositionRecord(**kwargs: object) -> PositionRecord:  # noqa: N802
     from alphamind.portfolio_state.records.positions import PositionRecord
 
     obj = object.__new__(PositionRecord)
@@ -529,13 +532,17 @@ class TestHappyPath:
 
 class TestEnvelopeIdSourceProvenanceBijection:
     def test_analyst_envelope_id_integer_matches_rec_integer_passes(self) -> None:
-        envelope = _make_analyst_envelope(envelope_id="ENV-REC-3", source_recommendation_id="REC-3")
+        envelope = _make_analyst_envelope(
+            envelope_id=EnvelopeId("ENV-REC-3"), source_recommendation_id="REC-3"
+        )
         bundle = _make_bundle(recommendations=(_recommendation_stub("REC-3"),))
         result = _validate(envelope, bundle=bundle)
         assert result.is_valid
 
     def test_analyst_envelope_id_integer_mismatch_fails(self) -> None:
-        envelope = _make_analyst_envelope(envelope_id="ENV-REC-3", source_recommendation_id="REC-5")
+        envelope = _make_analyst_envelope(
+            envelope_id=EnvelopeId("ENV-REC-3"), source_recommendation_id="REC-5"
+        )
         bundle = _make_bundle(recommendations=(_recommendation_stub("REC-5"),))
         result = _validate(envelope, bundle=bundle)
         assert not result.is_valid
@@ -547,7 +554,7 @@ class TestEnvelopeIdSourceProvenanceBijection:
 
     def test_strategist_position_assessment_envelope_id_match_passes(self) -> None:
         envelope = _make_strategist_envelope(
-            envelope_id="ENV-SA-7",
+            envelope_id=EnvelopeId("ENV-SA-7"),
             source_recommendation_id="SA-7",
             recommendation_type="position_assessment",
         )
@@ -557,7 +564,7 @@ class TestEnvelopeIdSourceProvenanceBijection:
 
     def test_strategist_pending_order_envelope_id_match_passes(self) -> None:
         envelope = _make_strategist_envelope(
-            envelope_id="ENV-SA-ORD-2",
+            envelope_id=EnvelopeId("ENV-SA-ORD-2"),
             source_recommendation_id="SA-ORD-2",
             recommendation_type="pending_order_assessment",
         )
@@ -569,7 +576,7 @@ class TestEnvelopeIdSourceProvenanceBijection:
 
     def test_strategist_envelope_id_integer_mismatch_fails(self) -> None:
         envelope = _make_strategist_envelope(
-            envelope_id="ENV-SA-7",
+            envelope_id=EnvelopeId("ENV-SA-7"),
             source_recommendation_id="SA-9",
         )
         bundle = _make_bundle(position_assessments=(_position_assessment_stub("SA-9"),))
@@ -587,7 +594,7 @@ class TestVerdictConditionalInvariants:
     def test_reject_with_empty_concerns_fails(self) -> None:
         # Bypass Pydantic's model validator via model_construct.
         envelope = PMAnalystEnvelope.model_construct(
-            envelope_id="ENV-REC-1",
+            envelope_id=EnvelopeId("ENV-REC-1"),
             invocation_id="inv-2026-05-05",
             source_provenance="pm_analyst",
             source_recommendation_id="REC-1",
@@ -606,7 +613,7 @@ class TestVerdictConditionalInvariants:
 
     def test_reject_with_commands_fails(self) -> None:
         envelope = PMAnalystEnvelope.model_construct(
-            envelope_id="ENV-REC-1",
+            envelope_id=EnvelopeId("ENV-REC-1"),
             invocation_id="inv-2026-05-05",
             source_provenance="pm_analyst",
             source_recommendation_id="REC-1",
@@ -625,7 +632,7 @@ class TestVerdictConditionalInvariants:
 
     def test_approve_with_modifications_fails(self) -> None:
         envelope = PMAnalystEnvelope.model_construct(
-            envelope_id="ENV-REC-1",
+            envelope_id=EnvelopeId("ENV-REC-1"),
             invocation_id="inv-2026-05-05",
             source_provenance="pm_analyst",
             source_recommendation_id="REC-1",
@@ -653,7 +660,7 @@ class TestVerdictConditionalInvariants:
 
     def test_approve_with_modification_no_modifications_fails(self) -> None:
         envelope = PMAnalystEnvelope.model_construct(
-            envelope_id="ENV-REC-1",
+            envelope_id=EnvelopeId("ENV-REC-1"),
             invocation_id="inv-2026-05-05",
             source_provenance="pm_analyst",
             source_recommendation_id="REC-1",
@@ -694,7 +701,7 @@ class TestEvaluationCriterionSetMatchesSourceProvenance:
 
     def test_pm_analyst_with_position_action_evaluation_fails(self) -> None:
         envelope = PMAnalystEnvelope.model_construct(
-            envelope_id="ENV-REC-1",
+            envelope_id=EnvelopeId("ENV-REC-1"),
             invocation_id="inv-2026-05-05",
             source_provenance="pm_analyst",
             source_recommendation_id="REC-1",
@@ -713,7 +720,7 @@ class TestEvaluationCriterionSetMatchesSourceProvenance:
 
     def test_pm_strategist_with_thesis_quality_evaluation_fails(self) -> None:
         envelope = PMStrategistEnvelope.model_construct(
-            envelope_id="ENV-SA-1",
+            envelope_id=EnvelopeId("ENV-SA-1"),
             invocation_id="inv-2026-05-05",
             source_provenance="pm_strategist",
             source_recommendation_id="SA-1",
@@ -787,7 +794,7 @@ class TestModificationAdjustmentCategoryPhase:
             triggering_rule="per_position_max_size",
         )
         envelope = PMAnalystEnvelope.model_construct(
-            envelope_id="ENV-REC-1",
+            envelope_id=EnvelopeId("ENV-REC-1"),
             invocation_id="inv-2026-05-05",
             source_provenance="pm_analyst",
             source_recommendation_id="REC-1",
@@ -815,7 +822,7 @@ class TestModificationAdjustmentCategoryPhase:
             triggering_rule=None,
         )
         envelope = PMAnalystEnvelope.model_construct(
-            envelope_id="ENV-REC-1",
+            envelope_id=EnvelopeId("ENV-REC-1"),
             invocation_id="inv-2026-05-05",
             source_provenance="pm_analyst",
             source_recommendation_id="REC-1",
@@ -843,7 +850,7 @@ class TestModificationAdjustmentCategoryPhase:
             triggering_rule=None,
         )
         envelope = PMAnalystEnvelope.model_construct(
-            envelope_id="ENV-REC-1",
+            envelope_id=EnvelopeId("ENV-REC-1"),
             invocation_id="inv-2026-05-05",
             source_provenance="pm_analyst",
             source_recommendation_id="REC-1",
@@ -925,7 +932,7 @@ class TestAntiPatternsCanonicalEnum:
 
     def test_unknown_anti_pattern_fails(self) -> None:
         envelope = PMAnalystEnvelope.model_construct(
-            envelope_id="ENV-REC-1",
+            envelope_id=EnvelopeId("ENV-REC-1"),
             invocation_id="inv-2026-05-05",
             source_provenance="pm_analyst",
             source_recommendation_id="REC-1",
@@ -1101,13 +1108,17 @@ class TestNarrativeReferenceResolution:
 
 class TestSourceRecommendationIdResolves:
     def test_analyst_rec_in_bundle_passes(self) -> None:
-        envelope = _make_analyst_envelope(envelope_id="ENV-REC-2", source_recommendation_id="REC-2")
+        envelope = _make_analyst_envelope(
+            envelope_id=EnvelopeId("ENV-REC-2"), source_recommendation_id="REC-2"
+        )
         bundle = _make_bundle(recommendations=(_recommendation_stub("REC-2"),))
         result = _validate(envelope, bundle=bundle)
         assert result.is_valid
 
     def test_analyst_rec_missing_from_bundle_fails(self) -> None:
-        envelope = _make_analyst_envelope(envelope_id="ENV-REC-2", source_recommendation_id="REC-2")
+        envelope = _make_analyst_envelope(
+            envelope_id=EnvelopeId("ENV-REC-2"), source_recommendation_id="REC-2"
+        )
         bundle = _make_bundle(recommendations=(_recommendation_stub("REC-99"),))
         result = _validate(envelope, bundle=bundle)
         assert not result.is_valid
@@ -1115,7 +1126,7 @@ class TestSourceRecommendationIdResolves:
 
     def test_strategist_position_assessment_in_bundle_passes(self) -> None:
         envelope = _make_strategist_envelope(
-            envelope_id="ENV-SA-3",
+            envelope_id=EnvelopeId("ENV-SA-3"),
             source_recommendation_id="SA-3",
             recommendation_type="position_assessment",
         )
@@ -1125,7 +1136,7 @@ class TestSourceRecommendationIdResolves:
 
     def test_strategist_position_assessment_missing_fails(self) -> None:
         envelope = _make_strategist_envelope(
-            envelope_id="ENV-SA-3",
+            envelope_id=EnvelopeId("ENV-SA-3"),
             source_recommendation_id="SA-3",
             recommendation_type="position_assessment",
         )
@@ -1136,7 +1147,7 @@ class TestSourceRecommendationIdResolves:
 
     def test_strategist_pending_order_in_bundle_passes(self) -> None:
         envelope = _make_strategist_envelope(
-            envelope_id="ENV-SA-ORD-4",
+            envelope_id=EnvelopeId("ENV-SA-ORD-4"),
             source_recommendation_id="SA-ORD-4",
             recommendation_type="pending_order_assessment",
         )
@@ -1148,7 +1159,7 @@ class TestSourceRecommendationIdResolves:
 
     def test_strategist_pending_order_missing_fails(self) -> None:
         envelope = _make_strategist_envelope(
-            envelope_id="ENV-SA-ORD-4",
+            envelope_id=EnvelopeId("ENV-SA-ORD-4"),
             source_recommendation_id="SA-ORD-4",
             recommendation_type="pending_order_assessment",
         )
@@ -1207,7 +1218,7 @@ class TestErrorInventoryCompleteness:
         # (1) envelope_id integer mismatch with source_recommendation_id;
         # (2) embedded OPEN command sector outside active_sectors (XOM → "energy").
         envelope = _make_analyst_envelope(
-            envelope_id="ENV-REC-2",
+            envelope_id=EnvelopeId("ENV-REC-2"),
             source_recommendation_id="REC-7",
             commands=(_open_command(underlying=Symbol("XOM")),),
         )

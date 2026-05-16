@@ -1,5 +1,4 @@
 """Tests for the snapshot assembler (story 06)."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -121,7 +120,7 @@ def _make_cash_ledger(current_cash: float = 10_000.0) -> CashLedger:
         reserved_capital_usd=0.0,
         available_buying_power_usd=current_cash,
         margin_held_usd=0.0,
-        unsettled_proceeds=[],
+        unsettled_proceeds=(),
         cash_pct_of_portfolio=0.0,
         true_deployable_capital_usd=0.0,
         regt_excess_trailing_30d_usd=0.0,
@@ -160,7 +159,7 @@ def _make_pnl_inputs() -> PortfolioPnLInputs:
 
 
 def _make_risk_budget() -> RiskBudgetConsumption:
-    return RiskBudgetConsumption(entries=[])
+    return RiskBudgetConsumption(entries=())
 
 
 def _make_active_risk_parameters(
@@ -172,8 +171,8 @@ def _make_active_risk_parameters(
         transition_state=RegimeTransitionState.STABLE,
         transition_invocations_remaining=0,
         parameter_change_flag=parameter_change_flag,
-        entries=[],
-        active_overlays=[],
+        entries=(),
+        active_overlays=(),
     )
 
 
@@ -191,23 +190,23 @@ def _make_active_risk_parameters_with_entry(rule_id: str, value: float) -> Activ
         transition_state=RegimeTransitionState.STABLE,
         transition_invocations_remaining=0,
         parameter_change_flag=False,
-        entries=[entry],
-        active_overlays=[],
+        entries=(entry,),
+        active_overlays=(),
     )
 
 
 def _make_thesis_quality_aggregates() -> ThesisQualityAggregate:
     return ThesisQualityAggregate(
         as_of_timestamp=_NOW,
-        resolution_counts_by_window=[],
-        duration_stats_by_window=[],
-        invalidation_timing_stats_by_window=[],
-        signal_hit_rates=[],
-        signal_to_thesis_conversions=[],
-        conviction_calibration=[],
-        conviction_sizing_deviation_by_window=[],
-        performance_attribution=[],
-        alpha_beta_decomposition_by_window=[],
+        resolution_counts_by_window=(),
+        duration_stats_by_window=(),
+        invalidation_timing_stats_by_window=(),
+        signal_hit_rates=(),
+        signal_to_thesis_conversions=(),
+        conviction_calibration=(),
+        conviction_sizing_deviation_by_window=(),
+        performance_attribution=(),
+        alpha_beta_decomposition_by_window=(),
     )
 
 
@@ -258,7 +257,7 @@ def _make_open_equity_position(
         fees=1.0,
     )
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -300,8 +299,8 @@ def _make_pending_order(
 ) -> OrderRecord:
     spec = EquityInstrumentSpec(ticker=Symbol("NVDA"))
     return OrderRecord(
-        order_id=order_id,
-        position_id=position_id,
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id),
         bracket_id=BracketId("BRK-001"),
         role=OrderRole.ENTRY,
         instrument_spec=spec,
@@ -312,7 +311,7 @@ def _make_pending_order(
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId("alp-001"),
-        alpaca_order_id_chain=("alp-001",),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-001"),),
         submission_timestamp=submission_timestamp,
         last_update_timestamp=submission_timestamp,
         filled_quantity=0.0,
@@ -352,64 +351,13 @@ def _make_bracket(
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
         entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(stop_leg, target_leg),
         modification_history=(),
         corporate_action_cancellation_reason=None,
-    )
-
-
-def _make_options_position(
-    position_id: str = "OPT-001",
-    underlying_ticker: str = "NVDA",
-    premium_paid: float = 10.0,
-    contract_count: float = 1.0,
-    contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
-    delta: float = 0.5,
-) -> PositionRecord:
-    options = OptionsPositionDetails(
-        underlying_ticker=Symbol(underlying_ticker),
-        strike_price=500.0,
-        expiration_date=date(2025, 12, 31),
-        contract_type=OptionContractType.CALL,
-        contract_count=contract_count,
-        contract_multiplier=contract_multiplier,
-        premium_paid_per_contract=premium_paid,
-        greeks=OptionGreeks(delta=delta, gamma=0.01, theta=-0.5, vega=0.2),
-    )
-    fill = PositionFill(
-        fill_timestamp=_ENTRY_AT,
-        fill_price=premium_paid,
-        fill_quantity=contract_count,
-        slippage=0.01,
-        fees=1.0,
-    )
-    return PositionRecord(
-        position_id=position_id,
-        thesis_id=None,
-        bracket_id=None,
-        status=PositionStatus.OPEN,
-        direction=Direction.LONG,
-        entry_timestamp=_ENTRY_AT,
-        details=options,
-        execution_history=(fill,),
-        realized_pnl_to_date_usd=None,
-        current_market_value_usd=0.0,
-        unrealized_pnl_usd=0.0,
-        unrealized_pnl_pct=0.0,
-        position_weight_pct=0.0,
-        position_age_hours=0.0,
-        notional_exposure_usd=0.0,
-        delta_adjusted_exposure_usd=0.0,
-        distance_to_target_usd=None,
-        distance_to_stop_usd=None,
-        risk_reward_at_current=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
     )
 
 
@@ -460,7 +408,7 @@ def _make_strategy_position(
         fees=2.0,
     )
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,

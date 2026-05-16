@@ -6,7 +6,6 @@ Tests are behaviour-driven through the public interface only:
 Anthropic API. Mirrors the structure of
 ``tests/decision/strategist/test_harness.py``.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -236,7 +235,7 @@ def _sector_resolver(ticker: str) -> str:
 def _build_validation_state() -> ValidationToolState:
     cfg = _config()
     return ValidationToolState(
-        invocation_id="INV-001",
+        invocation_id=InvocationId("INV-001"),
         starting_snapshot=_snapshot(),
         starting_risk_budget=_risk_budget(),
         starting_active_risk_parameters=_active_risk_parameters(),
@@ -256,7 +255,7 @@ def validation_state() -> ValidationToolState:
 @pytest.fixture()
 def submit_envelope_state(validation_state: ValidationToolState) -> SubmitEnvelopeState:
     return build_initial_submit_envelope_state(
-        invocation_id="INV-001",
+        invocation_id=InvocationId("INV-001"),
         starting_validation_state=validation_state,
     )
 
@@ -305,7 +304,7 @@ def pre_processor_bundle() -> ProposalPreProcessorBundle:
         ),
     )
     return ProposalPreProcessorBundle.model_construct(
-        invocation_id="inv-test-001",
+        invocation_id=InvocationId("inv-test-001"),
         timestamp=_NOW,
         aggregate_observations=aggregate,
         strategist_section=StrategistSection.model_construct(
@@ -329,7 +328,7 @@ def pm_view() -> PortfolioManagerView:
     sub-aggregate. Mirrors the pre-conversion ``model_construct`` shortcut.
     """
     view = object.__new__(PortfolioManagerView)
-    for name, value in {
+    fields: dict[str, object] = {
         "positions": (),
         "recent_thesis_resolutions": (),
         "portfolio_pnl": None,
@@ -344,7 +343,8 @@ def pm_view() -> PortfolioManagerView:
         "abandoned_actions": (),
         "thesis_quality_aggregates": None,
         "position_modification_trail": {},
-    }.items():
+    }
+    for name, value in fields.items():
         object.__setattr__(view, name, value)
     return view
 
@@ -531,7 +531,7 @@ async def test_happy_path_with_stub_sdk(
         **_invoke_kwargs(
             agent_config=agent_config,
             user_message="Produce PM output.",
-            invocation_id="inv-test-001",
+            invocation_id=InvocationId("inv-test-001"),
             validation_state=validation_state,
             submit_envelope_state=submit_envelope_state,
             retrieval_store=retrieval_store,
@@ -598,7 +598,7 @@ async def test_parse_failure_retries_then_succeeds(
         **_invoke_kwargs(
             agent_config=agent_config,
             user_message="Produce PM output.",
-            invocation_id="inv-test-002",
+            invocation_id=InvocationId("inv-test-002"),
             validation_state=validation_state,
             submit_envelope_state=submit_envelope_state,
             retrieval_store=retrieval_store,
@@ -656,7 +656,7 @@ async def test_parse_failure_with_max_tokens_raises_context_overflow(
             **_invoke_kwargs(
                 agent_config=agent_config,
                 user_message="Produce PM output.",
-                invocation_id="inv-test-003",
+                invocation_id=InvocationId("inv-test-003"),
                 validation_state=validation_state,
                 submit_envelope_state=submit_envelope_state,
                 retrieval_store=retrieval_store,
@@ -703,7 +703,7 @@ async def test_parse_failure_after_retry_raises_malformed(
             **_invoke_kwargs(
                 agent_config=agent_config,
                 user_message="Produce PM output.",
-                invocation_id="inv-test-004",
+                invocation_id=InvocationId("inv-test-004"),
                 validation_state=validation_state,
                 submit_envelope_state=submit_envelope_state,
                 retrieval_store=retrieval_store,
@@ -765,7 +765,7 @@ async def test_timeout_raises_timeout_failure(
             **_invoke_kwargs(
                 agent_config=tight_config,
                 user_message="Produce PM output.",
-                invocation_id="inv-timeout-001",
+                invocation_id=InvocationId("inv-timeout-001"),
                 validation_state=validation_state,
                 submit_envelope_state=submit_envelope_state,
                 retrieval_store=retrieval_store,
@@ -812,7 +812,7 @@ async def test_sdk_exception_raises_sdk_failure(
             **_invoke_kwargs(
                 agent_config=agent_config,
                 user_message="Produce PM output.",
-                invocation_id="inv-sdk-001",
+                invocation_id=InvocationId("inv-sdk-001"),
                 validation_state=validation_state,
                 submit_envelope_state=submit_envelope_state,
                 retrieval_store=retrieval_store,
@@ -861,7 +861,7 @@ async def test_diagnostic_archive_written(
         **_invoke_kwargs(
             agent_config=agent_config,
             user_message="Produce PM output.",
-            invocation_id="inv-diag-001",
+            invocation_id=InvocationId("inv-diag-001"),
             validation_state=validation_state,
             submit_envelope_state=submit_envelope_state,
             retrieval_store=retrieval_store,
@@ -927,7 +927,7 @@ async def test_archive_root_none_skips_disk_io(
         **_invoke_kwargs(
             agent_config=agent_config,
             user_message="Produce PM output.",
-            invocation_id="inv-no-archive",
+            invocation_id=InvocationId("inv-no-archive"),
             validation_state=validation_state,
             submit_envelope_state=submit_envelope_state,
             retrieval_store=retrieval_store,
@@ -986,7 +986,7 @@ async def test_four_mcp_servers_registered(
         **_invoke_kwargs(
             agent_config=agent_config,
             user_message="Produce PM output.",
-            invocation_id="inv-opt-001",
+            invocation_id=InvocationId("inv-opt-001"),
             validation_state=validation_state,
             submit_envelope_state=submit_envelope_state,
             retrieval_store=retrieval_store,
@@ -1076,12 +1076,12 @@ async def test_state_cells_are_per_invocation(
 
     state_a = _build_validation_state()
     submit_state_a = build_initial_submit_envelope_state(
-        invocation_id="inv-A",
+        invocation_id=InvocationId("inv-A"),
         starting_validation_state=state_a,
     )
     state_b = _build_validation_state()
     submit_state_b = build_initial_submit_envelope_state(
-        invocation_id="inv-B",
+        invocation_id=InvocationId("inv-B"),
         starting_validation_state=state_b,
     )
 
@@ -1089,7 +1089,7 @@ async def test_state_cells_are_per_invocation(
         **_invoke_kwargs(
             agent_config=agent_config,
             user_message="A",
-            invocation_id="inv-A",
+            invocation_id=InvocationId("inv-A"),
             validation_state=state_a,
             submit_envelope_state=submit_state_a,
             retrieval_store=retrieval_store,
@@ -1107,7 +1107,7 @@ async def test_state_cells_are_per_invocation(
         **_invoke_kwargs(
             agent_config=agent_config,
             user_message="B",
-            invocation_id="inv-B",
+            invocation_id=InvocationId("inv-B"),
             validation_state=state_b,
             submit_envelope_state=submit_state_b,
             retrieval_store=retrieval_store,
@@ -1254,7 +1254,7 @@ async def test_submission_log_threads_from_engine_stub_state_cell(
         **_invoke_kwargs(
             agent_config=agent_config,
             user_message="Produce PM output.",
-            invocation_id="inv-log-001",
+            invocation_id=InvocationId("inv-log-001"),
             validation_state=validation_state,
             submit_envelope_state=submit_envelope_state,
             retrieval_store=retrieval_store,
@@ -1316,7 +1316,7 @@ async def test_failed_submission_log_archived_from_state_cell(
         **_invoke_kwargs(
             agent_config=agent_config,
             user_message="Produce PM output.",
-            invocation_id="inv-fail-001",
+            invocation_id=InvocationId("inv-fail-001"),
             validation_state=validation_state,
             submit_envelope_state=submit_envelope_state,
             retrieval_store=retrieval_store,
@@ -1366,7 +1366,7 @@ async def test_sdk_query_fn_is_used_real_query_never_called(
             **_invoke_kwargs(
                 agent_config=agent_config,
                 user_message="Produce PM output.",
-                invocation_id="inv-stub-only",
+                invocation_id=InvocationId("inv-stub-only"),
                 validation_state=validation_state,
                 submit_envelope_state=submit_envelope_state,
                 retrieval_store=retrieval_store,

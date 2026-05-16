@@ -18,7 +18,6 @@ Covers:
 * Application-level invariant: ``processing_status = 'processed'`` requires a
   non-null ``processing_invocation_id``.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -147,7 +146,7 @@ def _invocation_record(invocation_id: str = "inv-1") -> InvocationRecord:
 
 def _order_record(order_id: str = "ord-1") -> OrderRecord:
     return OrderRecord(
-        order_id=order_id,
+        order_id=OrderId(order_id),
         position_id=None,
         bracket_id=BracketId("brk-1"),
         role=OrderRole.ENTRY,
@@ -160,7 +159,7 @@ def _order_record(order_id: str = "ord-1") -> OrderRecord:
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId("alp-1"),
-        alpaca_order_id_chain=("alp-1",),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-1"),),
         submission_timestamp=SUBMITTED_AT,
         last_update_timestamp=SUBMITTED_AT + timedelta(seconds=1),
         filled_quantity=0.0,

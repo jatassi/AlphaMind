@@ -1,15 +1,16 @@
 """Tests for the PortfolioStateRepository protocol, stub, and value objects (story 04b)."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
 from alphamind._kernel.ids import (
     BracketId,
     OrderId,
+    PositionId,
     Symbol,
 )
 from alphamind._kernel.regime import (
@@ -80,7 +81,7 @@ def test_repository_consistency_error_is_repository_read_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-_VALID_PNL = {
+_VALID_PNL: dict[str, Any] = {
     "daily_realized_pnl_usd": 100.0,
     "cumulative_realized_pnl_usd": 500.0,
     "rolling_realized_pnl": {"1d": 50.0, "5d": 200.0},
@@ -205,8 +206,8 @@ def _make_active_risk_params() -> ActiveRiskParameterSet:
         transition_state=RegimeTransitionState.STABLE,
         transition_invocations_remaining=0,
         parameter_change_flag=False,
-        entries=[],
-        active_overlays=[],
+        entries=(),
+        active_overlays=(),
     )
 
 
@@ -272,7 +273,7 @@ def _make_cash_ledger() -> CashLedger:
         reserved_capital_usd=500.0,
         available_buying_power_usd=8500.0,
         margin_held_usd=0.0,
-        unsettled_proceeds=[],
+        unsettled_proceeds=(),
         cash_pct_of_portfolio=80.0,
         true_deployable_capital_usd=8000.0,
         regt_excess_trailing_30d_usd=100.0,
@@ -320,7 +321,7 @@ def _make_thesis_quality_aggregate() -> ThesisQualityAggregate:
 
 def _make_position_record(position_id: str) -> PositionRecord:
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.PENDING,
@@ -374,11 +375,11 @@ def _make_bracket_record(position_id: str) -> BracketRecord:
     )
     return BracketRecord(
         bracket_id=BracketId("brk-1"),
-        position_id=position_id,
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
         entry_order_id=OrderId("ord-0"),
-        protective_legs=[leg],
-        modification_history=[],
+        protective_legs=(leg,),
+        modification_history=(),
         corporate_action_cancellation_reason=None,
     )
 

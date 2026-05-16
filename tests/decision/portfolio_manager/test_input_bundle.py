@@ -1,9 +1,9 @@
 """Tests for the portfolio manager input-bundle assembler — story 04 (ALP-324)."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from alphamind._kernel.ids import (
     AlpacaOrderId,
@@ -343,7 +343,7 @@ def _make_position_record(
         fees=1.0,
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -396,8 +396,8 @@ def _make_thesis(
         )
 
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="Hyperscaler capex acceleration drives Q1 revenue beat...",
         components=(
             _comp(
@@ -760,7 +760,7 @@ def _current_price_lookup(ticker: str) -> float:
 def _normal_kwargs(
     *,
     pm_view: PortfolioManagerView | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     return {
         "pm_view": pm_view or _make_pm_view(),
         "pre_processor_bundle": _make_pre_processor_bundle(),
@@ -783,7 +783,7 @@ def _normal_kwargs(
 def _halt_kwargs(
     *,
     pm_view: PortfolioManagerView | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     kwargs = _normal_kwargs(pm_view=pm_view)
     kwargs["halt_state"] = _make_halt_state()
     kwargs["pending_orders"] = ()
@@ -799,7 +799,7 @@ def _halt_kwargs(
 def test_normal_bundle_contains_all_seven_section_markers_in_order() -> None:
     """Normal-mode bundle order: header → tools → pre-processor bundle → brief → portfolio
     state → intra-invocation log → recent PM decision log."""
-    out = assemble_input_bundle_normal(**_normal_kwargs())  # type: ignore[arg-type]
+    out = assemble_input_bundle_normal(**_normal_kwargs())
     guardrail_idx = out.index("=== GUARDRAIL STATE")
     tools_idx = out.index("=== AVAILABLE TOOLS ===")
     pre_proc_idx = out.index("=== PROPOSAL PRE-PROCESSOR BUNDLE ===")
@@ -824,18 +824,18 @@ def test_normal_bundle_contains_all_seven_section_markers_in_order() -> None:
 
 
 def test_halt_bundle_contains_halt_banner() -> None:
-    out = assemble_input_bundle_halt(**_halt_kwargs())  # type: ignore[arg-type]
+    out = assemble_input_bundle_halt(**_halt_kwargs())
     assert "** HALT MODE ACTIVE — daily drawdown 2.6% / 2.5% **" in out
 
 
 def test_synthesizer_brief_verbatim() -> None:
-    out = assemble_input_bundle_normal(**_normal_kwargs())  # type: ignore[arg-type]
+    out = assemble_input_bundle_normal(**_normal_kwargs())
     assert _SYNTHESIZER_BRIEF in out
 
 
 def test_position_record_renders_pnl_and_distances() -> None:
     """Per-position rendering surfaces P/L (absolute + %), distances, age, thesis summary."""
-    out = assemble_input_bundle_normal(**_normal_kwargs())  # type: ignore[arg-type]
+    out = assemble_input_bundle_normal(**_normal_kwargs())
     # P/L absolute and percentage from fixture: $8,200 +5.0%
     assert "+$8,200" in out
     assert "+5.0%" in out
@@ -853,7 +853,7 @@ def test_activity_log_blocks_match_view_entries() -> None:
     pm_log = (_make_pm_decision_entry(),)
     view = _make_pm_view(intra_invocation_changelog=intra, recent_pm_decision_log=pm_log)
     out = assemble_input_bundle_normal(
-        **{**_normal_kwargs(), "pm_view": view},  # type: ignore[arg-type]
+        **{**_normal_kwargs(), "pm_view": view},
     )
     assert "PM raised target on momentum" in out
     assert "ENV-1" in out
@@ -886,7 +886,7 @@ def test_position_modification_trail_inline() -> None:
         position_modification_trail={pid: trail_entries},
     )
     out = assemble_input_bundle_normal(
-        **{**_normal_kwargs(), "pm_view": view},  # type: ignore[arg-type]
+        **{**_normal_kwargs(), "pm_view": view},
     )
     assert "first tighten" in out
     assert "second raise" in out
@@ -895,20 +895,20 @@ def test_position_modification_trail_inline() -> None:
 def test_pure_no_io_deterministic() -> None:
     """Identical inputs produce byte-equal output."""
     kwargs = _normal_kwargs()
-    out_a = assemble_input_bundle_normal(**kwargs)  # type: ignore[arg-type]
-    out_b = assemble_input_bundle_normal(**kwargs)  # type: ignore[arg-type]
+    out_a = assemble_input_bundle_normal(**kwargs)
+    out_b = assemble_input_bundle_normal(**kwargs)
     assert out_a == out_b
 
 
 def test_halt_pure_no_io_deterministic() -> None:
     kwargs = _halt_kwargs()
-    out_a = assemble_input_bundle_halt(**kwargs)  # type: ignore[arg-type]
-    out_b = assemble_input_bundle_halt(**kwargs)  # type: ignore[arg-type]
+    out_a = assemble_input_bundle_halt(**kwargs)
+    out_b = assemble_input_bundle_halt(**kwargs)
     assert out_a == out_b
 
 
 def test_recent_thesis_resolutions_and_abandoned_blocks_present() -> None:
-    out = assemble_input_bundle_normal(**_normal_kwargs())  # type: ignore[arg-type]
+    out = assemble_input_bundle_normal(**_normal_kwargs())
     assert "=== RECENT THESIS RESOLUTIONS ===" in out
     assert "=== ABANDONED OPENINGS / ACTIONS ===" in out
     assert "=== THESIS QUALITY AGGREGATE ===" in out
@@ -918,7 +918,7 @@ def test_pre_processor_bundle_serialized_byte_for_byte() -> None:
     """The rendered pre-processor JSON, when re-parsed, equals the input bundle."""
     bundle_in = _make_pre_processor_bundle()
     out = assemble_input_bundle_normal(
-        **{**_normal_kwargs(), "pre_processor_bundle": bundle_in},  # type: ignore[arg-type]
+        **{**_normal_kwargs(), "pre_processor_bundle": bundle_in},
     )
     pre_idx = out.index("=== PROPOSAL PRE-PROCESSOR BUNDLE ===")
     end_idx = out.index("=== END PROPOSAL PRE-PROCESSOR BUNDLE ===")
@@ -928,7 +928,7 @@ def test_pre_processor_bundle_serialized_byte_for_byte() -> None:
 
 
 def test_halt_bundle_contains_all_seven_section_markers_in_order() -> None:
-    out = assemble_input_bundle_halt(**_halt_kwargs())  # type: ignore[arg-type]
+    out = assemble_input_bundle_halt(**_halt_kwargs())
     guardrail_idx = out.index("=== GUARDRAIL STATE")
     tools_idx = out.index("=== AVAILABLE TOOLS ===")
     pre_proc_idx = out.index("=== PROPOSAL PRE-PROCESSOR BUNDLE ===")

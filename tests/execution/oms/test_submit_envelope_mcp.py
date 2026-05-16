@@ -5,7 +5,6 @@ Layer-2/3 validation (story 06b), then re-runs validate_guardrail per embedded
 command against cumulative state. Mirrors the analyst-side
 test_validation_tool_mcp.py shape.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -14,7 +13,11 @@ import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
+    from alphamind.portfolio_state.records.positions import PositionRecord
 
 import pytest
 
@@ -108,7 +111,7 @@ _DEFAULT_ACTIVE_SECTORS = frozenset({"tech", "semis", "financials", "energy"})
 # enforces all fields; these helpers skip validation so tests can inject sparse fixtures.
 
 
-def _bypass_init_PortfolioManagerView(**kwargs):  # noqa: N802
+def _bypass_init_PortfolioManagerView(**kwargs: object) -> PortfolioManagerView:  # noqa: N802
     from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 
     obj = object.__new__(PortfolioManagerView)
@@ -117,7 +120,7 @@ def _bypass_init_PortfolioManagerView(**kwargs):  # noqa: N802
     return obj
 
 
-def _bypass_init_StrategistPositionView(**kwargs):  # noqa: N802
+def _bypass_init_StrategistPositionView(**kwargs: object) -> StrategistPositionView:  # noqa: N802
     from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
 
     obj = object.__new__(StrategistPositionView)
@@ -126,7 +129,7 @@ def _bypass_init_StrategistPositionView(**kwargs):  # noqa: N802
     return obj
 
 
-def _bypass_init_PositionRecord(**kwargs):  # noqa: N802
+def _bypass_init_PositionRecord(**kwargs: object) -> PositionRecord:  # noqa: N802
     from alphamind.portfolio_state.records.positions import PositionRecord
 
     obj = object.__new__(PositionRecord)

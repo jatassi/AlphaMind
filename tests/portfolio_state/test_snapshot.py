@@ -1,10 +1,10 @@
 """Tests for PortfolioStateSnapshot and its inline rollup types (story 04a)."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 import copy
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -16,7 +16,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
-from alphamind._kernel.money import money, price
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -122,7 +122,7 @@ def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> Positi
         average_cost_basis_per_share=150.0,
     )
     record = PositionRecord(
-        position_id=pos_id,
+        position_id=PositionId(pos_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -157,7 +157,7 @@ def _make_pending_position(pos_id: str = "POS-003") -> PositionView:
         average_cost_basis_per_share=2800.0,
     )
     record = PositionRecord(
-        position_id=pos_id,
+        position_id=PositionId(pos_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.PENDING,
@@ -197,8 +197,8 @@ def _make_bracket(bracket_id: str = "BRK-001", position_id: str = "POS-001") -> 
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.PENDING_ENTRY,
         entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(mechanical_leg,),
@@ -214,8 +214,8 @@ def _make_pending_order(
 ) -> OrderRecord:
     spec = EquityInstrumentSpec(ticker=Symbol("AAPL"))
     return OrderRecord(
-        order_id=order_id,
-        position_id=position_id,
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id),
         bracket_id=BracketId("BRK-001"),
         role=OrderRole.ENTRY,
         instrument_spec=spec,
@@ -226,7 +226,7 @@ def _make_pending_order(
         duration=OrderDuration.DAY,
         status=status,
         alpaca_order_id=AlpacaOrderId("alp-001"),
-        alpaca_order_id_chain=("alp-001",),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-001"),),
         submission_timestamp=_T0,
         last_update_timestamp=_T0,
         filled_quantity=0.0,
@@ -258,8 +258,8 @@ def _make_thesis(
         )
 
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="Long AAPL on momentum breakout.",
         components=(
             _comp(ThesisComponentType.ENTRY_RATIONALE, "comp-1"),
@@ -466,16 +466,21 @@ def _make_thesis_quality() -> ThesisQualityAggregate:
 
 
 def _make_pnl(**overrides: object) -> PortfolioPnL:
-    kwargs: dict[str, object] = {
-        "total_unrealized_pnl_usd": 500.0,
+    kwargs: dict[str, Any] = {
+        "total_unrealized_pnl_usd": signed_money(500.0),
         "total_unrealized_pnl_pct_of_portfolio": 1.5,
-        "daily_realized_pnl_usd": 200.0,
-        "daily_total_pnl_usd": 700.0,
-        "cumulative_realized_pnl_usd": 10000.0,
-        "rolling_realized_pnl": {"1d": 200.0, "3d": 600.0, "5d": 1000.0, "20d": 3000.0},
+        "daily_realized_pnl_usd": signed_money(200.0),
+        "daily_total_pnl_usd": signed_money(700.0),
+        "cumulative_realized_pnl_usd": signed_money(10000.0),
+        "rolling_realized_pnl": {
+            "1d": signed_money(200.0),
+            "3d": signed_money(600.0),
+            "5d": signed_money(1000.0),
+            "20d": signed_money(3000.0),
+        },
         "win_rate_pct": 62.5,
-        "average_win_size_usd": 800.0,
-        "average_loss_size_usd": 400.0,
+        "average_win_size_usd": signed_money(800.0),
+        "average_loss_size_usd": signed_money(400.0),
         "profit_factor": 2.0,
     }
     kwargs.update(overrides)
@@ -483,9 +488,9 @@ def _make_pnl(**overrides: object) -> PortfolioPnL:
 
 
 def _make_directional(**overrides: object) -> DirectionalExposure:
-    kwargs: dict[str, object] = {
-        "total_long_delta_adjusted_usd": 50000.0,
-        "total_short_delta_adjusted_usd": 20000.0,
+    kwargs: dict[str, Any] = {
+        "total_long_delta_adjusted_usd": signed_money(50000.0),
+        "total_short_delta_adjusted_usd": signed_money(20000.0),
         "net_directional_pct_of_portfolio": 30.0,
         "gross_pct_of_portfolio": 70.0,
     }
@@ -494,10 +499,10 @@ def _make_directional(**overrides: object) -> DirectionalExposure:
 
 
 def _make_sector_entry(**overrides: object) -> SectorExposureEntry:
-    kwargs: dict[str, object] = {
+    kwargs: dict[str, Any] = {
         "sector": "TECHNOLOGY",
-        "long_delta_adjusted_usd": 10000.0,
-        "short_delta_adjusted_usd": 5000.0,
+        "long_delta_adjusted_usd": signed_money(10000.0),
+        "short_delta_adjusted_usd": signed_money(5000.0),
         "long_pct_of_portfolio": 20.0,
         "short_pct_of_portfolio": 10.0,
         "long_short_ratio": 2.0,
@@ -525,7 +530,7 @@ def _make_snapshot(**overrides: object) -> PortfolioStateSnapshot:
     pm_entry = _make_pm_decision_entry("ENTRY-PM-001", _INV_ID)
     mod_trail_entry = _make_activity_entry("ENTRY-MOD-001", _INV_ID, "POS-001")
 
-    base: dict[str, object] = {
+    base: dict[str, Any] = {
         "invocation_id": _INV_ID,
         "phase1_committed_at": _T0,
         "snapshot_assembled_at": _T1,
@@ -584,7 +589,7 @@ class TestPortfolioPnL:
     def test_frozen(self) -> None:
         pnl = _make_pnl()
         with pytest.raises((ValueError, TypeError, AttributeError)):
-            pnl.total_unrealized_pnl_usd = money(999.0)
+            pnl.total_unrealized_pnl_usd = money(999.0)  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -615,7 +620,7 @@ class TestSectorExposureEntry:
     def test_frozen(self) -> None:
         entry = _make_sector_entry()
         with pytest.raises((ValueError, TypeError, AttributeError)):
-            entry.sector = "OTHER"
+            entry.sector = "OTHER"  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -645,7 +650,7 @@ class TestDirectionalExposure:
     def test_frozen(self) -> None:
         de = _make_directional()
         with pytest.raises((ValueError, TypeError, AttributeError)):
-            de.gross_pct_of_portfolio = 99.0
+            de.gross_pct_of_portfolio = 99.0  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -775,7 +780,7 @@ class TestPendingOrderStatusValidator:
             duration=OrderDuration.DAY,
             status=OrderStatus.PARTIALLY_FILLED,
             alpaca_order_id=AlpacaOrderId("alp-002"),
-            alpaca_order_id_chain=("alp-002",),
+            alpaca_order_id_chain=(AlpacaOrderId("alp-002"),),
             submission_timestamp=_T0,
             last_update_timestamp=_T0,
             filled_quantity=5.0,
@@ -803,7 +808,7 @@ class TestPendingOrderStatusValidator:
             duration=OrderDuration.DAY,
             status=OrderStatus.FILLED,
             alpaca_order_id=AlpacaOrderId("alp-filled"),
-            alpaca_order_id_chain=("alp-filled",),
+            alpaca_order_id_chain=(AlpacaOrderId("alp-filled"),),
             submission_timestamp=_T0,
             last_update_timestamp=_T0,
             filled_quantity=10.0,
@@ -1026,12 +1031,12 @@ class TestImmutability:
     def test_cannot_mutate_open_positions(self) -> None:
         snap = _make_snapshot()
         with pytest.raises((ValueError, TypeError, AttributeError)):
-            snap.open_positions = ()
+            snap.open_positions = ()  # type: ignore[misc]
 
     def test_cannot_mutate_invocation_id(self) -> None:
         snap = _make_snapshot()
         with pytest.raises((ValueError, TypeError, AttributeError)):
-            snap.invocation_id = "other"
+            snap.invocation_id = "other"  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

@@ -21,7 +21,6 @@ Usage::
 
 See ``scripts/RUNBOOK_state_persistence.md`` for the operator runbook.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -318,9 +317,9 @@ _FILL_ID = "verify-fill-1"
 
 def _pending_entry_order() -> OrderRecord:
     return OrderRecord(
-        order_id=_ENTRY_ORDER_ID,
+        order_id=OrderId(_ENTRY_ORDER_ID),
         position_id=None,
-        bracket_id=_BRACKET_ID,
+        bracket_id=BracketId(_BRACKET_ID),
         role=OrderRole.ENTRY,
         instrument_spec=EquityInstrumentSpec(ticker=Symbol(_TICKER)),
         direction=OrderDirection.BUY,
@@ -331,14 +330,14 @@ def _pending_entry_order() -> OrderRecord:
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId(f"alp-{_ENTRY_ORDER_ID}"),
-        alpaca_order_id_chain=(f"alp-{_ENTRY_ORDER_ID}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{_ENTRY_ORDER_ID}"),),
         submission_timestamp=_NOW - timedelta(minutes=15),
         last_update_timestamp=_NOW - timedelta(minutes=15),
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=10.0,
         modification_count=0,
-        originating_thesis_id=_THESIS_ID,
+        originating_thesis_id=ThesisId(_THESIS_ID),
         originating_pm_command_id=None,
         age_hours=0.25,
     )
@@ -353,9 +352,9 @@ def _pending_protective_stop_order() -> OrderRecord:
     """
     stop_order_id = f"{_BRACKET_ID}-ord-stop"
     return OrderRecord(
-        order_id=stop_order_id,
+        order_id=OrderId(stop_order_id),
         position_id=None,
-        bracket_id=_BRACKET_ID,
+        bracket_id=BracketId(_BRACKET_ID),
         role=OrderRole.PRICE_STOP,
         instrument_spec=EquityInstrumentSpec(ticker=Symbol(_TICKER)),
         direction=OrderDirection.SELL,
@@ -366,14 +365,14 @@ def _pending_protective_stop_order() -> OrderRecord:
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId(f"alp-{stop_order_id}"),
-        alpaca_order_id_chain=(f"alp-{stop_order_id}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{stop_order_id}"),),
         submission_timestamp=_NOW - timedelta(minutes=15),
         last_update_timestamp=_NOW - timedelta(minutes=15),
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=10.0,
         modification_count=0,
-        originating_thesis_id=_THESIS_ID,
+        originating_thesis_id=ThesisId(_THESIS_ID),
         originating_pm_command_id=None,
         age_hours=0.25,
     )
@@ -381,9 +380,9 @@ def _pending_protective_stop_order() -> OrderRecord:
 
 def _pending_position() -> PositionRecord:
     return PositionRecord(
-        position_id=_POSITION_ID,
-        thesis_id=_THESIS_ID,
-        bracket_id=_BRACKET_ID,
+        position_id=PositionId(_POSITION_ID),
+        thesis_id=ThesisId(_THESIS_ID),
+        bracket_id=BracketId(_BRACKET_ID),
         status=PositionStatus.PENDING,
         direction=Direction.LONG,
         entry_timestamp=None,

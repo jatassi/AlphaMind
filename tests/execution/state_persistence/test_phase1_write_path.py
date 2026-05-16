@@ -11,7 +11,6 @@ around the call. Each test seeds the prerequisite Tier-1 entities (orders,
 positions, brackets, theses, cash, drawdown) via the same per-table codecs
 shipped in stories 04a-04e.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -260,9 +259,9 @@ def _make_pending_entry_order(
     position_id: str | None = None,
 ) -> OrderRecord:
     return OrderRecord(
-        order_id=order_id,
-        position_id=position_id,
-        bracket_id=bracket_id,
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id) if position_id else None,
+        bracket_id=BracketId(bracket_id),
         role=role,
         instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
         direction=direction,
@@ -273,7 +272,7 @@ def _make_pending_entry_order(
         duration=OrderDuration.DAY,
         status=status,
         alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
-        alpaca_order_id_chain=(f"alp-{order_id}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
         submission_timestamp=_NOW - timedelta(minutes=15),
         last_update_timestamp=_NOW - timedelta(minutes=15),
         filled_quantity=filled_quantity,
@@ -302,9 +301,9 @@ def _make_pending_position(
         average_cost_basis_per_share=average_cost_basis_per_share,
     )
     return PositionRecord(
-        position_id=position_id,
-        thesis_id=thesis_id,
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id) if thesis_id else None,
+        bracket_id=BracketId(bracket_id) if bracket_id else None,
         status=PositionStatus.PENDING,
         direction=direction,
         entry_timestamp=None,
@@ -346,9 +345,9 @@ def _make_open_position(
         ),
     )
     return PositionRecord(
-        position_id=position_id,
-        thesis_id=thesis_id,
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id) if thesis_id else None,
+        bracket_id=BracketId(bracket_id) if bracket_id else None,
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_NOW - timedelta(hours=2),

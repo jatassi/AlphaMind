@@ -1,5 +1,4 @@
 """Tests for ThesisHealthSnapshot — story ALP-351."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -57,7 +56,7 @@ def test_thesis_health_snapshot_is_frozen() -> None:
         component_health=(),
     )
     with pytest.raises(FrozenInstanceError):
-        snap.health_status = ThesisStatus.AT_RISK
+        snap.health_status = ThesisStatus.AT_RISK  # type: ignore[misc]
 
 
 def test_health_for_component_hit() -> None:
@@ -128,7 +127,7 @@ def test_invocation_id_min_length() -> None:
 def test_component_health_entry_is_frozen() -> None:
     entry = _make_entry()
     with pytest.raises(FrozenInstanceError):
-        entry.component_id = "changed"
+        entry.component_id = "changed"  # type: ignore[misc]
 
 
 def test_component_health_entry_min_id() -> None:

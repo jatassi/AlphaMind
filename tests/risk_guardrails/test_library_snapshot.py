@@ -3,7 +3,6 @@
 Tests cover field-by-field derivation rules from §2 and the existing_positions
 map construction from §3 of the story spec.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -186,15 +185,15 @@ def _make_pydantic_snapshot(
     )
     thesis_quality = ThesisQualityAggregate(
         as_of_timestamp=_NOW,
-        resolution_counts_by_window=[],
-        duration_stats_by_window=[],
-        invalidation_timing_stats_by_window=[],
-        signal_hit_rates=[],
-        signal_to_thesis_conversions=[],
-        conviction_calibration=[],
-        conviction_sizing_deviation_by_window=[],
-        performance_attribution=[],
-        alpha_beta_decomposition_by_window=[],
+        resolution_counts_by_window=(),
+        duration_stats_by_window=(),
+        invalidation_timing_stats_by_window=(),
+        signal_hit_rates=(),
+        signal_to_thesis_conversions=(),
+        conviction_calibration=(),
+        conviction_sizing_deviation_by_window=(),
+        performance_attribution=(),
+        alpha_beta_decomposition_by_window=(),
     )
     return PortfolioStateSnapshot(
         invocation_id=_INV_ID,

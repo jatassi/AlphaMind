@@ -10,7 +10,6 @@ and ``origin="spin_off_from_<parent>"`` — guarded by
 Test infrastructure (DB fixture, builders, seed helpers) mirrors
 ``test_splits.py`` so behavior assertions remain comparable across handlers.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -233,9 +232,9 @@ def _make_open_equity_parent(
         ),
     )
     return PositionRecord(
-        position_id=position_id,
-        thesis_id=thesis_id,
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id) if thesis_id else None,
+        bracket_id=BracketId(bracket_id) if bracket_id else None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW - timedelta(hours=2),
@@ -274,9 +273,9 @@ def _make_open_options_parent(
         ),
     )
     return PositionRecord(
-        position_id=position_id,
-        thesis_id=thesis_id,
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id) if thesis_id else None,
+        bracket_id=BracketId(bracket_id) if bracket_id else None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW - timedelta(hours=2),
@@ -298,9 +297,9 @@ def _make_pending_entry_order(
     thesis_id: str = "thesis-parent",
 ) -> OrderRecord:
     return OrderRecord(
-        order_id=order_id,
-        position_id=position_id,
-        bracket_id=bracket_id,
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id),
+        bracket_id=BracketId(bracket_id),
         role=OrderRole.ENTRY,
         instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
         direction=OrderDirection.BUY,
@@ -311,14 +310,14 @@ def _make_pending_entry_order(
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
-        alpaca_order_id_chain=(f"alp-{order_id}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
         submission_timestamp=_NOW - timedelta(minutes=15),
         last_update_timestamp=_NOW - timedelta(minutes=15),
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=100.0,
         modification_count=0,
-        originating_thesis_id=thesis_id,
+        originating_thesis_id=ThesisId(thesis_id),
         originating_pm_command_id=None,
         age_hours=0.25,
     )

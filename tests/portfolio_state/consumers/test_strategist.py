@@ -1,11 +1,10 @@
 """Tests for consumers/strategist.py — story 07."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 
@@ -134,7 +133,7 @@ def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> Positi
         average_cost_basis_per_share=150.0,
     )
     record = PositionRecord(
-        position_id=pos_id,
+        position_id=PositionId(pos_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -169,7 +168,7 @@ def _make_pending_position(pos_id: str = "POS-PEND") -> PositionView:
         average_cost_basis_per_share=2800.0,
     )
     record = PositionRecord(
-        position_id=pos_id,
+        position_id=PositionId(pos_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.PENDING,
@@ -209,8 +208,8 @@ def _make_bracket(bracket_id: str = "BRK-001", position_id: str = "POS-001") -> 
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.PENDING_ENTRY,
         entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(leg,),
@@ -225,8 +224,8 @@ def _make_pending_order(
 ) -> OrderRecord:
     spec = EquityInstrumentSpec(ticker=Symbol("AAPL"))
     return OrderRecord(
-        order_id=order_id,
-        position_id=position_id,
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id),
         bracket_id=BracketId("BRK-001"),
         role=OrderRole.ENTRY,
         instrument_spec=spec,
@@ -237,7 +236,7 @@ def _make_pending_order(
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId("alp-001"),
-        alpaca_order_id_chain=("alp-001",),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-001"),),
         submission_timestamp=_T0,
         last_update_timestamp=_T0,
         filled_quantity=0.0,
@@ -269,8 +268,8 @@ def _make_thesis(
         )
 
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="Long AAPL on momentum.",
         components=(
             _comp(ThesisComponentType.ENTRY_RATIONALE, "comp-1"),
@@ -495,12 +494,17 @@ def _make_thesis_quality() -> ThesisQualityAggregate:
 
 def _make_pnl() -> PortfolioPnL:
     return PortfolioPnL(
-        total_unrealized_pnl_usd=500.0,
+        total_unrealized_pnl_usd=signed_money(500.0),
         total_unrealized_pnl_pct_of_portfolio=1.5,
-        daily_realized_pnl_usd=200.0,
-        daily_total_pnl_usd=700.0,
-        cumulative_realized_pnl_usd=10000.0,
-        rolling_realized_pnl={"1d": 200.0, "3d": 600.0, "5d": 1000.0, "20d": 3000.0},
+        daily_realized_pnl_usd=signed_money(200.0),
+        daily_total_pnl_usd=signed_money(700.0),
+        cumulative_realized_pnl_usd=signed_money(10000.0),
+        rolling_realized_pnl={
+            "1d": signed_money(200.0),
+            "3d": signed_money(600.0),
+            "5d": signed_money(1000.0),
+            "20d": signed_money(3000.0),
+        },
         win_rate_pct=None,
         average_win_size_usd=None,
         average_loss_size_usd=None,
@@ -510,8 +514,8 @@ def _make_pnl() -> PortfolioPnL:
 
 def _make_directional() -> DirectionalExposure:
     return DirectionalExposure(
-        total_long_delta_adjusted_usd=50000.0,
-        total_short_delta_adjusted_usd=0.0,
+        total_long_delta_adjusted_usd=signed_money(50000.0),
+        total_short_delta_adjusted_usd=signed_money(0.0),
         net_directional_pct_of_portfolio=50.0,
         gross_pct_of_portfolio=50.0,
     )
@@ -520,8 +524,8 @@ def _make_directional() -> DirectionalExposure:
 def _make_sector_entry() -> SectorExposureEntry:
     return SectorExposureEntry(
         sector="TECHNOLOGY",
-        long_delta_adjusted_usd=10000.0,
-        short_delta_adjusted_usd=0.0,
+        long_delta_adjusted_usd=signed_money(10000.0),
+        short_delta_adjusted_usd=signed_money(0.0),
         long_pct_of_portfolio=20.0,
         short_pct_of_portfolio=0.0,
         long_short_ratio=None,
@@ -538,7 +542,7 @@ def _make_snapshot(**overrides: object) -> PortfolioStateSnapshot:
     changelog = _make_changelog_entry("ENTRY-CL-001", "POS-001")
     pm_entry = _make_pm_decision_entry("ENTRY-PM-001")
     mod_entry = _make_changelog_entry("ENTRY-MOD-001", "POS-001")
-    base: dict[str, object] = {
+    base: dict[str, Any] = {
         "invocation_id": _INV_ID,
         "phase1_committed_at": _T0,
         "snapshot_assembled_at": _T1,
@@ -607,7 +611,7 @@ class TestStrategistValueObjects:
             modification_trail=(),
         )
         with pytest.raises(FrozenInstanceError):
-            view.thesis = None
+            view.thesis = None  # type: ignore[misc]
 
     def test_abandoned_action_frozen(self) -> None:
         action = StrategistAbandonedAction(
@@ -619,13 +623,13 @@ class TestStrategistValueObjects:
             failure_reason="blocked",
         )
         with pytest.raises(FrozenInstanceError):
-            action.envelope_id = "other"
+            action.envelope_id = "other"  # type: ignore[misc]
 
     def test_strategist_view_frozen(self) -> None:
         snapshot = _make_snapshot()
         view = project_strategist_view(snapshot)
         with pytest.raises(FrozenInstanceError):
-            view.positions = ()
+            view.positions = ()  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -1035,7 +1039,7 @@ class TestBetweenInvocationClosuresProjection:
             rationale="price-based stop fired",
         )
         with pytest.raises(FrozenInstanceError):
-            closure.position_id = "POS-002"
+            closure.position_id = "POS-002"  # type: ignore[misc]
 
     def test_rationale_renders_em_dash_for_zero_exit_price(self) -> None:
         """Strategy-position closures emit ``exit_price=0.0`` (Phase 1

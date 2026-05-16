@@ -11,7 +11,6 @@ All writes join the open ``InvocationContext`` transaction so the surrounding
 context commits or rolls back atomically per the design doc's Phase 2
 contract.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -20,7 +19,10 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 
 import pytest
 from sqlalchemy import select
@@ -149,7 +151,7 @@ _PROCESS_ID = "proc-1"
 # enforces all fields; these helpers skip validation so tests can inject sparse fixtures.
 
 
-def _bypass_init_PortfolioManagerView(**kwargs):  # noqa: N802
+def _bypass_init_PortfolioManagerView(**kwargs: object) -> PortfolioManagerView:  # noqa: N802
     from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 
     obj = object.__new__(PortfolioManagerView)
@@ -590,9 +592,9 @@ def _open_position(
         ),
     )
     return PositionRecord(
-        position_id=position_id,
-        thesis_id=thesis_id,
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id),
+        bracket_id=BracketId(bracket_id),
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW - timedelta(hours=2),
@@ -757,7 +759,7 @@ async def test_persist_envelope_rejection_writes_one_log_entry(
     _, factory = db
     await _seed_invocation_substrate(factory)
 
-    envelope = _make_analyst_envelope(envelope_id="ENV-REC-2")
+    envelope = _make_analyst_envelope(envelope_id=EnvelopeId("ENV-REC-2"))
     errors = (
         PMValError(
             field_path="commands[0]",
@@ -823,7 +825,7 @@ async def test_persist_envelope_rejection_nullifies_orphan_position_id_on_fk_sch
         await _seed_invocation_substrate(factory)
 
         envelope = _make_strategist_envelope(
-            envelope_id="ENV-SA-99", position_id=PositionId("POS-NONEXISTENT")
+            envelope_id=EnvelopeId("ENV-SA-99"), position_id=PositionId("POS-NONEXISTENT")
         )
         errors = (
             PMValError(

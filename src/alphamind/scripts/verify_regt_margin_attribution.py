@@ -40,7 +40,6 @@ Usage::
 
 See ``scripts/RUNBOOK_regt_margin_attribution.md`` for the operator runbook.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -565,9 +564,9 @@ def _buy_entry_position_pending() -> PositionRecord:
 
 def _buy_entry_order() -> OrderRecord:
     return OrderRecord(
-        order_id=_BUY_ORDER_ID,
+        order_id=OrderId(_BUY_ORDER_ID),
         position_id=None,
-        bracket_id=_BUY_BRACKET_ID,
+        bracket_id=BracketId(_BUY_BRACKET_ID),
         role=OrderRole.ENTRY,
         instrument_spec=EquityInstrumentSpec(ticker=Symbol(_NVDA)),
         direction=OrderDirection.BUY,
@@ -578,14 +577,14 @@ def _buy_entry_order() -> OrderRecord:
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId(f"alp-{_BUY_ORDER_ID}"),
-        alpaca_order_id_chain=(f"alp-{_BUY_ORDER_ID}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{_BUY_ORDER_ID}"),),
         submission_timestamp=_NOW - timedelta(minutes=20),
         last_update_timestamp=_NOW - timedelta(minutes=20),
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=10.0,
         modification_count=0,
-        originating_thesis_id=_BUY_THESIS_ID,
+        originating_thesis_id=ThesisId(_BUY_THESIS_ID),
         originating_pm_command_id=None,
         age_hours=0.33,
     )
@@ -594,9 +593,9 @@ def _buy_entry_order() -> OrderRecord:
 def _buy_entry_protective_stop_order() -> OrderRecord:
     stop_id = f"{_BUY_BRACKET_ID}-ord-stop"
     return OrderRecord(
-        order_id=stop_id,
+        order_id=OrderId(stop_id),
         position_id=None,
-        bracket_id=_BUY_BRACKET_ID,
+        bracket_id=BracketId(_BUY_BRACKET_ID),
         role=OrderRole.PRICE_STOP,
         instrument_spec=EquityInstrumentSpec(ticker=Symbol(_NVDA)),
         direction=OrderDirection.SELL,
@@ -607,14 +606,14 @@ def _buy_entry_protective_stop_order() -> OrderRecord:
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId(f"alp-{stop_id}"),
-        alpaca_order_id_chain=(f"alp-{stop_id}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{stop_id}"),),
         submission_timestamp=_NOW - timedelta(minutes=20),
         last_update_timestamp=_NOW - timedelta(minutes=20),
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=10.0,
         modification_count=0,
-        originating_thesis_id=_BUY_THESIS_ID,
+        originating_thesis_id=ThesisId(_BUY_THESIS_ID),
         originating_pm_command_id=None,
         age_hours=0.33,
     )
@@ -721,9 +720,9 @@ def _sell_historical_entry_order() -> OrderRecord:
     FK resolves. Not exercised by Phase 1 — the sell exit fill targets a
     separate order."""
     return OrderRecord(
-        order_id=_SELL_HISTORICAL_ENTRY_ORDER_ID,
-        position_id=_SELL_POSITION_ID,
-        bracket_id=_SELL_BRACKET_ID,
+        order_id=OrderId(_SELL_HISTORICAL_ENTRY_ORDER_ID),
+        position_id=PositionId(_SELL_POSITION_ID),
+        bracket_id=BracketId(_SELL_BRACKET_ID),
         role=OrderRole.ENTRY,
         instrument_spec=EquityInstrumentSpec(ticker=Symbol(_AMD)),
         direction=OrderDirection.BUY,
@@ -734,14 +733,14 @@ def _sell_historical_entry_order() -> OrderRecord:
         duration=OrderDuration.DAY,
         status=OrderStatus.FILLED,
         alpaca_order_id=AlpacaOrderId(f"alp-{_SELL_HISTORICAL_ENTRY_ORDER_ID}"),
-        alpaca_order_id_chain=(f"alp-{_SELL_HISTORICAL_ENTRY_ORDER_ID}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{_SELL_HISTORICAL_ENTRY_ORDER_ID}"),),
         submission_timestamp=_NOW - timedelta(hours=8),
         last_update_timestamp=_NOW - timedelta(hours=8),
         filled_quantity=20.0,
         avg_fill_price=140.0,
         remaining_quantity=0.0,
         modification_count=0,
-        originating_thesis_id=_SELL_THESIS_ID,
+        originating_thesis_id=ThesisId(_SELL_THESIS_ID),
         originating_pm_command_id=None,
         age_hours=8.0,
     )
@@ -749,9 +748,9 @@ def _sell_historical_entry_order() -> OrderRecord:
 
 def _sell_exit_order() -> OrderRecord:
     return OrderRecord(
-        order_id=_SELL_ORDER_ID,
-        position_id=_SELL_POSITION_ID,
-        bracket_id=_SELL_BRACKET_ID,
+        order_id=OrderId(_SELL_ORDER_ID),
+        position_id=PositionId(_SELL_POSITION_ID),
+        bracket_id=BracketId(_SELL_BRACKET_ID),
         role=OrderRole.TAKE_PROFIT,
         instrument_spec=EquityInstrumentSpec(ticker=Symbol(_AMD)),
         direction=OrderDirection.SELL,
@@ -762,14 +761,14 @@ def _sell_exit_order() -> OrderRecord:
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId(f"alp-{_SELL_ORDER_ID}"),
-        alpaca_order_id_chain=(f"alp-{_SELL_ORDER_ID}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{_SELL_ORDER_ID}"),),
         submission_timestamp=_NOW - timedelta(minutes=10),
         last_update_timestamp=_NOW - timedelta(minutes=10),
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=10.0,
         modification_count=0,
-        originating_thesis_id=_SELL_THESIS_ID,
+        originating_thesis_id=ThesisId(_SELL_THESIS_ID),
         originating_pm_command_id=None,
         age_hours=0.17,
     )

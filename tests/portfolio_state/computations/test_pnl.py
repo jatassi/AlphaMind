@@ -1,14 +1,14 @@
 """Tests for portfolio P/L and drawdown rollup computations (story 05b)."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
-import dataclasses
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
 from alphamind._kernel.ids import (
+    PositionId,
     Symbol,
 )
 from alphamind.portfolio_state.computations.pnl import (
@@ -23,6 +23,7 @@ from alphamind.portfolio_state.records.positions import (
     LocateStatus,
     PositionFill,
     PositionRecord,
+    PositionStatus,
 )
 from alphamind.portfolio_state.repository import PortfolioPnLInputs
 from alphamind.portfolio_state.snapshot import PortfolioPnL
@@ -63,14 +64,14 @@ def _make_open_position(
 ) -> PositionView:
     equity = _LONG_EQUITY if direction == Direction.LONG else _SHORT_EQUITY
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
-        status="OPEN",
+        status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_NOW,
-        details=dataclasses.asdict(equity),
-        execution_history=[dataclasses.asdict(_FILL)],
+        details=equity,
+        execution_history=(_FILL,),
         realized_pnl_to_date_usd=None,
         corporate_action_adjustment_needed=False,
         parent_position_id=None,
@@ -96,14 +97,14 @@ def _make_pending_position(
     current_market_value_usd: float = 500.0,
 ) -> PositionView:
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
-        status="PENDING",
-        direction="LONG",
+        status=PositionStatus.PENDING,
+        direction=Direction.LONG,
         entry_timestamp=None,
-        details=dataclasses.asdict(_LONG_EQUITY),
-        execution_history=[],
+        details=_LONG_EQUITY,
+        execution_history=(),
         realized_pnl_to_date_usd=None,
         corporate_action_adjustment_needed=False,
         parent_position_id=None,
@@ -131,7 +132,7 @@ def _make_cash_ledger(current_cash_usd: float = 5000.0) -> CashLedger:
         reserved_capital_usd=0.0,
         available_buying_power_usd=current_cash_usd,
         margin_held_usd=0.0,
-        unsettled_proceeds=[],
+        unsettled_proceeds=(),
         cash_pct_of_portfolio=50.0,
         true_deployable_capital_usd=current_cash_usd,
         regt_excess_trailing_30d_usd=0.0,
@@ -141,7 +142,7 @@ def _make_cash_ledger(current_cash_usd: float = 5000.0) -> CashLedger:
 
 
 def _make_pnl_inputs(**overrides: object) -> PortfolioPnLInputs:
-    base: dict[str, object] = {
+    base: dict[str, Any] = {
         "daily_realized_pnl_usd": 200.0,
         "cumulative_realized_pnl_usd": 5000.0,
         "rolling_realized_pnl": {"1d": 200.0, "3d": 600.0, "5d": 900.0, "20d": 3000.0},

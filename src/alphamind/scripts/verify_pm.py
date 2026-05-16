@@ -18,7 +18,6 @@ scenario builders live in this module so
 the Anthropic API. The thin shim at ``scripts/verify_pm.py`` defers to
 :func:`main` here.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 

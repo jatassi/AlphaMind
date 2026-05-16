@@ -16,7 +16,6 @@ in-process logic that is safe to exercise without the Anthropic API:
 The end-to-end live-SDK invocation is verified by an operator running
 the script after this PR lands.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -24,7 +23,10 @@ import dataclasses
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
 
 import pytest
 
@@ -63,7 +65,7 @@ from alphamind.scripts.verify_decision_pipeline import (
 # enforces all fields; these helpers skip validation so tests can inject sparse fixtures.
 
 
-def _bypass_init_PortfolioStateSnapshot(**kwargs):  # noqa: N802
+def _bypass_init_PortfolioStateSnapshot(**kwargs: object) -> PortfolioStateSnapshot:  # noqa: N802
     from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
 
     obj = object.__new__(PortfolioStateSnapshot)

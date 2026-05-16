@@ -17,7 +17,6 @@ filled event. Net cost basis follows the signed-sum-across-legs convention
 described in ``orders-and-brackets.md § Multi-leg strategies`` (positive =
 net debit / paid premium; negative = net credit / received premium).
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -384,9 +383,9 @@ def _make_pending_strategy_position(
 ) -> PositionRecord:
     """Build a PENDING strategy position with no fills yet."""
     return PositionRecord(
-        position_id=position_id,
-        thesis_id=thesis_id,
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id) if thesis_id else None,
+        bracket_id=BracketId(bracket_id) if bracket_id else None,
         status=PositionStatus.PENDING,
         direction=Direction.LONG,
         entry_timestamp=None,
@@ -410,9 +409,9 @@ def _make_open_strategy_position(
 ) -> PositionRecord:
     """Build an OPEN strategy position whose ``execution_history`` reflects entry fills."""
     return PositionRecord(
-        position_id=position_id,
-        thesis_id=thesis_id,
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id) if thesis_id else None,
+        bracket_id=BracketId(bracket_id) if bracket_id else None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW - timedelta(hours=2),
@@ -452,9 +451,9 @@ def _make_strategy_parent_order(
         )
     )
     return OrderRecord(
-        order_id=order_id,
-        position_id=position_id,
-        bracket_id=bracket_id,
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id) if position_id else None,
+        bracket_id=BracketId(bracket_id),
         role=role,
         instrument_spec=StrategyInstrumentSpec(legs=spec_legs),
         direction=OrderDirection.BUY,
@@ -465,7 +464,7 @@ def _make_strategy_parent_order(
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
-        alpaca_order_id_chain=(f"alp-{order_id}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
         submission_timestamp=_NOW - timedelta(minutes=15),
         last_update_timestamp=_NOW - timedelta(minutes=15),
         filled_quantity=0.0,
@@ -501,9 +500,9 @@ def _make_leg_order(
     the parent order.
     """
     return OrderRecord(
-        order_id=order_id,
-        position_id=position_id,
-        bracket_id=bracket_id,
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id),
+        bracket_id=BracketId(bracket_id),
         role=role,
         instrument_spec=_make_options_spec(
             contract_type=contract_type,
@@ -518,7 +517,7 @@ def _make_leg_order(
         duration=OrderDuration.DAY,
         status=status,
         alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
-        alpaca_order_id_chain=(f"alp-{order_id}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
         submission_timestamp=_NOW - timedelta(minutes=15),
         last_update_timestamp=_NOW - timedelta(minutes=15),
         filled_quantity=filled_quantity,

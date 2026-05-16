@@ -113,10 +113,6 @@ max-statements = 50
     "PLR2004", # magic numbers fine in tests
     "ARG",     # fixtures often appear unused at signature
     "PLR0913", # test builders that mirror vendor API field structure exceed 8 args
-    "E501",    # long ``# mypy: disable-error-code="..."`` lines per ALP-477 dataclass conversion
-]
-"src/alphamind/scripts/**" = [
-    "E501",    # long ``# mypy: disable-error-code="..."`` lines per ALP-477 dataclass conversion
 ]
 "tests/analysis/qualitative_research/test_parser.py" = [
     "E501",   # verbatim fixture strings from the prompt spec cannot be wrapped
