@@ -212,7 +212,6 @@ def _build_bootstrap_block(
     block_id: str,
     bootstrap_reason: str,
     freshness_ts: datetime,
-    state: CalibrationState = CalibrationState.BOOTSTRAP,
 ) -> OutputBlock:
     """Build a stand-in q6 block when an essential input is missing.
 
@@ -226,7 +225,7 @@ def _build_bootstrap_block(
         block_id=block_id,
         audience=UNIVERSAL_BROADCAST_AUDIENCE,
         freshness_ts=freshness_ts,
-        calibration_state=state,
+        calibration_state=CalibrationState.BOOTSTRAP,
         bootstrap_reason=bootstrap_reason,
         payload={},
         anomaly_flags=(),

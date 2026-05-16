@@ -8,10 +8,10 @@ spec at ``docs/implementation/02-distillation-layer/12-distillation-orchestrator
 1. Class B refresh — refresh every rolling-state primitive before any
    computation reads from state. Refresh failure prevents any downstream
    work per ``docs/design/mid-pipeline-failure-handling.md``.
-2. Per-category indicator computations — Q1's, Q3's, and qualitative's
-   pure-compute paths run in parallel with each other and with the
-   remaining legacy session-bound categories (q6, q7, q12, which remain
-   internally serialized under one Session) via
+2. Per-category indicator computations — Q1's, Q3's, Q6's, and
+   qualitative's pure-compute paths run in parallel with each other and
+   with the remaining legacy session-bound categories (q7, q12, which
+   remain internally serialized under one Session) via
    :class:`asyncio.TaskGroup`. Each category is a thin module-level
    helper that wraps the synchronous DB-bound primitives in
    :func:`asyncio.to_thread` so the event loop does not block.
@@ -292,9 +292,9 @@ def _refresh_class_b_state(
 # ---------------------------------------------------------------------------
 #
 # Each dispatcher is a thin wrapper over its category's public surface.
-# The orchestrator runs Q1's, Q3's, and qualitative's pure-compute paths
-# concurrently with the remaining legacy session-bound categories (q6,
-# q7, q12, which stay sequential under one Session) via
+# The orchestrator runs Q1's, Q3's, Q6's, and qualitative's pure-compute
+# paths concurrently with the remaining legacy session-bound categories
+# (q7, q12, which stay sequential under one Session) via
 # asyncio.TaskGroup; the synchronous DB-bound work runs through
 # asyncio.to_thread so the event loop never blocks waiting for SQLite.
 #

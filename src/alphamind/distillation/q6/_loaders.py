@@ -38,7 +38,6 @@ from sqlalchemy.orm import Session
 
 from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation.baselines import _refresh_transaction, refresh_composite_state
-from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import AnomalyFlag
 from alphamind.distillation.q6.dollar_attribution_compute import (
     DollarAttributionResult,
@@ -74,14 +73,10 @@ from alphamind.persistence.models import (
 # Trailing-window definitional constants
 # ---------------------------------------------------------------------------
 #
-# Per ``external.md`` § 2 these are definitional/structural conventions of
-# each indicator, not Class A tunables — the rule shapes (5-day 2s10s
-# change, 3-month breakeven trend, 30-day sustained deflation check) are
-# anchors of the classification spec rather than knobs the operator turns.
-# The dollar-attribution window *does* coincide with
-# ``correlation_short_days`` (the universe-wide 20-day correlation
-# lookback) so that path routes through config rather than redeclaring
-# the magic number.
+# These are anchors of the classification spec per ``external.md`` § 2,
+# not Class A tunables. The dollar-attribution window coincides with
+# ``correlation_short_days`` and routes through config; the three below
+# are spec-anchored.
 
 _YIELD_CURVE_TRANSITION_LOOKBACK_DAYS: int = 5
 """Calendar lookback for the 5-day 2s10s change per external.md § quant 6a."""
@@ -184,7 +179,7 @@ class Q6Inputs:
 # ---------------------------------------------------------------------------
 
 
-def _format_iso_z(dt: datetime) -> str:
+def _format_iso_utc(dt: datetime) -> str:
     """Render a tz-aware datetime as ISO 8601 ``Z``-suffixed UTC."""
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -606,7 +601,7 @@ def _read_macro_surprise_anomalies(
        distribution.
     """
     out: list[tuple[str, AnomalyFlag]] = []
-    end_iso = _format_iso_z(as_of)
+    end_iso = _format_iso_utc(as_of)
     end_date = as_of.strftime("%Y-%m-%d")
     for event_type, series_id in _MACRO_SURPRISE_EVENTS:
         latest_event_stmt = (
@@ -678,7 +673,7 @@ def load_q6_inputs(
     all executed under the shared session before the parallel core fires —
     no shared-mutable-Session conflict with q1 / q3 / qualitative.
     """
-    as_of_iso = _format_iso_z(as_of)
+    as_of_iso = _format_iso_utc(as_of)
 
     yc_result = _try_yield_curve_result(session, as_of=as_of)
     inflation_result = _try_inflation_result(session, as_of=as_of)
@@ -730,10 +725,7 @@ def load_q6_inputs(
     )
 
 
-# CalibrationState is re-imported below to keep the q6 package's external
-# surface flat for callers that previously imported it from q6_macro.py.
 __all__ = [
-    "CalibrationState",
     "Q6Inputs",
     "load_q6_inputs",
     "refresh_funding_stress_composite",
