@@ -162,6 +162,8 @@ Agent({
 
 **Then run `simplify` in the main thread.** Capture recommendations as a list — *do not apply them as edits* until `/review` returns and the two lists are merged. Simplify is a stylistic pass; it won't verify factual claims. Applying its restylings to factually-wrong prose locks in the underlying error and forces a re-edit when `/review` flags it.
 
+**Verify the working branch after `simplify` returns.** `simplify` spawns sub-agents in worktrees, and control can return to the primary on `main` instead of the feature branch. Run `git branch --show-current` and `git checkout <feature-branch>` if it doesn't match. System-reminder file snapshots taken while HEAD is on `main` will show pre-refactor file content, which can mislead the address-feedback pass into editing stale state. The destructive failure mode is applying review fixes to `main`-state files, then committing the merged result over the feature branch.
+
 Do not push commits while either pass is still running.
 
 ### 4. Address consolidated feedback
@@ -181,6 +183,14 @@ Commit (`fix: address /review and simplify findings on <issue ID>`), push.
 ### 5. Land PR and clean local git state
 
 Wait for CI green on the PR.
+
+**Polling pattern: `while`, not `until`.** The harness's sleep block forces a background `Bash` with a polling loop. Use `while <still-pending>; do sleep 30; done` — the loop runs while the condition is true, exits when CI is no longer pending. `until COND; do sleep 30; done` exits when COND becomes true, which is easy to invert by mistake (e.g. `until <pending-checks-exist>` exits *immediately* the first time pending checks exist, claiming "CI complete" while the run is still IN_PROGRESS). Concrete shape:
+
+```bash
+while gh pr view <PR> --json statusCheckRollup --jq '.statusCheckRollup[] | select(.status != "COMPLETED")' 2>/dev/null | grep -q .; do
+  sleep 30
+done
+```
 
 **Sweep stale `main`-bearing worktrees before `gh pr merge`.** `git worktree list`, look for orphans checked out to `main` (typical naming: `.claude/worktrees/<random-name>`). Confirm `git -C <path> status --short` is clean, then `git worktree remove -f -f <path>`. The double `-f` overrides the Claude agent harness's lock.
 
