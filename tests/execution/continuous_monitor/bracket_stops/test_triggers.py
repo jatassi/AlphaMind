@@ -11,6 +11,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.continuous_monitor.bracket_stops.triggers import (
     evaluate_pl_target_trigger,
     evaluate_price_based_trigger,
@@ -79,10 +80,10 @@ def _options_position(
         execution_history=(
             PositionFill(
                 fill_timestamp=_NOW,
-                fill_price=premium_paid,
+                fill_price=price(premium_paid),
                 fill_quantity=1.0,
-                slippage=0.0,
-                fees=0.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
             ),
         ),
         realized_pnl_to_date_usd=None,

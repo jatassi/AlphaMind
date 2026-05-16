@@ -58,7 +58,7 @@ from alphamind._kernel.ids import (
     PositionId,
     RecommendationId,
 )
-from alphamind._kernel.money import money, price
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
@@ -1490,10 +1490,10 @@ async def _phase_4_simulate_phase_1_fill(
         # Synthesize one fill at the average cost basis x the configured quantity.
         fill = PositionFill(
             fill_timestamp=_NOW,
-            fill_price=record.details.average_cost_basis_per_share or 800.0,
+            fill_price=price(record.details.average_cost_basis_per_share or 800.0),
             fill_quantity=_PHASE_3_QUANTITY,
-            slippage=0.0,
-            fees=0.0,
+            slippage=signed_money(0.0),
+            fees=money(0.0),
         )
         opened_details = dataclasses.replace(record.details, share_count=_PHASE_3_QUANTITY)
         opened_record = dataclasses.replace(

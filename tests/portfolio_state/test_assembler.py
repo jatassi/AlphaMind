@@ -15,6 +15,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -251,10 +252,10 @@ def _make_open_equity_position(
     )
     fill = PositionFill(
         fill_timestamp=_ENTRY_AT,
-        fill_price=cost_per_share,
+        fill_price=price(cost_per_share),
         fill_quantity=share_count,
-        slippage=0.01,
-        fees=1.0,
+        slippage=signed_money(0.01),
+        fees=money(1.0),
     )
     return PositionRecord(
         position_id=PositionId(position_id),
@@ -402,10 +403,10 @@ def _make_strategy_position(
     )
     fill = PositionFill(
         fill_timestamp=_ENTRY_AT,
-        fill_price=(premium1 + premium2) * LISTED_OPTION_CONTRACT_MULTIPLIER,
+        fill_price=price((premium1 + premium2) * LISTED_OPTION_CONTRACT_MULTIPLIER),
         fill_quantity=1.0,
-        slippage=0.0,
-        fees=2.0,
+        slippage=signed_money(0.0),
+        fees=money(2.0),
     )
     return PositionRecord(
         position_id=PositionId(position_id),

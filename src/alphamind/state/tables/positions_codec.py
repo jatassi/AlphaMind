@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime
-from decimal import Decimal
 from typing import Any
 
 from alphamind._kernel.ids import BracketId, PositionId, Symbol, ThesisId
+from alphamind._kernel.money import decimal_json_default, money, price, signed_money
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -37,19 +37,6 @@ from alphamind.portfolio_state.records.positions import (
     StrategyPositionDetails,
 )
 from alphamind.state.tables.positions import PositionRow
-
-
-def _json_default(obj: object) -> object:
-    """JSON ``default=`` hook for Decimals serialised by the codec.
-
-    Encode Decimals as strings to preserve full precision; the decode path
-    re-parses via :class:`Decimal` when the destination dataclass field is
-    Money/Price-typed.
-    """
-    if isinstance(obj, Decimal):
-        return str(obj)
-    msg = f"object of type {type(obj).__name__} is not JSON-serializable"
-    raise TypeError(msg)
 
 
 def _encode_dt(value: datetime | None) -> str | None:
@@ -95,10 +82,10 @@ def _live_estimate_to_dict(le: LiveExecutionEstimate) -> dict[str, Any]:
 
 def _live_estimate_from_dict(payload: dict[str, Any]) -> LiveExecutionEstimate:
     return LiveExecutionEstimate(
-        estimated_spread_usd=payload["estimated_spread_usd"],
-        estimated_impact_usd=payload["estimated_impact_usd"],
-        estimated_regulatory_fees_usd=payload["estimated_regulatory_fees_usd"],
-        live_adjusted_fill_price=payload["live_adjusted_fill_price"],
+        estimated_spread_usd=money(payload["estimated_spread_usd"]),
+        estimated_impact_usd=money(payload["estimated_impact_usd"]),
+        estimated_regulatory_fees_usd=money(payload["estimated_regulatory_fees_usd"]),
+        live_adjusted_fill_price=price(payload["live_adjusted_fill_price"]),
     )
 
 
@@ -121,10 +108,10 @@ def _fill_from_dict(payload: dict[str, Any]) -> PositionFill:
     live = payload.get("live_execution_estimate")
     return PositionFill(
         fill_timestamp=datetime.fromisoformat(payload["fill_timestamp"]),
-        fill_price=payload["fill_price"],
+        fill_price=price(payload["fill_price"]),
         fill_quantity=payload["fill_quantity"],
-        slippage=payload["slippage"],
-        fees=payload["fees"],
+        slippage=signed_money(payload["slippage"]),
+        fees=money(payload["fees"]),
         live_execution_estimate=_live_estimate_from_dict(live) if live is not None else None,
     )
 
@@ -245,9 +232,9 @@ def record_to_row(record: PositionRecord) -> PositionRow:
             record.entry_timestamp.isoformat() if record.entry_timestamp is not None else None
         ),
         instrument_type=record.instrument_type.value,
-        details_json=json.dumps(_details_to_dict(record.details), default=_json_default),
+        details_json=json.dumps(_details_to_dict(record.details), default=decimal_json_default),
         execution_history_json=json.dumps(
-            [_fill_to_dict(f) for f in record.execution_history], default=_json_default
+            [_fill_to_dict(f) for f in record.execution_history], default=decimal_json_default
         ),
         realized_pnl_to_date_usd=record.realized_pnl_to_date_usd,
         corporate_action_adjustment_needed=1 if record.corporate_action_adjustment_needed else 0,

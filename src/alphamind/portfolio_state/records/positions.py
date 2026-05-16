@@ -9,12 +9,12 @@ invocations.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
 
 from alphamind._kernel.ids import BracketId, PositionId, Symbol, ThesisId
+from alphamind._kernel.money import Money, Price
 
 
 class Direction(StrEnum):
@@ -42,19 +42,6 @@ class PositionStatus(StrEnum):
 class LocateStatus(StrEnum):
     LOCATED = "LOCATED"
     AT_RISK_OF_RECALL = "AT_RISK_OF_RECALL"
-
-
-def _check_finite(value: float, field_name: str) -> None:
-    if not math.isfinite(value):
-        msg = f"{field_name} must be finite; got {value}"
-        raise ValueError(msg)
-
-
-def _check_non_negative_finite(value: float, field_name: str) -> None:
-    _check_finite(value, field_name)
-    if value < 0:
-        msg = f"{field_name} must be >= 0; got {value}"
-        raise ValueError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,22 +102,18 @@ class LiveExecutionEstimate:
       Alpaca reports at EOD via the activity feed, not per-fill.
     * live_adjusted_fill_price: the raw paper fill price minus (for buys) or
       plus (for sells) the per-share equivalent of the three drag components.
-      Always finite; can be above or below the raw fill_price depending on
-      direction.
+      Can be above or below the raw fill_price depending on direction.
+
+    ALP-489 — USD/price fields carry ``Money`` / ``Price`` (Decimal-backed).
+    The boundary constructors (``money``/``price``) enforce non-negative /
+    strictly-positive at the typed-record edge, so a per-field re-check here
+    would be redundant.
     """
 
-    estimated_spread_usd: float
-    estimated_impact_usd: float
-    estimated_regulatory_fees_usd: float
-    live_adjusted_fill_price: float
-
-    def __post_init__(self) -> None:
-        _check_non_negative_finite(self.estimated_spread_usd, "estimated_spread_usd")
-        _check_non_negative_finite(self.estimated_impact_usd, "estimated_impact_usd")
-        _check_non_negative_finite(
-            self.estimated_regulatory_fees_usd, "estimated_regulatory_fees_usd"
-        )
-        _check_finite(self.live_adjusted_fill_price, "live_adjusted_fill_price")
+    estimated_spread_usd: Money
+    estimated_impact_usd: Money
+    estimated_regulatory_fees_usd: Money
+    live_adjusted_fill_price: Price
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,19 +128,18 @@ class PositionFill:
       price is the limit price for limit orders, and the mid-quote at
       submission for market orders.
     * fees: always positive (cost — broker, regulatory, exchange).
+
+    ALP-489 — USD/price fields carry ``Money`` / ``Price``. ``signed_money``
+    accommodates negative slippage; ``money``/``price`` enforce
+    non-negative / strictly-positive at the boundary.
     """
 
     fill_timestamp: datetime
-    fill_price: float
+    fill_price: Price
     fill_quantity: float
-    slippage: float
-    fees: float
+    slippage: Money
+    fees: Money
     live_execution_estimate: LiveExecutionEstimate | None = None
-
-    def __post_init__(self) -> None:
-        if self.fees < 0:
-            msg = f"fees must be >= 0; got {self.fees}"
-            raise ValueError(msg)
 
 
 @dataclass(frozen=True, slots=True)

@@ -32,6 +32,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import RiskZone
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
@@ -233,10 +234,10 @@ def _make_open_position(
     history = (
         PositionFill(
             fill_timestamp=_NOW - timedelta(hours=2),
-            fill_price=average_cost_basis_per_share,
+            fill_price=price(average_cost_basis_per_share),
             fill_quantity=share_count,
-            slippage=0.0,
-            fees=0.0,
+            slippage=signed_money(0.0),
+            fees=money(0.0),
         ),
     )
     return PositionRecord(

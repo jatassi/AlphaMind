@@ -25,7 +25,7 @@ import dataclasses
 import uuid
 
 from alphamind._kernel.ids import PositionId, Symbol
-from alphamind._kernel.money import price
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.write_paths.ca_integration_ledger import (
     mark_ca_activity_processed,
 )
@@ -113,10 +113,10 @@ def _build_spin_off_child(
     """
     fill = PositionFill(
         fill_timestamp=activity.transaction_time,
-        fill_price=child_basis,
+        fill_price=price(child_basis),
         fill_quantity=child_qty,
-        slippage=0.0,
-        fees=0.0,
+        slippage=signed_money(0.0),
+        fees=money(0.0),
         live_execution_estimate=None,
     )
     details = EquityPositionDetails(

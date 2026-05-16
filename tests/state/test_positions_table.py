@@ -29,6 +29,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
@@ -90,22 +91,22 @@ def _equity_position(
     fills: tuple[PositionFill, ...] = (
         PositionFill(
             fill_timestamp=_FILL_TS,
-            fill_price=150.25,
+            fill_price=price(150.25),
             fill_quantity=60.0,
-            slippage=0.05,
-            fees=1.25,
+            slippage=signed_money(0.05),
+            fees=money(1.25),
         ),
         PositionFill(
             fill_timestamp=datetime(2026, 5, 7, 14, 31, tzinfo=UTC),
-            fill_price=150.40,
+            fill_price=price(150.40),
             fill_quantity=40.0,
-            slippage=0.10,
-            fees=1.00,
+            slippage=signed_money(0.10),
+            fees=money(1.00),
             live_execution_estimate=LiveExecutionEstimate(
-                estimated_spread_usd=0.5,
-                estimated_impact_usd=0.25,
-                estimated_regulatory_fees_usd=0.05,
-                live_adjusted_fill_price=150.45,
+                estimated_spread_usd=money(0.5),
+                estimated_impact_usd=money(0.25),
+                estimated_regulatory_fees_usd=money(0.05),
+                live_adjusted_fill_price=price(150.45),
             ),
         ),
     )
@@ -165,10 +166,10 @@ def _options_position(*, position_id: str = "pos-opt-1") -> PositionRecord:
         execution_history=(
             PositionFill(
                 fill_timestamp=_FILL_TS,
-                fill_price=8.75,
+                fill_price=price(8.75),
                 fill_quantity=5.0,
-                slippage=0.02,
-                fees=0.65,
+                slippage=signed_money(0.02),
+                fees=money(0.65),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -226,17 +227,17 @@ def _strategy_position(*, position_id: str = "pos-strat-1") -> PositionRecord:
         execution_history=(
             PositionFill(
                 fill_timestamp=_FILL_TS,
-                fill_price=2.10,
+                fill_price=price(2.10),
                 fill_quantity=10.0,
-                slippage=0.03,
-                fees=1.30,
+                slippage=signed_money(0.03),
+                fees=money(1.30),
             ),
             PositionFill(
                 fill_timestamp=datetime(2026, 5, 7, 14, 31, tzinfo=UTC),
-                fill_price=4.20,
+                fill_price=price(4.20),
                 fill_quantity=10.0,
-                slippage=0.04,
-                fees=1.30,
+                slippage=signed_money(0.04),
+                fees=money(1.30),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -428,10 +429,10 @@ class TestInvariantRejection:
                 execution_history=(
                     PositionFill(
                         fill_timestamp=_FILL_TS,
-                        fill_price=150.0,
+                        fill_price=price(150.0),
                         fill_quantity=100.0,
-                        slippage=0.0,
-                        fees=0.0,
+                        slippage=signed_money(0.0),
+                        fees=money(0.0),
                     ),
                 ),
                 realized_pnl_to_date_usd=None,
@@ -457,10 +458,10 @@ class TestInvariantRejection:
                 execution_history=(
                     PositionFill(
                         fill_timestamp=_FILL_TS,
-                        fill_price=150.0,
+                        fill_price=price(150.0),
                         fill_quantity=100.0,
-                        slippage=0.0,
-                        fees=0.0,
+                        slippage=signed_money(0.0),
+                        fees=money(0.0),
                     ),
                 ),
                 realized_pnl_to_date_usd=None,
@@ -606,3 +607,58 @@ class TestPositionsMigration:
                     conn.execute(text(sql))
         finally:
             eng.dispose()
+
+
+# ---------------------------------------------------------------------------
+# ALP-489 — codec round-trip acceptance: a ``PositionFill`` constructed with
+# Decimal-exact Money/Price values round-trips through the encoder/decoder
+# pair with bitwise-identical Decimal values (string equality of the
+# Decimal's ``repr``). Failure mode protected against: the encoder emitting
+# a JSON float and the decoder rehydrating via ``float()``, which would
+# silently lossy-convert ``Decimal("100.50")`` → ``100.5`` → ``Decimal("100.5")``.
+# ---------------------------------------------------------------------------
+
+
+class TestAlp489CodecRoundTrip:
+    def test_position_fill_money_price_round_trip_exact(self) -> None:
+        import json
+        from decimal import Decimal
+
+        from alphamind._kernel.money import decimal_json_default
+        from alphamind.state.tables.positions_codec import (
+            _fill_from_dict,
+            _fill_to_dict,
+        )
+
+        fill = PositionFill(
+            fill_timestamp=_FILL_TS,
+            fill_price=price("100.50"),
+            fill_quantity=10.0,
+            slippage=signed_money("-0.001234"),
+            fees=money("0.05"),
+            live_execution_estimate=LiveExecutionEstimate(
+                estimated_spread_usd=money("0.0123"),
+                estimated_impact_usd=money("0.0045"),
+                estimated_regulatory_fees_usd=money("0.0001"),
+                live_adjusted_fill_price=price("100.4944"),
+            ),
+        )
+
+        # Round-trip through the same encode→JSON→decode path the codec
+        # uses end-to-end (``record_to_row`` calls ``_fill_to_dict`` inside a
+        # ``json.dumps(..., default=decimal_json_default)``; ``row_to_record``
+        # reads ``json.loads`` and calls ``_fill_from_dict``).
+        payload = json.loads(json.dumps(_fill_to_dict(fill), default=decimal_json_default))
+        rehydrated = _fill_from_dict(payload)
+
+        # Exact Decimal equality — the literal "100.50" must survive intact.
+        assert repr(Decimal(rehydrated.fill_price)) == repr(Decimal("100.50"))
+        assert repr(Decimal(rehydrated.slippage)) == repr(Decimal("-0.001234"))
+        assert repr(Decimal(rehydrated.fees)) == repr(Decimal("0.05"))
+        assert rehydrated.live_execution_estimate is not None
+        assert repr(Decimal(rehydrated.live_execution_estimate.estimated_spread_usd)) == repr(
+            Decimal("0.0123")
+        )
+        assert repr(Decimal(rehydrated.live_execution_estimate.live_adjusted_fill_price)) == repr(
+            Decimal("100.4944")
+        )

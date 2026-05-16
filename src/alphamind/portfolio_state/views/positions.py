@@ -16,6 +16,7 @@ import math
 from dataclasses import dataclass
 from datetime import datetime
 
+from alphamind._kernel.money import Money
 from alphamind.portfolio_state.records.positions import (
     Direction,
     InstrumentType,
@@ -69,29 +70,33 @@ class PositionView:
     ``delta_adjusted_exposure_usd``
         Signed: positive for net-long delta, negative for net-short delta.
         For short equities this is negative; for options it is signed by the
-        option delta. Any finite float is accepted.
+        option delta.
+
+    ALP-489 — USD fields carry ``Money`` (Decimal-backed) so the snapshot-time
+    rollups (``PortfolioPnL``, ``SectorExposureEntry``, ``DirectionalExposure``)
+    aggregate via Decimal arithmetic with no float-sum precision loss.
+    ``signed_money`` accommodates negative values (short market value, P/L
+    losses, distance-to-target below stop, etc.). Percentage / hours / ratio
+    fields remain ``float`` (derived ratios, not money preservation
+    quantities).
     """
 
     record: PositionRecord
-    current_market_value_usd: float
-    unrealized_pnl_usd: float
+    current_market_value_usd: Money
+    unrealized_pnl_usd: Money
     unrealized_pnl_pct: float
     position_weight_pct: float
     position_age_hours: float
-    notional_exposure_usd: float
-    delta_adjusted_exposure_usd: float
-    distance_to_target_usd: float | None
-    distance_to_stop_usd: float | None
+    notional_exposure_usd: Money
+    delta_adjusted_exposure_usd: Money
+    distance_to_target_usd: Money | None
+    distance_to_stop_usd: Money | None
     risk_reward_at_current: float | None
 
     def __post_init__(self) -> None:
-        _check_finite(self.current_market_value_usd, "current_market_value_usd")
-        _check_finite(self.unrealized_pnl_usd, "unrealized_pnl_usd")
         _check_finite(self.unrealized_pnl_pct, "unrealized_pnl_pct")
         _check_finite(self.position_weight_pct, "position_weight_pct")
         _check_non_negative_finite(self.position_age_hours, "position_age_hours")
-        _check_non_negative_finite(self.notional_exposure_usd, "notional_exposure_usd")
-        _check_finite(self.delta_adjusted_exposure_usd, "delta_adjusted_exposure_usd")
 
     # ------------------------------------------------------------------
     # Convenience pass-through properties — mirror persistent record fields

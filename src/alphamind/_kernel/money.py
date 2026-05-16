@@ -22,8 +22,10 @@ from decimal import Decimal, InvalidOperation
 from typing import NewType
 
 __all__ = [
+    "DECIMAL_ZERO",
     "Money",
     "Price",
+    "decimal_json_default",
     "money",
     "price",
     "signed_money",
@@ -32,6 +34,22 @@ __all__ = [
 
 Money = NewType("Money", Decimal)
 Price = NewType("Price", Decimal)
+
+DECIMAL_ZERO = Decimal(0)
+
+
+def decimal_json_default(obj: object) -> object:
+    """``json.dumps`` ``default=`` hook that emits ``Decimal`` as its string form.
+
+    Use as ``json.dumps(payload, default=decimal_json_default)`` whenever a
+    codec needs to round-trip ``Decimal`` values through JSON without
+    binary-float drift. The decode path reconstructs via
+    :func:`money` / :func:`price` / :func:`signed_money`.
+    """
+    if isinstance(obj, Decimal):
+        return str(obj)
+    msg = f"object of type {type(obj).__name__} is not JSON-serializable"
+    raise TypeError(msg)
 
 
 def money(value: str | int | float | Decimal) -> Money:
@@ -87,19 +105,29 @@ def _to_decimal(value: str | int | float | Decimal, *, label: str) -> Decimal:
     Wraps :class:`decimal.InvalidOperation` (the underlying parse failure)
     in a :class:`ValueError` carrying the constructor label so the error
     message points at the boundary that rejected the value.
+
+    ALP-489 — rejects ``NaN`` and ``Infinity`` at the boundary so internal
+    Money/Price values are guaranteed finite (Decimal happily round-trips
+    ``"Infinity"``/``"NaN"``; the previous float-typed records relied on a
+    per-field ``math.isfinite`` check, which the Decimal migration retires).
     """
     if isinstance(value, Decimal):
-        return value
-    if isinstance(value, float):
+        decimal_value = value
+    elif isinstance(value, float):
         # Convert via str to avoid binary-float drift
         # (Decimal(0.1) == Decimal('0.1000000000000000055511151231257827021181583404541015625')).
         try:
-            return Decimal(str(value))
+            decimal_value = Decimal(str(value))
         except (InvalidOperation, ValueError) as exc:
             msg = f"{label} value cannot be parsed as Decimal: {value!r}"
             raise ValueError(msg) from exc
-    try:
-        return Decimal(value)
-    except (InvalidOperation, ValueError, TypeError) as exc:
-        msg = f"{label} value cannot be parsed as Decimal: {value!r}"
-        raise ValueError(msg) from exc
+    else:
+        try:
+            decimal_value = Decimal(value)
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            msg = f"{label} value cannot be parsed as Decimal: {value!r}"
+            raise ValueError(msg) from exc
+    if not decimal_value.is_finite():
+        msg = f"{label} value must be finite; got {decimal_value}"
+        raise ValueError(msg)
+    return decimal_value

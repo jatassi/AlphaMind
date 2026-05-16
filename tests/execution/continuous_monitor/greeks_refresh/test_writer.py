@@ -21,6 +21,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.continuous_monitor.greeks_refresh import SqlGreeksWriter
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
@@ -91,10 +92,10 @@ def _options_position(
         execution_history=(
             PositionFill(
                 fill_timestamp=datetime(2026, 5, 1, 14, 30, tzinfo=UTC),
-                fill_price=2.5,
+                fill_price=price(2.5),
                 fill_quantity=1.0,
-                slippage=0.0,
-                fees=0.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -147,10 +148,10 @@ def _strategy_position(*, position_id: str = "strat-1") -> PositionRecord:
         execution_history=(
             PositionFill(
                 fill_timestamp=datetime(2026, 5, 1, 14, 30, tzinfo=UTC),
-                fill_price=3.0,
+                fill_price=price(3.0),
                 fill_quantity=1.0,
-                slippage=0.0,
-                fees=0.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
             ),
         ),
         realized_pnl_to_date_usd=None,

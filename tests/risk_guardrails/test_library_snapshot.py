@@ -16,7 +16,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
-from alphamind._kernel.money import money
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -260,10 +260,10 @@ def _make_equity_position_view(
             resolved_history = (
                 PositionFill(
                     fill_timestamp=_PHASE1,
-                    fill_price=market_value_usd / max(share_count, 1),
+                    fill_price=price(market_value_usd / max(share_count, 1)),
                     fill_quantity=share_count,
-                    slippage=0.0,
-                    fees=0.0,
+                    slippage=signed_money(0.0),
+                    fees=money(0.0),
                 ),
             )
         else:
@@ -287,13 +287,13 @@ def _make_equity_position_view(
     )
     return PositionView(
         record=record,
-        current_market_value_usd=market_value_usd,
-        unrealized_pnl_usd=0.0,
+        current_market_value_usd=signed_money(market_value_usd),
+        unrealized_pnl_usd=signed_money(0.0),
         unrealized_pnl_pct=0.0,
         position_weight_pct=position_weight_pct,
         position_age_hours=1.0,
-        notional_exposure_usd=notional_usd,
-        delta_adjusted_exposure_usd=delta_adjusted_usd,
+        notional_exposure_usd=money(notional_usd),
+        delta_adjusted_exposure_usd=signed_money(delta_adjusted_usd),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -340,10 +340,10 @@ def _make_options_position_view(
         (
             PositionFill(
                 fill_timestamp=_PHASE1,
-                fill_price=5.0,
+                fill_price=price(5.0),
                 fill_quantity=contract_count,
-                slippage=0.0,
-                fees=0.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
             ),
         )
         if status == PositionStatus.OPEN
@@ -365,13 +365,13 @@ def _make_options_position_view(
     )
     return PositionView(
         record=record,
-        current_market_value_usd=market_value_usd,
-        unrealized_pnl_usd=0.0,
+        current_market_value_usd=signed_money(market_value_usd),
+        unrealized_pnl_usd=signed_money(0.0),
         unrealized_pnl_pct=0.0,
         position_weight_pct=position_weight_pct,
         position_age_hours=1.0,
-        notional_exposure_usd=notional_usd,
-        delta_adjusted_exposure_usd=delta_adjusted_usd,
+        notional_exposure_usd=money(notional_usd),
+        delta_adjusted_exposure_usd=signed_money(delta_adjusted_usd),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -810,10 +810,10 @@ def test_unresolvable_position_skipped_with_warning(caplog: pytest.LogCaptureFix
         execution_history=(
             PositionFill(
                 fill_timestamp=_PHASE1,
-                fill_price=0.0,
+                fill_price=price(1.0),
                 fill_quantity=1.0,
-                slippage=0.0,
-                fees=0.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -823,13 +823,13 @@ def test_unresolvable_position_skipped_with_warning(caplog: pytest.LogCaptureFix
     )
     pos = PositionView(
         record=record,
-        current_market_value_usd=0.0,
-        unrealized_pnl_usd=0.0,
+        current_market_value_usd=signed_money(0.0),
+        unrealized_pnl_usd=signed_money(0.0),
         unrealized_pnl_pct=0.0,
         position_weight_pct=0.0,
         position_age_hours=0.0,
-        notional_exposure_usd=0.0,
-        delta_adjusted_exposure_usd=0.0,
+        notional_exposure_usd=money(0.0),
+        delta_adjusted_exposure_usd=signed_money(0.0),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -1155,10 +1155,10 @@ def test_strategy_position_ticker_and_greeks() -> None:
         execution_history=(
             PositionFill(
                 fill_timestamp=_PHASE1,
-                fill_price=2.0,
+                fill_price=price(2.0),
                 fill_quantity=2.0,
-                slippage=0.0,
-                fees=0.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -1168,13 +1168,13 @@ def test_strategy_position_ticker_and_greeks() -> None:
     )
     pos = PositionView(
         record=record,
-        current_market_value_usd=400.0,
-        unrealized_pnl_usd=0.0,
+        current_market_value_usd=signed_money(400.0),
+        unrealized_pnl_usd=signed_money(0.0),
         unrealized_pnl_pct=0.0,
         position_weight_pct=0.5,
         position_age_hours=1.0,
-        notional_exposure_usd=400.0,
-        delta_adjusted_exposure_usd=300.0,
+        notional_exposure_usd=money(400.0),
+        delta_adjusted_exposure_usd=signed_money(300.0),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,

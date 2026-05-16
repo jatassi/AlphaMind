@@ -9,6 +9,7 @@ import pytest
 from alphamind._kernel.ids import (
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -25,10 +26,10 @@ from alphamind.portfolio_state.views.positions import PositionView
 _NOW = datetime.now(tz=UTC)
 _FILL = PositionFill(
     fill_timestamp=_NOW,
-    fill_price=150.0,
+    fill_price=price(150.0),
     fill_quantity=100.0,
-    slippage=0.01,
-    fees=1.0,
+    slippage=signed_money(0.01),
+    fees=money(1.0),
 )
 _LONG_EQUITY = EquityPositionDetails(
     ticker=Symbol("AAPL"),
@@ -108,7 +109,7 @@ class TestPositionViewFrozen:
     def test_frozen(self) -> None:
         view = _make_view()
         with pytest.raises(FrozenInstanceError):
-            view.unrealized_pnl_usd = 9_999.0  # type: ignore[misc]
+            view.unrealized_pnl_usd = signed_money(9_999.0)  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -122,16 +123,16 @@ class TestPositionViewFieldConstraints:
     # finite-only — current_market_value_usd
     def test_current_market_value_usd_inf_fails(self) -> None:
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
-            _make_view(current_market_value_usd=float("inf"))
+            _make_view(current_market_value_usd=signed_money(float("inf")))
 
     def test_current_market_value_usd_nan_fails(self) -> None:
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
-            _make_view(current_market_value_usd=float("nan"))
+            _make_view(current_market_value_usd=signed_money(float("nan")))
 
     # finite-only — unrealized_pnl_usd
     def test_unrealized_pnl_usd_inf_fails(self) -> None:
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
-            _make_view(unrealized_pnl_usd=float("inf"))
+            _make_view(unrealized_pnl_usd=signed_money(float("inf")))
 
     # signed — position_weight_pct can be negative for shorts
     def test_position_weight_pct_negative_passes(self) -> None:
@@ -159,20 +160,20 @@ class TestPositionViewFieldConstraints:
     # non-negative — notional_exposure_usd
     def test_notional_exposure_usd_negative_fails(self) -> None:
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
-            _make_view(notional_exposure_usd=-100.0)
+            _make_view(notional_exposure_usd=money(-100.0))
 
     def test_notional_exposure_usd_zero_passes(self) -> None:
-        view = _make_view(notional_exposure_usd=0.0)
+        view = _make_view(notional_exposure_usd=money(0.0))
         assert view.notional_exposure_usd == 0.0
 
     # signed — delta_adjusted_exposure_usd
     def test_delta_adjusted_exposure_usd_negative_passes(self) -> None:
-        view = _make_view(delta_adjusted_exposure_usd=-50_000.0)
+        view = _make_view(delta_adjusted_exposure_usd=signed_money(-50_000.0))
         assert view.delta_adjusted_exposure_usd == -50_000.0
 
     def test_delta_adjusted_exposure_usd_inf_fails(self) -> None:
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
-            _make_view(delta_adjusted_exposure_usd=float("inf"))
+            _make_view(delta_adjusted_exposure_usd=signed_money(float("inf")))
 
     # nullable — distance_to_target_usd / distance_to_stop_usd / risk_reward_at_current
     def test_distance_and_risk_reward_can_be_none(self) -> None:
@@ -187,8 +188,8 @@ class TestPositionViewFieldConstraints:
 
     def test_distance_can_be_set(self) -> None:
         view = _make_view(
-            distance_to_target_usd=5.0,
-            distance_to_stop_usd=2.0,
+            distance_to_target_usd=signed_money(5.0),
+            distance_to_stop_usd=signed_money(2.0),
             risk_reward_at_current=2.5,
         )
         assert view.distance_to_target_usd == 5.0

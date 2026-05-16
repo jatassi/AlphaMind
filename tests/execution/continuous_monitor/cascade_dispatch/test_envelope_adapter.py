@@ -10,6 +10,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.commands.engine_envelope import (
     EngineEnvelope as OmsEngineEnvelope,
 )
@@ -58,10 +59,10 @@ def _make_position_view(
         execution_history=(
             PositionFill(
                 fill_timestamp=_NOW,
-                fill_price=150.0,
+                fill_price=price(150.0),
                 fill_quantity=10.0,
-                slippage=0.0,
-                fees=0.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -71,13 +72,13 @@ def _make_position_view(
     )
     return PositionView(
         record=record,
-        current_market_value_usd=1500.0,
-        unrealized_pnl_usd=-100.0,
+        current_market_value_usd=signed_money(1500.0),
+        unrealized_pnl_usd=signed_money(-100.0),
         unrealized_pnl_pct=-6.67,
         position_weight_pct=10.0,
         position_age_hours=2.0,
-        notional_exposure_usd=1500.0,
-        delta_adjusted_exposure_usd=1500.0,
+        notional_exposure_usd=money(1500.0),
+        delta_adjusted_exposure_usd=signed_money(1500.0),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,

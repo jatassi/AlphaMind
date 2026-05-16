@@ -148,7 +148,7 @@ class TestSectionBProjectionConsistency:
         self._snapshot = self._assembled.snapshot
         _, _, self._sector_resolver, _, _ = inputs
         total_value = self._snapshot.cash_ledger.current_cash_usd + sum(
-            abs(p.current_market_value_usd) for p in self._snapshot.open_positions
+            abs(float(p.current_market_value_usd)) for p in self._snapshot.open_positions
         )
         self._synth_view = project_synthesizer_view(
             self._snapshot, sector_resolver=self._sector_resolver
@@ -277,31 +277,31 @@ class TestSectionCAssemblerCorrectness:
     def test_nvda_long_market_value(self) -> None:
         pos = self._pos_by_id("POS-NVDA")
         expected = 100.0 * 510.0  # share_count * price
-        assert abs(pos.current_market_value_usd - expected) < 1e-9
+        assert abs(float(pos.current_market_value_usd) - expected) < 1e-9
 
     def test_amd_short_market_value_is_negative(self) -> None:
         pos = self._pos_by_id("POS-AMD")
         expected = -(250.0 * 115.0)  # short: negative market value
-        assert abs(pos.current_market_value_usd - expected) < 1e-9
+        assert abs(float(pos.current_market_value_usd) - expected) < 1e-9
 
     def test_jpm_long_market_value(self) -> None:
         pos = self._pos_by_id("POS-JPM")
         expected = 100.0 * 195.0
-        assert abs(pos.current_market_value_usd - expected) < 1e-9
+        assert abs(float(pos.current_market_value_usd) - expected) < 1e-9
 
     def test_nvda_unrealized_pnl_long(self) -> None:
         pos = self._pos_by_id("POS-NVDA")
         cost = 100.0 * 500.0
         market_value = 100.0 * 510.0
         expected = market_value - cost  # LONG: mv - cost
-        assert abs(pos.unrealized_pnl_usd - expected) < 1e-9
+        assert abs(float(pos.unrealized_pnl_usd) - expected) < 1e-9
 
     def test_amd_unrealized_pnl_short(self) -> None:
         pos = self._pos_by_id("POS-AMD")
         cost = 250.0 * 120.0
         market_value_abs = 250.0 * 115.0
         expected = cost - market_value_abs  # SHORT: cost - abs(mv)
-        assert abs(pos.unrealized_pnl_usd - expected) < 1e-9
+        assert abs(float(pos.unrealized_pnl_usd) - expected) < 1e-9
 
     def test_portfolio_total_unrealized_pnl_is_sum_of_positions(self) -> None:
         # ALP-462 — ``portfolio_pnl.total_unrealized_pnl_usd`` is ``Money``
@@ -316,28 +316,28 @@ class TestSectionCAssemblerCorrectness:
 
     def test_position_weights_are_abs_mv_over_total(self) -> None:
         total_value = (
-            sum(abs(p.current_market_value_usd) for p in self._snapshot.open_positions)
-            + sum(abs(p.current_market_value_usd) for p in self._snapshot.pending_positions)
+            sum(abs(float(p.current_market_value_usd)) for p in self._snapshot.open_positions)
+            + sum(abs(float(p.current_market_value_usd)) for p in self._snapshot.pending_positions)
             + self._snapshot.cash_ledger.current_cash_usd
         )
         for pos in self._snapshot.open_positions:
-            expected = (abs(pos.current_market_value_usd) / total_value) * 100.0
+            expected = (abs(float(pos.current_market_value_usd)) / total_value) * 100.0
             assert abs(pos.position_weight_pct - expected) < 1e-6
 
     def test_gross_exposure_formula(self) -> None:
         long_delta = sum(
-            p.delta_adjusted_exposure_usd
+            float(p.delta_adjusted_exposure_usd)
             for p in self._snapshot.open_positions
             if p.delta_adjusted_exposure_usd > 0
         )
         short_delta = sum(
-            abs(p.delta_adjusted_exposure_usd)
+            abs(float(p.delta_adjusted_exposure_usd))
             for p in self._snapshot.open_positions
             if p.delta_adjusted_exposure_usd < 0
         )
         total_value = (
-            sum(abs(p.current_market_value_usd) for p in self._snapshot.open_positions)
-            + sum(abs(p.current_market_value_usd) for p in self._snapshot.pending_positions)
+            sum(abs(float(p.current_market_value_usd)) for p in self._snapshot.open_positions)
+            + sum(abs(float(p.current_market_value_usd)) for p in self._snapshot.pending_positions)
             + self._snapshot.cash_ledger.current_cash_usd
         )
         if total_value > 0:
@@ -348,8 +348,8 @@ class TestSectionCAssemblerCorrectness:
     def test_cash_pct_of_portfolio(self) -> None:
         cash = self._snapshot.cash_ledger.current_cash_usd
         total_value = (
-            sum(abs(p.current_market_value_usd) for p in self._snapshot.open_positions)
-            + sum(abs(p.current_market_value_usd) for p in self._snapshot.pending_positions)
+            sum(abs(float(p.current_market_value_usd)) for p in self._snapshot.open_positions)
+            + sum(abs(float(p.current_market_value_usd)) for p in self._snapshot.pending_positions)
             + cash
         )
         expected_pct = (cash / total_value) * 100.0
@@ -524,7 +524,7 @@ class TestSectionEDeterminism:
         r1 = _assemble(inputs)
         r2 = _assemble(inputs)
         total_value = r1.snapshot.cash_ledger.current_cash_usd + sum(
-            abs(p.current_market_value_usd) for p in r1.snapshot.open_positions
+            abs(float(p.current_market_value_usd)) for p in r1.snapshot.open_positions
         )
         v1 = project_analyst_view(
             r1.snapshot,

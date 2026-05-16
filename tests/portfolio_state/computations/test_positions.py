@@ -12,6 +12,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.computations.positions import (
     MissingLegPriceError,
@@ -75,10 +76,10 @@ def _price(price_usd: float, ticker: str = "AAPL") -> PriceQuote:
 def _fill() -> PositionFill:
     return PositionFill(
         fill_timestamp=_NOW,
-        fill_price=100.0,
+        fill_price=price(100.0),
         fill_quantity=10.0,
-        slippage=0.01,
-        fees=0.5,
+        slippage=signed_money(0.01),
+        fees=money(0.5),
     )
 
 

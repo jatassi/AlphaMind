@@ -16,7 +16,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
-from alphamind._kernel.money import money, signed_money
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     DrawdownTier,
     RegimeLabel,
@@ -357,10 +357,10 @@ def _make_equity_position(
         execution_history=(
             PositionFill(
                 fill_timestamp=datetime(2026, 4, 27, 14, 0, 0, tzinfo=UTC),
-                fill_price=100.0,
+                fill_price=price(100.0),
                 fill_quantity=100.0,
-                slippage=0.0,
-                fees=0.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -370,13 +370,13 @@ def _make_equity_position(
     )
     return PositionView(
         record=record,
-        current_market_value_usd=position_weight_pct * 5_000.0,
-        unrealized_pnl_usd=-1_800.0,
+        current_market_value_usd=signed_money(position_weight_pct * 5_000.0),
+        unrealized_pnl_usd=signed_money(-1_800.0),
         unrealized_pnl_pct=unrealized_pnl_pct,
         position_weight_pct=position_weight_pct,
         position_age_hours=24.0,
-        notional_exposure_usd=position_weight_pct * 5_000.0,
-        delta_adjusted_exposure_usd=position_weight_pct * 5_000.0,
+        notional_exposure_usd=money(position_weight_pct * 5_000.0),
+        delta_adjusted_exposure_usd=signed_money(position_weight_pct * 5_000.0),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,

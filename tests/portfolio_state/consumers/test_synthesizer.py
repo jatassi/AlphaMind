@@ -16,10 +16,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
-from alphamind._kernel.money import (
-    price,
-    signed_money,
-)
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -121,13 +118,13 @@ _INV_ID = "inv-synth-001"
 # ---------------------------------------------------------------------------
 
 
-def _make_fill(price: float = 150.0) -> PositionFill:
+def _make_fill(at_price: float = 150.0) -> PositionFill:
     return PositionFill(
         fill_timestamp=_T0,
-        fill_price=price,
+        fill_price=price(at_price),
         fill_quantity=100.0,
-        slippage=0.01,
-        fees=1.0,
+        slippage=signed_money(0.01),
+        fees=money(1.0),
     )
 
 
@@ -153,13 +150,13 @@ def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> Positi
     )
     return PositionView(
         record=record,
-        current_market_value_usd=15500.0,
-        unrealized_pnl_usd=500.0,
+        current_market_value_usd=signed_money(15500.0),
+        unrealized_pnl_usd=signed_money(500.0),
         unrealized_pnl_pct=3.33,
         position_weight_pct=10.0,
         position_age_hours=4.0,
-        notional_exposure_usd=15000.0,
-        delta_adjusted_exposure_usd=15000.0,
+        notional_exposure_usd=money(15000.0),
+        delta_adjusted_exposure_usd=signed_money(15000.0),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -188,13 +185,13 @@ def _make_pending_position(pos_id: str = "POS-PEND") -> PositionView:
     )
     return PositionView(
         record=record,
-        current_market_value_usd=0.0,
-        unrealized_pnl_usd=0.0,
+        current_market_value_usd=signed_money(0.0),
+        unrealized_pnl_usd=signed_money(0.0),
         unrealized_pnl_pct=0.0,
         position_weight_pct=0.0,
         position_age_hours=0.0,
-        notional_exposure_usd=0.0,
-        delta_adjusted_exposure_usd=0.0,
+        notional_exposure_usd=money(0.0),
+        delta_adjusted_exposure_usd=signed_money(0.0),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -624,13 +621,13 @@ def _make_empty_legs_strategy_position(pos_id: str = "POS-STRAT-EMPTY") -> Posit
     )
     return PositionView(
         record=record,
-        current_market_value_usd=0.0,
-        unrealized_pnl_usd=0.0,
+        current_market_value_usd=signed_money(0.0),
+        unrealized_pnl_usd=signed_money(0.0),
         unrealized_pnl_pct=0.0,
         position_weight_pct=0.0,
         position_age_hours=0.0,
-        notional_exposure_usd=0.0,
-        delta_adjusted_exposure_usd=0.0,
+        notional_exposure_usd=money(0.0),
+        delta_adjusted_exposure_usd=signed_money(0.0),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,

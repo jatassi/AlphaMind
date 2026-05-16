@@ -39,7 +39,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
-from alphamind._kernel.money import money, price
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.commands.command_models import (
     BracketOrderParameters,
     EntryOrder,
@@ -585,10 +585,10 @@ def _open_position(
     history = (
         PositionFill(
             fill_timestamp=_NOW - timedelta(hours=2),
-            fill_price=150.0,
+            fill_price=price(150.0),
             fill_quantity=10.0,
-            slippage=0.0,
-            fees=0.0,
+            slippage=signed_money(0.0),
+            fees=money(0.0),
         ),
     )
     return PositionRecord(

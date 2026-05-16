@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from alphamind._kernel.money import money, price, signed_money
+from alphamind._kernel.money import decimal_json_default, money, price, signed_money
 from alphamind.portfolio_state.records.orders import OrderStatus
 from alphamind.portfolio_state.records.positions import LiveExecutionEstimate
 from alphamind.state.records import (
@@ -64,7 +64,8 @@ def record_to_row(record: FillRecord) -> FillRecordRow:
                     "live_adjusted_fill_price": (
                         record.live_execution_estimate.live_adjusted_fill_price
                     ),
-                }
+                },
+                default=decimal_json_default,
             )
             if record.live_execution_estimate is not None
             else None
@@ -114,10 +115,10 @@ def row_to_record(row: FillRecordRow) -> FillRecord:
 def _live_estimate_from_json(payload: str) -> LiveExecutionEstimate:
     raw = json.loads(payload)
     return LiveExecutionEstimate(
-        estimated_spread_usd=raw["estimated_spread_usd"],
-        estimated_impact_usd=raw["estimated_impact_usd"],
-        estimated_regulatory_fees_usd=raw["estimated_regulatory_fees_usd"],
-        live_adjusted_fill_price=raw["live_adjusted_fill_price"],
+        estimated_spread_usd=money(raw["estimated_spread_usd"]),
+        estimated_impact_usd=money(raw["estimated_impact_usd"]),
+        estimated_regulatory_fees_usd=money(raw["estimated_regulatory_fees_usd"]),
+        live_adjusted_fill_price=price(raw["live_adjusted_fill_price"]),
     )
 
 

@@ -10,6 +10,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -194,10 +195,10 @@ class TestPositionFill:
         ts = self._now_utc()
         fill = PositionFill(
             fill_timestamp=ts,
-            fill_price=100.0,
+            fill_price=price(100.0),
             fill_quantity=10.0,
-            slippage=0.01,
-            fees=1.50,
+            slippage=signed_money(0.01),
+            fees=money(1.50),
         )
         assert fill.fill_timestamp == ts
         assert fill.fill_price == 100.0
@@ -205,26 +206,26 @@ class TestPositionFill:
     def test_frozen(self) -> None:
         fill = PositionFill(
             fill_timestamp=self._now_utc(),
-            fill_price=100.0,
+            fill_price=price(100.0),
             fill_quantity=10.0,
-            slippage=0.01,
-            fees=1.50,
+            slippage=signed_money(0.01),
+            fees=money(1.50),
         )
         with pytest.raises(FrozenInstanceError):
-            fill.fill_price = 200.0  # type: ignore[misc]
+            fill.fill_price = price(200.0)  # type: ignore[misc]
 
     def test_required_fields_enforced(self) -> None:
         with pytest.raises((ValueError, TypeError)):
-            PositionFill(fill_price=100.0)  # type: ignore[call-arg]
+            PositionFill(fill_price=price(100.0))  # type: ignore[call-arg]
 
     def test_live_execution_estimate_defaults_to_none(self) -> None:
         """(a) live_execution_estimate defaults to None (live-mode case)."""
         fill = PositionFill(
             fill_timestamp=self._now_utc(),
-            fill_price=100.0,
+            fill_price=price(100.0),
             fill_quantity=10.0,
-            slippage=0.01,
-            fees=1.50,
+            slippage=signed_money(0.01),
+            fees=money(1.50),
         )
         assert fill.live_execution_estimate is None
 
@@ -233,10 +234,10 @@ class TestPositionFill:
         est = _make_live_estimate()
         fill = PositionFill(
             fill_timestamp=self._now_utc(),
-            fill_price=150.0,
+            fill_price=price(150.0),
             fill_quantity=10.0,
-            slippage=0.01,
-            fees=0.50,
+            slippage=signed_money(0.01),
+            fees=money(0.50),
             live_execution_estimate=est,
         )
         assert fill.live_execution_estimate is est
@@ -246,10 +247,10 @@ class TestPositionFill:
         with pytest.raises((ValueError, TypeError)):
             PositionFill(
                 fill_timestamp=self._now_utc(),
-                fill_price=100.0,
+                fill_price=price(100.0),
                 fill_quantity=10.0,
-                slippage=0.01,
-                fees=-1.0,
+                slippage=signed_money(0.01),
+                fees=money(-1.0),
             )
 
     def test_docstring_includes_slippage_sign_convention(self) -> None:
@@ -392,10 +393,10 @@ class TestStrategyPositionDetails:
 _NOW = datetime.now(tz=UTC)
 _FILL = PositionFill(
     fill_timestamp=_NOW,
-    fill_price=150.0,
+    fill_price=price(150.0),
     fill_quantity=100.0,
-    slippage=0.01,
-    fees=1.0,
+    slippage=signed_money(0.01),
+    fees=money(1.0),
 )
 _LONG_EQUITY = EquityPositionDetails(
     ticker=Symbol("AAPL"),
@@ -673,62 +674,62 @@ class TestLiveExecutionEstimate:
     def test_negative_spread_rejected(self) -> None:
         """(b) Negative estimated_spread_usd raises ValidationError."""
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
-            _make_live_estimate(estimated_spread_usd=-0.1)
+            _make_live_estimate(estimated_spread_usd=money(-0.1))
 
     def test_negative_impact_rejected(self) -> None:
         """(b) Negative estimated_impact_usd raises ValidationError."""
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
-            _make_live_estimate(estimated_impact_usd=-0.01)
+            _make_live_estimate(estimated_impact_usd=money(-0.01))
 
     def test_negative_regulatory_fees_rejected(self) -> None:
         """(b) Negative estimated_regulatory_fees_usd raises ValidationError."""
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
-            _make_live_estimate(estimated_regulatory_fees_usd=-0.005)
+            _make_live_estimate(estimated_regulatory_fees_usd=money(-0.005))
 
     def test_nan_spread_rejected(self) -> None:
         """(c) nan in estimated_spread_usd raises ValidationError."""
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
-            _make_live_estimate(estimated_spread_usd=float("nan"))
+            _make_live_estimate(estimated_spread_usd=money(float("nan")))
 
     def test_inf_impact_rejected(self) -> None:
         """(c) inf in estimated_impact_usd raises ValidationError."""
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
-            _make_live_estimate(estimated_impact_usd=float("inf"))
+            _make_live_estimate(estimated_impact_usd=money(float("inf")))
 
     def test_nan_regulatory_fees_rejected(self) -> None:
         """(c) nan in estimated_regulatory_fees_usd raises ValidationError."""
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
-            _make_live_estimate(estimated_regulatory_fees_usd=float("nan"))
+            _make_live_estimate(estimated_regulatory_fees_usd=money(float("nan")))
 
     def test_inf_live_adjusted_fill_price_rejected(self) -> None:
         """(c) inf in live_adjusted_fill_price raises ValidationError."""
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
-            _make_live_estimate(live_adjusted_fill_price=float("inf"))
+            _make_live_estimate(live_adjusted_fill_price=price(float("inf")))
 
     def test_nan_live_adjusted_fill_price_rejected(self) -> None:
         """(c) nan in live_adjusted_fill_price raises ValidationError."""
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
-            _make_live_estimate(live_adjusted_fill_price=float("nan"))
+            _make_live_estimate(live_adjusted_fill_price=price(float("nan")))
 
     def test_frozen(self) -> None:
         """(d) Model is frozen — mutation raises FrozenInstanceError."""
         est = _make_live_estimate()
         with pytest.raises(FrozenInstanceError):
-            est.estimated_spread_usd = 1.0  # type: ignore[misc]
+            est.estimated_spread_usd = money(1.0)  # type: ignore[misc]
 
     def test_zero_cost_fields_accepted(self) -> None:
         """Cost fields accept exactly zero (ge=0.0 boundary)."""
         est = _make_live_estimate(
-            estimated_spread_usd=0.0,
-            estimated_impact_usd=0.0,
-            estimated_regulatory_fees_usd=0.0,
+            estimated_spread_usd=money(0.0),
+            estimated_impact_usd=money(0.0),
+            estimated_regulatory_fees_usd=money(0.0),
         )
         assert est.estimated_spread_usd == 0.0
 
-    def test_negative_live_adjusted_fill_price_accepted(self) -> None:
-        """live_adjusted_fill_price has no lower bound constraint."""
-        est = _make_live_estimate(live_adjusted_fill_price=-5.0)
-        assert est.live_adjusted_fill_price == -5.0
+    def test_negative_live_adjusted_fill_price_rejected(self) -> None:
+        """ALP-489 — live_adjusted_fill_price is ``Price`` (strictly positive)."""
+        with pytest.raises(ValueError, match="strictly positive"):
+            _make_live_estimate(live_adjusted_fill_price=price(-5.0))
 
     def test_docstring_includes_sign_convention(self) -> None:
         """LiveExecutionEstimate docstring documents cost/sign convention."""

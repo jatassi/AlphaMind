@@ -26,7 +26,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
-from alphamind._kernel.money import money, signed_money
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     DrawdownTier,
     RegimeLabel,
@@ -573,10 +573,10 @@ def _build_equity_position(
     )
     fill = PositionFill(
         fill_timestamp=_ENTRY_TIMESTAMP,
-        fill_price=100.0,
+        fill_price=price(100.0),
         fill_quantity=10.0,
-        slippage=0.01,
-        fees=1.0,
+        slippage=signed_money(0.01),
+        fees=money(1.0),
     )
     record = PositionRecord(
         position_id=PositionId(position_id),
@@ -594,13 +594,13 @@ def _build_equity_position(
     )
     return PositionView(
         record=record,
-        current_market_value_usd=market_value,
-        unrealized_pnl_usd=unrealized_pnl_pct * 10.0,
+        current_market_value_usd=signed_money(market_value),
+        unrealized_pnl_usd=signed_money(unrealized_pnl_pct * 10.0),
         unrealized_pnl_pct=unrealized_pnl_pct,
         position_weight_pct=weight_pct,
         position_age_hours=24.0,
-        notional_exposure_usd=abs(market_value),
-        delta_adjusted_exposure_usd=market_value,
+        notional_exposure_usd=money(abs(market_value)),
+        delta_adjusted_exposure_usd=signed_money(market_value),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -627,10 +627,10 @@ def _build_option_position(
     )
     fill = PositionFill(
         fill_timestamp=_ENTRY_TIMESTAMP,
-        fill_price=10.0,
+        fill_price=price(10.0),
         fill_quantity=2.0,
-        slippage=0.01,
-        fees=1.0,
+        slippage=signed_money(0.01),
+        fees=money(1.0),
     )
     record = PositionRecord(
         position_id=PositionId(position_id),
@@ -648,13 +648,13 @@ def _build_option_position(
     )
     return PositionView(
         record=record,
-        current_market_value_usd=market_value,
-        unrealized_pnl_usd=unrealized_pnl_pct * 2.0,
+        current_market_value_usd=signed_money(market_value),
+        unrealized_pnl_usd=signed_money(unrealized_pnl_pct * 2.0),
         unrealized_pnl_pct=unrealized_pnl_pct,
         position_weight_pct=weight_pct,
         position_age_hours=24.0,
-        notional_exposure_usd=market_value,
-        delta_adjusted_exposure_usd=market_value * 0.5,
+        notional_exposure_usd=money(market_value),
+        delta_adjusted_exposure_usd=signed_money(market_value * 0.5),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,

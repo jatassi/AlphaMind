@@ -10,6 +10,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -25,13 +26,13 @@ from alphamind.portfolio_state.records.positions import (
 )
 
 
-def _fill(price: float = 100.0, quantity: float = 10.0) -> PositionFill:
+def _fill(at_price: float = 100.0, quantity: float = 10.0) -> PositionFill:
     return PositionFill(
         fill_timestamp=datetime(2026, 1, 1, 14, 30, tzinfo=UTC),
-        fill_price=price,
+        fill_price=price(at_price),
         fill_quantity=quantity,
-        slippage=0.0,
-        fees=0.0,
+        slippage=signed_money(0.0),
+        fees=money(0.0),
     )
 
 

@@ -36,6 +36,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.execution.continuous_monitor.underlying_stream import (
@@ -77,10 +78,10 @@ def _equity_position(*, position_id: str, ticker: str) -> PositionRecord:
         execution_history=(
             PositionFill(
                 fill_timestamp=_now(),
-                fill_price=100.0,
+                fill_price=price(100.0),
                 fill_quantity=10.0,
-                slippage=0.0,
-                fees=0.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
             ),
         ),
         realized_pnl_to_date_usd=None,

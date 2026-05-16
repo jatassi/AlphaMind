@@ -396,10 +396,10 @@ def _make_open_options_position(
     history = (
         PositionFill(
             fill_timestamp=_NOW - timedelta(hours=2),
-            fill_price=fill_price,
+            fill_price=price(fill_price),
             fill_quantity=contract_count,
-            slippage=0.0,
-            fees=0.0,
+            slippage=signed_money(0.0),
+            fees=money(0.0),
         ),
     )
     return PositionRecord(

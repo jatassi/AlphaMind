@@ -182,7 +182,11 @@ def to_library_snapshot(
     # greeks, daily borrow cost, and build the existing_positions map.
     all_positions = (*snapshot.open_positions, *snapshot.pending_positions)
 
-    portfolio_value_usd = cash_usd + sum(p.current_market_value_usd for p in all_positions)
+    # ALP-489 — view USD fields carry Money; cash_usd is the repository-boundary
+    # float. Sum in float space (the downstream pct math is float-typed); the
+    # internal-positions Decimal arithmetic that protects against drift is
+    # asserted at the PortfolioPnL accumulator (see computations/pnl.py).
+    portfolio_value_usd = cash_usd + sum(float(p.current_market_value_usd) for p in all_positions)
 
     options_delta_pct = 0.0
     portfolio_theta_pct_per_day = 0.0
@@ -247,8 +251,8 @@ def to_library_snapshot(
             sector=sector_resolver(underlying),
             direction=_DIRECTION_TO_LIBRARY[pos.direction],
             asset_type=_INSTRUMENT_TO_ASSET_TYPE[pos.instrument_type],
-            notional_usd=pos.notional_exposure_usd,
-            delta_adjusted_exposure_usd=pos.delta_adjusted_exposure_usd,
+            notional_usd=float(pos.notional_exposure_usd),
+            delta_adjusted_exposure_usd=float(pos.delta_adjusted_exposure_usd),
             current_greeks=current_greeks,
             daily_borrow_cost_usd=daily_borrow_cost_usd,
             # reserves_capital_usd: 0.0 — PositionRecord does not carry this field

@@ -19,7 +19,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
-from alphamind._kernel.money import price
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -242,10 +242,10 @@ def _make_equity_position(
         execution_history = (
             PositionFill(
                 fill_timestamp=entry_timestamp,
-                fill_price=cost_per_share,
+                fill_price=price(cost_per_share),
                 fill_quantity=share_count,
-                slippage=0.01,
-                fees=1.0,
+                slippage=signed_money(0.01),
+                fees=money(1.0),
             ),
         )
     else:
@@ -491,10 +491,10 @@ def _make_options_position(
     )
     fill = PositionFill(
         fill_timestamp=entry_timestamp,
-        fill_price=premium,
+        fill_price=price(premium),
         fill_quantity=2.0,
-        slippage=0.01,
-        fees=1.0,
+        slippage=signed_money(0.01),
+        fees=money(1.0),
     )
     return PositionRecord(
         position_id=position_id,

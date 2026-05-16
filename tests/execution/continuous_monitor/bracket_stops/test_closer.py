@@ -14,6 +14,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     CloseSubmissionResult,
     submit_options_bracket_close,
@@ -87,10 +88,10 @@ def _options_position(*, position_id: str = "pos-1") -> PositionRecord:
         execution_history=(
             PositionFill(
                 fill_timestamp=_NOW,
-                fill_price=12.0,
+                fill_price=price(12.0),
                 fill_quantity=1.0,
-                slippage=0.0,
-                fees=0.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -164,10 +165,10 @@ def _strategy_position(*, position_id: str = "pos-st") -> PositionRecord:
         execution_history=(
             PositionFill(
                 fill_timestamp=_NOW,
-                fill_price=3.0,
+                fill_price=price(3.0),
                 fill_quantity=1.0,
-                slippage=0.0,
-                fees=0.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
             ),
         ),
         realized_pnl_to_date_usd=None,
@@ -430,10 +431,10 @@ class TestUnsupportedInstrument:
             execution_history=(
                 PositionFill(
                     fill_timestamp=_NOW,
-                    fill_price=150.0,
+                    fill_price=price(150.0),
                     fill_quantity=100.0,
-                    slippage=0.0,
-                    fees=0.0,
+                    slippage=signed_money(0.0),
+                    fees=money(0.0),
                 ),
             ),
             realized_pnl_to_date_usd=None,
