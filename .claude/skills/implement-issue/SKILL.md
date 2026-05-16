@@ -89,6 +89,7 @@ Invoke `Skill("tdd")`: red → green → refactor.
 - Each acceptance criterion that admits a programmatic test gets one.
 - Criteria that don't (file existence, doc structure, NSSM service config) are verified by post-implementation inspection.
 - Sociable tests per `python-architecture` P8 — real internal collaborators, faked / in-process I/O substitutes. No mockist tests.
+- For audit/cleanup issues where the deliverable is verified by re-running the full lint chain (e.g., removing a suppression directive, restoring strict mypy on a directory), TDD is the wrong frame — drive by the failure list (`mypy` / `ruff` output) and converge to zero. No new tests written; existing test suite is the regression guard.
 
 On blocker mid-implementation — schema gap, ambiguous spec, sibling-issue primitive missing or shaped differently than expected, test that won't pass without scope creep — **stop and surface**.
 
