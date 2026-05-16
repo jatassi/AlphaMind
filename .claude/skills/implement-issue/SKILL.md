@@ -106,6 +106,8 @@ uv run pytest -n auto
 
 **Do not pipe `pytest` to `tail`** — the pipe's exit code is `tail`'s (always 0), masking failures. Use `uv run pytest -n auto; echo "exit=$?"` and read the summary line.
 
+**For audit / docs-only issues** where the deliverable is prose making factual claims about counts, structures, or edge classifications, verify each claim against the source after writing. The lint chain validates that the file still parses, not that the prose is correct — a false count or miscategorized edge will sail through ruff/mypy/lint-imports/pytest and survive into the PR. Walk every entity the prose enumerates (each `ignore_imports` line against its source-file site, each LOC count against `wc -l`, each "TYPE_CHECKING only" claim against the actual `if TYPE_CHECKING:` block).
+
 ### Commit and push
 
 `git commit` with a message mirroring in-tree style (`feat(<feature>):`, `fix:`, `refactor:`, `docs:`). Reference the Linear issue identifier in the body. Verify:
@@ -157,7 +159,7 @@ Agent({
 })
 ```
 
-**Then run `simplify` in the main thread.** Capture recommendations as a list to apply alongside `/review`'s findings.
+**Then run `simplify` in the main thread.** Capture recommendations as a list — *do not apply them as edits* until `/review` returns and the two lists are merged. Simplify is a stylistic pass; it won't verify factual claims. Applying its restylings to factually-wrong prose locks in the underlying error and forces a re-edit when `/review` flags it.
 
 Do not push commits while either pass is still running.
 
