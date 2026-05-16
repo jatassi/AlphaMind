@@ -1,7 +1,9 @@
-"""Shared math primitives for the Q7 cross-asset sub-package.
+"""Shared pure math primitives for the Q7 cross-asset sub-package.
 
-Covers the correlation, log-return, z-score, and window-query helpers used
-across every Q7 compute module.
+ALP-486 retired the session-bound ``_select_close_series`` helper that
+previously lived here. It now lives in :mod:`alphamind.distillation.q7._loaders`
+alongside the rest of the loader machinery, so this module is ORM-free and
+safe to call from the parallel pure compute path.
 """
 
 from __future__ import annotations
@@ -12,11 +14,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
-from alphamind.distillation.calibration import CalibrationState
-from alphamind.persistence.models import OhlcvBars
+from alphamind.distillation._calibration_core import CalibrationState
 
 # ---------------------------------------------------------------------------
 # Block-id namespace
@@ -87,27 +85,6 @@ def _log_returns_from_closes(closes: Sequence[float]) -> list[float]:
         else:
             out.append(math.log(latest / prior))
     return out
-
-
-def _select_close_series(
-    session: Session,
-    *,
-    ticker: str,
-    range_start: str,
-    range_end: str,
-) -> list[float]:
-    """Return ascending daily-bar adj_close values for ``ticker`` in the window."""
-    stmt = (
-        select(OhlcvBars.adj_close)
-        .where(
-            OhlcvBars.ticker == ticker,
-            OhlcvBars.timeframe == "1d",
-            OhlcvBars.period_start >= range_start,
-            OhlcvBars.period_start <= range_end,
-        )
-        .order_by(OhlcvBars.period_start)
-    )
-    return [float(v) for v in session.execute(stmt).scalars().all()]
 
 
 def _correlation_matrix(

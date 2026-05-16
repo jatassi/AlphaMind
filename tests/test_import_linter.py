@@ -474,32 +474,26 @@ def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
     """The ``distillation-no-sqlalchemy`` punch-list ignore_imports baseline holds.
 
     ALP-467 piloted the compute/load boundary split for q1 and a single q3
-    sub-module. ALP-484 propagated the pilot to the remaining q3 sub-modules
-    (anomalies, atm_iv_baseline, etf_iv_divergence) plus the whole-category
-    ``q3._loaders``. ALP-487 propagated the pilot to qualitative_derived:
-    decomposing it into a ``qualitative/`` package whose per-classifier
-    compute cores are pure (now enumerated by
-    ``distillation-compute-no-sqlalchemy``) and whose session-bound shim
-    layer (``qualitative.assemble`` + the backward-compat ``qualitative_derived``
-    re-export) keeps sqlalchemy. Each propagation retires the now-stale
-    indirect ``persistence.models`` ignores for the slim shims that no
-    longer carry those chains.
+    sub-module. ALP-484 propagated the pilot to the remaining q3 sub-modules.
+    ALP-487 propagated the pilot to qualitative_derived. ALP-485 propagated
+    it to q6. ALP-486 propagated it to q7 — the legacy q7 entries
+    (``q7._helpers``, ``q7.<sub>.py`` for the six detection sub-modules)
+    are replaced by ``q7._loaders`` (the new whole-category IO shell) plus
+    one entry per session-accepting orchestration shim. The per-sub
+    ``*_compute.py`` cores are now enumerated by
+    ``distillation-compute-no-sqlalchemy``.
 
-    Post-ALP-485 baseline:
-    - 31 direct sqlalchemy ignores (post-ALP-487 30, +2 q6 IO-shell entries
-      ``q6._loaders``/``q6.assemble``, -1 retired ``q6_macro`` entry — the
-      shim no longer carries an ORM import after the q6 sub-package split).
-    - 21 indirect ignores (post-ALP-484 22 minus the retired
-      ``qualitative_derived -> persistence.models`` chain; ALP-485 retires
-      the ``q6_macro -> persistence.models`` chain and re-adds the same
-      single entry for the new ``q6._loaders`` shell, for net zero change
-      in this column).
+    Post-ALP-486 baseline:
+    - 31 direct sqlalchemy ignores (post-ALP-485 31; the q7 refactor swaps
+      ``q7._helpers`` for ``q7._loaders`` and replaces six per-sub
+      ``q7.<sub>`` entries with the same six entries on the new thin
+      orchestration shims — net zero change).
+    - 16 indirect ignores (post-ALP-485 21 minus the six retired
+      ``q7.<entry> -> persistence.models`` chains plus the single new
+      ``q7._loaders -> persistence.models`` chain — net -5).
 
     Regression guard: a future story tightening this contract by accident
-    would drop entries here and silently re-introduce violations. Punch-list
-    item #9 (continued q-* propagation past q1 + q3 + q6 + qualitative) is
-    still pending for q7 — those entries must hold until that follow-up
-    lands.
+    would drop entries here and silently re-introduce violations.
     """
     parser = _parse_importlinter_config()
     section = _contract_section(parser, "distillation-no-sqlalchemy")
@@ -510,12 +504,10 @@ def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
         f"direct sqlalchemy ignore_imports count drifted: expected 31, got {len(direct)}.\n"
         f"entries:\n  " + "\n  ".join(direct)
     )
-    assert len(indirect) == 21, (
-        f"indirect ignore_imports count drifted: expected 21 "
-        f"(post-ALP-484 22 minus the retired "
-        f"qualitative_derived -> persistence.models chain; ALP-485 retired "
-        f"q6_macro -> persistence.models and added q6._loaders -> "
-        f"persistence.models for net zero), got {len(indirect)}.\n"
+    assert len(indirect) == 16, (
+        f"indirect ignore_imports count drifted: expected 16 "
+        f"(post-ALP-485 21 minus the six retired q7.<entry> chains plus the "
+        f"single q7._loaders -> persistence.models chain), got {len(indirect)}.\n"
         f"entries:\n  " + "\n  ".join(indirect)
     )
 
