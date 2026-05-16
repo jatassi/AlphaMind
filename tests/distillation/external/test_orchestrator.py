@@ -649,12 +649,21 @@ def test_orchestrator_threads_resolved_contract_scope_to_both_consumers(
     populated_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The orchestrator must resolve scope ONCE and thread the same tuple to
-    ``refresh_contract_history`` and ``compute_prediction_market_deltas`` —
-    splitting would let the writer ingest one set while the reader reports
-    on another.
+    ``refresh_contract_history`` (Phase 1 writer) and the qualitative
+    Phase 2 loader — splitting would let the writer ingest one set while
+    the reader reports on another.
+
+    ALP-487 moved the qualitative reader from a direct
+    ``compute_prediction_market_deltas`` call to the
+    ``load_qualitative_inputs`` boundary. The scope-flow assertion holds
+    at that boundary: the loader consumes ``contract_scope`` and threads
+    it onward to the pure compute.
     """
     from alphamind.distillation import baselines as baselines_mod
-    from alphamind.distillation import qualitative_derived as qd_mod
+    from alphamind.distillation import orchestrator as orch_mod
+    from alphamind.distillation.qualitative._loaders import (
+        load_qualitative_inputs as real_load_qualitative,
+    )
 
     _seed_prediction_market_contracts(populated_session)
 
@@ -674,23 +683,20 @@ def test_orchestrator_threads_resolved_contract_scope_to_both_consumers(
 
     captured: dict[str, tuple[str, ...]] = {}
     real_refresh = baselines_mod.refresh_contract_history
-    real_compute = qd_mod.compute_prediction_market_deltas
 
     def spy_refresh(session: Session, *, contract_scope, **kwargs):  # type: ignore[no-untyped-def]
         captured["refresh"] = tuple(contract_scope)
         return real_refresh(session, contract_scope=contract_scope, **kwargs)
 
-    def spy_compute(session: Session, *, contract_scope, **kwargs):  # type: ignore[no-untyped-def]
+    def spy_load_qualitative(repo, *, contract_scope, **kwargs):  # type: ignore[no-untyped-def]
         captured["compute"] = tuple(contract_scope)
-        return real_compute(session, contract_scope=contract_scope, **kwargs)
+        return real_load_qualitative(repo, contract_scope=contract_scope, **kwargs)
 
     monkeypatch.setattr(baselines_mod, "refresh_contract_history", spy_refresh)
     # Both call sites bind via direct-imported symbols on the orchestrator
     # module; patch those bindings, not the source modules.
-    from alphamind.distillation import orchestrator as orch_mod
-
     monkeypatch.setattr(orch_mod, "refresh_contract_history", spy_refresh)
-    monkeypatch.setattr(orch_mod, "compute_prediction_market_deltas", spy_compute)
+    monkeypatch.setattr(orch_mod, "load_qualitative_inputs", spy_load_qualitative)
 
     as_of = datetime(2026, 4, 25, tzinfo=UTC)
     asyncio.run(

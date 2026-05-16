@@ -11,15 +11,22 @@ composition root and threads it into the per-category loaders.
 
 from __future__ import annotations
 
+import statistics
+from collections import Counter
 from collections.abc import Sequence
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.calibration import CalibrationState
 from alphamind.distillation._repository import (
+    ContractCurrentStateRow,
+    ContractHistoryEntry,
+    ContractMetadataRow,
     DailyBarRow,
     DistillationRepository,
     GapEventCounts,
+    NewsLabelCountsRow,
     OptionsContractRow,
     OptionsContractSnapshotRow,
     SectorClassificationRow,
@@ -29,11 +36,16 @@ from alphamind.distillation._repository import (
 from alphamind.distillation.baselines import PENDING_OUTCOME
 from alphamind.persistence.models import (
     AssetUniverse,
+    DistillationContractHistory,
     DistillationEventHistory,
     DistillationTickerBaseline,
+    NewsArticles,
+    NewsArticleTickers,
     OhlcvBars,
     OptionsContracts,
     OptionsContractSnapshots,
+    PredictionMarketContracts,
+    PredictionMarketSnapshots,
     SectorClassification,
 )
 
@@ -260,6 +272,167 @@ class SqlDistillationRepository(DistillationRepository):
             ticker=ticker,
             avg_daily_volume_shares=float(adv) if adv is not None else None,
         )
+
+    # --- qualitative news --------------------------------------------------
+
+    def load_news_article_label_counts(
+        self, *, ticker: str, range_start: str, range_end: str
+    ) -> NewsLabelCountsRow:
+        stmt = (
+            select(NewsArticleTickers.vendor_sentiment_label)
+            .join(NewsArticles, NewsArticles.article_id == NewsArticleTickers.article_id)
+            .where(
+                NewsArticleTickers.ticker == ticker,
+                NewsArticles.published_at >= range_start,
+                NewsArticles.published_at <= range_end,
+            )
+        )
+        counter: Counter[str] = Counter()
+        for label in self._session.execute(stmt).scalars().all():
+            if label is None:
+                continue
+            counter[label] += 1
+        return NewsLabelCountsRow(
+            positive=counter.get("positive", 0),
+            negative=counter.get("negative", 0),
+            neutral=counter.get("neutral", 0),
+            mixed=counter.get("mixed", 0),
+        )
+
+    def load_news_article_sentiment_scores(
+        self, *, ticker: str, range_start: str, range_end: str
+    ) -> tuple[float, int] | None:
+        stmt = (
+            select(NewsArticleTickers.vendor_sentiment_score)
+            .join(NewsArticles, NewsArticles.article_id == NewsArticleTickers.article_id)
+            .where(
+                NewsArticleTickers.ticker == ticker,
+                NewsArticleTickers.vendor_sentiment_score.isnot(None),
+                NewsArticles.published_at >= range_start,
+                NewsArticles.published_at <= range_end,
+            )
+        )
+        scores = [float(v) for v in self._session.execute(stmt).scalars().all() if v is not None]
+        if not scores:
+            return None
+        return statistics.fmean(scores), len(scores)
+
+    def load_hourly_window_price_change(
+        self, *, ticker: str, range_start: str, range_end: str
+    ) -> float | None:
+        stmt = (
+            select(OhlcvBars.adj_open, OhlcvBars.adj_close, OhlcvBars.period_start)
+            .where(
+                OhlcvBars.ticker == ticker,
+                OhlcvBars.timeframe == "1h",
+                OhlcvBars.period_start >= range_start,
+                OhlcvBars.period_start <= range_end,
+            )
+            .order_by(OhlcvBars.period_start)
+        )
+        rows = self._session.execute(stmt).all()
+        if not rows:
+            return None
+        first_open = float(rows[0][0])
+        last_close = float(rows[-1][1])
+        return last_close - first_open
+
+    def load_universe_pooled_sentiment_distribution(
+        self, *, as_of: str
+    ) -> tuple[float, float] | None:
+        stmt = select(DistillationTickerBaseline.mean, DistillationTickerBaseline.stdev).where(
+            DistillationTickerBaseline.baseline_kind == "sentiment",
+            DistillationTickerBaseline.as_of == as_of,
+            DistillationTickerBaseline.calibration_state == CalibrationState.CALIBRATED.value,
+        )
+        rows = self._session.execute(stmt).all()
+        if not rows:
+            return None
+        means = [float(row.mean) for row in rows]
+        stdevs = [float(row.stdev) for row in rows]
+        return statistics.fmean(means), statistics.fmean(stdevs)
+
+    # --- qualitative prediction markets ------------------------------------
+
+    def load_contract_history(
+        self, *, contract_id: str, range_start: str, range_end: str
+    ) -> tuple[ContractHistoryEntry, ...]:
+        stmt = (
+            select(
+                DistillationContractHistory.snapshot_ts,
+                DistillationContractHistory.yes_probability,
+            )
+            .where(
+                DistillationContractHistory.contract_id == contract_id,
+                DistillationContractHistory.snapshot_ts >= range_start,
+                DistillationContractHistory.snapshot_ts <= range_end,
+            )
+            .order_by(DistillationContractHistory.snapshot_ts)
+        )
+        return tuple(
+            ContractHistoryEntry(snapshot_ts=row[0], yes_probability=float(row[1]))
+            for row in self._session.execute(stmt).all()
+        )
+
+    def load_contract_current_state(
+        self, *, contract_id: str, as_of: str
+    ) -> ContractCurrentStateRow | None:
+        stmt = (
+            select(
+                DistillationContractHistory.yes_probability,
+                DistillationContractHistory.delta_pp_since_prior,
+                DistillationContractHistory.snapshot_ts,
+            )
+            .where(
+                DistillationContractHistory.contract_id == contract_id,
+                DistillationContractHistory.snapshot_ts <= as_of,
+            )
+            .order_by(DistillationContractHistory.snapshot_ts.desc())
+            .limit(1)
+        )
+        row = self._session.execute(stmt).first()
+        if row is None:
+            return None
+        yes_probability, delta_pp, snapshot_ts = row
+        return ContractCurrentStateRow(
+            yes_probability=float(yes_probability),
+            delta_pp_since_prior=float(delta_pp),
+            snapshot_ts=snapshot_ts,
+        )
+
+    def load_contract_metadata(self, *, contract_id: str) -> ContractMetadataRow | None:
+        stmt = select(
+            PredictionMarketContracts.platform,
+            PredictionMarketContracts.description,
+            PredictionMarketContracts.category,
+        ).where(PredictionMarketContracts.contract_id == contract_id)
+        row = self._session.execute(stmt).first()
+        if row is None:
+            return None
+        platform, description, category = row
+        return ContractMetadataRow(platform=platform, description=description, category=category)
+
+    def load_contract_24h_volume_and_liquidity(
+        self, *, contract_id: str, as_of: str
+    ) -> tuple[float, float]:
+        stmt = (
+            select(
+                PredictionMarketSnapshots.volume_24h_usd,
+                PredictionMarketSnapshots.liquidity_usd,
+            )
+            .where(
+                PredictionMarketSnapshots.contract_id == contract_id,
+                PredictionMarketSnapshots.snapshot_ts <= as_of,
+            )
+            .order_by(PredictionMarketSnapshots.snapshot_ts.desc())
+            .limit(1)
+        )
+        row = self._session.execute(stmt).first()
+        if row is None:
+            return 0.0, 0.0
+        volume = float(row[0]) if row[0] is not None else 0.0
+        liquidity = float(row[1]) if row[1] is not None else 0.0
+        return volume, liquidity
 
 
 __all__ = ["SqlDistillationRepository"]

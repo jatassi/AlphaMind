@@ -1,0 +1,430 @@
+"""Pure-compute tests for qualitative — no SQLite, no Session.
+
+ALP-487 propagated the compute/load split to qualitative. The defining
+property is that each ``qualitative/*_compute.py`` is testable from
+hand-built frozen inputs with no ORM or in-memory database. Tests in this
+module construct inputs directly and assert on the pure return shape.
+
+The session-bound integration tests at
+``tests/distillation/external/qualitative_derived/`` cover the IO shells
+end-to-end; these tests cover the pure-compute boundaries.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+import pytest
+
+from alphamind.distillation._calibration_core import CalibrationState
+from alphamind.distillation._repository import (
+    ContractCurrentStateRow,
+    ContractHistoryEntry,
+    ContractMetadataRow,
+    NewsLabelCountsRow,
+    TickerBaselineRow,
+)
+from alphamind.distillation.output import AnomalyFlag, OutputAudience
+from alphamind.distillation.qualitative.news_price_divergence_compute import (
+    NewsPriceDivergenceInputs,
+    compute_news_price_divergence_blocks,
+)
+from alphamind.distillation.qualitative.prediction_market_deltas_compute import (
+    PredictionMarketDeltasInputs,
+    compute_prediction_market_delta_blocks,
+)
+from alphamind.distillation.qualitative.sentiment_percentile_compute import (
+    SentimentPercentileInputs,
+    compute_sentiment_percentile_blocks,
+)
+
+_AS_OF = datetime(2026, 5, 15, 16, 0, 0, tzinfo=UTC)
+
+
+# ---------------------------------------------------------------------------
+# News-price divergence
+# ---------------------------------------------------------------------------
+
+
+def _divergence_inputs(
+    *,
+    label_counts: dict[str, NewsLabelCountsRow],
+    price_changes: dict[str, float | None],
+    sector_audience: dict[str, OutputAudience] | None = None,
+) -> NewsPriceDivergenceInputs:
+    audience_map = sector_audience or {
+        ticker: OutputAudience.SECTOR_TECH_SEMIS for ticker in label_counts
+    }
+    return NewsPriceDivergenceInputs(
+        ticker_scope=tuple(sorted(label_counts)),
+        freshness_ts=_AS_OF,
+        sector_audience_by_ticker=audience_map,
+        label_counts_by_ticker=label_counts,
+        price_change_by_ticker=price_changes,
+    )
+
+
+class TestNewsPriceDivergence:
+    def test_dominant_negative_news_with_rising_price_emits_priced_in(self) -> None:
+        inputs = _divergence_inputs(
+            label_counts={
+                "AAPL": NewsLabelCountsRow(positive=1, negative=9, neutral=0, mixed=0),
+            },
+            price_changes={"AAPL": 1.50},
+        )
+        blocks = compute_news_price_divergence_blocks(inputs, min_articles=5)
+        assert len(blocks) == 1
+        entry = blocks[0].payload["per_ticker"]["AAPL"]
+        assert entry["direction"] == "priced_in"
+        assert entry["dominant_label"] == "negative"
+        assert blocks[0].calibration_state is CalibrationState.CALIBRATED
+
+    def test_dominant_positive_news_with_falling_price_emits_hidden_problem(self) -> None:
+        inputs = _divergence_inputs(
+            label_counts={
+                "MSFT": NewsLabelCountsRow(positive=9, negative=1, neutral=0, mixed=0),
+            },
+            price_changes={"MSFT": -2.0},
+        )
+        blocks = compute_news_price_divergence_blocks(inputs, min_articles=5)
+        assert blocks[0].payload["per_ticker"]["MSFT"]["direction"] == "hidden_problem"
+
+    def test_agreement_does_not_fire(self) -> None:
+        inputs = _divergence_inputs(
+            label_counts={
+                "NVDA": NewsLabelCountsRow(positive=9, negative=1, neutral=0, mixed=0),
+            },
+            price_changes={"NVDA": 2.0},
+        )
+        blocks = compute_news_price_divergence_blocks(inputs, min_articles=5)
+        assert blocks == []
+
+    def test_threshold_boundary_at_59_percent_no_dominant_label(self) -> None:
+        # 59 positive / 41 negative = 59% positive — at-or-below the 60%
+        # cutoff so no dominant direction is assigned.
+        inputs = _divergence_inputs(
+            label_counts={
+                "AMD": NewsLabelCountsRow(positive=59, negative=41, neutral=0, mixed=0),
+            },
+            price_changes={"AMD": -0.5},
+        )
+        blocks = compute_news_price_divergence_blocks(inputs, min_articles=5)
+        assert blocks == []
+
+    def test_threshold_boundary_at_61_percent_dominant_label_set(self) -> None:
+        inputs = _divergence_inputs(
+            label_counts={
+                "INTC": NewsLabelCountsRow(positive=61, negative=39, neutral=0, mixed=0),
+            },
+            price_changes={"INTC": -0.5},
+        )
+        blocks = compute_news_price_divergence_blocks(inputs, min_articles=5)
+        assert blocks[0].payload["per_ticker"]["INTC"]["dominant_label"] == "positive"
+
+    def test_thin_evidence_below_min_articles_emits_bootstrap_block(self) -> None:
+        inputs = _divergence_inputs(
+            label_counts={
+                "AAPL": NewsLabelCountsRow(positive=0, negative=3, neutral=0, mixed=0),
+            },
+            price_changes={"AAPL": 0.10},
+        )
+        blocks = compute_news_price_divergence_blocks(inputs, min_articles=5)
+        assert blocks[0].calibration_state is CalibrationState.BOOTSTRAP
+        reason = blocks[0].bootstrap_reason
+        assert reason is not None
+        assert "news_price_divergence_min_articles: 3 < 5" in reason
+
+    def test_unrouted_ticker_is_skipped(self) -> None:
+        inputs = _divergence_inputs(
+            label_counts={
+                "AAPL": NewsLabelCountsRow(positive=1, negative=9, neutral=0, mixed=0),
+                "ORPHAN": NewsLabelCountsRow(positive=1, negative=9, neutral=0, mixed=0),
+            },
+            price_changes={"AAPL": 1.0, "ORPHAN": 1.0},
+            sector_audience={"AAPL": OutputAudience.SECTOR_TECH_SEMIS},
+        )
+        blocks = compute_news_price_divergence_blocks(inputs, min_articles=5)
+        assert list(blocks[0].payload["per_ticker"]) == ["AAPL"]
+
+    def test_missing_price_change_skips_ticker(self) -> None:
+        inputs = _divergence_inputs(
+            label_counts={
+                "AAPL": NewsLabelCountsRow(positive=1, negative=9, neutral=0, mixed=0),
+            },
+            price_changes={"AAPL": None},
+        )
+        blocks = compute_news_price_divergence_blocks(inputs, min_articles=5)
+        assert blocks == []
+
+    def test_anomaly_flag_carries_magnitude_per_ticker(self) -> None:
+        inputs = _divergence_inputs(
+            label_counts={
+                "AAPL": NewsLabelCountsRow(positive=1, negative=9, neutral=0, mixed=0),
+            },
+            price_changes={"AAPL": 1.0},
+        )
+        blocks = compute_news_price_divergence_blocks(inputs, min_articles=5)
+        flags = blocks[0].anomaly_flags
+        assert len(flags) == 1
+        assert isinstance(flags[0], AnomalyFlag)
+        assert flags[0].name == "news_price_divergence"
+
+
+# ---------------------------------------------------------------------------
+# Sentiment percentile
+# ---------------------------------------------------------------------------
+
+
+def _baseline(mean: float, stdev: float, n: int = 30) -> TickerBaselineRow:
+    return TickerBaselineRow(
+        ticker="X",
+        baseline_kind="sentiment",
+        as_of="2026-05-15T16:00:00Z",
+        mean=mean,
+        stdev=stdev,
+        n_observations=n,
+        window_days=30,
+        calibration_state="calibrated",
+    )
+
+
+class TestSentimentPercentile:
+    def test_current_above_baseline_yields_high_percentile(self) -> None:
+        inputs = SentimentPercentileInputs(
+            ticker_scope=("AAPL",),
+            freshness_ts=_AS_OF,
+            sector_audience_by_ticker={"AAPL": OutputAudience.SECTOR_TECH_SEMIS},
+            current_sentiment_by_ticker={"AAPL": (0.50, 4)},
+            baseline_by_ticker={"AAPL": _baseline(mean=0.0, stdev=0.25, n=30)},
+            universe_pooled_sentiment=None,
+        )
+        blocks = compute_sentiment_percentile_blocks(inputs, sentiment_min_observations=30)
+        entry = blocks[0].payload["per_ticker"]["AAPL"]
+        assert entry["percentile"] > 90.0
+        assert entry["calibration_state"] == CalibrationState.CALIBRATED.value
+        assert blocks[0].calibration_state is CalibrationState.CALIBRATED
+
+    def test_bootstrap_falls_back_to_universe_pool(self) -> None:
+        # Per-ticker observations below threshold — falls back to universe pool.
+        inputs = SentimentPercentileInputs(
+            ticker_scope=("MSFT",),
+            freshness_ts=_AS_OF,
+            sector_audience_by_ticker={"MSFT": OutputAudience.SECTOR_TECH_SEMIS},
+            current_sentiment_by_ticker={"MSFT": (0.20, 3)},
+            baseline_by_ticker={"MSFT": _baseline(mean=0.0, stdev=0.30, n=5)},
+            universe_pooled_sentiment=(0.05, 0.40),
+        )
+        blocks = compute_sentiment_percentile_blocks(inputs, sentiment_min_observations=30)
+        entry = blocks[0].payload["per_ticker"]["MSFT"]
+        assert entry["calibration_state"] == CalibrationState.BOOTSTRAP.value
+        assert entry["baseline_mean"] == pytest.approx(0.05)
+        assert entry["baseline_stdev"] == pytest.approx(0.40)
+        assert blocks[0].calibration_state is CalibrationState.BOOTSTRAP
+
+    def test_unavailable_when_pool_and_per_ticker_both_empty(self) -> None:
+        inputs = SentimentPercentileInputs(
+            ticker_scope=("NVDA",),
+            freshness_ts=_AS_OF,
+            sector_audience_by_ticker={"NVDA": OutputAudience.SECTOR_TECH_SEMIS},
+            current_sentiment_by_ticker={"NVDA": (0.10, 2)},
+            baseline_by_ticker={"NVDA": None},
+            universe_pooled_sentiment=None,
+        )
+        blocks = compute_sentiment_percentile_blocks(inputs, sentiment_min_observations=30)
+        # UNAVAILABLE — ticker omitted, no block emitted for the audience.
+        assert blocks == []
+
+    def test_missing_current_reading_skips_ticker(self) -> None:
+        inputs = SentimentPercentileInputs(
+            ticker_scope=("AAPL",),
+            freshness_ts=_AS_OF,
+            sector_audience_by_ticker={"AAPL": OutputAudience.SECTOR_TECH_SEMIS},
+            current_sentiment_by_ticker={"AAPL": None},
+            baseline_by_ticker={"AAPL": _baseline(0.0, 0.25)},
+            universe_pooled_sentiment=None,
+        )
+        blocks = compute_sentiment_percentile_blocks(inputs, sentiment_min_observations=30)
+        assert blocks == []
+
+    def test_zero_stdev_collapses_percentile_to_50(self) -> None:
+        inputs = SentimentPercentileInputs(
+            ticker_scope=("ORCL",),
+            freshness_ts=_AS_OF,
+            sector_audience_by_ticker={"ORCL": OutputAudience.SECTOR_TECH_SEMIS},
+            current_sentiment_by_ticker={"ORCL": (0.20, 4)},
+            baseline_by_ticker={"ORCL": _baseline(mean=0.0, stdev=0.0, n=30)},
+            universe_pooled_sentiment=None,
+        )
+        blocks = compute_sentiment_percentile_blocks(inputs, sentiment_min_observations=30)
+        entry = blocks[0].payload["per_ticker"]["ORCL"]
+        assert entry["percentile"] == pytest.approx(50.0)
+
+
+# ---------------------------------------------------------------------------
+# Prediction-market deltas
+# ---------------------------------------------------------------------------
+
+
+def _pm_inputs(
+    *,
+    current: dict[str, ContractCurrentStateRow | None],
+    history: dict[str, tuple[ContractHistoryEntry, ...]] | None = None,
+    metadata: dict[str, ContractMetadataRow | None] | None = None,
+    volume_liquidity: dict[str, tuple[float, float]] | None = None,
+) -> PredictionMarketDeltasInputs:
+    return PredictionMarketDeltasInputs(
+        contract_scope=tuple(sorted(current)),
+        freshness_ts=_AS_OF,
+        current_state_by_contract=current,
+        history_by_contract=history or {cid: () for cid in current},
+        metadata_by_contract=metadata or {cid: None for cid in current},
+        volume_liquidity_by_contract=volume_liquidity or {cid: (0.0, 0.0) for cid in current},
+    )
+
+
+class TestPredictionMarketDeltas:
+    def test_emits_one_delta_block_per_contract(self) -> None:
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.55,
+                    delta_pp_since_prior=4.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+            },
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket", description="FOMC rate hold", category="rates"
+                ),
+            },
+            volume_liquidity={"POLY-1": (50_000.0, 100_000.0)},
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        assert len(blocks) == 1
+        assert blocks[0].block_id == "qual.prediction_market_delta"
+        entry = blocks[0].payload["per_contract"]["POLY-1"]
+        assert entry["yes_probability"] == pytest.approx(0.55)
+        assert entry["delta_pp_since_prior"] == pytest.approx(4.0)
+        assert entry["delta_anomaly"] is False
+        assert entry["low_liquidity"] is False
+
+    def test_delta_anomaly_above_threshold_fires_flag(self) -> None:
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.60,
+                    delta_pp_since_prior=8.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+            },
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        delta_block = blocks[0]
+        assert delta_block.payload["per_contract"]["POLY-1"]["delta_anomaly"] is True
+        assert len(delta_block.anomaly_flags) == 1
+        assert delta_block.anomaly_flags[0].name == "prediction_market_delta"
+        assert delta_block.anomaly_flags[0].magnitude == pytest.approx(8.0)
+
+    def test_low_liquidity_tag_fires_below_volume_threshold(self) -> None:
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.30,
+                    delta_pp_since_prior=1.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+            },
+            volume_liquidity={"POLY-1": (5_000.0, 50_000.0)},
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        assert blocks[0].payload["per_contract"]["POLY-1"]["low_liquidity"] is True
+
+    def test_missing_current_state_omits_contract(self) -> None:
+        inputs = _pm_inputs(current={"POLY-1": None})
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        assert blocks == []
+
+    def test_cross_platform_match_emits_normalized_block(self) -> None:
+        # Two contracts with the same category and same tokenized description.
+        # Expected to group into one normalized block.
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.50,
+                    delta_pp_since_prior=1.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+                "KAL-1": ContractCurrentStateRow(
+                    yes_probability=0.70,
+                    delta_pp_since_prior=2.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+            },
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket", description="FOMC rate hold", category="rates"
+                ),
+                "KAL-1": ContractMetadataRow(
+                    platform="kalshi", description="FOMC rate hold", category="rates"
+                ),
+            },
+            volume_liquidity={"POLY-1": (50_000.0, 100_000.0), "KAL-1": (60_000.0, 300_000.0)},
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        assert {block.block_id for block in blocks} == {
+            "qual.prediction_market_delta",
+            "qual.prediction_market_normalized",
+        }
+        normalized_block = next(
+            b for b in blocks if b.block_id == "qual.prediction_market_normalized"
+        )
+        groups = normalized_block.payload["groups"]
+        # liquidity-weighted: (0.50*100k + 0.70*300k) / 400k = 0.65
+        (group,) = groups.values()
+        assert group["normalized_yes_probability"] == pytest.approx(0.65)
+
+    def test_zero_liquidity_skips_normalization(self) -> None:
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.50,
+                    delta_pp_since_prior=1.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+                "KAL-1": ContractCurrentStateRow(
+                    yes_probability=0.70,
+                    delta_pp_since_prior=2.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+            },
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket", description="FOMC rate hold", category="rates"
+                ),
+                "KAL-1": ContractMetadataRow(
+                    platform="kalshi", description="FOMC rate hold", category="rates"
+                ),
+            },
+            volume_liquidity={"POLY-1": (50_000.0, 0.0), "KAL-1": (60_000.0, 0.0)},
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        assert {block.block_id for block in blocks} == {"qual.prediction_market_delta"}
+
+    def test_empty_scope_emits_no_blocks(self) -> None:
+        inputs = _pm_inputs(current={})
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        assert blocks == []
