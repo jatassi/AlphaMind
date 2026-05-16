@@ -1,5 +1,4 @@
 """Tests for pricing.py — CurrentPriceProvider protocol, PriceQuote, PriceSource."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
@@ -67,7 +66,7 @@ def test_price_quote_accepts_positive_price() -> None:
 def test_price_quote_is_frozen() -> None:
     q = _quote()
     with pytest.raises(FrozenInstanceError):
-        q.price_usd = 999.0
+        q.price_usd = 999.0  # type: ignore[misc]
 
 
 def test_price_quote_fields() -> None:

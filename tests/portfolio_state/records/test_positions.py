@@ -1,8 +1,8 @@
 """Tests for position records (story 03a)."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from dataclasses import FrozenInstanceError
 from datetime import UTC, date, datetime
+from typing import Any
 
 import pytest
 
@@ -95,11 +95,11 @@ class TestOptionGreeks:
     def test_frozen(self) -> None:
         g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3)
         with pytest.raises(FrozenInstanceError):
-            g.delta = 0.9
+            g.delta = 0.9  # type: ignore[misc]
 
     def test_required_fields_enforced(self) -> None:
         with pytest.raises((ValueError, TypeError)):
-            OptionGreeks(delta=0.5)
+            OptionGreeks(delta=0.5)  # type: ignore[call-arg]
 
     def test_freshness_defaults_all_none_or_false(self) -> None:
         """(a) All freshness fields default to None/False; legacy construction succeeds."""
@@ -175,7 +175,7 @@ class TestOptionGreeks:
         ts = datetime.now(tz=UTC)
         g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, as_of_timestamp=ts)
         with pytest.raises(FrozenInstanceError):
-            g.as_of_timestamp = datetime.now(tz=UTC)
+            g.as_of_timestamp = datetime.now(tz=UTC)  # type: ignore[misc]
 
     def test_docstring_sign_convention_paragraphs(self) -> None:
         """Class docstring includes the four sign-convention paragraphs."""
@@ -211,11 +211,11 @@ class TestPositionFill:
             fees=1.50,
         )
         with pytest.raises(FrozenInstanceError):
-            fill.fill_price = 200.0
+            fill.fill_price = 200.0  # type: ignore[misc]
 
     def test_required_fields_enforced(self) -> None:
         with pytest.raises((ValueError, TypeError)):
-            PositionFill(fill_price=100.0)
+            PositionFill(fill_price=100.0)  # type: ignore[call-arg]
 
     def test_live_execution_estimate_defaults_to_none(self) -> None:
         """(a) live_execution_estimate defaults to None (live-mode case)."""
@@ -291,11 +291,11 @@ class TestEquityPositionDetails:
             average_cost_basis_per_share=150.0,
         )
         with pytest.raises(FrozenInstanceError):
-            d.ticker = Symbol("MSFT")
+            d.ticker = Symbol("MSFT")  # type: ignore[misc]
 
     def test_required_fields_enforced(self) -> None:
         with pytest.raises((ValueError, TypeError)):
-            EquityPositionDetails(ticker=Symbol("AAPL"))
+            EquityPositionDetails(ticker=Symbol("AAPL"))  # type: ignore[call-arg]
 
 
 _GREEKS = OptionGreeks(delta=0.5, gamma=0.05, theta=-0.01, vega=0.2)
@@ -303,7 +303,7 @@ _EXP = date(2025, 6, 20)
 
 
 def _make_options_details(**overrides: object) -> OptionsPositionDetails:
-    kwargs: dict[str, object] = {
+    kwargs: dict[str, Any] = {
         "underlying_ticker": "AAPL",
         "strike_price": 200.0,
         "expiration_date": _EXP,
@@ -327,15 +327,15 @@ class TestOptionsPositionDetails:
     def test_frozen(self) -> None:
         d = _make_options_details()
         with pytest.raises(FrozenInstanceError):
-            d.underlying_ticker = Symbol("MSFT")
+            d.underlying_ticker = Symbol("MSFT")  # type: ignore[misc]
 
     def test_required_fields_enforced(self) -> None:
         with pytest.raises((ValueError, TypeError)):
-            OptionsPositionDetails(underlying_ticker=Symbol("AAPL"))
+            OptionsPositionDetails(underlying_ticker=Symbol("AAPL"))  # type: ignore[call-arg]
 
 
 def _make_strategy_leg(**overrides: object) -> StrategyLeg:
-    kwargs: dict[str, object] = {
+    kwargs: dict[str, Any] = {
         "leg_id": "leg-1",
         "options": _make_options_details(),
     }
@@ -352,7 +352,7 @@ class TestStrategyLeg:
     def test_frozen(self) -> None:
         leg = _make_strategy_leg()
         with pytest.raises(FrozenInstanceError):
-            leg.leg_id = "leg-2"
+            leg.leg_id = "leg-2"  # type: ignore[misc]
 
 
 class TestStrategyPositionDetails:
@@ -382,7 +382,7 @@ class TestStrategyPositionDetails:
             strategy_greeks=_GREEKS,
         )
         with pytest.raises(FrozenInstanceError):
-            d.strategy_type_label = "other"
+            d.strategy_type_label = "other"  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -415,7 +415,7 @@ _OPTIONS_DETAILS = _make_options_details()
 
 def _make_position(**overrides: object) -> PositionRecord:
     """Build a valid open long equity PositionRecord (post-05a — persistent fields only)."""
-    kwargs: dict[str, object] = {
+    kwargs: dict[str, Any] = {
         "position_id": "POS-AAPL-001",
         "thesis_id": "THESIS-001",
         "bracket_id": None,
@@ -651,7 +651,7 @@ class TestSpinOffInvariant:
 
 
 def _make_live_estimate(**overrides: object) -> LiveExecutionEstimate:
-    kwargs: dict[str, object] = {
+    kwargs: dict[str, Any] = {
         "estimated_spread_usd": 0.05,
         "estimated_impact_usd": 0.02,
         "estimated_regulatory_fees_usd": 0.01,
@@ -714,7 +714,7 @@ class TestLiveExecutionEstimate:
         """(d) Model is frozen — mutation raises FrozenInstanceError."""
         est = _make_live_estimate()
         with pytest.raises(FrozenInstanceError):
-            est.estimated_spread_usd = 1.0
+            est.estimated_spread_usd = 1.0  # type: ignore[misc]
 
     def test_zero_cost_fields_accepted(self) -> None:
         """Cost fields accept exactly zero (ge=0.0 boundary)."""

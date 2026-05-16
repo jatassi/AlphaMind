@@ -15,7 +15,6 @@ Covers:
   the round-trip.
 * Alembic migration idempotency.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -23,6 +22,7 @@ from argparse import Namespace
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import command
@@ -130,7 +130,7 @@ def _strategy_spec() -> StrategyInstrumentSpec:
 
 def _market_order(**overrides: object) -> OrderRecord:
     """Build a valid post-submission MARKET ENTRY OrderRecord."""
-    base: dict[str, object] = {
+    base: dict[str, Any] = {
         "order_id": "ord-1",
         "position_id": None,
         "bracket_id": "brk-1",

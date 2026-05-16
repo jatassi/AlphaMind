@@ -1,10 +1,10 @@
 """Tests for capital state records (story 03d)."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -98,7 +98,7 @@ class TestDrawdownTier:
 
 class TestUnsettledProceedsEntry:
     def _valid(self, **kwargs: object) -> UnsettledProceedsEntry:
-        defaults: dict[str, object] = {
+        defaults: dict[str, Any] = {
             "settlement_date": datetime(2024, 1, 5, 0, 0, tzinfo=UTC),
             "amount_usd": 1500.00,
             "source_transaction_id": "TXN-001",
@@ -123,7 +123,7 @@ class TestUnsettledProceedsEntry:
     def test_frozen(self) -> None:
         entry = self._valid()
         with pytest.raises(FrozenInstanceError):
-            entry.amount_usd = 999.0  # pyright: ignore[reportAttributeAccessIssue]
+            entry.amount_usd = 999.0  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ class TestUnsettledProceedsEntry:
 
 class TestCashLedger:
     def _valid(self, **kwargs: object) -> CashLedger:
-        defaults: dict[str, object] = {
+        defaults: dict[str, Any] = {
             "current_cash_usd": 10_000.0,
             "settled_cash_usd": 9_800.0,
             "reserved_capital_usd": 500.0,
@@ -193,7 +193,7 @@ class TestCashLedger:
     def test_frozen(self) -> None:
         ledger = self._valid()
         with pytest.raises(FrozenInstanceError):
-            ledger.current_cash_usd = 0.0  # pyright: ignore[reportAttributeAccessIssue]
+            ledger.current_cash_usd = 0.0  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +203,7 @@ class TestCashLedger:
 
 class TestDrawdownState:
     def _valid(self, **kwargs: object) -> DrawdownState:
-        defaults: dict[str, object] = {
+        defaults: dict[str, Any] = {
             "current_drawdown_pct": 3.5,
             "equity_high_water_mark_usd": 120_000.0,
             "drawdown_duration_hours": 12.0,
@@ -265,7 +265,7 @@ class TestDrawdownState:
 
 
 def _make_risk_budget_entry(**kwargs: object) -> RiskBudgetEntry:
-    defaults: dict[str, object] = {
+    defaults: dict[str, Any] = {
         "rule_id": "concentration.single_name",
         "rule_label": "Single Name Concentration",
         "current_value": 15.0,
@@ -448,7 +448,7 @@ class TestRiskBudgetConsumption:
 
 
 def _make_param_entry(**kwargs: object) -> ActiveRiskParameterEntry:
-    defaults: dict[str, object] = {
+    defaults: dict[str, Any] = {
         "rule_id": "concentration.single_name",
         "rule_label": "Single Name Concentration",
         "value": 20.0,
@@ -461,7 +461,7 @@ def _make_param_entry(**kwargs: object) -> ActiveRiskParameterEntry:
 
 
 def _make_param_set(**kwargs: object) -> ActiveRiskParameterSet:
-    defaults: dict[str, object] = {
+    defaults: dict[str, Any] = {
         "regime_label": RegimeLabel.NORMAL,
         "transition_state": RegimeTransitionState.STABLE,
         "transition_invocations_remaining": 0,

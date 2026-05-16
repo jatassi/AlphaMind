@@ -1,5 +1,4 @@
 """Tests for sector and directional exposure rollup (story 05c)."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -8,6 +7,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from alphamind._kernel.ids import (
+    PositionId,
     Symbol,
 )
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
@@ -60,7 +60,7 @@ def _make_long_equity(
     notional: float = 10_000.0,
 ) -> PositionView:
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -99,7 +99,7 @@ def _make_short_equity(
     notional: float = 5_000.0,
 ) -> PositionView:
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -153,7 +153,7 @@ def _make_long_option(
         greeks=greeks,
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,

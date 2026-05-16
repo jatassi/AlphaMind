@@ -5,7 +5,6 @@ shared by every instrument type. Consumers reasoning generically about
 positions can annotate against the Protocol; per
 ``docs/design/05-execution-layer/position-model.md`` § Base position.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -48,7 +47,7 @@ _LONG_EQUITY = EquityPositionDetails(
 
 
 def _make_record(**overrides: object) -> PositionRecord:
-    kwargs: dict[str, object] = {
+    kwargs: dict[str, Any] = {
         "position_id": "POS-AAPL-001",
         "thesis_id": "THESIS-001",
         "bracket_id": None,
@@ -68,7 +67,7 @@ def _make_record(**overrides: object) -> PositionRecord:
 
 def _make_view(**overrides: object) -> PositionView:
     record = _make_record()
-    kwargs: dict[str, object] = {
+    kwargs: dict[str, Any] = {
         "record": record,
         "current_market_value_usd": 15_000.0,
         "unrealized_pnl_usd": 500.0,
@@ -104,7 +103,7 @@ def test_position_view_satisfies_base_protocol_via_convenience_properties() -> N
 
 def test_dict_does_not_satisfy_base_protocol() -> None:
     """A bare dict (no property accessors) fails the structural check."""
-    not_a_position: dict[str, object] = {
+    not_a_position: dict[str, Any] = {
         "position_id": "POS-001",
         "thesis_id": None,
         "bracket_id": None,

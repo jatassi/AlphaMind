@@ -40,7 +40,6 @@ this module so ``tests/scripts/test_verify_decision_pipeline.py`` can
 exercise them without touching the Anthropic API. The thin shim at
 ``scripts/verify_decision_pipeline.py`` defers to :func:`main` here.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -247,9 +246,9 @@ def _make_equity_position(
         fees=1.0,
     )
     return PositionRecord(
-        position_id=position_id,
-        thesis_id=thesis_id,
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id) if thesis_id else None,
+        bracket_id=BracketId(bracket_id) if bracket_id else None,
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_AS_OF - timedelta(hours=age_hours),
@@ -372,7 +371,7 @@ def _make_cash_ledger() -> CashLedger:
         reserved_capital_usd=0.0,
         available_buying_power_usd=_AVAILABLE_FOR_NEW_POSITIONS,
         margin_held_usd=0.0,
-        unsettled_proceeds=[],
+        unsettled_proceeds=(),
         cash_pct_of_portfolio=0.0,
         true_deployable_capital_usd=0.0,
         regt_excess_trailing_30d_usd=0.0,
@@ -873,7 +872,7 @@ def _snapshot_to_dict(snapshot: Any) -> dict[str, Any]:
             value = getattr(snapshot, field.name)
         except AttributeError:
             continue
-        if _dc.is_dataclass(value):
+        if _dc.is_dataclass(value) and not isinstance(value, type):
             try:
                 out[field.name] = _dc.asdict(value)
             except (AttributeError, TypeError):

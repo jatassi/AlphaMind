@@ -26,7 +26,6 @@ runs the full sequence inside a single invocation cycle to guard against
 read/write surfaces drifting out of contract once Phase 1 + Phase 2 share
 real state.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -296,9 +295,9 @@ def _pending_entry_order(
     order_id: str = "ord-entry-six",
 ) -> OrderRecord:
     return OrderRecord(
-        order_id=order_id,
-        position_id=position_id,
-        bracket_id=bracket_id,
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id),
+        bracket_id=BracketId(bracket_id),
         role=OrderRole.ENTRY,
         instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
         direction=OrderDirection.BUY,
@@ -309,7 +308,7 @@ def _pending_entry_order(
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
-        alpaca_order_id_chain=(f"alp-{order_id}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
         submission_timestamp=_NOW - timedelta(minutes=15),
         last_update_timestamp=_NOW - timedelta(minutes=15),
         filled_quantity=0.0,
@@ -332,9 +331,9 @@ def _pending_position(
         ticker=Symbol("AAPL"), share_count=0.0, average_cost_basis_per_share=0.0
     )
     return PositionRecord(
-        position_id=position_id,
-        thesis_id=thesis_id,
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id),
+        bracket_id=BracketId(bracket_id),
         status=PositionStatus.PENDING,
         direction=Direction.LONG,
         entry_timestamp=None,
@@ -485,9 +484,9 @@ def _pending_protective_stop_order(
     only mutates the entry order, so this row sits inert through the test.
     """
     return OrderRecord(
-        order_id=order_id,
-        position_id=position_id,
-        bracket_id=bracket_id,
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id),
+        bracket_id=BracketId(bracket_id),
         role=OrderRole.PRICE_STOP,
         instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
         direction=OrderDirection.SELL,
@@ -498,7 +497,7 @@ def _pending_protective_stop_order(
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
-        alpaca_order_id_chain=(f"alp-{order_id}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
         submission_timestamp=_NOW - timedelta(minutes=15),
         last_update_timestamp=_NOW - timedelta(minutes=15),
         filled_quantity=0.0,

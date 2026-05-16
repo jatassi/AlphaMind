@@ -29,7 +29,6 @@ Usage::
 
 See ``scripts/RUNBOOK_guardrail_enforcement.md`` for the operator runbook.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 

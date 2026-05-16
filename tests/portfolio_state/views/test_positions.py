@@ -1,8 +1,8 @@
 """Tests for PositionView (story 05a — split persistent core from delivery view)."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -39,7 +39,7 @@ _LONG_EQUITY = EquityPositionDetails(
 
 def _make_record(**overrides: object) -> PositionRecord:
     """Build a valid persistent PositionRecord (post-05a — no computed fields)."""
-    kwargs: dict[str, object] = {
+    kwargs: dict[str, Any] = {
         "position_id": "POS-AAPL-001",
         "thesis_id": "THESIS-001",
         "bracket_id": None,
@@ -60,7 +60,7 @@ def _make_record(**overrides: object) -> PositionRecord:
 def _make_view(**overrides: object) -> PositionView:
     """Build a valid PositionView wrapping the canonical persistent record."""
     record = _make_record()
-    kwargs: dict[str, object] = {
+    kwargs: dict[str, Any] = {
         "record": record,
         "current_market_value_usd": 15_000.0,
         "unrealized_pnl_usd": 500.0,
@@ -108,7 +108,7 @@ class TestPositionViewFrozen:
     def test_frozen(self) -> None:
         view = _make_view()
         with pytest.raises(FrozenInstanceError):
-            view.unrealized_pnl_usd = 9_999.0
+            view.unrealized_pnl_usd = 9_999.0  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

@@ -22,7 +22,6 @@ Usage::
 
 See ``scripts/RUNBOOK_corporate_actions.md`` for the operator runbook.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -461,9 +460,9 @@ def _equity_short_position(
         ),
     )
     return PositionRecord(
-        position_id=position_id,
-        thesis_id=thesis_id,
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id),
+        bracket_id=BracketId(bracket_id),
         status=PositionStatus.OPEN,
         direction=Direction.SHORT,
         entry_timestamp=_NOW - timedelta(hours=2),
@@ -505,9 +504,9 @@ def _options_long_position(
         ),
     )
     return PositionRecord(
-        position_id=position_id,
-        thesis_id=thesis_id,
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id),
+        bracket_id=BracketId(bracket_id),
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW - timedelta(hours=2),
@@ -574,9 +573,9 @@ def _strategy_position(
         ),
     )
     return PositionRecord(
-        position_id=position_id,
-        thesis_id=thesis_id,
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id),
+        bracket_id=BracketId(bracket_id),
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW - timedelta(hours=2),
@@ -591,9 +590,9 @@ def _strategy_position(
 
 def _entry_order(order_id: str, *, bracket_id: str, position_id: str, ticker: str) -> OrderRecord:
     return OrderRecord(
-        order_id=order_id,
-        position_id=position_id,
-        bracket_id=bracket_id,
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id),
+        bracket_id=BracketId(bracket_id),
         role=OrderRole.ENTRY,
         instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
         direction=OrderDirection.BUY,
@@ -604,7 +603,7 @@ def _entry_order(order_id: str, *, bracket_id: str, position_id: str, ticker: st
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
-        alpaca_order_id_chain=(f"alp-{order_id}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
         submission_timestamp=_NOW - timedelta(minutes=15),
         last_update_timestamp=_NOW - timedelta(minutes=15),
         filled_quantity=0.0,
@@ -624,9 +623,9 @@ def _stop_order(order_id: str, *, bracket_id: str, ticker: str) -> OrderRecord:
     enforcement migration would reject the leg at COMMIT.
     """
     return OrderRecord(
-        order_id=order_id,
+        order_id=OrderId(order_id),
         position_id=None,
-        bracket_id=bracket_id,
+        bracket_id=BracketId(bracket_id),
         role=OrderRole.PRICE_STOP,
         instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
         direction=OrderDirection.SELL,
@@ -637,7 +636,7 @@ def _stop_order(order_id: str, *, bracket_id: str, ticker: str) -> OrderRecord:
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
-        alpaca_order_id_chain=(f"alp-{order_id}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
         submission_timestamp=_NOW - timedelta(minutes=15),
         last_update_timestamp=_NOW - timedelta(minutes=15),
         filled_quantity=0.0,

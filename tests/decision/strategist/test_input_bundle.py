@@ -1,9 +1,9 @@
 """Tests for the strategist input-bundle assembler — story 04 (ALP-304)."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -327,7 +327,7 @@ def _make_position_record(
         fees=1.0,
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -381,8 +381,8 @@ def _make_thesis(
         )
 
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="Hyperscaler capex acceleration drives Q1 revenue beat...",
         components=(
             _comp(
@@ -671,7 +671,7 @@ def _make_halt_state() -> HaltState:
 def _normal_kwargs(
     *,
     strategist_view: StrategistView | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     return {
         "strategist_view": strategist_view or _make_strategist_view(),
         "invocation_id": _INVOCATION_ID,
@@ -692,7 +692,7 @@ def _normal_kwargs(
 def _defensive_kwargs(
     *,
     strategist_view: StrategistView | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     kwargs = _normal_kwargs(strategist_view=strategist_view)
     kwargs["halt_state"] = _make_halt_state()
     return kwargs
@@ -706,7 +706,7 @@ def _defensive_kwargs(
 def test_normal_mode_section_ordering() -> None:
     """Normal-mode bundle order: header → tools → portfolio state → brief."""
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     envelope_idx = out.index("=== GUARDRAIL STATE")
@@ -723,7 +723,7 @@ def test_normal_mode_section_ordering() -> None:
 
 def test_normal_mode_starts_with_envelope() -> None:
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     assert out.startswith(
@@ -733,7 +733,7 @@ def test_normal_mode_starts_with_envelope() -> None:
 
 def test_normal_mode_ends_with_brief() -> None:
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     assert out.rstrip().endswith(_SYNTHESIZER_BRIEF.rstrip())
@@ -746,7 +746,7 @@ def test_normal_mode_ends_with_brief() -> None:
 
 def test_normal_mode_tool_reminder_surfaces_both_tools() -> None:
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     tools_idx = out.index("=== AVAILABLE TOOLS ===")
@@ -759,7 +759,7 @@ def test_normal_mode_tool_reminder_surfaces_both_tools() -> None:
 def test_defensive_posture_tool_reminder_surfaces_both_tools() -> None:
     """Strategist still uses validate_guardrail in defensive_posture mode (parent decision (I))."""
     out = assemble_input_bundle_defensive_posture(
-        **_defensive_kwargs(),  # type: ignore[arg-type]
+        **_defensive_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     tools_idx = out.index("=== AVAILABLE TOOLS ===")
@@ -771,7 +771,7 @@ def test_defensive_posture_tool_reminder_surfaces_both_tools() -> None:
 
 def test_defensive_posture_tool_reminder_includes_posture_note() -> None:
     out = assemble_input_bundle_defensive_posture(
-        **_defensive_kwargs(),  # type: ignore[arg-type]
+        **_defensive_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     tools_idx = out.index("=== AVAILABLE TOOLS ===")
@@ -783,7 +783,7 @@ def test_defensive_posture_tool_reminder_includes_posture_note() -> None:
 
 def test_normal_mode_tool_reminder_omits_posture_note() -> None:
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     tools_idx = out.index("=== AVAILABLE TOOLS ===")
@@ -799,7 +799,7 @@ def test_normal_mode_tool_reminder_omits_posture_note() -> None:
 
 def test_defensive_posture_bundle_includes_halt_banner() -> None:
     out = assemble_input_bundle_defensive_posture(
-        **_defensive_kwargs(),  # type: ignore[arg-type]
+        **_defensive_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     assert "** HALT MODE ACTIVE — daily drawdown 2.6% / 2.5% **" in out
@@ -808,7 +808,7 @@ def test_defensive_posture_bundle_includes_halt_banner() -> None:
 
 def test_defensive_posture_section_ordering() -> None:
     out = assemble_input_bundle_defensive_posture(
-        **_defensive_kwargs(),  # type: ignore[arg-type]
+        **_defensive_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     envelope_idx = out.index("=== GUARDRAIL STATE")
@@ -825,7 +825,7 @@ def test_defensive_posture_section_ordering() -> None:
 
 def test_position_record_renders_pnl_absolute_and_percentage() -> None:
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     # Unrealized P/L absolute and percentage are present (5.0% and $8,200 from fixtures)
@@ -835,7 +835,7 @@ def test_position_record_renders_pnl_absolute_and_percentage() -> None:
 
 def test_position_record_renders_position_age_hours() -> None:
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     # Position age 36.4h
@@ -845,7 +845,7 @@ def test_position_record_renders_position_age_hours() -> None:
 def test_position_record_renders_distance_to_target_and_stop_pct() -> None:
     """Distance-to-target and distance-to-stop are computed from current price + bracket legs."""
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     # Current price 862, target 189.00, stop 167.00 — but those are in the
@@ -858,7 +858,7 @@ def test_position_record_renders_distance_to_target_and_stop_pct() -> None:
 def test_position_record_renders_risk_reward_at_current() -> None:
     """R/R at current must be present for positions with both target and stop legs."""
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     # Token "R/R" identifies the risk/reward line
@@ -872,7 +872,7 @@ def test_position_record_renders_risk_reward_at_current() -> None:
 
 def test_thesis_block_renders_summary_and_components() -> None:
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     assert "TH-NVDA-001" in out
@@ -896,7 +896,7 @@ def test_thesis_block_renders_prior_status_from_snapshot() -> None:
         component_health=(),
     )
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
         prior_health_snapshots=(prior_snap,),
     )
@@ -906,7 +906,7 @@ def test_thesis_block_renders_prior_status_from_snapshot() -> None:
 def test_thesis_block_omits_prior_status_when_no_snapshot() -> None:
     """When no prior snapshot is supplied, no Prior-status line is rendered."""
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     assert "Prior status:" not in out
@@ -915,7 +915,7 @@ def test_thesis_block_omits_prior_status_when_no_snapshot() -> None:
 def test_position_without_thesis_renders_pending_marker() -> None:
     view = _make_strategist_view(positions=(_make_position_view(with_thesis=False),))
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(strategist_view=view),  # type: ignore[arg-type]
+        **_normal_kwargs(strategist_view=view),
         sector_label_display=_SECTOR_LABELS,
     )
     assert "Thesis: NONE — pending position" in out
@@ -924,7 +924,7 @@ def test_position_without_thesis_renders_pending_marker() -> None:
 def test_position_without_bracket_renders_inactive_marker() -> None:
     view = _make_strategist_view(positions=(_make_position_view(with_bracket=False),))
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(strategist_view=view),  # type: ignore[arg-type]
+        **_normal_kwargs(strategist_view=view),
         sector_label_display=_SECTOR_LABELS,
     )
     assert "Bracket: not yet activated" in out
@@ -937,7 +937,7 @@ def test_position_without_bracket_renders_inactive_marker() -> None:
 
 def test_per_position_pending_orders_render() -> None:
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     assert "ORD-LIMIT-4" in out
@@ -945,7 +945,7 @@ def test_per_position_pending_orders_render() -> None:
 
 def test_per_position_modification_trail_renders() -> None:
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     assert "BRACKET_MODIFIED" in out
@@ -962,7 +962,7 @@ def test_intra_invocation_changelog_section_present() -> None:
         intra_invocation_changelog=(_make_intra_invocation_changelog_entry(),),
     )
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(strategist_view=view),  # type: ignore[arg-type]
+        **_normal_kwargs(strategist_view=view),
         sector_label_display=_SECTOR_LABELS,
     )
     assert "=== ACTIVITY LOG (intra-invocation) ===" in out
@@ -1001,7 +1001,7 @@ def test_halt_activated_summary_surfaces_drawdown_and_limit() -> None:
     )
     view = _make_strategist_view(intra_invocation_changelog=(entry,))
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(strategist_view=view),  # type: ignore[arg-type]
+        **_normal_kwargs(strategist_view=view),
         sector_label_display=_SECTOR_LABELS,
     )
     assert "daily_drawdown halt activated at drawdown=4.50% limit=4.00%" in out
@@ -1021,7 +1021,7 @@ def test_halt_lifted_summary_surfaces_halt_type_and_drawdown() -> None:
     )
     view = _make_strategist_view(intra_invocation_changelog=(entry,))
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(strategist_view=view),  # type: ignore[arg-type]
+        **_normal_kwargs(strategist_view=view),
         sector_label_display=_SECTOR_LABELS,
     )
     assert "cumulative_drawdown_tier3 halt lifted at drawdown=8.00%" in out
@@ -1042,7 +1042,7 @@ def test_greeks_refresh_failed_summary_surfaces_symbol_and_reason() -> None:
     )
     view = _make_strategist_view(intra_invocation_changelog=(entry,))
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(strategist_view=view),  # type: ignore[arg-type]
+        **_normal_kwargs(strategist_view=view),
         sector_label_display=_SECTOR_LABELS,
     )
     assert "greeks refresh failed: O:AAPL260619C00200000 (iv_fetch_no_row)" in out
@@ -1062,7 +1062,7 @@ def test_emergency_invocation_requested_summary_surfaces_trigger() -> None:
     )
     view = _make_strategist_view(intra_invocation_changelog=(entry,))
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(strategist_view=view),  # type: ignore[arg-type]
+        **_normal_kwargs(strategist_view=view),
         sector_label_display=_SECTOR_LABELS,
     )
     assert "emergency invocation requested: regime_jump — NORMAL → CRISIS" in out
@@ -1074,7 +1074,7 @@ def test_pm_decision_log_section_present() -> None:
         recent_pm_decision_log=(_make_pm_decision_entry(),),
     )
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(strategist_view=view),  # type: ignore[arg-type]
+        **_normal_kwargs(strategist_view=view),
         sector_label_display=_SECTOR_LABELS,
     )
     assert "=== ACTIVITY LOG (recent PM decisions) ===" in out
@@ -1084,7 +1084,7 @@ def test_pm_decision_log_section_present() -> None:
 
 def test_empty_intra_invocation_changelog_renders_none() -> None:
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     intra_idx = out.index("=== ACTIVITY LOG (intra-invocation) ===")
@@ -1095,7 +1095,7 @@ def test_empty_intra_invocation_changelog_renders_none() -> None:
 
 def test_empty_pm_decision_log_renders_none() -> None:
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     pm_idx = out.index("=== ACTIVITY LOG (recent PM decisions) ===")
@@ -1117,7 +1117,7 @@ def test_missing_current_price_raises_value_error_with_ticker_and_position_id() 
     kwargs["current_price_lookup"] = _empty_lookup
     with pytest.raises(ValueError) as excinfo:
         assemble_input_bundle_normal(
-            **kwargs,  # type: ignore[arg-type]
+            **kwargs,
             sector_label_display=_SECTOR_LABELS,
         )
     msg = str(excinfo.value)
@@ -1133,11 +1133,11 @@ def test_missing_current_price_raises_value_error_with_ticker_and_position_id() 
 def test_normal_mode_deterministic() -> None:
     kwargs = _normal_kwargs()
     out_a = assemble_input_bundle_normal(
-        **kwargs,  # type: ignore[arg-type]
+        **kwargs,
         sector_label_display=_SECTOR_LABELS,
     )
     out_b = assemble_input_bundle_normal(
-        **kwargs,  # type: ignore[arg-type]
+        **kwargs,
         sector_label_display=_SECTOR_LABELS,
     )
     assert out_a == out_b
@@ -1146,11 +1146,11 @@ def test_normal_mode_deterministic() -> None:
 def test_defensive_posture_deterministic() -> None:
     kwargs = _defensive_kwargs()
     out_a = assemble_input_bundle_defensive_posture(
-        **kwargs,  # type: ignore[arg-type]
+        **kwargs,
         sector_label_display=_SECTOR_LABELS,
     )
     out_b = assemble_input_bundle_defensive_posture(
-        **kwargs,  # type: ignore[arg-type]
+        **kwargs,
         sector_label_display=_SECTOR_LABELS,
     )
     assert out_a == out_b
@@ -1163,7 +1163,7 @@ def test_defensive_posture_deterministic() -> None:
 
 def test_synthesizer_brief_appears_verbatim() -> None:
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     assert _SYNTHESIZER_BRIEF in out
@@ -1176,7 +1176,7 @@ def test_synthesizer_brief_appears_verbatim() -> None:
 
 def test_portfolio_state_section_renders_aggregate_block() -> None:
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     portfolio_idx = out.index("=== PORTFOLIO STATE ===")
@@ -1218,7 +1218,7 @@ def test_between_invocation_closures_section_present() -> None:
     closure = _make_closure()
     view = _make_strategist_view(between_invocation_closures=(closure,))
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(strategist_view=view),  # type: ignore[arg-type]
+        **_normal_kwargs(strategist_view=view),
         sector_label_display=_SECTOR_LABELS,
     )
     assert "=== ACTIVITY LOG (between-invocation closures) ===" in out
@@ -1229,7 +1229,7 @@ def test_between_invocation_closures_section_present() -> None:
 
 def test_between_invocation_closures_section_empty_renders_none() -> None:
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     header_idx = out.index("=== ACTIVITY LOG (between-invocation closures) ===")
@@ -1241,7 +1241,7 @@ def test_between_invocation_closures_section_empty_renders_none() -> None:
 def test_between_invocation_closures_section_before_intra_log() -> None:
     """The between-invocation block sits between portfolio-state and intra-log."""
     out = assemble_input_bundle_normal(
-        **_normal_kwargs(),  # type: ignore[arg-type]
+        **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
     portfolio_idx = out.index("=== PORTFOLIO STATE ===")

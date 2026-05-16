@@ -6,7 +6,6 @@ but calls ``integrate_ca_activity`` directly (bypassing the
 ``process_unprocessed_fills`` shim) to verify the moved internals compose
 correctly with the new public entry point.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -215,9 +214,9 @@ def _make_open_position(
         ),
     )
     return PositionRecord(
-        position_id=position_id,
-        thesis_id=thesis_id,
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id) if thesis_id else None,
+        bracket_id=BracketId(bracket_id) if bracket_id else None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW - timedelta(hours=2),
@@ -235,9 +234,9 @@ def _make_pending_entry_order(
     bracket_id: str = "brk-1",
 ) -> OrderRecord:
     return OrderRecord(
-        order_id=order_id,
+        order_id=OrderId(order_id),
         position_id=PositionId("pos-1"),
-        bracket_id=bracket_id,
+        bracket_id=BracketId(bracket_id),
         role=OrderRole.ENTRY,
         instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
         direction=OrderDirection.BUY,
@@ -248,7 +247,7 @@ def _make_pending_entry_order(
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
-        alpaca_order_id_chain=(f"alp-{order_id}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
         submission_timestamp=_NOW - timedelta(minutes=15),
         last_update_timestamp=_NOW - timedelta(minutes=15),
         filled_quantity=0.0,

@@ -33,7 +33,6 @@ test asserts is now implemented end-to-end. Three gaps were closed:
    it through to ``OptionsPositionDetails.greeks`` so the four greek values
    round-trip identically.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -41,7 +40,10 @@ from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 
 import pytest
 from sqlalchemy import select
@@ -156,7 +158,7 @@ _PORTFOLIO_VALUE = 100_000.0
 # enforces all fields; these helpers skip validation so tests can inject sparse fixtures.
 
 
-def _bypass_init_PortfolioManagerView(**kwargs):  # noqa: N802
+def _bypass_init_PortfolioManagerView(**kwargs: object) -> PortfolioManagerView:  # noqa: N802
     obj = object.__new__(PortfolioManagerView)
     for k, v in kwargs.items():
         object.__setattr__(obj, k, v)

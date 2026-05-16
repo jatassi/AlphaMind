@@ -5,7 +5,6 @@ Each builder returns a 5-tuple:
 
 The tuple is ready to construct StubPortfolioStateRepository and StubCurrentPriceProvider.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -16,6 +15,7 @@ from alphamind._kernel.ids import (
     AlpacaOrderId,
     BracketId,
     OrderId,
+    PositionId,
     Symbol,
     ThesisId,
 )
@@ -96,6 +96,7 @@ _PHASE1_AT = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
 _NOW = datetime(2025, 6, 1, 9, 30, 0, tzinfo=UTC)
 _ENTRY_AT = datetime(2025, 6, 1, 7, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-e2e-001"
+_DEFAULT_POS_ID = PositionId("POS-001")
 
 # ---------------------------------------------------------------------------
 # Primitive builders (shared across fixtures)
@@ -125,7 +126,7 @@ def _make_cash_ledger(
         reserved_capital_usd=reserved,
         available_buying_power_usd=current_cash,
         margin_held_usd=margin_held,
-        unsettled_proceeds=[],
+        unsettled_proceeds=(),
         cash_pct_of_portfolio=0.0,
         true_deployable_capital_usd=0.0,
         regt_excess_trailing_30d_usd=0.0,
@@ -161,7 +162,7 @@ def _make_pnl_inputs() -> PortfolioPnLInputs:
 
 
 def _make_risk_budget() -> RiskBudgetConsumption:
-    return RiskBudgetConsumption(entries=[])
+    return RiskBudgetConsumption(entries=())
 
 
 def _make_active_risk_parameters() -> ActiveRiskParameterSet:
@@ -170,7 +171,7 @@ def _make_active_risk_parameters() -> ActiveRiskParameterSet:
         transition_state=RegimeTransitionState.STABLE,
         transition_invocations_remaining=0,
         parameter_change_flag=False,
-        entries=[
+        entries=(
             ActiveRiskParameterEntry(
                 rule_id="max_position_size_usd",
                 rule_label="Max position size",
@@ -178,24 +179,24 @@ def _make_active_risk_parameters() -> ActiveRiskParameterSet:
                 unit="USD",
                 regime_multiplier_applied=1.0,
                 base_value=25_000.0,
-            )
-        ],
-        active_overlays=[],
+            ),
+        ),
+        active_overlays=(),
     )
 
 
 def _make_thesis_quality_aggregates(now: datetime = _NOW) -> ThesisQualityAggregate:
     return ThesisQualityAggregate(
         as_of_timestamp=now,
-        resolution_counts_by_window=[],
-        duration_stats_by_window=[],
-        invalidation_timing_stats_by_window=[],
-        signal_hit_rates=[],
-        signal_to_thesis_conversions=[],
-        conviction_calibration=[],
-        conviction_sizing_deviation_by_window=[],
-        performance_attribution=[],
-        alpha_beta_decomposition_by_window=[],
+        resolution_counts_by_window=(),
+        duration_stats_by_window=(),
+        invalidation_timing_stats_by_window=(),
+        signal_hit_rates=(),
+        signal_to_thesis_conversions=(),
+        conviction_calibration=(),
+        conviction_sizing_deviation_by_window=(),
+        performance_attribution=(),
+        alpha_beta_decomposition_by_window=(),
     )
 
 
@@ -217,15 +218,15 @@ def _make_prior_context() -> PriorInvocationContext:
 
 
 def _make_equity_position(
-    position_id: str,
+    position_id: PositionId,
     ticker: str,
     share_count: float,
     cost_per_share: float,
     direction: Direction,
     status: PositionStatus = PositionStatus.OPEN,
     entry_timestamp: datetime = _ENTRY_AT,
-    bracket_id: str | None = None,
-    thesis_id: str | None = None,
+    bracket_id: BracketId | None = None,
+    thesis_id: ThesisId | None = None,
 ) -> PositionRecord:
     is_short = direction == Direction.SHORT
     equity = EquityPositionDetails(
@@ -265,7 +266,7 @@ def _make_equity_position(
     )
 
 
-def _make_bracket(bracket_id: str, position_id: str) -> BracketRecord:
+def _make_bracket(bracket_id: BracketId, position_id: PositionId) -> BracketRecord:
     stop_leg = BracketLeg(
         leg_id=f"{bracket_id}-stop",
         leg_type=BracketLegType.PRICE_STOP,
@@ -298,8 +299,8 @@ def _make_bracket(bracket_id: str, position_id: str) -> BracketRecord:
 
 
 def _make_pending_equity_order(
-    order_id: str,
-    position_id: str,
+    order_id: OrderId,
+    position_id: PositionId,
     ticker: str,
     quantity: float,
     limit_price: float,
@@ -319,7 +320,7 @@ def _make_pending_equity_order(
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
-        alpaca_order_id_chain=(f"alp-{order_id}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
         submission_timestamp=submission_timestamp,
         last_update_timestamp=submission_timestamp,
         filled_quantity=0.0,
@@ -333,8 +334,8 @@ def _make_pending_equity_order(
 
 
 def _make_thesis(
-    thesis_id: str,
-    position_id: str,
+    thesis_id: ThesisId,
+    position_id: PositionId,
     now: datetime = _NOW,
 ) -> ThesisRecord:
     entry_component = ThesisComponent(
@@ -394,7 +395,7 @@ def _make_thesis(
 def _make_pm_decision_log_entry(
     entry_id: str,
     invocation_id: str = _INV_ID,
-    position_id: str | None = None,
+    position_id: PositionId | None = None,
     timestamp: datetime = _NOW,
 ) -> ActivityLogEntry:
     detail = PMDecisionDetail(
@@ -422,7 +423,7 @@ def _make_pm_decision_log_entry(
 def _make_position_opened_entry(
     entry_id: str,
     invocation_id: str = _INV_ID,
-    position_id: str = "POS-001",
+    position_id: PositionId = _DEFAULT_POS_ID,
     ticker: str = "NVDA",
     timestamp: datetime = _NOW,
 ) -> ActivityLogEntry:
@@ -471,7 +472,7 @@ def _make_stale_quote(ticker: str, now: datetime = _NOW) -> PriceQuote:
 
 
 def _make_options_position(
-    position_id: str,
+    position_id: PositionId,
     underlying_ticker: str,
     contract_type: OptionContractType,
     delta: float,
@@ -593,7 +594,7 @@ def build_multi_position_snapshot_inputs() -> tuple[
         NVDA/AMD → tech  JPM → financials  AAPL → tech
     """
     nvda = _make_equity_position(
-        "POS-NVDA",
+        PositionId("POS-NVDA"),
         "NVDA",
         100.0,
         500.0,
@@ -602,7 +603,7 @@ def build_multi_position_snapshot_inputs() -> tuple[
         thesis_id=ThesisId("THESIS-NVDA"),
     )
     amd = _make_equity_position(
-        "POS-AMD",
+        PositionId("POS-AMD"),
         "AMD",
         250.0,
         120.0,
@@ -611,7 +612,7 @@ def build_multi_position_snapshot_inputs() -> tuple[
         thesis_id=ThesisId("THESIS-AMD"),
     )
     jpm = _make_equity_position(
-        "POS-JPM",
+        PositionId("POS-JPM"),
         "JPM",
         100.0,
         200.0,
@@ -620,7 +621,7 @@ def build_multi_position_snapshot_inputs() -> tuple[
         thesis_id=ThesisId("THESIS-JPM"),
     )
     aapl_pending = _make_equity_position(
-        "POS-AAPL",
+        PositionId("POS-AAPL"),
         "AAPL",
         50.0,
         180.0,
@@ -630,24 +631,30 @@ def build_multi_position_snapshot_inputs() -> tuple[
     )
 
     brackets = (
-        _make_bracket("BRK-NVDA", "POS-NVDA"),
-        _make_bracket("BRK-AMD", "POS-AMD"),
-        _make_bracket("BRK-JPM", "POS-JPM"),
+        _make_bracket(BracketId("BRK-NVDA"), PositionId("POS-NVDA")),
+        _make_bracket(BracketId("BRK-AMD"), PositionId("POS-AMD")),
+        _make_bracket(BracketId("BRK-JPM"), PositionId("POS-JPM")),
     )
 
-    aapl_order = _make_pending_equity_order("ORD-AAPL", "POS-AAPL", "AAPL", 50.0, 180.0, _ENTRY_AT)
+    aapl_order = _make_pending_equity_order(
+        OrderId("ORD-AAPL"), PositionId("POS-AAPL"), "AAPL", 50.0, 180.0, _ENTRY_AT
+    )
 
     theses = (
-        _make_thesis("THESIS-NVDA", "POS-NVDA"),
-        _make_thesis("THESIS-AMD", "POS-AMD"),
-        _make_thesis("THESIS-JPM", "POS-JPM"),
+        _make_thesis(ThesisId("THESIS-NVDA"), PositionId("POS-NVDA")),
+        _make_thesis(ThesisId("THESIS-AMD"), PositionId("POS-AMD")),
+        _make_thesis(ThesisId("THESIS-JPM"), PositionId("POS-JPM")),
     )
 
-    changelog_entry = _make_pm_decision_log_entry("entry-chg-001", _INV_ID, "POS-NVDA")
-    pm_log_entry = _make_pm_decision_log_entry("entry-pm-001", _INV_ID, "POS-NVDA")
+    changelog_entry = _make_pm_decision_log_entry("entry-chg-001", _INV_ID, PositionId("POS-NVDA"))
+    pm_log_entry = _make_pm_decision_log_entry("entry-pm-001", _INV_ID, PositionId("POS-NVDA"))
 
-    pos_opened_nvda = _make_position_opened_entry("entry-opened-NVDA", _INV_ID, "POS-NVDA", "NVDA")
-    pos_opened_amd = _make_position_opened_entry("entry-opened-AMD", _INV_ID, "POS-AMD", "AMD")
+    pos_opened_nvda = _make_position_opened_entry(
+        "entry-opened-NVDA", _INV_ID, PositionId("POS-NVDA"), "NVDA"
+    )
+    pos_opened_amd = _make_position_opened_entry(
+        "entry-opened-AMD", _INV_ID, PositionId("POS-AMD"), "AMD"
+    )
 
     fixture = _make_base_fixture(
         open_positions=(nvda, amd, jpm),
@@ -690,8 +697,12 @@ def build_options_position_snapshot_inputs() -> tuple[
 
     Tests directional-bucketing behavior from story 05c.
     """
-    nvda_call = _make_options_position("OPT-NVDA-CALL", "NVDA", OptionContractType.CALL, delta=0.6)
-    tsla_put = _make_options_position("OPT-TSLA-PUT", "TSLA", OptionContractType.PUT, delta=-0.4)
+    nvda_call = _make_options_position(
+        PositionId("OPT-NVDA-CALL"), "NVDA", OptionContractType.CALL, delta=0.6
+    )
+    tsla_put = _make_options_position(
+        PositionId("OPT-TSLA-PUT"), "TSLA", OptionContractType.PUT, delta=-0.4
+    )
 
     fixture = _make_base_fixture(
         open_positions=(nvda_call, tsla_put),
@@ -710,8 +721,8 @@ def build_stale_pricing_snapshot_inputs() -> tuple[
     RepositoryFixture, dict[str, PriceQuote], SectorResolver, PortfolioStateConfig, datetime
 ]:
     """Two open positions; all price quotes are 60 minutes old (> 15-min threshold)."""
-    nvda = _make_equity_position("POS-NVDA-STALE", "NVDA", 100.0, 500.0, Direction.LONG)
-    jpm = _make_equity_position("POS-JPM-STALE", "JPM", 50.0, 200.0, Direction.LONG)
+    nvda = _make_equity_position(PositionId("POS-NVDA-STALE"), "NVDA", 100.0, 500.0, Direction.LONG)
+    jpm = _make_equity_position(PositionId("POS-JPM-STALE"), "JPM", 50.0, 200.0, Direction.LONG)
 
     fixture = _make_base_fixture(
         open_positions=(nvda, jpm),
@@ -732,8 +743,10 @@ def build_unknown_ticker_snapshot_inputs() -> tuple[
     RepositoryFixture, dict[str, PriceQuote], SectorResolver, PortfolioStateConfig, datetime
 ]:
     """Two positions; price provider omits TICKER-X entirely (unknown ticker)."""
-    known = _make_equity_position("POS-KNOWN", "NVDA", 100.0, 500.0, Direction.LONG)
-    unknown = _make_equity_position("POS-UNKNOWN", "TICKER-X", 50.0, 100.0, Direction.LONG)
+    known = _make_equity_position(PositionId("POS-KNOWN"), "NVDA", 100.0, 500.0, Direction.LONG)
+    unknown = _make_equity_position(
+        PositionId("POS-UNKNOWN"), "TICKER-X", 50.0, 100.0, Direction.LONG
+    )
 
     fixture = _make_base_fixture(
         open_positions=(known, unknown),

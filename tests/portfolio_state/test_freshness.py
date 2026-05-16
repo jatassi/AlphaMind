@@ -1,5 +1,4 @@
 """Tests for the freshness contract (story 08)."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -9,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from alphamind._kernel.ids import (
+    PositionId,
     Symbol,
 )
 from alphamind._kernel.money import money
@@ -87,7 +87,7 @@ def _make_open_position(position_id: str = "POS-001", ticker: str = "NVDA") -> P
         fees=1.0,
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -125,7 +125,7 @@ def _make_pending_position(position_id: str = "PEND-001", ticker: str = "AAPL") 
         margin_held_usd=None,
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.PENDING,
@@ -160,7 +160,7 @@ def _make_cash_ledger() -> CashLedger:
         reserved_capital_usd=0.0,
         available_buying_power_usd=10000.0,
         margin_held_usd=0.0,
-        unsettled_proceeds=[],
+        unsettled_proceeds=(),
         cash_pct_of_portfolio=0.0,
         true_deployable_capital_usd=0.0,
         regt_excess_trailing_30d_usd=0.0,
@@ -184,7 +184,7 @@ def _make_drawdown_state() -> DrawdownState:
 
 
 def _make_risk_budget() -> RiskBudgetConsumption:
-    return RiskBudgetConsumption(entries=[])
+    return RiskBudgetConsumption(entries=())
 
 
 def _make_active_risk_parameters() -> ActiveRiskParameterSet:
@@ -193,8 +193,8 @@ def _make_active_risk_parameters() -> ActiveRiskParameterSet:
         transition_state=RegimeTransitionState.STABLE,
         transition_invocations_remaining=0,
         parameter_change_flag=False,
-        entries=[],
-        active_overlays=[],
+        entries=(),
+        active_overlays=(),
     )
 
 
@@ -257,15 +257,15 @@ def _make_snapshot(
         position_modification_trail={},
         thesis_quality_aggregates=ThesisQualityAggregate(
             as_of_timestamp=_NOW,
-            resolution_counts_by_window=[],
-            duration_stats_by_window=[],
-            invalidation_timing_stats_by_window=[],
-            signal_hit_rates=[],
-            signal_to_thesis_conversions=[],
-            conviction_calibration=[],
-            conviction_sizing_deviation_by_window=[],
-            performance_attribution=[],
-            alpha_beta_decomposition_by_window=[],
+            resolution_counts_by_window=(),
+            duration_stats_by_window=(),
+            invalidation_timing_stats_by_window=(),
+            signal_hit_rates=(),
+            signal_to_thesis_conversions=(),
+            conviction_calibration=(),
+            conviction_sizing_deviation_by_window=(),
+            performance_attribution=(),
+            alpha_beta_decomposition_by_window=(),
         ),
         brackets=(),
     )
@@ -805,8 +805,8 @@ def test_assembled_snapshot_is_frozen() -> None:
     freshness = compute_snapshot_freshness(snapshot, fetch_outcomes=outcomes, config=_make_config())
     assembled = AssembledSnapshot(snapshot=snapshot, freshness=freshness, price_map={})
     with pytest.raises(FrozenInstanceError):
-        assembled.snapshot = _make_snapshot()
+        assembled.snapshot = _make_snapshot()  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
-        assembled.freshness = freshness
+        assembled.freshness = freshness  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
-        assembled.price_map = {}
+        assembled.price_map = {}  # type: ignore[misc]

@@ -6,7 +6,6 @@ issued from a guardrail trigger. Mirrors the PM-side
 ``submit_envelope_mcp`` envelope-level validation + per-command writeback
 shape but operates on engine-originated envelopes.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -252,9 +251,9 @@ def _open_position(
         ),
     )
     return PositionRecord(
-        position_id=position_id,
-        thesis_id=thesis_id,
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id),
+        bracket_id=BracketId(bracket_id),
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW - timedelta(hours=2),
@@ -575,8 +574,8 @@ async def test_validates_command_id_consistency_with_envelope(
     # carries command_id with a *different* session, so the bijection is
     # violated.
     bad_envelope = _engine_envelope(
-        envelope_id="MON.session-abc.42",
-        commands=(_engine_close_command(command_id="MON.session-OTHER.42.0"),),
+        envelope_id=EnvelopeId("MON.session-abc.42"),
+        commands=(_engine_close_command(command_id=CommandId("MON.session-OTHER.42.0")),),
     )
 
     ctx, handle = await _open_handle(factory)
@@ -656,11 +655,11 @@ async def test_cascade_id_threads_through_to_activity_log(
     state = build_initial_submit_engine_envelope_state(monitor_session_id=_MONITOR_SESSION)
     cascade_id = "cascade-margin-001"
     env1 = _engine_envelope(
-        envelope_id="MON.session-abc.42",
+        envelope_id=EnvelopeId("MON.session-abc.42"),
         trigger_record=_trigger_record(cascade_id=cascade_id),
     )
     env2 = _engine_envelope(
-        envelope_id="MON.session-abc.43",
+        envelope_id=EnvelopeId("MON.session-abc.43"),
         trigger_record=_trigger_record(cascade_id=cascade_id),
         commands=(_engine_close_command(position_id=PositionId("POS-NVDA-002")),),
     )
@@ -759,7 +758,7 @@ async def test_state_session_id_must_match_envelope_session(
     await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
 
     state = build_initial_submit_engine_envelope_state(monitor_session_id="session-1")
-    envelope_other_session = _engine_envelope(envelope_id="MON.session-2.42")
+    envelope_other_session = _engine_envelope(envelope_id=EnvelopeId("MON.session-2.42"))
 
     ctx, handle = await _open_handle(factory)
     with pytest.raises(ValueError):

@@ -1,10 +1,10 @@
 """Tests for thesis records (story 03b)."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -100,12 +100,12 @@ def test_key_assumption_valid_resolved() -> None:
 def test_key_assumption_frozen() -> None:
     ka = KeyAssumption(text="test", outcome=None)
     with pytest.raises(FrozenInstanceError):
-        ka.text = "changed"
+        ka.text = "changed"  # type: ignore[misc]
 
 
 def test_key_assumption_requires_text() -> None:
     with pytest.raises((ValueError, TypeError)):
-        KeyAssumption(outcome=None)
+        KeyAssumption(outcome=None)  # type: ignore[call-arg]
 
 
 def test_supporting_signal_valid() -> None:
@@ -116,12 +116,12 @@ def test_supporting_signal_valid() -> None:
 
 def test_supporting_signal_requires_name() -> None:
     with pytest.raises((ValueError, TypeError)):
-        SupportingSignal(status="PRESENT")
+        SupportingSignal(status="PRESENT")  # type: ignore[call-arg,arg-type]
 
 
 def test_supporting_signal_requires_status() -> None:
     with pytest.raises((ValueError, TypeError)):
-        SupportingSignal(name="earnings revision")
+        SupportingSignal(name="earnings revision")  # type: ignore[call-arg]
 
 
 def _make_component(
@@ -185,7 +185,7 @@ def _make_thesis_record(**overrides: object) -> ThesisRecord:
     Default time_expectation_hours=24.0 with expected_resolution_at=NOW+24h
     so the cross-field consistency validator passes without needing overrides.
     """
-    base: dict[str, object] = {
+    base: dict[str, Any] = {
         "thesis_id": "thesis-1",
         "position_id": "pos-1",
         "summary": "Long AAPL on momentum breakout.",
@@ -223,19 +223,19 @@ def test_thesis_component_with_bracket_leg() -> None:
 def test_thesis_component_frozen() -> None:
     comp = _make_component()
     with pytest.raises(FrozenInstanceError):
-        comp.narrative = "changed"
+        comp.narrative = "changed"  # type: ignore[misc]
 
 
 def test_thesis_component_requires_component_id() -> None:
     with pytest.raises((ValueError, TypeError)):
-        ThesisComponent(
+        ThesisComponent(  # type: ignore[call-arg]
             thesis_id=ThesisId("t1"),
-            component_type="ENTRY_RATIONALE",
+            component_type="ENTRY_RATIONALE",  # type: ignore[arg-type]
             linked_bracket_leg_type=None,
             instrument_reference="AAPL",
             narrative="x",
-            key_assumptions=[],
-            generation_timestamp=NOW.isoformat(),
+            key_assumptions=(),
+            generation_timestamp=NOW.isoformat(),  # type: ignore[arg-type]
             resolution_outcome=None,
             resolution_notes=None,
         )
@@ -251,7 +251,7 @@ def test_thesis_record_valid_active() -> None:
 def test_thesis_record_frozen() -> None:
     rec = _make_thesis_record()
     with pytest.raises(FrozenInstanceError):
-        rec.summary = "changed"
+        rec.summary = "changed"  # type: ignore[misc]
 
 
 def test_active_thesis_empty_components_rejected() -> None:
@@ -345,7 +345,7 @@ def test_active_with_resolution_pnl_rejected() -> None:
 
 
 def _make_resolved_thesis(**overrides: object) -> ThesisRecord:
-    base: dict[str, object] = {
+    base: dict[str, Any] = {
         "status": ThesisRecordStatus.RESOLVED,
         "components": _make_full_components(resolved=True),
         "resolution_timestamp": NOW,
@@ -535,10 +535,10 @@ def test_recent_thesis_resolution_invalidated_with_post_mortem() -> None:
 
 def test_recent_thesis_resolution_requires_thesis_id() -> None:
     with pytest.raises((ValueError, TypeError)):
-        RecentThesisResolution(
+        RecentThesisResolution(  # type: ignore[call-arg]
             position_id=PositionId("pos-1"),
-            resolution_category="VALIDATED",
-            component_outcomes=[],
+            resolution_category="VALIDATED",  # type: ignore[arg-type]
+            component_outcomes=(),
             resolution_pnl_usd=0.0,
             active_duration_hours=1.0,
             expected_duration_hours=24.0,

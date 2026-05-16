@@ -1,10 +1,10 @@
 """Tests for thesis quality aggregate records (story 03f)."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -95,8 +95,8 @@ class TestAttributionDimension:
 
 
 class TestResolutionWindowCounts:
-    def _valid(self, **overrides: object) -> dict[str, object]:
-        base: dict[str, object] = {
+    def _valid(self, **overrides: object) -> dict[str, Any]:
+        base: dict[str, Any] = {
             "window": TrailingWindow.FIVE_DAYS,
             "total_resolutions": 10,
             "validated": 4,
@@ -382,8 +382,8 @@ class TestConvictionCalibrationEntry:
 
 
 class TestConvictionSizingDeviation:
-    def _valid(self, **overrides: object) -> dict[str, object]:
-        base: dict[str, object] = {
+    def _valid(self, **overrides: object) -> dict[str, Any]:
+        base: dict[str, Any] = {
             "window": TrailingWindow.FIVE_DAYS,
             "total_proposals": 10,
             "pm_sized_above_advisory_count": 3,
@@ -486,8 +486,8 @@ class TestPerformanceAttributionEntry:
 
 
 class TestAlphaBetaDecomposition:
-    def _valid(self, **overrides: object) -> dict[str, object]:
-        base: dict[str, object] = {
+    def _valid(self, **overrides: object) -> dict[str, Any]:
+        base: dict[str, Any] = {
             "window": TrailingWindow.FIVE_DAYS,
             "total_realized_pnl_usd": 1000.0,
             "market_component_usd": 400.0,

@@ -1,11 +1,11 @@
 """Tests for order and bracket records (story 03c)."""
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
 import dataclasses
 from dataclasses import FrozenInstanceError
 from datetime import UTC, date, datetime
+from typing import Any
 
 import pytest
 
@@ -75,7 +75,7 @@ def _market_price_params() -> PriceParameters:
 
 def _make_order(**overrides: object) -> OrderRecord:
     """Build a valid MARKET OrderRecord, with optional overrides."""
-    base: dict[str, object] = {
+    base: dict[str, Any] = {
         "order_id": "ord-1",
         "position_id": None,
         "bracket_id": "brk-1",
@@ -142,7 +142,7 @@ def _make_modification() -> BracketLegModification:
 
 
 def _make_bracket(**overrides: object) -> BracketRecord:
-    base: dict[str, object] = {
+    base: dict[str, Any] = {
         "bracket_id": "brk-1",
         "position_id": "pos-1",
         "status": BracketStatus.PENDING_ENTRY,
@@ -369,7 +369,7 @@ class TestInstrumentSpecDiscriminator:
 
     def test_equity_without_ticker_fails(self) -> None:
         with pytest.raises((ValueError, TypeError)):
-            EquityInstrumentSpec(instrument_type="EQUITY")
+            EquityInstrumentSpec(instrument_type="EQUITY")  # type: ignore[call-arg]
 
     def test_strategy_with_empty_legs_fails(self) -> None:
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
@@ -377,7 +377,7 @@ class TestInstrumentSpecDiscriminator:
 
     def test_strategy_with_none_legs_fails(self) -> None:
         with pytest.raises((ValueError, TypeError)):
-            StrategyInstrumentSpec(instrument_type="STRATEGY")
+            StrategyInstrumentSpec(instrument_type="STRATEGY")  # type: ignore[call-arg]
 
     def test_bogus_discriminator_no_longer_validated_at_construction(self) -> None:
         """Post-Pydantic dataclass: union discriminator parsing now lives in the
@@ -786,7 +786,7 @@ class TestOrderRecordFrozen:
     def test_order_record_is_frozen(self) -> None:
         order = _make_order()
         with pytest.raises((AttributeError, ValueError, TypeError)):
-            order.order_id = OrderId("changed")
+            order.order_id = OrderId("changed")  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -798,7 +798,7 @@ class TestBracketRecordFrozen:
     def test_bracket_record_is_frozen(self) -> None:
         bracket = _make_bracket()
         with pytest.raises((AttributeError, ValueError, TypeError)):
-            bracket.bracket_id = BracketId("changed")
+            bracket.bracket_id = BracketId("changed")  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -888,7 +888,7 @@ class TestPriceTrigger:
             underlying_ticker=Symbol("NVDA"), threshold_usd=10.0, direction="GTE"
         )
         with pytest.raises((AttributeError, ValueError, TypeError)):
-            trigger.threshold_usd = 20.0
+            trigger.threshold_usd = 20.0  # type: ignore[misc]
 
 
 class TestTimeTrigger:
@@ -1188,7 +1188,7 @@ class TestPLAnchorSpec:
     def test_frozen(self) -> None:
         spec = PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=18.50)
         with pytest.raises((AttributeError, ValueError, TypeError)):
-            spec.pct = 0.50
+            spec.pct = 0.50  # type: ignore[misc]
 
     def test_round_trip(self) -> None:
         spec = PLAnchorSpec(

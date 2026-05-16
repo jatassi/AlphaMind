@@ -11,7 +11,6 @@ and secondary-deferred), A8 cumulative drawdown tier 2, A10 regime-jump
 emergency invocation + regime-transition breaches (cross-feature), A11
 synchronized HTB buy-in (verifies *absence* of trigger and halt).
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -19,6 +18,7 @@ import pathlib
 from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -482,7 +482,7 @@ def test_a8_cumulative_drawdown_tier_2_overrides() -> None:
     assert gross.value == 60.0
     assert "cumulative_drawdown_tier_2" in post_params.active_overlays
     with pytest.raises(FrozenInstanceError):
-        post_params.active_overlays = ()
+        post_params.active_overlays = ()  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -541,7 +541,7 @@ def _a10_positions() -> tuple[PositionView, ...]:
     )
 
 
-def _a10_risk_budget_entries() -> list[dict[str, object]]:
+def _a10_risk_budget_entries() -> list[dict[str, Any]]:
     """A10 risk budget: net_long 65%, gross 118%, options_delta 45%."""
     return [
         {"rule_id": "net_long_pct", "current_value": 65.0, "limit_value": 70.0},

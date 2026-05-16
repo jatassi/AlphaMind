@@ -11,7 +11,6 @@ but exercise the wedge-specific behaviour: per-fill attribution presence,
 quarantined-fill nullability, deterministic batched-fill threading, and the
 required-MarketInputs surface.
 """
-# mypy: disable-error-code="arg-type,call-arg,dict-item,misc,no-untyped-def,no-untyped-call,unused-ignore,no-any-return,var-annotated"
 
 from __future__ import annotations
 
@@ -25,6 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import (
     AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
     Symbol,
 )
 from alphamind._kernel.money import money, price, signed_money
@@ -196,9 +198,9 @@ def _make_pending_entry_order(
     position directly (skipping the bracket lookup that the entry-fill
     happy-path normally walks)."""
     return OrderRecord(
-        order_id=order_id,
-        position_id=position_id,
-        bracket_id=_BRACKET_ID,
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id),
+        bracket_id=BracketId(_BRACKET_ID),
         role=OrderRole.ENTRY,
         instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
         direction=direction,
@@ -209,7 +211,7 @@ def _make_pending_entry_order(
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
         alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
-        alpaca_order_id_chain=(f"alp-{order_id}",),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
         submission_timestamp=_NOW - timedelta(minutes=15),
         last_update_timestamp=_NOW - timedelta(minutes=15),
         filled_quantity=0.0,
@@ -235,7 +237,7 @@ def _make_pending_position(
         average_cost_basis_per_share=0.0,
     )
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.PENDING,
