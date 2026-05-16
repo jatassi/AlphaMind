@@ -1,6 +1,6 @@
 {
-  "invocation_id": "20260509T201237Z-verify-strategist-emergency",
-  "timestamp": "2026-05-09T20:14:52Z",
+  "invocation_id": "20260516T201118Z-verify-strategist-emergency",
+  "timestamp": "2026-05-16T20:13:42Z",
   "mode": "normal",
   "position_assessments": [
     {
@@ -19,26 +19,55 @@
         "limit_price": null
       },
       "exposure_impact": {
-        "sector_delta_adjusted_change": -1.8,
-        "net_directional_impact": -1.8
+        "sector_delta_adjusted_change": "-1.8",
+        "net_directional_impact": "-1.8"
       },
-      "guardrail_validation_result": {
-        "overall": "FAIL",
-        "per_rule": [],
-        "delta_adjusted_exposure": null,
-        "greeks": null,
-        "cumulative_impact_note": "validate_guardrail tool rejected the input twice with 'CLOSE requires existing_position_id'; the parameter is not exposed in the tool's published schema. Recommendation grounded in explicit header arithmetic: 4.5% current → 2.7% projected (5 shares − 2 shares × $862 = $2,586 of $100,000 portfolio), curing the 1.0% overage with 0.8% buffer below the 3.5% cap. PM gate must re-run validation with proper plumbing before submission.",
-        "checked_at": "2026-05-09T20:14:18Z"
-      },
-      "remedy_flag": "POS-NVDA-regime-transition-overage-1.0pct",
-      "status_rationale": "Two distinct hits against the entry-thesis component set in this invocation. (1) Synthesizer flags directly that the NVDA Q1 earnings catalyst the thesis cites within a 48h window does not exist in the 72h scheduled event calendar [SA-TECH-3] — the operative near-term binary is the Trump-China summit May 13 [SA-TECH-4, QR-2] with 26% residual cancellation probability creating asymmetric downside on export-control-sensitive names. (2) The 'sector momentum persists' key assumption holds at the sector level (14:2 advance/decline, AMD/MU/INTC/QCOM 52w highs per [SA-TECH-1]) but NVDA is diverging from peers — AVGO:NVDA 3.952σ [CR-53], MRVL:NVDA 4.60σ [CR-242], MU 20-day +77.56% vs NVDA +14.09% [AR-3]. The thesis support legs are weakening without a specific falsifier — at-risk, not invalidated.",
-      "action_rationale": "Reduce 2 shares to cure the regime-transition breach (4.5% → 2.7%) while preserving residual exposure to the Trump-China summit binary, which is directionally constructive at the 74% scheduled probability and aligned with the [AR-5] rotation-into-growth signal. Full close would over-correct given the at-risk (not invalidated) status. Quantity sized to land below the 3.5% cap with buffer rather than grazing the limit.",
-      "reduce_rationale": "Partial because the rotation tail [AR-5] still supports semis/growth and the May 13 binary fires inside 72 hours. Quantity (2 shares = $1,724 ≈ 1.8% of portfolio) cures the breach with 0.8% headroom. A 1-share reduction lands at 3.6%, still over the cap.",
+      "guardrail_validation_result": null,
+      "remedy_flag": "POS-NVDA-normal-regime-overage",
+      "status_rationale": "[AR-7] documents NVDA -4.42% on 1.18x volume — pre-event mean-reversion ahead of the May 20 print, not a flush on volume. [SA-TECH-2] semis advance/decline at 1:15 directly contradicts the THESIS-POS-NVDA key assumption 'Sector momentum persists'; the intra-semis divergence corroborated by MRVL:NVDA 3.34σ [CR-183] and MCHP:NVDA 3.43σ [CR-153] confirms NVDA's outperformance is concentrated within semis rather than sector-wide. The May 20 catalyst leg in [SA-TECH-3] (Q1 earnings + Jensen at Beijing trade summit) remains intact, so the thesis is not invalidated — but the AR-7 verdict that the gap is more likely to compress via NVDA mean-reversion than via broad tech catching up means at-risk is the honest classification. Status moves on-track → at-risk on signal grounds, not on the 0.0% P/L.",
+      "action_rationale": "Reduce by 2 of 5 shares. Two drivers converge on the same quantity: (1) BREACH-1 cure — the position must move under the 3.5% normal-regime per-position limit; reducing 2 shares takes the position from 4.5% → 2.7%, curing the 1.0% overage with 0.8% headroom rather than grazing the limit at 3.6% (1-share reduction). (2) At-risk classification supports sizing-proportional trim rather than full close — the May 20 catalyst is 4 days out and remains an intact thesis leg per [SA-TECH-3]. Full close would discard residual catalyst exposure the at-risk-not-invalidated status does not warrant forfeiting.",
+      "reduce_rationale": "Quantity 2 (40% of position) sized to the breach-cure plus headroom requirement, not to a precise weakening fraction. The semis-breadth contradiction is structural (1:15 A/D), not name-specific; the May 20 catalyst leg is undamaged. A 40% trim preserves the catalyst leg while removing concentration risk against the intra-semis divergence — consistent with AR-7's read that the NVDA/META gap compresses via NVDA mean-reversion.",
       "add_conviction_justification": null,
       "adjustment_rationale": null,
-      "remedy_rationale": "Header overage is 1.0% of portfolio against the 3.5% normal-regime concentration cap. 2 shares brings exposure to 2.7%, curing the breach with deliberate buffer rather than threshold-grazing. The choice of partial-reduce over full-close reflects the at-risk classification — the residual catalyst leg (May 13 summit) is still live and directionally aligned with the dominant rotation frame.",
-      "cross_position_observations": "POS-AAPL also tech but on different thesis leg (services-margin); the AAPL:semis correlation breakdowns [CR-16, CR-17, CR-20] mean NVDA weakness here doesn't transmit directly to AAPL via correlation. No semis stack overlap to compound the trim.",
-      "component_health": []
+      "remedy_rationale": "BREACH-1: POS-NVDA 4.5% vs 3.5% normal-regime limit, overage 1.0%. Reducing 2 shares cures the breach to 2.7% with 0.8% headroom. Alternative single-share reduction (4.5% → 3.6%) would still breach by 0.1% and is rejected. Alternative full close would over-correct given at-risk-not-invalidated status and the intact May 20 catalyst. Note: validate_guardrail tool returned a contract error (CLOSE action required an existing_position_id field absent from the tool's published schema); proceeding on transparent arithmetic — sector/directional/gross headroom all show 20% room, so secondary breach risk is structurally absent. PM should be aware of the tool gap.",
+      "cross_position_observations": "Intra-tech bifurcation flagged in [SA-TECH-1] (cybersecurity leadership) vs [SA-TECH-2] (semis hardware deterioration) implicates POS-AAPL's 'Sector momentum persists' assumption asymmetrically — AAPL is neither in the cybersecurity leader cluster nor in the hardware-semis laggard cluster, so the contradiction is less direct but bears flagging on SA-4.",
+      "component_health": [
+        {
+          "component_id": "entry_rationale",
+          "supporting_signals": [
+            {
+              "name": "semis_sector_breadth",
+              "status": "REVERSED"
+            },
+            {
+              "name": "nvda_relative_strength",
+              "status": "WEAKENED"
+            },
+            {
+              "name": "may20_earnings_catalyst",
+              "status": "PRESENT"
+            }
+          ]
+        },
+        {
+          "component_id": "target_rationale",
+          "supporting_signals": [
+            {
+              "name": "constructive_technicals",
+              "status": "WEAKENED"
+            }
+          ]
+        },
+        {
+          "component_id": "invalidation_rationale",
+          "supporting_signals": [
+            {
+              "name": "swing_low_intact",
+              "status": "PRESENT"
+            }
+          ]
+        }
+      ]
     },
     {
       "assessment_id": "SA-2",
@@ -46,29 +75,53 @@
       "thesis_id": "THESIS-POS-JPM",
       "underlying": "JPM",
       "sector": "financials",
-      "thesis_status": "at-risk",
+      "thesis_status": "on-track",
       "prior_status": "on-track",
-      "recommended_action": "reduce",
-      "action_parameters": {
-        "action": "reduce",
-        "quantity": 8.0,
-        "order_type": "market",
-        "limit_price": null
-      },
-      "exposure_impact": {
-        "sector_delta_adjusted_change": -1.6,
-        "net_directional_impact": -1.6
-      },
+      "recommended_action": "hold",
+      "action_parameters": null,
+      "exposure_impact": null,
       "guardrail_validation_result": null,
       "remedy_flag": null,
-      "status_rationale": "Direct contradiction between entry thesis and current synthesizer frame. Thesis is 'long JPM on financials sector rotation'; [AR-5] identifies financials as the primary rotation LOSER in a moderate-confidence cross-sector signal anchored on 330+ correlation breakdowns, the inverted 2s/10s curve [AR-2], and structural NIM compression. [SA-FIN-2] records 13 declines vs 4 advances with near-universal bearish MACD. C:JPM at 6.30σ [CR-105] is the highest-magnitude correlation breakdown in the entire universe — extreme intra-financials divergence on the held name's pair partner. The 'sector momentum persists' key assumption is contradicted, not merely weakened. The one residual support is [SA-FIN-4]: a hot CPI print May 12 is constructive for money-center NIM, and JPM is money-center; this is a genuine asymmetric tail rather than rationalization. At-risk rather than invalidated because that tail exists with a binary in 41–48h; closing fully forecloses it.",
-      "action_rationale": "Reduce 8 of 15 shares ($1,600 ≈ 1.6% of portfolio) to right-size against the thesis-component contradiction while preserving the hot-CPI tail leg. Holding full size on a directly-contradicted thesis would be sunk_cost_persistence — the entry premise (rotation INTO financials) is opposite to the dominant frame. Closing fully discards the [SA-FIN-4] tail; the partial reduction matches the at-risk-with-residual-support classification.",
-      "reduce_rationale": "Sized to retain enough exposure to participate in a hot-CPI repricing (the lower-probability but JPM-supportive scenario) without carrying full thesis-contradicted size into the soft-print case, which [QR-1] flags as the larger and more disruptive repricing. Old size 3.0% → new size ~1.4%, halving the position to reflect halved thesis support.",
+      "status_rationale": "[SA-FIN-1] documents financials bifurcation with leaders (MET, PRU, GS, SCHW, V) and laggards (TFC, USB, BAC, WFC) — JPM appears in neither cluster, consistent with money-center bank positioning between deposit-funded regional weakness (NIM compression read from [AR-5]) and non-bank leadership. JPM:MA 3.08σ [CR-131] breakdown is driven by MA-specific dynamics per [AR-2]'s payment-peer-wide de-correlation read, not by a JPM-specific factor. SpaceX IPO filing report [SA-FIN-6] tags JPM as a headline lead-bank but is tier-3 single-source (fortune.com) and unconfirmed — directionally consistent with the thesis but insufficient weight to upgrade status. No current-invocation finding contradicts any THESIS-POS-JPM component; on-track confirmed on signal grounds.",
+      "action_rationale": "Hold without parameter change. Bracket levels reference AAPL price boundaries which is anomalous (cross-instrument bracket on a JPM position) and would warrant a separate adjust-bracket call to relevel against JPM-native levels, but no current-invocation signal supplies a JPM-specific level that would make the existing references wrong — the gap is in original bracket construction, not in current-signal-driven revision. Flagging the bracket-instrument mismatch in portfolio_level_observations for PM awareness rather than authoring an adjustment without signal support (would be the rationalized_continuation pattern).",
+      "reduce_rationale": null,
       "add_conviction_justification": null,
       "adjustment_rationale": null,
       "remedy_rationale": null,
-      "cross_position_observations": "[XLF→SPY 1-day lead-lag, CR-13] means financials deterioration historically leads broad-market moves by one session — the JPM reduction has cumulative-impact significance for the whole book ahead of the CPI binary, not just the financials sleeve.",
-      "component_health": []
+      "cross_position_observations": "No shared-catalyst exposure with POS-NVDA reduction; financials rotation thesis is independent of semis-breadth contradiction.",
+      "component_health": [
+        {
+          "component_id": "entry_rationale",
+          "supporting_signals": [
+            {
+              "name": "financials_sector_rotation",
+              "status": "PRESENT"
+            },
+            {
+              "name": "money_center_leadership",
+              "status": "PRESENT"
+            }
+          ]
+        },
+        {
+          "component_id": "target_rationale",
+          "supporting_signals": [
+            {
+              "name": "resistance_band_intact",
+              "status": "PRESENT"
+            }
+          ]
+        },
+        {
+          "component_id": "invalidation_rationale",
+          "supporting_signals": [
+            {
+              "name": "swing_low_intact",
+              "status": "PRESENT"
+            }
+          ]
+        }
+      ]
     },
     {
       "assessment_id": "SA-3",
@@ -76,29 +129,53 @@
       "thesis_id": "THESIS-POS-XOM",
       "underlying": "XOM",
       "sector": "energy",
-      "thesis_status": "at-risk",
+      "thesis_status": "on-track",
       "prior_status": "on-track",
-      "recommended_action": "reduce",
-      "action_parameters": {
-        "action": "reduce",
-        "quantity": 8.0,
-        "order_type": "market",
-        "limit_price": null
-      },
-      "exposure_impact": {
-        "sector_delta_adjusted_change": -0.88,
-        "net_directional_impact": -0.88
-      },
+      "recommended_action": "hold",
+      "action_parameters": null,
+      "exposure_impact": null,
       "guardrail_validation_result": null,
       "remedy_flag": null,
-      "status_rationale": "Entry thesis is 'energy capex normalization.' [SA-ENERGY-1] documents the services-vs-E&P ordering as anomalous — SLB +4.78% and BKR +3.87% versus OXY −6.3%, APA −5.8%, DVN −2.4% — and identifies operator capex curtailment as one of three explanations consistent with the inversion (the others being direct Hormuz-operations pricing of services and probability-not-realization pricing of disruption). Capex curtailment is the direct opposite of capex normalization. XOM is not named-falsified — it is integrated rather than pure E&P — but the thesis component 'sector momentum persists in the direction of normalization' is challenged by the dominant intra-sector signal in this invocation. [SA-ENERGY-TC-1] further flags the 17.5% US-Iran nuclear deal probability by May 31 as a sharp services-premium-compression risk that would impact the broader energy thesis. At-risk per the strategist's borderline-toward-at-risk default on thesis-component contradiction without name-specific falsifier.",
-      "action_rationale": "Reduce 8 of 20 shares ($880 ≈ 0.88% of portfolio) to acknowledge the contradicted-component classification without over-correcting on a thesis whose falsification is structural rather than name-specific. Hold-on-at-risk is disallowed by method discipline. Quantity is modest because the contradiction is at the thesis-component level not the position-specific level, and XOM as integrated is partially insulated from the pure-E&P-capex story.",
-      "reduce_rationale": "Sized smaller than the JPM reduction because the JPM contradiction is direct-and-named (financials = rotation loser) while the XOM contradiction is structural-and-inferred (capex normalization vs. capex curtailment as one of three coexisting explanations). Old size 2.2% → new size ~1.3%.",
+      "status_rationale": "[SA-ENERGY-2] documents E&P leadership (OXY 100th pct, DVN 77th, EOG 67th) — XOM as an integrated major sits adjacent to but not within the direct-crude-beta leadership cluster, which insulates it from the central [SA-ENERGY-4] / [SA-ENERGY-TC-2] contradiction (60% Russia-Ukraine ceasefire probability would compress the geopolitical risk premium that is precisely why pure E&Ps lead now). The vol_expansion regime tightening of commodity-equity correlation [CR-1, SA-ENERGY-TC-2] is regime-consistent with the THESIS-POS-XOM 'capex normalization' thesis. No current-invocation finding contradicts any thesis component on XOM specifically. On-track holds, but the sector carries an unpriced 60% binary event that would asymmetrically hurt the position on a ceasefire print.",
+      "action_rationale": "Hold without parameter change. The integrated-major positioning insulates XOM from the ceasefire-asymmetry that would justify a trim on a pure E&P; no XOM-specific contradiction supports a status downgrade. Bracket levels reference AAPL price boundaries (anomalous, same construction issue as POS-JPM and POS-AAPL) — flagged in portfolio_level_observations rather than adjusted without signal-driven leveling.",
+      "reduce_rationale": null,
       "add_conviction_justification": null,
       "adjustment_rationale": null,
       "remedy_rationale": null,
-      "cross_position_observations": null,
-      "component_health": []
+      "cross_position_observations": "The vol_expansion commodity-correlation tightening regime that is constructive for XOM is the same regime [CR-1] under which intra-semis divergences support the POS-NVDA at-risk downgrade — same regime, different implications, no shared catalyst with the NVDA trim.",
+      "component_health": [
+        {
+          "component_id": "entry_rationale",
+          "supporting_signals": [
+            {
+              "name": "energy_capex_normalization",
+              "status": "PRESENT"
+            },
+            {
+              "name": "vol_expansion_commodity_correlation",
+              "status": "STRENGTHENED"
+            }
+          ]
+        },
+        {
+          "component_id": "target_rationale",
+          "supporting_signals": [
+            {
+              "name": "resistance_band_intact",
+              "status": "PRESENT"
+            }
+          ]
+        },
+        {
+          "component_id": "invalidation_rationale",
+          "supporting_signals": [
+            {
+              "name": "swing_low_intact",
+              "status": "PRESENT"
+            }
+          ]
+        }
+      ]
     },
     {
       "assessment_id": "SA-4",
@@ -113,26 +190,58 @@
       "exposure_impact": null,
       "guardrail_validation_result": null,
       "remedy_flag": null,
-      "status_rationale": "No current-invocation finding contradicts the services-margin-expansion thesis component set. AAPL's correlation breakdowns from semis peers [CR-16 AAPL:MCHP 3.828σ, CR-17 AAPL:NXPI 4.156σ, CR-20 AAPL:TXN 3.241σ] are tier-3-narrative-attached to an unconfirmed Apple-Intel chip deal [SA-TECH-2, SA-TECH-TC-2] — orthogonal to the services-margin thesis and not signal-bearing on it either way. The dominant [AR-5] rotation frame is into growth/AI assets, of which AAPL qualifies on the broad-tech leg, providing constructive macro support. The position is at 1.8% of portfolio with substantial headroom on every constraint and 24h age — nothing in the brief moves it off on-track.",
-      "action_rationale": "Hold without modification. No signal in this invocation justifies parameter change; the thesis is supported (or at minimum not contradicted) by every current source touching AAPL or its sector context.",
+      "status_rationale": "[SA-TECH-1] documents cybersecurity leadership (CRWD/CSCO/DDOG/FTNT/PANW at RSI 82–88) and [SA-TECH-2] documents hardware-semis deterioration (semis A/D 1:15) — AAPL is in neither cluster. The intra-tech bifurcation weakens but does not contradict the THESIS-POS-AAPL 'Sector momentum persists' assumption: tech momentum is real but concentrated outside both the AAPL-adjacent services-megacap orbit and the hardware-semis orbit, which leaves AAPL's services-margin thesis without direct corroboration this invocation. The position is 24h old — well inside any reasonable horizon for a services-margin thesis, so stale does not apply. On-track holds with the qualification that the next invocation's briefs need to show AAPL-direct signal or the status moves to at-risk on absence-of-confirmation grounds.",
+      "action_rationale": "Hold without parameter change. No current-invocation signal supports a parameter revision; the absence of direct AAPL corroboration is noted but the time-expectation window is intact. Adjusting brackets here without an AAPL-specific signal would be the rationalized_continuation pattern. Bracket-instrument mismatch (AAPL bracket on AAPL position is the one position where the cross-bracket isn't anomalous — but the same boilerplate levels appear on all four positions, which is the bracket-construction issue flagged at portfolio level).",
       "reduce_rationale": null,
       "add_conviction_justification": null,
       "adjustment_rationale": null,
       "remedy_rationale": null,
-      "cross_position_observations": "AAPL's correlation isolation from semis [CR-16, CR-17, CR-20] is itself a portfolio-level diversification signal — the trim on POS-NVDA does not transmit to POS-AAPL through the historical pair channels.",
-      "component_health": []
+      "cross_position_observations": "Tech-sector momentum weakening (SA-TECH-2 semis breadth) is the same finding that downgrades POS-NVDA — but AAPL's services-margin thesis is independent of semis hardware breadth, so the contradiction is indirect. If next invocation shows the cybersecurity exhaustion event SA-TECH-1 warns of, AAPL's tech-sector-momentum component will weaken to REVERSED and at-risk becomes the honest classification.",
+      "component_health": [
+        {
+          "component_id": "entry_rationale",
+          "supporting_signals": [
+            {
+              "name": "services_margin_expansion",
+              "status": "PRESENT"
+            },
+            {
+              "name": "tech_sector_momentum",
+              "status": "WEAKENED"
+            }
+          ]
+        },
+        {
+          "component_id": "target_rationale",
+          "supporting_signals": [
+            {
+              "name": "resistance_band_intact",
+              "status": "PRESENT"
+            }
+          ]
+        },
+        {
+          "component_id": "invalidation_rationale",
+          "supporting_signals": [
+            {
+              "name": "swing_low_intact",
+              "status": "PRESENT"
+            }
+          ]
+        }
+      ]
     }
   ],
   "pending_order_assessments": [],
   "portfolio_level_observations": {
-    "aggregate_thesis_health": "Three of four positions transition from on-track to at-risk this invocation, all on synthesizer evidence rather than P/L (book-wide P/L is flat). NVDA: thesis-cited Q1 earnings catalyst absent from 72h calendar plus peer-divergence signal. JPM: entry-thesis rotation direction directly contradicted by dominant [AR-5] frame. XOM: capex-normalization thesis component challenged by services-vs-E&P inversion. AAPL alone confirms on-track. The pattern is consistent with a single dominant rotation/regime-shift signal hitting three of four entry theses simultaneously — the book was constructed under a different macro frame than the one currently expressed in the synthesizer.",
-    "sector_balance_shifts": "Recommended actions move semis exposure 4.5% → 2.7% (NVDA trim, cures regime-transition breach), financials 3.0% → 1.4% (JPM trim), energy 2.2% → 1.3% (XOM trim), tech unchanged at 1.8%. Net long drops from 11.5% to 7.2%. All sector caps remain comfortably honored; the trim cluster moves the book toward the rotation-frame-aligned tilt (tech-heavy relative to financials/energy) rather than rebalancing across.",
-    "thesis_dependency_warnings": "Two binary catalysts within 41–48 hours create concentrated resolution risk: CPI May 12 [QR-1, SA-FIN-4] resolves the JPM residual hot-CPI tail; Trump-China summit May 13 [SA-TECH-4, QR-2] resolves the NVDA residual export-control tail. The XLF→SPY 1-day lead-lag [CR-13] means a hard CPI repricing can transmit to broad-market exposure on a one-session lag. The recommended trims are timed before both binaries — the residual exposures are deliberate one-tail-each retentions, not status-quo holds.",
-    "capital_allocation_observations": "Aggressive trim cluster frees ~$4,200 of reserved capital across three positions, raising available-for-new from 70% toward ~74% of portfolio. The analyst will own redeployment recommendations; from this side, the deferred opportunities flagged by the synthesizer that the strategist cannot act on (no new entries from this seat) are: (1) the [AR-5] rotation thesis which would warrant net-long-tech adds the analyst should consider, (2) the WFC momentum-short setup [SA-FIN-1, SA-FIN-TC-1] which would express the financials-deterioration frame more cleanly than the JPM trim, (3) the LNG divergence-long [SA-ENERGY-TC-2] noting the unresolved company-specific suppression. Strategist also flags a portfolio-state data anomaly: every position's bracket displays 'AAPL GTE $200.0' target and 'AAPL LTE $150.0' stop, which is non-functional for NVDA, JPM, XOM and warrants infrastructure attention rather than an in-band adjust-bracket action since the synthesizer brief contains no per-name level basis for setting them correctly.",
+    "aggregate_thesis_health": "Four open positions, one moves on-track → at-risk (POS-NVDA on AR-7 pre-event mean-reversion and SA-TECH-2 semis-breadth contradiction of 'sector momentum persists'); three remain on-track without parameter changes (POS-JPM, POS-XOM, POS-AAPL). The book's primary capital-quality issue this invocation is the NVDA regime breach, which the proposed reduce cures. The secondary issue is that three of four position theses (JPM, XOM, AAPL) cite the same generic 'sector momentum persists / resistance band holds / swing low intact' key assumptions — this thesis boilerplate makes signal-specific status reassessment harder than it should be and increases the risk of generic_rationale findings on future invocations; flagging for PM awareness on thesis-construction quality.",
+    "sector_balance_shifts": "Proposed POS-NVDA reduce takes semis delta-adjusted exposure from 4.5% → 2.7%, well inside the 25% normal-regime sector limit and curing the 3.5% per-position breach with 0.8% headroom. Tech (AAPL 1.8%), Financials (JPM 3.0%), and Energy (XOM 2.2%) unchanged. Net long moves from 20.0% → 18.2% of portfolio; gross moves identically. No sector becomes under-allocated relative to opportunity given the synthesizer's E&P-leadership read (which the analyst owns; not a strategist add).",
+    "thesis_dependency_warnings": "Three cross-position dependency observations: (1) Vol_expansion regime [CR-1] tightening commodity-equity correlation is constructive for POS-XOM but the same regime under which SA-TECH-1 warns simultaneous Keltner penetrations in cybersecurity make exhaustion reversals sharp — not a current trigger but a regime-level fragility note. (2) The 60% Russia-Ukraine ceasefire probability [SA-ENERGY-4] is a binary sector-wide event POS-XOM is partially exposed to via integrated-major positioning, less than pure E&Ps would be. (3) META root-catalyst narrative lag [AR-1, CR-230] does not currently implicate the held book (no META position) but represents pipeline data-quality weakness the PM should weight when evaluating tech-sector confidence.",
+    "capital_allocation_observations": "Book is under-deployed at 20% gross with all four positions sub-5% of portfolio. Post-reduce, gross moves to 18.2%. The synthesizer flags two structurally significant opportunity surfaces the analyst should evaluate: E&P leadership cluster (OXY/DVN/EOG) and cybersecurity exhaustion-vs-continuation setup (CRWD/CSCO/PANW). Strategist does not propose new entries — recording the opportunity surface here for the feedback loop. Three structural quality notes for PM: (a) Thesis-component key assumptions on all four positions are identical boilerplate ('sector momentum persists / resistance band holds / swing low intact') with no position-specific named signals, which makes signal-criterion classification harder than it should be. (b) Bracket levels on all four positions reference AAPL price boundaries ('AAPL GTE $200.0' / 'AAPL LTE $150.0'), which is cross-instrument bracket construction on JPM, XOM, and (trivially correct on) AAPL — these brackets do not protect the underlying theses except for AAPL and need a separate bracket-construction pass, not a current-signal-driven adjust-bracket from this strategist call. (c) The validate_guardrail tool returned a contract error on the NVDA CLOSE remedy call (required existing_position_id field not in published tool schema); proceeded on transparent arithmetic — flagging the tool-contract gap for the feedback loop.",
     "regime_transition_summary": {
       "addressed_breaches": [
         {
-          "breach_id": "POS-NVDA-regime-transition-overage-1.0pct",
+          "breach_id": "POS-NVDA-normal-regime-overage",
           "remedy_assessment_ids": [
             "SA-1"
           ]

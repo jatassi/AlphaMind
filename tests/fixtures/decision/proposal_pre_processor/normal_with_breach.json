@@ -275,7 +275,7 @@
           ],
           "position_size": {
             "delta_adjusted_exposure": 4000.0,
-            "dollar_value": 4000.0,
+            "dollar_value": "4000.0",
             "pct_of_portfolio": 4.0,
             "premium_at_risk": null,
             "quantity": 9.52
@@ -284,10 +284,10 @@
           "recommendation_id": "REC-1",
           "sector": "tech",
           "target": {
-            "dollar_pl_target": 400.0,
+            "dollar_pl_target": "400.0",
             "pl_dollar": null,
             "pl_percentage": null,
-            "price": 462.00000000000006,
+            "price": "462.00000000000006",
             "target_type": "absolute_price"
           },
           "target_rationale": "10% upside target.",
@@ -345,7 +345,7 @@
           ],
           "position_size": {
             "delta_adjusted_exposure": 4000.0,
-            "dollar_value": 4000.0,
+            "dollar_value": "4000.0",
             "pct_of_portfolio": 4.0,
             "premium_at_risk": null,
             "quantity": 22.86
@@ -354,10 +354,10 @@
           "recommendation_id": "REC-2",
           "sector": "tech",
           "target": {
-            "dollar_pl_target": 400.0,
+            "dollar_pl_target": "400.0",
             "pl_dollar": null,
             "pl_percentage": null,
-            "price": 192.50000000000003,
+            "price": "192.50000000000003",
             "target_type": "absolute_price"
           },
           "target_rationale": "10% upside target.",
@@ -422,7 +422,7 @@
           ],
           "position_size": {
             "delta_adjusted_exposure": 4000.0,
-            "dollar_value": 4000.0,
+            "dollar_value": "4000.0",
             "pct_of_portfolio": 4.0,
             "premium_at_risk": null,
             "quantity": 4.64
@@ -431,10 +431,10 @@
           "recommendation_id": "REC-3",
           "sector": "semis",
           "target": {
-            "dollar_pl_target": 400.0,
+            "dollar_pl_target": "400.0",
             "pl_dollar": null,
             "pl_percentage": null,
-            "price": 948.2,
+            "price": "948.2",
             "target_type": "absolute_price"
           },
           "target_rationale": "10% upside target.",
