@@ -107,6 +107,46 @@ class TickerADVRow:
     avg_daily_volume_shares: float | None
 
 
+@dataclass(frozen=True, slots=True)
+class NewsLabelCountsRow:
+    """Vendor-sentiment label totals across articles in a window.
+
+    Mirrors the per-(article, ticker) ``vendor_sentiment_label`` taxonomy
+    from ``news_article_tickers`` rolled up to counts.
+    """
+
+    positive: int
+    negative: int
+    neutral: int
+    mixed: int
+
+
+@dataclass(frozen=True, slots=True)
+class ContractHistoryEntry:
+    """One trailing snapshot of ``distillation_contract_history`` for a contract."""
+
+    snapshot_ts: str
+    yes_probability: float
+
+
+@dataclass(frozen=True, slots=True)
+class ContractCurrentStateRow:
+    """Latest ``distillation_contract_history`` row at-or-before ``as_of``."""
+
+    yes_probability: float
+    delta_pp_since_prior: float
+    snapshot_ts: str
+
+
+@dataclass(frozen=True, slots=True)
+class ContractMetadataRow:
+    """Static ``prediction_market_contracts`` projection for a contract."""
+
+    platform: str
+    description: str
+    category: str
+
+
 # ---------------------------------------------------------------------------
 # Protocol surface — read-only, structural typing
 # ---------------------------------------------------------------------------
@@ -179,11 +219,68 @@ class DistillationRepository(Protocol):
         """Per-ticker average-daily-volume projection."""
         ...
 
+    # --- qualitative news --------------------------------------------------
+
+    def load_news_article_label_counts(
+        self, *, ticker: str, range_start: str, range_end: str
+    ) -> NewsLabelCountsRow:
+        """Vendor-sentiment label totals for one ticker in ``[range_start, range_end]``."""
+        ...
+
+    def load_news_article_sentiment_scores(
+        self, *, ticker: str, range_start: str, range_end: str
+    ) -> tuple[float, int] | None:
+        """``(mean_score, n_articles)`` over per-(article, ticker) rows in window."""
+        ...
+
+    def load_hourly_window_price_change(
+        self, *, ticker: str, range_start: str, range_end: str
+    ) -> float | None:
+        """Signed ``last_close - first_open`` over 1h bars in window; ``None`` if empty."""
+        ...
+
+    def load_universe_pooled_sentiment_distribution(
+        self, *, as_of: str
+    ) -> tuple[float, float] | None:
+        """Universe-wide ``(mean, stdev)`` over calibrated sentiment baselines at ``as_of``."""
+        ...
+
+    # --- qualitative prediction markets ------------------------------------
+
+    def load_contract_history(
+        self, *, contract_id: str, range_start: str, range_end: str
+    ) -> tuple[ContractHistoryEntry, ...]:
+        """``distillation_contract_history`` rows ascending in the trailing window."""
+        ...
+
+    def load_contract_current_state(
+        self, *, contract_id: str, as_of: str
+    ) -> ContractCurrentStateRow | None:
+        """Latest ``distillation_contract_history`` row at-or-before ``as_of``."""
+        ...
+
+    def load_contract_metadata(self, *, contract_id: str) -> ContractMetadataRow | None:
+        """Static ``prediction_market_contracts`` projection; ``None`` when absent."""
+        ...
+
+    def load_contract_24h_volume_and_liquidity(
+        self, *, contract_id: str, as_of: str
+    ) -> tuple[float, float]:
+        """``(volume_24h_usd, liquidity_usd)`` from latest snapshot at-or-before ``as_of``.
+
+        Defaults each to ``0.0`` when the column is NULL or no snapshot exists.
+        """
+        ...
+
 
 __all__ = [
+    "ContractCurrentStateRow",
+    "ContractHistoryEntry",
+    "ContractMetadataRow",
     "DailyBarRow",
     "DistillationRepository",
     "GapEventCounts",
+    "NewsLabelCountsRow",
     "OptionsContractRow",
     "OptionsContractSnapshotRow",
     "SectorClassificationRow",

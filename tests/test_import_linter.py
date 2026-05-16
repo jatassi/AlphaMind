@@ -476,28 +476,28 @@ def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
     ALP-467 piloted the compute/load boundary split for q1 and a single q3
     sub-module. ALP-484 propagated the pilot to the remaining q3 sub-modules
     (anomalies, atm_iv_baseline, etf_iv_divergence) plus the whole-category
-    ``q3._loaders``. The propagation does NOT retire the legacy ignores
-    wholesale — every assemble/loader that still issues SQL keeps its entry.
-    The propagation DOES introduce new IO-shell modules
-    (``q3._loaders``, ``q3.anomalies_loaders``, ``q3.atm_iv_baseline_loaders``,
-    ``q3.etf_iv_divergence_loaders``) that intentionally keep sqlalchemy.
-    ALP-484 also retired the now-stale indirect ignores
-    (``q3.anomalies``, ``q3.assemble``, ``q3.atm_iv_baseline``
-    ``-> persistence.models``) because the slim shims no longer carry those
-    chains.
+    ``q3._loaders``. ALP-487 propagated the pilot to qualitative_derived:
+    decomposing it into a ``qualitative/`` package whose per-classifier
+    compute cores are pure (now enumerated by
+    ``distillation-compute-no-sqlalchemy``) and whose session-bound shim
+    layer (``qualitative.assemble`` + the backward-compat ``qualitative_derived``
+    re-export) keeps sqlalchemy. Each propagation retires the now-stale
+    indirect ``persistence.models`` ignores for the slim shims that no
+    longer carry those chains.
 
-    Post-ALP-484 baseline:
-    - 30 direct sqlalchemy ignores (the post-ALP-467 26 + ALP-484's 4 new
-      q3 IO-shell modules: ``q3._loaders``, ``q3.anomalies_loaders``,
-      ``q3.atm_iv_baseline_loaders``, ``q3.etf_iv_divergence_loaders``).
-    - 22 indirect ignores (post-ALP-467 21 minus 3 retired q3 shim
-      entries plus 4 new q3 IO-shell -> persistence.models entries:
-      21 - 3 + 4 = 22).
+    Post-ALP-487 baseline:
+    - 30 direct sqlalchemy ignores (post-ALP-484 baseline preserved: ALP-487
+      retires the legacy ``qualitative_derived -> sqlalchemy`` entry and
+      re-adds the same single entry for the back-compat shim, for net
+      zero change in this column).
+    - 21 indirect ignores (post-ALP-484 22 minus the retired
+      ``qualitative_derived -> persistence.models`` chain — the shim no
+      longer imports ORM classes directly, only the repository facade).
 
     Regression guard: a future story tightening this contract by accident
     would drop entries here and silently re-introduce violations. Punch-list
-    item #9 (continued q-* propagation past q1 + q3) is still pending for
-    q6, q7, qualitative — those entries must hold until those follow-ups
+    item #9 (continued q-* propagation past q1 + q3 + qualitative) is still
+    pending for q6 and q7 — those entries must hold until those follow-ups
     land.
     """
     parser = _parse_importlinter_config()
@@ -509,10 +509,10 @@ def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
         f"direct sqlalchemy ignore_imports count drifted: expected 30, got {len(direct)}.\n"
         f"entries:\n  " + "\n  ".join(direct)
     )
-    assert len(indirect) == 22, (
-        f"indirect ignore_imports count drifted: expected 22 "
-        f"(post-ALP-467 21 minus 3 retired q3 shim entries plus "
-        f"4 new q3 IO-shell -> persistence.models entries: 21 - 3 + 4 = 22), "
+    assert len(indirect) == 21, (
+        f"indirect ignore_imports count drifted: expected 21 "
+        f"(post-ALP-484 22 minus the retired "
+        f"qualitative_derived -> persistence.models chain), "
         f"got {len(indirect)}.\n"
         f"entries:\n  " + "\n  ".join(indirect)
     )

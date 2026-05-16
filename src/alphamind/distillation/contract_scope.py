@@ -3,10 +3,10 @@ Resolve the in-scope prediction-market contract list for a distillation run.
 
 The orchestrator threads the resolved tuple to both
 :func:`alphamind.distillation.baselines.refresh_contract_history` (Phase 1)
-and :func:`alphamind.distillation.qualitative_derived.compute_prediction_market_deltas`
-(Phase 2's qualitative-derived block) — both consumers MUST receive the
-same tuple, otherwise the writer ingests one set while the reader reports
-on another.
+and :func:`alphamind.distillation.qualitative._loaders.load_qualitative_inputs`
+(Phase 2, which threads it into the prediction-market deltas loader) —
+both consumers MUST receive the same tuple, otherwise the writer ingests
+one set while the reader reports on another.
 
 Scope is computed from ``config.prediction_market.tracked_categories``:
 each category's ``min_volume_24h_usd`` override (or the

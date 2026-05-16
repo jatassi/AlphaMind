@@ -8,13 +8,13 @@ spec at ``docs/implementation/02-distillation-layer/12-distillation-orchestrator
 1. Class B refresh — refresh every rolling-state primitive before any
    computation reads from state. Refresh failure prevents any downstream
    work per ``docs/design/mid-pipeline-failure-handling.md``.
-2. Per-category indicator computations — Q1's and Q3's pure-compute paths
-   run in parallel with each other and with the legacy session-bound
-   categories (q6, q7, q12, qualitative_derived, which remain internally
-   serialized under one Session) via :class:`asyncio.TaskGroup`. Each
-   category is a thin module-level helper that wraps the synchronous
-   DB-bound primitives in :func:`asyncio.to_thread` so the event loop
-   does not block.
+2. Per-category indicator computations — Q1's, Q3's, and qualitative's
+   pure-compute paths run in parallel with each other and with the
+   remaining legacy session-bound categories (q6, q7, q12, which remain
+   internally serialized under one Session) via
+   :class:`asyncio.TaskGroup`. Each category is a thin module-level
+   helper that wraps the synchronous DB-bound primitives in
+   :func:`asyncio.to_thread` so the event loop does not block.
 3. Regime classification — universal-broadcast volatility regime label
    per story 09.
 4. Aggregation — partition blocks by audience, collect anomaly summaries
@@ -89,10 +89,12 @@ from alphamind.distillation.q7 import (
     compute_pair_correlations,
 )
 from alphamind.distillation.q12_corporate_actions import detect_q12_signals
-from alphamind.distillation.qualitative_derived import (
-    compute_news_price_divergence,
-    compute_prediction_market_deltas,
-    compute_sentiment_percentile,
+from alphamind.distillation.qualitative._loaders import (
+    QualitativeInputs,
+    load_qualitative_inputs,
+)
+from alphamind.distillation.qualitative.assemble import (
+    assemble_qualitative_blocks_from_inputs,
 )
 from alphamind.distillation.regime import (
     RegimeClassificationThresholds,
@@ -289,14 +291,14 @@ def _refresh_class_b_state(
 # ---------------------------------------------------------------------------
 #
 # Each dispatcher is a thin wrapper over its category's public surface.
-# The orchestrator runs Q1's and Q3's pure-compute paths concurrently with
-# the legacy session-bound categories (q6, q7, q12, qualitative_derived,
-# which stay sequential under one Session) via asyncio.TaskGroup; the
-# synchronous DB-bound work runs through asyncio.to_thread so the event
-# loop never blocks waiting for SQLite.
+# The orchestrator runs Q1's, Q3's, and qualitative's pure-compute paths
+# concurrently with the remaining legacy session-bound categories (q6,
+# q7, q12, which stay sequential under one Session) via
+# asyncio.TaskGroup; the synchronous DB-bound work runs through
+# asyncio.to_thread so the event loop never blocks waiting for SQLite.
 #
-# All six categories (q1, q3, q6, q7, q12, qualitative_derived) wire up
-# directly to their module-level entry points. The :data:`_PHASE_2_PLACEHOLDER_GAPS`
+# All six categories (q1, q3, q6, q7, q12, qualitative) wire up directly
+# to their module-level entry points. The :data:`_PHASE_2_PLACEHOLDER_GAPS`
 # table is preserved as an empty tuple for the verification script in
 # story 13 (`scripts/verify_distillation.py`) so its summary section's
 # shape stays stable; it now reports "all categories integrated."
@@ -363,28 +365,21 @@ def _compute_legacy_phase2_blocks(
     *,
     config: DistillationDomainConfig,
     ticker_scope: Sequence[str],
-    contract_scope: Sequence[str],
     as_of: datetime,
 ) -> tuple[list[OutputBlock], ...]:
-    """ALP-484 — sequential session-bound categories (q6, q7, q12, qualitative).
+    """ALP-487 — sequential session-bound categories (q6, q7, q12).
 
-    Q6, Q7, Q12, qualitative still share the Session and remain serialized
-    inside one TaskGroup task to avoid "Session is already flushing"
-    InvalidRequestError. Q3 lifted to its own TaskGroup task in ALP-484.
-    Each follow-up category that converts to the compute/load pattern
-    lifts out of this helper into its own TaskGroup task.
+    Q6, Q7, Q12 still share the Session and remain serialized inside one
+    TaskGroup task to avoid "Session is already flushing"
+    InvalidRequestError. Q1 / Q3 / qualitative each lift to their own
+    TaskGroup tasks under the pure-compute path. Each follow-up category
+    that converts to the compute/load pattern lifts out of this helper
+    into its own TaskGroup task.
     """
     return (
         _compute_q6_blocks(session, config=config, as_of=as_of),
         _compute_q7_blocks(session, config=config, ticker_scope=ticker_scope, as_of=as_of),
         _compute_q12_blocks(session, config=config, as_of=as_of),
-        _compute_qualitative_blocks(
-            session,
-            config=config,
-            ticker_scope=ticker_scope,
-            contract_scope=contract_scope,
-            as_of=as_of,
-        ),
     )
 
 
@@ -484,56 +479,45 @@ def _compute_q12_blocks(
     )
 
 
-def _compute_qualitative_blocks(
+def _load_qualitative_inputs_via_session(
     session: Session,
     *,
     config: DistillationDomainConfig,
     ticker_scope: Sequence[str],
     contract_scope: Sequence[str],
     as_of: datetime,
-) -> list[OutputBlock]:
-    """Qualitative-derived blocks.
+) -> QualitativeInputs:
+    """ALP-487 — pre-load qualitative inputs under the shared Session.
 
-    Qualitative-derived (story 08f) has three public computations
-    (news/price divergence, sentiment percentile, prediction-market
-    deltas). The orchestrator dispatches each in turn; primitives that
-    receive an empty contract scope (e.g. prediction markets when no
-    contracts are tracked) emit no blocks.
+    The shell half of the qualitative compute/load split. Phase 2 calls
+    this sequentially under one Session before launching the TaskGroup;
+    the returned :class:`QualitativeInputs` is then handed to
+    :func:`_compute_qualitative_blocks_from_inputs` (pure compute,
+    thread-safe).
     """
-    blocks: list[OutputBlock] = []
-    as_of_iso = _format_as_of(as_of)
-    blocks.extend(
-        compute_news_price_divergence(
-            session,
-            ticker_scope=ticker_scope,
-            as_of=as_of_iso,
-            window_hours=config.anomaly_detection.news_price_divergence_window_hours,
-            min_articles=config.anomaly_detection.news_price_divergence_min_articles,
-        )
+    repository = SqlDistillationRepository(session)
+    return load_qualitative_inputs(
+        repository,
+        config=config,
+        ticker_scope=ticker_scope,
+        contract_scope=contract_scope,
+        as_of=as_of,
     )
-    blocks.extend(
-        compute_sentiment_percentile(
-            session,
-            ticker_scope=ticker_scope,
-            as_of=as_of_iso,
-            sentiment_min_observations=config.persistence_windows.sentiment_min_observations,
-        )
-    )
-    blocks.extend(
-        compute_prediction_market_deltas(
-            session,
-            contract_scope=contract_scope,
-            as_of=as_of_iso,
-            delta_pp_threshold=config.prediction_market.prediction_market_delta_pp_threshold,
-            low_liquidity_volume_min_usd=(
-                config.prediction_market.prediction_market_low_liquidity_volume_min_usd
-            ),
-            prediction_market_history_days=(
-                config.persistence_windows.prediction_market_history_days
-            ),
-        )
-    )
-    return blocks
+
+
+def _compute_qualitative_blocks_from_inputs(
+    qualitative_inputs: QualitativeInputs,
+    *,
+    config: DistillationDomainConfig,
+) -> list[OutputBlock]:
+    """ALP-487 — pure-compute qualitative dispatch from pre-loaded inputs.
+
+    Wraps :func:`assemble_qualitative_blocks_from_inputs` so the
+    orchestrator's Phase 2 TaskGroup has a single ``to_thread`` callable
+    that takes only serializable / immutable arguments — no Session, no
+    ORM.
+    """
+    return assemble_qualitative_blocks_from_inputs(qualitative_inputs, config=config)
 
 
 # ---------------------------------------------------------------------------
@@ -739,13 +723,14 @@ async def _run_phase_2(
     """Phase 2 — per-category indicator computations.
 
     ALP-467 piloted the compute/load boundary split on q1; ALP-484
-    propagated the split to q3. Q1 and Q3 inputs are pre-loaded under the
-    shared Session (the shell) and then the pure computes run in parallel
-    with each other and with the legacy session-bound categories via an
-    ``asyncio.TaskGroup``. The legacy categories (q6, q7, q12,
-    qualitative) still share the Session so they remain serialized inside
-    one task — the multi-quarter migration to per-category pure compute
-    is tracked as ALP-467 follow-ups.
+    propagated the split to q3; ALP-487 propagated it to qualitative.
+    Q1 / Q3 / qualitative inputs are pre-loaded under the shared Session
+    (the shell) and then the pure computes run in parallel with each
+    other and with the legacy session-bound categories via an
+    ``asyncio.TaskGroup``. The remaining legacy categories (q6, q7, q12)
+    still share the Session so they remain serialized inside one task —
+    the multi-quarter migration to per-category pure compute is tracked
+    as ALP-467 follow-ups.
 
     Pair correlations are computed once before the dispatch so Q3's
     pair-trade-signature detection sees the same matrix Q7 reports (Q7
@@ -760,9 +745,10 @@ async def _run_phase_2(
         as_of=as_of,
         window_days=config.persistence_windows.correlation_short_days,
     )
-    # Shell: pre-load Q1 + Q3 inputs under the shared Session before the
-    # core. The Q3 loader UPSERTs the ATM-IV baseline rows synchronously
-    # so the parallel Q3 compute consumes already-calibrated IV ranks.
+    # Shell: pre-load Q1 + Q3 + qualitative inputs under the shared Session
+    # before the core. The Q3 loader UPSERTs the ATM-IV baseline rows
+    # synchronously so the parallel Q3 compute consumes already-calibrated
+    # IV ranks.
     q1_inputs = await asyncio.to_thread(
         _load_q1_inputs_via_session,
         session,
@@ -778,9 +764,18 @@ async def _run_phase_2(
         as_of=as_of,
         pair_correlations=pair_correlations,
     )
+    qualitative_inputs = await asyncio.to_thread(
+        _load_qualitative_inputs_via_session,
+        session,
+        config=config,
+        ticker_scope=ticker_scope,
+        contract_scope=contract_scope,
+        as_of=as_of,
+    )
 
-    # Core: TaskGroup runs Q1 + Q3 pure computes concurrently with the
-    # legacy session-bound categories (which remain internally serialized).
+    # Core: TaskGroup runs Q1 + Q3 + qualitative pure computes concurrently
+    # with the legacy session-bound categories (which remain internally
+    # serialized).
     # ExceptionGroup unwrapping: TaskGroup wraps any sub-exception in a
     # BaseExceptionGroup. Per the LLM-agents-uniformly-Critical policy,
     # propagate the original exception so callers (and tests) see the
@@ -800,19 +795,30 @@ async def _run_phase_2(
                     q3_inputs,
                 )
             )
+            qualitative_task = tg.create_task(
+                asyncio.to_thread(
+                    _compute_qualitative_blocks_from_inputs,
+                    qualitative_inputs,
+                    config=config,
+                )
+            )
             legacy_task = tg.create_task(
                 asyncio.to_thread(
                     _compute_legacy_phase2_blocks,
                     session,
                     config=config,
                     ticker_scope=ticker_scope,
-                    contract_scope=contract_scope,
                     as_of=as_of,
                 )
             )
     except BaseExceptionGroup as eg:
         raise eg.exceptions[0] from eg
-    per_category_blocks = (q1_task.result(), q3_task.result(), *legacy_task.result())
+    per_category_blocks = (
+        q1_task.result(),
+        q3_task.result(),
+        qualitative_task.result(),
+        *legacy_task.result(),
+    )
     indicator_blocks: list[OutputBlock] = []
     for category_blocks in per_category_blocks:
         indicator_blocks.extend(category_blocks)
@@ -857,9 +863,8 @@ async def run_external_distillation(
 
     # Resolve prediction-market contract scope ONCE so every consumer
     # (Phase 1's refresh_contract_history and Phase 2's
-    # compute_prediction_market_deltas) sees the identical tuple. Splitting
-    # would let the writer ingest one set while the reader reports on
-    # another.
+    # load_qualitative_inputs) sees the identical tuple. Splitting would
+    # let the writer ingest one set while the reader reports on another.
     contract_scope: tuple[str, ...] = await asyncio.to_thread(
         resolve_prediction_market_scope,
         session,

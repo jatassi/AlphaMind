@@ -10,9 +10,13 @@ from collections.abc import Sequence
 
 from alphamind._kernel.ids import Symbol
 from alphamind.distillation._repository import (
+    ContractCurrentStateRow,
+    ContractHistoryEntry,
+    ContractMetadataRow,
     DailyBarRow,
     DistillationRepository,
     GapEventCounts,
+    NewsLabelCountsRow,
     OptionsContractRow,
     OptionsContractSnapshotRow,
     SectorClassificationRow,
@@ -92,6 +96,53 @@ class _StubDistillationRepository:
     def load_ticker_adv(self, *, ticker: str) -> TickerADVRow | None:
         del ticker
         return None
+
+    # qualitative surface — stubbed empty for the q1-only tests in this module.
+    def load_news_article_label_counts(
+        self, *, ticker: str, range_start: str, range_end: str
+    ) -> NewsLabelCountsRow:
+        del ticker, range_start, range_end
+        return NewsLabelCountsRow(positive=0, negative=0, neutral=0, mixed=0)
+
+    def load_news_article_sentiment_scores(
+        self, *, ticker: str, range_start: str, range_end: str
+    ) -> tuple[float, int] | None:
+        del ticker, range_start, range_end
+        return None
+
+    def load_hourly_window_price_change(
+        self, *, ticker: str, range_start: str, range_end: str
+    ) -> float | None:
+        del ticker, range_start, range_end
+        return None
+
+    def load_universe_pooled_sentiment_distribution(
+        self, *, as_of: str
+    ) -> tuple[float, float] | None:
+        del as_of
+        return None
+
+    def load_contract_history(
+        self, *, contract_id: str, range_start: str, range_end: str
+    ) -> tuple[ContractHistoryEntry, ...]:
+        del contract_id, range_start, range_end
+        return ()
+
+    def load_contract_current_state(
+        self, *, contract_id: str, as_of: str
+    ) -> ContractCurrentStateRow | None:
+        del contract_id, as_of
+        return None
+
+    def load_contract_metadata(self, *, contract_id: str) -> ContractMetadataRow | None:
+        del contract_id
+        return None
+
+    def load_contract_24h_volume_and_liquidity(
+        self, *, contract_id: str, as_of: str
+    ) -> tuple[float, float]:
+        del contract_id, as_of
+        return 0.0, 0.0
 
 
 def _assert_is_repository(stub: _StubDistillationRepository) -> DistillationRepository:

@@ -94,7 +94,6 @@ ignore_imports =
     alphamind.distillation.q7.intermarket_regime -> sqlalchemy
     alphamind.distillation.q7.intra_sector_correlation -> sqlalchemy
     alphamind.distillation.q7.lead_lag -> sqlalchemy
-    alphamind.distillation.qualitative_derived -> sqlalchemy
     alphamind.distillation.regime -> sqlalchemy
     alphamind.distillation.replay_harness.engine -> sqlalchemy
     alphamind.distillation.sector_assembly -> sqlalchemy
@@ -121,6 +120,14 @@ ignore_imports =
     alphamind.distillation.q3.anomalies_loaders -> sqlalchemy
     alphamind.distillation.q3.atm_iv_baseline_loaders -> sqlalchemy
     alphamind.distillation.q3.etf_iv_divergence_loaders -> sqlalchemy
+    # ALP-487 piloted modules — qualitative_derived split into
+    # qualitative/ package. The session-bound back-compat shim
+    # (``qualitative_derived`` for the legacy public API) keeps sqlalchemy
+    # because it constructs the production repository. The per-classifier
+    # compute cores are ORM-free under
+    # ``distillation-compute-no-sqlalchemy`` below; the per-classifier
+    # loaders consume the Protocol only and so carry no sqlalchemy edge.
+    alphamind.distillation.qualitative_derived -> sqlalchemy
     # Indirect via persistence.models (also retired by punch-list #9: once
     # the distillation modules consume a loaders/repository protocol
     # instead of importing ORM declarative classes directly, the indirect
@@ -137,7 +144,6 @@ ignore_imports =
     alphamind.distillation.q7.intermarket_regime -> alphamind.persistence.models
     alphamind.distillation.q7.intra_sector_correlation -> alphamind.persistence.models
     alphamind.distillation.q7.lead_lag -> alphamind.persistence.models
-    alphamind.distillation.qualitative_derived -> alphamind.persistence.models
     alphamind.distillation.regime -> alphamind.persistence.models
     alphamind.distillation.replay_harness.engine -> alphamind.persistence.models
     alphamind.distillation.sector_assembly -> alphamind.persistence.models
@@ -181,6 +187,9 @@ source_modules =
     alphamind.distillation.q3.atm_iv_baseline_compute
     alphamind.distillation.q3.etf_iv_divergence_compute
     alphamind.distillation.q3.flow_classification_compute
+    alphamind.distillation.qualitative.news_price_divergence_compute
+    alphamind.distillation.qualitative.prediction_market_deltas_compute
+    alphamind.distillation.qualitative.sentiment_percentile_compute
 forbidden_modules =
     sqlalchemy
     alphamind.persistence.models
