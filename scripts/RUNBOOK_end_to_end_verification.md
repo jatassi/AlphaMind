@@ -280,7 +280,7 @@ rm -f /tmp/alphamind-verify-broker/alphamind.db
 uv run alembic -c alembic.ini \
     -x db=/tmp/alphamind-verify-broker/alphamind.db upgrade head
 DATABASE_PATH=/tmp/alphamind-verify-broker/alphamind.db \
-    uv run python -m alphamind.scripts.verify_broker_adapter
+    uv run python scripts/verify_broker_adapter.py
 ```
 
 Phase 1d requires a **freshly-migrated tmp DB**, sourced Alpaca paper
@@ -363,9 +363,18 @@ aggregates on `CashLedger`, and asserts the headline algebra
 plus the trailing-30d aggregate identity. No SDK calls, no live broker
 contact, sub-second runtime against a fresh on-disk DB.
 
+Phase 1f requires a **freshly-migrated tmp DB** — not the prod snapshot
+`$DB_PATH`. The seeding step writes a canonical four-position portfolio
+that would collide with prod rows. Migrate a tmp DB to head and pass
+that:
+
 ```bash
+mkdir -p /tmp/alphamind-verify-regt
+rm -f /tmp/alphamind-verify-regt/alphamind.db
+uv run alembic -c alembic.ini \
+    -x db=/tmp/alphamind-verify-regt/alphamind.db upgrade head
 uv run python scripts/verify_regt_margin_attribution.py \
-    --db-path "$VERIFY_DB" \
+    --db-path /tmp/alphamind-verify-regt/alphamind.db \
     --invocation-id verify-regt-001
 ```
 
@@ -376,10 +385,10 @@ per processed fill and a three-field trailing-window aggregate block
 `0` on full pass, `1` on any structured assertion failure (each failing
 assertion appears on its own `- ` line in the FAIL trailer).
 
-Stage artifact: the seeded DB at `$VERIFY_DB` carries
-`fill_records.regt_attribution_json` populated rows that downstream
-phases (notably the command-center verify) may read for cumulative
-delivery surface assertions.
+Stage artifact: the seeded DB at `/tmp/alphamind-verify-regt/alphamind.db`
+carries `fill_records.regt_attribution_json` populated rows that
+downstream phases (notably the command-center verify) may read for
+cumulative delivery surface assertions.
 
 **On failure:** read `scripts/RUNBOOK_regt_margin_attribution.md` §
 Failure-mode triage. The FAIL output names the failing assertion in the
@@ -467,8 +476,13 @@ Verifies: `run_external_distillation()` produces `DistillationOutputs`
 with 3 sector blocks, the correlation/regime brief carries `[CR-N]`
 references, the regime label is one of the 4 valid strings, all 5
 state tables have rows within a 5-minute freshness window, and the
-invocation archive has 5 files (`prompt.md`, `user_message.md`,
-`response.md`, `errors.json`, `metadata.json`).
+invocation archive has 5 files (`tech_semis_sector.md`,
+`financials_sector.md`, `energy_sector.md`,
+`correlation_regime_brief.md`, `regime.md`). The
+`[ PLACEHOLDER GAPS ]` section of the summary now reads
+`None — all six Phase 2 categories integrated.` (post-ALP-484/485/486/487
+compute/load splits; the orchestrator's `_PHASE_2_PLACEHOLDER_GAPS`
+tuple is empty).
 
 On success, writes `distillation_outputs.json`,
 `correlation_regime_brief.json`, and `universal_regime_label.json` to
@@ -658,8 +672,9 @@ uv run python scripts/verify_synthesizer.py \
 
 Verifies: non-empty prose response, every cited reference ID resolves
 in the per-invocation retrieval store (invented references → WARN
-verdict, exit 0), `stop_reason` in `{end_turn, max_tokens}`. Three
-portfolio-state tool calls plus the final prose generation.
+verdict, exit 0), `stop_reason` in `{end_turn, max_tokens}`. The
+verbose output renders `tool_calls_used` and `stop_reason` but the
+script does not assert a tool-call count.
 
 `--upstream-from` makes the script load the six-way upstream-brief
 tuple (3 sector briefs + correlation/regime + qualitative + adaptive
@@ -936,7 +951,7 @@ operator fix and re-run that one agent in seconds rather than discover
 the regression mid-composition.
 
 ```bash
-uv run python -m alphamind.scripts.verify_decision_pipeline \
+uv run python scripts/verify_decision_pipeline.py \
     --archive-root "$ARCHIVE_ROOT"
 ```
 
