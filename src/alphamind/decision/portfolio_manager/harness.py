@@ -48,6 +48,7 @@ from alphamind.commands.pm_envelope import PMCompletionRecord
 from alphamind.commands.protocols import BrokerDispatch
 from alphamind.commands.submission_log import SubmissionLogEntry
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
+from alphamind.decision._shared import system_prompt_as_file
 from alphamind.decision.portfolio_manager.parser import ParseError, parse_pm_completion_record
 from alphamind.decision.portfolio_manager.submit_envelope import (
     SubmitEnvelopeState,
@@ -687,7 +688,7 @@ def _strip_anthropic_incompat_keys(obj: Any) -> Any:
 def _build_sdk_options(
     agent_config: BaseAgentConfig,
     *,
-    prompt_text: str,
+    prompt_path: str,
     allowed_tools: list[str],
     mcp_servers: dict[str, Any],
 ) -> Any:
@@ -705,11 +706,17 @@ def _build_sdk_options(
     the dict surfaces on ``ResultMessage.structured_output``. The schema is
     passed through :func:`_strip_anthropic_incompat_keys` to remove keywords
     the API silently rejects.
+
+    ``system_prompt`` is passed in file-mode (the SDK serializes it as
+    ``--system-prompt-file <path>`` instead of ``--system-prompt <text>``) so
+    the combined cmdline stays under Windows ``CreateProcessW``'s 32,767
+    character limit — see :mod:`alphamind.decision._shared.prompt_file` for
+    the full rationale.
     """
     from claude_agent_sdk import ClaudeAgentOptions
 
     return ClaudeAgentOptions(
-        system_prompt=prompt_text,
+        system_prompt={"type": "file", "path": prompt_path},
         model=agent_config.model,
         tools=[],
         allowed_tools=allowed_tools,
@@ -877,8 +884,6 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
     TimeoutFailure
         Invocation exceeded ``agent_config.latency_budget_seconds``.
     """
-    from claude_agent_sdk import ClaudeSDKError, CLIConnectionError
-
     if sdk_query_fn is None:
         from claude_agent_sdk import query as _real_query
 
@@ -901,12 +906,45 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
         broker_dispatch=broker_dispatch,
     )
     prompt_text = await _load_prompt(agent_config.prompt)
-    options = _build_sdk_options(
-        agent_config,
-        prompt_text=prompt_text,
-        allowed_tools=allowed_tools,
-        mcp_servers=mcp_servers,
-    )
+
+    with system_prompt_as_file(prompt_text) as prompt_path:
+        options = _build_sdk_options(
+            agent_config,
+            prompt_path=prompt_path,
+            allowed_tools=allowed_tools,
+            mcp_servers=mcp_servers,
+        )
+        return await _run_invocation(
+            agent_config=agent_config,
+            agent_name=agent_name,
+            user_message=user_message,
+            invocation_id=invocation_id,
+            prompt_text=prompt_text,
+            options=options,
+            sdk_query_fn=sdk_query_fn,
+            get_submit_envelope_state=get_submit_envelope_state,
+            archive_root=archive_root,
+        )
+
+
+async def _run_invocation(  # noqa: PLR0913 — internal helper threading runner state.
+    *,
+    agent_config: BaseAgentConfig,
+    agent_name: str,
+    user_message: str,
+    invocation_id: str,
+    prompt_text: str,
+    options: Any,
+    sdk_query_fn: Callable[..., AsyncIterator[Any]],
+    get_submit_envelope_state: Callable[[], SubmitEnvelopeState],
+    archive_root: Path | None,
+) -> HarnessSuccess:
+    """Drive the two-attempt SDK loop with *options* already constructed.
+
+    Extracted so ``invoke_pm`` can hold the system-prompt tempfile open for
+    the entire invocation (Attempts 1 and 2 share the same options/prompt_path).
+    """
+    from claude_agent_sdk import ClaudeSDKError, CLIConnectionError
 
     diag = _DiagState(
         agent_name=agent_name,
