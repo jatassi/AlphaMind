@@ -263,20 +263,19 @@ layers =
 # execution.write_paths.phase2`` edge remains the load-bearing
 # execution-side wiring entry.
 #
-# ALP-482 audit conclusion: keep this package under
-# ``decision/portfolio_manager/`` rather than hoisting to a top-level
-# ``composition_roots/``. Post-06b, ``submit_envelope/`` is not a pure
-# assembler — ``process``, ``dispatch``, and ``server`` carry PM
-# request-routing logic (per-command pipeline, broker dispatch routing,
-# MCP orchestration handler) alongside the wiring, and only 4 of the
-# 11 ignored edges below are runtime imports (``process ->
-# execution.oms.command_ids``, ``persist -> execution.write_paths.phase2``,
-# and two function-local ``dispatch -> execution.*`` fallbacks); the
-# rest are ``TYPE_CHECKING``-only edges grimp surfaces as imports. A
-# hoist would relocate ~1700 LOC of PM subsystem code under
-# ``composition_roots/`` to satisfy a contract already documented by
-# the header above. The exceptions enumerated below are permanent
-# architectural carve-outs, not a debt item.
+# ALP-482 audit conclusion: keep this package here rather than hoisting
+# to a top-level ``composition_roots/``. Post-06b, ``submit_envelope/``
+# is not a pure assembler — ``process``, ``dispatch``, and ``server``
+# carry PM request-routing logic alongside the wiring. The runtime
+# ``decision -> execution`` edges are two top-level imports
+# (``process -> execution.oms.command_ids``,
+# ``persist -> execution.write_paths.phase2``) plus four function-local
+# fallbacks inside ``dispatch.py``; the remaining ``submit_envelope.*``
+# entries below are ``TYPE_CHECKING``-only and carry no runtime cost.
+# These ``submit_envelope.*`` exceptions are permanent architectural
+# carve-outs, not a debt item. (The trailing ``state.config ->
+# execution.corporate_actions.config`` entry below is a separate
+# transitive chain with its own retirement note.)
 [importlinter:contract:decision-not-execution]
 name = decision/ has no upward imports of execution/
 type = forbidden
