@@ -117,6 +117,7 @@ def _make_context(
 
     return RunInvocationContext(
         session_factory=session_factory,
+        sync_session_factory="sync-factory-sentinel",  # type: ignore[arg-type]
         process_lifetime_id="proc-driver-1",
         archive_root=tmp_path / "archive",
         config_dir=SHIPPED_CONFIG_DIR,
@@ -656,12 +657,21 @@ class TestMainRegistersApschedulerTask:
 
         monkeypatch.setattr(module, "record_process_lifetime", _stub_process_lifetime)
 
-        class _StubEngine:
-            async def dispose(self) -> None:
-                return None
+        import contextlib
+        from typing import cast
 
-        monkeypatch.setattr(module, "make_async_engine", lambda: _StubEngine())
-        monkeypatch.setattr(module, "make_async_session_factory", lambda engine: object())
+        from alphamind.persistence.session import EnginePair
+
+        @contextlib.asynccontextmanager
+        async def _stub_engine_pair(path: str | None = None) -> Any:
+            yield EnginePair(
+                async_engine=cast(Any, object()),
+                async_session_factory=cast(Any, object()),
+                sync_engine=cast(Any, object()),
+                sync_session_factory=cast(Any, object()),
+            )
+
+        monkeypatch.setattr(module, "engine_pair_context", _stub_engine_pair)
         monkeypatch.setattr(module, "configure_pipeline_logging", lambda: None)
 
         # Stub the venue loader so we don't hit the filesystem.

@@ -18,13 +18,13 @@ exercised end-to-end without hitting the Anthropic API.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import Engine, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import (
@@ -193,21 +193,43 @@ def _make_venue_config() -> VenueConfig:
     )
 
 
+# Sync engines built inside ``_make_context`` register here; the autouse
+# ``_dispose_make_context_engines`` fixture disposes them after every test so
+# Windows SQLite file handles release before pytest's tmp_path teardown runs.
+_MAKE_CONTEXT_ENGINES: list[Engine] = []
+
+
+@pytest.fixture(autouse=True)
+def _dispose_make_context_engines() -> Iterator[None]:
+    yield
+    while _MAKE_CONTEXT_ENGINES:
+        _MAKE_CONTEXT_ENGINES.pop().dispose()
+
+
 def _make_context(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     env_path: Path,
     archive_root: Path,
+    db_path: Path | None = None,
 ) -> Any:
     """Compose the standard ``RunInvocationContext`` test fixtures use.
 
-    Centralizes the seven bundled fields so the per-test invocations
-    stay focused on what's specific to each scenario.
+    Centralizes the bundled fields so the per-test invocations stay focused
+    on what's specific to each scenario. The sync session factory is built
+    from ``db_path`` so the analysis pipeline's sync read session shares the
+    same SQLite file as the async write sessions.
     """
     from alphamind.scheduler.run_context import RunInvocationContext
 
+    sync_path = db_path if db_path is not None else env_path.parent / "alphamind.db"
+    sync_engine = make_engine(str(sync_path))
+    _MAKE_CONTEXT_ENGINES.append(sync_engine)
+    sync_session_factory = make_session_factory(sync_engine)
+
     return RunInvocationContext(
         session_factory=session_factory,
+        sync_session_factory=sync_session_factory,
         process_lifetime_id="proc-orch-1",
         archive_root=archive_root,
         config_dir=SHIPPED_CONFIG_DIR,
@@ -744,6 +766,45 @@ class TestRunInvocationSnapshotWiring:
     write. The three-transaction refactor commits Phase 1 before the snapshot
     read, so ``SnapshotBackedSynthesizerReader`` wires correctly.
     """
+
+    async def test_analysis_pipeline_receives_sync_session(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """run_analysis_pipeline gets a sync ``Session``, not an ``AsyncSession``.
+
+        The distillation orchestrator threads the session through
+        :func:`asyncio.to_thread` into sync SQLAlchemy callsites
+        (``session.execute(...).all()``). Passing an ``AsyncSession`` raises
+        ``AttributeError: 'coroutine' object has no attribute 'all'`` at
+        runtime (ALP-490 blocker 1).
+        """
+        from sqlalchemy.orm import Session
+
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        passed_session = captured["analysis"]["session"]
+        assert isinstance(passed_session, Session)
+        assert not isinstance(passed_session, AsyncSession)
 
     async def test_analysis_pipeline_receives_snapshot_backed_synthesizer_reader(
         self,

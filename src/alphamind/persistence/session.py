@@ -19,8 +19,11 @@ Pragmas applied on every new connection (from data-and-state.md):
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -137,3 +140,43 @@ def make_async_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncS
         bind=engine, expire_on_commit=False
     )
     return factory
+
+
+@dataclass(frozen=True, slots=True)
+class EnginePair:
+    """Paired sync + async engines and session factories bound to one DB path.
+
+    The pipeline scheduler and verify script both need the pair: async writes
+    in Phase 1 / Phase 2, sync reads inside the analysis subtree's
+    ``asyncio.to_thread`` callsites. :func:`engine_pair_context` builds the
+    pair as a unit and disposes both on exit.
+    """
+
+    async_engine: AsyncEngine
+    async_session_factory: async_sessionmaker[AsyncSession]
+    sync_engine: Engine
+    sync_session_factory: sessionmaker[Session]
+
+
+@contextlib.asynccontextmanager
+async def engine_pair_context(path: str | None = None) -> AsyncIterator[EnginePair]:
+    """Yield a paired sync/async :class:`EnginePair`; dispose both on exit.
+
+    Both engines resolve through the same documented path chain (explicit
+    argument → ``DATABASE_PATH`` env → ``main.yaml``) so the pair binds to one
+    SQLite file. The sync engine is disposed before awaiting async dispose
+    because sync dispose is non-awaitable; both run in the ``finally`` block
+    so a partial-init failure still releases acquired connections.
+    """
+    async_engine = make_async_engine(path)
+    sync_engine = make_engine(path)
+    try:
+        yield EnginePair(
+            async_engine=async_engine,
+            async_session_factory=make_async_session_factory(async_engine),
+            sync_engine=sync_engine,
+            sync_session_factory=make_session_factory(sync_engine),
+        )
+    finally:
+        sync_engine.dispose()
+        await async_engine.dispose()

@@ -57,7 +57,11 @@ from alphamind._kernel.invocations import (
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.venue import VenueConfig
-from alphamind.persistence.session import make_async_engine, make_async_session_factory
+from alphamind.persistence.session import (
+    engine_pair_context,
+    make_async_engine,
+    make_async_session_factory,
+)
 from alphamind.risk_guardrails.breach_behavior.config import load_breach_behavior_config
 from alphamind.state.process_lifetime import (
     record_process_lifetime,
@@ -608,11 +612,10 @@ async def _drive_once_invocation(
     venue_config = VenueConfig.model_validate(read_yaml_file(_CONFIG_DIR / "venue.yaml"))
     execution_mode = ExecutionMode.live if mode == "live" else ExecutionMode.paper
 
-    engine = make_async_engine()
-    session_factory = make_async_session_factory(engine)
-    try:
+    async with engine_pair_context() as engines:
         context = RunInvocationContext(
-            session_factory=session_factory,
+            session_factory=engines.async_session_factory,
+            sync_session_factory=engines.sync_session_factory,
             process_lifetime_id=process_lifetime_id,
             archive_root=archive_root,
             config_dir=_CONFIG_DIR,
@@ -628,8 +631,6 @@ async def _drive_once_invocation(
             firing_run_type=run_type,
             now=datetime.now(UTC),
         )
-    finally:
-        await engine.dispose()
     return summary.invocation_id
 
 

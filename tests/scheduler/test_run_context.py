@@ -19,6 +19,7 @@ def test_dataclass_is_frozen() -> None:
     """
     ctx = RunInvocationContext(
         session_factory="session-factory-sentinel",  # type: ignore[arg-type]
+        sync_session_factory="sync-session-factory-sentinel",  # type: ignore[arg-type]
         process_lifetime_id="proc-1",
         archive_root=Path("/tmp/archive"),
         config_dir=Path("/tmp/config"),

@@ -253,6 +253,56 @@ def test_venue_paper_api_key_env_missing_from_env_keys_raises() -> None:
         )
 
 
+def test_paper_mode_ignores_missing_live_env_keys() -> None:
+    """Paper-mode operators don't need ``ALPACA_LIVE_*`` keys.
+
+    The shipped ``main.yaml`` carries ``execution_mode: paper``; the validator
+    must only enforce the paper credential block's env refs in that case.
+    """
+    from alphamind.config.models import ExecutionMode
+
+    main_paper = _MAIN.model_copy(update={"execution_mode": ExecutionMode.paper})
+    inputs = _make_inputs(main=main_paper)
+    paper_only_env = frozenset({"ALPACA_PAPER_KEY", "ALPACA_PAPER_SECRET"})
+    validate_cross_references(
+        inputs,
+        env_keys=paper_only_env,
+        registered_tools=REGISTERED_TOOLS,
+    )
+
+
+def test_live_mode_ignores_missing_paper_env_keys() -> None:
+    """Live-mode operators don't need ``ALPACA_PAPER_*`` keys.
+
+    Mirror of the paper-mode case; ensures the symmetry of the per-mode gate.
+    """
+    from alphamind.config.models import ExecutionMode
+
+    main_live = _MAIN.model_copy(update={"execution_mode": ExecutionMode.live})
+    inputs = _make_inputs(main=main_live)
+    live_only_env = frozenset({"ALPACA_LIVE_KEY", "ALPACA_LIVE_SECRET"})
+    validate_cross_references(
+        inputs,
+        env_keys=live_only_env,
+        registered_tools=REGISTERED_TOOLS,
+    )
+
+
+def test_live_mode_still_requires_live_env_keys() -> None:
+    """Live-mode failure path: ``ALPACA_LIVE_KEY`` missing surfaces an error."""
+    from alphamind.config.models import ExecutionMode
+
+    main_live = _MAIN.model_copy(update={"execution_mode": ExecutionMode.live})
+    inputs = _make_inputs(main=main_live)
+    env_keys = frozenset({"ALPACA_LIVE_SECRET"})  # missing ALPACA_LIVE_KEY
+    with pytest.raises(CrossReferenceError, match="ALPACA_LIVE_KEY"):
+        validate_cross_references(
+            inputs,
+            env_keys=env_keys,
+            registered_tools=REGISTERED_TOOLS,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Check 8: every agent tool / tool_caps key is in REGISTERED_TOOLS
 # ---------------------------------------------------------------------------

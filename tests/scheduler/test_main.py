@@ -9,8 +9,9 @@ with the parsed kwargs and emits the summary as JSON.
 
 from __future__ import annotations
 
+import contextlib
 import json
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -87,12 +88,18 @@ def _patch_cli_heavy_setup(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(module, "record_process_lifetime", _stub_process_lifetime)
 
-    class _StubEngine:
-        async def dispose(self) -> None:
-            return None
+    @contextlib.asynccontextmanager
+    async def _stub_engine_pair(path: str | None = None) -> Any:
+        from alphamind.persistence.session import EnginePair
 
-    monkeypatch.setattr(module, "make_async_engine", lambda: _StubEngine())
-    monkeypatch.setattr(module, "make_async_session_factory", lambda engine: object())
+        yield EnginePair(
+            async_engine=cast(Any, object()),
+            async_session_factory=cast(Any, object()),
+            sync_engine=cast(Any, object()),
+            sync_session_factory=cast(Any, object()),
+        )
+
+    monkeypatch.setattr(module, "engine_pair_context", _stub_engine_pair)
     monkeypatch.setattr(module, "configure_pipeline_logging", lambda: None)
 
 

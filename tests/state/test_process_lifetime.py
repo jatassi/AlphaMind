@@ -23,11 +23,20 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.state.process_lifetime import (
+    _capture_pip_freeze,
     record_process_lifetime,
 )
 from alphamind.state.tables.process_lifetimes import (
     ProcessLifetimeRow,
 )
+
+
+class _StubDistribution:
+    """Stand-in for ``importlib.metadata.Distribution`` exposing name + version."""
+
+    def __init__(self, name: str, version: str) -> None:
+        self.name = name
+        self.version = version
 
 
 @pytest.fixture()
@@ -49,11 +58,6 @@ async def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessio
 
 def _git_rev_parse_stub(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
     """Stand-in for ``subprocess.run`` that mimics a clean repo state."""
-    # Both ``git ...`` and ``<python> -m pip freeze`` call sites route through
-    # the same patched ``subprocess.run`` — match on argv tail so the test
-    # doesn't depend on the python interpreter path.
-    if "pip" in args and "freeze" in args:
-        return subprocess.CompletedProcess(args, returncode=0, stdout="pkg==1.0\n", stderr="")
     cmd = args[1:] if args and args[0] == "git" else args
     if cmd[:2] == ["rev-parse", "HEAD"]:
         return subprocess.CompletedProcess(args, returncode=0, stdout="a" * 40 + "\n", stderr="")
@@ -64,11 +68,25 @@ def _git_rev_parse_stub(args: list[str], **kwargs: Any) -> subprocess.CompletedP
     raise AssertionError(f"unexpected subprocess invocation in test: {args!r}")
 
 
+_STUB_DISTRIBUTIONS: tuple[_StubDistribution, ...] = (
+    _StubDistribution("pkg-b", "2.0"),
+    _StubDistribution("pkg-a", "1.0"),
+)
+
+
 def _patch_subprocess(stub: Any = _git_rev_parse_stub) -> Any:
     """Patch subprocess.run inside the helper module to return a stub."""
     return patch(
         "alphamind.state.process_lifetime.subprocess.run",
         side_effect=lambda args, **kwargs: stub(args, **kwargs),
+    )
+
+
+def _patch_distributions(distributions: tuple[_StubDistribution, ...] = _STUB_DISTRIBUTIONS) -> Any:
+    """Patch ``importlib.metadata.distributions`` inside the helper module."""
+    return patch(
+        "alphamind.state.process_lifetime.importlib.metadata.distributions",
+        return_value=distributions,
     )
 
 
@@ -88,7 +106,7 @@ class TestRecordProcessLifetimeHappyPath:
         session_factory: async_sessionmaker[AsyncSession],
         tmp_path: Path,
     ) -> None:
-        with _patch_subprocess():
+        with _patch_subprocess(), _patch_distributions():
             plt_id = await record_process_lifetime(
                 session_factory=session_factory,
                 process_role="pipeline",
@@ -112,7 +130,7 @@ class TestRecordProcessLifetimeHappyPath:
         session_factory: async_sessionmaker[AsyncSession],
         tmp_path: Path,
     ) -> None:
-        with _patch_subprocess():
+        with _patch_subprocess(), _patch_distributions():
             await record_process_lifetime(
                 session_factory=session_factory,
                 process_role="monitor",
@@ -143,7 +161,7 @@ class TestRecordProcessLifetimeHappyPath:
         session_factory: async_sessionmaker[AsyncSession],
         tmp_path: Path,
     ) -> None:
-        with _patch_subprocess():
+        with _patch_subprocess(), _patch_distributions():
             plt_id = await record_process_lifetime(
                 session_factory=session_factory,
                 process_role="pipeline",
@@ -154,8 +172,8 @@ class TestRecordProcessLifetimeHappyPath:
         assert expected.exists()
         row = await _read_single_row(session_factory)
         assert row.pip_freeze_snapshot_path == str(expected)
-        # Stub returns "pkg==1.0\n" — confirm the helper wrote that payload.
-        assert expected.read_text() == "pkg==1.0\n"
+        # Stub distributions render as a pip-freeze-format snapshot, sorted.
+        assert expected.read_text() == "pkg-a==1.0\npkg-b==2.0\n"
 
     async def test_dirty_working_tree_persists_as_one(
         self,
@@ -170,7 +188,7 @@ class TestRecordProcessLifetimeHappyPath:
                 )
             return _git_rev_parse_stub(args, **kwargs)
 
-        with _patch_subprocess(stub=dirty_stub):
+        with _patch_subprocess(stub=dirty_stub), _patch_distributions():
             await record_process_lifetime(
                 session_factory=session_factory,
                 process_role="pipeline",
@@ -193,7 +211,11 @@ class TestRecordProcessLifetimeFailFast:
                 raise subprocess.CalledProcessError(returncode=128, cmd=args, stderr="fatal: ...")
             return _git_rev_parse_stub(args, **kwargs)
 
-        with _patch_subprocess(stub=bad_git_stub), pytest.raises(subprocess.CalledProcessError):
+        with (
+            _patch_subprocess(stub=bad_git_stub),
+            _patch_distributions(),
+            pytest.raises(subprocess.CalledProcessError),
+        ):
             await record_process_lifetime(
                 session_factory=session_factory,
                 process_role="pipeline",
@@ -204,3 +226,44 @@ class TestRecordProcessLifetimeFailFast:
         async with session_factory() as sess:
             result = await sess.execute(select(ProcessLifetimeRow))
             assert list(result.scalars()) == []
+
+
+class TestCapturePipFreeze:
+    """Direct tests for ``_capture_pip_freeze``'s importlib.metadata path."""
+
+    def test_returns_sorted_name_eq_version_lines(self) -> None:
+        with _patch_distributions(
+            (
+                _StubDistribution("Zeta", "9.0"),
+                _StubDistribution("alpha", "1.2.3"),
+                _StubDistribution("Beta", "0.1"),
+            )
+        ):
+            assert _capture_pip_freeze() == "alpha==1.2.3\nBeta==0.1\nZeta==9.0\n"
+
+    def test_empty_environment_returns_empty_string(self) -> None:
+        with _patch_distributions(()):
+            assert _capture_pip_freeze() == ""
+
+    def test_uses_no_subprocess_call(self) -> None:
+        """The replacement must be hermetic — no shell-out to ``pip freeze``."""
+
+        def fail_if_called(*args: Any, **kwargs: Any) -> None:
+            raise AssertionError(f"unexpected subprocess.run: args={args!r}, kwargs={kwargs!r}")
+
+        with (
+            patch("alphamind.state.process_lifetime.subprocess.run", side_effect=fail_if_called),
+            _patch_distributions(),
+        ):
+            assert _capture_pip_freeze() == "pkg-a==1.0\npkg-b==2.0\n"
+
+    def test_dedupes_shadowed_packages_keeping_first_seen(self) -> None:
+        """Editable install + stale site-packages copy yields one row per name."""
+        with _patch_distributions(
+            (
+                _StubDistribution("alpha", "2.0"),  # first wins
+                _StubDistribution("beta", "0.1"),
+                _StubDistribution("alpha", "1.0"),  # shadowed copy
+            )
+        ):
+            assert _capture_pip_freeze() == "alpha==2.0\nbeta==0.1\n"

@@ -324,6 +324,7 @@ async def _running_receiver(
 
     context = RunInvocationContext(
         session_factory=factory,
+        sync_session_factory="sync-factory-sentinel",  # type: ignore[arg-type]
         process_lifetime_id=pipeline_session.process_lifetime_id,
         archive_root=tmp_path / "archive",
         config_dir=tmp_path / "config",
