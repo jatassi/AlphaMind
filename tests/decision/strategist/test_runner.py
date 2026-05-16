@@ -767,11 +767,31 @@ async def test_borrow_cost_resolver_propagates_to_validation_state(
 @pytest.mark.asyncio
 async def test_system_prompt_loaded_from_agent_config(tmp_path: Path) -> None:
     """The runner reads the prompt path from agent_config.prompt and sends its
-    file contents to the harness as the system prompt."""
+    file contents to the harness as the system prompt.
+
+    The harness writes the prompt text to a tempfile and passes the file-mode
+    dict ``{"type": "file", "path": <path>}`` to ``ClaudeAgentOptions`` — see
+    :mod:`alphamind.decision._shared.prompt_file` for the rationale (Windows
+    ``CreateProcessW`` cmdline limit). The on-disk file contents must equal
+    the prompt text loaded from ``agent_config.prompt``.
+    """
     captured_options: list[Any] = []
+    captured_prompt_file_contents: list[str] = []
+
+    def _read_prompt_file(path: str) -> str:
+        # Helper kept synchronous + outside the async stub so the ASYNC240
+        # ruff rule (no ``pathlib.Path`` methods in async functions) stays
+        # happy. The harness opens the prompt file synchronously too.
+        return Path(path).read_text(encoding="utf-8")
 
     async def _capturing_stub(**kwargs: Any) -> AsyncIterator[Any]:
-        captured_options.append(kwargs.get("options"))
+        options = kwargs.get("options")
+        captured_options.append(options)
+        # Read the tempfile while the contextmanager is still open. After the
+        # harness returns, the file is unlinked.
+        sp = options.system_prompt
+        assert isinstance(sp, dict) and sp.get("type") == "file"
+        captured_prompt_file_contents.append(_read_prompt_file(sp["path"]))
         async for msg in _async_iter(_make_sdk_response(_normal_payload())):
             yield msg
 
@@ -784,8 +804,10 @@ async def test_system_prompt_loaded_from_agent_config(tmp_path: Path) -> None:
         )
     )
 
-    # The harness places the agent_config.prompt file contents on options.system_prompt.
-    assert captured_options[0].system_prompt == _STRATEGIST_PROMPT_TEXT
+    sp = captured_options[0].system_prompt
+    assert isinstance(sp, dict)
+    assert sp.get("type") == "file"
+    assert captured_prompt_file_contents[0] == _STRATEGIST_PROMPT_TEXT
 
 
 # ---------------------------------------------------------------------------

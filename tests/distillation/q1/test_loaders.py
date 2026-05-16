@@ -81,17 +81,11 @@ class _StubDistillationRepository:
         del underlying
         return ()
 
-    def load_latest_options_snapshot_at(
-        self, *, contract_ticker: str, as_of: str
-    ) -> OptionsContractSnapshotRow | None:
-        del contract_ticker, as_of
-        return None
-
-    def load_prior_options_snapshot(
-        self, *, contract_ticker: str, as_of: str
-    ) -> OptionsContractSnapshotRow | None:
-        del contract_ticker, as_of
-        return None
+    def load_options_snapshot_pairs_for_underlying(
+        self, *, underlying: str, as_of: str
+    ) -> dict[str, tuple[OptionsContractSnapshotRow | None, OptionsContractSnapshotRow | None]]:
+        del underlying, as_of
+        return {}
 
     def load_ticker_adv(self, *, ticker: str) -> TickerADVRow | None:
         del ticker

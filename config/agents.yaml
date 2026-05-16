@@ -162,8 +162,11 @@ agents:
     # First clean post-migration verifier run observed 21537 output tokens; cap
     # initially set to 24000 for ~10% headroom. 2026-05-09 e2e run observed
     # 31222 output tokens with 5 substantive threads — re-baselined to 36000
-    # for ~15% headroom. Continue to re-baseline if runs trend higher.
-    output_token_budget: 36000
+    # for ~15% headroom. 2026-05-16 e2e run observed 36497 output tokens with
+    # 9 substantive threads (1.4% overshoot of the prior cap) — re-baselined to
+    # 40000 for ~10% headroom on the new 9-thread baseline. Continue to
+    # re-baseline if runs trend higher.
+    output_token_budget: 40000
     # social_sentiment + options_flow deferred — Qual2 + Q2 storage not yet provisioned.
     tools:
       - news_search

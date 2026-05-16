@@ -1,103 +1,46 @@
 {
   "completion_record": {
-    "invocation_id": "20260509T204335Z-verify-pm-synchronous_rejection",
-    "timestamp": "2026-05-09T20:48:12Z",
+    "invocation_id": "20260516T202225Z-verify-pm-synchronous_rejection",
+    "timestamp": "2026-05-16T20:24:10Z",
     "envelopes_submitted": 7,
     "verdict_summary": {
-      "approve": 1,
+      "approve": 3,
       "approve_with_modification": 0,
-      "reject": 6
+      "reject": 4
     }
   },
   "submission_log": [
     {
       "envelope": {
-        "envelope_id": "ENV-SA-1",
-        "invocation_id": "20260509T204335Z-verify-pm-synchronous_rejection",
-        "source_provenance": "pm_strategist",
-        "source_recommendation_id": "SA-1",
-        "recommendation_type": "position_assessment",
-        "position_id": "POS-NVDA",
-        "verdict": "reject",
-        "evaluation": {
-          "status_classification_warrant": {
-            "status": "fail",
-            "note": "Status_rationale rehashes entry context without engaging current information."
-          },
-          "action_status_alignment": {
-            "status": "fail",
-            "note": "Hold rests on unwarranted on-track classification."
-          },
-          "action_specific_justification": {
-            "status": "fail",
-            "note": "'Thesis on-track' is restatement, not justification."
-          },
-          "portfolio_coherence": {
-            "status": "fail",
-            "note": "Strategist offers no cross-position observation despite position at 4.3% (CRITICAL proximity) and concurrent analyst REC-3 proposing same-underlying entry."
-          }
-        },
-        "modifications": [],
-        "concerns": [
-          {
-            "source": "status_classification_warrant",
-            "summary": "Held NVDA thesis cites Q1 earnings as the 48h catalyst but synthesizer [SA-TECH-3] reports no NVDA earnings scheduled in the 72h window; the operative near-term binary is the Trump-China visit on May 13 [SA-TECH-4, QR-2] with NVDA export-control exposure. Strategist's 'AI capex momentum intact; no new information' rationale does not engage either signal."
-          },
-          {
-            "source": "portfolio_coherence",
-            "summary": "Position at 4.3% of portfolio with same-underlying entry from analyst (REC-3) and 6.0% remaining sector_concentration_semis headroom; strategist provides no cross-position context."
-          }
-        ],
-        "rationale_narrative": "Strategist's hold rests on a status classification that rehashes the entry-context thesis label ('AI capex momentum intact; no new information') without engaging two specific synthesizer signals bearing directly on the held thesis: (1) the cited Q1-earnings catalyst is not present in the 72h scheduled-event window per [SA-TECH-3], and (2) the operative near-term binary is the Trump-China visit on May 13 [SA-TECH-4, QR-2] with material export-control exposure for NVDA. The strategist also issues no cross-position observation despite the 4.3% CRITICAL position-proximity and a concurrent same-underlying analyst entry (REC-3). Pattern is rationalized_continuation \u2014 the action label persists across invocations under unchanged thin rationale. Re-evaluation required against the actual operative catalyst.",
-        "anti_patterns_identified": [
-          "rationalized_continuation"
-        ],
-        "commands": []
-      },
-      "submission_results": []
-    },
-    {
-      "envelope": {
         "envelope_id": "ENV-SA-2",
-        "invocation_id": "20260509T204335Z-verify-pm-synchronous_rejection",
+        "invocation_id": "20260516T202225Z-verify-pm-synchronous_rejection",
         "source_provenance": "pm_strategist",
         "source_recommendation_id": "SA-2",
         "recommendation_type": "position_assessment",
         "position_id": "POS-JPM",
-        "verdict": "reject",
+        "verdict": "approve",
         "evaluation": {
           "status_classification_warrant": {
-            "status": "fail",
-            "note": "On-track classification directly contradicts synthesizer's primary rotation framing."
+            "status": "pass",
+            "note": "On-track classification consistent with intra-financials non-bank leadership read [SA-FIN-1] and JPM's appearance in SpaceX-IPO headline-tag [SA-FIN-6]."
           },
           "action_status_alignment": {
-            "status": "fail",
-            "note": "Hold action rests on unwarranted classification."
+            "status": "pass",
+            "note": "Hold aligns with on-track status; no trigger for parameter change."
           },
           "action_specific_justification": {
-            "status": "fail",
-            "note": "'Thesis on-track' restatement; no engagement with the 6.30\u03c3 C:JPM correlation breakdown."
+            "status": "pass",
+            "note": "Hold needs no action parameters."
           },
           "portfolio_coherence": {
-            "status": "fail",
-            "note": "No cross-position observation given the highest-magnitude pair breakdown in the universe sits on this name."
+            "status": "pass",
+            "note": "Financials sector at 5.0% of 25% limit; ample headroom; no cross-position dependency stress."
           }
         },
         "modifications": [],
-        "concerns": [
-          {
-            "source": "status_classification_warrant",
-            "summary": "Strategist characterizes 'financials sector rotation ongoing' as supportive of the JPM long. Synthesizer [AR-5] frames financials as the primary rotation loser; C:JPM correlation breakdown at 6.30\u03c3 [CR-105] is the highest-magnitude pair in the entire universe, indicating extreme intra-financials divergence on this exact name. The directional read is opposite to the strategist's."
-          },
-          {
-            "source": "action_specific_justification",
-            "summary": "[SA-FIN-4]'s scenario where money-center NIM benefits from a hot CPI print is a plausible counterpoint, but is not invoked or addressed in the strategist's rationale. Hold may still be defensible \u2014 but not on this rationale."
-          }
-        ],
-        "rationale_narrative": "Strategist's status_rationale ('Financials sector rotation ongoing; position healthy') treats the rotation as supportive while the synthesizer's [AR-5] frames financials as the rotation loser, with C:JPM at 6.30\u03c3 [CR-105] \u2014 the single highest-magnitude correlation breakdown in the entire universe \u2014 sitting directly on the held name. This is thesis_contradiction_suppression: the load-bearing synthesizer signal is not engaged. A defensible hold rationale exists ([SA-FIN-4]'s money-center NIM channel under a hot CPI print on May 12 [QR-1]), but the strategist does not invoke it. Re-classify against [AR-5] and [CR-105], or pivot the rationale to the NIM channel and address the asymmetry [QR-1] flags between hot and soft prints.",
-        "anti_patterns_identified": [
-          "thesis_contradiction_suppression"
-        ],
+        "concerns": [],
+        "rationale_narrative": "JPM hold approved cleanly. The strategist's status_rationale is thin (\"sector rotation ongoing; position healthy\") but is consistent with the synthesizer's intra-financials bifurcation framing where non-bank/large-cap leaders separate from deposit-funded regional laggards (WFC, C, TFC, USB). JPM is not flagged in the AR-5 regional-bank deterioration cluster. The thesis remains intact and no action parameter requires PM modification on a hold.",
+        "anti_patterns_identified": null,
         "commands": []
       },
       "submission_results": []
@@ -105,45 +48,39 @@
     {
       "envelope": {
         "envelope_id": "ENV-SA-3",
-        "invocation_id": "20260509T204335Z-verify-pm-synchronous_rejection",
+        "invocation_id": "20260516T202225Z-verify-pm-synchronous_rejection",
         "source_provenance": "pm_strategist",
         "source_recommendation_id": "SA-3",
         "recommendation_type": "position_assessment",
         "position_id": "POS-XOM",
-        "verdict": "reject",
+        "verdict": "approve",
         "evaluation": {
           "status_classification_warrant": {
             "status": "pass",
-            "note": "Partially-realized transition from prior on-track is a plausible reclassification."
+            "note": "Transition on-track \u2192 partially-realized warranted by stated progress toward target; no contradictory evidence in synthesizer (XOM not flagged in CTRA/LNG anomaly clusters)."
           },
           "action_status_alignment": {
-            "status": "fail",
-            "note": "Partially-realized status warrants action (reduce, target tighten, or stop tighten); bare hold leaves realized portion exposed."
+            "status": "pass",
+            "note": "Hold for further realization is the canonical response when target is not yet reached on a partially-realized thesis."
           },
           "action_specific_justification": {
-            "status": "fail",
-            "note": "'Target not yet reached' justifies inaction but does not justify why the realized portion remains unprotected."
+            "status": "pass",
+            "note": "No action parameters to justify on a hold."
           },
           "portfolio_coherence": {
             "status": "pass",
-            "note": null
+            "note": "Energy sector at 5% of 25% limit; XOM not exposed to the OXY/DVN/EOG ceasefire-risk-premium tension surfaced by [SA-ENERGY-4]."
           }
         },
         "modifications": [],
         "concerns": [
           {
-            "source": "action_status_alignment",
-            "summary": "Status transition on-track \u2192 partially-realized is precisely the trigger for protecting realized P/L: a reduce sized to the realized portion, a stop tightened to lock in gains, or a target tightened to the achievable remainder. Bare hold preserves none of these."
-          },
-          {
-            "source": "action_specific_justification",
-            "summary": "Synthesizer's energy section flags services-vs-E&P inversion and a 17.5% US-Iran de-escalation probability that would compress the energy-sector premium [SA-ENERGY-TC-1]. Strategist does not address whether the partially-realized gain warrants protection against this de-escalation tail."
+            "source": "other",
+            "summary": "Partially-realized status without complementary stop-tightening leaves realized P/L exposed to give-back; the strategist did not propose risk-reduction parameters, so no PM modification is authored here, but a future invocation should weigh tightening the protective bracket."
           }
         ],
-        "rationale_narrative": "Status reclassification on-track \u2192 partially-realized is warranted, but the action selection is not. Partially-realized is the canonical trigger for converting paper gains into protected gains \u2014 through a reduce, a tightened stop, or a tightened target. Strategist's bare hold with 'target not yet reached' rationale leaves the realized portion fully exposed to a US-Iran de-escalation tail [SA-ENERGY-TC-1] at 17.5% probability. Pattern is rationalized_continuation: the partially-realized label triggered no action change. Re-evaluate the action against the realized portion; the recommendation should land on reduce or adjust-bracket (stop tighten), not bare hold.",
-        "anti_patterns_identified": [
-          "rationalized_continuation"
-        ],
+        "rationale_narrative": "XOM hold approved. The status transition to partially-realized is warranted and the hold action is consistent. Existing-position guidance for partial INVALIDATION (tighten stop) does not strictly apply to partial REALIZATION, so no complementary adjust-bracket is authored. Flagging the give-back risk for the next strategist cycle.",
+        "anti_patterns_identified": null,
         "commands": []
       },
       "submission_results": []
@@ -151,7 +88,7 @@
     {
       "envelope": {
         "envelope_id": "ENV-SA-4",
-        "invocation_id": "20260509T204335Z-verify-pm-synchronous_rejection",
+        "invocation_id": "20260516T202225Z-verify-pm-synchronous_rejection",
         "source_provenance": "pm_strategist",
         "source_recommendation_id": "SA-4",
         "recommendation_type": "position_assessment",
@@ -160,29 +97,24 @@
         "evaluation": {
           "status_classification_warrant": {
             "status": "pass",
-            "note": "Services-margin thesis sits in a different domain than the synthesizer's chip-deal/divergence flags; on-track is defensible."
+            "note": "On-track classification consistent with services-margin thesis; AAPL not flagged in any synthesizer anomaly cluster (META/NVDA/intra-tech-bifurcation discussion does not implicate AAPL)."
           },
           "action_status_alignment": {
             "status": "pass",
-            "note": null
+            "note": "Hold aligns with on-track status."
           },
           "action_specific_justification": {
             "status": "pass",
-            "note": "Hold on a 1.8% on-track position requires no further action."
+            "note": "No action parameters required on hold."
           },
           "portfolio_coherence": {
             "status": "pass",
-            "note": "Position is small (1.8%) and not in conflict with any analyst proposal."
+            "note": "Tech sector at 5% of 25% limit (AAPL the only tech name); coherent with portfolio."
           }
         },
         "modifications": [],
-        "concerns": [
-          {
-            "source": "status_classification_warrant",
-            "summary": "Synthesizer flags AAPL diverging from semis peers (AAPL:MCHP 3.83\u03c3, AAPL:NXPI 4.16\u03c3, AAPL:TXN 3.24\u03c3) with a concurrent tier-3 Apple-Intel chip-deal headline [SA-TECH-2, SA-TECH-TC-2]. None of these signals contradict the services-margin thesis directly, but the strategist should track whether the divergence pattern eventually intersects services-domain assumptions."
-          }
-        ],
-        "rationale_narrative": "Hold approved. The services-margin thesis is in a domain orthogonal to the synthesizer's specific AAPL flags (chip-deal, divergence-from-semis-peers), and no signal in this invocation contradicts services-margin expansion. Position is small (1.8%) and outside any analyst-proposal conflict. Strategist's rationale is thin but coherent and not contradicted. The divergence pattern is recorded as a watch concern for future invocations rather than a present reclassification trigger.",
+        "concerns": [],
+        "rationale_narrative": "AAPL hold approved. Thin but clean assessment; thesis intact and no contradicting evidence in the synthesizer. The intra-tech bifurcation discussion (cybersecurity leadership vs. hardware-semis deterioration) does not implicate AAPL.",
         "anti_patterns_identified": null,
         "commands": []
       },
@@ -190,8 +122,54 @@
     },
     {
       "envelope": {
+        "envelope_id": "ENV-SA-1",
+        "invocation_id": "20260516T202225Z-verify-pm-synchronous_rejection",
+        "source_provenance": "pm_strategist",
+        "source_recommendation_id": "SA-1",
+        "recommendation_type": "position_assessment",
+        "position_id": "POS-NVDA",
+        "verdict": "reject",
+        "evaluation": {
+          "status_classification_warrant": {
+            "status": "fail",
+            "note": "Status_rationale asserts 'no new information' but the synthesizer explicitly flags AR-7's NVDA -4.42%/1d mean-reversion on 1.18x volume and the MRVL:NVDA 3.34\u03c3 [CR-183] and MCHP:NVDA 3.43\u03c3 [CR-153] intra-semis divergences as pre-event flush signals the strategist is instructed to evaluate."
+          },
+          "action_status_alignment": {
+            "status": "pass",
+            "note": "Hold could be defensible even under a re-classified status, but classification must precede action."
+          },
+          "action_specific_justification": {
+            "status": "pass",
+            "note": "No parameters to justify."
+          },
+          "portfolio_coherence": {
+            "status": "fail",
+            "note": "POS-NVDA at 4.3% (CRITICAL proximity to 5% per-position max) without status re-assessment under pre-event mean-reversion evidence amplifies asymmetric downside through the May 20 catalyst."
+          }
+        },
+        "modifications": [],
+        "concerns": [
+          {
+            "source": "status_classification_warrant",
+            "summary": "Strategist's 'no new information' claim is directly contradicted by AR-7's NVDA mean-reversion finding and the intra-semis correlation breakdowns [CR-183, CR-153] surfaced in this invocation's brief."
+          },
+          {
+            "source": "portfolio_coherence",
+            "summary": "Position is at 4.3% (critical proximity to 5% cap) and faces a 5-day catalyst window; a hold without engaging the pre-event flush evidence is not a calibrated response."
+          }
+        ],
+        "rationale_narrative": "Rejecting SA-1 on thesis_contradiction_suppression. The synthesizer's NVDA section is unambiguous: AR-7 records -4.42% on 1.18x volume and concludes the semis-tech lead-lag is a NVDA-vs-META arithmetic story more likely to compress via NVDA mean-reversion than via tech catch-up. The brief explicitly directs the strategist to 'evaluate whether the held thesis's event trigger (May 20) is already partially priced into the 20d run and whether the -4.42% 1d print is a pre-event flush or early-exit signal.' SA-1's 'no new information' rationale does the opposite \u2014 it asserts the absence of what the brief surfaces. Rejection forces re-evaluation against the AR-7/CR-183/CR-153 evidence next invocation. The position itself is not being closed by this envelope; the strategist re-classifies and re-recommends.",
+        "anti_patterns_identified": [
+          "thesis_contradiction_suppression"
+        ],
+        "commands": []
+      },
+      "submission_results": []
+    },
+    {
+      "envelope": {
         "envelope_id": "ENV-REC-1",
-        "invocation_id": "20260509T204335Z-verify-pm-synchronous_rejection",
+        "invocation_id": "20260516T202225Z-verify-pm-synchronous_rejection",
         "source_provenance": "pm_analyst",
         "source_recommendation_id": "REC-1",
         "recommendation_type": "new_entry",
@@ -200,48 +178,38 @@
         "evaluation": {
           "falsifiability": {
             "status": "fail",
-            "note": "48h time-only stop with no price-level invalidation; thesis cannot be falsified by adverse evidence, only by clock."
+            "note": "Only a 48-hour time stop; no price-based invalidation. A 'momentum' thesis with no specified technical level cannot be falsified intra-window."
           },
           "sizing_proportionality": {
-            "status": "fail",
-            "note": "Conviction-3 with one-line thesis at 4% of portfolio is upper-band sizing for a thesis the analyst does not pressure-test."
+            "status": "pass",
+            "note": "4% at conviction-3 is within band; sizing itself is not the defect."
           },
           "portfolio_coherence": {
-            "status": "fail",
-            "note": "Combined with REC-2, projects sector_concentration_tech to 28% vs 25% limit per pre-processor combined_set_impact."
+            "status": "pass",
+            "note": "Tech sector at 5% / 25%; ample headroom. No coherence defect."
           },
           "timing_plausibility": {
-            "status": "fail",
-            "note": "48h horizon with no anchoring catalyst; CPI on May 12 [QR-1] and Trump-China visit on May 13 [QR-2] both fall inside the window and are unaddressed."
+            "status": "pass",
+            "note": "48h horizon is internally consistent with a momentum framing."
           },
           "counterargument_consideration": {
             "status": "fail",
-            "note": "'Macro downside risk acknowledged' is a label, not engagement."
+            "note": "'Macro downside risk acknowledged' is generic boilerplate; no engagement with specific cross-asset signals (COIN:MSFT 4.88\u03c3 [CR-60], vol_expansion regime exhaustion risk [CR-1])."
           }
         },
         "modifications": [],
         "concerns": [
           {
             "source": "falsifiability",
-            "summary": "Thesis 'Long MSFT on momentum' with only a time stop has no condition under which it can be falsified by evidence. A pure-time invalidation forces the position to ride out any adverse move within the window."
-          },
-          {
-            "source": "portfolio_coherence",
-            "summary": "Pre-processor combined_set_impact projects sector_concentration_tech to 28% (vs 25% limit) when REC-1 and REC-2 are taken together. Even after rejecting REC-2, the brief's [AR-5] rotation framing places MSFT in a sector-aggregate context the analyst does not address."
-          },
-          {
-            "source": "timing_plausibility",
-            "summary": "CPI print May 12 [QR-1] and Trump-China visit May 13 [QR-2] both sit inside the 48h window. A momentum long with a time stop straddling two binary catalysts and no event-anchored entry condition is mis-timed."
+            "summary": "Thesis is unfalsifiable: 'momentum' without a price level that, if breached, disproves the entry. A 48-hour time stop expires the trade but does not test the thesis."
           },
           {
             "source": "counterargument_consideration",
-            "summary": "Synthesizer brief presents specific contradictions on MS, LNG, PRU and an unresolved NET high-volume distribution event. Analyst's generic 'macro downside risk' label engages none of them."
+            "summary": "Counterargument is one generic sentence. The synthesizer's vol_expansion exhaustion-risk framing and the COIN:MSFT decoupling are unaddressed."
           }
         ],
-        "rationale_narrative": "Rejected on multiple thesis-quality criteria. The 'Long MSFT on momentum' thesis carries no price-level invalidation (only a 48h time stop), no event anchor for the 48h window despite two binary catalysts (CPI on May 12 [QR-1], Trump-China visit on May 13 [QR-2]) falling inside it, and a generic counterargument label that engages none of the synthesizer's specific contradictions. Combined with REC-2, the pre-processor projects sector_concentration_tech to breach. Pattern is thesis_contradiction_suppression \u2014 the analyst issues a momentum long into a brief dense with directionally-resolving signals without engaging any of them. Thesis redraft required: price-level invalidation anchored to the swing structure, sizing proportional to engagement depth, explicit handling of the CPI and Trump-China catalysts within the holding window.",
-        "anti_patterns_identified": [
-          "thesis_contradiction_suppression"
-        ],
+        "rationale_narrative": "Rejecting on falsifiability + counterargument-consideration failures. These are thesis-construction defects, not parameter-tunable issues, so the cure-vs-reject principle routes to reject. The analyst should redraft with (a) a price-based hard invalidation tied to the technical level the 'momentum' read depends on and (b) specific engagement with vol_expansion exhaustion risk and the synthesizer's tech-sector bifurcation framing before resubmission.",
+        "anti_patterns_identified": null,
         "commands": []
       },
       "submission_results": []
@@ -249,7 +217,7 @@
     {
       "envelope": {
         "envelope_id": "ENV-REC-2",
-        "invocation_id": "20260509T204335Z-verify-pm-synchronous_rejection",
+        "invocation_id": "20260516T202225Z-verify-pm-synchronous_rejection",
         "source_provenance": "pm_analyst",
         "source_recommendation_id": "REC-2",
         "recommendation_type": "new_entry",
@@ -258,47 +226,43 @@
         "evaluation": {
           "falsifiability": {
             "status": "fail",
-            "note": "48h time-only stop with no price-level invalidation."
+            "note": "Same defect as REC-1: time-only invalidation; no price level that disproves the 'momentum' read."
           },
           "sizing_proportionality": {
-            "status": "fail",
-            "note": "Conviction-3 with one-line thesis at 4% of portfolio is upper-band sizing for a thesis the analyst does not pressure-test."
+            "status": "pass",
+            "note": "4% at conviction-3 within band."
           },
           "portfolio_coherence": {
             "status": "fail",
-            "note": "Combined with REC-1, projects sector_concentration_tech to 28% vs 25% limit per pre-processor combined_set_impact."
+            "note": "GOOGL appears in synthesizer only via correlation breakdowns driven by META weakness (GOOGL:META 5.79\u03c3 [CR-95], GOOG:META 5.89\u03c3 [CR-101]) and the unresolved narrative-lag flag [AR-1] at the identical 5.89\u03c3 magnitude. Entering long into an unresolved META-root-catalyst environment without engaging the cross-asset evidence is poor coherence."
           },
           "timing_plausibility": {
-            "status": "fail",
-            "note": "48h horizon straddling CPI [QR-1] and Trump-China visit [QR-2] without event anchoring."
+            "status": "pass",
+            "note": "48h horizon internally consistent."
           },
           "counterargument_consideration": {
             "status": "fail",
-            "note": "'Macro downside risk acknowledged' is a label, not engagement."
+            "note": "Generic counterargument fails to address the META-narrative-lag context that the synthesizer explicitly directs analysts to treat as 'uncorroborated until the narrative lag resolves.'"
           }
         },
         "modifications": [],
         "concerns": [
           {
             "source": "falsifiability",
-            "summary": "Thesis 'Long GOOGL on momentum' with only a time stop has no evidence-based invalidation."
+            "summary": "Unfalsifiable 'momentum' thesis with only a time stop."
           },
           {
             "source": "portfolio_coherence",
-            "summary": "Sector_concentration_tech projects to 28% when paired with REC-1; even on its own, the analyst does not engage with [AR-5]'s rotation framing on which growth-tech sits."
-          },
-          {
-            "source": "timing_plausibility",
-            "summary": "CPI [QR-1] and Trump-China visit [QR-2] sit inside the 48h window. No event-anchored entry condition."
+            "summary": "GOOGL's only synthesizer mentions are as a victim of META-driven correlation breakdowns with an open narrative-lag flag [AR-1]; the brief explicitly instructs the analyst to treat META-adjacent directional claims as uncorroborated."
           },
           {
             "source": "counterargument_consideration",
-            "summary": "Generic counterargument label; no engagement with the synthesizer's specific signals on growth-tech (e.g., MU vs NVDA divergence, AAPL chip-deal divergence pattern)."
+            "summary": "Counterargument fails to engage with the META narrative-lag or the synthesizer's instruction to treat META-adjacent claims as uncorroborated."
           }
         ],
-        "rationale_narrative": "Rejected on the same template-thesis pattern as REC-1. 'Long GOOGL on momentum' with a 48h time-only stop, generic counterargument, and no engagement with the brief's growth-tech signals (MU's +77.56% 20-day vs NVDA, AAPL's chip-deal/divergence flags, the SOXX\u2192QQQ overdue lead-lag [CR-14]) is not a thesis the PM can pressure-test. Pattern is thesis_contradiction_suppression. Thesis redraft required with price-level invalidation, event-anchored timing, and explicit engagement with rotation directionality.",
+        "rationale_narrative": "Rejecting on falsifiability + coherence + counterargument failures. The synthesizer's META-narrative-lag treatment is directly load-bearing for GOOGL: the 5.89\u03c3 GOOG:META and 5.79\u03c3 GOOGL:META breakdowns are flagged in the same paragraph where the brief instructs the analyst to treat META-adjacent qualitative directional claims as uncorroborated until the narrative lag resolves. A 'momentum' long into that exact configuration without engaging the instruction is rationalized_continuation-shaped at the proposal level. Cure requires thesis redraft, not parameter adjustment.",
         "anti_patterns_identified": [
-          "thesis_contradiction_suppression"
+          "rationalized_continuation"
         ],
         "commands": []
       },
@@ -307,7 +271,7 @@
     {
       "envelope": {
         "envelope_id": "ENV-REC-3",
-        "invocation_id": "20260509T204335Z-verify-pm-synchronous_rejection",
+        "invocation_id": "20260516T202225Z-verify-pm-synchronous_rejection",
         "source_provenance": "pm_analyst",
         "source_recommendation_id": "REC-3",
         "recommendation_type": "new_entry",
@@ -316,42 +280,47 @@
         "evaluation": {
           "falsifiability": {
             "status": "fail",
-            "note": "48h time-only stop with no price-level invalidation."
+            "note": "Time-only invalidation; 'momentum' framing with no price level that disproves the read."
           },
           "sizing_proportionality": {
             "status": "fail",
-            "note": "4% addition on top of held POS-NVDA at 4.3% would push aggregate same-underlying exposure to 8.3%, breaching position_max_size_pct 5% cap."
+            "note": "4% on top of held POS-NVDA at 4.3% projects an 8.3% single-name concentration vs the 5% position_max_size_pct ceiling \u2014 the proposal as-sized is unsizable, not merely over-sized."
           },
           "portfolio_coherence": {
             "status": "fail",
-            "note": "Pre-processor flags entry_vs_hold conflict with SA-1; constructive action on a held name routes through a strategist add, not an analyst new-entry."
+            "note": "Direct entry_vs_hold conflict with SA-1 on POS-NVDA; pre-processor flagged. Adding NVDA while strategist holds NVDA \u2014 against a synthesizer brief warning of pre-event mean-reversion (AR-7: -4.42%/1d on 1.18x volume; MRVL:NVDA 3.34\u03c3 [CR-183]; MCHP:NVDA 3.43\u03c3 [CR-153]) \u2014 is incoherent."
           },
           "timing_plausibility": {
             "status": "fail",
-            "note": "48h horizon while Trump-China visit on May 13 [QR-2] sits inside the window with material NVDA export-control exposure on the 26% cancellation tail."
+            "note": "48h horizon with May 20 catalyst window approaching; the brief explicitly suggests pre-event flush dynamics, making a same-direction add into the catalyst the worst-timed entry shape."
           },
           "counterargument_consideration": {
             "status": "fail",
-            "note": "Generic counterargument label; no engagement with the export-control asymmetry or the AVGO:NVDA / MRVL:NVDA divergence pattern [CR-53, CR-242]."
+            "note": "Counterargument is generic boilerplate; AR-7's mean-reversion finding and the intra-semis divergence evidence are entirely unaddressed."
           }
         },
         "modifications": [],
         "concerns": [
           {
-            "source": "portfolio_coherence",
-            "summary": "Same-underlying entry on a position the strategist holds (SA-1). The constructive route is a strategist `add` with conviction justification, not an analyst new-entry. Routing this as a new entry sidesteps the strategist's same-underlying assessment surface."
+            "source": "sizing_proportionality",
+            "summary": "8.3% projected NVDA exposure breaches 5% per-position cap; cannot be cured by sizing adjustment in the same envelope without contradicting the held position thesis."
           },
           {
-            "source": "sizing_proportionality",
-            "summary": "POS-NVDA already at 4.3% (CRITICAL position-proximity per guardrail header); adding 4% pushes aggregate to 8.3%, breaching position_max_size_pct 5% cap. Pre-processor's projected_after on this rule reads 4.3% which appears to track REC-3 as a separate name rather than as same-underlying \u2014 the cap is breached either way."
+            "source": "portfolio_coherence",
+            "summary": "Entry_vs_hold conflict with SA-1; strategist holds NVDA and the synthesizer warns of pre-event mean-reversion."
           },
           {
             "source": "counterargument_consideration",
-            "summary": "The Trump-China visit on May 13 [QR-2] carries 26% cancellation tail with material NVDA export-control exposure [SA-TECH-4]. Within-semis, NVDA is diverging negatively from AVGO [CR-53] and MRVL [CR-242]. Neither signal is engaged."
+            "summary": "AR-7's -4.42%/1d NVDA mean-reversion print, MRVL:NVDA and MCHP:NVDA intra-semis divergences, and the explicit synthesizer direction to evaluate pre-event flush dynamics are unaddressed."
+          },
+          {
+            "source": "timing_plausibility",
+            "summary": "Adding into a catalyst window the brief flags as already partially priced, in the direction of the existing position, is timing-adverse."
           }
         ],
-        "rationale_narrative": "Rejected on portfolio coherence (entry_vs_hold conflict with SA-1, same-underlying), sizing (aggregate 8.3% post-entry breaches per-position cap), and the same template-thesis pattern as REC-1/REC-2. The analyst routes a constructive-action proposal through the new-entry surface rather than through a strategist `add`, sidestepping conviction justification on top of an existing thesis. The 48h window also straddles the Trump-China visit binary [QR-2] with a 26% cancellation tail and material NVDA export-control exposure that the thesis does not address. Pattern is thesis_contradiction_suppression compounded with channel mis-routing. The correct path is for the strategist to surface an `add` recommendation in a future invocation if conviction warrants, with the cap-breach addressed at the strategist layer; analyst new-entry on a held name is not the right channel.",
+        "rationale_narrative": "Rejecting REC-3 on a multi-criterion failure stack: unfalsifiable thesis, unsizable on top of held POS-NVDA (8.3% projected vs 5% cap), entry_vs_hold conflict pre-processor-flagged with SA-1, and timing into a catalyst the synthesizer says is already partially priced with active mean-reversion evidence. None of these is curable by parameter adjustment \u2014 sizing down would shrink the breach but the thesis remains unfalsifiable and the timing is still adverse. Coherence-wise, since SA-1 is also being rejected (forcing strategist re-assessment of POS-NVDA under the AR-7 evidence), the right shape across both envelopes is reject + reject: no NVDA action this invocation, strategist re-evaluates next cycle. The conviction_inflation pattern is shaped at the proposal level \u2014 generic boilerplate thesis sized at conviction-3 ($4000) when the synthesizer evidence cuts against the entry.",
         "anti_patterns_identified": [
+          "conviction_inflation",
           "thesis_contradiction_suppression"
         ],
         "commands": []
@@ -363,13 +332,13 @@
     "name": "synchronous_rejection",
     "verdict": "WARN",
     "tokens_used": {
-      "input_tokens": 15,
-      "output_tokens": 18482,
-      "cache_read_tokens": 359989,
-      "cache_write_tokens": 33369
+      "input_tokens": 12,
+      "output_tokens": 18034,
+      "cache_read_tokens": 238709,
+      "cache_write_tokens": 32792
     },
-    "wall_clock_seconds": 261.4502017090563,
-    "tool_calls_used": 8,
+    "wall_clock_seconds": 235.5847564000287,
+    "tool_calls_used": 9,
     "retry_count": 0,
     "stop_reason": "end_turn"
   }

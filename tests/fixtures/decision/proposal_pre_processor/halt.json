@@ -189,64 +189,115 @@
     "recommendations": null,
     "watchlist": [
       {
-        "estimated_conviction": 4,
-        "sector": "financials",
+        "estimated_conviction": 2,
+        "sector": "tech",
         "source_references": [
-          "AR-5",
-          "AR-2",
-          "SA-FIN-1",
-          "SA-FIN-2",
-          "SA-FIN-TC-1",
-          "CR-307",
-          "CR-348",
-          "CR-234",
-          "CR-325",
-          "CR-321",
-          "QR-1",
-          "SA-FIN-4"
+          "AR-1",
+          "CR-101",
+          "CR-95",
+          "CR-163",
+          "CR-166",
+          "CR-162",
+          "CR-230"
         ],
-        "thesis_summary": "Dominant weak-leg node in the financials-versus-growth-tech rotation [AR-5], appearing across at least six correlation breakdown pairs at 4.0\u20135.2\u03c3 (QQQ:WFC [CR-307], WFC:XLK [CR-348], META:WFC [CR-234], SOXX:WFC [CR-325], SMH:WFC [CR-321]). [SA-FIN-1] records a 3.15\u03c3 volume event on a \u22123.52 price move; [AR-2] characterizes it as continuation of multi-week structural NIM compression under the inverted curve, not single-session flush. [SA-FIN-TC-1] flags it as a three-source distillation-convergent momentum short, and the CPI print at May 12 12:30Z [QR-1, SA-FIN-4] is the binary resolution catalyst within 41\u201348 hours, with the asymmetric repricing biased to the soft-print side.",
-        "ticker": "WFC"
+        "thesis_summary": "Idiosyncratic -10.79%/20d decline is the proximate generator of 40+ of the 214 correlation breakdowns this invocation (GOOG:META 5.89\u03c3, GOOGL:META 5.79\u03c3, META:RSP 5.62\u03c3, META:SPY 5.02\u03c3, META:QQQ 4.63\u03c3), with narrative_lag co-firing at the identical 5.89\u03c3 magnitude \u2014 the qualitative pipeline has not surfaced the root catalyst. Short-squeeze (borrow 0.25%) and forced liquidation (84% avg volume, orderly) ruled out by AR-1. Direction is unresolvable until news_search runs next trading day; preserve as the highest-priority next-cycle resolution item, not as a directional candidate.",
+        "ticker": "META"
       },
       {
         "estimated_conviction": 3,
         "sector": "semis",
         "source_references": [
-          "SA-TECH-1",
-          "AR-3",
+          "SA-TECH-3",
+          "SA-TECH-TC-1",
+          "QR-1",
+          "AR-7",
+          "CR-183",
+          "CR-153",
           "CR-14"
         ],
-        "thesis_summary": "Synchronized 52-week-high breakout alongside AMD, INTC, QCOM with ADX 38\u201361 [SA-TECH-1], and a 20-day return of +77.56% versus NVDA's +14.09% on 1.53\u00d7 baseline volume [AR-3] \u2014 elevated but not extreme, consistent with sustained institutional accumulation rather than a short-squeeze unwind. The 1-day SOXX\u2192QQQ lead-lag is overdue at 2.10\u03c3 [CR-14], implying the semis breakout has not yet transmitted into broad tech. The conviction limiter is the unidentified differentiating DRAM/HBM demand catalyst that separates MU from NVDA \u2014 [AR-3] flags this gap as load-bearing and unresolved due to tool unavailability.",
-        "ticker": "MU"
+        "thesis_summary": "Three-source convergence on May 20 earnings + Huang Beijing trade-summit GPU export-policy leg (SA-TECH-3, SA-TECH-TC-1, QR-1) sits against a -4.42% 1d print on 1.18x volume (AR-7) and intra-semis divergences (MRVL:NVDA 3.34\u03c3, MCHP:NVDA 3.43\u03c3) suggesting the 20d outperformance was concentrated within semis rather than sector-wide. Open question post-halt: is the -4.42% 1d a pre-event flush or early-exit on a thesis already priced into the +11.72%/20d run. QR-1 sources are tier-3 with ticker misattributions, reducing their weight.",
+        "ticker": "NVDA"
+      },
+      {
+        "estimated_conviction": 3,
+        "sector": "tech",
+        "source_references": [
+          "SA-TECH-1",
+          "CR-64",
+          "CR-65",
+          "CR-92",
+          "CR-191"
+        ],
+        "thesis_summary": "Leader of the cybersecurity Keltner-penetration cluster (CRWD/CSCO/DDOG/FTNT/PANW all at 52w pct 1.0, RSI 82\u201388) at RSI 88.46 and Keltner position 2.201, +21.99% vs sector 5d \u2014 extreme overbought breadth in a vol_expansion regime where exhaustion events tend to be sharp when they arrive. Internal cluster correlation breakdowns (CRWD:NET 3.21\u03c3, FTNT:NET 3.34\u03c3, NET:PANW 3.28\u03c3) suggest the cluster is fragmenting ahead of a potential cluster-wide reversal. Mean-reversion candidate to monitor post-halt; no flow corroboration available (options data zero, Saturday).",
+        "ticker": "CSCO"
       },
       {
         "estimated_conviction": 3,
         "sector": "energy",
         "source_references": [
-          "SA-ENERGY-1",
-          "SA-ENERGY-4",
-          "SA-ENERGY-TC-1"
+          "SA-ENERGY-2",
+          "SA-ENERGY-TC-2",
+          "SA-ENERGY-4"
         ],
-        "thesis_summary": "Energy services-versus-E&P ordering inversion with second-source corroboration: [SA-ENERGY-1] places BKR at the 67th intra-sector 20-day percentile and SLB at the 100th, while E&P-heavy OXY/APA/DVN trail by \u22126.3% to \u22122.4% \u2014 anomalous against the canonical Hormuz-disruption sequencing. [SA-ENERGY-4] and [SA-ENERGY-TC-1] independently surface a BofA Buy reiteration on BKR as a non-technical second source, and [SA-ENERGY-TC-1] frames the services premium as direct pricing of Middle East operational exposure. The asymmetric downside is the 17.5%-by-May-31 US-Iran nuclear deal probability that would sharply compress the services premium \u2014 a discrete falsification path rather than diffuse risk.",
-        "ticker": "BKR"
+        "thesis_summary": "E&P leader at 100th intra-sector percentile (+12.22% vs SPY 5d) with bullish stochastic, riding crude-beta and vol_expansion-tightened commodity-equity correlation \u2014 but with the highest direct-crude exposure to a Russia-Ukraine ceasefire pegged at 60% probability (SA-ENERGY-4, SA-ENERGY-TC-2). The same leverage driving the rally is the asymmetric downside if the geopolitical risk premium compresses. Binary-event-sensitive watch item; ceasefire-tape developments are the trigger.",
+        "ticker": "OXY"
+      },
+      {
+        "estimated_conviction": 3,
+        "sector": "financials",
+        "source_references": [
+          "SA-FIN-2",
+          "SA-FIN-TC-1"
+        ],
+        "thesis_summary": "Analyst/Investor Day catalyst coincides with the strongest technical alignment in the financials universe \u2014 only name with simultaneously bullish MACD and bullish stochastic, 100th intra-sector 5d percentile (SA-FIN-2, SA-FIN-TC-1). Conviction is structurally capped by three simultaneous data gaps: yield curve unavailable (primary SCHW rate-income input), zero options flow (Saturday closure), and EMA trend zeroed from bootstrap. Re-evaluate when yield-curve macro data restores on next trading session.",
+        "ticker": "SCHW"
       },
       {
         "estimated_conviction": 2,
-        "sector": "semis",
+        "sector": "financials",
         "source_references": [
-          "SA-TECH-1",
-          "SA-TECH-2",
-          "SA-TECH-TC-2",
-          "CR-16",
-          "CR-17",
-          "CR-20"
+          "SA-FIN-1",
+          "SA-FIN-ANOM-3",
+          "AR-5",
+          "CR-6",
+          "CR-9"
         ],
-        "thesis_summary": "ADX=61.26 is the strongest trend reading in the entire universe [SA-TECH-1], with INTC participating in the synchronized semis breakout alongside AMD, MU, QCOM. Concurrent tier-3 headline of an Apple-Intel chip deal [SA-TECH-2, SA-TECH-TC-2] could supply a fundamental leg, but rests on a single unconfirmed source \u2014 technical conviction is meaningfully higher than fundamental conviction, and the AAPL-isolate pattern across [CR-16], [CR-17], [CR-20] is not yet resolvable to confirm or deny that deal. Conviction held at 2 explicitly because the fundamental leg is unverified rather than weak.",
-        "ticker": "INTC"
+        "thesis_summary": "WFC -9.81%/20d and C -6.63%/20d on below-average volume \u2014 orderly persistent drift consistent with shared macro factor (deposit-funded NIM compression in inflation_environment + rate_driven rotation) rather than name-specific catalysts. WFC at 52w pct 0.0 with no negative qualitative catalyst (SA-FIN-ANOM-3); RSI 33.5, below lower Keltner. Next earnings 8 weeks out, flat EPS revisions. Yield-curve data (US_10Y, 2-10 spread) on Monday is dispositive for the NIM-compression attribution; structural inference only at present.",
+        "ticker": "WFC"
+      },
+      {
+        "estimated_conviction": 2,
+        "sector": "financials",
+        "source_references": [
+          "SA-FIN-3",
+          "SA-FIN-4",
+          "AR-2",
+          "CR-140",
+          "CR-143",
+          "CR-149",
+          "CR-148",
+          "CR-30",
+          "CR-106",
+          "CR-131"
+        ],
+        "thesis_summary": "Sustained decline across three independent sources: Berkshire Q1 exit not absorbed while V absorbed the same exit cleanly (SA-FIN-3), UK digital wallet regulatory probe expanding without disclosed timeline (SA-FIN-4), and broad de-correlation from payment peers, banks, and broad market (MA:MS 5.02\u03c3, MA:RSP 4.44\u03c3, MA:XYZ 4.52\u03c3, MA:XLF 4.01\u03c3, AXP:MA 3.95\u03c3, GS:MA 4.07\u03c3, JPM:MA 3.08\u03c3) per AR-2. 8.7th 52w percentile, bearish MACD, 20d -5.20%. Contradiction: intraday with-trend gap (0.31\u00d7 ATR) \u2014 bounce vs first sign of selling abating is unresolved. News_search + options_flow next cycle.",
+        "ticker": "MA"
+      },
+      {
+        "estimated_conviction": 2,
+        "sector": "energy",
+        "source_references": [
+          "SA-ENERGY-1",
+          "SA-ENERGY-TC-1",
+          "AR-3",
+          "CR-69"
+        ],
+        "thesis_summary": "-8.62% on 7.18x average volume with the entire 5d decline compressed into a single session (SA-ENERGY-1, SA-ENERGY-TC-1, AR-3). Counter-trend full-fill gap and stochastic rolling bearish from overbought support a continuation-down read, but bootstrap volume baseline (8 days) inflates anomaly-magnitude uncertainty and no qualitative catalyst is identified. CTRA:TSLA 3.60\u03c3 cross-sector breakdown may reflect a shared factor (index rebalance / systematic deleveraging) visible only in the missing qualitative slice. News_search + sec_lending borrow data on Monday required before this becomes directional.",
+        "ticker": "CTRA"
       }
     ]
   },
-  "invocation_id": "20260509T200708Z-verify-analyst-halt",
+  "invocation_id": "20260516T200659Z-verify-analyst-halt",
   "strategist_section": {
     "mode": "defensive_posture",
     "pending_order_assessments": [],

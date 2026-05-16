@@ -21,7 +21,7 @@ spinning up SQLite.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -203,16 +203,18 @@ class DistillationRepository(Protocol):
         """All option contracts on ``underlying`` ordered by contract_ticker."""
         ...
 
-    def load_latest_options_snapshot_at(
-        self, *, contract_ticker: str, as_of: str
-    ) -> OptionsContractSnapshotRow | None:
-        """Snapshot at exactly ``as_of`` for ``contract_ticker``."""
-        ...
+    def load_options_snapshot_pairs_for_underlying(
+        self, *, underlying: str, as_of: str
+    ) -> Mapping[str, tuple[OptionsContractSnapshotRow | None, OptionsContractSnapshotRow | None]]:
+        """Per-contract (today, prior) snapshot pair for every contract on ``underlying``.
 
-    def load_prior_options_snapshot(
-        self, *, contract_ticker: str, as_of: str
-    ) -> OptionsContractSnapshotRow | None:
-        """Most recent snapshot strictly before ``as_of``."""
+        Returns one entry per contract that has at least one snapshot (today or
+        prior); contracts with neither are absent. Today's snapshot is the row
+        with ``snapshot_ts == as_of``; prior is the most recent row strictly
+        before ``as_of``. The q3 loader composes the pair into
+        :class:`PerContractSnapshotPair` — this protocol stays free of q3
+        vocabulary.
+        """
         ...
 
     def load_ticker_adv(self, *, ticker: str) -> TickerADVRow | None:

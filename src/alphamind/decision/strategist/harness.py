@@ -35,6 +35,7 @@ from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.analysis.synthesizer.retrieval_tools import build_retrieve_brief_mcp_server
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
+from alphamind.decision._shared import system_prompt_as_file
 from alphamind.decision.strategist.models import StrategistOutput
 from alphamind.decision.strategist.parser import ParseError, parse_strategist_output
 from alphamind.decision.strategist.validation import (
@@ -611,7 +612,7 @@ def _strip_anthropic_incompat_keys(obj: Any) -> Any:
 def _build_sdk_options(
     agent_config: BaseAgentConfig,
     *,
-    system_prompt: str,
+    prompt_path: str,
     allowed_tools: list[str],
     mcp_servers: dict[str, Any],
 ) -> Any:
@@ -629,11 +630,17 @@ def _build_sdk_options(
     the dict surfaces on ``ResultMessage.structured_output``. The schema is
     passed through :func:`_strip_anthropic_incompat_keys` to remove keywords
     the API silently rejects.
+
+    ``system_prompt`` is passed in file-mode (the SDK serializes it as
+    ``--system-prompt-file <path>`` instead of ``--system-prompt <text>``) so
+    the combined cmdline stays under Windows ``CreateProcessW``'s 32,767
+    character limit — see :mod:`alphamind.decision._shared.prompt_file` for
+    the full rationale.
     """
     from claude_agent_sdk import ClaudeAgentOptions
 
     return ClaudeAgentOptions(
-        system_prompt=system_prompt,
+        system_prompt={"type": "file", "path": prompt_path},
         model=agent_config.model,
         tools=[],
         allowed_tools=allowed_tools,
@@ -804,8 +811,6 @@ async def run_strategist_harness(  # noqa: PLR0913 — public signature is fixed
     TimeoutFailure
         Invocation exceeded ``agent_config.latency_budget_seconds``.
     """
-    from claude_agent_sdk import ClaudeSDKError, CLIConnectionError
-
     if sdk_query_fn is None:
         from claude_agent_sdk import query as _real_query
 
@@ -818,12 +823,46 @@ async def run_strategist_harness(  # noqa: PLR0913 — public signature is fixed
         validation_state=validation_state,
         retrieval_store=retrieval_store,
     )
-    options = _build_sdk_options(
-        agent_config,
-        system_prompt=system_prompt,
-        allowed_tools=allowed_tools,
-        mcp_servers=mcp_servers,
-    )
+
+    with system_prompt_as_file(system_prompt) as prompt_path:
+        options = _build_sdk_options(
+            agent_config,
+            prompt_path=prompt_path,
+            allowed_tools=allowed_tools,
+            mcp_servers=mcp_servers,
+        )
+        return await _run_invocation(
+            agent_config=agent_config,
+            agent_name=agent_name,
+            user_message=user_message,
+            system_prompt=system_prompt,
+            invocation_id=invocation_id,
+            options=options,
+            sdk_query_fn=sdk_query_fn,
+            validator=validator,
+            archive_root=archive_root,
+        )
+
+
+async def _run_invocation(  # noqa: PLR0913 — internal helper threading runner state.
+    *,
+    agent_config: BaseAgentConfig,
+    agent_name: str,
+    user_message: str,
+    system_prompt: str,
+    invocation_id: str,
+    options: Any,
+    sdk_query_fn: Callable[..., AsyncIterator[Any]],
+    validator: _ValidatorContext,
+    archive_root: Path | None,
+) -> HarnessSuccess:
+    """Drive the two-attempt SDK loop with *options* already constructed.
+
+    Extracted so ``run_strategist_harness`` can hold the system-prompt
+    tempfile open for the entire invocation (Attempts 1 and 2 share the same
+    options/prompt_path).
+    """
+    from claude_agent_sdk import ClaudeSDKError, CLIConnectionError
 
     diag = _DiagState(
         agent_name=agent_name,
