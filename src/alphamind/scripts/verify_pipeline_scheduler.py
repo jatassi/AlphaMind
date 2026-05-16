@@ -57,7 +57,12 @@ from alphamind._kernel.invocations import (
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.venue import VenueConfig
-from alphamind.persistence.session import make_async_engine, make_async_session_factory
+from alphamind.persistence.session import (
+    make_async_engine,
+    make_async_session_factory,
+    make_engine,
+    make_session_factory,
+)
 from alphamind.risk_guardrails.breach_behavior.config import load_breach_behavior_config
 from alphamind.state.process_lifetime import (
     record_process_lifetime,
@@ -610,9 +615,12 @@ async def _drive_once_invocation(
 
     engine = make_async_engine()
     session_factory = make_async_session_factory(engine)
+    sync_engine = make_engine()
+    sync_session_factory = make_session_factory(sync_engine)
     try:
         context = RunInvocationContext(
             session_factory=session_factory,
+            sync_session_factory=sync_session_factory,
             process_lifetime_id=process_lifetime_id,
             archive_root=archive_root,
             config_dir=_CONFIG_DIR,
@@ -629,6 +637,7 @@ async def _drive_once_invocation(
             now=datetime.now(UTC),
         )
     finally:
+        sync_engine.dispose()
         await engine.dispose()
     return summary.invocation_id
 

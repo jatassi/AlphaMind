@@ -27,7 +27,7 @@ from alphamind.config.models.agents import (
 )
 from alphamind.config.models.assets import AssetsConfig
 from alphamind.config.models.guardrails import GuardrailsConfig
-from alphamind.config.models.main import MainConfig, Profile
+from alphamind.config.models.main import ExecutionMode, MainConfig, Profile
 from alphamind.config.models.overlays import (
     Overlay,
     PreEventOverlay,
@@ -68,7 +68,7 @@ def validate_cross_references(
     failures.extend(_check_regime_multipliers(inputs.regimes, inputs.guardrails))
     failures.extend(_check_regime_rule_coverage(inputs.regimes, inputs.profiles))
     failures.extend(_check_overlay_multipliers(inputs.overlays, inputs.guardrails))
-    failures.extend(_check_venue_env_refs(inputs.venue, env_keys))
+    failures.extend(_check_venue_env_refs(inputs.venue, inputs.main.execution_mode, env_keys))
     failures.extend(_check_agent_tools(inputs.agents, registered_tools))
     failures.extend(_check_scheduler_run_type_files(inputs.scheduler, inputs.run_types))
     failures.extend(_check_run_type_files_cover_enum_members(inputs.run_types))
@@ -185,17 +185,30 @@ def _check_overlay_multipliers(
     return failures
 
 
-def _check_venue_env_refs(venue: VenueConfig, env_keys: frozenset[str]) -> list[str]:
-    """Check 7: every ``api_key_env`` / ``api_secret_env`` is in ``env_keys``."""
+def _check_venue_env_refs(
+    venue: VenueConfig,
+    execution_mode: ExecutionMode,
+    env_keys: frozenset[str],
+) -> list[str]:
+    """Check 7: ``api_key_env`` / ``api_secret_env`` for the active mode are in ``env_keys``.
+
+    Only the credential block matching ``main.execution_mode`` is enforced — a
+    paper-mode operator with no ``ALPACA_LIVE_*`` keys should not trip the check
+    over credentials the runtime will never read.
+    """
+    if execution_mode is ExecutionMode.paper:
+        active_creds = venue.alpaca.paper
+    else:
+        active_creds = venue.alpaca.live
+    label = execution_mode.value
     failures: list[str] = []
-    for label, creds in (("paper", venue.alpaca.paper), ("live", venue.alpaca.live)):
-        for field_name in ("api_key_env", "api_secret_env"):
-            env_var = getattr(creds, field_name)
-            if env_var not in env_keys:
-                failures.append(
-                    f"venue.yaml: alpaca.{label}.{field_name} references "
-                    f"{env_var!r} which is not present in .env"
-                )
+    for field_name in ("api_key_env", "api_secret_env"):
+        env_var = getattr(active_creds, field_name)
+        if env_var not in env_keys:
+            failures.append(
+                f"venue.yaml: alpaca.{label}.{field_name} references "
+                f"{env_var!r} which is not present in .env"
+            )
     return failures
 
 

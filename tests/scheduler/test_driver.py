@@ -117,6 +117,7 @@ def _make_context(
 
     return RunInvocationContext(
         session_factory=session_factory,
+        sync_session_factory="sync-factory-sentinel",  # type: ignore[arg-type]
         process_lifetime_id="proc-driver-1",
         archive_root=tmp_path / "archive",
         config_dir=SHIPPED_CONFIG_DIR,

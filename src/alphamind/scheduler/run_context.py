@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.venue import VenueConfig
@@ -22,9 +23,16 @@ __all__ = ["RunInvocationContext"]
 
 @dataclass(frozen=True, slots=True)
 class RunInvocationContext:
-    """Frozen bundle of the process-stable inputs ``run_invocation`` reads."""
+    """Frozen bundle of the process-stable inputs ``run_invocation`` reads.
+
+    Two session factories travel together: the async one drives Phase 1 /
+    Phase 2 writes through ``aiosqlite``; the sync one backs the analysis
+    pipeline's between-phase read, where the distillation orchestrator's
+    ``asyncio.to_thread`` callees consume a sync SQLAlchemy ``Session`` API.
+    """
 
     session_factory: async_sessionmaker[AsyncSession]
+    sync_session_factory: sessionmaker[Session]
     process_lifetime_id: str
     archive_root: Path
     config_dir: Path

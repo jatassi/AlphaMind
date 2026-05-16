@@ -61,14 +61,21 @@ def _run_git(*args: str) -> str:
 
 
 def _capture_pip_freeze() -> str:
-    """Return the current environment's ``pip freeze`` output."""
-    completed = subprocess.run(
-        [sys.executable, "-m", "pip", "freeze"],
-        check=True,
-        capture_output=True,
-        text=True,
+    """Return the installed-package set in ``pip freeze`` format.
+
+    Uses :func:`importlib.metadata.distributions` directly rather than shelling
+    out to ``python -m pip freeze`` so the helper works in any environment that
+    can import its own metadata — notably ``uv``-managed venvs, which do not
+    install pip by default. Output is sorted case-insensitively to match pip's
+    own ordering convention.
+    """
+    lines = sorted(
+        (f"{dist.name}=={dist.version}" for dist in importlib.metadata.distributions()),
+        key=str.lower,
     )
-    return completed.stdout
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n"
 
 
 def _format_started_at(started_at: datetime) -> str:

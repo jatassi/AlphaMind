@@ -57,6 +57,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind._kernel.mode import PipelineMode
 from alphamind.config.assets_views import (
@@ -471,16 +472,19 @@ async def run_invocation(
     )
 
     # Step 5 — Read-only analysis + decision pipelines.
-    async with session_factory() as read_session:
-        analysis_handle = InvocationHandle(session=read_session, invocation_id=invocation_id)
-        analysis_result = await _run_analysis(
-            handle=analysis_handle,
-            pipeline_config=pipeline_config,
-            config_dir=config_dir,
-            archive_root=archive_root,
-            now=now,
-            portfolio_reader=portfolio_reader,
-        )
+    # The analysis subtree consumes a sync ``Session`` (the distillation
+    # orchestrator threads it through ``asyncio.to_thread`` into sync
+    # SQLAlchemy callsites); the sync factory is bound to the same SQLite
+    # file as the async one via the context.
+    analysis_result = await _run_analysis(
+        invocation_id=invocation_id,
+        sync_session_factory=context.sync_session_factory,
+        pipeline_config=pipeline_config,
+        config_dir=config_dir,
+        archive_root=archive_root,
+        now=now,
+        portfolio_reader=portfolio_reader,
+    )
 
     pipeline_mode = PipelineMode.from_config_mode(runtime.active_mode)
     decision_kwargs = _build_decision_kwargs(
@@ -578,33 +582,38 @@ def _assemble_phase1_snapshot(
 
 async def _run_analysis(
     *,
-    handle: InvocationHandle,
+    invocation_id: str,
+    sync_session_factory: sessionmaker[Session],
     pipeline_config: PipelineConfig,
     config_dir: Path,
     archive_root: Path,
     now: datetime,
     portfolio_reader: SynthesizerPortfolioStateReader,
 ) -> Any:
-    """Compose ``run_analysis_pipeline`` inputs from the loaded config + handle.
+    """Compose ``run_analysis_pipeline`` inputs from the loaded config + factory.
 
     The reader is built upstream by ``run_invocation`` (after the snapshot
-    assembly) so the synthesizer projects the same post-Phase-1 snapshot
-    the decision pipeline consumes.
+    assembly) so the synthesizer projects the same post-Phase-1 snapshot the
+    decision pipeline consumes. The analysis pipeline's distillation orchestrator
+    threads the session through ``asyncio.to_thread`` into sync SQLAlchemy
+    callsites, so a fresh sync ``Session`` is opened here rather than reusing
+    the async Phase 1 handle.
     """
     from alphamind.scripts._common import load_distillation_config
 
     resolved = pipeline_config.resolved
     ticker_scope = ticker_scope_from_assets(resolved)
-    return await run_analysis_pipeline(
-        session=handle.session,  # type: ignore[arg-type]
-        invocation_id=handle.invocation_id,
-        as_of=now,
-        last_invocation_time=now,
-        distillation_config=load_distillation_config(config_dir / "distillation.yaml"),
-        ticker_scope=ticker_scope,
-        universe=frozenset(ticker_scope),
-        agents_config={name.value: cfg for name, cfg in resolved.agents.agents.items()},
-        sectors_config=sectors_config_from_assets(resolved),
-        portfolio_reader=portfolio_reader,
-        archive_root=archive_root,
-    )
+    with sync_session_factory() as session:
+        return await run_analysis_pipeline(
+            session=session,
+            invocation_id=invocation_id,
+            as_of=now,
+            last_invocation_time=now,
+            distillation_config=load_distillation_config(config_dir / "distillation.yaml"),
+            ticker_scope=ticker_scope,
+            universe=frozenset(ticker_scope),
+            agents_config={name.value: cfg for name, cfg in resolved.agents.agents.items()},
+            sectors_config=sectors_config_from_assets(resolved),
+            portfolio_reader=portfolio_reader,
+            archive_root=archive_root,
+        )
