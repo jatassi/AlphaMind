@@ -161,8 +161,6 @@ def compute_cross_sector_rotation_pure(
     *,
     short_closes_by_etf: Mapping[str, Sequence[float]],
     long_closes_by_etf: Mapping[str, Sequence[float]],
-    sector_etfs: Sequence[str],
-    risk_proxies: Sequence[str],
     short_window_days: int,
     long_window_days: int,
     as_of: datetime,
@@ -170,17 +168,11 @@ def compute_cross_sector_rotation_pure(
     """Pure compute of the cross-sector rotation block.
 
     Operates entirely over pre-loaded short-window and long-window close
-    series for the configured sector ETFs plus risk proxies. The
-    short-window slice is the tail of the long-window series — the caller
-    (loader) handles the slicing.
-
-    Per story 08d, ``sector_etfs`` and ``risk_proxies`` together drive the
-    velocity discriminant and the relative-strength tables; the narrative
-    classifier independently consults the XLF/XLK, XLE/XLK, and IWM/SPY
-    proxy pairs.
+    series for the sector ETFs and risk proxies. The short-window slice
+    is the tail of the long-window series — the caller (loader) handles
+    the slicing. The narrative classifier consults the XLF/XLK, XLE/XLK,
+    and IWM/SPY proxy pairs from the close-series dict.
     """
-    del sector_etfs, risk_proxies  # informational; payload is keyed by close series
-
     velocity = _classify_velocity(closes_by_etf=short_closes_by_etf)
     narrative = _classify_narrative(closes_by_etf=short_closes_by_etf)
 

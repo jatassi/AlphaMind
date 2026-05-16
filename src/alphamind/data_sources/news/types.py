@@ -5,7 +5,7 @@ consumers are news-domain modules — ``finnhub/news.py``, ``sec_edgar/rss.py``,
 ``marketaux/news.py``, ``analysis/news_clustering/clustering.py``,
 ``analysis/qualitative_research/news_digest.py``,
 ``analysis/domain_researchers/qualitative_input.py``, and
-``distillation/q7/correlation_regime_change.py``.
+``distillation/q7/_loaders.py``.
 """
 
 from __future__ import annotations

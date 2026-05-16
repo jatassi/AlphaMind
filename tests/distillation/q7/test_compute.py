@@ -153,8 +153,6 @@ class TestCrossSectorRotationCompute:
         block = compute_cross_sector_rotation_pure(
             short_closes_by_etf=short_closes,
             long_closes_by_etf=long_closes,
-            sector_etfs=("XLK", "SMH", "XLF", "XLE"),
-            risk_proxies=("IWM", "SPY"),
             short_window_days=20,
             long_window_days=60,
             as_of=_as_of(),
@@ -173,8 +171,6 @@ class TestCrossSectorRotationCompute:
         block = compute_cross_sector_rotation_pure(
             short_closes_by_etf=short_closes,
             long_closes_by_etf=short_closes,
-            sector_etfs=("XLK", "SMH", "XLF", "XLE"),
-            risk_proxies=("IWM", "SPY"),
             short_window_days=20,
             long_window_days=60,
             as_of=_as_of(),
@@ -193,8 +189,6 @@ class TestCrossSectorRotationCompute:
         block = compute_cross_sector_rotation_pure(
             short_closes_by_etf=short_closes,
             long_closes_by_etf=short_closes,
-            sector_etfs=("XLK", "SMH", "XLF", "XLE"),
-            risk_proxies=("IWM", "SPY"),
             short_window_days=20,
             long_window_days=60,
             as_of=_as_of(),
@@ -213,8 +207,6 @@ class TestCrossSectorRotationCompute:
         block = compute_cross_sector_rotation_pure(
             short_closes_by_etf=short_closes,
             long_closes_by_etf=short_closes,
-            sector_etfs=("XLK", "SMH", "XLF", "XLE"),
-            risk_proxies=("IWM", "SPY"),
             short_window_days=20,
             long_window_days=60,
             as_of=_as_of(),

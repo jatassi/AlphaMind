@@ -14,7 +14,6 @@ sees already-computed correlation matrices and narrative-lag verdicts.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -23,7 +22,7 @@ from itertools import pairwise
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from alphamind.data_sources.news.types import HeadlineType
+from alphamind.data_sources.news.types import HeadlineType, decode_topic_tags
 from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation.output import OutputBlock
 from alphamind.distillation.q7._helpers import (
@@ -278,26 +277,7 @@ def _qualifying_articles_present(
         )
     )
     rows = session.execute(stmt).scalars().all()
-    for raw_tags in rows:
-        if raw_tags is None:
-            continue
-        try:
-            parsed = json.loads(raw_tags)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(parsed, list):
-            continue
-        article_tags: set[HeadlineType] = set()
-        for tag in parsed:
-            if not isinstance(tag, str):
-                continue
-            try:
-                article_tags.add(HeadlineType(tag))
-            except ValueError:
-                continue
-        if article_tags & NARRATIVE_LAG_REGIME_TAGS:
-            return True
-    return False
+    return any(set(decode_topic_tags(raw_tags)) & NARRATIVE_LAG_REGIME_TAGS for raw_tags in rows)
 
 
 def _select_pair_lag_estimate(
@@ -411,8 +391,6 @@ def _load_cross_sector_blocks(
     block = compute_cross_sector_rotation_pure(
         short_closes_by_etf=short_closes,
         long_closes_by_etf=long_closes,
-        sector_etfs=_CROSS_SECTOR_ETFS,
-        risk_proxies=_RISK_PROXY_ETFS,
         short_window_days=short_window_days,
         long_window_days=long_window_days,
         as_of=as_of,

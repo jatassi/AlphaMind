@@ -431,13 +431,16 @@ class TestNarrativeLagFlag:
             b_closes.append(b_closes[-1] * (1.0 + r))
         _seed_path(session, ticker=Symbol("A"), closes=a_closes, start_day=start_day)
         _seed_path(session, ticker=Symbol("B"), closes=b_closes, start_day=start_day)
-        # Vendor-raw historical row: comma-separated free-form, not valid JSON.
+        # Truly malformed row: starts with ``[`` so the JSON path is taken,
+        # but the body is invalid JSON. ``decode_topic_tags`` returns an
+        # empty tuple rather than raising, so the article contributes no
+        # qualifying tags.
         _add_article(
             session,
             article_id="art-malformed",
             published_at=as_of - timedelta(hours=1),
             ticker=Symbol("A"),
-            topic_tags="macro_data,regulatory",
+            topic_tags='[not valid json',
         )
         session.commit()
 

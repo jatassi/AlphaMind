@@ -8,9 +8,9 @@ ALP-486 split this module along the compute/load boundary:
   parallel with q1 / q3 / q6 / qualitative.
 * :func:`assemble_q7_blocks` — thin session-accepting shim that wraps
   :func:`load_q7_inputs` then delegates to the pure compute.
-* :func:`compute_pair_correlations` — orchestrator-side helper feeding Q3's
-  pair-trade-signature detection; lives in :mod:`._loaders` but re-exported
-  here for back-compat.
+
+The orchestrator-facing :func:`compute_pair_correlations` helper lives in
+:mod:`._loaders` and is re-exported at the package root.
 """
 
 from __future__ import annotations
@@ -22,11 +22,7 @@ from sqlalchemy.orm import Session
 
 from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation.output import OutputBlock
-from alphamind.distillation.q7._loaders import (
-    Q7Inputs,
-    compute_pair_correlations,
-    load_q7_inputs,
-)
+from alphamind.distillation.q7._loaders import Q7Inputs, load_q7_inputs
 
 
 def assemble_q7_blocks_from_inputs(inputs: Q7Inputs) -> list[OutputBlock]:
@@ -85,6 +81,5 @@ __all__ = [
     "Q7Inputs",
     "assemble_q7_blocks",
     "assemble_q7_blocks_from_inputs",
-    "compute_pair_correlations",
     "load_q7_inputs",
 ]

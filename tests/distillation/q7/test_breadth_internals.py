@@ -138,9 +138,7 @@ class TestBreadthPctAboveEMA:
         blocks = compute_breadth_internals(
             session,
             universe_tickers=("AAPL", "MSFT", "GOOG"),
-            sectors=("tech",),
             sector_members={"tech": ("AAPL", "MSFT", "GOOG")},
-            broad_market_etf="SPY",
             as_of=as_of,
         )
 
@@ -186,12 +184,10 @@ class TestBreadthPctAboveEMA:
         blocks = compute_breadth_internals(
             session,
             universe_tickers=("AAPL", "MSFT", "GOOG", "JPM", "BAC"),
-            sectors=("tech", "financials"),
             sector_members={
                 "tech": ("AAPL", "MSFT", "GOOG"),
                 "financials": ("JPM", "BAC"),
             },
-            broad_market_etf="SPY",
             as_of=as_of,
         )
 
@@ -225,9 +221,7 @@ class TestBreadthPctAboveEMA:
         blocks = compute_breadth_internals(
             session,
             universe_tickers=("AAPL", "MSFT"),
-            sectors=("tech",),
             sector_members={"tech": ("AAPL", "MSFT")},
-            broad_market_etf="SPY",
             as_of=as_of,
         )
 

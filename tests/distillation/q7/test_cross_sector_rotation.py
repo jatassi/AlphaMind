@@ -97,14 +97,6 @@ def _seed_etf_path(
         _add_close(session, ticker=ticker, period_start=ts, close=close)
 
 
-# Story 08d names XLK / SMH / XLF / XLE for cross-sector rotation. Story §
-# rotation narrative classification proxies are IWM (small-cap) and SPY
-# (broad market) for risk-appetite, plus the same ETFs for the other
-# two narratives.
-DEFAULT_SECTOR_ETFS = ("XLK", "SMH", "XLF", "XLE")
-DEFAULT_RISK_PROXIES = ("IWM", "SPY")
-
-
 # ---------------------------------------------------------------------------
 # Velocity classification — slow regime shift vs. sharp intraday event
 # ---------------------------------------------------------------------------
@@ -139,8 +131,6 @@ class TestCrossSectorRotationVelocity:
 
         blocks = compute_cross_sector_rotation(
             session,
-            sector_etfs=DEFAULT_SECTOR_ETFS,
-            risk_proxies=DEFAULT_RISK_PROXIES,
             as_of=as_of,
             short_window_days=5,
             long_window_days=20,
@@ -175,8 +165,6 @@ class TestCrossSectorRotationVelocity:
 
         blocks = compute_cross_sector_rotation(
             session,
-            sector_etfs=DEFAULT_SECTOR_ETFS,
-            risk_proxies=DEFAULT_RISK_PROXIES,
             as_of=as_of,
             short_window_days=5,
             long_window_days=20,
@@ -235,8 +223,6 @@ class TestCrossSectorRotationNarrative:
 
         blocks = compute_cross_sector_rotation(
             session,
-            sector_etfs=DEFAULT_SECTOR_ETFS,
-            risk_proxies=DEFAULT_RISK_PROXIES,
             as_of=as_of,
             short_window_days=5,
             long_window_days=20,
@@ -262,8 +248,6 @@ class TestCrossSectorRotationNarrative:
 
         blocks = compute_cross_sector_rotation(
             session,
-            sector_etfs=DEFAULT_SECTOR_ETFS,
-            risk_proxies=DEFAULT_RISK_PROXIES,
             as_of=as_of,
             short_window_days=5,
             long_window_days=20,
@@ -289,8 +273,6 @@ class TestCrossSectorRotationNarrative:
 
         blocks = compute_cross_sector_rotation(
             session,
-            sector_etfs=DEFAULT_SECTOR_ETFS,
-            risk_proxies=DEFAULT_RISK_PROXIES,
             as_of=as_of,
             short_window_days=5,
             long_window_days=20,

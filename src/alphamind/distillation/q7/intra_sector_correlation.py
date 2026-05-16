@@ -14,14 +14,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.output import OutputBlock
-from alphamind.distillation.q7._helpers import (
-    _log_returns_from_closes,
-    _window_bounds,
-)
-from alphamind.distillation.q7._loaders import (
-    _persist_correlation_divergence_events,
-    _select_close_series,
-)
+from alphamind.distillation.q7._loaders import _load_intra_sector_blocks
 from alphamind.distillation.q7.intra_sector_correlation_compute import (
     compute_intra_sector_correlation_pure,
 )
@@ -39,34 +32,20 @@ def compute_intra_sector_correlation(
 ) -> list[OutputBlock]:
     """Compute the per-sector intra-sector correlation block.
 
-    Session-accepting thin shim that:
-
-    1. Reads per-ticker daily-bar closes over the long window.
-    2. Calls the pure compute to produce the block (matrices + divergence
-       flags).
-    3. Persists ``correlation_divergence`` event rows for each flag.
-    4. Flushes the session so the row writes settle before any Phase 2
-       parallel-compute consumer hits the session.
+    Session-accepting thin shim. Delegates to :func:`_load_intra_sector_blocks`
+    with a single-sector roster; the loader reads per-ticker closes, runs
+    the pure compute, persists the divergence events, and flushes the
+    session.
     """
-    long_start, range_end = _window_bounds(as_of=as_of, window_days=long_window_days)
-    long_returns: dict[str, tuple[float, ...]] = {}
-    for ticker in sector_tickers:
-        closes = _select_close_series(
-            session, ticker=ticker, range_start=long_start, range_end=range_end
-        )
-        long_returns[ticker] = tuple(_log_returns_from_closes(closes))
-    block = compute_intra_sector_correlation_pure(
-        sector=sector,
-        sector_tickers=sector_tickers,
-        long_returns_by_ticker=long_returns,
+    blocks = _load_intra_sector_blocks(
+        session,
+        sector_roster={sector: tuple(sector_tickers)},
+        as_of=as_of,
         short_window_days=short_window_days,
         long_window_days=long_window_days,
         divergence_sigma=divergence_sigma,
-        as_of=as_of,
     )
-    _persist_correlation_divergence_events(session, block=block, as_of=as_of)
-    session.flush()
-    return [block]
+    return list(blocks)
 
 
 __all__ = [

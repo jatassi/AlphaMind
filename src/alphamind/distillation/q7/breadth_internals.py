@@ -24,20 +24,16 @@ def compute_breadth_internals(
     session: Session,
     *,
     universe_tickers: Sequence[str],
-    sectors: Sequence[str],
     sector_members: dict[str, Sequence[str]],
-    broad_market_etf: str,
     as_of: datetime,
 ) -> list[OutputBlock]:
     """Compute the breadth-and-internals block.
 
     Session-accepting thin shim that delegates to the pure compute under
-    pre-loaded inputs. ``broad_market_etf`` is fixed to ``SPY`` by the
-    upstream pipeline; the parameter is preserved for back-compat.
-    ``sectors`` is informational; ``sector_members`` drives the per-sector
-    advance/decline counts the payload exposes.
+    pre-loaded inputs. The broad-market ETF (``SPY``) and the sector
+    roster are pinned in :mod:`._loaders`; this shim threads the
+    universe-scope tickers and per-sector membership through.
     """
-    del sectors, broad_market_etf  # informational; defaults pinned in the pure compute path
     blocks = _load_breadth_blocks(
         session,
         ticker_scope=universe_tickers,
