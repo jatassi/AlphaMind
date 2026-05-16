@@ -361,57 +361,6 @@ def _make_bracket(
     )
 
 
-def _make_options_position(
-    position_id: str = "OPT-001",
-    underlying_ticker: str = "NVDA",
-    premium_paid: float = 10.0,
-    contract_count: float = 1.0,
-    contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
-    delta: float = 0.5,
-) -> PositionRecord:
-    options = OptionsPositionDetails(
-        underlying_ticker=Symbol(underlying_ticker),
-        strike_price=500.0,
-        expiration_date=date(2025, 12, 31),
-        contract_type=OptionContractType.CALL,
-        contract_count=contract_count,
-        contract_multiplier=contract_multiplier,
-        premium_paid_per_contract=premium_paid,
-        greeks=OptionGreeks(delta=delta, gamma=0.01, theta=-0.5, vega=0.2),
-    )
-    fill = PositionFill(
-        fill_timestamp=_ENTRY_AT,
-        fill_price=premium_paid,
-        fill_quantity=contract_count,
-        slippage=0.01,
-        fees=1.0,
-    )
-    return PositionRecord(  # type: ignore[call-arg]
-        position_id=PositionId(position_id),
-        thesis_id=None,
-        bracket_id=None,
-        status=PositionStatus.OPEN,
-        direction=Direction.LONG,
-        entry_timestamp=_ENTRY_AT,
-        details=options,
-        execution_history=(fill,),
-        realized_pnl_to_date_usd=None,
-        current_market_value_usd=0.0,
-        unrealized_pnl_usd=0.0,
-        unrealized_pnl_pct=0.0,
-        position_weight_pct=0.0,
-        position_age_hours=0.0,
-        notional_exposure_usd=0.0,
-        delta_adjusted_exposure_usd=0.0,
-        distance_to_target_usd=None,
-        distance_to_stop_usd=None,
-        risk_reward_at_current=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
-    )
-
-
 def _make_strategy_position(
     position_id: str = "STR-001",
     leg1_underlying: str = "NVDA",

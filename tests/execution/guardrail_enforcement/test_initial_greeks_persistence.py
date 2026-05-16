@@ -40,10 +40,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
+from typing import Any
 
 import pytest
 from sqlalchemy import select

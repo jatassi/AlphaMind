@@ -116,7 +116,7 @@ def test_supporting_signal_valid() -> None:
 
 def test_supporting_signal_requires_name() -> None:
     with pytest.raises((ValueError, TypeError)):
-        SupportingSignal(status="PRESENT")  # type: ignore[call-arg,arg-type]
+        SupportingSignal(status=SupportingSignalStatus.PRESENT)  # type: ignore[call-arg]
 
 
 def test_supporting_signal_requires_status() -> None:

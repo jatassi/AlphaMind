@@ -872,6 +872,8 @@ def _snapshot_to_dict(snapshot: Any) -> dict[str, Any]:
             value = getattr(snapshot, field.name)
         except AttributeError:
             continue
+        # is_dataclass() returns True for both instances and the class itself;
+        # narrow to instances so asdict() doesn't reject the class.
         if _dc.is_dataclass(value) and not isinstance(value, type):
             try:
                 out[field.name] = _dc.asdict(value)

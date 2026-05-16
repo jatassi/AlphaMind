@@ -16,7 +16,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
-from alphamind._kernel.money import money, price
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -467,15 +467,20 @@ def _make_thesis_quality() -> ThesisQualityAggregate:
 
 def _make_pnl(**overrides: object) -> PortfolioPnL:
     kwargs: dict[str, Any] = {
-        "total_unrealized_pnl_usd": 500.0,
+        "total_unrealized_pnl_usd": signed_money(500.0),
         "total_unrealized_pnl_pct_of_portfolio": 1.5,
-        "daily_realized_pnl_usd": 200.0,
-        "daily_total_pnl_usd": 700.0,
-        "cumulative_realized_pnl_usd": 10000.0,
-        "rolling_realized_pnl": {"1d": 200.0, "3d": 600.0, "5d": 1000.0, "20d": 3000.0},
+        "daily_realized_pnl_usd": signed_money(200.0),
+        "daily_total_pnl_usd": signed_money(700.0),
+        "cumulative_realized_pnl_usd": signed_money(10000.0),
+        "rolling_realized_pnl": {
+            "1d": signed_money(200.0),
+            "3d": signed_money(600.0),
+            "5d": signed_money(1000.0),
+            "20d": signed_money(3000.0),
+        },
         "win_rate_pct": 62.5,
-        "average_win_size_usd": 800.0,
-        "average_loss_size_usd": 400.0,
+        "average_win_size_usd": signed_money(800.0),
+        "average_loss_size_usd": signed_money(400.0),
         "profit_factor": 2.0,
     }
     kwargs.update(overrides)
@@ -484,8 +489,8 @@ def _make_pnl(**overrides: object) -> PortfolioPnL:
 
 def _make_directional(**overrides: object) -> DirectionalExposure:
     kwargs: dict[str, Any] = {
-        "total_long_delta_adjusted_usd": 50000.0,
-        "total_short_delta_adjusted_usd": 20000.0,
+        "total_long_delta_adjusted_usd": signed_money(50000.0),
+        "total_short_delta_adjusted_usd": signed_money(20000.0),
         "net_directional_pct_of_portfolio": 30.0,
         "gross_pct_of_portfolio": 70.0,
     }
@@ -496,8 +501,8 @@ def _make_directional(**overrides: object) -> DirectionalExposure:
 def _make_sector_entry(**overrides: object) -> SectorExposureEntry:
     kwargs: dict[str, Any] = {
         "sector": "TECHNOLOGY",
-        "long_delta_adjusted_usd": 10000.0,
-        "short_delta_adjusted_usd": 5000.0,
+        "long_delta_adjusted_usd": signed_money(10000.0),
+        "short_delta_adjusted_usd": signed_money(5000.0),
         "long_pct_of_portfolio": 20.0,
         "short_pct_of_portfolio": 10.0,
         "long_short_ratio": 2.0,

@@ -23,7 +23,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
     from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
     from alphamind.portfolio_state.records.positions import PositionRecord
 
