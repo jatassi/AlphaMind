@@ -474,39 +474,45 @@ def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
     """The ``distillation-no-sqlalchemy`` punch-list ignore_imports baseline holds.
 
     ALP-467 piloted the compute/load boundary split for q1 and a single q3
-    sub-module. The pilot does NOT retire the legacy ignores wholesale —
-    every assemble/loader that still issues SQL keeps its entry. The pilot
-    DOES introduce new IO-shell modules (``_repository_sql``, ``q1.gap_loaders``)
-    that intentionally keep sqlalchemy; those new entries are accepted as part
-    of this story.
+    sub-module. ALP-484 propagated the pilot to the remaining q3 sub-modules
+    (anomalies, atm_iv_baseline, etf_iv_divergence) plus the whole-category
+    ``q3._loaders``. The propagation does NOT retire the legacy ignores
+    wholesale — every assemble/loader that still issues SQL keeps its entry.
+    The propagation DOES introduce new IO-shell modules
+    (``q3._loaders``, ``q3.anomalies_loaders``, ``q3.atm_iv_baseline_loaders``,
+    ``q3.etf_iv_divergence_loaders``) that intentionally keep sqlalchemy.
+    ALP-484 also retired the now-stale indirect ignores
+    (``q3.anomalies``, ``q3.assemble``, ``q3.atm_iv_baseline``
+    ``-> persistence.models``) because the slim shims no longer carry those
+    chains.
 
-    Post-ALP-473 baseline:
-    - 26 direct sqlalchemy ignores (the original 22 still-impure modules +
-      ALP-467 pilot shims/shells: ``_repository_sql``, ``q1.gap``,
-      ``q1.gap_loaders``, ``q3.flow_classification``).
-    - 21 indirect ignores (19 original persistence.models edges still in
-      place + 2 ALP-467 pilot shells reaching persistence.models). ALP-473
-      retired the q7.correlation_regime_change -> data_sources._common
-      edge by hoisting ``HeadlineType`` to ``data_sources.news.types`` and
-      retargeting the consumer.
+    Post-ALP-484 baseline:
+    - 30 direct sqlalchemy ignores (the post-ALP-467 26 + ALP-484's 4 new
+      q3 IO-shell modules: ``q3._loaders``, ``q3.anomalies_loaders``,
+      ``q3.atm_iv_baseline_loaders``, ``q3.etf_iv_divergence_loaders``).
+    - 22 indirect ignores (post-ALP-467 21 minus 3 retired q3 shim
+      entries plus 4 new q3 IO-shell -> persistence.models entries:
+      21 - 3 + 4 = 22).
 
     Regression guard: a future story tightening this contract by accident
     would drop entries here and silently re-introduce violations. Punch-list
-    item #9 (continued q-* propagation past the pilot) is still pending, so
-    the remaining entries must hold until that lands.
+    item #9 (continued q-* propagation past q1 + q3) is still pending for
+    q6, q7, qualitative — those entries must hold until those follow-ups
+    land.
     """
     parser = _parse_importlinter_config()
     section = _contract_section(parser, "distillation-no-sqlalchemy")
     ignored = _split_module_list(section["ignore_imports"])
     direct = [e for e in ignored if e.endswith("-> sqlalchemy")]
     indirect = [e for e in ignored if not e.endswith("-> sqlalchemy")]
-    assert len(direct) == 26, (
-        f"direct sqlalchemy ignore_imports count drifted: expected 26, got {len(direct)}.\n"
+    assert len(direct) == 30, (
+        f"direct sqlalchemy ignore_imports count drifted: expected 30, got {len(direct)}.\n"
         f"entries:\n  " + "\n  ".join(direct)
     )
-    assert len(indirect) == 21, (
-        f"indirect ignore_imports count drifted: expected 21 (19 original via "
-        f"persistence.models + 2 ALP-467 pilot via persistence.models), "
+    assert len(indirect) == 22, (
+        f"indirect ignore_imports count drifted: expected 22 "
+        f"(post-ALP-467 21 minus 3 retired q3 shim entries plus "
+        f"4 new q3 IO-shell -> persistence.models entries: 21 - 3 + 4 = 22), "
         f"got {len(indirect)}.\n"
         f"entries:\n  " + "\n  ".join(indirect)
     )
