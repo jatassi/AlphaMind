@@ -565,11 +565,10 @@ def test_run_verification_dumps_brief_before_printing_report(
 ) -> None:
     """Stage artifacts must persist even when the report render fails.
 
-    ALP-491 Site 1 defensive improvement: ``print(format_report(...))`` on
-    Windows can raise ``UnicodeEncodeError`` when the brief contains UTF-8
-    glyphs the active codepage cannot encode. Dumping before printing
-    keeps the brief on disk so the operator doesn't have to re-run the
-    LLM call.
+    ``print(format_report(...))`` on Windows can raise
+    ``UnicodeEncodeError`` when the brief contains UTF-8 glyphs the
+    active codepage cannot encode. Dumping before printing keeps the
+    brief on disk so the operator doesn't have to re-run the LLM call.
     """
     from alphamind.scripts import verify_qualitative_researcher as module
     from alphamind.scripts._artifact_io import (

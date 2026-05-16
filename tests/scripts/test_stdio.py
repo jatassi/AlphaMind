@@ -1,4 +1,4 @@
-"""Tests for the UTF-8 stdio bootstrap helper (ALP-491).
+"""Tests for the UTF-8 stdio bootstrap helper.
 
 The helper is called at the top of every ``verify_*`` ``main()`` so the
 scripts behave identically on Windows (cp1252 by default) and POSIX.
@@ -10,7 +10,6 @@ import contextlib
 import importlib
 import io
 import sys
-from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
@@ -18,9 +17,11 @@ import pytest
 from alphamind.scripts._stdio import configure_utf8_stdio
 
 
-@dataclass
-class _RecordingTextIO(io.StringIO):
-    reconfigure_calls: list[dict[str, Any]] = field(default_factory=list)
+class _Recorder:
+    """Test substitute for a text stream that captures reconfigure() calls."""
+
+    def __init__(self) -> None:
+        self.reconfigure_calls: list[dict[str, Any]] = []
 
     def reconfigure(self, **kwargs: Any) -> None:
         self.reconfigure_calls.append(kwargs)
@@ -29,8 +30,8 @@ class _RecordingTextIO(io.StringIO):
 def test_configure_utf8_stdio_reconfigures_both_streams(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_stdout = _RecordingTextIO()
-    fake_stderr = _RecordingTextIO()
+    fake_stdout = _Recorder()
+    fake_stderr = _Recorder()
     monkeypatch.setattr(sys, "stdout", fake_stdout)
     monkeypatch.setattr(sys, "stderr", fake_stderr)
 
@@ -80,9 +81,9 @@ def test_verify_main_calls_configure_utf8_stdio(
 ) -> None:
     """Every ``verify_*`` ``main()`` must invoke the stdio bootstrap.
 
-    The bootstrap must fire before argparse so ``--help`` (which exits
-    via :class:`SystemExit`) is enough to drive the check — argparse's
-    own help text contains UTF-8 characters in some scripts.
+    ``main(["--help"])`` exits via :class:`SystemExit` after argparse
+    finishes; running it with the bootstrap monkey-patched to a spy
+    confirms the helper fires.
     """
     module = importlib.import_module(f"alphamind.scripts.{module_name}")
     calls: list[None] = []

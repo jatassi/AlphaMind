@@ -40,6 +40,7 @@ import exchange_calendars as xcals
 from sqlalchemy import text
 
 from alphamind.persistence.session import make_engine
+from alphamind.scripts._stdio import configure_utf8_stdio
 
 # ---------------------------------------------------------------------------
 # Collector freshness specs
@@ -219,6 +220,7 @@ def run_verification(db_path: str | None = None) -> bool:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     parser.add_argument(
         "--db-path",

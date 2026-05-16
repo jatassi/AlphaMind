@@ -48,6 +48,7 @@ from typing import Any
 from sqlalchemy import text
 
 from alphamind.persistence.session import make_engine
+from alphamind.scripts._stdio import configure_utf8_stdio
 
 VALID_VENDORS = [
     "polygon",
@@ -225,6 +226,7 @@ def run_drill(vendor: str, timeout_seconds: int) -> bool:
 
 
 def main() -> None:
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(description="Revoked-key drill for AlphaMind collector.")
     parser.add_argument(
         "--vendor",
