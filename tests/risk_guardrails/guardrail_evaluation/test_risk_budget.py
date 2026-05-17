@@ -278,21 +278,15 @@ def test_zone_blocked_at_threshold() -> None:
     assert net_long.zone == RiskZone.BLOCKED
 
 
-def test_zone_defaults_to_normal_when_zones_missing() -> None:
-    # The orchestrator path currently passes escalation_zones={} into LibraryConfig.
-    # The builder must defend against this without crashing — emit entries with
-    # zone=NORMAL so downstream renderers see a consistent shape.
+def test_raises_when_zones_missing_for_a_rule() -> None:
+    # Every caller path builds the config through ``from_resolved_config``,
+    # which fills zones for every rule. A missing entry is a real bug — silent
+    # NORMAL classifications can't hide a consumption breach.
     config = _config(escalation_zones={})
-    # Push net_long_pct well into a would-be-BLOCKED range had zones been
-    # present, to prove the NORMAL fallback isn't accidentally aligning with
-    # a low-consumption regime.
-    snapshot = _snapshot(net_long_pct=58.0)
+    snapshot = _snapshot()
 
-    budget = build_risk_budget_consumption(snapshot, config)
-
-    net_long = budget.entry_by_rule_id("net_long_pct")
-    assert net_long is not None
-    assert net_long.zone == RiskZone.NORMAL
+    with pytest.raises(KeyError):
+        build_risk_budget_consumption(snapshot, config)
 
 
 # ---------------------------------------------------------------------------

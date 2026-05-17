@@ -111,6 +111,7 @@ def _pipeline_inputs_from_fixture(
     from alphamind.portfolio_state.assembler import assemble_snapshot
     from alphamind.portfolio_state.repository import StubPortfolioStateRepository
     from alphamind.risk_guardrails.guardrail_evaluation import (
+        EscalationZones,
         FeatureFlagsView,
         FixtureIvProvider,
         LibraryConfig,
@@ -157,9 +158,11 @@ def _pipeline_inputs_from_fixture(
         now=now,
     )
     feature_flags = FeatureFlagsView(options_enabled=False, short_selling_enabled=False)
+    effective_limits = {"position_max_size_pct": 10.0}
+    default_zones = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
     library_config = LibraryConfig(
-        effective_limits=MappingProxyType({"position_max_size_pct": 10.0}),
-        escalation_zones=MappingProxyType({}),
+        effective_limits=MappingProxyType(effective_limits),
+        escalation_zones=MappingProxyType({k: default_zones for k in effective_limits}),
         feature_flags=feature_flags,
         active_sectors=active_sectors,
         active_regime="normal",
