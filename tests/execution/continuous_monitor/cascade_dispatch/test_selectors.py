@@ -8,57 +8,49 @@ from alphamind.execution.continuous_monitor.cascade_dispatch import (
 )
 from alphamind.risk_guardrails.breach_behavior import (
     select_for_drawdown_breach,
-    select_for_margin_call,
     select_for_position_max_loss,
     select_for_single_short_max_size_breach,
-    select_for_total_short_exposure_breach,
 )
 
 
 def test_dispatch_table_covers_every_immediate_engine_rule() -> None:
-    """Every rule classified as IMMEDIATE in breach-behavior has a selector."""
+    """Every rule classified as IMMEDIATE in breach-behavior has a selector.
+
+    Keys mirror ``config/guardrails.yaml`` rule ids whose ``breach_response``
+    is ``immediate_engine`` and which can reach the dispatcher via
+    ``handle_immediate_breach``. ``margin_call`` flows through the separate
+    ``handle_margin_call`` entry point and is intentionally absent.
+    """
     expected = {
-        "daily_drawdown",
-        "cumulative_drawdown",
-        "per_position_max_loss",
-        "total_short_exposure",
-        "single_short_max_size",
-        "margin_call",
+        "daily_drawdown_pct",
+        "cumulative_drawdown_pct",
+        "position_max_loss_equity_pct",
+        "position_max_loss_options_pct",
+        "single_short_max_pct",
     }
     assert set(RULE_SELECTOR_DISPATCH.keys()) == expected
 
 
 def test_dispatch_table_maps_drawdown_rules_to_drawdown_selector() -> None:
     """Both daily and cumulative drawdown route to ``select_for_drawdown_breach``."""
-    assert RULE_SELECTOR_DISPATCH["daily_drawdown"] is select_for_drawdown_breach
-    assert RULE_SELECTOR_DISPATCH["cumulative_drawdown"] is select_for_drawdown_breach
+    assert RULE_SELECTOR_DISPATCH["daily_drawdown_pct"] is select_for_drawdown_breach
+    assert RULE_SELECTOR_DISPATCH["cumulative_drawdown_pct"] is select_for_drawdown_breach
 
 
 def test_dispatch_table_maps_position_max_loss_to_per_position_selector() -> None:
-    """The per-position max-loss rule routes to ``select_for_position_max_loss``."""
-    assert RULE_SELECTOR_DISPATCH["per_position_max_loss"] is select_for_position_max_loss
-
-
-def test_dispatch_table_maps_total_short_to_total_short_selector() -> None:
-    """The total-short-exposure rule routes to ``select_for_total_short_exposure_breach``."""
-    assert RULE_SELECTOR_DISPATCH["total_short_exposure"] is select_for_total_short_exposure_breach
+    """Both equity and options per-position max-loss route to ``select_for_position_max_loss``."""
+    assert RULE_SELECTOR_DISPATCH["position_max_loss_equity_pct"] is select_for_position_max_loss
+    assert RULE_SELECTOR_DISPATCH["position_max_loss_options_pct"] is select_for_position_max_loss
 
 
 def test_dispatch_table_maps_single_short_to_single_short_selector() -> None:
     """The single-short max-size rule routes to ``select_for_single_short_max_size_breach``."""
-    assert (
-        RULE_SELECTOR_DISPATCH["single_short_max_size"] is select_for_single_short_max_size_breach
-    )
-
-
-def test_dispatch_table_maps_margin_call_to_margin_call_selector() -> None:
-    """The margin-call rule routes to ``select_for_margin_call``."""
-    assert RULE_SELECTOR_DISPATCH["margin_call"] is select_for_margin_call
+    assert RULE_SELECTOR_DISPATCH["single_short_max_pct"] is select_for_single_short_max_size_breach
 
 
 def test_selector_for_returns_callable_for_known_rule() -> None:
     """``selector_for`` returns the dispatched selector for a known immediate rule."""
-    assert selector_for("per_position_max_loss") is select_for_position_max_loss
+    assert selector_for("position_max_loss_equity_pct") is select_for_position_max_loss
 
 
 def test_selector_for_returns_none_for_deferred_rule() -> None:
