@@ -50,29 +50,15 @@ def test_configure_utf8_stdio_skips_streams_without_reconfigure(
     configure_utf8_stdio()
 
 
-_VERIFY_MODULES = (
-    "verify_adaptive_researcher",
-    "verify_analyst",
-    "verify_bootstrap_calibration_mix",
-    "verify_broker_adapter",
-    "verify_continuous_monitor",
-    "verify_corporate_actions",
-    "verify_decision_pipeline",
-    "verify_distillation",
-    "verify_domain_researcher_failure_modes",
-    "verify_domain_researchers",
-    "verify_guardrail_enforcement",
-    "verify_oms_commands",
-    "verify_pipeline_scheduler",
-    "verify_pm",
-    "verify_proposal_pre_processor",
-    "verify_qualitative_researcher",
-    "verify_regime_transition",
-    "verify_regt_margin_attribution",
-    "verify_state_persistence",
-    "verify_strategist",
-    "verify_synthesizer",
-)
+# The per-feature pipeline ``verify_*`` scripts retired in ALP-502; the
+# debug-e2e CLI (``--debug-e2e`` flag on ``python -m alphamind.scheduler``)
+# replaces them as the central pipeline-e2e surface. ``verify_bootstrap_
+# calibration_mix`` is the only ``alphamind.scripts.verify_*`` module that
+# still ships — the other three surviving standalone scripts
+# (``verify_bootstrap``, ``verify_ongoing_collection``,
+# ``verify_position_thesis_model``) live under ``scripts/`` only and are
+# tested via their own suites where applicable.
+_VERIFY_MODULES = ("verify_bootstrap_calibration_mix",)
 
 
 @pytest.mark.parametrize("module_name", _VERIFY_MODULES)
