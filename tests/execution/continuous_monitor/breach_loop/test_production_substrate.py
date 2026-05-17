@@ -18,7 +18,7 @@ correctness is the existing test surface of each subsystem.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -43,8 +43,9 @@ from alphamind._kernel.regime import (
 )
 from alphamind.config.models.regimes import Regime
 from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
-    DispatchPlaceholders,
+    DispatchContextProvider,
     load_breach_loop_resolved_config,
+    make_adv_provider,
     make_dispatch_context_provider,
     make_invocation_id_provider_sync,
     make_library_config_factory,
@@ -55,8 +56,9 @@ from alphamind.execution.continuous_monitor.breach_loop.production_substrate imp
 )
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingPriceCache,
+    UnderlyingQuote,
 )
-from alphamind.persistence.models import Base
+from alphamind.persistence.models import AssetUniverse, Base, OhlcvBars
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.portfolio_state import load_portfolio_state_config
 from alphamind.portfolio_state.aggregates.risk_parameters import (
@@ -71,6 +73,10 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
 )
 from alphamind.portfolio_state.views.positions import PositionView
+from alphamind.risk_guardrails.breach_behavior import (
+    select_for_drawdown_breach,
+    select_for_margin_call,
+)
 from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
     MarketInputs,
@@ -381,6 +387,8 @@ def _equity_position_view(
     share_count: float = 10.0,
     cost_basis: float = 150.0,
     market_value_usd: float = 1500.0,
+    unrealized_pnl_usd: float = 0.0,
+    risk_reward_at_current: float | None = 2.0,
 ) -> PositionView:
     """Minimal open equity ``PositionView`` for dispatch-context tests."""
     as_of = datetime(2026, 5, 17, 14, 30, tzinfo=UTC)
@@ -415,7 +423,7 @@ def _equity_position_view(
     return PositionView(
         record=record,
         current_market_value_usd=signed_money(market_value_usd),
-        unrealized_pnl_usd=signed_money(0.0),
+        unrealized_pnl_usd=signed_money(unrealized_pnl_usd),
         unrealized_pnl_pct=0.0,
         position_weight_pct=10.0 * sign,
         position_age_hours=2.0,
@@ -423,7 +431,7 @@ def _equity_position_view(
         delta_adjusted_exposure_usd=signed_money(market_value_usd * sign),
         distance_to_target_usd=signed_money(10.0),
         distance_to_stop_usd=signed_money(5.0),
-        risk_reward_at_current=2.0,
+        risk_reward_at_current=risk_reward_at_current,
     )
 
 
@@ -458,33 +466,71 @@ def _make_regime_output() -> RegimeAdaptationOutput:
     )
 
 
+async def _empty_adv_provider() -> Mapping[str, float]:
+    """ADV provider returning no entries — every position falls back to zero ratio."""
+    return {}
+
+
+async def _build_dispatch_context_provider(
+    *,
+    config_dir: Path,
+    positions: tuple[PositionView, ...] | None = None,
+    adv_map: Mapping[str, float] | None = None,
+    quotes: Mapping[str, float] | None = None,
+    iv_provider: FixtureIvProvider | None = None,
+) -> DispatchContextProvider:
+    """Construct ``make_dispatch_context_provider`` with stubs around the varying inputs.
+
+    ``positions=None`` (default) omits ``open_positions_provider`` so the
+    substrate's empty-positions branch fires; an explicit empty tuple binds
+    a provider that returns no positions.
+    """
+    as_of = datetime(2026, 5, 17, 14, 30, tzinfo=UTC)
+    cache = UnderlyingPriceCache()
+    for ticker, price_usd in (quotes or {}).items():
+        await cache.update(UnderlyingQuote(ticker=ticker, price=price_usd, as_of=as_of))
+
+    snapshot = _make_library_snapshot()
+    regime_output = _make_regime_output()
+
+    async def _snapshot_provider() -> LibrarySnapshot:
+        return snapshot
+
+    async def _regime_provider() -> RegimeAdaptationOutput:
+        return regime_output
+
+    async def _adv_provider() -> Mapping[str, float]:
+        return dict(adv_map) if adv_map else {}
+
+    open_positions_provider = None
+    if positions is not None:
+        captured = positions
+
+        async def _open_positions_provider() -> tuple[PositionView, ...]:
+            return captured
+
+        open_positions_provider = _open_positions_provider
+
+    return make_dispatch_context_provider(
+        snapshot_provider=_snapshot_provider,
+        regime_provider=_regime_provider,
+        library_config_factory=make_library_config_factory(
+            resolved=load_breach_loop_resolved_config(config_dir),
+        ),
+        underlying_cache=cache,
+        iv_provider=iv_provider or FixtureIvProvider(surface={}, realized_vol={}),
+        adv_provider=_adv_provider,
+        open_positions_provider=open_positions_provider,
+    )
+
+
 class TestMakeDispatchContextProvider:
     """The dispatcher's per-tick context-builder threads live deps into BreachDispatchContext."""
 
     async def test_iv_provider_threaded_into_market_inputs(self, config_dir: Path) -> None:
         """The IV provider the caller passes is the one consumers see on the context."""
-        snapshot = _make_library_snapshot()
-        regime_output = _make_regime_output()
-
-        async def _snapshot_provider() -> LibrarySnapshot:
-            return snapshot
-
-        async def _regime_provider() -> RegimeAdaptationOutput:
-            return regime_output
-
         iv = FixtureIvProvider(surface={}, realized_vol={})
-        provider = make_dispatch_context_provider(
-            snapshot_provider=_snapshot_provider,
-            regime_provider=_regime_provider,
-            library_config_factory=make_library_config_factory(
-                resolved=load_breach_loop_resolved_config(config_dir),
-            ),
-            underlying_cache=UnderlyingPriceCache(),
-            iv_provider=iv,
-            placeholders=DispatchPlaceholders(
-                adv_to_position_size_ratio=10.0, risk_reward_ratio=2.0
-            ),
-        )
+        provider = await _build_dispatch_context_provider(config_dir=config_dir, iv_provider=iv)
         context = await provider()
         # ``BreachDispatchContext.market_inputs`` is typed as the protocol;
         # cast to the concrete ``MarketInputs`` to assert the IV provider
@@ -494,100 +540,154 @@ class TestMakeDispatchContextProvider:
 
     async def test_open_positions_populated_from_provider(self, config_dir: Path) -> None:
         """When ``open_positions_provider`` returns N positions, the context carries N."""
-        snapshot = _make_library_snapshot()
-        regime_output = _make_regime_output()
         positions = (
             _equity_position_view(position_id="p1", ticker="AAPL"),
             _equity_position_view(position_id="p2", ticker="MSFT"),
         )
-
-        async def _snapshot_provider() -> LibrarySnapshot:
-            return snapshot
-
-        async def _regime_provider() -> RegimeAdaptationOutput:
-            return regime_output
-
-        async def _open_positions_provider() -> tuple[PositionView, ...]:
-            return positions
-
-        provider = make_dispatch_context_provider(
-            snapshot_provider=_snapshot_provider,
-            regime_provider=_regime_provider,
-            library_config_factory=make_library_config_factory(
-                resolved=load_breach_loop_resolved_config(config_dir),
-            ),
-            underlying_cache=UnderlyingPriceCache(),
-            iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
-            placeholders=DispatchPlaceholders(
-                adv_to_position_size_ratio=10.0, risk_reward_ratio=2.0
-            ),
-            open_positions_provider=_open_positions_provider,
+        provider = await _build_dispatch_context_provider(
+            config_dir=config_dir, positions=positions
         )
         context = await provider()
         assert context.open_positions == positions
 
     async def test_open_positions_empty_when_provider_absent(self, config_dir: Path) -> None:
         """No ``open_positions_provider`` → empty ``open_positions`` and zero liquidity/R/R."""
-        snapshot = _make_library_snapshot()
-        regime_output = _make_regime_output()
-
-        async def _snapshot_provider() -> LibrarySnapshot:
-            return snapshot
-
-        async def _regime_provider() -> RegimeAdaptationOutput:
-            return regime_output
-
-        provider = make_dispatch_context_provider(
-            snapshot_provider=_snapshot_provider,
-            regime_provider=_regime_provider,
-            library_config_factory=make_library_config_factory(
-                resolved=load_breach_loop_resolved_config(config_dir),
-            ),
-            underlying_cache=UnderlyingPriceCache(),
-            iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
-            placeholders=DispatchPlaceholders(
-                adv_to_position_size_ratio=10.0, risk_reward_ratio=2.0
-            ),
-        )
+        provider = await _build_dispatch_context_provider(config_dir=config_dir)
         context = await provider()
         assert context.open_positions == ()
         assert context.liquidity == ()
         assert context.risk_reward_metric == ()
 
-    async def test_placeholder_ratios_apply_per_position(self, config_dir: Path) -> None:
-        """Each PositionLiquidity / PositionRiskReward carries the configured placeholder."""
-        snapshot = _make_library_snapshot()
-        regime_output = _make_regime_output()
+    async def test_liquidity_and_rr_computed_per_position_from_live_signals(
+        self, config_dir: Path
+    ) -> None:
+        """Liquidity = ADV*price/notional from the live map; R/R from PositionView.
+
+        Each position carries a distinct ticker, notional, and
+        ``risk_reward_at_current`` value so a uniform-placeholder regression
+        would surface as both ratios collapsing to the same constant.
+        """
         positions = (
-            _equity_position_view(position_id="p1", ticker="AAPL"),
-            _equity_position_view(position_id="p2", ticker="MSFT"),
+            _equity_position_view(
+                position_id="p1",
+                ticker="AAPL",
+                share_count=10.0,
+                market_value_usd=1500.0,
+                risk_reward_at_current=2.5,
+            ),
+            _equity_position_view(
+                position_id="p2",
+                ticker="MSFT",
+                share_count=5.0,
+                market_value_usd=750.0,
+                risk_reward_at_current=1.0,
+            ),
         )
-
-        async def _snapshot_provider() -> LibrarySnapshot:
-            return snapshot
-
-        async def _regime_provider() -> RegimeAdaptationOutput:
-            return regime_output
-
-        async def _open_positions_provider() -> tuple[PositionView, ...]:
-            return positions
-
-        provider = make_dispatch_context_provider(
-            snapshot_provider=_snapshot_provider,
-            regime_provider=_regime_provider,
-            library_config_factory=make_library_config_factory(
-                resolved=load_breach_loop_resolved_config(config_dir),
-            ),
-            underlying_cache=UnderlyingPriceCache(),
-            iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
-            placeholders=DispatchPlaceholders(
-                adv_to_position_size_ratio=42.0, risk_reward_ratio=7.5
-            ),
-            open_positions_provider=_open_positions_provider,
+        provider = await _build_dispatch_context_provider(
+            config_dir=config_dir,
+            positions=positions,
+            adv_map={"AAPL": 1_000_000.0, "MSFT": 2_000_000.0},
+            quotes={"AAPL": 150.0, "MSFT": 300.0},
         )
         context = await provider()
-        assert tuple(liq.adv_to_position_size_ratio for liq in context.liquidity) == (42.0, 42.0)
-        assert tuple(r.risk_reward_ratio for r in context.risk_reward_metric) == (7.5, 7.5)
+        assert tuple(liq.adv_to_position_size_ratio for liq in context.liquidity) == (
+            100_000.0,
+            800_000.0,
+        )
+        assert tuple(r.risk_reward_ratio for r in context.risk_reward_metric) == (2.5, 1.0)
+
+    async def test_drawdown_selector_picks_higher_liquidity_position_via_live_adv(
+        self, config_dir: Path
+    ) -> None:
+        """When two losers tie on P/L, the substrate-derived ADV picks the more liquid one.
+
+        Exercises the per-position-ADV selector branch end-to-end: each
+        position carries the same loss, so the selector falls through to its
+        liquidity tiebreaker and selects the position whose ticker has higher
+        ADV in the live map.
+        """
+        positions = (
+            _equity_position_view(
+                position_id="p-msft",
+                ticker="MSFT",
+                share_count=10.0,
+                market_value_usd=1000.0,
+                unrealized_pnl_usd=-100.0,
+            ),
+            _equity_position_view(
+                position_id="p-aapl",
+                ticker="AAPL",
+                share_count=10.0,
+                market_value_usd=1000.0,
+                unrealized_pnl_usd=-100.0,
+            ),
+        )
+        provider = await _build_dispatch_context_provider(
+            config_dir=config_dir,
+            positions=positions,
+            adv_map={"AAPL": 10_000_000.0, "MSFT": 1_000_000.0},
+            quotes={"AAPL": 150.0, "MSFT": 300.0},
+        )
+        context = await provider()
+
+        result = select_for_drawdown_breach(
+            open_positions=context.open_positions,
+            liquidity=context.liquidity,
+        )
+        assert result.position_id == "p-aapl"
+
+    async def test_margin_call_selector_picks_worst_rr_via_live_position_view(
+        self, config_dir: Path
+    ) -> None:
+        """The margin-call selector reads per-position R/R sourced from PositionView.
+
+        Two positions with different ``risk_reward_at_current`` values flow
+        through the substrate; the selector must pick the lower-R/R one
+        (closest to invalidation, farthest from target).
+        """
+        positions = (
+            _equity_position_view(
+                position_id="p-safe",
+                ticker="AAPL",
+                risk_reward_at_current=3.0,
+            ),
+            _equity_position_view(
+                position_id="p-risky",
+                ticker="MSFT",
+                risk_reward_at_current=0.5,
+            ),
+        )
+        provider = await _build_dispatch_context_provider(
+            config_dir=config_dir,
+            positions=positions,
+            adv_map={"AAPL": 1_000_000.0, "MSFT": 1_000_000.0},
+            quotes={"AAPL": 150.0, "MSFT": 300.0},
+        )
+        context = await provider()
+
+        result = select_for_margin_call(
+            open_positions=context.open_positions,
+            liquidity=context.liquidity,
+            additional_margin_required_usd=5_000.0,
+            risk_reward_metric=context.risk_reward_metric,
+        )
+        assert result.position_id == "p-risky"
+
+    async def test_missing_adv_and_rr_default_to_zero(self, config_dir: Path) -> None:
+        """Position missing from the ADV map and lacking R/R defaults to 0.0 on both."""
+        positions = (
+            _equity_position_view(
+                position_id="p-no-data",
+                ticker="UNKNOWN",
+                risk_reward_at_current=None,
+            ),
+        )
+        provider = await _build_dispatch_context_provider(
+            config_dir=config_dir, positions=positions
+        )
+        context = await provider()
+        assert context.liquidity[0].adv_to_position_size_ratio == 0.0
+        assert context.risk_reward_metric[0].risk_reward_ratio == 0.0
 
 
 class TestMakeOpenPositionsViewProvider:
@@ -634,3 +734,117 @@ class TestMakeOpenPositionsViewProvider:
             ),
         )
         assert callable(provider)
+
+
+async def _seed_universe_ticker(factory: async_sessionmaker[AsyncSession], *, ticker: str) -> None:
+    """Insert one ``asset_universe`` row so ``ohlcv_bars`` FK inserts succeed."""
+    async with factory() as sess:
+        sess.add(
+            AssetUniverse(
+                asset_id=f"asset-{ticker.lower()}",
+                ticker=ticker,
+                full_name=f"{ticker} Holdings",
+                asset_class="equity",
+                asset_role="universe",
+                exchange="NASDAQ",
+                is_active=1,
+                added_date="2020-01-01",
+                last_updated="2026-05-17T00:00:00Z",
+            )
+        )
+        await sess.commit()
+
+
+async def _seed_ohlcv_bars(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    ticker: str,
+    daily_volumes: tuple[int, ...],
+    timeframe: str = "1d",
+    start_date: str = "2026-04-01",
+) -> None:
+    """Insert one daily bar per entry in ``daily_volumes`` (oldest → newest)."""
+    from datetime import date, timedelta
+
+    base = date.fromisoformat(start_date)
+    async with factory() as sess:
+        for offset, volume in enumerate(daily_volumes):
+            period_start = (base + timedelta(days=offset)).isoformat()
+            sess.add(
+                OhlcvBars(
+                    ticker=ticker,
+                    timeframe=timeframe,
+                    period_start=period_start,
+                    period_end=period_start,
+                    session="regular",
+                    adj_open=100.0,
+                    adj_high=101.0,
+                    adj_low=99.0,
+                    adj_close=100.0,
+                    adj_volume=volume,
+                    unadj_open=100.0,
+                    unadj_high=101.0,
+                    unadj_low=99.0,
+                    unadj_close=100.0,
+                    unadj_volume=volume,
+                    source="polygon",
+                    ingested_at=period_start,
+                )
+            )
+        await sess.commit()
+
+
+class TestMakeAdvProvider:
+    """``make_adv_provider`` returns a per-ticker trailing-N-day ADV map from OhlcvBars."""
+
+    async def test_empty_db_returns_empty_map(
+        self, db_session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        provider = make_adv_provider(session_factory=db_session_factory)
+        assert await provider() == {}
+
+    async def test_average_of_daily_adj_volume_per_ticker(
+        self, db_session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The map averages each ticker's adj_volume across its daily bars."""
+        await _seed_universe_ticker(db_session_factory, ticker="AAPL")
+        await _seed_universe_ticker(db_session_factory, ticker="MSFT")
+        # AAPL mean over (100, 200, 300) is 200; MSFT mean over (500, 700) is 600.
+        await _seed_ohlcv_bars(db_session_factory, ticker="AAPL", daily_volumes=(100, 200, 300))
+        await _seed_ohlcv_bars(db_session_factory, ticker="MSFT", daily_volumes=(500, 700))
+        provider = make_adv_provider(session_factory=db_session_factory)
+        result = await provider()
+        assert result["AAPL"] == pytest.approx(200.0)
+        assert result["MSFT"] == pytest.approx(600.0)
+
+    async def test_lookback_truncates_to_n_most_recent_bars(
+        self, db_session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """When more bars exist than ``lookback_days``, only the most recent ones count."""
+        await _seed_universe_ticker(db_session_factory, ticker="AAPL")
+        # Stale bars then 3 recent bars; 3-day lookback should average only the recent ones.
+        await _seed_ohlcv_bars(
+            db_session_factory,
+            ticker="AAPL",
+            daily_volumes=(10, 10, 10, 100, 200, 300),
+        )
+        provider = make_adv_provider(session_factory=db_session_factory, lookback_days=3)
+        result = await provider()
+        assert result["AAPL"] == pytest.approx(200.0)
+
+    async def test_non_daily_timeframes_excluded(
+        self, db_session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Hourly / minute bars do not contribute — only the ``"1d"`` timeframe is averaged."""
+        await _seed_universe_ticker(db_session_factory, ticker="AAPL")
+        # Hourly bars with very large volume — would distort the mean if included.
+        await _seed_ohlcv_bars(
+            db_session_factory,
+            ticker="AAPL",
+            daily_volumes=(1_000_000, 1_000_000),
+            timeframe="1h",
+        )
+        await _seed_ohlcv_bars(db_session_factory, ticker="AAPL", daily_volumes=(100, 200))
+        provider = make_adv_provider(session_factory=db_session_factory)
+        result = await provider()
+        assert result["AAPL"] == pytest.approx(150.0)
