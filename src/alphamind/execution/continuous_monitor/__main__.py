@@ -51,9 +51,10 @@ from alphamind.execution.continuous_monitor.breach_loop import (
 from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
     load_breach_loop_resolved_config,
     make_adv_provider,
+    make_assembled_snapshot_provider,
     make_dispatch_context_provider,
     make_library_config_factory,
-    make_open_positions_view_provider,
+    make_library_snapshot_translator,
     make_regime_provider,
     make_snapshot_provider,
     make_submit_envelope,
@@ -366,35 +367,35 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     # One IvProvider shared by the breach-loop evaluator and the cascade
     # dispatcher's re-projection so both observe identical IV values.
     iv_provider = FixtureIvProvider(surface={}, realized_vol={})
-    snapshot_provider = make_snapshot_provider(
+    # ALP-510 — one assembled-snapshot provider + translator shared across
+    # the breach-loop snapshot provider and the dispatcher's context provider.
+    assembled_snapshot_provider = make_assembled_snapshot_provider(
         session_factory=db_session_factory,
         underlying_cache=underlying_cache_typed,
         resolved=resolved_config,
         portfolio_state_config=portfolio_state_config,
         state_persistence_config=state_persistence_config,
+    )
+    library_snapshot_translator = make_library_snapshot_translator(resolved=resolved_config)
+    snapshot_provider = make_snapshot_provider(
+        assembled_snapshot_provider=assembled_snapshot_provider,
+        library_snapshot_translator=library_snapshot_translator,
     )
     regime_provider = make_regime_provider(
         session_factory=db_session_factory,
         resolved=resolved_config,
     )
     library_config_factory = make_library_config_factory(resolved=resolved_config)
-    open_positions_view_provider = make_open_positions_view_provider(
-        session_factory=db_session_factory,
-        underlying_cache=underlying_cache_typed,
-        resolved=resolved_config,
-        portfolio_state_config=portfolio_state_config,
-        state_persistence_config=state_persistence_config,
-    )
     adv_provider = make_adv_provider(session_factory=db_session_factory)
     dispatch_context_provider = make_dispatch_context_provider(
-        snapshot_provider=snapshot_provider,
+        assembled_snapshot_provider=assembled_snapshot_provider,
+        library_snapshot_translator=library_snapshot_translator,
         regime_provider=regime_provider,
         library_config_factory=library_config_factory,
         underlying_cache=underlying_cache_typed,
         iv_provider=iv_provider,
         adv_provider=adv_provider,
         progressive_tiers=progressive_tiers,
-        open_positions_provider=open_positions_view_provider,
     )
     submit_envelope = make_submit_envelope(
         session_factory=db_session_factory,
