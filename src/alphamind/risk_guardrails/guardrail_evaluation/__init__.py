@@ -33,6 +33,9 @@ from alphamind.risk_guardrails.guardrail_evaluation.projection import (
     ProjectionError,
     project_rule,
 )
+from alphamind.risk_guardrails.guardrail_evaluation.risk_budget import (
+    build_risk_budget_consumption,
+)
 from alphamind.risk_guardrails.guardrail_evaluation.rules import (
     RuleSpec,
     build_active_specs,
@@ -74,6 +77,7 @@ for _submodule in (
     "feature_gate",
     "iv_sourcing",
     "projection",
+    "risk_budget",
     "rules",
     "types",
 ):
@@ -114,6 +118,7 @@ __all__ = [
     "bs_greeks",
     "bs_price",
     "build_active_specs",
+    "build_risk_budget_consumption",
     "classify_feature_gate",
     "compute_delta_adjusted_exposure",
     "evaluate_proposals",

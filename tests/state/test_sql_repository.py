@@ -1513,18 +1513,6 @@ async def test_get_active_risk_parameters_invokes_provider_once(
     assert result.entries[0].value == 2000.0
 
 
-async def test_get_risk_budget_consumption_returns_empty_passthrough(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
-) -> None:
-    _, factory = db
-    await _seed_minimal_invocation(factory)
-
-    repo = _build_repo(factory)
-    result = repo.get_risk_budget_consumption()
-
-    assert result.entries == ()
-
-
 # ---------------------------------------------------------------------------
 # Protocol conformance
 # ---------------------------------------------------------------------------
@@ -1657,7 +1645,6 @@ async def test_parity_with_stub_over_same_state(
     pnl_inputs = sql_repo.get_portfolio_pnl_inputs()
     tqa = sql_repo.get_thesis_quality_aggregates()
     arp = sql_repo.get_active_risk_parameters()
-    rb = sql_repo.get_risk_budget_consumption()
     current_meta = sql_repo.get_current_invocation_metadata()
     prior_ctx = sql_repo.get_prior_invocation_context()
 
@@ -1670,7 +1657,6 @@ async def test_parity_with_stub_over_same_state(
         recent_thesis_resolutions=(),
         cash_ledger=sql_cash,
         pending_orders=(fx.pending_order,),
-        risk_budget=rb,
         active_risk_parameters=arp,
         intra_invocation_changelog=(fx.pm_entry, fx.pos_entry),
         recent_pm_decision_log=(fx.pm_entry,),
@@ -1708,7 +1694,6 @@ async def test_parity_with_stub_over_same_state(
     assert pnl_inputs == stub_repo.get_portfolio_pnl_inputs()
     assert tqa == stub_repo.get_thesis_quality_aggregates()
     assert arp == stub_repo.get_active_risk_parameters()
-    assert rb == stub_repo.get_risk_budget_consumption()
 
     # Invocation scaffolding
     assert current_meta == stub_repo.get_current_invocation_metadata()

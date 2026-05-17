@@ -80,6 +80,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     FeatureFlagsView,
     LibraryConfig,
     MarketInputs,
+    build_risk_budget_consumption,
 )
 from alphamind.risk_guardrails.library_snapshot import (
     LibrarySnapshot,
@@ -297,6 +298,14 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
         sector_resolver=sector_resolver,
         borrow_cost_resolver=borrow_cost_resolver,
     )
+
+    # 3b. Project the in-scope risk-budget consumption against the library
+    # snapshot and overlay it on ``pydantic_snapshot``. The SQL repository's
+    # ``get_risk_budget_consumption`` returns an empty passthrough (ALP-503);
+    # the projection is the single source of truth for the budget the
+    # analyst / strategist / PM input bundles consume.
+    risk_budget = build_risk_budget_consumption(library_snapshot, library_config)
+    pydantic_snapshot = dataclasses.replace(pydantic_snapshot, risk_budget=risk_budget)
 
     # 4. Project per-consumer views.
     analyst_view = project_analyst_view(

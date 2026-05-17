@@ -19,7 +19,6 @@ from alphamind._kernel.regime import (
     RiskZone,
 )
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.records.activity_log import (
     ActivityLogEntry,
@@ -296,10 +295,6 @@ def _make_drawdown_state() -> DrawdownState:
     )
 
 
-def _make_risk_budget() -> RiskBudgetConsumption:
-    return RiskBudgetConsumption(entries=())
-
-
 def _make_active_risk_parameters() -> ActiveRiskParameterSet:
     return _make_active_risk_params()
 
@@ -416,7 +411,6 @@ def _make_fixture(
         recent_thesis_resolutions=recent_thesis_resolutions,
         cash_ledger=_make_cash_ledger(),
         pending_orders=pending_orders,
-        risk_budget=_make_risk_budget(),
         active_risk_parameters=_make_active_risk_parameters(),
         intra_invocation_changelog=intra_invocation_changelog,
         recent_pm_decision_log=recent_pm_decision_log,
@@ -454,7 +448,6 @@ def test_repository_fixture_list_open_positions_stored_as_is() -> None:
         recent_thesis_resolutions=(),
         cash_ledger=_make_cash_ledger(),
         pending_orders=(),
-        risk_budget=_make_risk_budget(),
         active_risk_parameters=_make_active_risk_parameters(),
         intra_invocation_changelog=(),
         recent_pm_decision_log=(),
@@ -547,12 +540,6 @@ def test_stub_get_pending_orders() -> None:
     stub = StubPortfolioStateRepository(_make_fixture())
     result = stub.get_pending_orders()
     assert result == ()
-
-
-def test_stub_get_risk_budget_consumption() -> None:
-    stub = StubPortfolioStateRepository(_make_fixture())
-    result = stub.get_risk_budget_consumption()
-    assert result.entries == ()
 
 
 def test_stub_get_active_risk_parameters() -> None:

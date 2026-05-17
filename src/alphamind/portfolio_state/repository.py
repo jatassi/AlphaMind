@@ -9,7 +9,6 @@ from typing import Protocol, runtime_checkable
 
 from alphamind.execution.regt_margin_attribution.aggregates import RegTExcessAggregates
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.records.activity_log import ActivityLogEntry
 from alphamind.portfolio_state.records.cash import CashLedger
@@ -170,8 +169,6 @@ class PortfolioStateRepository(Protocol):
 
     def get_pending_orders(self) -> tuple[OrderRecord, ...]: ...
 
-    def get_risk_budget_consumption(self) -> RiskBudgetConsumption: ...
-
     def get_active_risk_parameters(self) -> ActiveRiskParameterSet: ...
 
     # Category 5 — Activity log
@@ -226,7 +223,6 @@ class RepositoryFixture:
     recent_thesis_resolutions: tuple[RecentThesisResolution, ...]
     cash_ledger: CashLedger
     pending_orders: tuple[OrderRecord, ...]
-    risk_budget: RiskBudgetConsumption
     active_risk_parameters: ActiveRiskParameterSet
     intra_invocation_changelog: tuple[ActivityLogEntry, ...]
     recent_pm_decision_log: tuple[ActivityLogEntry, ...]
@@ -279,9 +275,6 @@ class StubPortfolioStateRepository:
 
     def get_pending_orders(self) -> tuple[OrderRecord, ...]:
         return self._fixture.pending_orders
-
-    def get_risk_budget_consumption(self) -> RiskBudgetConsumption:
-        return self._fixture.risk_budget
 
     def get_active_risk_parameters(self) -> ActiveRiskParameterSet:
         return self._fixture.active_risk_parameters

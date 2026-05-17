@@ -28,7 +28,6 @@ from alphamind._kernel.regime import (
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state import PortfolioStateConfig
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
@@ -159,10 +158,6 @@ def _make_pnl_inputs() -> PortfolioPnLInputs:
         average_loss_size_usd=None,
         profit_factor=None,
     )
-
-
-def _make_risk_budget() -> RiskBudgetConsumption:
-    return RiskBudgetConsumption(entries=())
 
 
 def _make_active_risk_parameters() -> ActiveRiskParameterSet:
@@ -534,7 +529,6 @@ def _make_base_fixture(
         recent_thesis_resolutions=(),
         cash_ledger=cash_ledger or _make_cash_ledger(),
         pending_orders=pending_orders,
-        risk_budget=_make_risk_budget(),
         active_risk_parameters=_make_active_risk_parameters(),
         intra_invocation_changelog=intra_invocation_changelog,
         recent_pm_decision_log=recent_pm_decision_log,
