@@ -29,22 +29,87 @@ import asyncio
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
+from sqlalchemy import desc, select
+from sqlalchemy.orm import Session
 
 from alphamind.analysis.qualitative_research.runner import (
     QualitativeResearcherResult,
     run_qualitative_researcher,
 )
-from alphamind.config.models.agents import AdaptiveAgentConfig, AgentName
+from alphamind.config.models.agents import (
+    AdaptiveAgentConfig,
+    AgentName,
+    AgentsConfig,
+)
+from alphamind.persistence.models import DistillationRegimeState
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.scripts._common import load_universe_scope
-from alphamind.scripts.verify_qualitative_researcher import (
-    _REQUIRED_DIAGNOSTIC_FILES,
-    _diagnostic_dir,
-    _load_agents_config,
-    _load_recent_regime_label,
+
+# Helpers inlined from the retired ``alphamind.scripts.verify_qualitative_researcher``
+# (deleted in ALP-502 along with the rest of the per-feature pipeline verify
+# scripts). These helpers exist only to drive the live-SDK harness this test
+# wraps; the diagnostic-archive-layout contract and synthetic regime stub they
+# encode are documented in
+# ``docs/design/03-analysis-layer/qualitative-research.md``.
+_REQUIRED_DIAGNOSTIC_FILES: tuple[str, ...] = (
+    "prompt.md",
+    "user_message.md",
+    "response_initial.md",
+    "errors.json",
+    "metadata.json",
 )
+
+
+def _diagnostic_dir(archive_root: Path, invocation_id: str, agent_name: str) -> Path:
+    return archive_root / "invocations" / invocation_id / "analysis" / agent_name
+
+
+def _load_agents_config() -> AgentsConfig:
+    import yaml
+
+    repo_root = Path(__file__).resolve().parents[3]
+    with (repo_root / "config" / "agents.yaml").open(encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    return AgentsConfig.model_validate(data)
+
+
+def _synthetic_regime_label() -> dict[str, Any]:
+    """Synthetic regime-label stub matching the runner's expected payload shape."""
+    return {
+        "regime_label": "vol_expansion",
+        "transition_state": "early-weak",
+        "prior_label": "low_vol_compression",
+        "invocations_held": 1,
+        "indicator_agreement_count": 2,
+        "vix_level": 22.0,
+        "term_structure_basis": 1.5,
+        "vvix_percentile": 0.7,
+        "realized_vol_5d": 0.15,
+    }
+
+
+def _load_recent_regime_label(session: Session) -> tuple[dict[str, Any], str]:
+    """Load the most recent ``DistillationRegimeState`` row and project it."""
+    stmt = select(DistillationRegimeState).order_by(desc(DistillationRegimeState.as_of)).limit(1)
+    row = session.execute(stmt).scalar_one_or_none()
+    if row is None:
+        return _synthetic_regime_label(), "synthetic-stub"
+    payload: dict[str, Any] = {
+        "regime_label": row.regime_label,
+        "transition_state": row.transition_state,
+        "prior_label": row.prior_label,
+        "invocations_held": row.invocations_held,
+        "indicator_agreement_count": row.indicator_agreement_count,
+        "vix_level": float(row.vix_level),
+        "term_structure_basis": float(row.term_structure_basis),
+        "vvix_percentile": float(row.vvix_percentile),
+        "realized_vol_5d": float(row.realized_vol),
+    }
+    return payload, "db"
+
 
 _LIVE_FLAG = "RUN_LIVE_LLM_TESTS"
 _OAUTH_FLAG = "CLAUDE_CODE_OAUTH_TOKEN"

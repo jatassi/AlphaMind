@@ -17,6 +17,7 @@ exercised end-to-end without hitting the Anthropic API.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
@@ -1030,28 +1031,53 @@ def _stub_only_llm_and_broker(
     monkeypatch.setattr(module, "run_decision_pipeline", _decision_stub)
 
 
+_REQUIRED_INVOCATION_ROW_COLUMNS: tuple[str, ...] = (
+    "invocation_id",
+    "process_lifetime_id",
+    "start_at",
+    "phase1_completed_at",
+    "phase2_completed_at",
+    "trigger_type",
+    "trigger_source",
+    "trigger_reason",
+    "git_sha_at_invocation",
+    "active_profile",
+    "active_regime",
+    "active_mode",
+    "active_overlays_json",
+    "resolved_config_hash",
+    "resolved_config_snapshot_path",
+    "feature_flags_snapshot_json",
+    "data_calibration_state_snapshot_path",
+    "data_source_freshness_json",
+    "fill_collection_summary_json",
+    "command_execution_summary_json",
+    "staleness_flag",
+)
+
+
 class TestRunInvocationProductionPathArtifacts:
-    """Pin the verify-script row + activity-log checks against a unit invocation.
+    """Pin the invocation-row + activity-log invariants against a unit invocation.
 
     The other test classes in this file stub every heavy callee
     (``gather_phase1_inputs``, ``process_unprocessed_fills``,
     ``run_analysis_pipeline``, ``run_decision_pipeline``, ``dispatch_phase2``)
     so the orchestrator wiring is exercised without hitting the broker or
-    LLM. That coverage missed two blockers caught in /review on PR #44
+    LLM. That coverage previously missed two blockers
     (``snapshot_metadata_json`` column population, baseline ``activity_log``
     emission) because both were expected from the orchestrator's own glue
     code — not from the stubbed inner stages.
 
     This class re-runs the orchestrator with the LLM + broker stages
     stubbed but ``process_unprocessed_fills`` / ``dispatch_phase2`` in
-    production form, then runs the verify script's
-    ``check_invocation_row_population`` and ``check_activity_log`` helpers
-    against the resulting DB state. Regressions to the row-population path
-    or the baseline activity-log emission surface at test time instead of
-    verify-script time.
+    production form, then asserts directly against the resulting DB
+    state. ALP-502 retired the per-feature verify scripts; the
+    invariants the deleted ``check_invocation_row_population`` and
+    ``check_activity_log`` helpers enforced are reproduced inline below
+    so regressions still surface at test time.
     """
 
-    async def test_check_invocation_row_population_passes(
+    async def test_invocation_row_columns_populated(
         self,
         async_factory_with_singletons: async_sessionmaker[AsyncSession],
         env_path: Path,
@@ -1059,11 +1085,8 @@ class TestRunInvocationProductionPathArtifacts:
         db_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """End-to-end run → ``check_invocation_row_population`` PASS."""
+        """Every must-be-set column on the ``invocations`` row is populated."""
         from alphamind.scheduler.orchestrator import run_invocation
-        from alphamind.scripts.verify_pipeline_scheduler import (
-            check_invocation_row_population,
-        )
 
         _stub_only_llm_and_broker(monkeypatch)
         summary = await run_invocation(
@@ -1082,12 +1105,36 @@ class TestRunInvocationProductionPathArtifacts:
         sync_engine = make_engine(str(db_path))
         try:
             with sync_engine.connect() as conn:
-                result = check_invocation_row_population(conn, invocation_id=summary.invocation_id)
+                row_result = (
+                    conn.exec_driver_sql(
+                        "SELECT * FROM invocations WHERE invocation_id = :iid",
+                        {"iid": summary.invocation_id},
+                    )
+                    .mappings()
+                    .first()
+                )
         finally:
             sync_engine.dispose()
-        assert result.passed, result.message
+        assert row_result is not None
+        row = dict(row_result)
+        null_columns = [c for c in _REQUIRED_INVOCATION_ROW_COLUMNS if row.get(c) is None]
+        assert not null_columns, f"NULL columns on invocations row: {null_columns}"
+        assert row["trigger_type"] == "manual"
+        for json_col in ("active_overlays_json", "feature_flags_snapshot_json"):
+            json.loads(row[json_col])
+        resolved_cfg_path = Path(row["resolved_config_snapshot_path"])
+        # Use ``asyncio.to_thread`` to avoid the lint-flagged sync-IO-in-
+        # async-function pattern; these calls are filesystem stats, not
+        # mutations, so a worker-thread bounce is fine.
+        cfg_stat_ok, cfg_size = await asyncio.to_thread(
+            lambda: (resolved_cfg_path.is_file(), resolved_cfg_path.stat().st_size)
+        )
+        assert cfg_stat_ok
+        assert cfg_size > 0
+        data_cal_path = Path(row["data_calibration_state_snapshot_path"])
+        assert await asyncio.to_thread(data_cal_path.is_file)
 
-    async def test_check_activity_log_passes(
+    async def test_activity_log_carries_at_least_one_entry(
         self,
         async_factory_with_singletons: async_sessionmaker[AsyncSession],
         env_path: Path,
@@ -1095,15 +1142,14 @@ class TestRunInvocationProductionPathArtifacts:
         db_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """End-to-end run → ``check_activity_log`` PASS.
+        """``activity_log`` carries at least one entry per invocation.
 
         With no fills and no commands, the orchestrator's baseline
         ``DISTILLATION_CONFIG_CHANGE`` emission is the only entry and is
-        sufficient to satisfy the verify-script's "at least one entry"
-        guarantee.
+        sufficient to satisfy the per-invocation "at least one entry"
+        invariant the deleted verify script enforced.
         """
         from alphamind.scheduler.orchestrator import run_invocation
-        from alphamind.scripts.verify_pipeline_scheduler import check_activity_log
 
         _stub_only_llm_and_broker(monkeypatch)
         summary = await run_invocation(
@@ -1122,10 +1168,13 @@ class TestRunInvocationProductionPathArtifacts:
         sync_engine = make_engine(str(db_path))
         try:
             with sync_engine.connect() as conn:
-                result = check_activity_log(conn, invocation_id=summary.invocation_id)
+                rows = conn.exec_driver_sql(
+                    "SELECT event_type FROM activity_log WHERE invocation_id = :iid",
+                    {"iid": summary.invocation_id},
+                ).all()
         finally:
             sync_engine.dispose()
-        assert result.passed, result.message
+        assert rows, "expected ≥1 activity_log entry; got none"
 
 
 class TestRunInvocationDebugE2EWiring:

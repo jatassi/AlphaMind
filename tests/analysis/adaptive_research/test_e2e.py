@@ -52,17 +52,39 @@ from alphamind.analysis.adaptive_research.runner import (
 from alphamind.analysis.adaptive_research.validation import _build_reference_universe
 from alphamind.analysis.domain_researchers.models import SectorBrief
 from alphamind.analysis.qualitative_research.models import QualitativeBrief
-from alphamind.config.models.agents import AdaptiveAgentConfig, AgentName
+from alphamind.config.models.agents import AdaptiveAgentConfig, AgentName, AgentsConfig
 from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
 from alphamind.distillation.orchestrator import DistillationOutputs
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.scripts._common import load_universe_scope
-from alphamind.scripts.verify_adaptive_researcher import (
-    _REQUIRED_DIAGNOSTIC_FILES,
-    _diagnostic_dir,
-    _load_agents_config,
-)
 from tests.analysis.adaptive_research.fixtures import load_e2e_fixtures
+
+# Helpers inlined from the retired ``alphamind.scripts.verify_adaptive_researcher``
+# (deleted in ALP-502 along with the rest of the per-feature pipeline verify
+# scripts). These helpers exist only to drive the live-SDK harness this test
+# wraps; the diagnostic-archive-layout contract they encode is documented in
+# ``docs/design/03-analysis-layer/adaptive-research.md`` § Diagnostic archive.
+_REQUIRED_DIAGNOSTIC_FILES: tuple[str, ...] = (
+    "prompt.md",
+    "user_message.md",
+    "response_initial.md",
+    "errors.json",
+    "metadata.json",
+)
+
+
+def _diagnostic_dir(archive_root: Path, invocation_id: str, agent_name: str) -> Path:
+    return archive_root / "invocations" / invocation_id / "analysis" / agent_name
+
+
+def _load_agents_config() -> AgentsConfig:
+    import yaml
+
+    repo_root = Path(__file__).resolve().parents[3]
+    with (repo_root / "config" / "agents.yaml").open(encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    return AgentsConfig.model_validate(data)
+
 
 _LIVE_FLAG = "RUN_LIVE_LLM_TESTS"
 _OAUTH_FLAG = "CLAUDE_CODE_OAUTH_TOKEN"
