@@ -10,6 +10,12 @@ Verifies the public contract called out by story ALP-495:
   fixed by parent issue ALP-493 § Pre-resolved (B):
   ``duration_s``, ``input_tokens``, ``output_tokens``, ``tool_calls``,
   ``stop_reason``.
+
+Also exposes :class:`RecordingProgressEmitter` as a reusable test fake
+(per story ALP-497 § AC) so the integration test in
+``tests/scheduler/test_orchestrator_progress.py`` and any future
+emitter-aware test can assert on the recorded event stream without
+re-deriving the substitute shape.
 """
 
 from __future__ import annotations
@@ -17,6 +23,40 @@ from __future__ import annotations
 from typing import Any
 
 from alphamind.scheduler.progress import NoOpProgressEmitter, ProgressEmitter
+
+
+class RecordingProgressEmitter:
+    """Test fake — records every progress event as a ``(kind, fields)`` tuple.
+
+    Structurally satisfies :class:`ProgressEmitter` (the Protocol is
+    ``@runtime_checkable``); tests can pass an instance wherever
+    ``ProgressEmitter`` is expected and assert on ``self.events`` to
+    verify the emit stream. Story ALP-497 § AC pins this shape so the
+    orchestrator-progress integration test (and follow-on tests) can
+    import a single canonical substitute.
+
+    ``phase_start`` events carry only the phase name; ``phase_done``
+    events carry the phase name plus any caller-supplied ``**fields``.
+    ``agent_request`` / ``agent_response`` events carry every kwarg the
+    real call site supplies — the recording does not enforce the
+    Protocol's named-only contract so tests can assert on whatever
+    field set the real emit site uses.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    def phase_start(self, phase: str) -> None:
+        self.events.append(("phase_start", {"phase": phase}))
+
+    def phase_done(self, phase: str, **fields: Any) -> None:
+        self.events.append(("phase_done", {"phase": phase, **fields}))
+
+    def agent_request(self, **fields: Any) -> None:
+        self.events.append(("agent_request", fields))
+
+    def agent_response(self, **fields: Any) -> None:
+        self.events.append(("agent_response", fields))
 
 
 def test_noop_emitter_satisfies_protocol() -> None:
@@ -102,29 +142,37 @@ def test_protocol_declared_methods_are_present() -> None:
     assert declared.issubset(available)
 
 
-def test_recording_emitter_substitute_also_satisfies_protocol() -> None:
-    """A minimal in-test substitute structurally satisfies the Protocol.
+def test_recording_emitter_satisfies_protocol() -> None:
+    """The module-level :class:`RecordingProgressEmitter` satisfies the Protocol.
 
     Demonstrates the testing seam called out by the design doc § 5 —
-    fakes over mocks. Story 02a will use this shape to assert on the
-    event stream.
+    fakes over mocks. The integration test in
+    ``test_orchestrator_progress.py`` uses this same class to assert on
+    the orchestrator's emitted event stream.
     """
-
-    class _RecordingEmitter:
-        def __init__(self) -> None:
-            self.events: list[tuple[str, dict[str, Any]]] = []
-
-        def phase_start(self, phase: str) -> None:
-            self.events.append(("phase_start", {"phase": phase}))
-
-        def phase_done(self, phase: str, **fields: Any) -> None:
-            self.events.append(("phase_done", {"phase": phase, **fields}))
-
-        def agent_request(self, **fields: Any) -> None:
-            self.events.append(("agent_request", fields))
-
-        def agent_response(self, **fields: Any) -> None:
-            self.events.append(("agent_response", fields))
-
-    recording = _RecordingEmitter()
+    recording = RecordingProgressEmitter()
     assert isinstance(recording, ProgressEmitter)
+
+
+def test_recording_emitter_records_each_event_kind() -> None:
+    """All four event kinds land in ``events`` with the expected payload shape."""
+    emitter = RecordingProgressEmitter()
+    emitter.phase_start("phase1")
+    emitter.phase_done("phase1", fills_processed=3)
+    emitter.agent_request(phase="analyst", agent="analyst", model="claude-opus-4-7")
+    emitter.agent_response(
+        phase="analyst",
+        agent="analyst",
+        model="claude-opus-4-7",
+        duration_s=4.2,
+        input_tokens=100,
+        output_tokens=50,
+        tool_calls=2,
+        stop_reason="end_turn",
+    )
+    kinds = [evt[0] for evt in emitter.events]
+    assert kinds == ["phase_start", "phase_done", "agent_request", "agent_response"]
+    assert emitter.events[0][1] == {"phase": "phase1"}
+    assert emitter.events[1][1] == {"phase": "phase1", "fills_processed": 3}
+    assert emitter.events[2][1]["agent"] == "analyst"
+    assert emitter.events[3][1]["stop_reason"] == "end_turn"

@@ -33,6 +33,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._harness_core import (
     _PROMPT_CACHE,
     ContextOverflowFailure,
@@ -407,6 +408,8 @@ async def invoke_adaptive_researcher(
     correlation_regime_brief: CorrelationRegimeBrief,
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "adaptive",
 ) -> HarnessSuccess:
     """Invoke the adaptive-researcher agent and return a validated :class:`HarnessSuccess`.
 
@@ -464,6 +467,8 @@ async def invoke_adaptive_researcher(
             invocation_id=invocation_id,
             on_cli_result_error="context_overflow",
             tool_name_prefix=_TOOL_NAME_PREFIX,
+            progress=progress,
+            phase=phase,
         )
         return (
             outcome.structured_output,

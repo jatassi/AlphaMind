@@ -43,9 +43,10 @@ import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._shared import TokensUsed
 
 __all__ = [
@@ -55,6 +56,7 @@ __all__ = [
     "CollectOutcome",
     "ContextOverflowFailure",
     "DiagState",
+    "DiagWriter",
     "HarnessFailure",
     "MalformedOutputFailure",
     "SDKFailure",
@@ -70,6 +72,34 @@ __all__ = [
     "_tokens_from_usage",
     "invoke_sdk",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic-state Protocol
+# ---------------------------------------------------------------------------
+
+
+class DiagWriter(Protocol):
+    """Structural shape :func:`invoke_sdk` requires of any *diag* argument.
+
+    Both :class:`DiagState` (the canonical analysis-side dataclass) and the
+    decision-layer harnesses' private ``_DiagState`` records satisfy this
+    Protocol. Defining the shape here lets ``invoke_sdk`` stay agnostic of
+    the per-harness metadata shape while keeping the failure-path flush
+    and the ``agent_response`` model-name emission consistent across the
+    seven harnesses.
+    """
+
+    model: str
+
+    def write(
+        self,
+        *,
+        success: bool,
+        wall_clock_seconds: float,
+        stop_reason: str | None,
+    ) -> None: ...
+
 
 # ---------------------------------------------------------------------------
 # Per-process system-prompt cache
@@ -324,6 +354,11 @@ class DiagState:
     positive value or when explicitly requested by passing
     ``record_tool_calls=True``. The domain-researcher harness does not
     track tool calls; the other three do.
+
+    ``archive_layer`` selects the layer segment of the diagnostic path.
+    Defaults to ``"analysis"`` (the four analysis harnesses' archive
+    convention). The three decision harnesses pass ``"decision"`` so
+    their diagnostics land under ``invocations/<id>/decision/<agent>/``.
     """
 
     agent_name: str
@@ -347,6 +382,9 @@ class DiagState:
     # When set, the diagnostic writes a single response file under this name
     # instead of the response_initial.md / response_retry.md pair.
     response_filename: str | None = None
+    # Layer segment of the diagnostic path; analysis harnesses use the
+    # default, decision harnesses override to "decision".
+    archive_layer: str = "analysis"
 
     def write(
         self,
@@ -362,7 +400,7 @@ class DiagState:
             self.archive_root
             / INVOCATIONS_DIRNAME
             / self.invocation_id
-            / "analysis"
+            / self.archive_layer
             / self.agent_name
         )
         diag_dir.mkdir(parents=True, exist_ok=True)
@@ -443,7 +481,7 @@ async def _collect_response(
     prompt: str,
     options: Any,
     init_stall_timeout_seconds: float | None = None,
-    tool_name_prefix: str | None = None,
+    tool_name_prefix: str | tuple[str, ...] | None = None,
 ) -> CollectOutcome:
     """Drive the SDK generator to completion.
 
@@ -458,10 +496,12 @@ async def _collect_response(
     occasionally narrates between tool calls.
 
     ``tool_calls`` counts ``ToolUseBlock`` instances in assistant messages.
-    When ``tool_name_prefix`` is supplied, only blocks whose ``name`` starts
-    with that prefix are counted; otherwise every ``ToolUseBlock`` counts.
-    The prefix lets per-harness MCP-wired runs filter out SDK-internal
-    pseudo-events (e.g. ``StructuredOutput``).
+    When ``tool_name_prefix`` is supplied (either a single ``str`` or a
+    ``tuple[str, ...]``), only blocks whose ``name`` matches via
+    ``str.startswith`` are counted; otherwise every ``ToolUseBlock``
+    counts. The prefix lets per-harness MCP-wired runs filter out
+    SDK-internal pseudo-events (e.g. ``StructuredOutput``); decision
+    harnesses pass a tuple to merge multiple MCP-server allowlists.
 
     When ``init_stall_timeout_seconds`` is set, the wait for the *first* SDK
     message is bounded by that timeout. A healthy call emits a
@@ -542,38 +582,76 @@ async def _collect_response(
 CLIResultErrorMapping = Literal["context_overflow", "sdk_failure"]
 
 
-async def invoke_sdk(  # noqa: PLR0913 - all kw-only; each name documents one SDK behaviour the four harnesses configure
+async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents one SDK behaviour the seven harnesses configure; the except-arms each translate one SDK signal into the matching HarnessFailure subclass (one branch per signal — extracting them would obscure the 1:1 translation table)
     *,
     sdk_query_fn: Callable[..., AsyncIterator[Any]],
     prompt: str,
     options: Any,
-    diag: DiagState,
+    diag: DiagWriter,
     budget_seconds: float,
     init_stall_timeout_seconds: float | None,
     wall_start: float,
     agent_name: str,
     invocation_id: str,
     on_cli_result_error: CLIResultErrorMapping,
-    tool_name_prefix: str | None = None,
+    tool_name_prefix: str | tuple[str, ...] | None = None,
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str,
 ) -> CollectOutcome:
     """Run one SDK call with stall-retry, timeout, and error translation.
 
     Behavioural toggles:
 
     * ``init_stall_timeout_seconds=None`` disables the stall watchdog (QR,
-      AR, synthesizer behaviour). When set (the domain-researcher path),
-      :class:`_StuckSDKCall` is retried once before surfacing
-      :class:`TimeoutFailure`.
+      AR, synthesizer, analyst, strategist, PM behaviour). When set (the
+      domain-researcher path), :class:`_StuckSDKCall` is retried once
+      before surfacing :class:`TimeoutFailure`.
     * ``on_cli_result_error`` selects how a ``_CLIResultError`` (the SDK's
       ``is_error=True`` signal) is translated:
         - ``"context_overflow"`` → :class:`ContextOverflowFailure`
           (DR / QR / AR — the API surfaces context overflow this way).
-        - ``"sdk_failure"`` → :class:`SDKFailure` (synthesizer behaviour).
+        - ``"sdk_failure"`` → :class:`SDKFailure` (synthesizer + analyst +
+          strategist + PM behaviour).
+
+    Progress emission (single emit point per parent issue ALP-493 § B):
+
+    * Emits ``progress.agent_request(phase, agent, model)`` immediately
+      before opening the SDK call.
+    * Emits ``progress.agent_response(phase, agent, model, duration_s,
+      input_tokens, output_tokens, tool_calls, stop_reason)`` after the
+      call settles — on the happy path with the outcome's fields, and on
+      every terminal failure path with whatever cost the SDK accumulated
+      before raising (zero tokens / no stop_reason for stalls and auth
+      failures; partial tokens / stop_reason for ``_CLIResultError``).
+
+    ``progress`` defaults to :class:`NoOpProgressEmitter` so production
+    callers keep their original signature; ``phase`` is required and
+    names the pipeline stage (``"domain_researchers"``, ``"analyst"``…).
 
     The function writes a diagnostic record on every terminal failure path
     and re-raises the matching :class:`HarnessFailure` subclass.
     """
     from claude_agent_sdk import ClaudeSDKError, CLIConnectionError
+
+    progress.agent_request(phase=phase, agent=agent_name, model=diag.model)
+
+    def _emit_response(
+        *,
+        stop_reason: str | None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        tool_calls: int = 0,
+    ) -> None:
+        progress.agent_response(
+            phase=phase,
+            agent=agent_name,
+            model=diag.model,
+            duration_s=time.monotonic() - wall_start,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            tool_calls=tool_calls,
+            stop_reason=stop_reason,
+        )
 
     def _record_failure(stop_reason: str | None) -> None:
         diag.write(
@@ -585,7 +663,7 @@ async def invoke_sdk(  # noqa: PLR0913 - all kw-only; each name documents one SD
     stall_attempts = 2 if init_stall_timeout_seconds is not None else 1
     for stall_attempt in range(1, stall_attempts + 1):
         try:
-            return await asyncio.wait_for(
+            outcome = await asyncio.wait_for(
                 _collect_response(
                     sdk_query_fn,
                     prompt=prompt,
@@ -599,6 +677,7 @@ async def invoke_sdk(  # noqa: PLR0913 - all kw-only; each name documents one SD
             if stall_attempt < stall_attempts:
                 continue
             _record_failure(None)
+            _emit_response(stop_reason=None)
             raise TimeoutFailure(
                 f"SDK call stalled before producing any message on two consecutive "
                 f"attempts ({init_stall_timeout_seconds}s init timeout). Likely "
@@ -608,6 +687,7 @@ async def invoke_sdk(  # noqa: PLR0913 - all kw-only; each name documents one SD
             ) from exc
         except TimeoutError as exc:
             _record_failure(None)
+            _emit_response(stop_reason=None)
             raise TimeoutFailure(
                 f"Invocation exceeded latency budget of {budget_seconds}s",
                 agent_name=agent_name,
@@ -615,6 +695,7 @@ async def invoke_sdk(  # noqa: PLR0913 - all kw-only; each name documents one SD
             ) from exc
         except _CLIResultError as exc:
             _record_failure(exc.stop_reason)
+            _emit_response(stop_reason=exc.stop_reason)
             if on_cli_result_error == "context_overflow":
                 raise ContextOverflowFailure(
                     f"CLI returned is_error=True: {exc.error_text}",
@@ -629,6 +710,7 @@ async def invoke_sdk(  # noqa: PLR0913 - all kw-only; each name documents one SD
             ) from exc
         except CLIConnectionError as exc:
             _record_failure(None)
+            _emit_response(stop_reason=None)
             raise SDKFailure(
                 f"Authentication or connection failure — ensure CLAUDE_CODE_OAUTH_TOKEN "
                 f"is set and valid. Underlying error: {exc}",
@@ -638,12 +720,21 @@ async def invoke_sdk(  # noqa: PLR0913 - all kw-only; each name documents one SD
             ) from exc
         except ClaudeSDKError as exc:
             _record_failure(None)
+            _emit_response(stop_reason=None)
             raise SDKFailure(
                 f"Non-recoverable SDK error: {exc}",
                 agent_name=agent_name,
                 invocation_id=invocation_id,
                 cause=exc,
             ) from exc
+        else:
+            _emit_response(
+                stop_reason=outcome.stop_reason,
+                input_tokens=outcome.tokens_used.input_tokens,
+                output_tokens=outcome.tokens_used.output_tokens,
+                tool_calls=outcome.tool_calls,
+            )
+            return outcome
     raise AssertionError(  # pragma: no cover
         "unreachable: stall retry loop exhausted without returning or raising"
     )
