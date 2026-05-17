@@ -496,3 +496,62 @@ def test_harness_receives_bundle_and_universe_verbatim() -> None:
     assert received["user_message"] == result.input_bundle.bundle_text
     assert received["universe"] is _UNIVERSE
     assert received["invocation_id"] == _INVOCATION_ID
+
+
+# ---------------------------------------------------------------------------
+# Test 8: Integrity check is invoked between bundle assembly and harness call
+# ---------------------------------------------------------------------------
+
+
+def test_integrity_check_receives_regime_inputs_digest() -> None:
+    """The integrity_check_fn dep sees the same regime/inputs/digest used by the harness."""
+    received: dict[str, Any] = {}
+    call_order: list[str] = []
+    inputs = _make_qualitative_inputs()
+    digest = _make_news_digest()
+
+    def _loader(**_kw: object) -> QualitativeInputs:
+        call_order.append("inputs")
+        return inputs
+
+    def _renderer(**_kw: object) -> NewsDigest:
+        call_order.append("digest")
+        return digest
+
+    def _assembler(**kw: object) -> InputBundle:
+        call_order.append("bundle")
+        return assemble_input_bundle(**kw)  # type: ignore[arg-type]
+
+    def _integrity(**kw: object) -> None:
+        call_order.append("integrity")
+        received.update(kw)
+
+    async def _harness(**_kw: object) -> HarnessSuccess:
+        call_order.append("harness")
+        return _make_harness_success()
+
+    asyncio.run(
+        _run_qualitative_researcher(
+            invocation_id=_INVOCATION_ID,
+            as_of=_AS_OF,
+            last_invocation_time=_LAST_INVOCATION_TIME,
+            universal_regime_label=_REGIME_LABEL,
+            sector_roster=_SECTOR_ROSTER,
+            universe=_UNIVERSE,
+            agents_config=_make_agents_registry(),
+            deps=_Deps(
+                inputs_loader=_loader,
+                digest_renderer=_renderer,
+                bundle_assembler=_assembler,
+                harness_fn=_harness,
+                integrity_check_fn=_integrity,
+            ),
+        )
+    )
+
+    # Integrity check fires after bundle assembly and before the harness.
+    assert call_order == ["inputs", "digest", "bundle", "integrity", "harness"]
+    assert received["regime_label"] is _REGIME_LABEL
+    assert received["inputs"] is inputs
+    assert received["news_digest"] is digest
+    assert received["as_of"] == _AS_OF
