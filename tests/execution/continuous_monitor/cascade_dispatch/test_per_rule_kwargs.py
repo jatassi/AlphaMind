@@ -1,4 +1,4 @@
-"""Tests for the per-rule kwargs providers factory (ALP-509).
+"""Tests for the per-rule kwargs providers factory.
 
 The factory returns one :data:`PerRuleKwargsProvider` per ``immediate_engine``
 rule declared in ``config/guardrails.yaml``. Each provider extracts the
@@ -389,13 +389,14 @@ def test_factory_returns_provider_per_immediate_engine_rule_in_guardrails() -> N
     assert set(providers.keys()) == expected
 
 
-def test_factory_keys_align_with_dispatch_table() -> None:
-    """Every provider key resolves to a selector in the dispatch table."""
+def test_factory_keys_match_dispatch_table_exactly() -> None:
+    """The provider set and the dispatch-table key set are equal.
+
+    Renaming one without the other (the structural class of bug this PR
+    fixes) is what this symmetric check catches in CI.
+    """
     providers = build_per_rule_kwargs_providers(breach_behavior_config=_make_breach_config())
-    for rule_id in providers:
-        assert RULE_SELECTOR_DISPATCH.get(rule_id) is not None, (
-            f"provider registered for {rule_id!r} but no selector dispatched"
-        )
+    assert set(providers.keys()) == set(RULE_SELECTOR_DISPATCH.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -417,19 +418,23 @@ def test_drawdown_provider_returns_open_positions_and_liquidity() -> None:
 
 
 def test_position_max_loss_equity_provider_picks_breaching_equity() -> None:
-    """``position_max_loss_equity_pct`` provider selects the worst equity over the limit."""
+    """``position_max_loss_equity_pct`` provider selects the worst equity over the limit.
+
+    Limits are positive-magnitude percentages (``3.0`` for a 3% max loss);
+    ``unrealized_pnl_pct`` is signed.
+    """
     providers = build_per_rule_kwargs_providers(breach_behavior_config=_make_breach_config())
     breaching = _equity_view(position_id="POS-1", unrealized_pnl_usd=-60.0)  # -4.0% on $1500 cost
     healthy = _equity_view(position_id="POS-2", unrealized_pnl_usd=-15.0)  # -1.0%
     context = _make_context((breaching, healthy))
 
-    rule = _evaluation(rule_id="position_max_loss_equity_pct", current=-4.0, limit=-3.0)
+    rule = _evaluation(rule_id="position_max_loss_equity_pct", current=4.0, limit=3.0)
     kwargs = providers["position_max_loss_equity_pct"](rule, context)
 
     assert kwargs["breaching_position_id"] == "POS-1"
     assert kwargs["open_positions"] == (breaching, healthy)
-    assert kwargs["loss_pct"] == -4.0
-    assert kwargs["limit_pct"] == -3.0
+    assert kwargs["loss_pct"] == 4.0
+    assert kwargs["limit_pct"] == 3.0
 
 
 def test_position_max_loss_options_provider_picks_breaching_option() -> None:
@@ -439,7 +444,7 @@ def test_position_max_loss_options_provider_picks_breaching_option() -> None:
     breaching_option = _options_view(position_id="POS-OPT-1", unrealized_pnl_usd=-80.0)
     context = _make_context((equity_loser, breaching_option))
 
-    rule = _evaluation(rule_id="position_max_loss_options_pct", current=-20.0, limit=-15.0)
+    rule = _evaluation(rule_id="position_max_loss_options_pct", current=20.0, limit=15.0)
     kwargs = providers["position_max_loss_options_pct"](rule, context)
 
     assert kwargs["breaching_position_id"] == "POS-OPT-1"
@@ -451,7 +456,7 @@ def test_position_max_loss_provider_raises_when_no_position_breaches() -> None:
     positions = (_equity_view(position_id="POS-1", unrealized_pnl_usd=-15.0),)  # -1.0%
     context = _make_context(positions)
 
-    rule = _evaluation(rule_id="position_max_loss_equity_pct", current=-3.5, limit=-3.0)
+    rule = _evaluation(rule_id="position_max_loss_equity_pct", current=3.5, limit=3.0)
     with pytest.raises(ValueError, match="position_max_loss_equity_pct"):
         providers["position_max_loss_equity_pct"](rule, context)
 
@@ -504,49 +509,38 @@ def test_single_short_max_provider_raises_when_no_short_breaches() -> None:
 
 
 async def test_dispatcher_with_built_providers_handles_one_breach_per_registered_rule() -> None:
-    """Constructing the dispatcher with ``build_per_rule_kwargs_providers`` accepts
-    one immediate breach per registered rule_id without raising
-    ``ValueError("no per-rule kwargs provider…")`` (ALP-509 acceptance criterion).
+    """The dispatcher built with ``build_per_rule_kwargs_providers`` handles one
+    immediate breach per registered rule_id end-to-end, submitting exactly one
+    envelope per scenario whose ``position_id`` matches the breaching position
+    the provider selected.
 
-    Per scenario the per-tick context contains a position satisfying the
-    provider's pre-condition (a losing equity / option for max-loss; an
-    oversized short for ``single_short_max_pct``). The dispatcher's submit
-    path runs end-to-end; envelope structure is pinned in other tests.
+    Without the envelope assertion this test would pass even if every provider
+    built nonsensical kwargs, as long as nothing raised — so each scenario
+    pins the submitted envelope's ``position_id`` to the only breaching
+    position in its context.
     """
     breach_config = _make_breach_config()
     providers = build_per_rule_kwargs_providers(breach_behavior_config=breach_config)
-    scenarios: dict[str, tuple[tuple[PositionView, ...], tuple[float, float]]] = {
-        "position_max_loss_equity_pct": (
-            (_equity_view(position_id="POS-EQ", unrealized_pnl_usd=-60.0),),
-            (-4.0, -3.0),
-        ),
-        "position_max_loss_options_pct": (
-            (_options_view(position_id="POS-OPT", unrealized_pnl_usd=-80.0),),
-            (-20.0, -15.0),
-        ),
-        "daily_drawdown_pct": (
-            (_equity_view(position_id="POS-DD", unrealized_pnl_usd=-100.0),),
-            (-6.0, -5.0),
-        ),
-        "cumulative_drawdown_pct": (
-            (_equity_view(position_id="POS-CD", unrealized_pnl_usd=-100.0),),
-            (-9.0, -8.0),
-        ),
-        "single_short_max_pct": (
-            (
-                _equity_view(
-                    position_id="POS-SH",
-                    direction=Direction.SHORT,
-                    position_weight_pct=4.0,
-                ),
-            ),
-            (4.0, 3.0),
-        ),
+    equity_max_loss = _equity_view(position_id="POS-EQ", unrealized_pnl_usd=-60.0)
+    options_max_loss = _options_view(position_id="POS-OPT", unrealized_pnl_usd=-80.0)
+    daily_loser = _equity_view(position_id="POS-DD", unrealized_pnl_usd=-100.0)
+    cumulative_loser = _equity_view(position_id="POS-CD", unrealized_pnl_usd=-100.0)
+    oversized_short = _equity_view(
+        position_id="POS-SH", direction=Direction.SHORT, position_weight_pct=4.0
+    )
+    scenarios: dict[str, tuple[tuple[PositionView, ...], tuple[float, float], str]] = {
+        "position_max_loss_equity_pct": ((equity_max_loss,), (4.0, 3.0), "POS-EQ"),
+        "position_max_loss_options_pct": ((options_max_loss,), (20.0, 15.0), "POS-OPT"),
+        "daily_drawdown_pct": ((daily_loser,), (-6.0, -5.0), "POS-DD"),
+        "cumulative_drawdown_pct": ((cumulative_loser,), (-9.0, -8.0), "POS-CD"),
+        "single_short_max_pct": ((oversized_short,), (4.0, 3.0), "POS-SH"),
     }
     assert set(scenarios.keys()) == set(providers.keys())
-    for rule_id, (positions, (current, limit)) in scenarios.items():
+    for rule_id, (positions, (current, limit), expected_position_id) in scenarios.items():
         context = _make_context(positions)
         rule = _evaluation(rule_id=rule_id, current=current, limit=limit)
+        submit = _RecordingSubmit()
+        deferral_sink = _RecordingDeferralSink()
 
         def _context_provider(ctx: BreachDispatchContext = context) -> BreachDispatchContext:
             return ctx
@@ -556,10 +550,17 @@ async def test_dispatcher_with_built_providers_handles_one_breach_per_registered
             breach_config=breach_config,
             trigger_ids=TriggerIdGenerator(session_id=_SESSION_ID),
             context_provider=_context_provider,
-            submit_envelope=_RecordingSubmit(),
-            deferral_sink=_RecordingDeferralSink(),
+            submit_envelope=submit,
+            deferral_sink=deferral_sink,
             per_rule_kwargs_providers=providers,
             now=lambda: _NOW,
         )
         result = _make_breach_loop_result(rule)
         await dispatcher.handle_immediate_breach(result, rule)
+
+        assert deferral_sink.calls == [], (
+            f"{rule_id}: dispatcher unexpectedly deferred to PM "
+            f"({deferral_sink.calls[0].reason if deferral_sink.calls else ''})"
+        )
+        assert len(submit.calls) == 1, f"{rule_id}: expected 1 envelope, got {len(submit.calls)}"
+        assert submit.calls[0].commands[0].position_id == expected_position_id

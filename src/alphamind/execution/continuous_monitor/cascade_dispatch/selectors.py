@@ -9,10 +9,7 @@ the per-selector keyword arguments at the call site.
 Keys match the rule ids declared in ``config/guardrails.yaml`` and produced by
 the guardrail-evaluation library's ``RuleProjection.rule`` field, so a breach
 projected by the library flows straight through ``selector_for(rule.rule_id)``
-without any naming translation. ``margin_call`` does not appear because the
-margin-call path bypasses ``handle_immediate_breach`` entirely — it routes
-through ``CascadeDispatcher.handle_margin_call`` which invokes
-``select_for_margin_call`` directly.
+without any naming translation.
 
 A rule id that is not in this table is either:
 

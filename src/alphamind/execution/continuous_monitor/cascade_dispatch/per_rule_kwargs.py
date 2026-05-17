@@ -1,4 +1,4 @@
-"""Per-rule kwargs providers for the cascade dispatcher (ALP-509).
+"""Per-rule kwargs providers for the cascade dispatcher.
 
 Each entry in :func:`build_per_rule_kwargs_providers` is a
 :data:`PerRuleKwargsProvider` keyed by the ``rule_id`` of an
@@ -10,11 +10,17 @@ position-selection result.
 
 Per-position rules (``position_max_loss_*_pct``, ``single_short_max_pct``)
 need a ``breaching_position_id`` that is not currently carried on
-:class:`RuleEvaluation`. The providers derive it from the open-position
-snapshot — the worst in-class loss for the max-loss rules, the largest short
-over the cap for ``single_short_max_pct``. A future enhancement that surfaces
-the breaching id directly on the rule evaluation would let these providers
-trust the rule instead of re-scanning.
+:class:`RuleEvaluation`. The providers derive it by re-scanning open
+positions — the worst in-class loser for the max-loss rules, the largest
+short over the cap for ``single_short_max_pct``. The dispatcher may close a
+different position than the one whose breach triggered the rule when ties
+or near-ties exist; surfacing the breaching id on the rule evaluation
+upstream would let these providers trust the rule instead of re-scanning.
+
+Sign convention: ``rule.limit_value`` and ``rule.current_value`` for max-loss
+rules are positive-magnitude percentages (e.g., ``3.0`` for a 3% max loss).
+``PositionView.unrealized_pnl_pct`` is signed (negative for a loss), so the
+filter negates the limit before comparison.
 """
 
 from __future__ import annotations
@@ -52,21 +58,15 @@ def build_per_rule_kwargs_providers(
 
 
 # ---------------------------------------------------------------------------
-# Drawdown — selector signature is (open_positions, liquidity).
+# Drawdown — selector signature is (open_positions, liquidity). The rule
+# carries a portfolio-level metric, not a position identifier; the selector
+# re-derives the worst loser internally.
 # ---------------------------------------------------------------------------
 
 
 def _drawdown_kwargs_provider(
-    rule: RuleEvaluation, context: BreachDispatchContext
+    _rule: RuleEvaluation, context: BreachDispatchContext
 ) -> dict[str, Any]:
-    """Provider for daily / cumulative drawdown rules.
-
-    ``select_for_drawdown_breach`` picks the position with the largest
-    unrealized loss; ``rule`` carries the drawdown metric, not a position
-    identifier, so the selector receives the full open-position set and
-    re-derives the worst.
-    """
-    del rule
     return {
         "open_positions": context.open_positions,
         "liquidity": context.liquidity,
@@ -75,8 +75,7 @@ def _drawdown_kwargs_provider(
 
 # ---------------------------------------------------------------------------
 # Per-position max loss — selector signature is (breaching_position_id,
-# open_positions, loss_pct, limit_pct). The breaching position is the worst
-# in-class position whose unrealized_pnl_pct is below the rule's limit.
+# open_positions, loss_pct, limit_pct).
 # ---------------------------------------------------------------------------
 
 
@@ -84,17 +83,18 @@ def _make_position_max_loss_provider(
     instrument_type: InstrumentType,
 ) -> PerRuleKwargsProvider:
     def _provider(rule: RuleEvaluation, context: BreachDispatchContext) -> dict[str, Any]:
+        max_loss_pct = rule.limit_value
         breaching = _select_worst_loss_position(
             context.open_positions,
             instrument_type=instrument_type,
-            limit_pct=rule.limit_value,
+            max_loss_pct=max_loss_pct,
             rule_id=rule.rule_id,
         )
         return {
             "breaching_position_id": breaching.position_id,
             "open_positions": context.open_positions,
             "loss_pct": rule.current_value,
-            "limit_pct": rule.limit_value,
+            "limit_pct": max_loss_pct,
         }
 
     return _provider
@@ -104,23 +104,24 @@ def _select_worst_loss_position(
     positions: tuple[PositionView, ...],
     *,
     instrument_type: InstrumentType,
-    limit_pct: float,
+    max_loss_pct: float,
     rule_id: str,
 ) -> PositionView:
-    """Return the in-class position with the largest loss below ``limit_pct``.
+    """Return the in-class position whose loss exceeds ``max_loss_pct``.
 
-    ``limit_pct`` is signed (negative, e.g., ``-3.0``); a position is breaching
-    when its ``unrealized_pnl_pct`` is strictly less (more negative).
+    ``max_loss_pct`` is the positive-magnitude threshold (e.g., ``3.0`` for a
+    3% max loss). ``unrealized_pnl_pct`` is signed, so the filter compares
+    against the negated threshold.
     """
     candidates = [
         p
         for p in positions
-        if p.instrument_type is instrument_type and p.unrealized_pnl_pct < limit_pct
+        if p.instrument_type is instrument_type and p.unrealized_pnl_pct < -max_loss_pct
     ]
     if not candidates:
         msg = (
             f"{rule_id} fired with no {instrument_type.value} position below "
-            f"limit_pct={limit_pct:.2f}%; structural error — the rule classifier "
+            f"limit -{max_loss_pct:.2f}%; structural error — the rule classifier "
             f"surfaced an immediate breach with no breaching position"
         )
         raise ValueError(msg)
@@ -129,9 +130,7 @@ def _select_worst_loss_position(
 
 # ---------------------------------------------------------------------------
 # Single-short max size — selector signature is (breaching_position_id,
-# open_positions, single_short_max_pct_of_portfolio, config). The breaching
-# short is the largest short whose absolute weight exceeds the per-position
-# cap (``rule.limit_value``).
+# open_positions, single_short_max_pct_of_portfolio, config).
 # ---------------------------------------------------------------------------
 
 
@@ -139,15 +138,16 @@ def _make_single_short_max_provider(
     breach_behavior_config: BreachBehaviorConfig,
 ) -> PerRuleKwargsProvider:
     def _provider(rule: RuleEvaluation, context: BreachDispatchContext) -> dict[str, Any]:
+        per_position_cap_pct = rule.limit_value
         breaching = _select_largest_short_over_cap(
             context.open_positions,
-            cap_pct=rule.limit_value,
+            per_position_cap_pct=per_position_cap_pct,
             rule_id=rule.rule_id,
         )
         return {
             "breaching_position_id": breaching.position_id,
             "open_positions": context.open_positions,
-            "single_short_max_pct_of_portfolio": rule.limit_value,
+            "single_short_max_pct_of_portfolio": per_position_cap_pct,
             "config": breach_behavior_config,
         }
 
@@ -157,18 +157,18 @@ def _make_single_short_max_provider(
 def _select_largest_short_over_cap(
     positions: tuple[PositionView, ...],
     *,
-    cap_pct: float,
+    per_position_cap_pct: float,
     rule_id: str,
 ) -> PositionView:
     shorts_over = [
         p
         for p in positions
-        if p.direction is Direction.SHORT and abs(p.position_weight_pct) > cap_pct
+        if p.direction is Direction.SHORT and abs(p.position_weight_pct) > per_position_cap_pct
     ]
     if not shorts_over:
         msg = (
             f"{rule_id} fired with no short position above cap "
-            f"{cap_pct:.2f}%; structural error — the rule classifier "
+            f"{per_position_cap_pct:.2f}%; structural error — the rule classifier "
             f"surfaced an immediate breach with no breaching short"
         )
         raise ValueError(msg)
