@@ -25,7 +25,6 @@ from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.regt_margin_attribution import RegTExcessAggregates
 from alphamind.portfolio_state import PortfolioStateConfig
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
@@ -157,10 +156,6 @@ def _make_pnl_inputs() -> PortfolioPnLInputs:
         average_loss_size_usd=None,
         profit_factor=None,
     )
-
-
-def _make_risk_budget() -> RiskBudgetConsumption:
-    return RiskBudgetConsumption(entries=())
 
 
 def _make_active_risk_parameters(
@@ -448,7 +443,6 @@ def _make_fixture(
         recent_thesis_resolutions=(),
         cash_ledger=cash_ledger or _make_cash_ledger(),
         pending_orders=pending_orders,
-        risk_budget=_make_risk_budget(),
         active_risk_parameters=active_risk_parameters or _make_active_risk_parameters(),
         intra_invocation_changelog=intra_invocation_changelog,
         recent_pm_decision_log=recent_pm_decision_log,
@@ -530,9 +524,6 @@ class _FailingRepository:
         raise RepositoryReadError("simulated read failure")
 
     def get_pending_orders(self) -> tuple[OrderRecord, ...]:
-        raise RepositoryReadError("simulated read failure")
-
-    def get_risk_budget_consumption(self) -> RiskBudgetConsumption:
         raise RepositoryReadError("simulated read failure")
 
     def get_active_risk_parameters(self) -> ActiveRiskParameterSet:

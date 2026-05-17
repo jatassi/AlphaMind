@@ -101,7 +101,7 @@ def test_kernel_regime_has_zero_first_party_imports() -> None:
                 )
 
 
-def test_kernel_regime_all_lists_four_enums() -> None:
+def test_kernel_regime_all_lists_documented_surface() -> None:
     from alphamind._kernel import regime
 
     assert set(regime.__all__) == {
@@ -109,4 +109,5 @@ def test_kernel_regime_all_lists_four_enums() -> None:
         "RegimeLabel",
         "RegimeTransitionState",
         "RiskZone",
+        "classify_consumption_zone",
     }

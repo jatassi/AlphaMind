@@ -14,10 +14,13 @@ library-shape translation and the per-consumer view projection.
 
 from __future__ import annotations
 
-from alphamind._kernel.regime import RiskZone
+from alphamind._kernel.regime import RiskZone, classify_consumption_zone
 from alphamind.portfolio_state.aggregates.risk_budget import (
     RiskBudgetConsumption,
     RiskBudgetEntry,
+)
+from alphamind.risk_guardrails.guardrail_evaluation.projection import (
+    MIN_RULE_WARNING_BAND_PCT,
 )
 from alphamind.risk_guardrails.guardrail_evaluation.rules import build_active_specs
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
@@ -27,6 +30,25 @@ from alphamind.risk_guardrails.guardrail_evaluation.types import (
 )
 
 __all__ = ["build_risk_budget_consumption"]
+
+
+# Display labels for the canonical rule_ids. Sector-concentration rule_ids
+# (``sector_concentration_<sector>``) are not enumerated here; the renderer's
+# sector-label resolver handles those.
+_RULE_LABELS: dict[str, str] = {
+    "position_max_size_pct": "Position max size",
+    "net_long_pct": "Net long",
+    "net_short_pct": "Net short",
+    "gross_exposure_pct": "Gross exposure",
+    "options_delta_pct": "Options delta",
+    "portfolio_theta_pct_per_day": "Portfolio theta",
+    "portfolio_vega_pct_per_iv_point": "Portfolio vega",
+    "total_short_pct": "Total short",
+    "single_short_max_pct": "Single short max",
+    "borrow_cost_budget_pct_per_day": "Borrow cost budget",
+    "min_cash_reserve_pct": "Min cash reserve",
+    "pending_order_capital_pct": "Pending order capital",
+}
 
 
 def build_risk_budget_consumption(
@@ -41,35 +63,37 @@ def build_risk_budget_consumption(
     * ``limit_value = config.effective_limits[spec.effective_limit_key]``
     * ``headroom = limit_value - current_value`` (signed; matches the
       ``RiskBudgetEntry`` validator's strict equality contract).
-    * ``zone`` classifies ``current / limit`` against the per-rule
-      escalation zones when present. Rules missing from
-      ``config.escalation_zones`` default to ``RiskZone.NORMAL`` — the
-      scheduler-orchestrator path currently passes an empty zone mapping,
-      and the builder should remain usable across both that path and the
-      breach-loop path (which uses ``from_resolved_config`` and has
-      populated zones).
+    * ``zone`` classifies via the per-rule escalation zones when present.
+      Inverse rules (``spec.inverse=True``) mirror the projection engine's
+      convention (``projection.py:_classify``) — FAIL below the floor,
+      WARNING within ``MIN_RULE_WARNING_BAND_PCT`` above the floor, NORMAL
+      otherwise — collapsed to three of the four ``RiskZone`` values
+      (NORMAL / WARNING / BLOCKED; CRITICAL is unused for inverse).
+      Rules missing from ``config.escalation_zones`` default to
+      ``RiskZone.NORMAL`` — the scheduler-orchestrator path currently
+      passes an empty zone mapping, and the builder must remain usable
+      across both that path and the breach-loop path.
 
-    ``headroom_pct_of_limit`` and ``cumulative_invocation_impact_value``
-    are zero: the former is in the typed contract but no renderer
-    consumes it; the latter is populated by within-invocation
-    accumulators that don't exist at snapshot-build time.
+    ``cumulative_invocation_impact_value`` is ``0.0`` at snapshot-build
+    time: no proposals have been validated yet. ``headroom_pct_of_limit``
+    is the fraction of headroom remaining relative to the limit, clamped
+    to ``[0, 100]`` — for inverse rules it measures buffer above the floor
+    instead of below the cap.
     """
     entries: list[RiskBudgetEntry] = []
     for spec in build_active_specs(config):
-        if _excluded_by_feature_flag(spec.rule_id, config):
-            continue
         current = spec.read_current(snapshot, config)
         limit = config.effective_limits[spec.effective_limit_key]
         zones = config.escalation_zones.get(spec.effective_limit_key)
         entries.append(
             RiskBudgetEntry(
                 rule_id=spec.rule_id,
-                rule_label=spec.rule_id,
+                rule_label=_rule_label(spec.rule_id),
                 current_value=current,
                 limit_value=limit,
                 headroom=limit - current,
-                headroom_pct_of_limit=0.0,
-                zone=_classify_zone(current, limit, zones),
+                headroom_pct_of_limit=_headroom_pct(current, limit, inverse=spec.inverse),
+                zone=_classify_zone(current, limit, zones, inverse=spec.inverse),
                 unit=spec.unit,
                 cumulative_invocation_impact_value=0.0,
             )
@@ -77,41 +101,73 @@ def build_risk_budget_consumption(
     return RiskBudgetConsumption(entries=tuple(entries))
 
 
-def _excluded_by_feature_flag(rule_id: str, config: LibraryConfig) -> bool:
-    """Mirror ``validate_feature_flag_closure``'s rejection set.
+def _rule_label(rule_id: str) -> str:
+    """Return a human-readable label for *rule_id*.
 
-    ``build_active_specs`` filters by each spec's ``requires_shorts`` /
-    ``requires_options`` flag. ``net_short_pct`` carries neither flag in
-    the rule library (it's classified as an exposure rule), but the
-    analyst's renderer-side validator
-    (``state_delivery.primitives.validate_feature_flag_closure``) refuses
-    to render a ``net_short_pct`` entry when short selling is disabled.
-    Drop it here so the budget matches the renderer's contract.
+    Sector-concentration ids (``sector_concentration_<sector>``) fall through
+    to a ``"<Sector> concentration"`` form; the renderer's sector-label
+    resolver overlays a richer display name when one is configured.
     """
-    return rule_id == "net_short_pct" and not config.feature_flags.short_selling_enabled
+    if rule_id in _RULE_LABELS:
+        return _RULE_LABELS[rule_id]
+    if rule_id.startswith("sector_concentration_"):
+        sector = rule_id.removeprefix("sector_concentration_")
+        return f"{sector.capitalize()} concentration"
+    return rule_id
+
+
+def _headroom_pct(current_value: float, limit_value: float, *, inverse: bool) -> float:
+    """Compute ``headroom_pct_of_limit`` clamped to ``[0, 100]``.
+
+    For cap rules: how much of the limit remains unconsumed. For inverse
+    (floor) rules: how far above the floor the current value sits, as a
+    fraction of the floor.
+    """
+    if limit_value <= 0:
+        return 0.0
+    raw = (current_value - limit_value) if inverse else (limit_value - current_value)
+    return max(0.0, min(100.0, raw / limit_value * 100.0))
 
 
 def _classify_zone(
     current_value: float,
     limit_value: float,
     zones: EscalationZones | None,
+    *,
+    inverse: bool,
 ) -> RiskZone:
-    """Mirror ``breach_behavior.zones.classify_zone`` for the library-shape
-    :class:`EscalationZones`.
+    """Classify the rule's risk zone from current vs. limit.
 
-    Defends against missing zones, non-positive limits, and negative current
-    values — all shape-level cases the strict ``classify_zone`` raises on but
-    the builder must keep tolerating because the upstream config builder
-    surface accepts them (e.g., the scheduler orchestrator's
-    ``escalation_zones={}``).
+    Cap rules (``inverse=False``) delegate to ``classify_consumption_zone``
+    against the supplied escalation thresholds. Inverse rules mirror the
+    projection engine's convention (``projection.py:_classify``): FAIL
+    (→ BLOCKED) below the floor, WARNING within ``MIN_RULE_WARNING_BAND_PCT``
+    above the floor, NORMAL otherwise.
+
+    Returns ``RiskZone.NORMAL`` when *zones* is ``None`` — the scheduler
+    orchestrator's inline ``LibraryConfig`` passes an empty ``escalation_zones``
+    map today, and the builder defends against that without crashing.
+    Raises ``ValueError`` on ``limit_value <= 0`` or ``current_value < 0``
+    (real data corruption that the rest of the system would refuse).
     """
-    if zones is None or limit_value <= 0 or current_value < 0:
+    if zones is None:
         return RiskZone.NORMAL
-    consumption_pct = current_value / limit_value * 100.0
-    if consumption_pct >= zones.hard_block:
+    if limit_value <= 0:
+        msg = f"limit_value must be > 0; got {limit_value}"
+        raise ValueError(msg)
+    if current_value < 0:
+        msg = f"current_value must be >= 0; got {current_value}"
+        raise ValueError(msg)
+    if inverse:
+        warning_floor = limit_value * (1 + MIN_RULE_WARNING_BAND_PCT / 100.0)
+        if current_value >= warning_floor:
+            return RiskZone.NORMAL
+        if current_value >= limit_value:
+            return RiskZone.WARNING
         return RiskZone.BLOCKED
-    if consumption_pct >= zones.critical:
-        return RiskZone.CRITICAL
-    if consumption_pct >= zones.warning:
-        return RiskZone.WARNING
-    return RiskZone.NORMAL
+    return classify_consumption_zone(
+        consumption_pct=current_value / limit_value * 100.0,
+        warning=zones.warning,
+        critical=zones.critical,
+        hard_block=zones.hard_block,
+    )

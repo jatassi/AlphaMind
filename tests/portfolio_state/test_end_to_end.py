@@ -645,9 +645,6 @@ class _RaisingRepositoryReadError:
     def get_pending_orders(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    def get_risk_budget_consumption(self) -> NoReturn:
-        raise RepositoryReadError("simulated DB error")
-
     def get_active_risk_parameters(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
@@ -702,9 +699,6 @@ class _RaisingRepositoryConsistencyError:
         raise RepositoryConsistencyError("simulated consistency violation")
 
     def get_pending_orders(self) -> NoReturn:
-        raise RepositoryConsistencyError("simulated consistency violation")
-
-    def get_risk_budget_consumption(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
     def get_active_risk_parameters(self) -> NoReturn:

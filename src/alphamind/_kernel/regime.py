@@ -27,6 +27,7 @@ __all__ = [
     "RegimeLabel",
     "RegimeTransitionState",
     "RiskZone",
+    "classify_consumption_zone",
 ]
 
 
@@ -66,3 +67,30 @@ class DrawdownTier(StrEnum):
     CONSTRAINED = "CONSTRAINED"
     HEAVILY_CONSTRAINED = "HEAVILY_CONSTRAINED"
     FULL_HALT = "FULL_HALT"
+
+
+def classify_consumption_zone(
+    *,
+    consumption_pct: float,
+    warning: float,
+    critical: float,
+    hard_block: float,
+) -> RiskZone:
+    """Classify a consumption percentage into a ``RiskZone`` via three thresholds.
+
+    Boundaries are inclusive on the lower bound — ``consumption_pct >= warning``
+    classifies as ``WARNING`` (or higher), per the breach-behavior design's
+    "70-85% of limit = Warning" wording where each zone owns its lower bound.
+
+    The thresholds must satisfy ``warning < critical < hard_block``; the
+    ``EscalationZones`` value objects in both ``breach_behavior.types`` and
+    ``guardrail_evaluation.types`` enforce this at construction, and this
+    primitive trusts the caller to have passed a validated set.
+    """
+    if consumption_pct >= hard_block:
+        return RiskZone.BLOCKED
+    if consumption_pct >= critical:
+        return RiskZone.CRITICAL
+    if consumption_pct >= warning:
+        return RiskZone.WARNING
+    return RiskZone.NORMAL

@@ -42,7 +42,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.regt_margin_attribution.aggregates import RegTExcessAggregates
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.events.activity_log import EventType
@@ -536,15 +535,6 @@ class SqlPortfolioStateRepository:
 
     def get_active_risk_parameters(self) -> ActiveRiskParameterSet:
         return self._active_risk_parameters_provider()
-
-    def get_risk_budget_consumption(self) -> RiskBudgetConsumption:
-        # Empty passthrough — the decision pipeline overlays the real budget
-        # via ``build_risk_budget_consumption`` after ``to_library_snapshot``
-        # (ALP-503). The Protocol method is retained because the assembler
-        # still threads a value through ``PortfolioStateSnapshot.risk_budget``
-        # for non-decision-pipeline callers (breach loop + monitor snapshot
-        # provider), which do not currently read the field.
-        return RiskBudgetConsumption(entries=())
 
     # ------------------------------------------------------------------
     # Internal helpers

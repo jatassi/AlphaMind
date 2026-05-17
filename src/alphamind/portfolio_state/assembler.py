@@ -455,7 +455,10 @@ def assemble_snapshot(
     )
     cash_ledger_raw: CashLedger = repository.get_cash_ledger()
     pending_orders_raw: tuple[OrderRecord, ...] = repository.get_pending_orders()
-    risk_budget: RiskBudgetConsumption = repository.get_risk_budget_consumption()
+    # Phase-1 snapshot emits an empty ``risk_budget``; the decision pipeline
+    # populates the real consumption via ``build_risk_budget_consumption``
+    # between ``to_library_snapshot`` and the per-consumer view projection.
+    risk_budget = RiskBudgetConsumption(entries=())
     active_risk_parameters_raw: ActiveRiskParameterSet = repository.get_active_risk_parameters()
     intra_invocation_changelog: tuple[ActivityLogEntry, ...] = (
         repository.get_intra_invocation_changelog(invocation_id=metadata.invocation_id)

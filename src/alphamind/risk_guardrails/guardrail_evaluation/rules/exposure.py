@@ -187,6 +187,7 @@ def exposure_specs() -> tuple[RuleSpec, ...]:
             read_current=_net_short_read_current,
             contribute=_net_short_contribute,
             effective_limit_key="net_short_pct",
+            requires_shorts=True,
         ),
         RuleSpec(
             rule_id="gross_exposure_pct",

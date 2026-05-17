@@ -296,6 +296,128 @@ def test_zone_defaults_to_normal_when_zones_missing() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Inverse-rule classification tests
+# ---------------------------------------------------------------------------
+
+
+def test_min_cash_reserve_healthy_classifies_normal_and_not_breaching() -> None:
+    # ``min_cash_reserve_pct`` is the only inverse rule in the registry — the
+    # limit is a floor, so healthy = current >= limit. A naive cap-rule
+    # classifier (consumption_pct = current / limit * 100, BLOCKED at >= 95)
+    # would have flagged this as BLOCKED and leaked a phantom hard-block line
+    # into every agent prompt.
+    config = _config()
+    # cash_usd=25_700 against portfolio_value=100_000 gives cash_pct=25.7%,
+    # well above the 10% floor.
+    snapshot = _snapshot(cash_usd=25_700.0)
+
+    budget = build_risk_budget_consumption(snapshot, config)
+
+    entry = budget.entry_by_rule_id("min_cash_reserve_pct")
+    assert entry is not None
+    assert entry.current_value == pytest.approx(25.7)
+    assert entry.limit_value == pytest.approx(10.0)
+    assert entry.zone == RiskZone.NORMAL
+    assert entry not in budget.breaching_entries()
+
+
+def test_min_cash_reserve_within_warning_band_classifies_warning() -> None:
+    # MIN_RULE_WARNING_BAND_PCT=20 → warning floor = 10.0 * 1.20 = 12.0.
+    # current=11.0% lands in [10, 12) → WARNING.
+    config = _config()
+    snapshot = _snapshot(cash_usd=11_000.0)
+
+    budget = build_risk_budget_consumption(snapshot, config)
+
+    entry = budget.entry_by_rule_id("min_cash_reserve_pct")
+    assert entry is not None
+    assert entry.zone == RiskZone.WARNING
+
+
+def test_min_cash_reserve_below_floor_classifies_blocked() -> None:
+    # current=5% < limit=10% → BLOCKED (FAIL in projection-engine terms).
+    config = _config()
+    snapshot = _snapshot(cash_usd=5_000.0)
+
+    budget = build_risk_budget_consumption(snapshot, config)
+
+    entry = budget.entry_by_rule_id("min_cash_reserve_pct")
+    assert entry is not None
+    assert entry.zone == RiskZone.BLOCKED
+    assert entry in budget.breaching_entries()
+
+
+# ---------------------------------------------------------------------------
+# headroom_pct_of_limit tests
+# ---------------------------------------------------------------------------
+
+
+def test_headroom_pct_cap_rule_normal_consumption() -> None:
+    # net_long_pct=30 against limit=60 → headroom=30 → headroom_pct=50%.
+    config = _config()
+    snapshot = _snapshot(net_long_pct=30.0)
+
+    budget = build_risk_budget_consumption(snapshot, config)
+
+    entry = budget.entry_by_rule_id("net_long_pct")
+    assert entry is not None
+    assert entry.headroom_pct_of_limit == pytest.approx(50.0)
+
+
+def test_headroom_pct_cap_rule_above_limit_clamps_to_zero() -> None:
+    # net_long_pct=70 > limit=60 → headroom=-10 → clamped headroom_pct=0.
+    config = _config()
+    snapshot = _snapshot(net_long_pct=70.0)
+
+    budget = build_risk_budget_consumption(snapshot, config)
+
+    entry = budget.entry_by_rule_id("net_long_pct")
+    assert entry is not None
+    assert entry.headroom_pct_of_limit == 0.0
+
+
+def test_headroom_pct_inverse_rule_above_floor() -> None:
+    # cash=15%, limit=10% → buffer = 5%, buffer/limit = 50%.
+    config = _config()
+    snapshot = _snapshot(cash_usd=15_000.0)
+
+    budget = build_risk_budget_consumption(snapshot, config)
+
+    entry = budget.entry_by_rule_id("min_cash_reserve_pct")
+    assert entry is not None
+    assert entry.headroom_pct_of_limit == pytest.approx(50.0)
+
+
+def test_headroom_pct_inverse_rule_below_floor_clamps_to_zero() -> None:
+    # cash=5%, limit=10% → buffer negative → clamped to 0.
+    config = _config()
+    snapshot = _snapshot(cash_usd=5_000.0)
+
+    budget = build_risk_budget_consumption(snapshot, config)
+
+    entry = budget.entry_by_rule_id("min_cash_reserve_pct")
+    assert entry is not None
+    assert entry.headroom_pct_of_limit == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Rule-label tests
+# ---------------------------------------------------------------------------
+
+
+def test_rule_label_uses_human_readable_form() -> None:
+    config = _config()
+    snapshot = _snapshot()
+
+    budget = build_risk_budget_consumption(snapshot, config)
+
+    by_id = _entries_by_id(budget.entries)
+    assert by_id["net_long_pct"].rule_label == "Net long"
+    assert by_id["min_cash_reserve_pct"].rule_label == "Min cash reserve"
+    assert by_id["sector_concentration_tech"].rule_label == "Tech concentration"
+
+
+# ---------------------------------------------------------------------------
 # Determinism + structural tests
 # ---------------------------------------------------------------------------
 

@@ -9,6 +9,7 @@ See ``docs/implementation/06-risk-guardrails/breach-behavior/04a-zone-classifier
 
 from __future__ import annotations
 
+from alphamind._kernel.regime import classify_consumption_zone
 from alphamind.risk_guardrails.breach_behavior.types import EscalationZones, RiskZone
 
 
@@ -50,13 +51,9 @@ def classify_zone(
     if limit_value <= 0:
         msg = f"limit_value must be > 0; got {limit_value}"
         raise ValueError(msg)
-
-    consumption_pct = current_value / limit_value * 100
-
-    if consumption_pct >= escalation_zones.hard_block:
-        return RiskZone.BLOCKED
-    if consumption_pct >= escalation_zones.critical:
-        return RiskZone.CRITICAL
-    if consumption_pct >= escalation_zones.warning:
-        return RiskZone.WARNING
-    return RiskZone.NORMAL
+    return classify_consumption_zone(
+        consumption_pct=current_value / limit_value * 100,
+        warning=escalation_zones.warning,
+        critical=escalation_zones.critical,
+        hard_block=escalation_zones.hard_block,
+    )
