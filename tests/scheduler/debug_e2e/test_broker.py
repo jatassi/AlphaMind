@@ -64,15 +64,16 @@ class TestAccountSnapshotShape:
     def test_get_account_cash_matches_starting_cash(self) -> None:
         queries = LogOnlyAccountStateQueries(SYNTHETIC_PORTFOLIO)
         snapshot = queries.get_account()
-        # Cash on the snapshot is Decimal-backed; compare numerically.
-        assert float(snapshot.cash) == SYNTHETIC_PORTFOLIO.starting_cash_usd
+        # Cash on the snapshot is Decimal-backed; starting_cash_usd is
+        # likewise Decimal — compare exactly.
+        assert snapshot.cash == SYNTHETIC_PORTFOLIO.starting_cash_usd
 
     def test_get_account_equity_includes_starting_cash(self) -> None:
         queries = LogOnlyAccountStateQueries(SYNTHETIC_PORTFOLIO)
         snapshot = queries.get_account()
         # Equity should be at least starting cash (positions are entered at
         # cost so portfolio value adds equity on top).
-        assert float(snapshot.equity) >= SYNTHETIC_PORTFOLIO.starting_cash_usd
+        assert snapshot.equity >= SYNTHETIC_PORTFOLIO.starting_cash_usd
 
 
 class TestPositionsShape:
@@ -167,3 +168,27 @@ class TestLogging:
         # Key call args appear in the message (start, end, symbol count).
         assert "2026-05-01" in msg
         assert "2026-05-17" in msg
+        assert "symbols=2" in msg
+
+    def test_get_corporate_actions_logs_symbols_all_when_none(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """``symbols=None`` (= all-symbols per fetcher semantics) logs ``<all>``.
+
+        Logging ``symbols=0`` would have falsely suggested a "no
+        symbols requested" call — masking that the fetcher would in
+        production fan out to the full universe.
+        """
+        queries = LogOnlyCorporateActionsQueries()
+        with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
+            asyncio.run(
+                queries.get_corporate_actions(
+                    symbols=None,
+                    start=date(2026, 5, 1),
+                    end=date(2026, 5, 17),
+                )
+            )
+        records = [r for r in caplog.records if r.name == _LOGGER_NAME]
+        assert len(records) == 1
+        msg = records[0].getMessage()
+        assert "symbols=<all>" in msg

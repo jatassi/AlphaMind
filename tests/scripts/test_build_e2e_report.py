@@ -52,7 +52,12 @@ def _ts(offset_s: float) -> str:
 
 
 def _full_progress_stream() -> list[dict[str, Any]]:
-    """13 phase pairs + 9 SDK call pairs in dependency-respecting order."""
+    """12 in-invocation phase pairs + 10 SDK call pairs in dependency-respecting order.
+
+    The pre-invocation ``seed`` event is intentionally absent — it lives
+    in the sibling ``_pre_invocation`` archive directory per parent
+    issue ALP-493 § D.
+    """
     s: list[dict[str, Any]] = []
 
     def phase(name: str, start: float, done: float) -> None:
@@ -96,7 +101,6 @@ def _full_progress_stream() -> list[dict[str, Any]]:
             }
         )
 
-    phase("seed", 0, 1)
     phase("phase1", 2, 3)
     phase("snapshot_assembly", 4, 5)
 
@@ -289,9 +293,10 @@ def test_load_invocation_archive_returns_typed_view(
     )
     assert archive.invocation_id == invocation_id
     assert archive.archive_root == archive_root
-    # All 13 phase_start + 13 phase_done + 10 agent_request + 10 agent_response
-    # = 46 events in the canonical fixture above (1 phase_start emitted per
-    # phase, 1 phase_done per phase, plus 10 SDK request/response pairs).
+    # 12 phase_start + 12 phase_done + 10 agent_request + 10 agent_response
+    # = 44 events in the canonical fixture above (1 phase_start emitted per
+    # in-invocation phase, 1 phase_done per phase, plus 10 SDK
+    # request/response pairs).
     assert len(archive.events) > 0
     assert archive.resolved_config["active_profile"] == "balanced"
     assert "INFO ok" in archive.pipeline_log
@@ -342,18 +347,36 @@ def test_discover_invocation_id_raises_on_zero(report_module: ModuleType, tmp_pa
         report_module.discover_invocation_id(tmp_path)
 
 
+def test_discover_invocation_id_excludes_leading_underscore_dirs(
+    report_module: ModuleType, tmp_path: Path
+) -> None:
+    """Auto-discovery ignores ``_pre_invocation`` and any leading-underscore directory.
+
+    The debug-e2e CLI writes the pre-invocation ``seed`` event to
+    ``<archive>/invocations/_pre_invocation/progress.jsonl`` alongside
+    the canonical ``<invocation_id>`` directory. Without the leading-
+    underscore exclusion, ``discover_invocation_id`` errors out with
+    "multiple invocations" and breaks the auto-discovery contract.
+    """
+    archive_root, invocation_id = _make_archive(tmp_path)
+    (tmp_path / "invocations" / "_pre_invocation").mkdir()
+
+    found = report_module.discover_invocation_id(archive_root)
+    assert found == invocation_id
+
+
 # ---------------------------------------------------------------------------
 # build_phase_summaries
 # ---------------------------------------------------------------------------
 
 
-def test_build_phase_summaries_marks_all_13_phases_passing_on_full_stream(
+def test_build_phase_summaries_marks_all_in_invocation_phases_passing_on_full_stream(
     report_module: ModuleType,
 ) -> None:
-    """Every phase carrying both start + done renders as PASS."""
+    """Every in-invocation phase carrying both start + done renders as PASS."""
     events = _full_progress_stream()
     summaries = report_module.build_phase_summaries(events)
-    assert len(summaries) == 13
+    assert len(summaries) == 12
     for s in summaries:
         assert s.started is True
         assert s.done is True
@@ -398,7 +421,7 @@ def test_build_sdk_call_rows_yields_one_row_per_agent_request_response(
     assert ("analyst", "analyst") in keys
     assert ("strategist", "strategist") in keys
     assert ("pm", "portfolio_manager") in keys
-    assert len(rows) == 10  # 9 SDK call pairs per parent ALP-493 § E + distillation = 10
+    assert len(rows) == 10  # 10 SDK call pairs per parent ALP-493 § E
 
 
 def test_build_sdk_call_rows_carries_response_metrics(
@@ -454,9 +477,10 @@ def test_render_emits_valid_html_with_dark_mode_css(
     # The dark-mode background colour from the sidecar stylesheet leaks
     # into the inline <style> block.
     assert "background" in html or "color-scheme" in html
-    # Ribbon contains every phase name.
+    # Ribbon contains every in-invocation phase name. The pre-invocation
+    # ``seed`` event lives in the sibling ``_pre_invocation`` archive and
+    # is intentionally NOT part of the ribbon.
     for phase_name in (
-        "seed",
         "phase1",
         "snapshot_assembly",
         "distillation",

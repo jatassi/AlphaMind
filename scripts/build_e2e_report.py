@@ -4,9 +4,12 @@ Consumes the single-invocation archive produced by ``python -m
 alphamind.scheduler run --debug-e2e``:
 
 * ``<archive_root>/invocations/<invocation_id>/progress.jsonl`` —
-  canonical event log of 13 ``phase_start``/``phase_done`` pairs plus
-  9 ``agent_request``/``agent_response`` pairs (one per Sonnet/Opus
-  agent call); see parent issue ALP-493 §§ (D), (E).
+  canonical event log of 12 in-invocation ``phase_start``/``phase_done``
+  pairs plus 10 ``agent_request``/``agent_response`` pairs (one per
+  Sonnet/Opus agent call); see parent issue ALP-493 §§ (D), (E). The
+  pre-invocation ``seed`` event lands in the sibling
+  ``<archive_root>/invocations/_pre_invocation/progress.jsonl`` and is
+  not consumed by this builder.
 * ``<archive_root>/invocations/<invocation_id>/resolved_config.json``
   — the orchestrator's serialized configuration view.
 * ``<archive_root>/invocations/<invocation_id>/pipeline.log`` —
@@ -14,7 +17,7 @@ alphamind.scheduler run --debug-e2e``:
   ``TimedRotatingFileHandler`` (Story ALP-431).
 
 Emits one self-contained dark-mode HTML page summarizing the
-invocation: a 13-phase verdict ribbon, a 10-row SDK-call table with
+invocation: a 12-phase verdict ribbon, a 10-row SDK-call table with
 each call's ``duration_s`` / ``input_tokens`` / ``output_tokens`` /
 ``tool_calls`` / ``stop_reason``, the resolved-config summary, an
 incomplete-phase failure section, and a collapsible pipeline-log
@@ -62,11 +65,13 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-# The 13 phases per parent issue ALP-493 § (D), in their canonical
-# dependency-respecting order. Used for the verdict ribbon's deterministic
-# column order — the JSONL itself can interleave the parallel pairs.
+# The 12 in-invocation phases per parent issue ALP-493 § (D), in their
+# canonical dependency-respecting order. Used for the verdict ribbon's
+# deterministic column order — the JSONL itself can interleave the parallel
+# pairs. The pre-invocation ``seed`` event lives in the sibling
+# ``_pre_invocation`` archive directory and is intentionally NOT part of
+# the ribbon.
 _PHASE_ORDER: tuple[str, ...] = (
-    "seed",
     "phase1",
     "snapshot_assembly",
     "distillation",
@@ -134,12 +139,19 @@ def discover_invocation_id(archive_root: Path) -> str:
     Raises ``ValueError`` when the count is anything other than one, so
     the caller can either fall back to ``--invocation-id`` or surface
     the operator-visible error.
+
+    Leading-underscore directory names (e.g. ``_pre_invocation``, where
+    the debug-e2e CLI writes the pre-invocation ``seed`` event) are
+    excluded from the candidate set so they don't collide with the
+    canonical ``<invocation_id>`` directory.
     """
     inv_root = archive_root / INVOCATIONS_DIRNAME
     if not inv_root.is_dir():
         msg = f"no invocations directory under {archive_root}; did the debug-e2e subprocess run?"
         raise ValueError(msg)
-    candidates = sorted(p.name for p in inv_root.iterdir() if p.is_dir())
+    candidates = sorted(
+        p.name for p in inv_root.iterdir() if p.is_dir() and not p.name.startswith("_")
+    )
     if not candidates:
         msg = f"no invocations under {inv_root}"
         raise ValueError(msg)

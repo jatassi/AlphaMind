@@ -16,6 +16,7 @@ and any downstream tests that assert against fixture values.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Literal
 
 from alphamind._kernel.ids import Symbol
@@ -133,7 +134,7 @@ class SyntheticPortfolio:
 
     positions: tuple[SyntheticPosition, ...]
     theses: tuple[SyntheticThesis, ...]
-    starting_cash_usd: float
+    starting_cash_usd: Decimal
 
 
 # ---------------------------------------------------------------------------
@@ -292,5 +293,5 @@ SYNTHETIC_PORTFOLIO = SyntheticPortfolio(
             ),
         ),
     ),
-    starting_cash_usd=24_440.0,
+    starting_cash_usd=Decimal(24440),
 )

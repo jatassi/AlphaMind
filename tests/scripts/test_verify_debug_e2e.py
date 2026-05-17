@@ -162,17 +162,23 @@ def _write_jsonl(path: Path, events: list[dict[str, Any]]) -> None:
 
 
 def _canonical_event_stream() -> list[dict[str, Any]]:
-    """Construct one well-formed event stream covering all 13 phases.
+    """Construct one well-formed event stream covering the 12 in-invocation phases.
 
-    Mirrors the production sequence:
-      seed → phase1 → snapshot_assembly → distillation →
+    Mirrors the production sequence written to the real-invocation
+    ``<archive>/invocations/<invocation_id>/progress.jsonl``:
+      phase1 → snapshot_assembly → distillation →
       (domain_researchers, qualitative) interleaved →
       adaptive → synthesizer →
       (analyst, strategist) interleaved →
       pre_processor → pm → phase2
 
+    The ``seed`` event lands in the ``_pre_invocation`` archive
+    directory (the canonical invocation_id isn't known until
+    ``run_invocation`` returns); it is NOT part of the real-invocation
+    stream the verify script inspects.
+
     Each ``agent_request`` is paired with its ``agent_response`` to give
-    9 SDK call pairs (distillation, 3 domain researchers, qualitative,
+    10 SDK call pairs (distillation, 3 domain researchers, qualitative,
     adaptive, synthesizer, analyst, strategist, pm).
     """
     t = datetime(2026, 5, 16, 12, 0, 0, tzinfo=UTC)
@@ -181,9 +187,6 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
         return (t + timedelta(seconds=offset_s)).isoformat()
 
     stream: list[dict[str, Any]] = []
-    stream.append({"event": "phase_start", "phase": "seed", "timestamp": ts(0)})
-    stream.append({"event": "phase_done", "phase": "seed", "timestamp": ts(1)})
-
     stream.append({"event": "phase_start", "phase": "phase1", "timestamp": ts(2)})
     stream.append({"event": "phase_done", "phase": "phase1", "timestamp": ts(3)})
 
@@ -420,13 +423,43 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
 def test_check_jsonl_ordering_passes_for_canonical_stream(
     verify_module: ModuleType, tmp_path: Path
 ) -> None:
-    """A well-formed event stream covering all 13 phases passes."""
+    """A well-formed event stream covering the 12 in-invocation phases passes."""
     jsonl = tmp_path / "progress.jsonl"
     _write_jsonl(jsonl, _canonical_event_stream())
 
     result = verify_module.check_jsonl_ordering(jsonl)
     assert result.passed is True, result.message
     assert result.label == "jsonl_ordering"
+
+
+def test_check_jsonl_ordering_fails_when_seed_event_leaks_into_real_invocation_stream(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """A real-invocation stream must not carry ``seed`` events.
+
+    Per parent issue ALP-493 § D, the pre-invocation ``seed`` event
+    lands in the sentinel ``<archive>/invocations/_pre_invocation/``
+    directory because the canonical invocation_id isn't known until
+    ``run_invocation`` returns. If a future regression starts emitting
+    ``seed`` into the real-invocation file, the check should surface
+    it as an unexpected phase.
+    """
+    t = datetime(2026, 5, 16, 11, 59, 59, tzinfo=UTC)
+    stream = [
+        {"event": "phase_start", "phase": "seed", "timestamp": t.isoformat()},
+        {
+            "event": "phase_done",
+            "phase": "seed",
+            "timestamp": (t + timedelta(seconds=1)).isoformat(),
+        },
+        *_canonical_event_stream(),
+    ]
+    jsonl = tmp_path / "progress.jsonl"
+    _write_jsonl(jsonl, stream)
+
+    result = verify_module.check_jsonl_ordering(jsonl)
+    assert result.passed is False
+    assert "seed" in result.message
 
 
 def test_check_jsonl_ordering_tolerates_parallel_pair_reverse_start_order(
@@ -492,7 +525,7 @@ def test_check_jsonl_ordering_tolerates_analyst_strategist_done_reorder(
 def test_check_jsonl_ordering_fails_on_missing_phase(
     verify_module: ModuleType, tmp_path: Path
 ) -> None:
-    """FAIL if any of the 13 phases lacks a `phase_start`."""
+    """FAIL if any of the 12 in-invocation phases lacks a `phase_start`."""
     stream = [e for e in _canonical_event_stream() if e.get("phase") != "synthesizer"]
     jsonl = tmp_path / "progress.jsonl"
     _write_jsonl(jsonl, stream)
@@ -550,7 +583,7 @@ def test_check_jsonl_ordering_fails_on_non_monotonic_timestamp(
 def test_check_jsonl_ordering_fails_on_missing_agent_request_response_pair(
     verify_module: ModuleType, tmp_path: Path
 ) -> None:
-    """FAIL if fewer than 9 SDK call pairs are present."""
+    """FAIL if fewer than 10 SDK call pairs are present."""
     stream = [
         e
         for e in _canonical_event_stream()
@@ -579,6 +612,84 @@ def test_check_jsonl_ordering_fails_on_orphan_agent_response(
 
     result = verify_module.check_jsonl_ordering(jsonl)
     assert result.passed is False
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "duration_s",
+        "input_tokens",
+        "output_tokens",
+        "tool_calls",
+        # ``stop_reason`` is allowed to be null per parent issue ALP-493
+        # § (B); only its absence is a regression.
+        "stop_reason",
+    ],
+)
+def test_check_jsonl_ordering_fails_when_agent_response_missing_required_field(
+    verify_module: ModuleType, tmp_path: Path, field: str
+) -> None:
+    """Each ``agent_response`` must carry the 5-field set per parent § (B).
+
+    ``duration_s`` / ``input_tokens`` / ``output_tokens`` / ``tool_calls``
+    must be non-null; ``stop_reason`` may be ``None`` but must be
+    present as a key.
+    """
+    stream = _canonical_event_stream()
+    # Drop the field from the synthesizer agent_response only.
+    mutated: list[dict[str, Any]] = []
+    for ev in stream:
+        if ev.get("event") == "agent_response" and ev.get("phase") == "synthesizer":
+            mutated.append({k: v for k, v in ev.items() if k != field})
+        else:
+            mutated.append(ev)
+    jsonl = tmp_path / "progress.jsonl"
+    _write_jsonl(jsonl, mutated)
+
+    result = verify_module.check_jsonl_ordering(jsonl)
+    assert result.passed is False
+    assert field in result.message
+
+
+def test_check_jsonl_ordering_fails_when_required_field_is_null(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """The non-stop_reason 4 fields must be non-null.
+
+    ``stop_reason`` is allowed to be null (it's optional per the
+    Anthropic SDK); the other four are load-bearing for the report.
+    """
+    stream = _canonical_event_stream()
+    mutated: list[dict[str, Any]] = []
+    for ev in stream:
+        if ev.get("event") == "agent_response" and ev.get("phase") == "synthesizer":
+            mutated.append({**ev, "tool_calls": None})
+        else:
+            mutated.append(ev)
+    jsonl = tmp_path / "progress.jsonl"
+    _write_jsonl(jsonl, mutated)
+
+    result = verify_module.check_jsonl_ordering(jsonl)
+    assert result.passed is False
+    assert "tool_calls" in result.message
+
+
+def test_check_jsonl_ordering_allows_null_stop_reason(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """``stop_reason`` may legitimately be null without failing the check."""
+    stream = _canonical_event_stream()
+    mutated: list[dict[str, Any]] = []
+    for ev in stream:
+        if ev.get("event") == "agent_response":
+            mutated.append({**ev, "stop_reason": None})
+        else:
+            mutated.append(ev)
+    jsonl = tmp_path / "progress.jsonl"
+    _write_jsonl(jsonl, mutated)
+
+    result = verify_module.check_jsonl_ordering(jsonl)
+    assert result.passed is True, result.message
 
 
 # ---------------------------------------------------------------------------
@@ -766,43 +877,41 @@ def test_check_synthetic_portfolio_visibility_fails_on_wrong_cash(
 # ---------------------------------------------------------------------------
 
 
-def test_check_no_alpaca_passes_on_clean_log(verify_module: ModuleType, tmp_path: Path) -> None:
-    """PASS when the pipeline log carries no Alpaca HTTP indicators."""
-    log = tmp_path / "pipeline.log"
-    log.write_text(
+def test_check_no_alpaca_passes_on_clean_stream(verify_module: ModuleType) -> None:
+    """PASS when the captured subprocess stream carries no Alpaca HTTP indicators."""
+    stream = (
         "2026-05-16 12:00:00 INFO alphamind.scheduler.orchestrator phase1 start\n"
-        "2026-05-16 12:00:01 INFO alphamind.scheduler.orchestrator phase1 done\n",
-        encoding="utf-8",
+        "2026-05-16 12:00:01 INFO alphamind.scheduler.orchestrator phase1 done\n"
     )
 
-    result = verify_module.check_no_alpaca(log)
+    result = verify_module.check_no_alpaca(stream)
     assert result.passed is True
     assert result.label == "no_alpaca"
 
 
-def test_check_no_alpaca_fails_on_alpaca_py_mention(
-    verify_module: ModuleType, tmp_path: Path
-) -> None:
-    """FAIL when ``alpaca-py`` or HTTP-y indicators leak into the log."""
-    log = tmp_path / "pipeline.log"
-    log.write_text(
-        "2026-05-16 12:00:01 DEBUG alpaca-py request to /v2/positions\n",
-        encoding="utf-8",
-    )
+def test_check_no_alpaca_fails_on_alpaca_py_mention(verify_module: ModuleType) -> None:
+    """FAIL when ``alpaca-py`` or HTTP-y indicators leak into the stream."""
+    stream = "2026-05-16 12:00:01 DEBUG alpaca-py request to /v2/positions\n"
 
-    result = verify_module.check_no_alpaca(log)
+    result = verify_module.check_no_alpaca(stream)
     assert result.passed is False
     assert "alpaca" in result.message.lower()
 
 
-def test_check_no_alpaca_passes_on_missing_log(verify_module: ModuleType, tmp_path: Path) -> None:
-    """No-log is not a hard FAIL — the helper reports SKIP-like PASS.
+def test_check_no_alpaca_fails_on_alpaca_markets_host_in_stream(
+    verify_module: ModuleType,
+) -> None:
+    """FAIL on canonical hostname ``alpaca.markets`` in the stream."""
+    stream = "DEBUG urllib3.connectionpool: Starting new HTTPS connection to api.alpaca.markets\n"
 
-    The pipeline-log location is platform-dependent (``~/AlphaMind/logs/
-    pipeline.log``), so a missing log is normal in CI; only the presence
-    of Alpaca traffic in an existing log is a hard FAIL.
-    """
-    result = verify_module.check_no_alpaca(tmp_path / "does_not_exist.log")
+    result = verify_module.check_no_alpaca(stream)
+    assert result.passed is False
+    assert "alpaca" in result.message.lower()
+
+
+def test_check_no_alpaca_passes_on_empty_stream(verify_module: ModuleType) -> None:
+    """An empty stream is a clean PASS — the check runs every time."""
+    result = verify_module.check_no_alpaca("")
     assert result.passed is True
 
 
@@ -890,3 +999,83 @@ def test_check_invocation_summary_fails_on_non_json_stdout(
     result = verify_module.check_invocation_summary("not json at all")
     assert result.passed is False
     assert "json" in result.message.lower()
+
+
+# ---------------------------------------------------------------------------
+# _drive_debug_e2e_subprocess — argparse → subprocess command-line plumbing
+# ---------------------------------------------------------------------------
+
+
+def test_drive_debug_e2e_subprocess_propagates_archive_root_to_cli(
+    verify_module: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The verify script must pass ``--archive-root`` through to the CLI.
+
+    Without propagation, the subprocess uses the hardcoded
+    ``~/AlphaMind/archive`` default and the verify-script's archive
+    checks point at a directory the CLI never wrote.
+    """
+    captured: dict[str, Any] = {}
+
+    def _stub_run(cmd: list[str], **_kwargs: Any) -> Any:
+        captured["cmd"] = cmd
+
+        class _Completed:
+            returncode = 0
+            stdout = '{"invocation_id": "iid"}'
+            stderr = ""
+
+        return _Completed()
+
+    monkeypatch.setattr(verify_module.subprocess, "run", _stub_run)
+
+    args = verify_module._parse_args(
+        [
+            "--archive-root",
+            str(tmp_path / "archive"),
+            "--db-path",
+            str(tmp_path / "alphamind-debug-e2e.db"),
+        ]
+    )
+    result, _output = verify_module._drive_debug_e2e_subprocess(args)
+
+    assert result.passed is True
+    assert "--archive-root" in captured["cmd"]
+    archive_idx = captured["cmd"].index("--archive-root")
+    assert captured["cmd"][archive_idx + 1] == str(tmp_path / "archive")
+
+
+def test_drive_debug_e2e_subprocess_captures_stdout_and_stderr(
+    verify_module: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The subprocess driver captures stderr alongside stdout for downstream checks.
+
+    ``check_no_alpaca`` consumes the stderr blob to scan for Alpaca
+    HTTP indicators; the prior log-file approach was lenient when no
+    pipeline log existed.
+    """
+
+    def _stub_run(cmd: list[str], **_kwargs: Any) -> Any:
+        class _Completed:
+            returncode = 0
+            stdout = '{"invocation_id": "iid"}'
+            stderr = "some captured stderr text\n"
+
+        return _Completed()
+
+    monkeypatch.setattr(verify_module.subprocess, "run", _stub_run)
+
+    args = verify_module._parse_args(
+        [
+            "--archive-root",
+            str(tmp_path / "archive"),
+            "--db-path",
+            str(tmp_path / "alphamind-debug-e2e.db"),
+        ]
+    )
+    result, output = verify_module._drive_debug_e2e_subprocess(args)
+
+    assert result.passed is True
+    assert output is not None
+    assert output.stdout == '{"invocation_id": "iid"}'
+    assert output.stderr == "some captured stderr text\n"

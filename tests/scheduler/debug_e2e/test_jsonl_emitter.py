@@ -227,3 +227,24 @@ def test_non_json_serializable_field_raises_type_error(tmp_path: Path) -> None:
 
     with pytest.raises(TypeError):
         emitter.phase_done("phase1", payload=object())
+
+
+def test_raw_bytes_contain_only_lf_line_endings(tmp_path: Path) -> None:
+    """Raw on-disk bytes use ``\\n`` exclusively — no Windows CRLF translation.
+
+    Default text-mode file opening on Windows translates ``\\n`` writes
+    into ``\\r\\n`` bytes. The downstream consumers (``json.loads``)
+    tolerate ``\\r\\n``, but the JSONL spec mandates ``\\n``-only and
+    byte-identical output across platforms matters for archive
+    digests, diff hygiene, and any future binary-aware parser.
+    """
+    path = tmp_path / "progress.jsonl"
+    emitter = JsonlProgressEmitter(path=path)
+
+    emitter.phase_start("phase1")
+    emitter.phase_done("phase1", elapsed_s=1.0)
+    emitter.agent_request(phase="x", agent="x", model="m")
+
+    raw_bytes = path.read_bytes()
+    assert b"\r\n" not in raw_bytes, f"raw bytes contained CRLF — got {raw_bytes!r}"
+    assert raw_bytes.count(b"\n") == 3

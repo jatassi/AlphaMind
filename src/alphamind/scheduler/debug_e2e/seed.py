@@ -15,7 +15,7 @@ decision § (C)).
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -66,7 +66,18 @@ _WIPE_ORDER: tuple[type[Base], ...] = (
 
 
 def _isoformat(when: datetime) -> str:
-    """ISO-8601 with the canonical ``Z`` suffix the state-persistence layer uses."""
+    """ISO-8601 with the canonical ``Z`` suffix the state-persistence layer uses.
+
+    The ``.replace("+00:00", "Z")`` substitution is only safe when
+    ``when`` is UTC; a naive or non-UTC input would silently drop its
+    offset (no substitution match) and produce an ambiguous timestamp.
+    The guard fails loudly so the regression surfaces at the seeder
+    rather than downstream where the parsed timestamp is reinterpreted
+    as UTC.
+    """
+    if when.tzinfo is not UTC:
+        msg = f"_isoformat requires a UTC datetime, got tzinfo={when.tzinfo!r}"
+        raise ValueError(msg)
     return when.isoformat().replace("+00:00", "Z")
 
 

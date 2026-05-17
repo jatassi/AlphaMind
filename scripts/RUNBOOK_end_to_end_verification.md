@@ -25,14 +25,22 @@ Phase 1 ingest → snapshot assembly → `run_analysis_pipeline` (distillation +
 → Phase 2 envelope dispatch. The check helpers assert every load-bearing
 invariant the prior per-feature verify suite collectively covered:
 
-- All 13 phases produced both `phase_start` + `phase_done` events in
-  dependency-respecting order (parent issue § D).
-- All 9 SDK call pairs landed with `agent_request`/`agent_response` pairs
+- All 12 in-invocation phases produced both `phase_start` + `phase_done`
+  events in dependency-respecting order (parent issue § D). The
+  pre-invocation `seed` event lands under
+  `<archive>/invocations/_pre_invocation/progress.jsonl` and is
+  intentionally NOT part of the real-invocation stream the verify
+  script inspects — operators can read that file directly for
+  seed-step debugging.
+- All 10 SDK call pairs landed with `agent_request`/`agent_response` pairs
   carrying `duration_s` / `input_tokens` / `output_tokens` / `tool_calls` /
-  `stop_reason` (parent issue § E).
+  `stop_reason` (parent issue § E). The 10 are: distillation, 3 domain
+  researchers (tech_semis, financials, energy), qualitative, adaptive,
+  synthesizer, analyst, strategist, pm.
 - The synthetic portfolio seeded cleanly (8 positions, 8 theses, cash
   ledger at $24,440).
-- No Alpaca HTTP traffic leaked into the pipeline log.
+- No Alpaca HTTP traffic leaked into the subprocess's captured
+  stderr stream.
 - The orchestrator's `InvocationSummary` reports
   `trigger_source="debug_e2e_cli"`, `staleness_flag=false`,
   `commands_submitted >= 0`.
@@ -86,15 +94,15 @@ set -a && source .env && set +a && \
 
 ## Expected output
 
-Six PASS lines on a clean run, in order:
+Seven PASS lines on a clean run, in order:
 
 ```
 PASS: auth — all required env vars present (CLAUDE_CODE_OAUTH_TOKEN)
 PASS: subprocess — debug-e2e subprocess exited 0
 PASS: archive_directory — directory + resolved_config.json + progress.jsonl present at <archive>/invocations/<id>
-PASS: jsonl_ordering — 13/13 phases with paired start/done in dependency order; 10/10 SDK call pairs matched
+PASS: jsonl_ordering — 12/12 phases with paired start/done in dependency order; 10/10 SDK call pairs matched
 PASS: synthetic_portfolio — positions=8, theses=8, cash_ledger.current_cash_usd=24440.0
-PASS: no_alpaca — no alpaca indicators in pipeline log at ~/AlphaMind/logs/pipeline.log
+PASS: no_alpaca — no alpaca indicators in captured stream
 PASS: invocation_summary — staleness_flag=false, trigger_source='debug_e2e_cli', commands_submitted=N
 === DEBUG-E2E VERIFICATION === 7/7 checks passed
 ```
@@ -119,7 +127,7 @@ uv run python scripts/build_e2e_report.py \
 # auto-discovers --invocation-id when exactly one invocation directory exists
 ```
 
-The report shows a 13-phase verdict ribbon, the SDK-call table with each
+The report shows a 12-phase verdict ribbon, the SDK-call table with each
 call's `agent_response` fields, the `resolved_config.json` payload, an
 incomplete-phase failure section, and a collapsible `pipeline.log`
 excerpt. Open the file in a browser — it carries its own CSS via the
@@ -156,14 +164,14 @@ timings.
 | `FAIL: archive_directory — archive directory missing`    | CLI never wrote the archive | The orchestrator died before `insert_invocation_record` committed — check `~/AlphaMind/logs/pipeline.log` |
 | `FAIL: archive_directory — resolved_config.json missing` | Phase 1 prep crashed | Same as above — orchestrator died before the resolved-config writer fired |
 | `FAIL: archive_directory — progress.jsonl missing`       | JSONL emitter never wired | Re-verify `DebugE2ESettings.emitter_factory` populated (story ALP-500) |
-| `FAIL: jsonl_ordering — missing phase_start for <name>`  | A pipeline stage never emitted its `phase_start` | Cross-check `src/alphamind/pipeline/{analysis,decision}.py` against the 13-phase ladder |
+| `FAIL: jsonl_ordering — missing phase_start for <name>`  | A pipeline stage never emitted its `phase_start` | Cross-check `src/alphamind/pipeline/{analysis,decision}.py` against the 12-in-invocation-phase ladder |
 | `FAIL: jsonl_ordering — phase_done for <name> precedes its own phase_start` | An emitter mis-emits | Same as above |
 | `FAIL: jsonl_ordering — non-monotonic timestamp`         | Clock skew or out-of-order write | Inspect the JSONL line referenced in the message; the fsync per write should have prevented this |
-| `FAIL: jsonl_ordering — missing agent_request/response pair(s)` | An SDK call site bypassed `_harness_core.invoke_sdk` | Cross-check the failing agent's harness against the 9 SDK pairs in parent § E |
+| `FAIL: jsonl_ordering — missing agent_request/response pair(s)` | An SDK call site bypassed `_harness_core.invoke_sdk` | Cross-check the failing agent's harness against the 10 SDK pairs in parent § E |
 | `FAIL: synthetic_portfolio — required table(s) missing`  | DB not migrated to head | Delete the debug DB; the CLI re-migrates on next run |
 | `FAIL: synthetic_portfolio — positions count expected 8` | Seeder didn't run | Either the seeder raised (check stderr) or a downstream stage truncated `positions` |
 | `FAIL: synthetic_portfolio — cash_ledger.current_cash_usd expected 24440.0` | Seeder bug or a downstream write mutated the row | Cross-check `wipe_and_seed` against `SYNTHETIC_PORTFOLIO.starting_cash_usd` |
-| `FAIL: no_alpaca — pipeline log carries alpaca indicator(s)` | `LogOnlyAccountStateQueries` not wired | Verify `context.debug_e2e is not None` reaches `phase1_inputs.gather_phase1_inputs`; the import-linter contract should have caught this at lint time |
+| `FAIL: no_alpaca — captured stream carries alpaca indicator(s)` | `LogOnlyAccountStateQueries` not wired | Verify `context.debug_e2e is not None` reaches `phase1_inputs.gather_phase1_inputs`; the import-linter contract should have caught this at lint time |
 | `FAIL: invocation_summary — staleness_flag expected false` | Phase 1 saw a stale data source | Inspect the staleness logger output in the pipeline log; debug-e2e seeds fresh state so this is a real regression |
 | `FAIL: invocation_summary — trigger_source expected 'debug_e2e_cli'` | CLI dispatch routed to `_run_once` instead of `_run_debug_e2e` | The `--debug-e2e` argparse branch in `__main__.py` regressed |
 | `FAIL: invocation_summary — commands_submitted` | The orchestrator's typed return shape changed | Inspect `InvocationSummary` against `scheduler/orchestrator.py` |
