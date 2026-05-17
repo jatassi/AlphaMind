@@ -11,10 +11,12 @@ any broker-side failure degrades the bundle (returning no-op defaults +
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
+from alpaca.data.enums import CorporateActionsType
+from alpaca.data.models.corporate_actions import CorporateAction
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.money import money, price
@@ -190,14 +192,14 @@ class _StubQueries:
 class _StubCorporateActionsQueries:
     """Async stand-in for ``CorporateActionsQueries``."""
 
-    async def get_corporate_actions(  # type: ignore[no-untyped-def]
+    async def get_corporate_actions(
         self,
         *,
-        symbols=None,
-        start=None,
-        end=None,
-        types=None,
-    ):
+        symbols: tuple[str, ...] | None = None,
+        start: date | None = None,
+        end: date | None = None,
+        types: tuple[CorporateActionsType, ...] | None = None,
+    ) -> tuple[CorporateAction, ...]:
         return ()
 
 
