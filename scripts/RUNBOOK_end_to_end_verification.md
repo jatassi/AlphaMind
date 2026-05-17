@@ -1,40 +1,63 @@
 # End-to-End Pipeline Verification Runbook
 
-Operator workflow for verifying everything that's been built so far in
-the AlphaMind pipeline (data layer → distillation layer → analysis
-layer) by running the existing per-layer verification scripts in
-dependency order. Targets a live operator, with a fresh agent session
-co-piloting the run.
+Operator workflow for verifying the AlphaMind pipeline. The runbook
+has two modes:
 
-A green run proves today's actual distillation outputs flow correctly
-through the domain researchers AND the qualitative researcher; their
-actual outputs flow into the adaptive researcher; all five upstream
-briefs (3 sectors + correlation/regime + qualitative + adaptive) flow
-into the synthesizer. The cross-layer flow is enforced by a
-stage-artifact cache (ALP-287): each phase 2-5 script writes its parsed
-output to `<archive_root>/invocations/<invocation_id>/stage_artifacts/`
-on success, and the next script reads its predecessor's outputs via
-`--upstream-from`.
+- **End-to-end gate (Phase 9d).** One pass through `run_invocation` —
+  the production orchestrator the scheduler daemon fires on its
+  schedule. A green Phase 9d run proves today's data flows end-to-end
+  through Phase 1 ingest → snapshot assembly → `run_analysis_pipeline`
+  (distillation + 3 sector researchers + qualitative + adaptive +
+  synthesizer) → `run_decision_pipeline` (analyst + strategist +
+  proposal pre-processor + PM) → Phase 2 envelope dispatch. **This is
+  the canonical e2e check; everything else is diagnostic.**
+
+- **Per-layer diagnostics (Phases 0–9c).** Each phase exercises one
+  layer in isolation through its own runner — not through the
+  orchestrator's composition runners (`run_analysis_pipeline` /
+  `run_decision_pipeline`). Useful for cost-isolated iteration when a
+  layer is broken or being changed, and for regenerating fixtures the
+  unit tests consume. Not how production composes — the cross-phase
+  `--upstream-from` JSON cache (ALP-287) is a workaround for these
+  phases not chaining through the orchestrator in-process the way
+  production does.
+
+## Choosing the run mode
+
+| Goal | Use |
+|---|---|
+| "Is the pipeline currently working?" / gate before merge or deploy | Phase 9d alone |
+| "Is layer X working in isolation?" / a specific layer is failing | The per-layer phase (2–9) for that layer |
+| Regenerate per-agent fixtures consumed by unit tests | Per-agent phase with `--save-fixtures` |
+| Decision-layer wiring change with stable upstream | Phase 9c, then 9d |
+| First run on a fresh environment / data-layer rework | Phases 0–1g, then 9d |
+| Cost-isolated iteration on a single agent's prompt | Per-agent phase with `--upstream-from` |
+| Post-refactor or documentation audit of every per-layer contract | Phases 0–9 in dependency order |
+
+If you find yourself running Phases 2–9 sequentially to "prove the
+pipeline works end-to-end," skip to 9d. Phase 9d exercises the
+production composition runners that the per-layer phases bypass, and
+costs roughly the same as a single full sweep.
 
 ## TL;DR for the agent
 
-You're going to run 17 verification scripts in 12 phases plus a final
-HTML-report render. Three rules:
+When the operator says "run the e2e verify" (default request):
 
-1. **Stop on first FAIL.** Each phase depends on prior phases' state
-   AND its predecessor's stage artifacts. Don't continue past a red
-   signal — the next script will fail fast with a "run phase N first"
-   message anyway.
-2. **Track LLM cost.** The five Sonnet-driven analysis-layer scripts
-   together consume roughly 60–65K input + 8–12K output tokens (~10–15%
-   of weekly Sonnet cap); the analyst phase adds ~15K input + ~4K
-   output Opus tokens across both scenarios. If the operator wants to
-   skip to a specific layer, support that — but the downstream scripts
-   will need a stage-artifacts directory from a prior run, or they'll
-   fall back to fixtures (and the run is no longer end-to-end).
-3. **Reference the per-layer runbook for failure triage.** Each
-   live-SDK layer has its own runbook with a failure-mode table. Don't
-   reinvent triage — read those.
+1. **Run Phase 9d.** Stop on FAIL.
+2. **On FAIL,** drop into the per-layer phase the failure message
+   names; re-run that one against the same archive. The per-script
+   runbook has the failure-mode triage table.
+3. **Track LLM cost.** A clean Phase 9d run is one Sonnet pass through
+   the analysis layer plus one Opus pass through the four decision
+   agents (~10% of the weekly Sonnet cap, ~$1–5 Opus). Per-layer
+   re-runs are additive.
+
+When the operator asks for the full per-layer sweep (post-refactor
+audit, documentation pass), follow Phases 0–9 in dependency order and
+stop on first FAIL — each phase depends on its predecessor's state and
+stage artifacts, and the next script will fail fast with a "run phase
+N first" message anyway. The per-layer runbooks own failure-mode
+triage; don't reinvent it.
 
 ## Prerequisites
 
@@ -944,6 +967,15 @@ consumed by the decision-layer pipeline-composition wiring once
 
 ## Phase 9c — Decision-pipeline composition
 
+> **When to use this.** Largely subsumed by Phase 9d under the new
+> framing. Phase 9c is fixture-fed (pre-recorded synthesizer text +
+> fixture `RetrievalStore`); Phase 9d chains the live synthesizer →
+> decision-layer pass that production actually does. Keep 9c for the
+> narrow case where the operator is iterating on decision-layer
+> wiring alone, doesn't want to re-spend analysis-layer tokens, and
+> accepts that the cross-pipeline chain isn't being proven. Otherwise
+> skip straight to 9d.
+
 Live-SDK end-to-end check of the decision-layer composition runner
 (`alphamind.pipeline.decision.run_decision_pipeline`). Runs all four
 decision-layer agents (analyst + strategist in parallel, then proposal
@@ -996,23 +1028,38 @@ per-agent modal coverage independently — but a 9c FAIL flags a
 wiring-level regression that should be triaged before relying on the
 composition runner in production.
 
-## Phase 9d — Pipeline scheduler
+## Phase 9d — Pipeline scheduler (**the e2e gate**)
 
-End-to-end check of the pipeline scheduler (ALP-431 work tree) — the
-main entrypoint that drives the full Phase 1 → analysis pipeline →
-decision pipeline → Phase 2 envelope dispatch sequence through one
-`run_invocation` orchestrator pass and writes every artifact the
-feedback loop joins against.
+The canonical end-to-end check. Drives one `--once` invocation through
+the production orchestrator (`run_invocation`) — the same entry point
+the scheduler daemon fires on its schedule. Threads Phase 1 ingest →
+snapshot assembly → `run_analysis_pipeline` (Sonnet) →
+`run_decision_pipeline` (Opus, all four decision agents) → Phase 2
+envelope dispatch, writing every artifact the feedback loop joins
+against.
 
-This phase runs **after** Phase 9c (the decision-pipeline composition
-verifier) since the scheduler's orchestrator threads the decision
-pipeline as one of its five phases — a 9c FAIL invalidates 9d, and
-isolating decision-layer failures via 9c first is the cheaper path. It
-also runs **after** Phase 1b (state-persistence substrate), Phase 1c
-(OMS commands), Phase 1d (broker adapter), and Phase 5b (guardrail
-enforcement) for the same reason: the scheduler composes every prior
-layer's substrate, and a regression in any of them surfaces more
-clearly when isolated.
+A green Phase 9d run is the production-readiness signal. Per the
+"Choosing the run mode" table at the top of this runbook, **Phase 9d
+alone is the right gate before merge or deploy** — the per-layer
+phases (0–9c) are diagnostics for cost-isolated iteration when a
+specific layer is broken, not prerequisites.
+
+The historical "run 9c first, plus 1b / 1c / 1d / 5b substrate phases"
+ordering is preserved below as a fallback path for after a 9d FAIL:
+each substrate phase isolates one composed layer, and 9c isolates the
+decision sub-tree, so triaging the surfacing layer is faster than
+re-running 9d from scratch.
+
+> **Current fidelity caveat.** The verify script imports
+> `run_invocation` and builds `RunInvocationContext` directly rather
+> than shelling out to `python -m alphamind.scheduler run --once`.
+> This bypasses argparse, `load_dotenv`, the `_run_once` JSON
+> serializer, and the outer `BaseException` supervisor in
+> `__main__.py`. Tracked as a follow-up — strict CLI fidelity will
+> come when the verify script subprocesses the CLI and asserts
+> against the resulting archive, deferred so per-layer invariant
+> checks (today split across Phases 2–9) can be hoisted onto the
+> post-run archive in the same pass.
 
 ```bash
 uv run python scripts/verify_pipeline_scheduler.py \
@@ -1064,7 +1111,23 @@ layer, and the per-layer runbook covers the triage).
 
 ## When complete
 
-Report a one-line summary to the operator:
+If Phase 9d alone was run (default e2e gate), report:
+
+```
+End-to-end verification (Phase 9d): <PASS|FAIL>
+- invocation_id: <id>
+- duration: <Xs>
+- phase1: <fills_processed> fills processed, staleness_flag=<bool>
+- phase2: <commands_submitted> submitted, <commands_rejected> rejected
+- LLM cost: ~Xk Sonnet, ~Yk Opus
+- Archive: <archive_root>/invocations/<invocation_id>/
+```
+
+On FAIL, name the per-layer phase the failure message points to and
+attach its verdict block.
+
+If the full per-layer sweep was run (post-refactor audit, documentation
+pass), report:
 
 ```
 End-to-end verification: <PASS|FAIL|WARN-only>
