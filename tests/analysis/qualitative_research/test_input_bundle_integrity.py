@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from sqlalchemy.engine import Engine
@@ -22,7 +23,6 @@ from sqlalchemy.orm import Session
 from alphamind.analysis.qualitative_research import input_bundle_integrity as integrity
 from alphamind.analysis.qualitative_research.input_bundle_integrity import (
     SENTIMENT_CALIBRATED_BASELINE_WARN_THRESHOLD,
-    TICKER_ALIASES,
     log_input_bundle_integrity_warnings,
 )
 from alphamind.analysis.qualitative_research.loaders import (
@@ -41,7 +41,6 @@ from alphamind.persistence.models import (
 from alphamind.persistence.session import make_engine, make_session_factory
 
 AS_OF = datetime(2026, 5, 16, 17, 0, tzinfo=UTC)
-AS_OF_ISO = AS_OF.strftime("%Y-%m-%dT%H:%M:%SZ")
 EARLIER_ISO = (AS_OF - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -208,14 +207,8 @@ def _gap_records(caplog: pytest.LogCaptureFixture, gap: str) -> list[logging.Log
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("rv_5d", "rv_20d"),
-    [(0.0, 0.0)],
-)
-def test_gap1_double_zero_emits_warning(
-    session: Session, caplog: pytest.LogCaptureFixture, rv_5d: float, rv_20d: float
-) -> None:
-    regime_label = {"realized_vol_5d": rv_5d, "realized_vol_20d": rv_20d}
+def test_gap1_double_zero_emits_warning(session: Session, caplog: pytest.LogCaptureFixture) -> None:
+    regime_label = {"realized_vol_5d": 0.0, "realized_vol_20d": 0.0}
     with caplog.at_level(logging.WARNING, logger=integrity.__name__):
         log_input_bundle_integrity_warnings(
             session,
@@ -225,6 +218,34 @@ def test_gap1_double_zero_emits_warning(
             news_digest=_digest(),
         )
     assert _gap_records(caplog, "Gap 1"), "expected Gap 1 WARN"
+
+
+@pytest.mark.parametrize(
+    "regime_label",
+    [
+        {},
+        {"realized_vol_5d": 0.0},
+        {"realized_vol_20d": 0.0},
+        {"realized_vol_5d": None, "realized_vol_20d": None},
+    ],
+)
+def test_gap1_missing_or_none_keys_no_warning(
+    session: Session,
+    caplog: pytest.LogCaptureFixture,
+    regime_label: dict[str, Any],
+) -> None:
+    # Locks in current behavior: missing or None values are not the
+    # empty-bar-window signature. A separate detector would be needed to
+    # treat a *missing* regime block as a payload-drop failure.
+    with caplog.at_level(logging.WARNING, logger=integrity.__name__):
+        log_input_bundle_integrity_warnings(
+            session,
+            as_of=AS_OF,
+            regime_label=regime_label,
+            inputs=_inputs(sentiment=(_sentiment(),), prediction_markets=(_prediction_market(),)),
+            news_digest=_digest(),
+        )
+    assert not _gap_records(caplog, "Gap 1")
 
 
 @pytest.mark.parametrize(
@@ -410,6 +431,51 @@ def test_gap3_future_history_only_no_warning(
     assert not _gap_records(caplog, "Gap 3")
 
 
+def test_gap3_resolved_contracts_excluded_no_warning(
+    session: Session, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Resolved contracts (resolution_date <= as_of) should not count toward
+    # the "contract scope is non-empty" precondition — they mirror the
+    # contract_scope resolver's exclusion.
+    past = (AS_OF - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    session.add(
+        PredictionMarketContracts(
+            contract_id="0xRESOLVED",
+            platform="polymarket",
+            description="x",
+            category="macro",
+            resolution_date=past,
+            resolution_outcome="yes",
+            created_at="2026-01-01T00:00:00Z",
+            last_seen_at=past,
+        )
+    )
+    session.flush()
+    session.add(
+        DistillationContractHistory(
+            contract_id="0xRESOLVED",
+            snapshot_ts=EARLIER_ISO,
+            yes_probability=0.5,
+            delta_pp_since_prior=0.0,
+            liquidity_usd=100_000.0,
+            calibration_state="calibrated",
+            ingested_at=EARLIER_ISO,
+        )
+    )
+    session.commit()
+
+    regime_label = {"realized_vol_5d": 0.1, "realized_vol_20d": 0.1}
+    with caplog.at_level(logging.WARNING, logger=integrity.__name__):
+        log_input_bundle_integrity_warnings(
+            session,
+            as_of=AS_OF,
+            regime_label=regime_label,
+            inputs=_inputs(sentiment=(_sentiment(),)),
+            news_digest=_digest(),
+        )
+    assert not _gap_records(caplog, "Gap 3")
+
+
 # ---------------------------------------------------------------------------
 # Gap 4 — news ticker labeling drift
 # ---------------------------------------------------------------------------
@@ -524,7 +590,6 @@ def test_gap4_labeled_ticker_outside_alias_map_no_check(
         headline="Nvidia breakout drives semis higher",
         tickers=("SLB",),
     )
-    assert "SLB" not in TICKER_ALIASES
     regime_label = {"realized_vol_5d": 0.1, "realized_vol_20d": 0.1}
     with caplog.at_level(logging.WARNING, logger=integrity.__name__):
         log_input_bundle_integrity_warnings(
@@ -578,6 +643,63 @@ def test_gap4_word_boundary_avoids_substring_false_positive(
             news_digest=_digest(entry),
         )
     assert not _gap_records(caplog, "Gap 4")
+
+
+def test_gap4_multiple_other_tickers_sorted_alphabetically(
+    session: Session, caplog: pytest.LogCaptureFixture
+) -> None:
+    # When more than one high-profile ticker is referenced in the headline,
+    # the WARN message lists them alphabetically — locks the
+    # ``tuple(sorted(...))`` contract in _drift_other_tickers.
+    entry = _digest_entry(
+        reference_id="ND-T9",
+        headline="Apple and Microsoft strike AI deal that sidelines smaller chip makers",
+        tickers=("NVDA",),
+    )
+    regime_label = {"realized_vol_5d": 0.1, "realized_vol_20d": 0.1}
+    with caplog.at_level(logging.WARNING, logger=integrity.__name__):
+        log_input_bundle_integrity_warnings(
+            session,
+            as_of=AS_OF,
+            regime_label=regime_label,
+            inputs=_inputs(sentiment=(_sentiment(),), prediction_markets=(_prediction_market(),)),
+            news_digest=_digest(entry),
+        )
+    records = _gap_records(caplog, "Gap 4")
+    assert records
+    assert "AAPL, MSFT" in records[0].getMessage()
+
+
+def test_gap4_message_includes_truncated_headline(
+    session: Session, caplog: pytest.LogCaptureFixture
+) -> None:
+    long_headline = (
+        "Nvidia's record-setting trillion-dollar AI infrastructure announcement "
+        "sends markets surging in unexpected ways across every sector watched today"
+    )
+    entry = _digest_entry(
+        reference_id="ND-T10",
+        headline=long_headline,
+        tickers=("MSFT",),
+    )
+    regime_label = {"realized_vol_5d": 0.1, "realized_vol_20d": 0.1}
+    with caplog.at_level(logging.WARNING, logger=integrity.__name__):
+        log_input_bundle_integrity_warnings(
+            session,
+            as_of=AS_OF,
+            regime_label=regime_label,
+            inputs=_inputs(sentiment=(_sentiment(),), prediction_markets=(_prediction_market(),)),
+            news_digest=_digest(entry),
+        )
+    records = _gap_records(caplog, "Gap 4")
+    assert records
+    msg = records[0].getMessage()
+    # First few words of the headline should appear in the WARN so an operator
+    # grepping the log can identify the story without cross-referencing.
+    assert "Nvidia's record-setting" in msg
+    # The full headline is longer than 80 chars — message must include the
+    # ellipsis sentinel to signal truncation.
+    assert "…" in msg
 
 
 # ---------------------------------------------------------------------------

@@ -82,7 +82,11 @@ class QualitativeResearcherResult:
 
 
 def _noop_integrity_check(**_kw: object) -> None:
-    """Default ``integrity_check_fn`` — used when tests don't supply one."""
+    """Default ``integrity_check_fn`` — used when tests don't supply one.
+
+    Intentionally accepts arbitrary kwargs so test fixtures that haven't
+    been updated for new integrity-check parameters keep passing.
+    """
 
 
 @dataclass(frozen=True)

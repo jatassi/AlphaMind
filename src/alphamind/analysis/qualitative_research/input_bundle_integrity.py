@@ -12,17 +12,21 @@ The four gaps:
   (the empty-bar-window signature; legitimate near-zero is unaffected).
 - Gap 2: ``sentiment_aggregates`` empty while a non-trivial number of
   calibrated sentiment baselines exist at or before ``as_of``.
-- Gap 3: ``prediction_markets`` empty while ``distillation_contract_history``
-  carries at least one row at or before ``as_of``.
+- Gap 3: ``prediction_markets`` empty while at least one unresolved contract
+  has ``distillation_contract_history`` at or before ``as_of``.
 - Gap 4: a news-digest entry's labeled ticker (within the high-profile
   alias map) is absent from the headline while a *different* high-profile
   ticker IS referenced — ticker-misattribution drift.
 
-Public names
+Wiring scope
 ------------
-- :data:`SENTIMENT_CALIBRATED_BASELINE_WARN_THRESHOLD`
-- :data:`TICKER_ALIASES`
-- :func:`log_input_bundle_integrity_warnings`
+The check fires from the qualitative-researcher runner only. The adaptive
+researcher consumes ``universal_regime_label`` (Gap 1) from the same
+distillation payload that feeds the qualitative path, so the WARN is
+guaranteed to fire on Gap 1 regressions regardless of which researcher
+runs first. Gaps 2/3/4 are qualitative-bundle-specific by construction:
+sentiment aggregates, prediction-market snapshots, and news digests are
+not part of the adaptive bundle's contract.
 """
 
 from __future__ import annotations
@@ -30,22 +34,23 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from alphamind.analysis.qualitative_research.loaders import QualitativeInputs
 from alphamind.analysis.qualitative_research.news_digest import DigestEntry, NewsDigest
+from alphamind.analysis.tools._envelope import format_iso
 from alphamind.persistence.models import (
     DistillationContractHistory,
     DistillationTickerBaseline,
+    PredictionMarketContracts,
 )
 
 __all__ = [
     "SENTIMENT_CALIBRATED_BASELINE_WARN_THRESHOLD",
-    "TICKER_ALIASES",
     "log_input_bundle_integrity_warnings",
 ]
 
@@ -60,12 +65,14 @@ can use as a stable fallback distribution without single-row dominance.
 """
 
 
-TICKER_ALIASES: Mapping[str, frozenset[str]] = {
+_GOOGLE_ALIASES: frozenset[str] = frozenset({"GOOG", "GOOGL", "Google", "Alphabet"})
+
+_TICKER_ALIASES: Mapping[str, frozenset[str]] = {
     "AAPL": frozenset({"AAPL", "Apple"}),
     "AMD": frozenset({"AMD", "Advanced Micro Devices"}),
     "AMZN": frozenset({"AMZN", "Amazon"}),
-    "GOOG": frozenset({"GOOG", "GOOGL", "Google", "Alphabet"}),
-    "GOOGL": frozenset({"GOOG", "GOOGL", "Google", "Alphabet"}),
+    "GOOG": _GOOGLE_ALIASES,
+    "GOOGL": _GOOGLE_ALIASES,
     "META": frozenset({"META", "Meta Platforms", "Facebook"}),
     "MSFT": frozenset({"MSFT", "Microsoft"}),
     "NFLX": frozenset({"NFLX", "Netflix"}),
@@ -76,6 +83,24 @@ TICKER_ALIASES: Mapping[str, frozenset[str]] = {
 likely to surface in news digests. The drift detector only fires for
 labeled tickers in this map — small-cap and ETF labels are skipped to keep
 false positives out of the WARN stream.
+"""
+
+
+_ALIAS_PATTERNS: Mapping[str, re.Pattern[str]] = {
+    alias: re.compile(rf"\b{re.escape(alias)}\b", re.IGNORECASE)
+    for aliases in _TICKER_ALIASES.values()
+    for alias in aliases
+}
+"""Precompiled word-boundary patterns for every alias in
+:data:`_TICKER_ALIASES`. Built once at import so the per-digest drift
+detector does not recompile on each entry-alias combination.
+"""
+
+
+_HEADLINE_LOG_MAX_CHARS: int = 80
+"""Maximum headline characters surfaced in the Gap 4 WARN message — enough
+context for the operator to identify the story without overflowing log
+lines. The full headline remains accessible via the digest archive.
 """
 
 
@@ -99,9 +124,10 @@ def log_input_bundle_integrity_warnings(
     to the harness so the WARN annotates the invocation those values
     produced.
     """
+    as_of_iso = format_iso(as_of)
     _warn_gap1_realized_vol_double_zero(regime_label)
-    _warn_gap2_sentiment_block_drop(session, as_of=as_of, inputs=inputs)
-    _warn_gap3_prediction_market_block_drop(session, as_of=as_of, inputs=inputs)
+    _warn_gap2_sentiment_block_drop(session, as_of_iso=as_of_iso, inputs=inputs)
+    _warn_gap3_prediction_market_block_drop(session, as_of_iso=as_of_iso, inputs=inputs)
     _warn_gap4_news_ticker_drift(news_digest)
 
 
@@ -125,40 +151,40 @@ def _warn_gap1_realized_vol_double_zero(regime_label: Mapping[str, Any]) -> None
 
 
 def _warn_gap2_sentiment_block_drop(
-    session: Session, *, as_of: datetime, inputs: QualitativeInputs
+    session: Session, *, as_of_iso: str, inputs: QualitativeInputs
 ) -> None:
     if inputs.sentiment_aggregates:
         return
-    calibrated = _count_calibrated_sentiment_baselines(session, as_of=as_of)
+    calibrated = _count_calibrated_sentiment_baselines(session, as_of_iso=as_of_iso)
     if calibrated >= SENTIMENT_CALIBRATED_BASELINE_WARN_THRESHOLD:
         logger.warning(
             "input-bundle integrity (ALP-492 Gap 2): sentiment_aggregates empty "
             "but %d calibrated sentiment baselines exist at or before %s "
             "(threshold %d) — the assembler may be dropping the column",
             calibrated,
-            _format_iso_utc(as_of),
+            as_of_iso,
             SENTIMENT_CALIBRATED_BASELINE_WARN_THRESHOLD,
         )
 
 
 # ---------------------------------------------------------------------------
-# Gap 3 — prediction-market snapshot empty despite contracts with history
+# Gap 3 — prediction-market snapshot empty despite unresolved contracts with history
 # ---------------------------------------------------------------------------
 
 
 def _warn_gap3_prediction_market_block_drop(
-    session: Session, *, as_of: datetime, inputs: QualitativeInputs
+    session: Session, *, as_of_iso: str, inputs: QualitativeInputs
 ) -> None:
     if inputs.prediction_markets:
         return
-    contracts_with_history = _count_contracts_with_history(session, as_of=as_of)
+    contracts_with_history = _count_unresolved_contracts_with_history(session, as_of_iso=as_of_iso)
     if contracts_with_history > 0:
         logger.warning(
             "input-bundle integrity (ALP-492 Gap 3): prediction_markets empty "
-            "but %d contracts have history at or before %s — the assembler may "
-            "be dropping the block",
+            "but %d unresolved contracts have history at or before %s — the "
+            "assembler may be dropping the block",
             contracts_with_history,
-            _format_iso_utc(as_of),
+            as_of_iso,
         )
 
 
@@ -175,10 +201,12 @@ def _warn_gap4_news_ticker_drift(news_digest: NewsDigest) -> None:
                 continue
             logger.warning(
                 "input-bundle integrity (ALP-492 Gap 4): news entry %s labeled "
-                "%s but headline references %s — ticker-attribution drift",
+                "%s but headline references %s — ticker-attribution drift "
+                "(headline: %r)",
                 entry.reference_id,
                 labeled,
                 ", ".join(sorted(other_present)),
+                _truncate_headline(entry.headline),
             )
 
 
@@ -190,7 +218,7 @@ def _drift_other_tickers(entry: DigestEntry, *, labeled: str) -> tuple[str, ...]
     ticker is referenced. The caller logs a single WARN per (entry, label)
     pair when this is non-empty.
     """
-    label_aliases = TICKER_ALIASES.get(labeled)
+    label_aliases = _TICKER_ALIASES.get(labeled)
     if label_aliases is None:
         return ()
     if any(_alias_in_headline(alias, entry.headline) for alias in label_aliases):
@@ -198,7 +226,9 @@ def _drift_other_tickers(entry: DigestEntry, *, labeled: str) -> tuple[str, ...]
     return tuple(
         sorted(
             other
-            for other, aliases in TICKER_ALIASES.items()
+            # ``isdisjoint`` excludes tickers that share aliases with the labeled
+            # ticker (e.g., GOOG ↔ GOOGL) so class-share pairs don't false-flag.
+            for other, aliases in _TICKER_ALIASES.items()
             if aliases.isdisjoint(label_aliases)
             and any(_alias_in_headline(a, entry.headline) for a in aliases)
         )
@@ -210,10 +240,19 @@ def _alias_in_headline(alias: str, headline: str) -> bool:
 
     Word-boundary matching avoids false positives like ``Apple`` matching
     ``pineapple``; case-insensitive matching catches ``Microsoft`` /
-    ``MICROSOFT`` regardless of headline casing.
+    ``MICROSOFT`` regardless of headline casing. Patterns are precompiled
+    in :data:`_ALIAS_PATTERNS`.
     """
-    pattern = rf"\b{re.escape(alias)}\b"
-    return re.search(pattern, headline, re.IGNORECASE) is not None
+    pattern = _ALIAS_PATTERNS.get(alias)
+    if pattern is None:
+        return False
+    return pattern.search(headline) is not None
+
+
+def _truncate_headline(headline: str) -> str:
+    if len(headline) <= _HEADLINE_LOG_MAX_CHARS:
+        return headline
+    return headline[: _HEADLINE_LOG_MAX_CHARS - 1] + "…"
 
 
 # ---------------------------------------------------------------------------
@@ -221,27 +260,37 @@ def _alias_in_headline(alias: str, headline: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _count_calibrated_sentiment_baselines(session: Session, *, as_of: datetime) -> int:
-    as_of_str = _format_iso_utc(as_of)
+def _count_calibrated_sentiment_baselines(session: Session, *, as_of_iso: str) -> int:
     result = session.execute(
         select(func.count(func.distinct(DistillationTickerBaseline.ticker))).where(
             DistillationTickerBaseline.baseline_kind == "sentiment",
             DistillationTickerBaseline.calibration_state == "calibrated",
-            DistillationTickerBaseline.as_of <= as_of_str,
+            DistillationTickerBaseline.as_of <= as_of_iso,
         )
     ).scalar()
     return int(result or 0)
 
 
-def _count_contracts_with_history(session: Session, *, as_of: datetime) -> int:
-    as_of_str = _format_iso_utc(as_of)
+def _count_unresolved_contracts_with_history(session: Session, *, as_of_iso: str) -> int:
+    """Distinct contracts whose ``resolution_date`` has not passed and which
+    have ``distillation_contract_history`` at or before ``as_of_iso``.
+
+    Mirrors the ``resolution_date IS NULL OR resolution_date > as_of`` filter
+    used by :func:`alphamind.distillation.contract_scope.resolve_prediction_market_scope`
+    so the WARN aligns with the loader's notion of "contract scope is non-empty".
+    """
     result = session.execute(
-        select(func.count(func.distinct(DistillationContractHistory.contract_id))).where(
-            DistillationContractHistory.snapshot_ts <= as_of_str,
+        select(func.count(func.distinct(DistillationContractHistory.contract_id)))
+        .join(
+            PredictionMarketContracts,
+            PredictionMarketContracts.contract_id == DistillationContractHistory.contract_id,
+        )
+        .where(
+            DistillationContractHistory.snapshot_ts <= as_of_iso,
+            or_(
+                PredictionMarketContracts.resolution_date.is_(None),
+                PredictionMarketContracts.resolution_date > as_of_iso,
+            ),
         )
     ).scalar()
     return int(result or 0)
-
-
-def _format_iso_utc(dt: datetime) -> str:
-    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
