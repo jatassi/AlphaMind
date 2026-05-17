@@ -24,9 +24,14 @@ Validation layering:
    twice within a session is a structural error per
    ``oms-command-ids.md § What happens if a duplicate command ID arrives``.
 
-Broker routing remains deferred per parent decision (C); the function
-persists the protective CLOSE via the Phase 2 writeback machinery and
-returns a :class:`SubmissionResult` matching the existing PM-side shape.
+Broker routing is wired via the engine-stub coordinated swap (story 03e /
+ALP-390): when ``client`` + ``queries`` + ``execution_config`` are supplied
+the protective CLOSE submits through
+:mod:`alphamind.execution.oms.broker_dispatch` first and the persisted order
+carries the broker's real ``alpaca_order_id``; otherwise the synthetic-
+acknowledgment legacy path is preserved. The function persists the outcome
+via the Phase 2 writeback machinery and returns a :class:`SubmissionResult`
+matching the existing PM-side shape.
 """
 
 from __future__ import annotations
