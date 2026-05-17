@@ -78,10 +78,30 @@ def test_run_context_does_not_eagerly_import_debug_e2e() -> None:
 
     Story 04 lands an import-linter contract forbidding the import;
     the forward reference must be ``TYPE_CHECKING``-only.
+
+    Run in a fresh subprocess so the assertion is unaffected by other tests in
+    the same xdist worker that may have imported ``debug_e2e`` already.
     """
+    import subprocess
     import sys
 
-    # The module is already imported by the test header; that import
-    # alone must not have pulled ``debug_e2e`` into ``sys.modules``.
-    assert "alphamind.scheduler.debug_e2e" not in sys.modules
-    assert "alphamind.scheduler.debug_e2e.settings" not in sys.modules
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys\n"
+                "import alphamind.scheduler.run_context  # noqa: F401\n"
+                "assert 'alphamind.scheduler.debug_e2e' not in sys.modules, (\n"
+                "    'debug_e2e imported eagerly via run_context'\n"
+                ")\n"
+                "assert 'alphamind.scheduler.debug_e2e.settings' not in sys.modules, (\n"
+                "    'debug_e2e.settings imported eagerly via run_context'\n"
+                ")\n"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
