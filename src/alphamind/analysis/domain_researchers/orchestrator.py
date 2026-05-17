@@ -30,6 +30,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._shared import _SECTOR_AUDIENCE_MAP, Sector, TokensUsed
 from alphamind.analysis.domain_researchers.runner import (
     DomainResearcherResult,
@@ -75,7 +76,7 @@ class DomainResearchersOutput:
 _RunnerFn = Callable[..., Awaitable[DomainResearcherResult]]
 
 
-async def _run_domain_researchers(
+async def _run_domain_researchers(  # noqa: PLR0913 — internal helper threading runner state plus ALP-497 progress/phase
     *,
     invocation_id: str,
     as_of: datetime,
@@ -85,6 +86,8 @@ async def _run_domain_researchers(
     runner_fn: _RunnerFn,
     session: Session | None = None,
     archive_root: Path | None = None,
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "domain_researchers",
 ) -> DomainResearchersOutput:
     """Run the three sectors in parallel via *runner_fn* and aggregate.
 
@@ -110,6 +113,8 @@ async def _run_domain_researchers(
             agents_config=agents_config,
             sectors_config=sectors_config,
             archive_root=archive_root,
+            progress=progress,
+            phase=phase,
         )
 
     try:
@@ -151,7 +156,7 @@ async def _run_domain_researchers(
 # ---------------------------------------------------------------------------
 
 
-async def run_domain_researchers(
+async def run_domain_researchers(  # noqa: PLR0913 — public signature plus ALP-497 progress/phase
     *,
     invocation_id: str,
     as_of: datetime,
@@ -160,6 +165,8 @@ async def run_domain_researchers(
     agents_config: Mapping[str, BaseAgentConfig],
     sectors_config: Mapping[str, list[str]],
     archive_root: Path | None = None,
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "domain_researchers",
 ) -> DomainResearchersOutput:
     """Run all three domain researchers in parallel and aggregate.
 
@@ -177,4 +184,6 @@ async def run_domain_researchers(
         runner_fn=run_domain_researcher,
         session=session,
         archive_root=archive_root,
+        progress=progress,
+        phase=phase,
     )

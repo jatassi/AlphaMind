@@ -26,6 +26,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._shared import Sector, TokensUsed
 from alphamind.analysis.qualitative_research.harness import (
     HarnessSuccess,
@@ -227,7 +228,7 @@ async def _run_qualitative_researcher(  # noqa: PLR0913 — signature dictated b
 # ---------------------------------------------------------------------------
 
 
-async def run_qualitative_researcher(
+async def run_qualitative_researcher(  # noqa: PLR0913 — signature dictated by ALP-252 spec plus ALP-497 progress/phase kwargs
     invocation_id: str,
     as_of: datetime,
     last_invocation_time: datetime,
@@ -237,6 +238,8 @@ async def run_qualitative_researcher(
     universe: frozenset[str],
     agents_config: Mapping[str, BaseAgentConfig],
     archive_root: Path | None = None,
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "qualitative",
 ) -> QualitativeResearcherResult:
     """Invoke the qualitative researcher and return a validated result.
 
@@ -290,6 +293,8 @@ async def run_qualitative_researcher(
             session=session,
             universe=universe,
             archive_root=archive_root,
+            progress=progress,
+            phase=phase,
         )
 
     def _integrity_check_fn(

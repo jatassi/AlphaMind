@@ -1,4 +1,4 @@
-"""Phase 1 input gatherer (story 03b / ALP-445).
+"""Phase 1 input gatherer (story 03b / ALP-445; refactored ALP-494).
 
 Assembles the typed bundle ``process_unprocessed_fills`` consumes — Alpaca
 account + positions, v1beta1 corporate-action activities, and the
@@ -10,14 +10,20 @@ exceptions raised by individual data-fetch helpers are caught and logged.
 The orchestrator (``run_invocation``) reads ``Phase1Inputs.staleness_flag``
 to populate the row's ``staleness_flag`` column.
 
-The two ``_build_*`` factory hooks at module level are seams: production
-constructs ``AccountStateQueries`` / ``CorporateActionsQueries`` against
-the venue config; tests monkey-patch them to inject stub queries.
+ALP-494 — broker-adapter access is parameterized via optional
+``account_queries_factory`` / ``ca_queries_factory`` kwargs typed against
+the structural Protocols in
+:mod:`alphamind.execution.broker_adapter.protocols`. Production callers
+omit both and the gatherer constructs Alpaca-backed defaults inline; the
+debug-e2e package (story 02b) and tests inject log-only / stub
+implementations through the same seam. Retires the module-level
+``_build_*`` monkey-patch hooks story 03b ships with.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -33,6 +39,10 @@ from alphamind.execution.broker_adapter.client_factory import (
 )
 from alphamind.execution.broker_adapter.corporate_actions_queries import (
     CorporateActionsQueries,
+)
+from alphamind.execution.broker_adapter.protocols import (
+    AccountStateQueriesP,
+    CorporateActionsQueriesP,
 )
 from alphamind.execution.broker_adapter.queries import (
     AccountStateQueries,
@@ -56,6 +66,9 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
+
+_AccountQueriesFactory = Callable[[VenueConfig, ExecutionMode], AccountStateQueriesP]
+_CorporateActionsQueriesFactory = Callable[[VenueConfig, ExecutionMode], CorporateActionsQueriesP]
 
 __all__ = ["Phase1Inputs", "gather_phase1_inputs"]
 
@@ -86,14 +99,13 @@ class Phase1Inputs:
     staleness_flag: bool
 
 
-def _build_account_state_queries(
+def _default_account_queries_factory(
     venue_config: VenueConfig, execution_mode: ExecutionMode
-) -> AccountStateQueries:
-    """Construct ``AccountStateQueries`` from venue config + execution mode.
+) -> AccountStateQueriesP:
+    """Default Alpaca-backed ``AccountStateQueriesP`` construction.
 
-    Module-level seam: tests monkey-patch this to inject a stub queries
-    object so the gatherer's broker-adapter path can be exercised without
-    real Alpaca credentials.
+    Used when ``gather_phase1_inputs`` is called without an
+    ``account_queries_factory`` kwarg (the production daemon path).
     """
     mode_literal: ClientFactoryExecutionMode = (
         "live" if execution_mode is ExecutionMode.live else "paper"
@@ -102,13 +114,13 @@ def _build_account_state_queries(
     return AccountStateQueries(factory.build_trading_client())
 
 
-def _build_corporate_actions_queries(
+def _default_ca_queries_factory(
     venue_config: VenueConfig, execution_mode: ExecutionMode
-) -> CorporateActionsQueries:
-    """Construct ``CorporateActionsQueries`` from venue config + execution mode.
+) -> CorporateActionsQueriesP:
+    """Default Alpaca-backed ``CorporateActionsQueriesP`` construction.
 
-    Symmetric seam to :func:`_build_account_state_queries`; tests inject a
-    stub so the gatherer composes without hitting Alpaca.
+    Used when ``gather_phase1_inputs`` is called without a
+    ``ca_queries_factory`` kwarg (the production daemon path).
     """
     mode_literal: ClientFactoryExecutionMode = (
         "live" if execution_mode is ExecutionMode.live else "paper"
@@ -198,6 +210,8 @@ async def gather_phase1_inputs(
     venue_config: VenueConfig,
     execution_mode: ExecutionMode,
     as_of: datetime,
+    account_queries_factory: _AccountQueriesFactory | None = None,
+    ca_queries_factory: _CorporateActionsQueriesFactory | None = None,
 ) -> Phase1Inputs:
     """Assemble the Phase 1 input bundle for ``process_unprocessed_fills``.
 
@@ -210,13 +224,22 @@ async def gather_phase1_inputs(
     The ``InvocationHandle`` carries the open transaction the v1beta1
     fetcher needs to consult the CA integration ledger. Macro-table reads
     join the same transaction so the snapshot is internally consistent.
+
+    ``account_queries_factory`` / ``ca_queries_factory`` are optional
+    Protocol-typed seams (ALP-494). When ``None`` (the production daemon
+    path), the inline Alpaca-backed defaults run. Story 02b's log-only
+    queries and the test suite pass their own factory to substitute the
+    real broker without monkey-patching.
     """
+    account_factory = account_queries_factory or _default_account_queries_factory
+    ca_factory = ca_queries_factory or _default_ca_queries_factory
+
     staleness_flag = False
 
     account: TradeAccountSnapshot | None
     positions: tuple[PositionSnapshot, ...]
     try:
-        queries = _build_account_state_queries(venue_config, execution_mode)
+        queries = account_factory(venue_config, execution_mode)
     except RuntimeError as exc:
         log.warning(
             "phase1_inputs: broker-adapter construction failed (%s); degrading "
@@ -251,7 +274,7 @@ async def gather_phase1_inputs(
     ca_activities: tuple[CorporateActionActivity, ...] = ()
     if positions:
         try:
-            ca_queries = _build_corporate_actions_queries(venue_config, execution_mode)
+            ca_queries = ca_factory(venue_config, execution_mode)
             lookup_map = _position_lookup_from_positions(positions)
             ca_activities = await fetch_unprocessed_ca_activities(
                 handle,

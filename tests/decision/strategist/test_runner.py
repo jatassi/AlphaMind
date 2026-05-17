@@ -785,7 +785,7 @@ async def test_system_prompt_loaded_from_agent_config(tmp_path: Path) -> None:
         return Path(path).read_text(encoding="utf-8")
 
     async def _capturing_stub(**kwargs: Any) -> AsyncIterator[Any]:
-        options = kwargs.get("options")
+        options = kwargs["options"]
         captured_options.append(options)
         # Read the tempfile while the contextmanager is still open. After the
         # harness returns, the file is unlinked.

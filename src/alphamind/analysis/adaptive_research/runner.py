@@ -25,6 +25,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.adaptive_research.harness import (
     HarnessSuccess,
@@ -180,7 +181,7 @@ async def _run_adaptive_researcher(  # noqa: PLR0913 — signature dictated by A
 # ---------------------------------------------------------------------------
 
 
-async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; validator requires three upstream briefs
+async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; validator requires three upstream briefs; ALP-497 adds progress/phase kwargs
     invocation_id: str,
     as_of: datetime,
     *,
@@ -193,6 +194,8 @@ async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; va
     universe: frozenset[str],
     agents_config: Mapping[str, BaseAgentConfig],
     archive_root: Path | None = None,
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "adaptive",
 ) -> AdaptiveResearcherResult:
     """Invoke the adaptive researcher and return a validated result.
 
@@ -227,6 +230,8 @@ async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; va
             qualitative_brief=qualitative_brief,
             correlation_regime_brief=correlation_regime_brief,
             archive_root=archive_root,
+            progress=progress,
+            phase=phase,
         )
 
     return await _run_adaptive_researcher(

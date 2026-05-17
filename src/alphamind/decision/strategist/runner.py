@@ -27,6 +27,7 @@ from typing import Any, Literal
 
 import yaml
 
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import (
@@ -170,7 +171,7 @@ def _adapt_sector_resolver_for_input_bundle(
 # ---------------------------------------------------------------------------
 
 
-async def run_strategist(  # noqa: PLR0913 — signature dictated by ALP-308 spec
+async def run_strategist(  # noqa: PLR0913 — signature dictated by ALP-308 spec plus ALP-497 progress/phase
     *,
     invocation_id: str,
     timestamp: datetime,
@@ -199,6 +200,8 @@ async def run_strategist(  # noqa: PLR0913 — signature dictated by ALP-308 spe
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     borrow_cost_resolver: Callable[[str], float] | None = None,
     prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "strategist",
 ) -> StrategistResult:
     """Invoke the strategist and return a :class:`StrategistResult`.
 
@@ -272,6 +275,8 @@ async def run_strategist(  # noqa: PLR0913 — signature dictated by ALP-308 spe
         active_sectors=frozenset(active_sectors),
         archive_root=archive_root,
         sdk_query_fn=sdk_query_fn,
+        progress=progress,
+        phase=phase,
     )
     logger.info(
         "strategist harness invoked (tokens=%s, attempts=%d)",

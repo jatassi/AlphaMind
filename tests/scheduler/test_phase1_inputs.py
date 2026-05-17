@@ -11,10 +11,12 @@ any broker-side failure degrades the bundle (returning no-op defaults +
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
+from alpaca.data.enums import CorporateActionsType
+from alpaca.data.models.corporate_actions import CorporateAction
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.money import money, price
@@ -190,14 +192,14 @@ class _StubQueries:
 class _StubCorporateActionsQueries:
     """Async stand-in for ``CorporateActionsQueries``."""
 
-    async def get_corporate_actions(  # type: ignore[no-untyped-def]
+    async def get_corporate_actions(
         self,
         *,
-        symbols=None,
-        start=None,
-        end=None,
-        types=None,
-    ):
+        symbols: tuple[str, ...] | None = None,
+        start: date | None = None,
+        end: date | None = None,
+        types: tuple[CorporateActionsType, ...] | None = None,
+    ) -> tuple[CorporateAction, ...]:
         return ()
 
 
@@ -247,23 +249,12 @@ class TestGatherPhase1Inputs:
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
         archive_root: Path,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Happy path: alpaca account+positions present, no CA activities, no degradation."""
         from alphamind.scheduler import phase1_inputs as module
 
         positions = (_make_position_snapshot(),)
         account = _make_account_snapshot()
-        monkeypatch.setattr(
-            module,
-            "_build_account_state_queries",
-            lambda venue_config, execution_mode: _StubQueries(account=account, positions=positions),
-        )
-        monkeypatch.setattr(
-            module,
-            "_build_corporate_actions_queries",
-            lambda venue_config, execution_mode: _StubCorporateActionsQueries(),
-        )
 
         session, handle = await _open_phase1_handle(
             async_factory=async_factory,
@@ -276,6 +267,10 @@ class TestGatherPhase1Inputs:
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
                 as_of=_NOW,
+                account_queries_factory=lambda v, m: _StubQueries(
+                    account=account, positions=positions
+                ),
+                ca_queries_factory=lambda v, m: _StubCorporateActionsQueries(),
             )
         finally:
             await session.close()
@@ -292,7 +287,6 @@ class TestGatherPhase1Inputs:
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
         archive_root: Path,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A ``RuntimeError`` from ``get_account`` returns a bundle with
         ``alpaca_account=None`` and ``staleness_flag=True``; the function does
@@ -307,17 +301,6 @@ class TestGatherPhase1Inputs:
             def get_positions(self) -> tuple[PositionSnapshot, ...]:
                 return ()
 
-        monkeypatch.setattr(
-            module,
-            "_build_account_state_queries",
-            lambda venue_config, execution_mode: _FailingQueries(),
-        )
-        monkeypatch.setattr(
-            module,
-            "_build_corporate_actions_queries",
-            lambda venue_config, execution_mode: _StubCorporateActionsQueries(),
-        )
-
         session, handle = await _open_phase1_handle(
             async_factory=async_factory,
             env_path=env_path,
@@ -329,6 +312,8 @@ class TestGatherPhase1Inputs:
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
                 as_of=_NOW,
+                account_queries_factory=lambda v, m: _FailingQueries(),
+                ca_queries_factory=lambda v, m: _StubCorporateActionsQueries(),
             )
         finally:
             await session.close()
@@ -341,22 +326,14 @@ class TestGatherPhase1Inputs:
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
         archive_root: Path,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When the broker-adapter factory itself raises (missing creds),
         both account and positions degrade to defaults."""
         from alphamind.scheduler import phase1_inputs as module
 
-        def _failing_factory(*args: object, **kwargs: object) -> AccountStateQueries:
+        def _failing_account_factory(*args: object, **kwargs: object) -> AccountStateQueries:
             msg = "Alpaca paper credentials not set"
             raise RuntimeError(msg)
-
-        monkeypatch.setattr(module, "_build_account_state_queries", _failing_factory)
-        monkeypatch.setattr(
-            module,
-            "_build_corporate_actions_queries",
-            lambda venue_config, execution_mode: _StubCorporateActionsQueries(),
-        )
 
         session, handle = await _open_phase1_handle(
             async_factory=async_factory,
@@ -369,6 +346,8 @@ class TestGatherPhase1Inputs:
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
                 as_of=_NOW,
+                account_queries_factory=_failing_account_factory,
+                ca_queries_factory=lambda v, m: _StubCorporateActionsQueries(),
             )
         finally:
             await session.close()
@@ -382,7 +361,6 @@ class TestGatherPhase1Inputs:
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
         archive_root: Path,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``market_inputs.underlying_prices`` is built from position
         ``current_price`` values when available."""
@@ -391,18 +369,6 @@ class TestGatherPhase1Inputs:
         positions = (
             _make_position_snapshot("AAPL", 175.0),
             _make_position_snapshot("MSFT", 410.0),
-        )
-        monkeypatch.setattr(
-            module,
-            "_build_account_state_queries",
-            lambda venue_config, execution_mode: _StubQueries(
-                account=_make_account_snapshot(), positions=positions
-            ),
-        )
-        monkeypatch.setattr(
-            module,
-            "_build_corporate_actions_queries",
-            lambda venue_config, execution_mode: _StubCorporateActionsQueries(),
         )
 
         session, handle = await _open_phase1_handle(
@@ -416,6 +382,10 @@ class TestGatherPhase1Inputs:
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
                 as_of=_NOW,
+                account_queries_factory=lambda v, m: _StubQueries(
+                    account=_make_account_snapshot(), positions=positions
+                ),
+                ca_queries_factory=lambda v, m: _StubCorporateActionsQueries(),
             )
         finally:
             await session.close()

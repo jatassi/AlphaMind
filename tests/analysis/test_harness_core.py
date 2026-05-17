@@ -472,6 +472,7 @@ async def test_invoke_translates_timeout_to_timeout_failure(tmp_path: Path) -> N
             agent_name="x",
             invocation_id="inv-1",
             on_cli_result_error="context_overflow",
+            phase="test-phase",
         )
 
 
@@ -496,6 +497,7 @@ async def test_invoke_translates_cli_result_error_to_context_overflow(
             agent_name="x",
             invocation_id="inv-1",
             on_cli_result_error="context_overflow",
+            phase="test-phase",
         )
 
 
@@ -518,6 +520,7 @@ async def test_invoke_translates_cli_result_error_to_sdk_failure_when_configured
             agent_name="x",
             invocation_id="inv-1",
             on_cli_result_error="sdk_failure",
+            phase="test-phase",
         )
 
 
@@ -553,6 +556,7 @@ async def test_invoke_retries_once_on_stall(tmp_path: Path) -> None:
         agent_name="x",
         invocation_id="inv-1",
         on_cli_result_error="context_overflow",
+        phase="test-phase",
     )
     assert call_count == 2
     assert outcome.structured_output == {"ok": True}
@@ -580,6 +584,7 @@ async def test_invoke_two_consecutive_stalls_raises_timeout(tmp_path: Path) -> N
             agent_name="x",
             invocation_id="inv-1",
             on_cli_result_error="context_overflow",
+            phase="test-phase",
         )
 
 
@@ -692,3 +697,182 @@ def test_no_prefill_directive_in_json_schema_harness_options() -> None:
         # extra_args is a dict-like mapping; ensure no prefill keys snuck in.
         assert "prefill" not in (opts.extra_args or {})
         assert "system-prompt-prefill" not in (opts.extra_args or {})
+
+
+# ---------------------------------------------------------------------------
+# ALP-497 extensions: tuple tool_name_prefix, archive_layer, progress emit
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_collect_response_counts_tool_uses_with_prefix_tuple() -> None:
+    """``tool_name_prefix`` accepts a tuple — the decision harnesses use this."""
+    from claude_agent_sdk import ToolUseBlock
+
+    a = ToolUseBlock(id="t1", name="mcp__alphamind_decision_validation__check", input={})
+    b = ToolUseBlock(id="t2", name="mcp__alphamind_synthesizer_retrieval__fetch", input={})
+    c = ToolUseBlock(id="t3", name="StructuredOutput", input={})
+    messages = [
+        _make_sdk_assistant(tool_use=[a, b, c]),
+        _make_sdk_result(),
+    ]
+    outcome = await core._collect_response(
+        _make_stub(messages),
+        prompt="p",
+        options=None,
+        tool_name_prefix=(
+            "mcp__alphamind_decision_validation__",
+            "mcp__alphamind_synthesizer_retrieval__",
+        ),
+    )
+    assert outcome.tool_calls == 2
+
+
+def test_diagstate_writes_to_archive_layer_decision(tmp_path: Path) -> None:
+    """``archive_layer="decision"`` redirects the diag dir to ``.../decision/<agent>/``."""
+    diag = core.DiagState(
+        agent_name="analyst",
+        invocation_id="inv-dec-001",
+        prompt_text="P",
+        user_message="U",
+        model="m",
+        archive_root=tmp_path,
+        archive_layer="decision",
+    )
+    diag.response_initial = "ok"
+    diag.write(success=True, wall_clock_seconds=0.1, stop_reason="end_turn")
+    decision_dir = tmp_path / "invocations" / "inv-dec-001" / "decision" / "analyst"
+    assert (decision_dir / "prompt.md").read_text() == "P"
+    # Analysis path is NOT populated.
+    assert not (tmp_path / "invocations" / "inv-dec-001" / "analysis").exists()
+
+
+def test_diagstate_defaults_archive_layer_to_analysis(tmp_path: Path) -> None:
+    """Default ``archive_layer`` is ``"analysis"`` — analysis-harness behaviour preserved."""
+    diag = _make_diag(tmp_path)
+    diag.response_initial = "ok"
+    diag.write(success=True, wall_clock_seconds=0.1, stop_reason="end_turn")
+    analysis_dir = tmp_path / "invocations" / "inv-001" / "analysis" / "demo_agent"
+    assert (analysis_dir / "prompt.md").exists()
+
+
+class _RecordingEmitterForCore:
+    """Test-only ProgressEmitter substitute used by invoke_sdk tests."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    def phase_start(self, phase: str) -> None:  # pragma: no cover - not used here
+        self.events.append(("phase_start", {"phase": phase}))
+
+    def phase_done(self, phase: str, **fields: Any) -> None:  # pragma: no cover
+        self.events.append(("phase_done", {"phase": phase, **fields}))
+
+    def agent_request(self, **fields: Any) -> None:
+        self.events.append(("agent_request", fields))
+
+    def agent_response(self, **fields: Any) -> None:
+        self.events.append(("agent_response", fields))
+
+
+@pytest.mark.asyncio
+async def test_invoke_sdk_emits_agent_request_and_response(tmp_path: Path) -> None:
+    """`invoke_sdk` emits ``agent_request`` then ``agent_response`` per call."""
+    messages = [
+        _make_sdk_assistant(text="hi"),
+        _make_sdk_result(structured_output={"ok": True}, stop_reason="end_turn"),
+    ]
+    diag = _make_diag(tmp_path)
+    emitter = _RecordingEmitterForCore()
+    await core.invoke_sdk(
+        sdk_query_fn=_make_stub(messages),
+        prompt="p",
+        options=None,
+        diag=diag,
+        budget_seconds=5.0,
+        init_stall_timeout_seconds=None,
+        wall_start=0.0,
+        agent_name="demo_agent",
+        invocation_id="inv-emit-1",
+        on_cli_result_error="context_overflow",
+        progress=emitter,
+        phase="phase-x",
+    )
+
+    assert [evt[0] for evt in emitter.events] == ["agent_request", "agent_response"]
+
+    request_fields = emitter.events[0][1]
+    assert request_fields["phase"] == "phase-x"
+    assert request_fields["agent"] == "demo_agent"
+    assert request_fields["model"] == "claude-sonnet"
+
+    response_fields = emitter.events[1][1]
+    assert response_fields["phase"] == "phase-x"
+    assert response_fields["agent"] == "demo_agent"
+    assert response_fields["model"] == "claude-sonnet"
+    assert response_fields["stop_reason"] == "end_turn"
+    # 5 fixed agent_response fields (parent issue § B):
+    assert "duration_s" in response_fields
+    assert response_fields["input_tokens"] == 10
+    assert response_fields["output_tokens"] == 20
+    assert response_fields["tool_calls"] == 0
+
+
+@pytest.mark.asyncio
+async def test_invoke_sdk_emits_agent_response_on_failure(tmp_path: Path) -> None:
+    """Failure path still emits ``agent_response`` so cost is recorded.
+
+    Stop_reason carries the SDK-reported failure-stop-reason when available.
+    """
+    messages = [
+        _make_sdk_result(is_error=True, result_text="ctx overflow", stop_reason="max_tokens"),
+    ]
+    diag = _make_diag(tmp_path)
+    emitter = _RecordingEmitterForCore()
+    with pytest.raises(core.ContextOverflowFailure):
+        await core.invoke_sdk(
+            sdk_query_fn=_make_stub(messages),
+            prompt="p",
+            options=None,
+            diag=diag,
+            budget_seconds=5.0,
+            init_stall_timeout_seconds=None,
+            wall_start=0.0,
+            agent_name="demo_agent",
+            invocation_id="inv-emit-2",
+            on_cli_result_error="context_overflow",
+            progress=emitter,
+            phase="phase-fail",
+        )
+
+    kinds = [evt[0] for evt in emitter.events]
+    assert kinds == ["agent_request", "agent_response"]
+
+
+@pytest.mark.asyncio
+async def test_invoke_sdk_defaults_progress_to_noop(tmp_path: Path) -> None:
+    """``progress`` defaults to a NoOp; ``phase`` is still required as kwarg.
+
+    Calls that don't pass ``progress`` continue to work — the default is
+    :class:`NoOpProgressEmitter`.
+    """
+    messages = [
+        _make_sdk_assistant(text="hi"),
+        _make_sdk_result(structured_output={"ok": True}),
+    ]
+    diag = _make_diag(tmp_path)
+    # No ``progress`` kwarg — relies on default. ``phase`` is required.
+    outcome = await core.invoke_sdk(
+        sdk_query_fn=_make_stub(messages),
+        prompt="p",
+        options=None,
+        diag=diag,
+        budget_seconds=5.0,
+        init_stall_timeout_seconds=None,
+        wall_start=0.0,
+        agent_name="demo_agent",
+        invocation_id="inv-emit-3",
+        on_cli_result_error="context_overflow",
+        phase="some-phase",
+    )
+    assert outcome.structured_output == {"ok": True}
