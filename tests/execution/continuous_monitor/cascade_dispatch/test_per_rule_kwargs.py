@@ -424,50 +424,58 @@ def test_drawdown_provider_returns_open_positions_and_liquidity() -> None:
         assert kwargs == {"open_positions": positions, "liquidity": context.liquidity}
 
 
-def test_position_max_loss_equity_provider_passes_breaching_id_from_rule() -> None:
-    """``position_max_loss_equity_pct`` provider reads ``breaching_position_id`` from the rule.
+@pytest.mark.parametrize(
+    ("rule_id", "make_breaching_view", "expected_position_id", "other_view"),
+    [
+        (
+            "position_max_loss_equity_pct",
+            lambda: _equity_view(position_id="POS-EQ-1", unrealized_pnl_usd=-60.0),
+            "POS-EQ-1",
+            _equity_view(position_id="POS-EQ-DEEPER", unrealized_pnl_usd=-90.0),
+        ),
+        (
+            "position_max_loss_options_pct",
+            lambda: _options_view(position_id="POS-OPT-1", unrealized_pnl_usd=-80.0),
+            "POS-OPT-1",
+            _equity_view(position_id="POS-EQ-LOSER", unrealized_pnl_usd=-200.0),
+        ),
+    ],
+)
+def test_position_max_loss_provider_passes_breaching_id_from_rule(
+    rule_id: str,
+    make_breaching_view: Any,
+    expected_position_id: str,
+    other_view: PositionView,
+) -> None:
+    """Per-position max-loss providers read ``breaching_position_id`` from the rule.
 
     The library projection is the source of truth for which position triggered
-    the rule; the provider must not re-derive it from ``open_positions``.
+    the rule; the provider must not re-derive it from ``open_positions``. The
+    "other" position carries a deeper loss to guard against accidental re-scan
+    masquerading as correct behavior.
     """
     providers = build_per_rule_kwargs_providers(breach_behavior_config=_make_breach_config())
-    breaching = _equity_view(position_id="POS-1", unrealized_pnl_usd=-60.0)  # -4.0% on $1500 cost
-    deeper_loser = _equity_view(position_id="POS-2", unrealized_pnl_usd=-90.0)  # -6.0%
-    context = _make_context((breaching, deeper_loser))
+    breaching = make_breaching_view()
+    context = _make_context((breaching, other_view))
 
     rule = _evaluation(
-        rule_id="position_max_loss_equity_pct",
+        rule_id=rule_id,
         current=4.0,
         limit=3.0,
-        breaching_position_id="POS-1",
+        breaching_position_id=expected_position_id,
     )
-    kwargs = providers["position_max_loss_equity_pct"](rule, context)
+    kwargs = providers[rule_id](rule, context)
 
-    assert kwargs["breaching_position_id"] == "POS-1"
-    assert kwargs["open_positions"] == (breaching, deeper_loser)
+    assert kwargs["breaching_position_id"] == expected_position_id
+    assert kwargs["open_positions"] == (breaching, other_view)
     assert kwargs["loss_pct"] == 4.0
     assert kwargs["limit_pct"] == 3.0
 
 
-def test_position_max_loss_options_provider_passes_breaching_id_from_rule() -> None:
-    """``position_max_loss_options_pct`` provider trusts ``rule.breaching_position_id``."""
-    providers = build_per_rule_kwargs_providers(breach_behavior_config=_make_breach_config())
-    equity_loser = _equity_view(position_id="POS-EQ-1", unrealized_pnl_usd=-200.0)
-    breaching_option = _options_view(position_id="POS-OPT-1", unrealized_pnl_usd=-80.0)
-    context = _make_context((equity_loser, breaching_option))
-
-    rule = _evaluation(
-        rule_id="position_max_loss_options_pct",
-        current=20.0,
-        limit=15.0,
-        breaching_position_id="POS-OPT-1",
-    )
-    kwargs = providers["position_max_loss_options_pct"](rule, context)
-
-    assert kwargs["breaching_position_id"] == "POS-OPT-1"
-
-
-def test_position_max_loss_provider_raises_when_rule_lacks_breaching_id() -> None:
+@pytest.mark.parametrize(
+    "rule_id", ["position_max_loss_equity_pct", "position_max_loss_options_pct"]
+)
+def test_position_max_loss_provider_raises_when_rule_lacks_breaching_id(rule_id: str) -> None:
     """The provider raises a structural error if ``rule.breaching_position_id`` is None.
 
     Per-position rules must always carry the breaching id from the library
@@ -478,9 +486,9 @@ def test_position_max_loss_provider_raises_when_rule_lacks_breaching_id() -> Non
     positions = (_equity_view(position_id="POS-1", unrealized_pnl_usd=-60.0),)
     context = _make_context(positions)
 
-    rule = _evaluation(rule_id="position_max_loss_equity_pct", current=4.0, limit=3.0)
-    with pytest.raises(ValueError, match="position_max_loss_equity_pct"):
-        providers["position_max_loss_equity_pct"](rule, context)
+    rule = _evaluation(rule_id=rule_id, current=4.0, limit=3.0)
+    with pytest.raises(ValueError, match=rule_id):
+        providers[rule_id](rule, context)
 
 
 def test_single_short_max_provider_passes_breaching_id_limit_and_config() -> None:

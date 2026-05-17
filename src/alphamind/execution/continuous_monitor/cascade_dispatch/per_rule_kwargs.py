@@ -9,11 +9,8 @@ the dispatcher invokes ``selector_for(rule_id)(**kwargs)`` to obtain the
 position-selection result.
 
 Per-position rules (``position_max_loss_*_pct``, ``single_short_max_pct``)
-require ``rule.breaching_position_id`` to be populated by the library
-projection; the providers route the id through to the selector without
-re-scanning ``open_positions``. ``None`` on a per-position rule is a
-structural error — the rule classifier surfaced an immediate breach without
-identifying the breaching position.
+read ``rule.breaching_position_id`` directly; the library projection
+populates it upstream so the providers do not re-scan ``open_positions``.
 
 Sign convention: ``rule.limit_value`` and ``rule.current_value`` for max-loss
 rules are positive-magnitude percentages (e.g., ``3.0`` for a 3% max loss).
@@ -70,8 +67,8 @@ def _drawdown_kwargs_provider(
 # ---------------------------------------------------------------------------
 # Per-position max loss — selector signature is (breaching_position_id,
 # open_positions, loss_pct, limit_pct). Equity and options share the
-# provider; the rule_id distinguishes the instrument class and the
-# instrument-specific selector reads only same-class positions internally.
+# provider; the upstream rule classifier decides which rule_id fired, and
+# the selector closes the single position the rule names.
 # ---------------------------------------------------------------------------
 
 
@@ -107,11 +104,10 @@ def _make_single_short_max_provider(
 
 
 def _require_breaching_position_id(rule: RuleEvaluation) -> str:
-    """Return ``rule.breaching_position_id`` or raise on ``None``.
+    """Per-position rules must carry the breaching id from the library projection.
 
-    Per-position rules must carry the breaching id from the library
-    projection. ``None`` indicates the rule classifier surfaced an immediate
-    breach without identifying a breaching position — a structural error.
+    ``None`` indicates the rule classifier surfaced an immediate breach
+    without identifying a breaching position — a structural error.
     """
     if rule.breaching_position_id is None:
         msg = (

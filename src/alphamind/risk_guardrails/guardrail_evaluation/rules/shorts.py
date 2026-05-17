@@ -66,6 +66,12 @@ def _single_short_max_read_current(state: PortfolioStateSnapshot, config: Librar
     return state.single_short_max_pct
 
 
+def _single_short_max_read_breaching_position_id(
+    state: PortfolioStateSnapshot, config: LibraryConfig
+) -> str | None:
+    return state.single_short_max_position_id
+
+
 def _single_short_max_contribute(
     proposal: ProposedDelta,
     dae: DeltaAdjustedExposure,
@@ -141,6 +147,7 @@ def shorts_specs() -> tuple[RuleSpec, ...]:
             contribute=_single_short_max_contribute,
             effective_limit_key="single_short_max_pct",
             requires_shorts=True,
+            read_breaching_position_id=_single_short_max_read_breaching_position_id,
         ),
         RuleSpec(
             rule_id="borrow_cost_budget_pct_per_day",

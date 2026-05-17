@@ -44,6 +44,12 @@ class RuleSpec:
       ``feature_flags.short_selling_enabled=True``.
     * ``magnitude`` — projection engine classifies on ``|projected_after|``.
     * ``inverse`` — projection engine classifies "below limit = FAIL".
+    * ``read_breaching_position_id`` — optional projector for the
+      ``position_id`` of the position whose state triggered the rule. Per-
+      position rules (e.g., ``single_short_max_pct``) populate it so the
+      continuous-monitor cascade dispatcher routes the breach close to the
+      exact position without re-scanning. Portfolio-scope rules leave it
+      ``None``.
     """
 
     rule_id: str
@@ -58,6 +64,9 @@ class RuleSpec:
     requires_shorts: bool = False
     magnitude: bool = False
     inverse: bool = False
+    read_breaching_position_id: (
+        Callable[[PortfolioStateSnapshot, LibraryConfig], str | None] | None
+    ) = None
 
 
 def existing_position(
