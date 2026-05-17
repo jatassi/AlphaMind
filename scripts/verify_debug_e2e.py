@@ -39,8 +39,7 @@ Usage::
             [--run-type market_hours_rolling] \
             [--reason "verify_debug_e2e"]
 
-See ``scripts/RUNBOOK_debug_e2e.md`` for the operator runbook and
-``scripts/RUNBOOK_end_to_end_verification.md`` for the central runbook.
+See ``scripts/RUNBOOK_end_to_end_verification.md`` for the operator runbook.
 """
 
 from __future__ import annotations

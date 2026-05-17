@@ -11,10 +11,9 @@ the paper DB. ALP-502 retired the legacy per-feature pipeline verify scripts;
 the debug-e2e CLI replaces them as the single e2e gate.
 
 `scripts/verify_debug_e2e.py` wraps the CLI in a verify harness that runs six
-check helpers against the resulting archive. Operator-facing details for the
-verify script live in `scripts/RUNBOOK_debug_e2e.md`; this runbook documents
-the operator workflow for the full e2e gate plus pointers to the surviving
-standalone scripts.
+check helpers against the resulting archive. This runbook is the single
+operator-facing entry point — argparse surface, expected output, failure
+triage, and pointers to the surviving standalone scripts all live below.
 
 ## Purpose
 
@@ -80,6 +79,22 @@ set -a && source .env && set +a && \
 It subprocesses one `python -m alphamind.scheduler run --debug-e2e --once
 <run_type> --reason <text>`, parses the resulting archive, and prints one
 PASS/FAIL line per check. Exit code is 0 on full pass.
+
+Argparse surface:
+
+- `--archive-root DIR` (required) — root of the verification archive. The
+  CLI writes the per-invocation directory under
+  `<archive-root>/invocations/<invocation_id>/`.
+- `--db-path PATH` (default `data/alphamind-debug-e2e.db`) — SQLite DB the
+  debug-e2e mode targets. Must end with `-debug-e2e.db`.
+- `--run-type {pre_open,market_hours_rolling,pre_close,off_hours_rolling,weekend_saturday,weekend_sunday,emergency}`
+  (default `market_hours_rolling`) — firing run type for the manual
+  invocation.
+- `--reason TEXT` (default `verify_debug_e2e`) — free-form reason recorded
+  on the invocation row.
+
+`check_no_alpaca` scans the captured subprocess stderr stream directly — no
+separate `--pipeline-log` flag is needed.
 
 To drive the CLI directly without the wrapper (e.g., when iterating on
 the underlying mode rather than the check semantics):
@@ -205,8 +220,6 @@ to the pipeline e2e gate and remain operator-runnable:
 
 ## References
 
-- `scripts/RUNBOOK_debug_e2e.md` — operator runbook for the
-  `verify_debug_e2e.py` harness.
 - `scripts/RUNBOOK_position_thesis_model.md` — failure-mode triage for
   the offline position-thesis-model verifier.
 - `docs/design/debug-e2e-mode.md` — design doc for the `--debug-e2e`
