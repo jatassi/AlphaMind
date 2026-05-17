@@ -319,12 +319,6 @@ def make_invocation_id_provider_sync(
 # ---------------------------------------------------------------------------
 
 
-# ``build_active_risk_parameters`` historically mirrored the scheduler's
-# own private helper. ALP-513 consolidated both onto
-# :func:`build_active_risk_parameters` so the monitor and scheduler hit one
-# definition of the rule_values-wrap path.
-
-
 async def _load_active_risk_parameters_from_row(
     row: tuple[str, str, str] | None,
     *,
@@ -627,22 +621,21 @@ def make_regime_provider(
         regime=Regime(resolved.regime_label),
     )
     fallback_regime = Regime(resolved.regime_label)
-    fallback_output = _bootstrap_regime_output(
-        bootstrap_parameters=bootstrap_parameters,
-        fallback_regime=fallback_regime,
-        invocation_id=_BOOTSTRAP_SENTINEL,
-        now=now,
-    )
+
+    def _bootstrap() -> RegimeAdaptationOutput:
+        # Tick-time evaluation so ``RegimeAdaptationState.as_of`` reflects the
+        # call's wall clock, not the closure-construction wall clock.
+        return _bootstrap_regime_output(
+            bootstrap_parameters=bootstrap_parameters,
+            fallback_regime=fallback_regime,
+            invocation_id=_BOOTSTRAP_SENTINEL,
+            now=now,
+        )
 
     async def _provider() -> RegimeAdaptationOutput:
         row = await _read_latest_invocation_row(session_factory)
         if row is None:
-            return _bootstrap_regime_output(
-                bootstrap_parameters=bootstrap_parameters,
-                fallback_regime=fallback_regime,
-                invocation_id=_BOOTSTRAP_SENTINEL,
-                now=now,
-            )
+            return _bootstrap()
         invocation_id = row[0]
         prior_parameter_set = await _load_active_risk_parameters_from_row(
             row, fallback=bootstrap_parameters
@@ -654,7 +647,7 @@ def make_regime_provider(
             prior_parameter_set=prior_parameter_set,
             invocation_id=invocation_id,
             now_utc=now(),
-            fallback=fallback_output,
+            fallback=_bootstrap(),
         )
 
     return _provider
@@ -711,6 +704,16 @@ def _resolve_regime_adaptation_sync(
     folded a regime decision through the resolver). The monitor process
     can start before the scheduler does in fresh-DB environments, so the
     breach loop must keep ticking.
+
+    ``held_positions`` and ``risk_budget`` arrive empty: their sole consumer
+    in the resolver is :func:`detect_regime_transition_breaches`, whose
+    output ``RegimeAdaptationOutput.regime_transition_breaches`` is unread
+    by the breach loop (it only reads ``active_risk_parameter_set``). The
+    breach loop already runs full per-tick breach evaluation independently
+    via :func:`evaluate_proposals`, so re-fetching positions here would
+    duplicate the snapshot provider's work without adding signal. Any
+    future monitor consumer of ``regime_transition_breaches`` must arrange
+    for the snapshot to be threaded in here.
     """
     with sync_session_factory() as session:
         persisted = select_most_recent_state(session)

@@ -65,8 +65,6 @@ from alphamind.persistence.models import AssetUniverse, Base, OhlcvBars
 from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
-    make_engine,
-    make_session_factory,
 )
 from alphamind.portfolio_state import load_portfolio_state_config
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
@@ -131,23 +129,6 @@ async def db_session_factory(
         yield factory
     finally:
         await engine.dispose()
-
-
-@pytest.fixture()
-async def sync_session_factory(
-    db_session_factory: async_sessionmaker[AsyncSession],
-    tmp_path: Path,
-) -> sessionmaker[Session]:
-    """Sync sessionmaker bound to the same SQLite file as ``db_session_factory``.
-
-    The regime resolver runs against a sync ``Session`` (per ALP-454 (C));
-    SQLite WAL mode handles concurrent sync + async access on one file.
-    Async-defined so pytest-asyncio resolves the upstream async fixture's
-    schema-create coroutine before this one runs.
-    """
-    del db_session_factory  # ordering dependency only — schema-create must have run.
-    sync_engine = make_engine(str(tmp_path / "alphamind.db"))
-    return make_session_factory(sync_engine)
 
 
 def _build_regime_config_fan(config_dir: Path) -> RegimeAdaptationConfigFan:

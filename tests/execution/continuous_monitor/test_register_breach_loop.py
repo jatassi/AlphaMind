@@ -42,12 +42,7 @@ from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
 from alphamind.execution.venue_configuration.calendar_cache import TradingCalendarCache
 from alphamind.persistence.models import Base
-from alphamind.persistence.session import (
-    make_async_engine,
-    make_async_session_factory,
-    make_engine,
-    make_session_factory,
-)
+from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.risk_guardrails.breach_behavior import BreachBehaviorConfig
 from alphamind.state.config import StatePersistenceConfig
 
@@ -76,23 +71,6 @@ async def db_session_factory(
         yield factory
     finally:
         await engine.dispose()
-
-
-@pytest.fixture()
-async def sync_session_factory(
-    db_session_factory: async_sessionmaker[AsyncSession],
-    tmp_path: Path,
-) -> sessionmaker[Session]:
-    """Sync sessionmaker bound to the same SQLite file as ``db_session_factory``.
-
-    Async-defined so pytest-asyncio resolves the upstream async
-    ``db_session_factory`` fixture before this one runs — the upstream
-    fixture creates the schema on the SQLite file, and this one binds a
-    fresh sync engine to it.
-    """
-    del db_session_factory  # ordering dependency only — schema-create must have run.
-    sync_engine = make_engine(str(tmp_path / "alphamind.db"))
-    return make_session_factory(sync_engine)
 
 
 def _session() -> MonitorSession:

@@ -69,10 +69,15 @@ class PipelineConfig:
     :class:`alphamind.config.resolver.LoadedConfig`, which carries the parsed
     Pydantic-model bundle handed to :func:`compose_config`. Both are
     invocation-scoped data carriers; this one is what the pipeline runs against.
+
+    ``loaded`` retains the parsed input bundle so downstream consumers (e.g.
+    the regime-adaptation resolver wiring) can read it without re-running the
+    14-file YAML parse pass.
     """
 
     resolved: ResolvedConfig
     snapshot: SnapshotResult
+    loaded: LoadedConfig
 
 
 def parse_loaded_config(config_dir: Path) -> LoadedConfig:
@@ -161,4 +166,4 @@ def load_full_config(
     )
 
     # 6. Wrap.
-    return PipelineConfig(resolved=resolved, snapshot=snapshot_result)
+    return PipelineConfig(resolved=resolved, snapshot=snapshot_result, loaded=inputs)

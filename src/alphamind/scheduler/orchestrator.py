@@ -80,7 +80,7 @@ from alphamind.config.models.profiles import ProfileConfig
 from alphamind.config.models.regimes import Regime
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.scheduler import SchedulerConfig
-from alphamind.distillation.regime import RegimeLabel as _DistillationRegimeLabel
+from alphamind.distillation.regime import RegimeLabel as DistillationRegimeLabel
 from alphamind.execution.write_paths.phase1 import (
     Phase1Summary,
     process_unprocessed_fills,
@@ -114,7 +114,6 @@ from alphamind.risk_guardrails.regime_adaptation import (
     evaluate_pre_event_decision,
     evaluate_stress_decision,
     load_config_fan,
-    load_prior_active_risk_parameters,
     make_repository_providers,
     resolve_regime_adaptation,
 )
@@ -134,6 +133,7 @@ from alphamind.scheduler.phase2_dispatch import (
 )
 from alphamind.scheduler.run_context import RunInvocationContext
 from alphamind.scheduler.runtime import resolve_runtime_dimensions
+from alphamind.scripts._common import load_distillation_config
 from alphamind.state.config import (
     StatePersistenceConfig,
     load_state_persistence_config,
@@ -182,54 +182,39 @@ _PORTFOLIO_STATE_CONFIG_PATH = (
 )
 
 
-def _resolve_regime_adaptation_for_invocation(  # noqa: PLR0913 — composition surface threads the regime resolver's inputs through one builder.
+def _resolve_regime_adaptation_for_invocation(
     *,
     sync_session_factory: sessionmaker[Session],
     config_dir: Path,
     pipeline_config: PipelineConfig,
     analysis_result: Any,
     assembled: AssembledSnapshot,
-    prior_invocation_snapshot_path: str | None,
-    active_risk_parameters: ActiveRiskParameterSet,
+    prior_parameter_set: ActiveRiskParameterSet | None,
     invocation_id: str,
     now: datetime,
 ) -> RegimeAdaptationOutput:
-    """Invoke :func:`resolve_regime_adaptation` for the current invocation (ALP-513).
+    """Invoke :func:`resolve_regime_adaptation` for the current invocation.
 
     Wires the regime resolver into the scheduler's per-invocation flow:
     parses the fresh distillation classification out of
-    :class:`AnalysisPipelineResult`, loads the prior parameter set from
-    the previous invocation's snapshot (when one exists), reads the
-    composite-alert state, and runs the resolver in a sync session. The
-    new persisted state is appended to ``regime_adaptation_state`` so the
-    monitor sees a populated row on its next tick.
+    :class:`AnalysisPipelineResult`, reads the composite-alert state, and
+    runs the resolver in a sync session. The new persisted state is
+    appended to ``regime_adaptation_state`` so the monitor sees a populated
+    row on its next tick. ``prior_parameter_set`` flows in from
+    :meth:`PortfolioStateRepository.get_prior_invocation_context` so the
+    resolver's parameter-change-flag computation compares the prior
+    invocation's committed parameters against the current resolution.
     """
-    from alphamind.config.load import parse_loaded_config  # local import — config-load surface
-
-    loaded_config = parse_loaded_config(config_dir)
-    distillation_config = _load_distillation_config(config_dir)
     fan = load_config_fan(
         config_dir=config_dir,
-        loaded_config=loaded_config,
-        distillation_config=distillation_config,
+        loaded_config=pipeline_config.loaded,
+        distillation_config=load_distillation_config(config_dir / "distillation.yaml"),
     )
 
     universal_payload = analysis_result.distillation_outputs.universal_regime_label
-    distillation_regime_label = _DistillationRegimeLabel(universal_payload["regime_label"])
+    distillation_regime_label = DistillationRegimeLabel(universal_payload["regime_label"])
     distillation_vix_level = float(universal_payload["vix_level"])
     distillation_regime_skip_emergency = bool(universal_payload["regime_skip_emergency"])
-
-    prior_parameter_set: ActiveRiskParameterSet | None
-    if prior_invocation_snapshot_path is None:
-        prior_parameter_set = None
-    else:
-        try:
-            prior_parameter_set = load_prior_active_risk_parameters(prior_invocation_snapshot_path)
-        except FileNotFoundError:
-            # Archive relocation or first-ever invocation — fall back to the current
-            # parameter set so ``parameter_change_flag`` stays False rather than
-            # comparing against nothing.
-            prior_parameter_set = active_risk_parameters
 
     with sync_session_factory() as session:
         composite_alert_state = fetch_composite_alert_state(session)
@@ -250,29 +235,7 @@ def _resolve_regime_adaptation_for_invocation(  # noqa: PLR0913 — composition 
             session=session,
         )
         insert_state(session, output.new_persisted_state, ingested_at=now.isoformat())
-    del pipeline_config  # carried for caller-symmetry; unused after fan assembly.
     return output
-
-
-def _prior_invocation_snapshot_path(pipeline_config: PipelineConfig) -> str | None:
-    """Return the previous invocation's ``resolved_config_snapshot_path``, if any.
-
-    The current invocation's snapshot path sits at
-    ``pipeline_config.snapshot.path``; the *prior* invocation's path lives
-    on the prior row in ``invocations``. For now we treat the scheduler's
-    bootstrap path (first-ever invocation) and the archive-relocation path
-    the same way — return ``None`` and let the caller fall back to the
-    current parameter set for ``parameter_change_flag`` comparison.
-    """
-    del pipeline_config  # placeholder: prior-invocation snapshot lookup is not yet plumbed.
-    return None
-
-
-def _load_distillation_config(config_dir: Path) -> Any:
-    """Lazy distillation-config load — avoids the module-load cost on non-resolver paths."""
-    from alphamind.scripts._common import load_distillation_config
-
-    return load_distillation_config(config_dir / "distillation.yaml")
 
 
 def _load_base_profile_rule_values(config_dir: Path) -> dict[str, float]:
@@ -621,19 +584,14 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         progress=progress,
     )
 
-    # ALP-513 — invoke the regime-adaptation orchestrator with the fresh
-    # distillation classification + portfolio snapshot. The output flows into
-    # the decision pipeline's Phase 1 enforcement composition with the
-    # canonical overlay bookkeeping, transition state, and parameter-change
-    # flag the synthetic shim could not carry.
+    prior_context = snapshot_repository.get_prior_invocation_context()
     regime_output = _resolve_regime_adaptation_for_invocation(
         sync_session_factory=context.sync_session_factory,
         config_dir=config_dir,
         pipeline_config=pipeline_config,
         analysis_result=analysis_result,
         assembled=assembled,
-        prior_invocation_snapshot_path=_prior_invocation_snapshot_path(pipeline_config),
-        active_risk_parameters=active_risk_parameters,
+        prior_parameter_set=prior_context.prior_active_risk_parameters,
         invocation_id=invocation_id,
         now=now,
     )
