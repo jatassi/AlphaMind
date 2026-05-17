@@ -247,7 +247,7 @@ def _make_breach_loop_result(*, evaluations: tuple[RuleEvaluation, ...]) -> Brea
     )
 
 
-def _per_position_breach_eval(*, rule_id: str = "per_position_max_loss") -> RuleEvaluation:
+def _per_position_breach_eval(*, rule_id: str = "position_max_loss_equity_pct") -> RuleEvaluation:
     return RuleEvaluation(
         rule_id=rule_id,
         current_value=-3.5,
@@ -293,7 +293,7 @@ def _make_dispatch_context(
     secondary_breach_library: _ScriptedLibrary | None = None,
     portfolio_value_usd: float = 100_000.0,
     extra_positions: tuple[PositionView, ...] = (),
-    primary_rule: str = "per_position_max_loss",
+    primary_rule: str = "position_max_loss_equity_pct",
 ) -> BreachDispatchContext:
     """Build a per-tick context with one breaching position + a passing secondary check."""
     breaching = _equity_position_view(
@@ -331,11 +331,12 @@ def _make_dispatch_context(
         library_config=_StubLibraryConfig(
             effective_limits={
                 primary_rule: 1.0,
-                "per_position_max_loss": 1.0,
-                "daily_drawdown": 1.0,
-                "cumulative_drawdown": 1.0,
-                "total_short_exposure": 1.0,
-                "single_short_max_size": 1.0,
+                "position_max_loss_equity_pct": 1.0,
+                "position_max_loss_options_pct": 1.0,
+                "daily_drawdown_pct": 1.0,
+                "cumulative_drawdown_pct": 1.0,
+                "total_short_pct": 1.0,
+                "single_short_max_pct": 1.0,
                 "margin_call": 1.0,
             }
         ),
@@ -357,7 +358,7 @@ def _per_position_max_loss_kwargs_provider(
     rule: RuleEvaluation,
     context: BreachDispatchContext,
 ) -> dict[str, Any]:
-    """Provider for per_position_max_loss selector kwargs.
+    """Provider for position_max_loss_*_pct selector kwargs.
 
     Tests pass the breaching position's id as the rule's first immediate
     candidate; in real wiring the breach loop would surface this on the
@@ -393,7 +394,7 @@ async def test_happy_path_submits_one_envelope_for_per_position_max_loss() -> No
         submit_envelope=submit,
         deferral_sink=deferral_sink,
         per_rule_kwargs_providers={
-            "per_position_max_loss": _per_position_max_loss_kwargs_provider,
+            "position_max_loss_equity_pct": _per_position_max_loss_kwargs_provider,
         },
         now=lambda: _NOW,
     )
@@ -423,7 +424,7 @@ async def test_happy_path_envelope_and_command_ids_match_canonical_patterns() ->
         submit_envelope=submit,
         deferral_sink=_RecordingDeferralSink(),
         per_rule_kwargs_providers={
-            "per_position_max_loss": _per_position_max_loss_kwargs_provider,
+            "position_max_loss_equity_pct": _per_position_max_loss_kwargs_provider,
         },
         now=lambda: _NOW,
     )
@@ -454,7 +455,7 @@ async def test_deferred_to_pm_does_not_submit_logs_deferral() -> None:
             _StubLibraryOutput(  # post-close → introduces a new FAIL
                 per_rule=(
                     _StubRuleProjection(
-                        rule="total_short_exposure",
+                        rule="total_short_pct",
                         status="FAIL",
                         current=35.0,
                         limit=30.0,
@@ -476,7 +477,7 @@ async def test_deferred_to_pm_does_not_submit_logs_deferral() -> None:
         submit_envelope=submit,
         deferral_sink=deferral_sink,
         per_rule_kwargs_providers={
-            "per_position_max_loss": _per_position_max_loss_kwargs_provider,
+            "position_max_loss_equity_pct": _per_position_max_loss_kwargs_provider,
         },
         now=lambda: _NOW,
     )
@@ -488,7 +489,7 @@ async def test_deferred_to_pm_does_not_submit_logs_deferral() -> None:
     assert submit.calls == []
     assert len(deferral_sink.calls) == 1
     deferral = deferral_sink.calls[0]
-    assert deferral.rule_breached == "per_position_max_loss"
+    assert deferral.rule_breached == "position_max_loss_equity_pct"
     assert deferral.candidate_position_id == "POS-NVDA-1"
 
 
@@ -510,7 +511,7 @@ async def test_secondary_breach_avoided_submits_alternate_envelope() -> None:
             _StubLibraryOutput(  # post-primary-close — introduces a fail
                 per_rule=(
                     _StubRuleProjection(
-                        rule="total_short_exposure",
+                        rule="total_short_pct",
                         status="FAIL",
                         current=35.0,
                         limit=30.0,
@@ -541,7 +542,7 @@ async def test_secondary_breach_avoided_submits_alternate_envelope() -> None:
         submit_envelope=submit,
         deferral_sink=deferral_sink,
         per_rule_kwargs_providers={
-            "per_position_max_loss": _per_position_max_loss_kwargs_provider,
+            "position_max_loss_equity_pct": _per_position_max_loss_kwargs_provider,
         },
         now=lambda: _NOW,
     )
@@ -602,7 +603,7 @@ async def test_trigger_ids_strictly_increase_over_sequential_breaches() -> None:
         submit_envelope=submit,
         deferral_sink=_RecordingDeferralSink(),
         per_rule_kwargs_providers={
-            "per_position_max_loss": _per_position_max_loss_kwargs_provider,
+            "position_max_loss_equity_pct": _per_position_max_loss_kwargs_provider,
         },
         now=lambda: _NOW,
     )
@@ -628,7 +629,7 @@ async def test_trigger_ids_strictly_increase_over_sequential_breaches() -> None:
             submit_envelope=submit,
             deferral_sink=_RecordingDeferralSink(),
             per_rule_kwargs_providers={
-                "per_position_max_loss": _per_position_max_loss_kwargs_provider,
+                "position_max_loss_equity_pct": _per_position_max_loss_kwargs_provider,
             },
             now=lambda: _NOW,
         )
@@ -667,7 +668,7 @@ async def test_breach_cascade_submits_chained_envelopes_in_order_with_shared_cas
             _StubLibraryOutput(  # 4 — post-1st-close, introduces a new fail
                 per_rule=(
                     _StubRuleProjection(
-                        rule="daily_drawdown",
+                        rule="daily_drawdown_pct",
                         status="FAIL",
                         current=6.0,
                         limit=5.0,
@@ -687,7 +688,7 @@ async def test_breach_cascade_submits_chained_envelopes_in_order_with_shared_cas
         extra_positions=(alternate,),
     )
     # Enable cascade follow-up by injecting breach_classification + follow_up_selector.
-    classification = {"daily_drawdown": BreachResponse.immediate_engine}
+    classification = {"daily_drawdown_pct": BreachResponse.immediate_engine}
 
     def _follow_up_selector(
         *,
@@ -737,7 +738,7 @@ async def test_breach_cascade_submits_chained_envelopes_in_order_with_shared_cas
         submit_envelope=submit,
         deferral_sink=_RecordingDeferralSink(),
         per_rule_kwargs_providers={
-            "per_position_max_loss": _per_position_max_loss_kwargs_provider,
+            "position_max_loss_equity_pct": _per_position_max_loss_kwargs_provider,
         },
         follow_up_selector=_follow_up_selector,
         now=lambda: _NOW,

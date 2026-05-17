@@ -63,6 +63,9 @@ from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
     CascadeDispatcher,
     DeferralEvent,
 )
+from alphamind.execution.continuous_monitor.cascade_dispatch.per_rule_kwargs import (
+    build_per_rule_kwargs_providers,
+)
 from alphamind.execution.continuous_monitor.emergency_trigger import (
     AlpacaMarginCallObserver,
     make_emergency_callback,
@@ -426,7 +429,9 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
         context_provider=dispatch_context_provider,
         submit_envelope=submit_envelope,
         deferral_sink=_log_deferral,
-        per_rule_kwargs_providers={},
+        per_rule_kwargs_providers=build_per_rule_kwargs_providers(
+            breach_behavior_config=breach_behavior_config
+        ),
     )
     on_emergency_input = make_emergency_callback(
         session=session,

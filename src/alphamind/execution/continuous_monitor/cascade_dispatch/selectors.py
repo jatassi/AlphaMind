@@ -2,9 +2,17 @@
 
 Maps each immediate-action rule id to the breach-behavior selector primitive
 that picks the position to close. The per-selector signatures differ (drawdown
-+ margin-call take liquidity; per-position-max-loss takes the breaching
-position id; etc.) — the dispatcher reads the table to *resolve* the selector,
-then constructs the per-selector keyword arguments at the call site.
+takes liquidity; per-position-max-loss takes the breaching position id; etc.)
+— the dispatcher reads the table to *resolve* the selector, then constructs
+the per-selector keyword arguments at the call site.
+
+Keys match the rule ids declared in ``config/guardrails.yaml`` and produced by
+the guardrail-evaluation library's ``RuleProjection.rule`` field, so a breach
+projected by the library flows straight through ``selector_for(rule.rule_id)``
+without any naming translation. ``margin_call`` does not appear because the
+margin-call path bypasses ``handle_immediate_breach`` entirely — it routes
+through ``CascadeDispatcher.handle_margin_call`` which invokes
+``select_for_margin_call`` directly.
 
 A rule id that is not in this table is either:
 
@@ -25,10 +33,8 @@ from collections.abc import Callable, Mapping
 from alphamind.risk_guardrails.breach_behavior import (
     PositionSelectionResult,
     select_for_drawdown_breach,
-    select_for_margin_call,
     select_for_position_max_loss,
     select_for_single_short_max_size_breach,
-    select_for_total_short_exposure_breach,
 )
 
 # Selector signatures differ per breach type — the dispatch table stores
@@ -39,12 +45,11 @@ type PositionSelector = Callable[..., PositionSelectionResult]
 
 
 RULE_SELECTOR_DISPATCH: Mapping[str, PositionSelector] = {
-    "daily_drawdown": select_for_drawdown_breach,
-    "cumulative_drawdown": select_for_drawdown_breach,
-    "per_position_max_loss": select_for_position_max_loss,
-    "total_short_exposure": select_for_total_short_exposure_breach,
-    "single_short_max_size": select_for_single_short_max_size_breach,
-    "margin_call": select_for_margin_call,
+    "daily_drawdown_pct": select_for_drawdown_breach,
+    "cumulative_drawdown_pct": select_for_drawdown_breach,
+    "position_max_loss_equity_pct": select_for_position_max_loss,
+    "position_max_loss_options_pct": select_for_position_max_loss,
+    "single_short_max_pct": select_for_single_short_max_size_breach,
 }
 
 
