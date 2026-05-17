@@ -318,6 +318,36 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     }
 
 
+def _account_queries_factory_from_debug_e2e(
+    context: RunInvocationContext,
+) -> Any:
+    """``AccountStateQueriesP`` factory derived from ``context.debug_e2e``.
+
+    Returns ``None`` on the production daemon path so
+    ``gather_phase1_inputs`` falls back to its inline Alpaca-backed
+    default. Returns a closure over the bundle's log-only queries when
+    debug-e2e is active (story ALP-501).
+    """
+    debug_settings = context.debug_e2e
+    if debug_settings is None:
+        return None
+    return lambda _venue, _mode: debug_settings.account_queries
+
+
+def _ca_queries_factory_from_debug_e2e(
+    context: RunInvocationContext,
+) -> Any:
+    """``CorporateActionsQueriesP`` factory derived from ``context.debug_e2e``.
+
+    Mirrors :func:`_account_queries_factory_from_debug_e2e`; ``None`` on
+    the production path, the bundle's log-only queries on debug-e2e.
+    """
+    debug_settings = context.debug_e2e
+    if debug_settings is None:
+        return None
+    return lambda _venue, _mode: debug_settings.ca_queries
+
+
 def _price_provider_from_phase1(
     market_inputs: MarketInputs,
 ) -> StubCurrentPriceProvider:
@@ -452,11 +482,18 @@ async def run_invocation(
             config_dir=config_dir,
             now=now,
         )
+        # Story ALP-501 — ``context.debug_e2e`` is the SOLE signal the
+        # orchestrator is in debug-e2e mode (P3 — no parallel boolean
+        # flag). The helpers resolve to ``None`` on the production path
+        # so ``gather_phase1_inputs`` falls through to its inline
+        # Alpaca-backed defaults.
         phase1_inputs = await gather_phase1_inputs(
             handle=phase1_handle,
             venue_config=venue_config,
             execution_mode=execution_mode,
             as_of=now,
+            account_queries_factory=_account_queries_factory_from_debug_e2e(context),
+            ca_queries_factory=_ca_queries_factory_from_debug_e2e(context),
         )
         phase1_summary = await process_unprocessed_fills(
             phase1_handle,
