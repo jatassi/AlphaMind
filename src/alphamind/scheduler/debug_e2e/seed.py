@@ -19,29 +19,37 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import delete
+from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from alphamind.persistence.models import Base
+from alphamind.persistence.models import Base, RegimeAdaptationStateRow
 from alphamind.portfolio_state.records.positions import (
     Direction,
     InstrumentType,
     OptionContractType,
     PositionStatus,
 )
-from alphamind.portfolio_state.records.theses import ThesisRecordStatus
+from alphamind.portfolio_state.records.theses import (
+    ThesisComponentType,
+    ThesisRecordStatus,
+)
 from alphamind.state.tables import (
     ActivityLogRow,
     BracketLegRow,
     BracketRow,
     CashLedgerRow,
+    CorporateActionIntegrationLedgerRow,
+    DrawdownStateRow,
     FillRecordRow,
     InvocationRow,
+    OrderRow,
     PositionRow,
     ProcessLifetimeRow,
+    ThesisComponentRow,
     ThesisRow,
 )
 from alphamind.state.tables.cash_ledger import CASH_LEDGER_SINGLETON_ID
+from alphamind.state.tables.drawdown_state import DRAWDOWN_STATE_SINGLETON_ID
 
 _DEBUG_DB_SUFFIX = "-debug-e2e.db"
 
@@ -52,16 +60,46 @@ _DEBUG_DB_SUFFIX = "-debug-e2e.db"
 # parent issue ALP-493 pre-resolved decision § (L). The order maps to
 # the design's logical names: PositionFills → FillRecordRow,
 # PositionTheses → ThesisRow.
+# State-persistence tables wiped at the start of every debug-e2e invocation.
+#
+# The snapshot-from-prod workflow (``scripts/snapshot_prod_for_debug_e2e.py``)
+# means the bootstrap DB carries real production rows for every table below,
+# so the wipe list MUST cover all state-persistence tables — not just the
+# narrower set the original design enumerated when the seeder ran against a
+# truly fresh DB. Tables managed by collectors / the data layer
+# (``asset_universe``, distillation calibration, news, event calendar, ...)
+# are deliberately preserved by the snapshot and are NOT wiped here.
+#
+# ``PRAGMA defer_foreign_keys = ON`` (set inside :func:`wipe_and_seed`)
+# defers FK enforcement until commit, which lets the DELETEs run in any
+# order despite the circular FK between ``orders`` and ``brackets``
+# (orders.bracket_id → brackets ↔ brackets.entry_order_id → orders). Order
+# here documents intent (children-before-parents where there's no cycle)
+# rather than being load-bearing for correctness.
 _WIPE_ORDER: tuple[type[Base], ...] = (
     ActivityLogRow,
-    BracketLegRow,
-    BracketRow,
     FillRecordRow,
+    BracketLegRow,
+    CorporateActionIntegrationLedgerRow,
+    OrderRow,
+    BracketRow,
+    ThesisComponentRow,
     ThesisRow,
     PositionRow,
     CashLedgerRow,
+    DrawdownStateRow,
+    RegimeAdaptationStateRow,
     InvocationRow,
     ProcessLifetimeRow,
+)
+
+# Components seeded per thesis. ACTIVE theses fail validation at codec read
+# time unless all three rationale types are present (see
+# ``ThesisRecord._check_mandatory_coverage``).
+_REQUIRED_COMPONENT_TYPES: tuple[ThesisComponentType, ...] = (
+    ThesisComponentType.ENTRY_RATIONALE,
+    ThesisComponentType.TARGET_RATIONALE,
+    ThesisComponentType.INVALIDATION_RATIONALE,
 )
 
 
@@ -194,6 +232,13 @@ def _build_strategy_position_row(
 ) -> PositionRow:
     expiration = (now + timedelta(days=int(synthetic.expiration_offset_days))).date()
     legs_payload = []
+    # ``SyntheticStrategyLeg`` carries no per-leg premium (the synthetic
+    # spread is summarized by ``net_premium`` only), but the pricing layer's
+    # ``PriceQuote.__post_init__`` requires per-leg ``price_usd > 0`` when
+    # the strategy position is enriched. Spread ``net_premium`` evenly across
+    # legs so every leg gets a positive placeholder — the downstream P&L is
+    # nominal for debug-e2e (no real prices flow), but the invariant holds.
+    per_leg_premium = float(synthetic.net_premium) / max(len(synthetic.legs), 1)
     for index, leg in enumerate(synthetic.legs):
         leg_contract_type = OptionContractType(leg.contract_type.value)
         leg_direction = Direction(leg.direction.value)
@@ -209,7 +254,7 @@ def _build_strategy_position_row(
                     "contract_type": leg_contract_type.value,
                     "contract_count": float(leg.contracts),
                     "contract_multiplier": 100.0,
-                    "premium_paid_per_contract": 0.0,
+                    "premium_paid_per_contract": per_leg_premium,
                     "greeks": {
                         "delta": 0.0,
                         "gamma": 0.0,
@@ -258,29 +303,62 @@ def _build_strategy_position_row(
     )
 
 
-def _build_thesis_row(synthetic: Any, *, now: datetime) -> ThesisRow:
-    """Translate a ``SyntheticThesis`` into a ``ThesisRow``.
+def _component_id(thesis_id: str, component_type: ThesisComponentType) -> str:
+    return f"{thesis_id}-{component_type.value.lower()}"
+
+
+def _build_thesis_rows(
+    synthetic: Any, *, now: datetime
+) -> tuple[ThesisRow, tuple[ThesisComponentRow, ...]]:
+    """Translate a ``SyntheticThesis`` into one parent ``ThesisRow`` + 3 child rows.
 
     The synthetic thesis is a flat ``(position_index, headline, rationale)``
     triple; the ``ThesisRow`` carries a richer narrative-JSON payload that
     the codec round-trip reads (see
-    :func:`alphamind.state.tables.theses_codec.rows_to_record`). We stamp
-    the minimum fields needed for SELECT-shape tests against the seeded
-    DB to succeed.
+    :func:`alphamind.state.tables.theses_codec.rows_to_record`). ACTIVE
+    theses fail validation unless the codec-reconstructed record carries
+    ENTRY/TARGET/INVALIDATION rationale components (see
+    ``ThesisRecord._check_mandatory_coverage``), so each thesis gets all
+    three seeded.
     """
     thesis_id = f"debug-thesis-{synthetic.position_index:02d}"
     position_id = f"debug-pos-{synthetic.position_index:02d}"
     time_expectation_hours = 24.0
     expected_resolution_at = now + timedelta(hours=time_expectation_hours)
+    generation_iso = _isoformat(now)
+
+    component_rows: list[ThesisComponentRow] = []
+    components_metadata: dict[str, dict[str, str | None]] = {}
+    for component_type in _REQUIRED_COMPONENT_TYPES:
+        component_id = _component_id(thesis_id, component_type)
+        component_rows.append(
+            ThesisComponentRow(
+                component_id=component_id,
+                thesis_id=thesis_id,
+                component_type=component_type.value,
+                linked_bracket_leg=None,
+                instrument_reference=position_id,
+                narrative=f"{component_type.value} for {thesis_id}",
+                key_assumptions_json="[]",
+                supporting_signals_json="[]",
+                resolution_outcome=None,
+                resolution_notes=None,
+            )
+        )
+        components_metadata[component_id] = {
+            "linked_bracket_leg_type": None,
+            "generation_timestamp": generation_iso,
+        }
+
     narrative_payload = {
         "key_catalyst": str(synthetic.headline),
         "age_hours": 0.0,
         "expected_resolution_at": _isoformat(expected_resolution_at),
         "resolution_pnl_usd": None,
         "entry_fill_gap_usd": None,
-        "components_metadata": {},
+        "components_metadata": components_metadata,
     }
-    return ThesisRow(
+    thesis_row = ThesisRow(
         thesis_id=thesis_id,
         position_id=position_id,
         status=ThesisRecordStatus.ACTIVE.value,
@@ -289,9 +367,10 @@ def _build_thesis_row(synthetic: Any, *, now: datetime) -> ThesisRow:
         summary=str(synthetic.rationale),
         time_expectation_hours=time_expectation_hours,
         position_size_rationale=None,
-        generation_timestamp=_isoformat(now),
+        generation_timestamp=generation_iso,
         narrative_json=json.dumps(narrative_payload),
     )
+    return thesis_row, tuple(component_rows)
 
 
 def _build_cash_ledger_row(starting_cash_usd: float, *, now: datetime) -> CashLedgerRow:
@@ -306,6 +385,27 @@ def _build_cash_ledger_row(starting_cash_usd: float, *, now: datetime) -> CashLe
         available_buying_power_usd=cash,
         margin_held_usd=zero,
         unsettled_proceeds_json="[]",
+        last_updated_at=_isoformat(now),
+    )
+
+
+def _build_drawdown_state_row(starting_cash_usd: float, *, now: datetime) -> DrawdownStateRow:
+    """Seed the ``drawdown_state`` singleton at the synthetic-portfolio HWM.
+
+    The snapshot assembler reads this singleton via
+    :meth:`SqlRepository.get_drawdown_state`, which raises on absence (the
+    fresh-DB fallback in :func:`alphamind.state.drawdown_reader.read_drawdown_state`
+    is only used pre-snapshot for halt-state computation). Seeding it here
+    keeps debug-e2e runnable from a fully wiped DB without depending on a
+    prior Phase 1 write to bootstrap the row.
+    """
+    return DrawdownStateRow(
+        id=DRAWDOWN_STATE_SINGLETON_ID,
+        equity_high_water_mark_usd=float(starting_cash_usd),
+        current_drawdown_pct=0.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        drawdown_by_source_json="{}",
         last_updated_at=_isoformat(now),
     )
 
@@ -333,6 +433,15 @@ async def wipe_and_seed(
         msg = f"refusing to wipe non-debug DB path {db_path!r}"
         raise RuntimeError(msg)
 
+    # Defer FK enforcement until commit so the wipe can DELETE the
+    # state-persistence tables in any order despite the orders↔brackets
+    # circular FK (and any other deferred edges the schema may add). At
+    # commit time every wiped table is empty and every seed row's parents
+    # exist, so FK validation passes cleanly. This is the SQLite-specific
+    # ``defer_foreign_keys`` PRAGMA (scoped to the current transaction);
+    # it does NOT disable enforcement globally.
+    await session.execute(text("PRAGMA defer_foreign_keys = ON"))
+
     for table in _WIPE_ORDER:
         await session.execute(delete(table))
 
@@ -340,8 +449,12 @@ async def wipe_and_seed(
         session.add(_build_position_row(synthetic, position_index=index, now=now))
 
     for synthetic_thesis in portfolio.theses:
-        session.add(_build_thesis_row(synthetic_thesis, now=now))
+        thesis_row, component_rows = _build_thesis_rows(synthetic_thesis, now=now)
+        session.add(thesis_row)
+        for component_row in component_rows:
+            session.add(component_row)
 
     session.add(_build_cash_ledger_row(portfolio.starting_cash_usd, now=now))
+    session.add(_build_drawdown_state_row(portfolio.starting_cash_usd, now=now))
 
     await session.commit()

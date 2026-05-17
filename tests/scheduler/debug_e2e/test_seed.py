@@ -465,22 +465,39 @@ class TestSeed:
 
 
 class TestWipeOrdering:
-    def test_wipe_order_lists_children_before_parents(self) -> None:
-        """The wipe list must put activity_log / bracket_legs / brackets /
-        fill_records / theses (children) before positions / cash_ledger /
-        invocations / process_lifetimes (parents).
+    def test_wipe_order_lists_all_state_persistence_tables(self) -> None:
+        """The wipe list must cover every state-persistence table.
+
+        The snapshot-from-prod workflow brings real production rows for
+        every state-persistence table into the bootstrap DB, so the wipe
+        list must cover them all. Tables not covered would leak prod
+        state into the verified pipeline.
+
+        ``PRAGMA defer_foreign_keys = ON`` (set inside ``wipe_and_seed``)
+        handles the orders↔brackets circular FK; the order below is
+        documentation, not load-bearing for correctness.
         """
         names = [row_type.__tablename__ for row_type in _WIPE_ORDER]
         children = {
             "activity_log",
             "bracket_legs",
             "brackets",
+            "corporate_action_integration_ledger",
             "fill_records",
+            "orders",
+            "thesis_components",
             "theses",
         }
-        parents = {"positions", "cash_ledger", "invocations", "process_lifetimes"}
+        parents = {
+            "positions",
+            "cash_ledger",
+            "drawdown_state",
+            "invocations",
+            "process_lifetimes",
+            "regime_adaptation_state",
+        }
 
-        # Every name in the list is one of the 9.
+        # Every name in the list is one of the enumerated wipe tables.
         assert set(names) == children | parents
 
         # Every child appears before every parent it can reference.

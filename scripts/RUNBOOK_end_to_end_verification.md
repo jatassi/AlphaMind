@@ -54,14 +54,37 @@ invariant the prior per-feature verify suite collectively covered:
    Alpaca credentials are **deliberately not required** — the debug-e2e
    mode replaces the broker adapter with a log-only stand-in.
 3. **`uv sync` completed.**
-4. **Dedicated debug DB.** Debug-e2e wipes its DB on every invocation
-   (parent issue § C, decision 2b — full reproducibility). The seeder
-   refuses to wipe any path whose basename does not end with
-   `-debug-e2e.db`. The canonical path is `data/alphamind-debug-e2e.db`;
-   any sibling path (e.g. `data/scratch-debug-e2e.db`) is also accepted.
-   The orchestrator creates the file on first invocation; no separate
-   `alembic upgrade head` is needed because the same migration chain
-   the production DB runs on is applied.
+4. **Dedicated debug DB seeded from a prod snapshot.** Debug-e2e wipes
+   the state-persistence subset on every invocation (parent issue § C,
+   decision 2b) but assumes the *data layer* — `asset_universe`,
+   `sector_classification`, distillation calibration baselines
+   (`distillation_ticker_baseline`, `distillation_pair_lag`), news
+   clusters, the event calendar, and the rest of the collector-populated
+   tables — is already present. The canonical bootstrap is a file copy
+   of the production DB:
+
+   ```bash
+   uv run python scripts/snapshot_prod_for_debug_e2e.py
+   # add --force to overwrite an existing target
+   ```
+
+   This runs from a machine with `data/alphamind.db` accessible (the
+   production server, or a Mac dev box with the volume mounted) and
+   produces `data/alphamind-debug-e2e.db` — a ~6 GB file with the full
+   migrated schema and live data-layer state. On Mac, copy this file
+   from the production server (`scp` / SMB share) into the local
+   `data/` directory before running the verify.
+
+   The seeder refuses any path whose basename does not end with
+   `-debug-e2e.db`. The canonical target is
+   `data/alphamind-debug-e2e.db`; any sibling path (e.g.
+   `data/scratch-debug-e2e.db`) is also accepted.
+
+   Re-snapshot when (a) alembic migrations land that change the schema,
+   (b) you want the latest collector state baked into the verify, or
+   (c) you suspect the snapshot has drifted materially from prod.
+   `wipe_and_seed` runs over the snapshot on every invocation, so
+   per-invocation state-persistence rows never leak between runs.
 
 ## Invocation
 
