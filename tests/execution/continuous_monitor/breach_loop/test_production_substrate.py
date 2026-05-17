@@ -610,7 +610,7 @@ async def _build_dispatch_context_provider(
     adv_map: Mapping[str, float] | None = None,
     quotes: Mapping[str, float] | None = None,
     iv_provider: FixtureIvProvider | None = None,
-    assembled_snapshot_call_log: list[None] | None = None,
+    assembled_snapshot_call_count: list[int] | None = None,
 ) -> DispatchContextProvider:
     """Construct ``make_dispatch_context_provider`` with stubs around the varying inputs.
 
@@ -620,9 +620,9 @@ async def _build_dispatch_context_provider(
     :class:`LibrarySnapshot`, so the assembled snapshot's other fields only
     need to satisfy :class:`PortfolioStateSnapshot`'s validators.
 
-    Pass ``assembled_snapshot_call_log`` to count how many times the
-    assembled-snapshot provider is awaited per dispatch (regression test
-    for ALP-510).
+    Pass ``assembled_snapshot_call_count`` (single-element ``[0]``) to
+    count how many times the assembled-snapshot provider is awaited per
+    dispatch (regression test for ALP-510).
     """
     as_of = datetime(2026, 5, 17, 14, 30, tzinfo=UTC)
     cache = UnderlyingPriceCache()
@@ -634,8 +634,8 @@ async def _build_dispatch_context_provider(
     regime_output = _make_regime_output()
 
     async def _assembled_provider() -> AssembledSnapshot:
-        if assembled_snapshot_call_log is not None:
-            assembled_snapshot_call_log.append(None)
+        if assembled_snapshot_call_count is not None:
+            assembled_snapshot_call_count[0] += 1
         return assembled
 
     def _translator(_snapshot: PortfolioStateSnapshot) -> LibrarySnapshot:
@@ -674,8 +674,8 @@ class TestMakeDispatchContextProvider:
         market_inputs = cast(MarketInputs, context.market_inputs)
         assert market_inputs.iv_provider is iv
 
-    async def test_open_positions_populated_from_provider(self, config_dir: Path) -> None:
-        """When ``open_positions_provider`` returns N positions, the context carries N."""
+    async def test_open_positions_populated_from_assembled_snapshot(self, config_dir: Path) -> None:
+        """N positions on the assembled snapshot → N positions on the context."""
         positions = (
             _equity_position_view(position_id="p1", ticker="AAPL"),
             _equity_position_view(position_id="p2", ticker="MSFT"),
@@ -686,8 +686,10 @@ class TestMakeDispatchContextProvider:
         context = await provider()
         assert context.open_positions == positions
 
-    async def test_open_positions_empty_when_provider_absent(self, config_dir: Path) -> None:
-        """No ``open_positions_provider`` → empty ``open_positions`` and zero liquidity/R/R."""
+    async def test_open_positions_empty_when_assembled_snapshot_has_none(
+        self, config_dir: Path
+    ) -> None:
+        """Assembled snapshot with no open positions → empty open_positions / liquidity / R/R."""
         provider = await _build_dispatch_context_provider(config_dir=config_dir)
         context = await provider()
         assert context.open_positions == ()
@@ -838,14 +840,14 @@ class TestMakeDispatchContextProvider:
         awaited exactly once.
         """
         positions = (_equity_position_view(position_id="p1", ticker="AAPL"),)
-        call_log: list[None] = []
+        call_count = [0]
         provider = await _build_dispatch_context_provider(
             config_dir=config_dir,
             positions=positions,
-            assembled_snapshot_call_log=call_log,
+            assembled_snapshot_call_count=call_count,
         )
         await provider()
-        assert len(call_log) == 1
+        assert call_count[0] == 1
 
 
 async def _seed_universe_ticker(factory: async_sessionmaker[AsyncSession], *, ticker: str) -> None:

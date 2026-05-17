@@ -367,10 +367,8 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     # One IvProvider shared by the breach-loop evaluator and the cascade
     # dispatcher's re-projection so both observe identical IV values.
     iv_provider = FixtureIvProvider(surface={}, realized_vol={})
-    # ALP-510 — one AssembledSnapshot provider + translator shared by the
-    # breach-loop's library-snapshot provider and the cascade dispatcher's
-    # context provider, so the assemble pipeline runs at most once per
-    # consumer call rather than twice per immediate-breach event.
+    # ALP-510 — one assembled-snapshot provider + translator shared across
+    # the breach-loop snapshot provider and the dispatcher's context provider.
     assembled_snapshot_provider = make_assembled_snapshot_provider(
         session_factory=db_session_factory,
         underlying_cache=underlying_cache_typed,

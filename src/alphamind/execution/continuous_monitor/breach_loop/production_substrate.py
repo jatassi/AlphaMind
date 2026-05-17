@@ -396,7 +396,7 @@ async def _load_active_risk_parameters_from_row(
 
 
 # ---------------------------------------------------------------------------
-# Shared inner assembly — snapshot and open-positions providers both use this
+# Inner assembly helper — underlies make_assembled_snapshot_provider
 # ---------------------------------------------------------------------------
 
 
@@ -448,7 +448,7 @@ async def _assemble_for_breach_loop_tick(
 
 
 # ---------------------------------------------------------------------------
-# assembled_snapshot_provider — the single substrate seam (ALP-510)
+# assembled_snapshot_provider
 # ---------------------------------------------------------------------------
 
 
@@ -472,6 +472,13 @@ def make_assembled_snapshot_provider(
     SELECT + active-parameter read + SQL repository composition + price
     projection + :func:`assemble_snapshot`) runs at most once per call
     rather than once per consumer (ALP-510).
+
+    Bootstrap contract: on a fresh DB with no invocation rows, the inner
+    pipeline runs against ``_BOOTSTRAP_SENTINEL`` and returns an empty
+    snapshot — the same path :func:`make_snapshot_provider` exercised
+    before ALP-510. The cascade dispatcher only fires on immediate-breach
+    events, which presuppose a running breach loop with a seeded
+    ``cash_ledger`` singleton, so this branch is unreachable in production.
     """
     bootstrap_parameters = _build_active_risk_parameters(
         rule_values=resolved.rule_values,
@@ -497,8 +504,7 @@ def make_assembled_snapshot_provider(
 
 
 # ---------------------------------------------------------------------------
-# library_snapshot_translator — pure adapter, shared by snapshot_provider
-# and dispatch_context_provider so both wire identical sector mapping
+# library_snapshot_translator
 # ---------------------------------------------------------------------------
 
 
@@ -527,7 +533,7 @@ def make_library_snapshot_translator(
 
 
 # ---------------------------------------------------------------------------
-# snapshot_provider — breach-loop's per-tick :class:`LibrarySnapshot` seam
+# snapshot_provider
 # ---------------------------------------------------------------------------
 
 
