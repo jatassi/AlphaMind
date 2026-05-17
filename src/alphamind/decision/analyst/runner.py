@@ -21,6 +21,7 @@ from typing import Any, Literal
 
 import yaml
 
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import (
@@ -124,7 +125,7 @@ def load_analyst_agent_config(
 # ---------------------------------------------------------------------------
 
 
-async def run_analyst(  # noqa: PLR0913 — signature dictated by ALP-299 spec
+async def run_analyst(  # noqa: PLR0913 — signature dictated by ALP-299 spec plus ALP-497 progress/phase
     *,
     mode: Literal["normal", "watchlist"],
     synthesizer_text: str,
@@ -148,6 +149,8 @@ async def run_analyst(  # noqa: PLR0913 — signature dictated by ALP-299 spec
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     agent_config: BaseAgentConfig | None = None,
     borrow_cost_resolver: Callable[[str], float] | None = None,
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "analyst",
 ) -> AnalystResult:
     """Invoke the analyst and return an :class:`AnalystResult`.
 
@@ -214,6 +217,8 @@ async def run_analyst(  # noqa: PLR0913 — signature dictated by ALP-299 spec
         active_sectors=active_sectors,
         archive_root=archive_root,
         sdk_query_fn=sdk_query_fn,
+        progress=progress,
+        phase=phase,
     )
     logger.info(
         "analyst harness invoked (tokens=%s, tool_calls=%d, retry_count=%d, stop_reason=%s)",

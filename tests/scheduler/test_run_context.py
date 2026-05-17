@@ -68,7 +68,7 @@ def test_debug_e2e_accepts_sentinel_value() -> None:
         env_path=Path("/tmp/.env"),
         venue_config="venue-config-sentinel",  # type: ignore[arg-type]
         execution_mode="paper-sentinel",  # type: ignore[arg-type]
-        debug_e2e=sentinel,
+        debug_e2e=sentinel,  # type: ignore[arg-type]
     )
     assert ctx.debug_e2e is sentinel
 

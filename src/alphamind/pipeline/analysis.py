@@ -31,6 +31,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis.adaptive_research.runner import (
     AdaptiveResearcherResult,
     run_adaptive_researcher,
@@ -105,7 +106,7 @@ def _extract_regime_label(distillation_outputs: DistillationOutputs) -> str:
     return str(label)
 
 
-async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface threads typed inputs through every stage
+async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface threads typed inputs through every stage plus ALP-497 progress
     *,
     session: Session,
     invocation_id: str,
@@ -119,6 +120,7 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
     portfolio_reader: SynthesizerPortfolioStateReader,
     archive_root: Path | None = None,
     provenance_root: Path | None = None,
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
 ) -> AnalysisPipelineResult:
     """Run the distillation → analysis-layer composition end-to-end.
 
@@ -136,10 +138,19 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
     sibling when one of the parallel branches raises and re-raises the
     failures inside a ``BaseExceptionGroup``; we unwrap the first child so
     callers see the same exception type they did under ``asyncio.gather``.
+
+    ``progress`` is the per-invocation event sink (story ALP-495). The
+    runner emits ``phase_start`` / ``phase_done`` around each phase and
+    threads the same emitter into every harness call so the single
+    ``agent_request`` / ``agent_response`` emit point inside
+    :func:`alphamind.analysis._harness_core.invoke_sdk` records each SDK
+    call. Defaults to a no-op emitter for production callers that don't
+    set ``--debug-e2e``.
     """
     # Project the Pydantic ``DistillationConfig`` boundary type onto its
     # frozen-dataclass mirror (ALP-471) before the orchestrator runs — the
     # orchestrator's compute path consumes the dataclass form.
+    progress.phase_start("distillation")
     distillation_outputs = await run_external_distillation(
         session,
         distillation_config.to_domain(),
@@ -149,7 +160,10 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
         archive_root=archive_root,
         provenance_root=provenance_root,
     )
+    progress.phase_done("distillation")
 
+    progress.phase_start("domain_researchers")
+    progress.phase_start("qualitative")
     try:
         async with asyncio.TaskGroup() as tg:
             domain_task = tg.create_task(
@@ -161,6 +175,8 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
                     agents_config=agents_config,
                     sectors_config=sectors_config,
                     archive_root=archive_root,
+                    progress=progress,
+                    phase="domain_researchers",
                 )
             )
             qualitative_task = tg.create_task(
@@ -173,6 +189,8 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
                     universe=universe,
                     agents_config=agents_config,
                     archive_root=archive_root,
+                    progress=progress,
+                    phase="qualitative",
                 )
             )
     except BaseExceptionGroup as eg:
@@ -184,6 +202,8 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
 
     domain_researchers_output = domain_task.result()
     qualitative_result = qualitative_task.result()
+    progress.phase_done("domain_researchers")
+    progress.phase_done("qualitative")
 
     sector_briefs: tuple[SectorBrief, ...] = (
         domain_researchers_output.tech_semis.brief,
@@ -191,6 +211,7 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
         domain_researchers_output.energy.brief,
     )
 
+    progress.phase_start("adaptive")
     adaptive_result = await run_adaptive_researcher(
         invocation_id,
         as_of,
@@ -203,8 +224,12 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
         universe=universe,
         agents_config=agents_config,
         archive_root=archive_root,
+        progress=progress,
+        phase="adaptive",
     )
+    progress.phase_done("adaptive")
 
+    progress.phase_start("synthesizer")
     synthesizer_result = await run_synthesizer(
         regime_label=_extract_regime_label(distillation_outputs),
         sector_briefs=sector_briefs,
@@ -216,7 +241,10 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
         now_utc=as_of,
         archive_root=archive_root,
         agent_config=agents_config.get(AgentName.synthesizer.value),
+        progress=progress,
+        phase="synthesizer",
     )
+    progress.phase_done("synthesizer")
 
     return AnalysisPipelineResult(
         distillation_outputs=distillation_outputs,

@@ -22,6 +22,7 @@ from typing import Any
 
 import yaml
 
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.adaptive_research.models import AdaptiveBrief
 from alphamind.analysis.domain_researchers.models import SectorBrief
@@ -206,7 +207,7 @@ def load_synthesizer_agent_config(
     return cfg.agents[AgentName.synthesizer]
 
 
-async def run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 spec
+async def run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 spec plus ALP-497 progress/phase kwargs
     *,
     regime_label: str,
     sector_briefs: tuple[SectorBrief, ...],
@@ -219,6 +220,8 @@ async def run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 sp
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     agent_config: BaseAgentConfig | None = None,
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "synthesizer",
 ) -> SynthesizerResult:
     """Invoke the synthesizer and return a ``SynthesizerResult``.
 
@@ -250,6 +253,8 @@ async def run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 sp
             portfolio_reader=portfolio_reader,
             archive_root=archive_root,
             sdk_query_fn=sdk_query_fn,
+            progress=progress,
+            phase=phase,
         )
 
     return await _run_synthesizer(

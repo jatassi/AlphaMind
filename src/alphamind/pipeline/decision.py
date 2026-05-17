@@ -44,6 +44,7 @@ from typing import Any, Literal
 from alphamind._kernel.exception_group import first_non_cancelled
 from alphamind._kernel.mode import PipelineMode
 from alphamind._kernel.money import money
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
 from alphamind.config.models.guardrails import ProgressiveTier
 from alphamind.decision.analyst.runner import AnalystResult, run_analyst
@@ -182,7 +183,7 @@ def _derive_cross_constraint_impact(
 # ---------------------------------------------------------------------------
 
 
-async def run_decision_pipeline(  # noqa: PLR0913 — composition surface threads typed inputs through every stage
+async def run_decision_pipeline(  # noqa: PLR0913 — composition surface threads typed inputs through every stage plus ALP-497 progress
     *,
     assembled_snapshot: AssembledSnapshot,
     repository: PortfolioStateRepository,
@@ -212,6 +213,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     correlation_state: CorrelationState | None = None,
     dependency_risk_flag: DependencyRiskFlag | None = None,
     prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
 ) -> DecisionPipelineResult:
     """Run the decision-layer composition end-to-end.
 
@@ -313,6 +315,8 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     strategist_mode = pipeline_mode.to_strategist_pipeline_mode()
     available_capital_usd = pydantic_snapshot.cash_ledger.true_deployable_capital_usd
     current_price_lookup = _price_lookup_from_assembled(assembled)
+    progress.phase_start("analyst")
+    progress.phase_start("strategist")
     try:
         async with asyncio.TaskGroup() as tg:
             analyst_task = tg.create_task(
@@ -338,6 +342,8 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
                     archive_root=archive_root,
                     agent_config=resolved_agents.get(AgentName.analyst.value),
                     borrow_cost_resolver=borrow_cost_resolver,
+                    progress=progress,
+                    phase="analyst",
                 )
             )
             strategist_task = tg.create_task(
@@ -367,6 +373,8 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
                     regime_transition_breaches=regime_transition_breaches,
                     borrow_cost_resolver=borrow_cost_resolver,
                     prior_health_snapshots=prior_health_snapshots,
+                    progress=progress,
+                    phase="strategist",
                 )
             )
     except BaseExceptionGroup as eg:
@@ -383,8 +391,11 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
 
     analyst_result = analyst_task.result()
     strategist_result = strategist_task.result()
+    progress.phase_done("analyst")
+    progress.phase_done("strategist")
 
     # 6. Run proposal pre-processor — pure (no I/O, no clock reads).
+    progress.phase_start("pre_processor")
     pre_processor_bundle = run_proposal_pre_processor(
         analyst_output=analyst_result.output,
         strategist_output=strategist_result.output,
@@ -394,12 +405,14 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
         snapshot_timestamp=pydantic_snapshot.snapshot_assembled_at,
         timestamp=timestamp,
     )
+    progress.phase_done("pre_processor")
 
     # 7. Build PM cross-constraint impact and run portfolio manager.
     cross_constraint_impact = _derive_cross_constraint_impact(
         combined_set_impact=pre_processor_bundle.aggregate_observations.combined_set_impact,
         available_capital_usd=available_capital_usd,
     )
+    progress.phase_start("pm")
     pm_result = await run_portfolio_manager(
         mode=mode,
         pre_processor_bundle=pre_processor_bundle,
@@ -436,7 +449,10 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
         agent_config=resolved_agents.get(AgentName.portfolio_manager.value),
         borrow_cost_resolver=borrow_cost_resolver,
         prior_health_snapshots=prior_health_snapshots,
+        progress=progress,
+        phase="pm",
     )
+    progress.phase_done("pm")
 
     return DecisionPipelineResult(
         pydantic_snapshot=pydantic_snapshot,

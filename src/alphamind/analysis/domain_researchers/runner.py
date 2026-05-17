@@ -21,6 +21,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._shared import Sector, TokensUsed
 from alphamind.analysis.domain_researchers.harness import HarnessSuccess, invoke_domain_researcher
 from alphamind.analysis.domain_researchers.input_bundle import InputBundle, assemble_input_bundle
@@ -103,7 +104,7 @@ def _validate_sectors_config(sectors_config: Mapping[str, list[str]]) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _run_domain_researcher(
+async def _run_domain_researcher(  # noqa: PLR0913 — internal helper threading runner state plus ALP-497 progress/phase
     *,
     sector: Sector,
     invocation_id: str,
@@ -113,6 +114,8 @@ async def _run_domain_researcher(
     sectors_config: Mapping[str, list[str]],
     deps: _Deps,
     archive_root: Path | None = None,
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "domain_researchers",
 ) -> DomainResearcherResult:
     """Run a domain researcher with injected dependencies.
 
@@ -184,6 +187,8 @@ async def _run_domain_researcher(
         user_message=bundle.bundle_text,
         invocation_id=invocation_id,
         archive_root=archive_root,
+        progress=progress,
+        phase=phase,
     )
     logger.info(
         "[%s] harness invoked (retry_count=%d, tokens=%s)",
@@ -210,7 +215,7 @@ async def _run_domain_researcher(
 # ---------------------------------------------------------------------------
 
 
-async def run_domain_researcher(
+async def run_domain_researcher(  # noqa: PLR0913 — public signature plus ALP-497 progress/phase
     sector: Sector,
     invocation_id: str,
     as_of: datetime,
@@ -220,6 +225,8 @@ async def run_domain_researcher(
     agents_config: Mapping[str, BaseAgentConfig],
     sectors_config: Mapping[str, list[str]],
     archive_root: Path | None = None,
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "domain_researchers",
 ) -> DomainResearcherResult:
     """Invoke a domain researcher and return a validated ``DomainResearcherResult``.
 
@@ -279,4 +286,6 @@ async def run_domain_researcher(
             harness_fn=invoke_domain_researcher,
         ),
         archive_root=archive_root,
+        progress=progress,
+        phase=phase,
     )

@@ -63,6 +63,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind._kernel.mode import PipelineMode
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.config.assets_views import (
     active_sectors_from_resolved,
     build_sector_resolver,
@@ -424,6 +425,18 @@ async def run_invocation(
         now=now,
     )
 
+    # Story ALP-497 — single read of the per-invocation progress emitter.
+    # Production invocations leave ``context.debug_e2e`` at ``None`` and
+    # fall through to the no-op singleton; debug-e2e callers (story 04,
+    # ALP-501) populate ``debug_e2e.emitter_factory`` so the JSONL
+    # emitter (story 02c / ALP-499) opens a fresh log under the
+    # invocation's archive directory.
+    progress: ProgressEmitter = (
+        context.debug_e2e.emitter_factory(invocation_id)
+        if context.debug_e2e is not None
+        else NOOP_PROGRESS_EMITTER
+    )
+
     # Compose the current invocation's active_risk_parameters from the resolved fold.
     active_risk_parameters = build_active_risk_parameters(
         rule_values=pipeline_config.resolved.rule_values,
@@ -431,6 +444,7 @@ async def run_invocation(
     )
 
     # Step 3 — Phase 1 transaction.
+    progress.phase_start("phase1")
     async with session_factory() as session:
         phase1_handle = InvocationHandle(session=session, invocation_id=invocation_id)
         await emit_baseline_config_change_entry(
@@ -458,8 +472,10 @@ async def run_invocation(
             staleness_flag=phase1_inputs.staleness_flag,
         )
         await session.commit()
+    progress.phase_done("phase1", fills_processed=phase1_summary.fills_processed)
 
     # Step 4 — Between-phase snapshot read.
+    progress.phase_start("snapshot_assembly")
     sector_resolver = build_sector_resolver(pipeline_config.resolved)
     assembled, snapshot_repository = _assemble_phase1_snapshot(
         session_factory=session_factory,
@@ -473,6 +489,7 @@ async def run_invocation(
         assembled.snapshot,
         sector_resolver=adapt_ticker_sector_resolver(sector_resolver),
     )
+    progress.phase_done("snapshot_assembly")
 
     # Step 5 — Read-only analysis + decision pipelines.
     analysis_result = await _run_analysis(
@@ -483,6 +500,7 @@ async def run_invocation(
         archive_root=archive_root,
         now=now,
         portfolio_reader=portfolio_reader,
+        progress=progress,
     )
 
     pipeline_mode = PipelineMode.from_config_mode(runtime.active_mode)
@@ -503,9 +521,10 @@ async def run_invocation(
         runtime_active_regime=runtime.active_regime,
         progressive_tiers=load_cumulative_drawdown_progressive_tiers(),
     )
-    decision_result = await run_decision_pipeline(**decision_kwargs)
+    decision_result = await run_decision_pipeline(**decision_kwargs, progress=progress)
 
     # Step 6 — Phase 2.
+    progress.phase_start("phase2")
     phase2_summary = await dispatch_phase2(
         session_factory=session_factory,
         invocation_id=invocation_id,
@@ -517,6 +536,7 @@ async def run_invocation(
         await _update_row_phase2(phase2_handle, phase2_summary=phase2_summary)
         await stamp_phase_completion(phase2_handle, column="phase2_completed_at")
         await session.commit()
+    progress.phase_done("phase2", commands_submitted=phase2_summary.commands_submitted)
 
     duration = time.monotonic() - start_perf
     return InvocationSummary(
@@ -588,6 +608,7 @@ async def _run_analysis(
     archive_root: Path,
     now: datetime,
     portfolio_reader: SynthesizerPortfolioStateReader,
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
 ) -> Any:
     """Compose ``run_analysis_pipeline`` inputs from the loaded config + factory.
 
@@ -615,4 +636,5 @@ async def _run_analysis(
             sectors_config=sectors_config_from_assets(resolved),
             portfolio_reader=portfolio_reader,
             archive_root=archive_root,
+            progress=progress,
         )
