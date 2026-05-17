@@ -319,6 +319,48 @@ def _make_analysis_result() -> Any:
     )
 
 
+def _make_regime_output() -> Any:
+    """Minimal :class:`RegimeAdaptationOutput` for orchestrator stubs."""
+    from alphamind._kernel.regime import RegimeLabel, RegimeTransitionState
+    from alphamind.config.models.regimes import Regime
+    from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
+    from alphamind.risk_guardrails.regime_adaptation import RegimeAdaptationOutput
+    from alphamind.risk_guardrails.regime_adaptation.types import RegimeAdaptationState
+
+    state = RegimeAdaptationState(
+        as_of=_NOW.isoformat().replace("+00:00", "Z"),
+        invocation_id="inv-stub",
+        active_regime=Regime.normal,
+        prior_regime=None,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        transition_started_invocation_id=None,
+        transition_origin_regime=None,
+        active_overlays=(),
+        distillation_regime_label=Regime.normal.value,
+        distillation_vix_level=0.0,
+        regime_skip_emergency=False,
+    )
+    return RegimeAdaptationOutput(
+        runtime_dimensions_active_regime=Regime.normal,
+        runtime_dimensions_active_overlays=(),
+        overlay_activation_decisions=(),
+        effective_limits={},
+        active_risk_parameter_set=ActiveRiskParameterSet(
+            regime_label=RegimeLabel.NORMAL,
+            transition_state=RegimeTransitionState.STABLE,
+            transition_invocations_remaining=0,
+            parameter_change_flag=False,
+            entries=(),
+            active_overlays=(),
+        ),
+        regime_transition_breaches=(),
+        regime_skip_emergency=False,
+        new_persisted_state=state,
+        audit_log_entries=(),
+    )
+
+
 def _make_decision_result() -> Any:
     """Build a no-op ``DecisionPipelineResult`` with empty submission_log."""
     from types import SimpleNamespace
@@ -471,11 +513,15 @@ def _patch_no_op_pipeline_with_progress_emit(monkeypatch: pytest.MonkeyPatch) ->
 
         return Phase2Summary(commands_submitted=0, commands_rejected=0)
 
+    def _regime_stub(**_kw: Any) -> Any:
+        return _make_regime_output()
+
     monkeypatch.setattr(module, "gather_phase1_inputs", _gather_stub)
     monkeypatch.setattr(module, "process_unprocessed_fills", _process_stub)
     monkeypatch.setattr(module, "run_analysis_pipeline", _analysis_stub)
     monkeypatch.setattr(module, "run_decision_pipeline", _decision_stub)
     monkeypatch.setattr(module, "dispatch_phase2", _dispatch_stub)
+    monkeypatch.setattr(module, "_resolve_regime_adaptation_for_invocation", _regime_stub)
 
 
 # ---------------------------------------------------------------------------

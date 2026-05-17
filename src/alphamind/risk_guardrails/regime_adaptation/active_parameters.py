@@ -1,16 +1,19 @@
-"""Pre-fold ``ActiveRiskParameterSet`` and ``RegimeAdaptationOutput`` shims (ALP-472 lift).
+"""Pre-fold ``ActiveRiskParameterSet`` building block (ALP-472 lift; ALP-513 retire).
 
-These helpers compose the scheduler-side fold of profile * regime * overlays
-* feature-flags rule_values into the records the rest of the system reads.
-They lived inline in ``scheduler/orchestrator.py`` until ALP-472; the lift
-homes them in the regime-adaptation feature they belong to.
+:func:`build_active_risk_parameters` wraps a flat ``rule_values`` map into an
+:class:`ActiveRiskParameterSet`. Two production callers remain after ALP-513:
 
-The helpers wrap rule_values directly rather than running
-:func:`resolve_regime_adaptation` because the resolver already produced the
-folded ``rule_values`` map ``compose_config`` writes onto
-``ResolvedConfig``. When the regime-adaptation orchestrator is threaded
-through the pipeline scheduler (deferred follow-up), these helpers retire
-and ``resolve_regime_adaptation``'s real output flows through.
+* The scheduler's pre-runtime halt-state check, which needs the
+  ``daily_drawdown_pct`` value before the regime-adaptation orchestrator can
+  run (the resolver's inputs themselves depend on a halt-state probe).
+* The scheduler's snapshot-assembly parameter-set seed, which feeds the
+  ``ActiveRiskParameterSet`` field on :class:`PortfolioStateSnapshot` — that
+  field is informational for downstream consumers and does not need the
+  resolver's transition / overlay bookkeeping.
+
+The companion ``build_synthetic_regime_output`` shim retired in ALP-513;
+``resolve_regime_adaptation``'s real output now flows through every
+:func:`compose_phase_1_enforcement` call site.
 
 Per the parameter set contract, each entry's ``rule_label`` mirrors its
 ``rule_id`` and the unit is a flat ``"pct"`` — the values are not surfaced
@@ -22,7 +25,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from datetime import datetime
 from pathlib import Path
 
 from alphamind._kernel.regime import RegimeLabel, RegimeTransitionState
@@ -31,14 +33,9 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
-from alphamind.risk_guardrails.regime_adaptation.types import (
-    RegimeAdaptationOutput,
-    RegimeAdaptationState,
-)
 
 __all__ = [
     "build_active_risk_parameters",
-    "build_synthetic_regime_output",
     "load_prior_active_risk_parameters",
 ]
 
@@ -58,19 +55,19 @@ def build_active_risk_parameters(
 ) -> ActiveRiskParameterSet:
     """Compose an ``ActiveRiskParameterSet`` from a flat rule-values map.
 
-    The production pipeline normally derives this set through
-    ``compose_phase_1_enforcement`` which in turn requires a fully-resolved
-    :class:`RegimeAdaptationOutput`. Until the regime-adaptation
-    orchestrator is threaded through the pipeline scheduler, callers wrap
-    the resolved ``rule_values`` directly — they already carry the
-    profile * regime * overlay * feature-flag fold ``compose_config``
-    produced, which is what the downstream consumers (halt-state
-    computation, repository provider, decision pipeline) actually read.
+    The canonical pipeline path is :func:`resolve_regime_adaptation` →
+    :func:`compose_phase_1_enforcement`. This helper exists for callers
+    that need a parameter set *before* the resolver can run (the
+    scheduler's pre-runtime halt-state probe, the snapshot's seed
+    parameter set, the :func:`load_prior_active_risk_parameters`
+    rehydration). Each such caller takes the already-folded
+    ``rule_values`` ``compose_config`` produced and wraps it without
+    overlay / transition / parameter-change-flag bookkeeping — those
+    fields are the resolver's contribution and are unused by this
+    helper's consumers.
 
     Each entry's ``rule_label`` / ``unit`` mirror the ``rule_id`` and a
-    flat ``"pct"`` unit — the values aren't surfaced anywhere downstream
-    in the current pipeline-scheduler call path (the decision pipeline
-    only reads ``rule_id`` and ``value`` from the entries).
+    flat ``"pct"`` unit.
     """
     entries = tuple(
         ActiveRiskParameterEntry(
@@ -90,51 +87,6 @@ def build_active_risk_parameters(
         parameter_change_flag=False,
         entries=entries,
         active_overlays=(),
-    )
-
-
-def build_synthetic_regime_output(
-    *,
-    active_risk_parameters: ActiveRiskParameterSet,
-    runtime_active_regime: Regime,
-    invocation_id: str,
-    now: datetime,
-) -> RegimeAdaptationOutput:
-    """Wrap a folded ``ActiveRiskParameterSet`` in a synthetic ``RegimeAdaptationOutput``.
-
-    The scheduler does not yet invoke :func:`resolve_regime_adaptation`
-    (its rule_values already carry the profile * regime * overlay fold
-    ``compose_config`` produces). Story ALP-433 still needs a
-    :class:`RegimeAdaptationOutput` to thread into the pipeline's Phase 1
-    enforcement composition; this helper wraps the parameter set in an
-    otherwise-empty bundle. When the regime-adaptation orchestrator is
-    wired into the scheduler (deferred follow-up), this helper retires
-    and :func:`resolve_regime_adaptation`'s real output flows through.
-    """
-    state = RegimeAdaptationState(
-        as_of=now.isoformat().replace("+00:00", "Z"),
-        invocation_id=invocation_id,
-        active_regime=runtime_active_regime,
-        prior_regime=None,
-        transition_state=RegimeTransitionState.STABLE,
-        transition_invocations_remaining=0,
-        transition_started_invocation_id=None,
-        transition_origin_regime=None,
-        active_overlays=(),
-        distillation_regime_label=runtime_active_regime.value,
-        distillation_vix_level=0.0,
-        regime_skip_emergency=False,
-    )
-    return RegimeAdaptationOutput(
-        runtime_dimensions_active_regime=runtime_active_regime,
-        runtime_dimensions_active_overlays=(),
-        overlay_activation_decisions=(),
-        effective_limits={},
-        active_risk_parameter_set=active_risk_parameters,
-        regime_transition_breaches=(),
-        regime_skip_emergency=False,
-        new_persisted_state=state,
-        audit_log_entries=(),
     )
 
 

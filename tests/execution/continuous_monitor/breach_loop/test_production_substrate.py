@@ -25,6 +25,7 @@ from typing import cast
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 # Import portfolio_manager.models first to break the latent cycle between
 # alphamind.execution.oms (engine-stub MCP) and alphamind.decision.portfolio_manager.
@@ -61,7 +62,12 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingQuote,
 )
 from alphamind.persistence.models import AssetUniverse, Base, OhlcvBars
-from alphamind.persistence.session import make_async_engine, make_async_session_factory
+from alphamind.persistence.session import (
+    make_async_engine,
+    make_async_session_factory,
+    make_engine,
+    make_session_factory,
+)
 from alphamind.portfolio_state import load_portfolio_state_config
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
@@ -97,9 +103,13 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     PortfolioStateSnapshot as LibrarySnapshot,
 )
 from alphamind.risk_guardrails.regime_adaptation import (
+    RegimeAdaptationConfigFan,
     RegimeAdaptationOutput,
-    build_synthetic_regime_output,
+    load_config_fan,
 )
+from alphamind.risk_guardrails.regime_adaptation.persistence import insert_state
+from alphamind.risk_guardrails.regime_adaptation.types import RegimeAdaptationState
+from alphamind.scripts._common import load_distillation_config
 from alphamind.state.config import StatePersistenceConfig
 from alphamind.state.invocation_context import (
     ProcessLifetimeRecord,
@@ -121,6 +131,36 @@ async def db_session_factory(
         yield factory
     finally:
         await engine.dispose()
+
+
+@pytest.fixture()
+async def sync_session_factory(
+    db_session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> sessionmaker[Session]:
+    """Sync sessionmaker bound to the same SQLite file as ``db_session_factory``.
+
+    The regime resolver runs against a sync ``Session`` (per ALP-454 (C));
+    SQLite WAL mode handles concurrent sync + async access on one file.
+    Async-defined so pytest-asyncio resolves the upstream async fixture's
+    schema-create coroutine before this one runs.
+    """
+    del db_session_factory  # ordering dependency only — schema-create must have run.
+    sync_engine = make_engine(str(tmp_path / "alphamind.db"))
+    return make_session_factory(sync_engine)
+
+
+def _build_regime_config_fan(config_dir: Path) -> RegimeAdaptationConfigFan:
+    """Construct the resolver's slow-changing config fan for the test."""
+    from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
+        load_breach_loop_loaded_config,
+    )
+
+    return load_config_fan(
+        config_dir=config_dir,
+        loaded_config=load_breach_loop_loaded_config(config_dir),
+        distillation_config=load_distillation_config(config_dir / "distillation.yaml"),
+    )
 
 
 @pytest.fixture()
@@ -409,30 +449,34 @@ class TestInvocationIdProvider:
 
 
 class TestRegimeProvider:
-    """The regime provider wraps the latest invocation's parameter set."""
+    """The regime provider calls :func:`resolve_regime_adaptation` per tick."""
 
     async def test_empty_db_falls_back_to_bootstrap_regime(
         self,
         db_session_factory: async_sessionmaker[AsyncSession],
+        sync_session_factory: sessionmaker[Session],
         config_dir: Path,
     ) -> None:
         """No invocations in the DB → bootstrap-regime synthetic output."""
+        resolved = load_breach_loop_resolved_config(config_dir)
         provider = make_regime_provider(
             session_factory=db_session_factory,
-            resolved=load_breach_loop_resolved_config(config_dir),
+            sync_session_factory=sync_session_factory,
+            config_fan=_build_regime_config_fan(config_dir),
+            resolved=resolved,
         )
         output = await provider()
-        # The synthetic output is shaped like the orchestrator's pre-review shim.
         assert output.active_risk_parameter_set is not None
         assert output.runtime_dimensions_active_regime.value == "normal"
 
-    async def test_reads_active_regime_from_latest_invocation(
+    async def test_persisted_state_drives_resolver_output(
         self,
         db_session_factory: async_sessionmaker[AsyncSession],
+        sync_session_factory: sessionmaker[Session],
         config_dir: Path,
         tmp_path: Path,
     ) -> None:
-        """The provider's output mirrors the latest invocation's persisted regime."""
+        """With a persisted regime state row, the resolver maps it through to output."""
         snap = tmp_path / "snap.json"
         snap.write_text('{"rule_values": {"daily_drawdown_pct": 2.5}, "regime_label": "elevated"}')
         await _seed_invocation(
@@ -442,16 +486,35 @@ class TestRegimeProvider:
             snapshot_path=str(snap),
             active_regime="elevated",
         )
+        # Seed the regime-adaptation state the resolver reads back as ``prior_state``.
+        with sync_session_factory() as session:
+            insert_state(
+                session,
+                RegimeAdaptationState(
+                    as_of="2026-05-11T09:00:00Z",
+                    invocation_id="inv-elevated",
+                    active_regime=Regime.elevated,
+                    prior_regime=None,
+                    transition_state=RegimeTransitionState.STABLE,
+                    transition_invocations_remaining=0,
+                    transition_started_invocation_id=None,
+                    transition_origin_regime=None,
+                    active_overlays=(),
+                    distillation_regime_label="vol_expansion",
+                    distillation_vix_level=25.0,
+                    regime_skip_emergency=False,
+                ),
+                ingested_at="2026-05-11T09:00:01Z",
+            )
 
         provider = make_regime_provider(
             session_factory=db_session_factory,
+            sync_session_factory=sync_session_factory,
+            config_fan=_build_regime_config_fan(config_dir),
             resolved=load_breach_loop_resolved_config(config_dir),
         )
         output = await provider()
-        assert output.runtime_dimensions_active_regime.value == "elevated"
-        # The parameter set's entries reflect the snapshot file's rule_values.
-        entries_by_id = {e.rule_id: e.value for e in output.active_risk_parameter_set.entries}
-        assert entries_by_id["daily_drawdown_pct"] == pytest.approx(2.5)
+        assert output.runtime_dimensions_active_regime is Regime.elevated
 
 
 class TestSnapshotProvider:
@@ -589,12 +652,38 @@ def _make_library_snapshot(*, portfolio_value_usd: float = 100_000.0) -> Library
 
 
 def _make_regime_output() -> RegimeAdaptationOutput:
-    """Synthetic ``RegimeAdaptationOutput`` for context-provider tests."""
-    return build_synthetic_regime_output(
-        active_risk_parameters=_active_parameter_set(),
-        runtime_active_regime=Regime.normal,
+    """Minimal ``RegimeAdaptationOutput`` for context-provider tests.
+
+    Context-provider tests only read ``active_risk_parameter_set`` off the
+    output; the remaining fields just need to satisfy the dataclass
+    contract. Constructed inline to avoid a dependency on either the
+    retired synthetic shim or a full ``resolve_regime_adaptation`` run.
+    """
+    now = datetime(2026, 5, 17, 14, 30, tzinfo=UTC)
+    state = RegimeAdaptationState(
+        as_of=now.isoformat().replace("+00:00", "Z"),
         invocation_id="inv-test",
-        now=datetime(2026, 5, 17, 14, 30, tzinfo=UTC),
+        active_regime=Regime.normal,
+        prior_regime=None,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        transition_started_invocation_id=None,
+        transition_origin_regime=None,
+        active_overlays=(),
+        distillation_regime_label=Regime.normal.value,
+        distillation_vix_level=0.0,
+        regime_skip_emergency=False,
+    )
+    return RegimeAdaptationOutput(
+        runtime_dimensions_active_regime=Regime.normal,
+        runtime_dimensions_active_overlays=(),
+        overlay_activation_decisions=(),
+        effective_limits={},
+        active_risk_parameter_set=_active_parameter_set(),
+        regime_transition_breaches=(),
+        regime_skip_emergency=False,
+        new_persisted_state=state,
+        audit_log_entries=(),
     )
 
 

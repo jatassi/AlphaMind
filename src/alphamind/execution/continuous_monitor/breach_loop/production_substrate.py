@@ -29,9 +29,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind._kernel.regime import (
-    RegimeLabel,
     RegimeTransitionState,
 )
 from alphamind.commands.engine_envelope import EngineEnvelope as OmsEngineEnvelope
@@ -52,8 +52,8 @@ from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
 )
 from alphamind.persistence.models import OhlcvBars
 from alphamind.portfolio_state import PortfolioStateConfig
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import (
-    ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
 from alphamind.portfolio_state.assembler import assemble_snapshot
@@ -83,7 +83,17 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     PortfolioStateSnapshot as LibrarySnapshot,
 )
 from alphamind.risk_guardrails.library_snapshot import to_library_snapshot
-from alphamind.risk_guardrails.regime_adaptation import RegimeAdaptationOutput
+from alphamind.risk_guardrails.regime_adaptation import (
+    RegimeAdaptationConfigFan,
+    RegimeAdaptationOutput,
+    build_active_risk_parameters,
+    build_inputs_from_persisted_state,
+    resolve_regime_adaptation,
+)
+from alphamind.risk_guardrails.regime_adaptation.persistence import select_most_recent_state
+from alphamind.risk_guardrails.regime_adaptation.stress_activator import (
+    fetch_composite_alert_state,
+)
 from alphamind.risk_guardrails.regime_adaptation.types import RegimeAdaptationState
 from alphamind.state.config import (
     StatePersistenceConfig,
@@ -106,6 +116,7 @@ __all__ = [
     "AssembledSnapshotProvider",
     "LibraryConfigFactory",
     "LibrarySnapshotTranslator",
+    "load_breach_loop_loaded_config",
     "load_breach_loop_resolved_config",
     "make_adv_provider",
     "make_assembled_snapshot_provider",
@@ -134,18 +145,14 @@ _BOOTSTRAP_SENTINEL = "monitor-bootstrap"
 _DEFAULT_RISK_FREE_RATE = 0.045  # mirrors greeks_refresh.wiring default
 
 
-def load_breach_loop_resolved_config(config_dir: Path) -> ResolvedConfig:
-    """Compose a :class:`ResolvedConfig` for the monitor's lifetime.
+def load_breach_loop_loaded_config(config_dir: Path) -> LoadedConfig:
+    """Parse every YAML the monitor reads into one :class:`LoadedConfig`.
 
-    The breach loop runs across invocations; resolved config rarely
-    changes mid-lifetime (operator restart on amendment is the design).
-    We compose once at daemon startup using the active profile / regime /
-    mode declared in ``main.yaml`` so the library-config + sector resolver
-    + escalation zones are stable across ticks.
-
-    The runtime dimensions match ``main.active_*`` defaults — the monitor
-    does not drive regime transitions itself; the scheduler's invocations
-    do that and the monitor reads the resulting active risk parameter set.
+    Split out from :func:`load_breach_loop_resolved_config` so the
+    regime-resolver's ``RegimeAdaptationConfigFan`` and the monitor's
+    daemon-startup compose path share one parse pass — operator-edit-time
+    YAML changes still require a restart per the pre-resolved configuration
+    decisions in ALP-431.
     """
     from alphamind.config.loaders import (
         load_modes,
@@ -165,7 +172,7 @@ def load_breach_loop_resolved_config(config_dir: Path) -> ResolvedConfig:
     from alphamind.config.models.venue import VenueConfig
 
     main = MainConfig.model_validate(read_yaml_file(config_dir / "main.yaml"))
-    loaded = LoadedConfig(
+    return LoadedConfig(
         main=main,
         scheduler=SchedulerConfig.model_validate(read_yaml_file(config_dir / "scheduler.yaml")),
         venue=VenueConfig.model_validate(read_yaml_file(config_dir / "venue.yaml")),
@@ -186,6 +193,22 @@ def load_breach_loop_resolved_config(config_dir: Path) -> ResolvedConfig:
         overlays=load_overlays(config_dir),
         run_types=load_run_types(config_dir),
     )
+
+
+def load_breach_loop_resolved_config(config_dir: Path) -> ResolvedConfig:
+    """Compose a :class:`ResolvedConfig` for the monitor's lifetime.
+
+    The breach loop runs across invocations; resolved config rarely
+    changes mid-lifetime (operator restart on amendment is the design).
+    We compose once at daemon startup using the active profile / regime /
+    mode declared in ``main.yaml`` so the library-config + sector resolver
+    + escalation zones are stable across ticks.
+
+    The runtime dimensions match ``main.active_*`` defaults — the monitor
+    does not drive regime transitions itself; the scheduler's invocations
+    do that and the monitor reads the resulting active risk parameter set.
+    """
+    loaded = load_breach_loop_loaded_config(config_dir)
     # The monitor does not drive regime transitions; the scheduler does. We
     # compose against the conservative defaults (``normal`` regime, no
     # overlays) at daemon startup so the LibraryConfig base is stable.
@@ -296,43 +319,10 @@ def make_invocation_id_provider_sync(
 # ---------------------------------------------------------------------------
 
 
-_REGIME_TO_LABEL: dict[Regime, RegimeLabel] = {
-    Regime.low_vol: RegimeLabel.LOW_VOL,
-    Regime.normal: RegimeLabel.NORMAL,
-    Regime.elevated: RegimeLabel.ELEVATED,
-    Regime.crisis: RegimeLabel.CRISIS,
-}
-
-
-def _build_active_risk_parameters(
-    *,
-    rule_values: Mapping[str, float],
-    regime: Regime,
-) -> ActiveRiskParameterSet:
-    """Mirror :func:`scheduler.orchestrator._build_active_risk_parameters`.
-
-    Wraps the resolver's already-folded ``rule_values`` so the breach loop
-    consumes the same parameter set the most recent invocation committed.
-    """
-    entries = tuple(
-        ActiveRiskParameterEntry(
-            rule_id=rule_id,
-            rule_label=rule_id,
-            value=float(value),
-            unit="pct",
-            regime_multiplier_applied=1.0,
-            base_value=float(value),
-        )
-        for rule_id, value in sorted(rule_values.items())
-    )
-    return ActiveRiskParameterSet(
-        regime_label=_REGIME_TO_LABEL[regime],
-        transition_state=RegimeTransitionState.STABLE,
-        transition_invocations_remaining=0,
-        parameter_change_flag=False,
-        entries=entries,
-        active_overlays=(),
-    )
+# ``build_active_risk_parameters`` historically mirrored the scheduler's
+# own private helper. ALP-513 consolidated both onto
+# :func:`build_active_risk_parameters` so the monitor and scheduler hit one
+# definition of the rule_values-wrap path.
 
 
 async def _load_active_risk_parameters_from_row(
@@ -389,7 +379,7 @@ async def _load_active_risk_parameters_from_row(
             active_regime_str,
         )
         return fallback
-    return _build_active_risk_parameters(
+    return build_active_risk_parameters(
         rule_values={k: float(v) for k, v in rule_values.items()},
         regime=regime,
     )
@@ -480,7 +470,7 @@ def make_assembled_snapshot_provider(
     events, which presuppose a running breach loop with a seeded
     ``cash_ledger`` singleton, so this branch is unreachable in production.
     """
-    bootstrap_parameters = _build_active_risk_parameters(
+    bootstrap_parameters = build_active_risk_parameters(
         rule_values=resolved.rule_values,
         regime=Regime(resolved.regime_label),
     )
@@ -605,74 +595,142 @@ RegimeProvider = Callable[[], Awaitable[RegimeAdaptationOutput]]
 def make_regime_provider(
     *,
     session_factory: async_sessionmaker[AsyncSession],
+    sync_session_factory: sessionmaker[Session],
+    config_fan: RegimeAdaptationConfigFan,
     resolved: ResolvedConfig,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> RegimeProvider:
     """Build the per-tick :class:`RegimeAdaptationOutput` provider.
 
-    Mirrors :func:`scheduler.orchestrator._build_synthetic_regime_output`:
-    the monitor process does not run the full regime-adaptation pipeline
-    (that lives in the scheduler's invocation path); instead it reads the
-    most recent invocation's already-resolved parameter set and wraps it
-    in a synthetic :class:`RegimeAdaptationOutput` so the breach loop's
-    :func:`compose_phase_1_enforcement` call site receives the canonical
-    shape. When the regime-adaptation orchestrator is threaded through the
-    monitor (deferred follow-up), this synthetic shim retires.
+    Each tick (ALP-513): read the most-recently-persisted
+    :class:`RegimeAdaptationState`, hydrate the prior
+    :class:`ActiveRiskParameterSet` from the latest invocation's snapshot
+    file, fetch the live composite-alert state, then invoke
+    :func:`resolve_regime_adaptation` so the breach loop's
+    :func:`compose_phase_1_enforcement` call site receives a real output
+    bundle — active overlays bookkeeping, ``parameter_change_flag``
+    computation, transition-state semantics, and
+    ``regime_skip_emergency`` policy all flow through.
+
+    On a fresh DB (no invocations yet, no regime-adaptation state) the
+    closure falls back to a synthetic bootstrap output built from the
+    daemon-startup resolved config — the breach loop still ticks during
+    bootstrap rather than crashing.
+
+    The resolver runs in a thread (``asyncio.to_thread``) so its
+    synchronous SQLAlchemy reads do not block the supervisor loop.
+    Persistence of the returned state is the scheduler's responsibility;
+    the monitor only reads.
     """
-    bootstrap_parameters = _build_active_risk_parameters(
+    bootstrap_parameters = build_active_risk_parameters(
         rule_values=resolved.rule_values,
         regime=Regime(resolved.regime_label),
     )
     fallback_regime = Regime(resolved.regime_label)
+    fallback_output = _bootstrap_regime_output(
+        bootstrap_parameters=bootstrap_parameters,
+        fallback_regime=fallback_regime,
+        invocation_id=_BOOTSTRAP_SENTINEL,
+        now=now,
+    )
 
     async def _provider() -> RegimeAdaptationOutput:
         row = await _read_latest_invocation_row(session_factory)
-        invocation_id = _BOOTSTRAP_SENTINEL if row is None else row[0]
-        active = await _load_active_risk_parameters_from_row(row, fallback=bootstrap_parameters)
-        regime_for_state = _resolve_regime_from_label(active.regime_label, fallback_regime)
-        state = RegimeAdaptationState(
-            as_of=now().isoformat().replace("+00:00", "Z"),
-            invocation_id=invocation_id,
-            active_regime=regime_for_state,
-            prior_regime=None,
-            transition_state=RegimeTransitionState.STABLE,
-            transition_invocations_remaining=0,
-            transition_started_invocation_id=None,
-            transition_origin_regime=None,
-            active_overlays=(),
-            distillation_regime_label=regime_for_state.value,
-            distillation_vix_level=0.0,
-            regime_skip_emergency=False,
+        if row is None:
+            return _bootstrap_regime_output(
+                bootstrap_parameters=bootstrap_parameters,
+                fallback_regime=fallback_regime,
+                invocation_id=_BOOTSTRAP_SENTINEL,
+                now=now,
+            )
+        invocation_id = row[0]
+        prior_parameter_set = await _load_active_risk_parameters_from_row(
+            row, fallback=bootstrap_parameters
         )
-        return RegimeAdaptationOutput(
-            runtime_dimensions_active_regime=regime_for_state,
-            runtime_dimensions_active_overlays=(),
-            overlay_activation_decisions=(),
-            effective_limits={},
-            active_risk_parameter_set=active,
-            regime_transition_breaches=(),
-            regime_skip_emergency=False,
-            new_persisted_state=state,
-            audit_log_entries=(),
+        return await asyncio.to_thread(
+            _resolve_regime_adaptation_sync,
+            sync_session_factory=sync_session_factory,
+            config_fan=config_fan,
+            prior_parameter_set=prior_parameter_set,
+            invocation_id=invocation_id,
+            now_utc=now(),
+            fallback=fallback_output,
         )
 
     return _provider
 
 
-_LABEL_TO_REGIME: dict[RegimeLabel, Regime] = {
-    RegimeLabel.LOW_VOL: Regime.low_vol,
-    RegimeLabel.NORMAL: Regime.normal,
-    RegimeLabel.ELEVATED: Regime.elevated,
-    RegimeLabel.CRISIS: Regime.crisis,
-}
+def _bootstrap_regime_output(
+    *,
+    bootstrap_parameters: ActiveRiskParameterSet,
+    fallback_regime: Regime,
+    invocation_id: str,
+    now: Callable[[], datetime],
+) -> RegimeAdaptationOutput:
+    """Synthetic output for the bootstrap path — no invocations yet."""
+    state = RegimeAdaptationState(
+        as_of=now().isoformat().replace("+00:00", "Z"),
+        invocation_id=invocation_id,
+        active_regime=fallback_regime,
+        prior_regime=None,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        transition_started_invocation_id=None,
+        transition_origin_regime=None,
+        active_overlays=(),
+        distillation_regime_label=fallback_regime.value,
+        distillation_vix_level=0.0,
+        regime_skip_emergency=False,
+    )
+    return RegimeAdaptationOutput(
+        runtime_dimensions_active_regime=fallback_regime,
+        runtime_dimensions_active_overlays=(),
+        overlay_activation_decisions=(),
+        effective_limits={},
+        active_risk_parameter_set=bootstrap_parameters,
+        regime_transition_breaches=(),
+        regime_skip_emergency=False,
+        new_persisted_state=state,
+        audit_log_entries=(),
+    )
 
 
-def _resolve_regime_from_label(
-    label: RegimeLabel,
-    fallback: Regime,
-) -> Regime:
-    """Map a :class:`RegimeLabel` back to the config :class:`Regime` enum."""
-    return _LABEL_TO_REGIME.get(label, fallback)
+def _resolve_regime_adaptation_sync(
+    *,
+    sync_session_factory: sessionmaker[Session],
+    config_fan: RegimeAdaptationConfigFan,
+    prior_parameter_set: ActiveRiskParameterSet,
+    invocation_id: str,
+    now_utc: datetime,
+    fallback: RegimeAdaptationOutput,
+) -> RegimeAdaptationOutput:
+    """Run :func:`resolve_regime_adaptation` against a fresh sync session.
+
+    ``fallback`` covers the case where no :class:`RegimeAdaptationState`
+    has been persisted yet (the scheduler hasn't completed a Phase 1 that
+    folded a regime decision through the resolver). The monitor process
+    can start before the scheduler does in fresh-DB environments, so the
+    breach loop must keep ticking.
+    """
+    with sync_session_factory() as session:
+        persisted = select_most_recent_state(session)
+        if persisted is None:
+            return fallback
+        composite_alert_state = fetch_composite_alert_state(session)
+        inputs = build_inputs_from_persisted_state(
+            fan=config_fan,
+            persisted_state=persisted,
+            held_positions=(),
+            risk_budget=RiskBudgetConsumption(entries=()),
+            prior_parameter_set=prior_parameter_set,
+            composite_alert_state=composite_alert_state,
+        )
+        return resolve_regime_adaptation(
+            invocation_id=invocation_id,
+            now_utc=now_utc,
+            inputs=inputs,
+            session=session,
+        )
 
 
 # ---------------------------------------------------------------------------

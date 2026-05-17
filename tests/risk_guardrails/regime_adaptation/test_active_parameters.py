@@ -71,43 +71,6 @@ def test_build_active_risk_parameters_regime_mapping() -> None:
         assert params.regime_label is expected_label
 
 
-def test_build_synthetic_regime_output_wraps_parameters() -> None:
-    """``build_synthetic_regime_output`` wraps a parameter set in a RegimeAdaptationOutput."""
-    from datetime import UTC, datetime
-
-    from alphamind._kernel.regime import RegimeTransitionState
-    from alphamind.config.models.regimes import Regime
-    from alphamind.risk_guardrails.regime_adaptation.active_parameters import (
-        build_active_risk_parameters,
-        build_synthetic_regime_output,
-    )
-
-    now = datetime(2026, 5, 12, 14, 30, tzinfo=UTC)
-    params = build_active_risk_parameters(
-        rule_values={"daily_drawdown_pct": 0.025},
-        regime=Regime.normal,
-    )
-
-    output = build_synthetic_regime_output(
-        active_risk_parameters=params,
-        runtime_active_regime=Regime.normal,
-        invocation_id="inv-test-1",
-        now=now,
-    )
-
-    assert output.runtime_dimensions_active_regime is Regime.normal
-    assert output.runtime_dimensions_active_overlays == ()
-    assert output.overlay_activation_decisions == ()
-    assert output.effective_limits == {}
-    assert output.active_risk_parameter_set is params
-    assert output.regime_transition_breaches == ()
-    assert output.regime_skip_emergency is False
-    assert output.new_persisted_state.invocation_id == "inv-test-1"
-    assert output.new_persisted_state.active_regime is Regime.normal
-    assert output.new_persisted_state.transition_state is RegimeTransitionState.STABLE
-    assert output.audit_log_entries == ()
-
-
 def test_load_prior_active_risk_parameters_reads_snapshot(tmp_path: Path) -> None:
     """``load_prior_active_risk_parameters`` rehydrates from a resolved-config snapshot."""
     from alphamind._kernel.regime import RegimeLabel

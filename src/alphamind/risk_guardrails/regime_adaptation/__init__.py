@@ -13,7 +13,6 @@ resolve those enums and trigger an ``ImportError``.
 
 from alphamind.risk_guardrails.regime_adaptation.active_parameters import (
     build_active_risk_parameters,
-    build_synthetic_regime_output,
     load_prior_active_risk_parameters,
 )
 from alphamind.risk_guardrails.regime_adaptation.breach_detector import (
@@ -24,6 +23,13 @@ from alphamind.risk_guardrails.regime_adaptation.event_calendar import (
     load_event_calendar,
     select_events_within_window,
     warn_on_stale_calendar,
+)
+from alphamind.risk_guardrails.regime_adaptation.inputs_assembly import (
+    RegimeAdaptationConfigFan,
+    build_inputs_from_distillation_outputs,
+    build_inputs_from_persisted_state,
+    build_rule_metadata,
+    load_config_fan,
 )
 from alphamind.risk_guardrails.regime_adaptation.interpolation import (
     interpolate_loosening_multipliers,
@@ -87,6 +93,7 @@ __all__ = [
     "OverlayActivationDecision",
     "RegimeAdaptationAuditEntry",
     "RegimeAdaptationAuditEventKind",
+    "RegimeAdaptationConfigFan",
     "RegimeAdaptationInputs",
     "RegimeAdaptationOutput",
     "RegimeAdaptationState",
@@ -96,7 +103,9 @@ __all__ = [
     "VixBoundaryThresholds",
     "assemble_active_risk_parameter_set",
     "build_active_risk_parameters",
-    "build_synthetic_regime_output",
+    "build_inputs_from_distillation_outputs",
+    "build_inputs_from_persisted_state",
+    "build_rule_metadata",
     "compute_next_transition",
     "detect_regime_transition_breaches",
     "evaluate_pre_event_decision",
@@ -107,6 +116,7 @@ __all__ = [
     "from_regime_classification",
     "insert_state",
     "interpolate_loosening_multipliers",
+    "load_config_fan",
     "load_event_calendar",
     "load_prior_active_risk_parameters",
     "make_repository_providers",
