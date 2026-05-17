@@ -20,6 +20,7 @@ from typing import Literal
 from alphamind.risk_guardrails.guardrail_evaluation.rules._helpers import (
     RuleSpec,
     existing_position,
+    signed_notional_for_contribution,
 )
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
     Action,
@@ -57,20 +58,13 @@ def _options_delta_contribute(
     """For options/strategies, signed contribution = signed_notional / value.
 
     Equity proposals contribute 0 — the rule constrains options-only delta.
-
-    CLOSE on options/strategy mirrors the theta/vega CLOSE pattern: read the
-    existing position's stored delta-adjusted exposure (negated, because the
-    close removes that exposure). The proposal's DAE is zero whenever the
-    strategist's close assessment omits ``option_legs`` — ALP-504.
+    The signed-notional selection (proposal DAE for OPEN/ADD, existing
+    position's stored DAE for CLOSE) is the same as the exposure rules.
     """
     if proposal.asset_type is AssetType.EQUITY:
         return 0.0
-    if proposal.action is Action.CLOSE:
-        existing = existing_position(proposal, state)
-        if existing is None:
-            return 0.0
-        return -existing.delta_adjusted_exposure_usd / state.portfolio_value_usd * 100.0
-    return dae.signed_notional_usd / state.portfolio_value_usd * 100.0
+    signed = signed_notional_for_contribution(proposal, dae, state)
+    return signed / state.portfolio_value_usd * 100.0
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
+    Action,
+    AssetType,
     DeltaAdjustedExposure,
     ExistingPosition,
     LibraryConfig,
@@ -70,3 +72,28 @@ def existing_position(
     if proposal.existing_position_id is None:
         return None
     return state.existing_positions.get(proposal.existing_position_id)
+
+
+def signed_notional_for_contribution(
+    proposal: ProposedDelta,
+    dae: DeltaAdjustedExposure,
+    state: PortfolioStateSnapshot,
+) -> float:
+    """Signed DAE the DAE-driven rule contributions consume.
+
+    For OPEN/ADD and EQUITY CLOSE, ``dae.signed_notional_usd`` is correct: the
+    DAE math signs ``proposal.notional_usd`` for equity closes by the same
+    convention as opens, so partial closes scale with the close size.
+
+    For OPTION/STRATEGY CLOSE, the strategist's assessment legitimately omits
+    ``option_legs``, so ``compute_delta_adjusted_exposure`` produces a zero
+    ``signed_notional_usd``. The rule contribution then reads the existing
+    position's stored DAE, negated (the close removes that exposure from the
+    book). Returns 0.0 if the position id does not resolve.
+    """
+    if proposal.action is Action.CLOSE and proposal.asset_type is not AssetType.EQUITY:
+        existing = existing_position(proposal, state)
+        if existing is None:
+            return 0.0
+        return -existing.delta_adjusted_exposure_usd
+    return dae.signed_notional_usd

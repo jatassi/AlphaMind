@@ -176,13 +176,11 @@ def _check_underlying_in_market(proposal: ProposedDelta, *, market: MarketInputs
 def _check_asset_type_legs_consistency(proposal: ProposedDelta) -> list[str]:
     """asset_type vs option_legs.
 
-    EQUITY ⇔ legs is None. For OPTION/STRATEGY, legs are required only for
-    OPEN/ADD — those actions need the leg breakdown to compute new
-    delta-adjusted exposure. CLOSE/ADJUST/CANCEL reference an existing position
-    whose legs the rule contributions already know; the validator must accept
-    ``option_legs=None`` for those actions. When legs *are* supplied on any
-    options/strategy proposal, they must satisfy the per-asset-type minimums
-    (OPTION ≥ 1, STRATEGY ≥ 2).
+    EQUITY ⇔ legs is None. OPEN/ADD on OPTION/STRATEGY synthesize new exposure
+    and require the leg breakdown. CLOSE/ADJUST/CANCEL read stored fields on
+    the existing position or contribute zero, so legs are not required for
+    those actions. When legs *are* supplied on any options/strategy proposal,
+    they must satisfy the per-asset-type minimums (OPTION ≥ 1, STRATEGY ≥ 2).
     """
     legs = proposal.option_legs
     if proposal.asset_type is AssetType.EQUITY:

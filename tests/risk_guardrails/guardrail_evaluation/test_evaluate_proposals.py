@@ -987,38 +987,70 @@ def test_strategy_with_single_leg_raises() -> None:
         )
 
 
+def _existing_options_position(
+    *,
+    position_id: str,
+    asset_type: AssetType,
+    delta_adjusted_exposure_usd: float,
+    notional_usd: float = 2_000.0,
+) -> ExistingPosition:
+    return ExistingPosition(
+        position_id=PositionId(position_id),
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=asset_type,
+        notional_usd=notional_usd,
+        delta_adjusted_exposure_usd=delta_adjusted_exposure_usd,
+        current_greeks=None,
+        daily_borrow_cost_usd=None,
+        reserves_capital_usd=0.0,
+    )
+
+
+def _close_proposal(
+    *,
+    proposal_id: str,
+    asset_type: AssetType,
+    existing_position_id: str,
+    notional_usd: float = 2_000.0,
+    quantity: float = 5.0,
+) -> ProposedDelta:
+    return ProposedDelta(
+        id=proposal_id,
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=asset_type,
+        notional_usd=notional_usd,
+        quantity=quantity,
+        option_legs=None,
+        action=Action.CLOSE,
+        existing_position_id=existing_position_id,
+    )
+
+
 def test_close_on_strategy_with_no_legs_is_accepted() -> None:
     """CLOSE on an existing STRATEGY position with ``option_legs=None`` is valid.
 
     A CLOSE assessment legitimately doesn't carry the leg breakdown — the
     existing position already knows its legs. The validator must accept this
-    case (regression for ALP-504); the rule contributions then read
-    ``existing.delta_adjusted_exposure_usd`` instead of the empty proposal DAE.
+    case; the rule contributions then read ``existing.delta_adjusted_exposure_usd``
+    instead of the empty proposal DAE.
     """
-    existing = ExistingPosition(
-        position_id=PositionId("POS-STRAT"),
-        underlying=Symbol("AAPL"),
-        sector="tech",
-        direction=Direction.LONG,
+    existing = _existing_options_position(
+        position_id="POS-STRAT",
         asset_type=AssetType.STRATEGY,
         notional_usd=4_000.0,
         delta_adjusted_exposure_usd=4_500.0,
-        current_greeks=None,
-        daily_borrow_cost_usd=None,
-        reserves_capital_usd=0.0,
     )
     state = _snapshot(existing_positions={"POS-STRAT": existing})
-    proposal = ProposedDelta(
-        id="REC-CLOSE-STRAT",
-        underlying=Symbol("AAPL"),
-        sector="tech",
-        direction=Direction.LONG,
+    proposal = _close_proposal(
+        proposal_id="REC-CLOSE-STRAT",
         asset_type=AssetType.STRATEGY,
+        existing_position_id="POS-STRAT",
         notional_usd=4_000.0,
         quantity=4.0,
-        option_legs=None,
-        action=Action.CLOSE,
-        existing_position_id="POS-STRAT",
     )
 
     output = evaluate_proposals(
@@ -1032,30 +1064,16 @@ def test_close_on_strategy_with_no_legs_is_accepted() -> None:
 
 
 def test_close_on_option_with_no_legs_is_accepted() -> None:
-    """CLOSE on an existing OPTION position with ``option_legs=None`` is valid (ALP-504)."""
-    existing = ExistingPosition(
-        position_id=PositionId("POS-OPT"),
-        underlying=Symbol("AAPL"),
-        sector="tech",
-        direction=Direction.LONG,
+    """CLOSE on an existing OPTION position with ``option_legs=None`` is valid."""
+    existing = _existing_options_position(
+        position_id="POS-OPT",
         asset_type=AssetType.OPTION,
-        notional_usd=2_000.0,
         delta_adjusted_exposure_usd=2_250.0,
-        current_greeks=None,
-        daily_borrow_cost_usd=None,
-        reserves_capital_usd=0.0,
     )
     state = _snapshot(existing_positions={"POS-OPT": existing})
-    proposal = ProposedDelta(
-        id="REC-CLOSE-OPT",
-        underlying=Symbol("AAPL"),
-        sector="tech",
-        direction=Direction.LONG,
+    proposal = _close_proposal(
+        proposal_id="REC-CLOSE-OPT",
         asset_type=AssetType.OPTION,
-        notional_usd=2_000.0,
-        quantity=5.0,
-        option_legs=None,
-        action=Action.CLOSE,
         existing_position_id="POS-OPT",
     )
 
