@@ -275,3 +275,56 @@ def test_build_regime_snapshot_vix_missing_keeps_bootstrap_path(session: Session
     assert snapshot.vix_level == 0.0
     assert snapshot.realized_vol_5d == 0.0
     assert snapshot.realized_vol_20d == 0.0
+
+
+def test_vol_expansion_label_fires_when_rv_rising_and_vix_elevated(
+    session: Session,
+) -> None:
+    """Locks in the rule-firing change PR #63 enables.
+
+    Pre-fix the rv_5d/rv_20d hardcode at 0.0 meant ``classify_regime`` never
+    found ``rv_5d > rv_20d`` true and the ``vol_expansion`` rule never fired
+    — every invocation fell through to the VIX-band fallback. Post-fix the
+    rule is live: seed elevated-band VIX + a SPY series whose 5d realized
+    vol exceeds its 20d realized vol and verify the label.
+    """
+    from alphamind.distillation.regime import (
+        RegimeClassificationThresholds,
+        classify_regime,
+    )
+
+    # Front-load 20 calm bars, then 5 bars with much larger day-over-day moves
+    # so the 5d realized vol is materially higher than the 20d window.
+    calm_segment = [700.0 + 0.1 * (i % 2) for i in range(20)]
+    volatile_segment = [700.0 + 8.0 * (i % 2) for i in range(5)]
+    closes = calm_segment + volatile_segment
+    _seed_spy_closes(session, closes, end_date=AS_OF)
+    session.add(
+        MacroObservations(
+            source="fred",
+            series_id="VIXCLS",
+            observation_date="2026-05-15",
+            revision_number=0,
+            # VIX in the elevated band (24 ∈ [normal_vix_min, elevated_vix_max]
+            # under typical thresholds).
+            value=24.0,
+            ingested_at="2026-05-15T20:00:00Z",
+        )
+    )
+    session.commit()
+
+    snapshot, _bootstrap = _build_regime_snapshot(session, as_of=AS_OF)
+    assert snapshot.realized_vol_5d > snapshot.realized_vol_20d > 0.0
+
+    thresholds = RegimeClassificationThresholds(
+        low_vol_vix_max=15.0,
+        normal_vix_min=15.0,
+        normal_vix_max=20.0,
+        elevated_vix_min=20.0,
+        elevated_vix_max=28.0,
+        crisis_vix_min=28.0,
+        term_structure_backwardation_threshold=0.0,
+        vvix_high_percentile=80.0,
+        vvix_low_percentile=20.0,
+    )
+    assert classify_regime(snapshot=snapshot, thresholds=thresholds).value == "vol_expansion"

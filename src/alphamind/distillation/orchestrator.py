@@ -601,7 +601,7 @@ _VVIX_PERCENTILE_PLACEHOLDER: float = 50.0
 # rather than trading days; 35 calendar days yields ≥21 trading days
 # (enough for the 20-day window) under the worst-case U.S. holiday density.
 _REALIZED_VOL_BENCHMARK_TICKER: str = "SPY"
-_REALIZED_VOL_DAILY_TIMEFRAME: str = "1d"
+_TIMEFRAME_DAILY: str = "1d"
 _TRADING_DAYS_PER_YEAR: int = 252
 _REALIZED_VOL_SHORT_WINDOW: int = 5
 _REALIZED_VOL_LONG_WINDOW: int = 20
@@ -611,9 +611,9 @@ _REALIZED_VOL_LOOKBACK_DAYS: int = 35
 def _annualized_window_stdev(returns: Sequence[float], window: int) -> float:
     """Sample-stdev of the last ``window`` returns, annualized via √252.
 
-    Returns ``0.0`` when fewer than ``window`` returns are available — the
-    caller surfaces that state via the ALP-492 Gap 1 WARN rather than
-    fabricating a vol reading from too little data.
+    Returns ``0.0`` when fewer than ``window`` returns are available so the
+    caller can fall back to the placeholder snapshot without fabricating a
+    vol reading from too little data.
     """
     if len(returns) < window:
         return 0.0
@@ -636,7 +636,7 @@ def _load_spy_closes(session: Session, *, as_of: datetime) -> list[float]:
         select(OhlcvBars.adj_close)
         .where(
             OhlcvBars.ticker == _REALIZED_VOL_BENCHMARK_TICKER,
-            OhlcvBars.timeframe == _REALIZED_VOL_DAILY_TIMEFRAME,
+            OhlcvBars.timeframe == _TIMEFRAME_DAILY,
             OhlcvBars.period_start >= range_start,
             OhlcvBars.period_start <= range_end,
         )
@@ -645,21 +645,41 @@ def _load_spy_closes(session: Session, *, as_of: datetime) -> list[float]:
     return [float(v) for v in session.execute(stmt).scalars().all()]
 
 
+def _spy_log_returns(closes: Sequence[float]) -> list[float]:
+    """Day-over-day log returns from ascending SPY closes.
+
+    Non-positive closes are a data-corruption signal: SPY adjusted closes are
+    bounded strictly above zero. The function logs a WARN per occurrence and
+    substitutes ``0.0`` so a single bad bar doesn't take the whole window out;
+    the WARN makes the bad bar visible in operator logs rather than silently
+    deflating realized vol.
+    """
+    out: list[float] = []
+    for prior, latest in pairwise(closes):
+        if prior <= 0.0 or latest <= 0.0:
+            logger.warning(
+                "realized-vol: non-positive SPY close in pair (prior=%r, latest=%r) — "
+                "substituting 0.0 return; investigate upstream OHLCV ingest",
+                prior,
+                latest,
+            )
+            out.append(0.0)
+        else:
+            out.append(math.log(latest / prior))
+    return out
+
+
 def _compute_realized_vols(session: Session, *, as_of: datetime) -> tuple[float, float]:
     """Annualized SPY realized vol over 5 and 20 trading days at or before ``as_of``.
 
-    Returns ``(0.0, 0.0)`` when SPY closes are insufficient — the ALP-492
-    Gap 1 WARN trips on that state, so the data-pipeline gap surfaces to
-    operators rather than being silently masked by a fabricated reading.
+    Returns ``(0.0, 0.0)`` when fewer than two SPY closes are available — the
+    placeholder caller (``_build_regime_snapshot``) propagates that state so
+    the downstream emitter can mark the regime block as data-degraded.
     """
     closes = _load_spy_closes(session, as_of=as_of)
     if len(closes) < 2:
         return 0.0, 0.0
-    log_returns = [
-        math.log(latest / prior) if prior > 0.0 and latest > 0.0 else 0.0
-        for prior, latest in pairwise(closes)
-    ]
-    return _realized_vols_from_log_returns(log_returns)
+    return _realized_vols_from_log_returns(_spy_log_returns(closes))
 
 
 def _build_regime_snapshot(
@@ -670,9 +690,9 @@ def _build_regime_snapshot(
     Reads VIX (``VIXCLS``) and SPY daily closes directly. The VX1 / VVIX
     series remain conservative placeholders when missing — per story 09's
     dispatch instruction the regime block emits rather than blocking the
-    orchestrator. Realized vol is now computed from SPY log returns when
-    closes are available; absent SPY data, both windows fall back to
-    ``0.0`` and the ALP-492 Gap 1 WARN surfaces the gap.
+    orchestrator. Realized vol is computed from SPY log returns when closes
+    are available; absent SPY data, both windows fall back to ``0.0`` and
+    the downstream input-bundle integrity check surfaces the gap.
 
     Returns ``(snapshot, None)`` when VIX is observed and
     ``(snapshot, "regime: VIXCLS observation missing")`` when it is not.
