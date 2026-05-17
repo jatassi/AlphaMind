@@ -51,8 +51,9 @@ Argparse surface:
   invocation.
 - `--reason TEXT` (default `verify_debug_e2e`) — free-form reason
   recorded on the invocation row.
-- `--pipeline-log PATH` (default `~/AlphaMind/logs/pipeline.log`) — log
-  path scanned by `check_no_alpaca`.
+
+`check_no_alpaca` scans the captured subprocess stderr stream
+directly — no separate `--pipeline-log` flag is needed.
 
 ## Expected output
 
@@ -60,9 +61,9 @@ Argparse surface:
 PASS: auth — all required env vars present (CLAUDE_CODE_OAUTH_TOKEN)
 PASS: subprocess — debug-e2e subprocess exited 0
 PASS: archive_directory — directory + resolved_config.json + progress.jsonl present at <archive>
-PASS: jsonl_ordering — 13/13 phases with paired start/done in dependency order; 10/10 SDK call pairs matched
+PASS: jsonl_ordering — 12/12 phases with paired start/done in dependency order; 10/10 SDK call pairs matched
 PASS: synthetic_portfolio — positions=8, theses=8, cash_ledger.current_cash_usd=24440.0
-PASS: no_alpaca — no alpaca indicators in pipeline log at ~/AlphaMind/logs/pipeline.log
+PASS: no_alpaca — no alpaca indicators in captured stream
 PASS: invocation_summary — staleness_flag=false, trigger_source='debug_e2e_cli', commands_submitted=N
 === DEBUG-E2E VERIFICATION === 7/7 checks passed
 ```

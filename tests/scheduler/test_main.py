@@ -200,6 +200,49 @@ class TestCliArgparseSurface:
             main(argv=["run", "--once", "market_hours_rolling"])
 
 
+class TestCliConfiguresUtf8Stdio:
+    def test_main_calls_configure_utf8_stdio(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``main()`` must reconfigure stdio to UTF-8 before dispatching.
+
+        Windows defaults stdout to cp1252; when ``verify_debug_e2e.py``
+        captures the subprocess stdout (the InvocationSummary JSON),
+        any non-ASCII codepoint surfaces as ``UnicodeEncodeError`` and
+        loses the captured payload. The verify script already calls
+        ``configure_utf8_stdio()`` itself; the subprocess needs the
+        same treatment.
+        """
+        from alphamind.scheduler import __main__ as module
+
+        _patch_cli_heavy_setup(monkeypatch)
+
+        called: dict[str, bool] = {"called": False}
+
+        def _stub_configure() -> None:
+            called["called"] = True
+
+        monkeypatch.setattr(module, "configure_utf8_stdio", _stub_configure)
+
+        async def _stub(**_kwargs: Any) -> Any:
+            return _make_summary_stub()
+
+        monkeypatch.setattr(module, "run_invocation", _stub)
+
+        main(
+            argv=[
+                "run",
+                "--once",
+                "market_hours_rolling",
+                "--reason",
+                "test",
+            ]
+        )
+
+        assert called["called"] is True
+
+
 class TestCliDaemonRegistersEmergencyReceiver:
     def test_daemon_path_registers_emergency_receiver_task(
         self,

@@ -77,6 +77,57 @@ class TestParseArgsDebugE2E:
         args = _parse_args(["run", "--once", "market_hours_rolling", "--reason", "test"])
         assert args.debug_e2e is False
 
+    def test_archive_root_flag_parsed_when_paired_with_debug_e2e(self) -> None:
+        """``--archive-root`` parses to a ``Path`` when paired with ``--debug-e2e``."""
+        from pathlib import Path
+
+        args = _parse_args(
+            [
+                "run",
+                "--debug-e2e",
+                "--archive-root",
+                "/tmp/some-archive",
+                "--once",
+                "market_hours_rolling",
+                "--reason",
+                "test",
+            ]
+        )
+        assert args.archive_root == Path("/tmp/some-archive")
+
+    def test_archive_root_default_is_none(self) -> None:
+        """Omitting ``--archive-root`` leaves ``args.archive_root`` at ``None``."""
+        args = _parse_args(
+            [
+                "run",
+                "--debug-e2e",
+                "--once",
+                "market_hours_rolling",
+                "--reason",
+                "test",
+            ]
+        )
+        assert args.archive_root is None
+
+    def test_archive_root_without_debug_e2e_raises(self) -> None:
+        """``--archive-root`` without ``--debug-e2e`` errors out at argparse level.
+
+        Production daemons must use the hardcoded ``~/AlphaMind/archive``
+        default — the override is debug-e2e-only.
+        """
+        with pytest.raises(SystemExit):
+            _parse_args(
+                [
+                    "run",
+                    "--archive-root",
+                    "/tmp/some-archive",
+                    "--once",
+                    "market_hours_rolling",
+                    "--reason",
+                    "test",
+                ]
+            )
+
 
 # ---------------------------------------------------------------------------
 # Execution shape — _run_debug_e2e (acceptance criterion 4)
@@ -197,6 +248,7 @@ def _patch_debug_e2e_heavy_setup(monkeypatch: pytest.MonkeyPatch) -> dict[str, A
         "wipe_seed_calls": [],
         "run_invocation_kwargs": None,
         "recorder": shared_recorder,
+        "configure_debug_e2e_archive_root": None,
     }
 
     monkeypatch.setattr(module, "_load_venue_config", lambda _config_dir: _make_fake_venue_config())
@@ -216,6 +268,7 @@ def _patch_debug_e2e_heavy_setup(monkeypatch: pytest.MonkeyPatch) -> dict[str, A
     monkeypatch.setattr(seed_module, "wipe_and_seed", _stub_wipe_and_seed)
 
     def _stub_configure_debug_e2e(*, archive_root: Any) -> Any:
+        captured["configure_debug_e2e_archive_root"] = archive_root
         return settings_module.DebugE2ESettings(
             account_queries=LogOnlyAccountStateQueries(SYNTHETIC_PORTFOLIO),
             ca_queries=LogOnlyCorporateActionsQueries(),
@@ -367,3 +420,89 @@ class TestRunDebugE2E:
 
         call = captured["wipe_seed_calls"][0]
         assert call["db_path"] == "/tmp/whatever-debug-e2e.db"
+
+    async def test_wipe_and_seed_runtime_error_logged_with_db_path_and_reraised(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A failing safety-guard ``RuntimeError`` surfaces the refusing path.
+
+        The seeder's ``-debug-e2e.db`` suffix guard raises
+        :class:`RuntimeError` on a mis-set ``DATABASE_PATH``. Without
+        explicit handling the error rolls up into the generic
+        "pipeline scheduler exited with error" frame, hiding the
+        actionable path. The dispatch must log the path before
+        re-raising.
+        """
+        import logging
+
+        from alphamind.scheduler import __main__ as module
+        from alphamind.scheduler.__main__ import _run_debug_e2e
+        from alphamind.scheduler.debug_e2e import seed as seed_module
+
+        _patch_debug_e2e_heavy_setup(monkeypatch)
+
+        async def _raising_wipe(**_kwargs: Any) -> None:
+            msg = "refusing to wipe non-debug DB path '/tmp/whatever-debug-e2e.db'"
+            raise RuntimeError(msg)
+
+        monkeypatch.setattr(seed_module, "wipe_and_seed", _raising_wipe)
+
+        args = _parse_args(
+            [
+                "run",
+                "--debug-e2e",
+                "--once",
+                "market_hours_rolling",
+                "--reason",
+                "smoke",
+            ]
+        )
+
+        with (
+            caplog.at_level(logging.ERROR, logger=module.log.name),
+            pytest.raises(RuntimeError, match="refusing to wipe non-debug DB path"),
+        ):
+            await _run_debug_e2e(args)
+
+        # The error log names db_path so operators see the refusing path
+        # before the outermost ``BaseException`` frame swallows it.
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert any("db_path" in r.getMessage() for r in error_records)
+        assert any("-debug-e2e.db" in r.getMessage() for r in error_records)
+
+    async def test_archive_root_override_threads_to_configure_and_context(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+    ) -> None:
+        """``--archive-root`` propagates to ``configure_debug_e2e`` + the context.
+
+        The verify-script's --archive-root must reach
+        :func:`configure_debug_e2e` (so the JSONL emitter writes under
+        the operator-chosen verification archive) and the
+        :class:`RunInvocationContext` (so the orchestrator writes
+        ``resolved_config.json`` under the same root).
+        """
+        from alphamind.scheduler.__main__ import _run_debug_e2e
+
+        override = tmp_path / "verify-archive"
+        captured = _patch_debug_e2e_heavy_setup(monkeypatch)
+        args = _parse_args(
+            [
+                "run",
+                "--debug-e2e",
+                "--archive-root",
+                str(override),
+                "--once",
+                "market_hours_rolling",
+                "--reason",
+                "smoke",
+            ]
+        )
+        await _run_debug_e2e(args)
+
+        assert captured["configure_debug_e2e_archive_root"] == override
+        assert captured["run_invocation_kwargs"]["context"].archive_root == override
+        assert override.is_dir()

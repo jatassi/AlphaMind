@@ -8,6 +8,7 @@ fixture content from design § 4.
 from __future__ import annotations
 
 import dataclasses
+from decimal import Decimal
 
 import pytest
 
@@ -80,7 +81,16 @@ class TestSyntheticPortfolioConstant:
         assert len(SYNTHETIC_PORTFOLIO.theses) == 8
 
     def test_starting_cash_usd_matches_design(self) -> None:
-        assert SYNTHETIC_PORTFOLIO.starting_cash_usd == 24_440.0
+        assert SYNTHETIC_PORTFOLIO.starting_cash_usd == Decimal(24440)
+
+    def test_starting_cash_usd_is_decimal(self) -> None:
+        """Money discipline: ``starting_cash_usd`` is a ``Decimal``, not a float.
+
+        Keeps the seed path (which constructs ``Decimal(str(...))``) on
+        the same exact representation as the portfolio fixture, avoiding
+        any float→Decimal round-trip surprises.
+        """
+        assert isinstance(SYNTHETIC_PORTFOLIO.starting_cash_usd, Decimal)
 
 
 # ---------------------------------------------------------------------------
@@ -210,4 +220,4 @@ class TestTheses:
 class TestImmutability:
     def test_synthetic_portfolio_constant_is_immutable(self) -> None:
         with pytest.raises(dataclasses.FrozenInstanceError):
-            SYNTHETIC_PORTFOLIO.starting_cash_usd = 0.0  # type: ignore[misc]
+            SYNTHETIC_PORTFOLIO.starting_cash_usd = Decimal(0)  # type: ignore[misc]

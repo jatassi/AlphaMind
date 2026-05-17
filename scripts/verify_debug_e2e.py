@@ -14,14 +14,18 @@ driving a real subprocess:
   credentials NOT required.
 * :func:`check_archive_directory` — ``<archive>/invocations/<id>/``
   exists with ``resolved_config.json`` and ``progress.jsonl``.
-* :func:`check_jsonl_ordering` — 13 ``phase_start``/``phase_done``
-  pairs plus 9 ``agent_request``/``agent_response`` pairs in
-  dependency order; ``domain_researchers``/``qualitative`` and
-  ``analyst``/``strategist`` parallel-overlap pairs tolerated.
+* :func:`check_jsonl_ordering` — 12 in-invocation
+  ``phase_start``/``phase_done`` pairs plus 10
+  ``agent_request``/``agent_response`` pairs in dependency order;
+  ``domain_researchers``/``qualitative`` and
+  ``analyst``/``strategist`` parallel-overlap pairs tolerated. The
+  pre-invocation ``seed`` event lands under
+  ``<archive>/invocations/_pre_invocation/progress.jsonl`` and is
+  intentionally NOT inspected here.
 * :func:`check_synthetic_portfolio_visibility` — 8 positions, 8 theses,
   cash ledger seeded at $24,440.
-* :func:`check_no_alpaca` — pipeline log carries no ``alpaca-py``
-  indicators.
+* :func:`check_no_alpaca` — captured subprocess stderr carries no
+  ``alpaca-py`` indicators.
 * :func:`check_invocation_summary` — subprocess stdout JSON carries
   ``staleness_flag=false``, ``commands_submitted>=0``,
   ``trigger_source="debug_e2e_cli"``.
@@ -173,15 +177,19 @@ def check_archive_directory(*, archive_root: Path, invocation_id: str) -> CheckR
 # ---------------------------------------------------------------------------
 
 
-# 13 phases in dependency order. ``domain_researchers``/``qualitative`` open
-# in parallel under the analysis TaskGroup; ``analyst``/``strategist`` open
-# in parallel under the decision TaskGroup. The dependency-graph below pins
-# every phase's required predecessors using only the strict edges; sibling
-# phases (peers under a TaskGroup) are intentionally absent from each
-# other's edge sets so the parallel-overlap event interleaving validates.
+# 12 in-invocation phases in dependency order. The pre-invocation ``seed``
+# phase lands in the sentinel ``_pre_invocation`` archive directory before
+# ``run_invocation`` opens the canonical invocation_id, so it is NOT part of
+# the per-invocation ``progress.jsonl`` this check inspects (parent issue
+# ALP-493 § D — "12 in-invocation phases + 1 pre-invocation seed event").
+# ``domain_researchers``/``qualitative`` open in parallel under the analysis
+# TaskGroup; ``analyst``/``strategist`` open in parallel under the decision
+# TaskGroup. The dependency-graph below pins every phase's required
+# predecessors using only the strict edges; sibling phases (peers under a
+# TaskGroup) are intentionally absent from each other's edge sets so the
+# parallel-overlap event interleaving validates.
 _PHASE_PREDECESSORS: dict[str, frozenset[str]] = {
-    "seed": frozenset(),
-    "phase1": frozenset({"seed"}),
+    "phase1": frozenset(),
     "snapshot_assembly": frozenset({"phase1"}),
     "distillation": frozenset({"snapshot_assembly"}),
     "domain_researchers": frozenset({"distillation"}),
@@ -195,9 +203,11 @@ _PHASE_PREDECESSORS: dict[str, frozenset[str]] = {
     "phase2": frozenset({"pm"}),
 }
 
-# 9 SDK call pairs per parent issue ALP-493 § (E) — 3 domain-researcher
-# sectors + 6 single-call agents. Each is a ``(phase, agent)`` tuple so
-# we can match the request/response events by their joint identity.
+# 10 SDK call pairs per parent issue ALP-493 § (E) — distillation, 3
+# domain-researcher sectors (tech_semis, financials, energy), qualitative,
+# adaptive, synthesizer, analyst, strategist, pm. Each is a ``(phase,
+# agent)`` tuple so we can match the request/response events by their
+# joint identity.
 _SDK_CALL_PAIRS: tuple[tuple[str, str], ...] = (
     ("distillation", "distillation"),
     ("domain_researchers", "tech_semis_researcher"),
@@ -235,16 +245,19 @@ def check_jsonl_ordering(path: Path) -> CheckResult:
     1. **Monotonic timestamps.** Each event's ``timestamp`` is >= the prior.
        The JSONL emitter's ``fsync`` per write guarantees this in practice;
        a regression here would point at a clock-skew or out-of-order write.
-    2. **13 phase pairs.** Each of the 13 phases produces exactly one
-       ``phase_start`` and one ``phase_done``, and ``phase_done`` follows
-       its own ``phase_start``.
+    2. **12 in-invocation phase pairs.** Each of the 12 in-invocation
+       phases produces exactly one ``phase_start`` and one ``phase_done``,
+       and ``phase_done`` follows its own ``phase_start``. The
+       pre-invocation ``seed`` event lands in
+       ``<archive>/invocations/_pre_invocation/progress.jsonl`` and is NOT
+       part of the stream this check inspects.
     3. **Phase-level dependency graph.** ``phase_start("X")`` happens after
        every predecessor in ``_PHASE_PREDECESSORS[X]`` has emitted its
        ``phase_done``. The parallel-overlap pairs
        (``domain_researchers``/``qualitative`` and
        ``analyst``/``strategist``) are NOT each other's predecessors, so
        their event interleaving validates either way.
-    4. **9 SDK call pairs.** Each of the 9 ``(phase, agent)`` tuples in
+    4. **10 SDK call pairs.** Each of the 10 ``(phase, agent)`` tuples in
        ``_SDK_CALL_PAIRS`` emits one ``agent_request`` followed by one
        ``agent_response``.
     """
@@ -268,11 +281,13 @@ def check_jsonl_ordering(path: Path) -> CheckResult:
     if sdk_error is not None:
         return _ordering_fail(sdk_error)
 
+    expected_phases = len(_PHASE_PREDECESSORS)
     return CheckResult(
         label="jsonl_ordering",
         passed=True,
         message=(
-            f"13/13 phases with paired start/done in dependency order; "
+            f"{expected_phases}/{expected_phases} phases with paired start/done "
+            f"in dependency order; "
             f"{len(_SDK_CALL_PAIRS)}/{len(_SDK_CALL_PAIRS)} SDK call pairs matched"
         ),
     )
@@ -361,7 +376,7 @@ def _check_phase_dependency_graph(
 
 
 def _check_phase_pairs(events: list[dict[str, object]]) -> str | None:
-    """Validate the 13 phase_start/phase_done pairs + dependency graph."""
+    """Validate the 12 in-invocation phase_start/phase_done pairs + dependency graph."""
     starts, dones, indexing_error = _index_phase_events(events)
     if indexing_error is not None:
         return indexing_error
@@ -371,8 +386,46 @@ def _check_phase_pairs(events: list[dict[str, object]]) -> str | None:
     return _check_phase_dependency_graph(starts, dones)
 
 
+# Fields every ``agent_response`` must carry per parent issue ALP-493 § (B).
+# ``stop_reason`` may legitimately be ``None`` (the Anthropic SDK does not
+# always populate it); the other four must be present AND non-null because
+# the report builder + cost-tracking downstream rely on them.
+_AGENT_RESPONSE_REQUIRED_FIELDS: tuple[str, ...] = (
+    "duration_s",
+    "input_tokens",
+    "output_tokens",
+    "tool_calls",
+    "stop_reason",
+)
+_AGENT_RESPONSE_NON_NULL_FIELDS: frozenset[str] = frozenset(
+    {"duration_s", "input_tokens", "output_tokens", "tool_calls"}
+)
+
+
+def _check_agent_response_fields(
+    *, event_index: int, ev: dict[str, object], key: tuple[str, str]
+) -> str | None:
+    """Assert one ``agent_response`` carries the 5-field set per § (B).
+
+    Returns a non-``None`` error string when a required field is absent
+    or — for the four load-bearing fields — null.
+    """
+    for field in _AGENT_RESPONSE_REQUIRED_FIELDS:
+        if field not in ev:
+            return (
+                f"agent_response for {key!r} at event #{event_index} "
+                f"missing required field {field!r}"
+            )
+        if field in _AGENT_RESPONSE_NON_NULL_FIELDS and ev[field] is None:
+            return (
+                f"agent_response for {key!r} at event #{event_index} "
+                f"has null {field!r} (only stop_reason may be null)"
+            )
+    return None
+
+
 def _check_sdk_call_pairs(events: list[dict[str, object]]) -> str | None:
-    """Validate the 9 SDK call request/response pairs."""
+    """Validate the 10 SDK call request/response pairs."""
     seen_requests: set[tuple[str, str]] = set()
     matched_pairs: set[tuple[str, str]] = set()
     for index, ev in enumerate(events):
@@ -391,6 +444,9 @@ def _check_sdk_call_pairs(events: list[dict[str, object]]) -> str | None:
                 return (
                     f"agent_response for {key!r} at event #{index} has no preceding agent_request"
                 )
+            field_error = _check_agent_response_fields(event_index=index, ev=ev, key=key)
+            if field_error is not None:
+                return field_error
             matched_pairs.add(key)
 
     expected = set(_SDK_CALL_PAIRS)
@@ -481,25 +537,19 @@ _ALPACA_INDICATORS: tuple[re.Pattern[str], ...] = (
 )
 
 
-def check_no_alpaca(log_path: Path) -> CheckResult:
-    """Grep the pipeline log for Alpaca HTTP indicators; FAIL on any hit.
+def check_no_alpaca(stream: str) -> CheckResult:
+    """Scan a captured text stream for Alpaca HTTP indicators; FAIL on any hit.
 
-    A missing log is reported as PASS — the pipeline-log location depends
-    on the runtime environment (``~/AlphaMind/logs/pipeline.log`` on
-    POSIX, ``%USERPROFILE%\\AlphaMind\\logs\\pipeline.log`` on Windows)
-    and may not exist in CI. The check's primary failure mode is "Alpaca
-    leaked"; "no log at all" is an operator-known SKIP.
+    The verify script passes the subprocess's captured stderr blob
+    here, so the check is stream-based (no filesystem dependency) and
+    runs every time — the prior log-file approach was lenient because
+    the pipeline-log location is platform-dependent and routinely
+    absent in CI, which short-circuited the check to PASS even when a
+    regression might have leaked Alpaca traffic.
     """
-    if not log_path.is_file():
-        return CheckResult(
-            label="no_alpaca",
-            passed=True,
-            message=f"pipeline log not at {log_path} (SKIP — no log to scan)",
-        )
-    text_blob = log_path.read_text(encoding="utf-8", errors="replace")
     hits: list[str] = []
     for pattern in _ALPACA_INDICATORS:
-        match = pattern.search(text_blob)
+        match = pattern.search(stream)
         if match is not None:
             hits.append(match.group(0))
     if hits:
@@ -507,14 +557,13 @@ def check_no_alpaca(log_path: Path) -> CheckResult:
             label="no_alpaca",
             passed=False,
             message=(
-                f"pipeline log at {log_path} carries alpaca indicator(s): "
-                f"{', '.join(sorted(set(hits)))}"
+                f"captured stream carries alpaca indicator(s): {', '.join(sorted(set(hits)))}"
             ),
         )
     return CheckResult(
         label="no_alpaca",
         passed=True,
-        message=f"no alpaca indicators in pipeline log at {log_path}",
+        message="no alpaca indicators in captured stream",
     )
 
 
@@ -583,7 +632,6 @@ def check_invocation_summary(stdout: str) -> CheckResult:
 
 
 _DEFAULT_DB_PATH = Path("data") / "alphamind-debug-e2e.db"
-_DEFAULT_PIPELINE_LOG = Path.home() / "AlphaMind" / "logs" / "pipeline.log"
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -624,15 +672,6 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default="verify_debug_e2e",
         help="Free-form reason recorded on the invocation row.",
     )
-    parser.add_argument(
-        "--pipeline-log",
-        type=Path,
-        default=_DEFAULT_PIPELINE_LOG,
-        help=(
-            "Pipeline-log path scanned by the no_alpaca check "
-            "(default ``~/AlphaMind/logs/pipeline.log``)."
-        ),
-    )
     return parser.parse_args(argv)
 
 
@@ -641,8 +680,25 @@ def _emit(results: list[CheckResult], result: CheckResult) -> None:
     print(result.format_line())
 
 
-def _drive_debug_e2e_subprocess(args: argparse.Namespace) -> tuple[CheckResult, str | None]:
-    """Subprocess the CLI and return its stdout JSON on success."""
+@dataclass(frozen=True, slots=True)
+class _SubprocessOutput:
+    """Captured stdout + stderr of the debug-e2e subprocess."""
+
+    stdout: str
+    stderr: str
+
+
+def _drive_debug_e2e_subprocess(
+    args: argparse.Namespace,
+) -> tuple[CheckResult, _SubprocessOutput | None]:
+    """Subprocess the CLI and return its captured stdout + stderr on success.
+
+    Passes ``--archive-root`` through to the CLI so the per-invocation
+    directory lands under the operator-chosen verification archive
+    rather than the production-default ``~/AlphaMind/archive``. The
+    captured stderr feeds :func:`check_no_alpaca` so the no-Alpaca
+    invariant is enforced every run regardless of pipeline-log presence.
+    """
     cmd = [
         "uv",
         "run",
@@ -651,6 +707,8 @@ def _drive_debug_e2e_subprocess(args: argparse.Namespace) -> tuple[CheckResult, 
         "alphamind.scheduler",
         "run",
         "--debug-e2e",
+        "--archive-root",
+        str(args.archive_root),
         "--once",
         args.run_type,
         "--reason",
@@ -694,7 +752,7 @@ def _drive_debug_e2e_subprocess(args: argparse.Namespace) -> tuple[CheckResult, 
             passed=True,
             message="debug-e2e subprocess exited 0",
         ),
-        completed.stdout,
+        _SubprocessOutput(stdout=completed.stdout, stderr=completed.stderr),
     )
 
 
@@ -727,13 +785,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_summary(results)
         return 1
 
-    subprocess_result, stdout = _drive_debug_e2e_subprocess(args)
+    subprocess_result, output = _drive_debug_e2e_subprocess(args)
     _emit(results, subprocess_result)
-    if not subprocess_result.passed or stdout is None:
+    if not subprocess_result.passed or output is None:
         _print_summary(results)
         return 1
 
-    invocation_id = _invocation_id_from_summary(stdout)
+    invocation_id = _invocation_id_from_summary(output.stdout)
     if invocation_id is None:
         _emit(
             results,
@@ -771,8 +829,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         engine.dispose()
 
-    _emit(results, check_no_alpaca(args.pipeline_log))
-    _emit(results, check_invocation_summary(stdout))
+    # ``check_no_alpaca`` runs against the captured stderr stream so the
+    # check fires every time regardless of pipeline-log presence (the
+    # prior log-file approach was lenient on missing logs).
+    _emit(results, check_no_alpaca(output.stderr))
+    _emit(results, check_invocation_summary(output.stdout))
 
     _print_summary(results)
     return 0 if all(r.passed for r in results) else 1

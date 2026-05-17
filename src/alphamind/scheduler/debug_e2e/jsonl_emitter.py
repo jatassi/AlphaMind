@@ -58,7 +58,12 @@ class JsonlProgressEmitter:
     def _write(self, payload: dict[str, Any]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload["timestamp"] = datetime.now(UTC).isoformat()
-        with self._path.open("a", encoding="utf-8") as f:
+        # ``newline=""`` disables Windows ``\n`` -> ``\r\n`` text-mode
+        # translation so the on-disk bytes are LF-only on every
+        # platform; the downstream consumers (``json.loads``) tolerate
+        # CRLF, but byte-identical output matters for archive digests
+        # and any future binary-aware parser.
+        with self._path.open("a", encoding="utf-8", newline="") as f:
             f.write(json.dumps(payload, sort_keys=True) + "\n")
             f.flush()
             os.fsync(f.fileno())

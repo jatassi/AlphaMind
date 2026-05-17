@@ -176,10 +176,13 @@ class LogOnlyCorporateActionsQueries:
     ) -> tuple[CorporateAction, ...]:
         log.info(
             "[debug_e2e] LogOnlyCorporateActionsQueries.get_corporate_actions("
-            "start=%s end=%s symbols=%d types=%d)",
+            "start=%s end=%s symbols=%s types=%d)",
             start.isoformat(),
             end.isoformat(),
-            0 if symbols is None else len(symbols),
+            # ``symbols is None`` means "all symbols" per the production
+            # corporate-actions fetcher's semantics; surface that
+            # explicitly rather than logging an ambiguous ``0``.
+            "<all>" if symbols is None else len(symbols),
             len(types),
         )
         return ()

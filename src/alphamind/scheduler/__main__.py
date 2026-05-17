@@ -42,6 +42,7 @@ from alphamind.scheduler.orchestrator import run_invocation
 from alphamind.scheduler.run_context import RunInvocationContext
 from alphamind.scheduler.session import PipelineMode, new_session
 from alphamind.scheduler.supervisor import PipelineSupervisor
+from alphamind.scripts._stdio import configure_utf8_stdio
 from alphamind.state.process_lifetime import (
     record_process_lifetime,
 )
@@ -93,6 +94,18 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             "is mutually exclusive with --mode live."
         ),
     )
+    run_p.add_argument(
+        "--archive-root",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Override the archive-root directory (debug-e2e only). Production "
+            "daemons use the hardcoded ``~/AlphaMind/archive`` default; the "
+            "debug-e2e verify script passes this so per-invocation files land "
+            "under the operator-chosen verification archive."
+        ),
+    )
 
     args = parser.parse_args(argv)
     if args.subcommand == "run" and args.once is not None and not args.reason:
@@ -106,6 +119,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             parser.error("--debug-e2e is incompatible with --mode live")
         if args.once is None:
             parser.error("--debug-e2e requires --once <run_type> --reason <text>")
+    if args.subcommand == "run" and args.archive_root is not None and not args.debug_e2e:
+        parser.error("--archive-root is only valid with --debug-e2e")
     return args
 
 
@@ -175,9 +190,15 @@ async def _run_debug_e2e(args: argparse.Namespace) -> None:
     ("seed")`` / ``phase_done("seed")`` around the wipe+seed via a
     pre-invocation emitter (the canonical invocation_id is not known
     until ``run_invocation`` returns; the sentinel ``_pre_invocation``
-    keys the seed log), (d) records the process-lifetime row *after*
-    the wipe so the row survives, and (e) hands ``debug_e2e=settings``
-    to ``run_invocation``.
+    keys the seed log). The ``seed`` events live exclusively in
+    ``<archive>/invocations/_pre_invocation/progress.jsonl`` — they
+    are intentionally NOT part of the real-invocation event stream
+    consumed by :func:`scripts.verify_debug_e2e.check_jsonl_ordering`,
+    which inspects only the 12 in-invocation phases. Operators may
+    consult the pre-invocation archive directory directly for seed-step
+    debugging. (d) records the process-lifetime row *after* the wipe
+    so the row survives, and (e) hands ``debug_e2e=settings`` to
+    ``run_invocation``.
 
     The imports of ``alphamind.scheduler.debug_e2e`` are deferred via
     :func:`importlib.import_module` so the import-linter contract
@@ -188,7 +209,7 @@ async def _run_debug_e2e(args: argparse.Namespace) -> None:
     """
     configure_pipeline_logging()
 
-    archive_root = _DEFAULT_ARCHIVE_ROOT
+    archive_root = args.archive_root if args.archive_root is not None else _DEFAULT_ARCHIVE_ROOT
     archive_root.mkdir(parents=True, exist_ok=True)
 
     debug_e2e_settings = importlib.import_module("alphamind.scheduler.debug_e2e.settings")
@@ -221,13 +242,21 @@ async def _run_debug_e2e(args: argparse.Namespace) -> None:
         # pre-invocation seed log so it doesn't race with the per-invocation file.
         pre_emitter = debug_settings.emitter_factory("_pre_invocation")
         pre_emitter.phase_start("seed")
-        async with engines.async_session_factory() as session:
-            await wipe_and_seed(
-                session=session,
-                now=now,
-                db_path=resolved_db_path,
-                portfolio=synthetic_portfolio,
-            )
+        try:
+            async with engines.async_session_factory() as session:
+                await wipe_and_seed(
+                    session=session,
+                    now=now,
+                    db_path=resolved_db_path,
+                    portfolio=synthetic_portfolio,
+                )
+        except RuntimeError:
+            # Surface the refusing path before the outermost
+            # ``BaseException`` handler in ``__main__`` swallows the
+            # exception into a generic "pipeline scheduler exited with
+            # error" frame — operators need the actionable path.
+            log.exception("debug-e2e seed refused: db_path=%s", resolved_db_path)
+            raise
         pre_emitter.phase_done("seed")
 
         # Record process_lifetime AFTER the wipe so the row survives.
@@ -323,6 +352,11 @@ async def _run_daemon(*, mode: PipelineMode) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    # Switch stdout/stderr to UTF-8 with ``replace`` errors so a Windows
+    # ``cp1252`` default doesn't mangle the JSON ``InvocationSummary``
+    # captured by ``scripts/verify_debug_e2e.py`` (or surface as a
+    # ``UnicodeEncodeError`` inside the subprocess on non-ASCII output).
+    configure_utf8_stdio()
     args = _parse_args(argv)
     load_dotenv()
     logging.basicConfig(level=logging.INFO)
