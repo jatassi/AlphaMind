@@ -58,6 +58,7 @@ def _snapshot(
     portfolio_value_usd: float = 100_000.0,
     total_short_pct: float = 0.0,
     single_short_max_pct: float = 0.0,
+    single_short_max_position_id: str | None = None,
     daily_borrow_cost_pct: float = 0.0,
     existing_positions: Mapping[str, ExistingPosition] | None = None,
 ) -> PortfolioStateSnapshot:
@@ -79,6 +80,7 @@ def _snapshot(
         daily_borrow_cost_pct=daily_borrow_cost_pct,
         position_max_size_pct=0.0,
         existing_positions=MappingProxyType(dict(existing_positions)),
+        single_short_max_position_id=single_short_max_position_id,
     )
 
 
@@ -247,6 +249,29 @@ def test_single_short_max_contribute_zero_for_long_proposal() -> None:
     state = _snapshot(portfolio_value_usd=100_000.0)
     spec = _spec_by_id(build_active_specs(config), "single_short_max_pct")
     assert spec.contribute(_long_proposal(), _long_dae(), state, config) == 0.0
+
+
+def test_single_short_max_read_breaching_position_id_returns_snapshot_field() -> None:
+    """AC: the rule projects ``state.single_short_max_position_id`` so the
+    continuous-monitor cascade dispatcher routes the close to the same short
+    the snapshot identified as the largest.
+    """
+    config = _config()
+    state = _snapshot(
+        single_short_max_pct=4.5,
+        single_short_max_position_id="POS-SHORT",
+    )
+    spec = _spec_by_id(build_active_specs(config), "single_short_max_pct")
+    assert spec.read_breaching_position_id is not None
+    assert spec.read_breaching_position_id(state, config) == "POS-SHORT"
+
+
+def test_single_short_max_read_breaching_position_id_none_when_no_shorts() -> None:
+    config = _config()
+    state = _snapshot(single_short_max_pct=0.0, single_short_max_position_id=None)
+    spec = _spec_by_id(build_active_specs(config), "single_short_max_pct")
+    assert spec.read_breaching_position_id is not None
+    assert spec.read_breaching_position_id(state, config) is None
 
 
 # ---------------------------------------------------------------------------

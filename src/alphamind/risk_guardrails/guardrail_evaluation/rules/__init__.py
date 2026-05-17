@@ -94,6 +94,11 @@ def project_all(
         contributions = [
             spec.contribute(proposal, dae, state, config) for proposal, dae in proposals
         ]
+        breaching_position_id = (
+            spec.read_breaching_position_id(state, config)
+            if spec.read_breaching_position_id is not None
+            else None
+        )
         projections.append(
             project_rule(
                 rule_id=spec.rule_id,
@@ -104,6 +109,7 @@ def project_all(
                 unit=spec.unit,
                 magnitude=spec.magnitude,
                 inverse=spec.inverse,
+                breaching_position_id=breaching_position_id,
             )
         )
     return tuple(projections)

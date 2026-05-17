@@ -24,6 +24,7 @@ from alphamind.portfolio_state.records.positions import (
     resolve_ticker,
 )
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.guardrail_evaluation import (
     AssetType,
     ExistingPosition,
@@ -136,6 +137,28 @@ def _build_position_reservations(
 
 
 # ---------------------------------------------------------------------------
+# Single-short max aggregation
+# ---------------------------------------------------------------------------
+
+
+def _select_single_short_max(
+    open_positions: Sequence[PositionView],
+) -> tuple[float, str | None]:
+    """Return ``(max_weight_pct, position_id)`` for the largest open short.
+
+    ``compute_position_weight_pct`` derives ``position_weight_pct`` from
+    ``abs(position_market_value_usd)``, so the field is always >= 0; no abs()
+    needed. Lexicographic ``position_id`` is the tiebreaker. Returns
+    ``(0.0, None)`` when the book holds no shorts.
+    """
+    shorts = [p for p in open_positions if p.direction == Direction.SHORT]
+    if not shorts:
+        return 0.0, None
+    max_short = min(shorts, key=lambda p: (-p.position_weight_pct, p.position_id))
+    return max_short.position_weight_pct, max_short.position_id
+
+
+# ---------------------------------------------------------------------------
 # Public translator
 # ---------------------------------------------------------------------------
 
@@ -191,12 +214,8 @@ def to_library_snapshot(
 
     total_short_pct = sum(e.short_pct_of_portfolio for e in snapshot.sector_exposure)
 
-    # single_short_max_pct: max weight among SHORT positions (open only per spec §2).
-    # ``compute_position_weight_pct`` derives ``position_weight_pct`` from
-    # ``abs(position_market_value_usd)``, so the field is always >= 0; no abs() needed.
-    single_short_max_pct = max(
-        (p.position_weight_pct for p in snapshot.open_positions if p.direction == Direction.SHORT),
-        default=0.0,
+    single_short_max_pct, single_short_max_position_id = _select_single_short_max(
+        snapshot.open_positions
     )
 
     # position_max_size_pct: read from active_risk_parameters by rule_id
@@ -315,4 +334,5 @@ def to_library_snapshot(
         daily_borrow_cost_pct=daily_borrow_cost_pct,
         position_max_size_pct=position_max_size_pct,
         existing_positions=existing_positions,
+        single_short_max_position_id=single_short_max_position_id,
     )

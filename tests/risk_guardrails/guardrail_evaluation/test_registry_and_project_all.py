@@ -375,6 +375,55 @@ def test_project_all_returns_per_rule_in_registry_order() -> None:
     assert rule_ids == sorted(rule_ids)
 
 
+def test_project_all_propagates_breaching_position_id_for_single_short_max() -> None:
+    """``single_short_max_pct`` projection carries the snapshot's identified short.
+
+    The continuous-monitor cascade dispatcher reads this field off the
+    ``RuleEvaluation`` projected from this ``RuleProjection``; without it,
+    the dispatcher would have to re-scan ``existing_positions`` (the
+    pre-ALP-511 lossy fallback).
+    """
+    config = _full_config(active_sectors=("tech",))
+    state = PortfolioStateSnapshot(
+        portfolio_value_usd=100_000.0,
+        cash_usd=70_000.0,
+        reserved_for_pending_orders_usd=0.0,
+        sector_exposure_pct=MappingProxyType({"tech": 0.0}),
+        net_long_pct=0.0,
+        net_short_pct=0.0,
+        gross_pct=0.0,
+        options_delta_pct=0.0,
+        portfolio_theta_pct_per_day=0.0,
+        portfolio_vega_pct_per_iv_point=0.0,
+        total_short_pct=8.0,
+        single_short_max_pct=6.0,
+        daily_borrow_cost_pct=0.0,
+        position_max_size_pct=5.0,
+        existing_positions=MappingProxyType({}),
+        single_short_max_position_id="POS-BIGGEST-SHORT",
+    )
+    projections = project_all(proposals_with_dae=(), state=state, config=config)
+    single_short = next(p for p in projections if p.rule == "single_short_max_pct")
+
+    assert single_short.breaching_position_id == "POS-BIGGEST-SHORT"
+
+
+def test_project_all_breaching_position_id_none_for_non_per_position_rules() -> None:
+    """Only rules with a ``read_breaching_position_id`` hook project a value.
+
+    Inverted assertion (rather than enumerating known portfolio-scope rules)
+    so a future per-position rule cannot silently leave its hook unwired
+    without this test failing.
+    """
+    config = _full_config(active_sectors=("tech",))
+    state = _snapshot(single_short_max_pct=0.0)
+    projections = project_all(proposals_with_dae=(), state=state, config=config)
+
+    for projection in projections:
+        if projection.rule != "single_short_max_pct":
+            assert projection.breaching_position_id is None
+
+
 # ---------------------------------------------------------------------------
 # ProposedDelta extension fields (verifies story-01 spec extensions)
 # ---------------------------------------------------------------------------

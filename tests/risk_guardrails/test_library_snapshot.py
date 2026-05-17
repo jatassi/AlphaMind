@@ -798,6 +798,72 @@ def test_total_short_pct_and_single_short_max_pct() -> None:
     assert lib.total_short_pct == pytest.approx(5.5 + 2.0)
     # single_short_max_pct = max |position_weight_pct| for SHORT positions
     assert lib.single_short_max_pct == pytest.approx(5.5)
+    # single_short_max_position_id pins the largest short for the cascade dispatcher.
+    assert lib.single_short_max_position_id == "POS-XOM"
+
+
+def test_single_short_max_position_id_none_when_no_shorts() -> None:
+    """AC: ``single_short_max_position_id`` is ``None`` when the book has no shorts."""
+    snapshot = _make_pydantic_snapshot(open_positions=[], sector_exposure=[])
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    assert lib.single_short_max_pct == pytest.approx(0.0)
+    assert lib.single_short_max_position_id is None
+
+
+def test_single_short_max_position_id_breaks_ties_lexicographically() -> None:
+    """AC: identical ``position_weight_pct`` resolves to the smallest ``position_id``.
+
+    Determinism guard — equal books must produce equal projections so the
+    cascade dispatcher routes the same breach to the same position on every
+    tick.
+    """
+    pos_a = _make_equity_position_view(
+        "POS-AAPL",
+        "AAPL",
+        Direction.SHORT,
+        share_count=50.0,
+        market_value_usd=5_000.0,
+        notional_usd=5_000.0,
+        delta_adjusted_usd=-5_000.0,
+        position_weight_pct=4.0,
+    )
+    pos_x = _make_equity_position_view(
+        "POS-XOM",
+        "XOM",
+        Direction.SHORT,
+        share_count=50.0,
+        market_value_usd=5_000.0,
+        notional_usd=5_000.0,
+        delta_adjusted_usd=-5_000.0,
+        position_weight_pct=4.0,
+    )
+    sector_entries = [
+        SectorExposureEntry(
+            sector="tech",
+            long_delta_adjusted_usd=money(0.0),
+            short_delta_adjusted_usd=money(5_000.0),
+            long_pct_of_portfolio=0.0,
+            short_pct_of_portfolio=4.0,
+            long_short_ratio=None,
+        ),
+        SectorExposureEntry(
+            sector="energy",
+            long_delta_adjusted_usd=money(0.0),
+            short_delta_adjusted_usd=money(5_000.0),
+            long_pct_of_portfolio=0.0,
+            short_pct_of_portfolio=4.0,
+            long_short_ratio=None,
+        ),
+    ]
+    snapshot = _make_pydantic_snapshot(
+        open_positions=[pos_x, pos_a],  # input order reversed
+        sector_exposure=sector_entries,
+    )
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    assert lib.single_short_max_pct == pytest.approx(4.0)
+    assert lib.single_short_max_position_id == "POS-AAPL"
 
 
 # ---------------------------------------------------------------------------

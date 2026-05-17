@@ -212,6 +212,13 @@ class PortfolioStateSnapshot:
     Pre-aggregated read interface — the library does not iterate raw positions
     to compute exposures (that lives in the portfolio-state ingestion layer
     per ``portfolio-state.md`` § 4c). All percentages are of portfolio.
+
+    ``single_short_max_position_id`` carries the ``position_id`` of the short
+    whose ``position_weight_pct`` equals ``single_short_max_pct``; the
+    ``single_short_max_pct`` rule's projection routes this id into the
+    cascade dispatcher so the breach handler closes the right position
+    without re-scanning ``existing_positions``. ``None`` when no shorts are
+    open.
     """
 
     portfolio_value_usd: float
@@ -229,6 +236,7 @@ class PortfolioStateSnapshot:
     daily_borrow_cost_pct: float
     position_max_size_pct: float
     existing_positions: Mapping[str, ExistingPosition]
+    single_short_max_position_id: str | None = None
 
     def __hash__(self) -> int:
         return hash(
@@ -248,6 +256,7 @@ class PortfolioStateSnapshot:
                 self.daily_borrow_cost_pct,
                 self.position_max_size_pct,
                 tuple(sorted(self.existing_positions.items())),
+                self.single_short_max_position_id,
             )
         )
 
@@ -398,6 +407,13 @@ class RuleProjection:
     a floor (e.g., ``min_cash_reserve_pct``) and ``False`` when ``limit`` is a
     cap (every other rule). Callers branching on rule semantics read this flag
     rather than maintaining a parallel registry of inverse-rule IDs.
+
+    ``breaching_position_id`` identifies the position whose state triggered
+    the rule. Per-position rules (``position_max_loss_*_pct``,
+    ``single_short_max_pct``) populate it so the continuous-monitor cascade
+    dispatcher routes the close envelope to the exact breaching position
+    instead of re-scanning the open-positions list for the worst in-class
+    loser. ``None`` for portfolio-scope rules.
     """
 
     rule: str
@@ -408,6 +424,7 @@ class RuleProjection:
     headroom_remaining: float
     unit: str
     inverse: bool = False
+    breaching_position_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

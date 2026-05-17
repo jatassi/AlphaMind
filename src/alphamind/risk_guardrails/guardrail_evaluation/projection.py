@@ -51,7 +51,7 @@ class ProjectionError(Exception):
     """
 
 
-def project_rule(
+def project_rule(  # noqa: PLR0913 — math primitive entry point; args mirror the projection inputs
     *,
     rule_id: str,
     current: float,
@@ -61,6 +61,7 @@ def project_rule(
     unit: str,
     magnitude: bool = False,
     inverse: bool = False,
+    breaching_position_id: str | None = None,
 ) -> RuleProjection:
     """Pure per-rule projection.
 
@@ -115,6 +116,7 @@ def project_rule(
         headroom_remaining=headroom_remaining,
         unit=unit,
         inverse=inverse,
+        breaching_position_id=breaching_position_id,
     )
 
 

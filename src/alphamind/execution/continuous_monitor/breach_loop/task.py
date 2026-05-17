@@ -87,6 +87,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     IvProvider,
     LibraryConfig,
     MarketInputs,
+    RuleProjection,
     evaluate_proposals,
 )
 from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -235,10 +236,7 @@ async def _run_one_tick(  # noqa: PLR0913
 
     rule_evaluations = tuple(
         _build_rule_evaluation(
-            rule_id=projection.rule,
-            current_value=projection.current,
-            limit_value=projection.limit,
-            inverse=projection.inverse,
+            projection=projection,
             escalation_zones=library_config.escalation_zones,
             breach_response_lookup=breach_response_lookup,
         )
@@ -300,10 +298,7 @@ async def _run_one_tick(  # noqa: PLR0913
 
 def _build_rule_evaluation(
     *,
-    rule_id: str,
-    current_value: float,
-    limit_value: float,
-    inverse: bool,
+    projection: RuleProjection,
     escalation_zones: Mapping[str, EscalationZones],
     breach_response_lookup: Mapping[str, BreachResponse],
 ) -> RuleEvaluation:
@@ -317,6 +312,7 @@ def _build_rule_evaluation(
     lookup keys on the bare rule ID ``sector_concentration_pct`` so we strip
     the trailing sector suffix.
     """
+    rule_id = projection.rule
     escalation_key = rule_id if rule_id in escalation_zones else _strip_sector_suffix(rule_id)
     zones = escalation_zones[escalation_key]
     # The library carves a dataclass ``EscalationZones`` with float fields for
@@ -329,8 +325,8 @@ def _build_rule_evaluation(
         hard_block=int(zones.hard_block),
     )
     zone = classify_zone(
-        current_value=abs(current_value),
-        limit_value=limit_value,
+        current_value=abs(projection.current),
+        limit_value=projection.limit,
         escalation_zones=breach_zones,
     )
 
@@ -339,15 +335,20 @@ def _build_rule_evaluation(
     if zone is RiskZone.BLOCKED:
         classification = breach_response_lookup.get(classification_key)
 
-    overage = limit_value - current_value if inverse else current_value - limit_value
+    overage = (
+        projection.limit - projection.current
+        if projection.inverse
+        else projection.current - projection.limit
+    )
 
     return RuleEvaluation(
         rule_id=rule_id,
-        current_value=current_value,
-        limit_value=limit_value,
+        current_value=projection.current,
+        limit_value=projection.limit,
         overage=overage,
         zone=zone,
         classification=classification,
+        breaching_position_id=projection.breaching_position_id,
     )
 
 
