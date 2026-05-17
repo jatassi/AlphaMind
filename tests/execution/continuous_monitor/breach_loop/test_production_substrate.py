@@ -40,16 +40,18 @@ from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
+    RiskZone,
 )
 from alphamind.config.models.regimes import Regime
 from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
     DispatchContextProvider,
     load_breach_loop_resolved_config,
     make_adv_provider,
+    make_assembled_snapshot_provider,
     make_dispatch_context_provider,
     make_invocation_id_provider_sync,
     make_library_config_factory,
-    make_open_positions_view_provider,
+    make_library_snapshot_translator,
     make_regime_provider,
     make_snapshot_provider,
     make_submit_envelope,
@@ -61,16 +63,26 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
 from alphamind.persistence.models import AssetUniverse, Base, OhlcvBars
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.portfolio_state import load_portfolio_state_config
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
+from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
+from alphamind.portfolio_state.freshness import AssembledSnapshot, SnapshotFreshness
+from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
     PositionFill,
     PositionRecord,
     PositionStatus,
+)
+from alphamind.portfolio_state.snapshot import (
+    DirectionalExposure,
+    PortfolioPnL,
+    PortfolioStateSnapshot,
 )
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import (
@@ -136,6 +148,121 @@ def _active_parameter_set(*, daily_drawdown_pct: float = 1.5) -> ActiveRiskParam
         ),
         active_overlays=(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Minimal :class:`AssembledSnapshot` builder for substrate-wiring tests.
+# The dispatch-context-provider tests stub ``library_snapshot_translator`` so
+# only ``snapshot.open_positions`` is read off the assembled snapshot — the
+# remaining fields just need to satisfy :class:`PortfolioStateSnapshot`'s
+# ``__post_init__`` validators.
+# ---------------------------------------------------------------------------
+
+_SNAPSHOT_AT = datetime(2026, 5, 17, 14, 30, tzinfo=UTC)
+
+
+def _make_assembled_snapshot(
+    *,
+    positions: tuple[PositionView, ...] = (),
+) -> AssembledSnapshot:
+    """Build a minimal valid :class:`AssembledSnapshot` for substrate tests."""
+    snapshot = PortfolioStateSnapshot(
+        invocation_id="inv-test",
+        phase1_committed_at=_SNAPSHOT_AT,
+        snapshot_assembled_at=_SNAPSHOT_AT,
+        open_positions=positions,
+        pending_positions=(),
+        sector_exposure=(),
+        directional_exposure=DirectionalExposure(
+            total_long_delta_adjusted_usd=signed_money(0.0),
+            total_short_delta_adjusted_usd=signed_money(0.0),
+            net_directional_pct_of_portfolio=0.0,
+            gross_pct_of_portfolio=0.0,
+        ),
+        portfolio_pnl=PortfolioPnL(
+            total_unrealized_pnl_usd=signed_money(0.0),
+            total_unrealized_pnl_pct_of_portfolio=0.0,
+            daily_realized_pnl_usd=signed_money(0.0),
+            daily_total_pnl_usd=signed_money(0.0),
+            cumulative_realized_pnl_usd=signed_money(0.0),
+            rolling_realized_pnl={
+                "1d": signed_money(0.0),
+                "3d": signed_money(0.0),
+                "5d": signed_money(0.0),
+                "20d": signed_money(0.0),
+            },
+            win_rate_pct=None,
+            average_win_size_usd=None,
+            average_loss_size_usd=None,
+            profit_factor=None,
+        ),
+        drawdown=DrawdownState(
+            current_drawdown_pct=0.0,
+            equity_high_water_mark_usd=100_000.0,
+            drawdown_duration_hours=0.0,
+            lifetime_max_drawdown_pct=0.0,
+            intraday_drawdown_pct=0.0,
+            daily_zone=RiskZone.NORMAL,
+            cumulative_zone=RiskZone.NORMAL,
+            cumulative_tier=None,
+            drawdown_by_source_pct={},
+        ),
+        active_theses=(),
+        recent_thesis_resolutions=(),
+        cash_ledger=CashLedger(
+            current_cash_usd=100_000.0,
+            settled_cash_usd=100_000.0,
+            reserved_capital_usd=0.0,
+            available_buying_power_usd=100_000.0,
+            margin_held_usd=0.0,
+            unsettled_proceeds=(),
+            cash_pct_of_portfolio=100.0,
+            true_deployable_capital_usd=100_000.0,
+            regt_excess_trailing_30d_usd=0.0,
+            regt_excess_trailing_90d_usd=0.0,
+            regt_excess_lifetime_usd=0.0,
+        ),
+        pending_orders=(),
+        risk_budget=RiskBudgetConsumption(entries=()),
+        active_risk_parameters=_active_parameter_set(),
+        intra_invocation_changelog=(),
+        recent_pm_decision_log=(),
+        position_modification_trail={},
+        thesis_quality_aggregates=ThesisQualityAggregate(
+            as_of_timestamp=_SNAPSHOT_AT,
+            resolution_counts_by_window=(),
+            duration_stats_by_window=(),
+            invalidation_timing_stats_by_window=(),
+            signal_hit_rates=(),
+            signal_to_thesis_conversions=(),
+            conviction_calibration=(),
+            conviction_sizing_deviation_by_window=(),
+            performance_attribution=(),
+            alpha_beta_decomposition_by_window=(),
+        ),
+        brackets=(),
+    )
+    freshness = SnapshotFreshness(
+        phase1_committed_at=_SNAPSHOT_AT,
+        snapshot_assembled_at=_SNAPSHOT_AT,
+        phase1_to_snapshot_seconds=0.0,
+        max_phase1_to_snapshot_seconds=30.0,
+        phase1_to_snapshot_within_threshold=True,
+        total_open_positions=len(positions),
+        total_pending_positions=0,
+        total_positions=len(positions),
+        position_ids_priced_fresh=frozenset(p.position_id for p in positions),
+        position_ids_priced_stale=frozenset(),
+        position_ids_unknown_ticker=frozenset(),
+        count_priced_fresh=len(positions),
+        count_priced_stale=0,
+        count_unknown_ticker=0,
+        all_position_prices_fresh=True,
+        oldest_price_as_of=None,
+        oldest_price_age_seconds=None,
+        max_price_age_seconds=900.0,
+    )
+    return AssembledSnapshot(snapshot=snapshot, freshness=freshness, price_map={})
 
 
 class TestMakeLibraryConfigFactory:
@@ -337,10 +464,11 @@ class TestSnapshotProvider:
         tmp_path: Path,
     ) -> None:
         """``make_snapshot_provider`` constructs a callable closure without raising."""
-        provider = make_snapshot_provider(
+        resolved = load_breach_loop_resolved_config(config_dir)
+        assembled = make_assembled_snapshot_provider(
             session_factory=db_session_factory,
             underlying_cache=UnderlyingPriceCache(),
-            resolved=load_breach_loop_resolved_config(config_dir),
+            resolved=resolved,
             portfolio_state_config=load_portfolio_state_config(config_dir / "portfolio_state.yaml"),
             state_persistence_config=StatePersistenceConfig(
                 pm_decision_log_sliding_window_invocations=10,
@@ -348,6 +476,10 @@ class TestSnapshotProvider:
                 pip_freeze_snapshot_root=str(tmp_path / "pip"),
                 invocation_provenance_root=str(tmp_path / "prov"),
             ),
+        )
+        provider = make_snapshot_provider(
+            assembled_snapshot_provider=assembled,
+            library_snapshot_translator=make_library_snapshot_translator(resolved=resolved),
         )
         assert callable(provider)
 
@@ -478,23 +610,36 @@ async def _build_dispatch_context_provider(
     adv_map: Mapping[str, float] | None = None,
     quotes: Mapping[str, float] | None = None,
     iv_provider: FixtureIvProvider | None = None,
+    assembled_snapshot_call_log: list[None] | None = None,
 ) -> DispatchContextProvider:
     """Construct ``make_dispatch_context_provider`` with stubs around the varying inputs.
 
-    ``positions=None`` (default) omits ``open_positions_provider`` so the
-    substrate's empty-positions branch fires; an explicit empty tuple binds
-    a provider that returns no positions.
+    ``positions=None`` (default) yields an :class:`AssembledSnapshot` with
+    empty ``open_positions``; an explicit empty tuple is equivalent. The
+    ``library_snapshot_translator`` stub returns a pre-built
+    :class:`LibrarySnapshot`, so the assembled snapshot's other fields only
+    need to satisfy :class:`PortfolioStateSnapshot`'s validators.
+
+    Pass ``assembled_snapshot_call_log`` to count how many times the
+    assembled-snapshot provider is awaited per dispatch (regression test
+    for ALP-510).
     """
     as_of = datetime(2026, 5, 17, 14, 30, tzinfo=UTC)
     cache = UnderlyingPriceCache()
     for ticker, price_usd in (quotes or {}).items():
         await cache.update(UnderlyingQuote(ticker=ticker, price=price_usd, as_of=as_of))
 
-    snapshot = _make_library_snapshot()
+    assembled = _make_assembled_snapshot(positions=positions or ())
+    library_snapshot = _make_library_snapshot()
     regime_output = _make_regime_output()
 
-    async def _snapshot_provider() -> LibrarySnapshot:
-        return snapshot
+    async def _assembled_provider() -> AssembledSnapshot:
+        if assembled_snapshot_call_log is not None:
+            assembled_snapshot_call_log.append(None)
+        return assembled
+
+    def _translator(_snapshot: PortfolioStateSnapshot) -> LibrarySnapshot:
+        return library_snapshot
 
     async def _regime_provider() -> RegimeAdaptationOutput:
         return regime_output
@@ -502,17 +647,9 @@ async def _build_dispatch_context_provider(
     async def _adv_provider() -> Mapping[str, float]:
         return dict(adv_map) if adv_map else {}
 
-    open_positions_provider = None
-    if positions is not None:
-        captured = positions
-
-        async def _open_positions_provider() -> tuple[PositionView, ...]:
-            return captured
-
-        open_positions_provider = _open_positions_provider
-
     return make_dispatch_context_provider(
-        snapshot_provider=_snapshot_provider,
+        assembled_snapshot_provider=_assembled_provider,
+        library_snapshot_translator=_translator,
         regime_provider=_regime_provider,
         library_config_factory=make_library_config_factory(
             resolved=load_breach_loop_resolved_config(config_dir),
@@ -520,7 +657,6 @@ async def _build_dispatch_context_provider(
         underlying_cache=cache,
         iv_provider=iv_provider or FixtureIvProvider(surface={}, realized_vol={}),
         adv_provider=_adv_provider,
-        open_positions_provider=open_positions_provider,
     )
 
 
@@ -689,51 +825,27 @@ class TestMakeDispatchContextProvider:
         assert context.liquidity[0].adv_to_position_size_ratio == 0.0
         assert context.risk_reward_metric[0].risk_reward_ratio == 0.0
 
-
-class TestMakeOpenPositionsViewProvider:
-    """The PositionView-tuple provider feeds the dispatcher's context per immediate breach."""
-
-    async def test_empty_db_returns_empty(
-        self,
-        db_session_factory: async_sessionmaker[AsyncSession],
-        config_dir: Path,
-        tmp_path: Path,
+    async def test_assembled_snapshot_provider_awaited_once_per_dispatch(
+        self, config_dir: Path
     ) -> None:
-        """No invocation row → empty tuple (bootstrap path, no cascade fires)."""
-        provider = make_open_positions_view_provider(
-            session_factory=db_session_factory,
-            underlying_cache=UnderlyingPriceCache(),
-            resolved=load_breach_loop_resolved_config(config_dir),
-            portfolio_state_config=load_portfolio_state_config(config_dir / "portfolio_state.yaml"),
-            state_persistence_config=StatePersistenceConfig(
-                pm_decision_log_sliding_window_invocations=10,
-                snapshot_read_timeout_seconds=5.0,
-                pip_freeze_snapshot_root=str(tmp_path / "pip"),
-                invocation_provenance_root=str(tmp_path / "prov"),
-            ),
-        )
-        assert await provider() == ()
+        """ALP-510 regression — the assemble pipeline runs once per dispatch, not twice.
 
-    def test_provider_constructs(
-        self,
-        db_session_factory: async_sessionmaker[AsyncSession],
-        config_dir: Path,
-        tmp_path: Path,
-    ) -> None:
-        """``make_open_positions_view_provider`` returns a callable closure."""
-        provider = make_open_positions_view_provider(
-            session_factory=db_session_factory,
-            underlying_cache=UnderlyingPriceCache(),
-            resolved=load_breach_loop_resolved_config(config_dir),
-            portfolio_state_config=load_portfolio_state_config(config_dir / "portfolio_state.yaml"),
-            state_persistence_config=StatePersistenceConfig(
-                pm_decision_log_sliding_window_invocations=10,
-                snapshot_read_timeout_seconds=5.0,
-                pip_freeze_snapshot_root=str(tmp_path / "pip"),
-                invocation_provenance_root=str(tmp_path / "prov"),
-            ),
+        Before ALP-510, the dispatch context provider awaited
+        ``snapshot_provider()`` and ``open_positions_provider()`` independently,
+        each running :func:`assemble_snapshot` end-to-end. After the refactor,
+        both library snapshot and open positions are derived from a single
+        :class:`AssembledSnapshot`, so the assembled-snapshot provider is
+        awaited exactly once.
+        """
+        positions = (_equity_position_view(position_id="p1", ticker="AAPL"),)
+        call_log: list[None] = []
+        provider = await _build_dispatch_context_provider(
+            config_dir=config_dir,
+            positions=positions,
+            assembled_snapshot_call_log=call_log,
         )
-        assert callable(provider)
+        await provider()
+        assert len(call_log) == 1
 
 
 async def _seed_universe_ticker(factory: async_sessionmaker[AsyncSession], *, ticker: str) -> None:
