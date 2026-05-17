@@ -43,6 +43,7 @@ from alphamind._kernel.regime import (
 )
 from alphamind.config.models.regimes import Regime
 from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
+    DispatchContextProvider,
     load_breach_loop_resolved_config,
     make_adv_provider,
     make_dispatch_context_provider,
@@ -470,31 +471,66 @@ async def _empty_adv_provider() -> Mapping[str, float]:
     return {}
 
 
+async def _build_dispatch_context_provider(
+    *,
+    config_dir: Path,
+    positions: tuple[PositionView, ...] | None = None,
+    adv_map: Mapping[str, float] | None = None,
+    quotes: Mapping[str, float] | None = None,
+    iv_provider: FixtureIvProvider | None = None,
+) -> DispatchContextProvider:
+    """Construct ``make_dispatch_context_provider`` with stubs around the varying inputs.
+
+    ``positions=None`` (default) omits ``open_positions_provider`` so the
+    substrate's empty-positions branch fires; an explicit empty tuple binds
+    a provider that returns no positions.
+    """
+    as_of = datetime(2026, 5, 17, 14, 30, tzinfo=UTC)
+    cache = UnderlyingPriceCache()
+    for ticker, price_usd in (quotes or {}).items():
+        await cache.update(UnderlyingQuote(ticker=ticker, price=price_usd, as_of=as_of))
+
+    snapshot = _make_library_snapshot()
+    regime_output = _make_regime_output()
+
+    async def _snapshot_provider() -> LibrarySnapshot:
+        return snapshot
+
+    async def _regime_provider() -> RegimeAdaptationOutput:
+        return regime_output
+
+    async def _adv_provider() -> Mapping[str, float]:
+        return dict(adv_map) if adv_map else {}
+
+    open_positions_provider = None
+    if positions is not None:
+        captured = positions
+
+        async def _open_positions_provider() -> tuple[PositionView, ...]:
+            return captured
+
+        open_positions_provider = _open_positions_provider
+
+    return make_dispatch_context_provider(
+        snapshot_provider=_snapshot_provider,
+        regime_provider=_regime_provider,
+        library_config_factory=make_library_config_factory(
+            resolved=load_breach_loop_resolved_config(config_dir),
+        ),
+        underlying_cache=cache,
+        iv_provider=iv_provider or FixtureIvProvider(surface={}, realized_vol={}),
+        adv_provider=_adv_provider,
+        open_positions_provider=open_positions_provider,
+    )
+
+
 class TestMakeDispatchContextProvider:
     """The dispatcher's per-tick context-builder threads live deps into BreachDispatchContext."""
 
     async def test_iv_provider_threaded_into_market_inputs(self, config_dir: Path) -> None:
         """The IV provider the caller passes is the one consumers see on the context."""
-        snapshot = _make_library_snapshot()
-        regime_output = _make_regime_output()
-
-        async def _snapshot_provider() -> LibrarySnapshot:
-            return snapshot
-
-        async def _regime_provider() -> RegimeAdaptationOutput:
-            return regime_output
-
         iv = FixtureIvProvider(surface={}, realized_vol={})
-        provider = make_dispatch_context_provider(
-            snapshot_provider=_snapshot_provider,
-            regime_provider=_regime_provider,
-            library_config_factory=make_library_config_factory(
-                resolved=load_breach_loop_resolved_config(config_dir),
-            ),
-            underlying_cache=UnderlyingPriceCache(),
-            iv_provider=iv,
-            adv_provider=_empty_adv_provider,
-        )
+        provider = await _build_dispatch_context_provider(config_dir=config_dir, iv_provider=iv)
         context = await provider()
         # ``BreachDispatchContext.market_inputs`` is typed as the protocol;
         # cast to the concrete ``MarketInputs`` to assert the IV provider
@@ -504,57 +540,19 @@ class TestMakeDispatchContextProvider:
 
     async def test_open_positions_populated_from_provider(self, config_dir: Path) -> None:
         """When ``open_positions_provider`` returns N positions, the context carries N."""
-        snapshot = _make_library_snapshot()
-        regime_output = _make_regime_output()
         positions = (
             _equity_position_view(position_id="p1", ticker="AAPL"),
             _equity_position_view(position_id="p2", ticker="MSFT"),
         )
-
-        async def _snapshot_provider() -> LibrarySnapshot:
-            return snapshot
-
-        async def _regime_provider() -> RegimeAdaptationOutput:
-            return regime_output
-
-        async def _open_positions_provider() -> tuple[PositionView, ...]:
-            return positions
-
-        provider = make_dispatch_context_provider(
-            snapshot_provider=_snapshot_provider,
-            regime_provider=_regime_provider,
-            library_config_factory=make_library_config_factory(
-                resolved=load_breach_loop_resolved_config(config_dir),
-            ),
-            underlying_cache=UnderlyingPriceCache(),
-            iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
-            adv_provider=_empty_adv_provider,
-            open_positions_provider=_open_positions_provider,
+        provider = await _build_dispatch_context_provider(
+            config_dir=config_dir, positions=positions
         )
         context = await provider()
         assert context.open_positions == positions
 
     async def test_open_positions_empty_when_provider_absent(self, config_dir: Path) -> None:
         """No ``open_positions_provider`` → empty ``open_positions`` and zero liquidity/R/R."""
-        snapshot = _make_library_snapshot()
-        regime_output = _make_regime_output()
-
-        async def _snapshot_provider() -> LibrarySnapshot:
-            return snapshot
-
-        async def _regime_provider() -> RegimeAdaptationOutput:
-            return regime_output
-
-        provider = make_dispatch_context_provider(
-            snapshot_provider=_snapshot_provider,
-            regime_provider=_regime_provider,
-            library_config_factory=make_library_config_factory(
-                resolved=load_breach_loop_resolved_config(config_dir),
-            ),
-            underlying_cache=UnderlyingPriceCache(),
-            iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
-            adv_provider=_empty_adv_provider,
-        )
+        provider = await _build_dispatch_context_provider(config_dir=config_dir)
         context = await provider()
         assert context.open_positions == ()
         assert context.liquidity == ()
@@ -569,8 +567,6 @@ class TestMakeDispatchContextProvider:
         ``risk_reward_at_current`` value so a uniform-placeholder regression
         would surface as both ratios collapsing to the same constant.
         """
-        snapshot = _make_library_snapshot()
-        regime_output = _make_regime_output()
         positions = (
             _equity_position_view(
                 position_id="p1",
@@ -587,37 +583,13 @@ class TestMakeDispatchContextProvider:
                 risk_reward_at_current=1.0,
             ),
         )
-        cache = UnderlyingPriceCache()
-        as_of = datetime(2026, 5, 17, 14, 30, tzinfo=UTC)
-        await cache.update(UnderlyingQuote(ticker="AAPL", price=150.0, as_of=as_of))
-        await cache.update(UnderlyingQuote(ticker="MSFT", price=300.0, as_of=as_of))
-
-        async def _snapshot_provider() -> LibrarySnapshot:
-            return snapshot
-
-        async def _regime_provider() -> RegimeAdaptationOutput:
-            return regime_output
-
-        async def _open_positions_provider() -> tuple[PositionView, ...]:
-            return positions
-
-        async def _adv_provider() -> Mapping[str, float]:
-            return {"AAPL": 1_000_000.0, "MSFT": 2_000_000.0}
-
-        provider = make_dispatch_context_provider(
-            snapshot_provider=_snapshot_provider,
-            regime_provider=_regime_provider,
-            library_config_factory=make_library_config_factory(
-                resolved=load_breach_loop_resolved_config(config_dir),
-            ),
-            underlying_cache=cache,
-            iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
-            adv_provider=_adv_provider,
-            open_positions_provider=_open_positions_provider,
+        provider = await _build_dispatch_context_provider(
+            config_dir=config_dir,
+            positions=positions,
+            adv_map={"AAPL": 1_000_000.0, "MSFT": 2_000_000.0},
+            quotes={"AAPL": 150.0, "MSFT": 300.0},
         )
         context = await provider()
-        # AAPL ratio: 1_000_000 shares times 150 USD divided by 1500 USD notional equals 100_000.
-        # MSFT ratio: 2_000_000 shares times 300 USD divided by 750 USD notional equals 800_000.
         assert tuple(liq.adv_to_position_size_ratio for liq in context.liquidity) == (
             100_000.0,
             800_000.0,
@@ -634,10 +606,6 @@ class TestMakeDispatchContextProvider:
         liquidity tiebreaker and selects the position whose ticker has higher
         ADV in the live map.
         """
-        snapshot = _make_library_snapshot()
-        regime_output = _make_regime_output()
-        # Both positions tie on a -100 USD loss. AAPL's ADV is 10x MSFT's,
-        # so the drawdown selector's liquidity tiebreaker must pick AAPL.
         positions = (
             _equity_position_view(
                 position_id="p-msft",
@@ -654,33 +622,11 @@ class TestMakeDispatchContextProvider:
                 unrealized_pnl_usd=-100.0,
             ),
         )
-        cache = UnderlyingPriceCache()
-        as_of = datetime(2026, 5, 17, 14, 30, tzinfo=UTC)
-        await cache.update(UnderlyingQuote(ticker="AAPL", price=150.0, as_of=as_of))
-        await cache.update(UnderlyingQuote(ticker="MSFT", price=300.0, as_of=as_of))
-
-        async def _snapshot_provider() -> LibrarySnapshot:
-            return snapshot
-
-        async def _regime_provider() -> RegimeAdaptationOutput:
-            return regime_output
-
-        async def _open_positions_provider() -> tuple[PositionView, ...]:
-            return positions
-
-        async def _adv_provider() -> Mapping[str, float]:
-            return {"AAPL": 10_000_000.0, "MSFT": 1_000_000.0}
-
-        provider = make_dispatch_context_provider(
-            snapshot_provider=_snapshot_provider,
-            regime_provider=_regime_provider,
-            library_config_factory=make_library_config_factory(
-                resolved=load_breach_loop_resolved_config(config_dir),
-            ),
-            underlying_cache=cache,
-            iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
-            adv_provider=_adv_provider,
-            open_positions_provider=_open_positions_provider,
+        provider = await _build_dispatch_context_provider(
+            config_dir=config_dir,
+            positions=positions,
+            adv_map={"AAPL": 10_000_000.0, "MSFT": 1_000_000.0},
+            quotes={"AAPL": 150.0, "MSFT": 300.0},
         )
         context = await provider()
 
@@ -699,8 +645,6 @@ class TestMakeDispatchContextProvider:
         through the substrate; the selector must pick the lower-R/R one
         (closest to invalidation, farthest from target).
         """
-        snapshot = _make_library_snapshot()
-        regime_output = _make_regime_output()
         positions = (
             _equity_position_view(
                 position_id="p-safe",
@@ -713,33 +657,11 @@ class TestMakeDispatchContextProvider:
                 risk_reward_at_current=0.5,
             ),
         )
-        cache = UnderlyingPriceCache()
-        as_of = datetime(2026, 5, 17, 14, 30, tzinfo=UTC)
-        await cache.update(UnderlyingQuote(ticker="AAPL", price=150.0, as_of=as_of))
-        await cache.update(UnderlyingQuote(ticker="MSFT", price=300.0, as_of=as_of))
-
-        async def _snapshot_provider() -> LibrarySnapshot:
-            return snapshot
-
-        async def _regime_provider() -> RegimeAdaptationOutput:
-            return regime_output
-
-        async def _open_positions_provider() -> tuple[PositionView, ...]:
-            return positions
-
-        async def _adv_provider() -> Mapping[str, float]:
-            return {"AAPL": 1_000_000.0, "MSFT": 1_000_000.0}
-
-        provider = make_dispatch_context_provider(
-            snapshot_provider=_snapshot_provider,
-            regime_provider=_regime_provider,
-            library_config_factory=make_library_config_factory(
-                resolved=load_breach_loop_resolved_config(config_dir),
-            ),
-            underlying_cache=cache,
-            iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
-            adv_provider=_adv_provider,
-            open_positions_provider=_open_positions_provider,
+        provider = await _build_dispatch_context_provider(
+            config_dir=config_dir,
+            positions=positions,
+            adv_map={"AAPL": 1_000_000.0, "MSFT": 1_000_000.0},
+            quotes={"AAPL": 150.0, "MSFT": 300.0},
         )
         context = await provider()
 
@@ -753,8 +675,6 @@ class TestMakeDispatchContextProvider:
 
     async def test_missing_adv_and_rr_default_to_zero(self, config_dir: Path) -> None:
         """Position missing from the ADV map and lacking R/R defaults to 0.0 on both."""
-        snapshot = _make_library_snapshot()
-        regime_output = _make_regime_output()
         positions = (
             _equity_position_view(
                 position_id="p-no-data",
@@ -762,27 +682,8 @@ class TestMakeDispatchContextProvider:
                 risk_reward_at_current=None,
             ),
         )
-        cache = UnderlyingPriceCache()
-
-        async def _snapshot_provider() -> LibrarySnapshot:
-            return snapshot
-
-        async def _regime_provider() -> RegimeAdaptationOutput:
-            return regime_output
-
-        async def _open_positions_provider() -> tuple[PositionView, ...]:
-            return positions
-
-        provider = make_dispatch_context_provider(
-            snapshot_provider=_snapshot_provider,
-            regime_provider=_regime_provider,
-            library_config_factory=make_library_config_factory(
-                resolved=load_breach_loop_resolved_config(config_dir),
-            ),
-            underlying_cache=cache,
-            iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
-            adv_provider=_empty_adv_provider,
-            open_positions_provider=_open_positions_provider,
+        provider = await _build_dispatch_context_provider(
+            config_dir=config_dir, positions=positions
         )
         context = await provider()
         assert context.liquidity[0].adv_to_position_size_ratio == 0.0

@@ -27,7 +27,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind._kernel.regime import (
@@ -683,7 +683,7 @@ def make_open_positions_view_provider(
 
 AdvProvider = Callable[[], Awaitable[Mapping[str, float]]]
 
-_OHLCV_DAILY_TIMEFRAME = "1d"
+_TIMEFRAME_DAILY = "1d"
 _DEFAULT_ADV_LOOKBACK_DAYS = 20
 
 
@@ -694,8 +694,10 @@ def make_adv_provider(
 ) -> AdvProvider:
     """Return a provider of per-ticker ADV (average daily volume in shares).
 
-    Computes the trailing-``lookback_days`` average of ``adj_volume`` from
-    :class:`OhlcvBars` (timeframe ``"1d"``) per ticker. The cascade
+    Averages up to the most recent ``lookback_days`` daily ``adj_volume``
+    rows from :class:`OhlcvBars` (timeframe ``"1d"``) per ticker — tickers
+    with fewer than ``lookback_days`` bars in the table contribute the
+    average of what is available, rather than being excluded. The cascade
     dispatcher uses the returned mapping to derive each open position's
     ``adv_to_position_size_ratio`` (= ``adv_shares * underlying_price /
     position_notional_usd``) — higher means more liquid relative to size.
@@ -705,7 +707,6 @@ def make_adv_provider(
     refresh once per session, so the SELECT cost is amortized across the
     rare immediate-breach path.
     """
-    from sqlalchemy import func
 
     async def _provider() -> Mapping[str, float]:
         async with session_factory() as sess:
@@ -723,7 +724,7 @@ def make_adv_provider(
                     OhlcvBars.adj_volume,
                     row_number,
                 )
-                .where(OhlcvBars.timeframe == _OHLCV_DAILY_TIMEFRAME)
+                .where(OhlcvBars.timeframe == _TIMEFRAME_DAILY)
                 .subquery()
             )
             stmt = (
@@ -757,19 +758,19 @@ def _compute_adv_to_position_size_ratio(
     """Return ``(ADV_shares * underlying_price) / position_notional_usd``.
 
     Falls back to ``0.0`` (lowest liquidity, treated as worst-tiebreaker)
-    when any input is missing or non-positive: the underlying isn't priced
-    on the live cache, the ADV provider has no row for the ticker, the
-    notional is zero, or any value is negative. The cascade selectors
-    require an entry per open position, so the fallback keeps the contract
-    intact rather than excluding the position from selection.
+    when any input is missing or zero: the underlying isn't priced on the
+    live cache, the ADV provider has no row for the ticker, or the
+    position's notional is zero. The cascade selectors require an entry
+    per open position, so the fallback keeps the contract intact rather
+    than excluding the position from selection.
     """
     ticker = resolve_ticker(position.details)
     if ticker is None:
         return 0.0
-    adv_shares = adv_shares_by_ticker.get(str(ticker))
+    adv_shares = adv_shares_by_ticker.get(ticker)
     if adv_shares is None or adv_shares <= 0.0:
         return 0.0
-    price = underlying_prices.get(str(ticker))
+    price = underlying_prices.get(ticker)
     if price is None or price <= 0.0:
         return 0.0
     notional = float(position.notional_exposure_usd)
@@ -799,9 +800,10 @@ def make_dispatch_context_provider(  # noqa: PLR0913 — composition root; each 
     per-ticker 20-day average daily volume (shares); the provider combines
     it with live underlying prices and each position's notional to derive
     ``PositionLiquidity.adv_to_position_size_ratio``. ``PositionRiskReward``
-    is read directly from :attr:`PositionView.risk_reward_at_current` (None
-    on positions without a bracket → ``0.0``, worst-of-the-worst per the
-    margin-call selector's ranking).
+    is read directly from :attr:`PositionView.risk_reward_at_current` — None
+    on positions without a bracket falls back to ``0.0``, which the
+    margin-call selector treats as worse than any positive R/R but better
+    than the pathological negative R/R of a position past invalidation.
 
     ``open_positions_provider`` is an optional async callable returning the
     assembled :class:`PositionView` tuple for the per-tick context. When
@@ -814,9 +816,22 @@ def make_dispatch_context_provider(  # noqa: PLR0913 — composition root; each 
     sequence (driven by ``GuardrailsConfig.rules`` at daemon startup).
     """
 
+    async def _empty_positions() -> tuple[PositionView, ...]:
+        return ()
+
+    positions_provider = open_positions_provider or _empty_positions
+
     async def _provider() -> BreachDispatchContext:
-        library_snapshot, regime_output, adv_shares_by_ticker = await asyncio.gather(
-            snapshot_provider(), regime_provider(), adv_provider()
+        (
+            library_snapshot,
+            regime_output,
+            adv_shares_by_ticker,
+            open_positions,
+        ) = await asyncio.gather(
+            snapshot_provider(),
+            regime_provider(),
+            adv_provider(),
+            positions_provider(),
         )
         library_config = library_config_factory(regime_output.active_risk_parameter_set)
         underlying_prices = {t: q.price for t, q in underlying_cache.get_all().items()}
@@ -826,9 +841,6 @@ def make_dispatch_context_provider(  # noqa: PLR0913 — composition root; each 
             iv_provider=iv_provider,
             as_of=now(),
         )
-        open_positions: tuple[PositionView, ...] = ()
-        if open_positions_provider is not None:
-            open_positions = await open_positions_provider()
         liquidity = tuple(
             PositionLiquidity(
                 position_id=p.position_id,
