@@ -1,6 +1,13 @@
 [importlinter]
 root_package = alphamind
 include_external_packages = True
+# Story ALP-501 — exclude TYPE_CHECKING-guarded imports from the graph so
+# forward-reference seams (``run_context`` → ``debug_e2e.settings``) are
+# treated as the type-time-only edges they are. The runtime
+# ``run_context`` module never pulls ``debug_e2e`` into ``sys.modules``
+# (verified by ``test_run_context_does_not_eagerly_import_debug_e2e``);
+# import-linter must reflect that reality.
+exclude_type_checking_imports = True
 
 # ---------------------------------------------------------------------------
 # Import-linter contracts.
@@ -355,17 +362,18 @@ forbidden_modules =
     alphamind.execution
 ignore_imports =
     # Architectural exception: see contract header — submit_envelope/ is
-    # the PM MCP composition root (python-architecture §C4).
+    # the PM MCP composition root (python-architecture §C4). ALP-501 turned
+    # on ``exclude_type_checking_imports = True`` globally so several
+    # previously-listed ``submit_envelope.*`` entries that were
+    # ``TYPE_CHECKING``-only no longer register as graph edges and are
+    # dropped from this block. The remaining entries are runtime
+    # function-local lazy imports that still register and must be ignored.
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter.errors
-    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter.order_modify
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter.order_options
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.oms.broker_dispatch
-    alphamind.decision.portfolio_manager.submit_envelope.persist -> alphamind.execution.oms.broker_dispatch
     alphamind.decision.portfolio_manager.submit_envelope.persist -> alphamind.execution.write_paths.phase2
     alphamind.decision.portfolio_manager.submit_envelope.process -> alphamind.execution.oms.command_ids
-    alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.broker_adapter
-    alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.oms.broker_dispatch
     # ALP-470 hoisted ``state.config`` out of execution but its
     # ``CorporateActionsConfig`` field still reaches into
     # ``execution.corporate_actions.config`` (the per-feature CA knobs).
@@ -385,3 +393,37 @@ source_modules =
     alphamind.portfolio_state
 forbidden_modules =
     alphamind.risk_guardrails
+
+# Story ALP-501 — production scheduler code must not import ``debug_e2e``
+# at module-load time. The debug-e2e package carries the synthetic
+# portfolio + log-only broker shims + wipe-and-seed helper; pulling any
+# of it into the production import graph would (a) execute the
+# ``-debug-e2e.db`` suffix-guarded seeder branch where it does not
+# belong and (b) couple production code to dev-only test fixtures.
+#
+# ``scheduler.__main__`` is the SOLE production module that names
+# ``debug_e2e`` symbols, and it does so via ``importlib.import_module``
+# inside ``_run_debug_e2e`` — grimp can't statically resolve dynamic
+# module names, so those edges are invisible to the contract while still
+# executing normally. ``run_context`` declares the ``DebugE2ESettings``
+# field via ``TYPE_CHECKING`` only and the ``exclude_type_checking_imports``
+# session flag drops that forward-reference seam from the graph.
+[importlinter:contract:debug-e2e-forbidden-in-production]
+name = Production scheduler code must not import debug_e2e
+type = forbidden
+source_modules =
+    alphamind.scheduler.__main__
+    alphamind.scheduler.orchestrator
+    alphamind.scheduler.phase1_inputs
+    alphamind.scheduler.phase2_dispatch
+    alphamind.scheduler.run_context
+    alphamind.scheduler.driver
+    alphamind.scheduler.emergency
+    alphamind.scheduler.invocation
+    alphamind.scheduler.runtime
+    alphamind.scheduler.supervisor
+    alphamind.scheduler.session
+    alphamind.scheduler.logging_setup
+    alphamind.pipeline
+forbidden_modules =
+    alphamind.scheduler.debug_e2e

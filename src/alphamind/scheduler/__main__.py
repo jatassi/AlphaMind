@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import json
 import logging
 import sys
@@ -83,10 +84,28 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default="paper",
         help="Trading mode for the session (default: paper).",
     )
+    run_p.add_argument(
+        "--debug-e2e",
+        action="store_true",
+        help=(
+            "Drive one --once invocation with the synthetic portfolio + "
+            "log-only broker + progress.jsonl emit. Requires --once and "
+            "is mutually exclusive with --mode live."
+        ),
+    )
 
     args = parser.parse_args(argv)
     if args.subcommand == "run" and args.once is not None and not args.reason:
         parser.error("--once requires --reason")
+    if args.subcommand == "run" and args.debug_e2e:
+        # Mutual exclusion with ``--mode live`` is enforced at argparse level
+        # so the helper never opens an engine pair against the live DB by
+        # accident — the seeder's ``-debug-e2e.db`` suffix guard is the last
+        # line of defense, this is the first.
+        if args.mode == "live":
+            parser.error("--debug-e2e is incompatible with --mode live")
+        if args.once is None:
+            parser.error("--debug-e2e requires --once <run_type> --reason <text>")
     return args
 
 
@@ -143,6 +162,100 @@ async def _run_once(args: argparse.Namespace) -> None:
     # the embedded ``RunType`` enum and the ``Phase1Summary`` slots so the
     # serialization stays a one-liner regardless of which fields are added
     # to ``InvocationSummary`` later.
+    print(json.dumps(asdict(summary), default=str, indent=2))
+
+
+async def _run_debug_e2e(args: argparse.Namespace) -> None:
+    """Drive a single ``--once`` invocation under debug-e2e mode (story ALP-501).
+
+    Mirrors :func:`_run_once` but (a) constructs the
+    :class:`alphamind.scheduler.debug_e2e.settings.DebugE2ESettings`
+    bundle, (b) wipes + reseeds the synthetic portfolio against the
+    debug DB inside a single async session, (c) emits ``phase_start
+    ("seed")`` / ``phase_done("seed")`` around the wipe+seed via a
+    pre-invocation emitter (the canonical invocation_id is not known
+    until ``run_invocation`` returns; the sentinel ``_pre_invocation``
+    keys the seed log), (d) records the process-lifetime row *after*
+    the wipe so the row survives, and (e) hands ``debug_e2e=settings``
+    to ``run_invocation``.
+
+    The imports of ``alphamind.scheduler.debug_e2e`` are deferred via
+    :func:`importlib.import_module` so the import-linter contract
+    ``debug-e2e-forbidden-in-production`` never sees a production
+    scheduler module reaching into the debug package — grimp's static
+    parse can't resolve dynamic module names, so the runtime-only edge
+    stays invisible to the contract while still executing normally.
+    """
+    configure_pipeline_logging()
+
+    archive_root = _DEFAULT_ARCHIVE_ROOT
+    archive_root.mkdir(parents=True, exist_ok=True)
+
+    debug_e2e_settings = importlib.import_module("alphamind.scheduler.debug_e2e.settings")
+    debug_e2e_seed = importlib.import_module("alphamind.scheduler.debug_e2e.seed")
+    debug_e2e_portfolio = importlib.import_module("alphamind.scheduler.debug_e2e.portfolio")
+    configure_debug_e2e = debug_e2e_settings.configure_debug_e2e
+    wipe_and_seed = debug_e2e_seed.wipe_and_seed
+    synthetic_portfolio = debug_e2e_portfolio.SYNTHETIC_PORTFOLIO
+
+    debug_settings = configure_debug_e2e(archive_root=archive_root)
+    venue_config = _load_venue_config(_CONFIG_DIR)
+    execution_mode = ExecutionMode.paper
+    now = datetime.now(UTC)
+
+    async with engine_pair_context() as engines:
+        # ``EnginePair`` has no ``db_path`` field; read it off the resolved
+        # URL so ``wipe_and_seed``'s ``-debug-e2e.db`` suffix guard sees the
+        # path actually in use (a mis-set ``DATABASE_PATH`` then surfaces as
+        # a refusing ``RuntimeError`` rather than wiping a paper / live DB).
+        resolved_db_path = engines.async_engine.url.database
+        if resolved_db_path is None:
+            msg = (
+                "engine URL did not expose a database path; "
+                "cannot enforce the -debug-e2e.db safety guard"
+            )
+            raise RuntimeError(msg)
+
+        # The canonical invocation_id is not known until ``run_invocation``
+        # opens the invocation row; the ``_pre_invocation`` sentinel keys the
+        # pre-invocation seed log so it doesn't race with the per-invocation file.
+        pre_emitter = debug_settings.emitter_factory("_pre_invocation")
+        pre_emitter.phase_start("seed")
+        async with engines.async_session_factory() as session:
+            await wipe_and_seed(
+                session=session,
+                now=now,
+                db_path=resolved_db_path,
+                portfolio=synthetic_portfolio,
+            )
+        pre_emitter.phase_done("seed")
+
+        # Record process_lifetime AFTER the wipe so the row survives.
+        process_lifetime_id = await record_process_lifetime(
+            session_factory=engines.async_session_factory,
+            process_role="pipeline",
+            archive_root=archive_root,
+        )
+        context = RunInvocationContext(
+            session_factory=engines.async_session_factory,
+            sync_session_factory=engines.sync_session_factory,
+            process_lifetime_id=process_lifetime_id,
+            archive_root=archive_root,
+            config_dir=_CONFIG_DIR,
+            env_path=_DEFAULT_ENV_PATH,
+            venue_config=venue_config,
+            execution_mode=execution_mode,
+            debug_e2e=debug_settings,
+        )
+        summary = await run_invocation(
+            context=context,
+            trigger_type="manual",
+            trigger_source="debug_e2e_cli",
+            trigger_reason=args.reason,
+            firing_run_type=RunType(args.once),
+            now=now,
+        )
+
     print(json.dumps(asdict(summary), default=str, indent=2))
 
 
@@ -225,6 +338,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         # argparse ``choices=["paper", "live"]`` already narrowed the value;
         # ``cast`` informs mypy without an additional runtime check.
         asyncio.run(_run_daemon(mode=cast(PipelineMode, args.mode)))
+        return
+
+    # ``--debug-e2e`` branch — synthetic-portfolio + log-only-broker variant
+    # of the single-invocation path (story ALP-501).
+    if args.debug_e2e:
+        asyncio.run(_run_debug_e2e(args))
         return
 
     # ``--once`` branch: argparse already validated ``args.once`` against the

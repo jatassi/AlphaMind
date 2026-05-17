@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from alphamind._kernel.ids import (
     InvocationId,
 )
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.modes import Mode
 from alphamind.config.models.run_types import RunType
@@ -212,6 +213,7 @@ def _make_context(
     env_path: Path,
     archive_root: Path,
     db_path: Path | None = None,
+    debug_e2e: Any | None = None,
 ) -> Any:
     """Compose the standard ``RunInvocationContext`` test fixtures use.
 
@@ -219,6 +221,10 @@ def _make_context(
     on what's specific to each scenario. The sync session factory is built
     from ``db_path`` so the analysis pipeline's sync read session shares the
     same SQLite file as the async write sessions.
+
+    Pass ``debug_e2e=<settings>`` to exercise the debug-e2e wiring path; the
+    orchestrator then threads the bundle's emitter + query factories through
+    ``run_invocation``.
     """
     from alphamind.scheduler.run_context import RunInvocationContext
 
@@ -236,6 +242,7 @@ def _make_context(
         env_path=env_path,
         venue_config=_make_venue_config(),
         execution_mode=ExecutionMode.paper,
+        debug_e2e=debug_e2e,
     )
 
 
@@ -1119,3 +1126,98 @@ class TestRunInvocationProductionPathArtifacts:
         finally:
             sync_engine.dispose()
         assert result.passed, result.message
+
+
+class TestRunInvocationDebugE2EWiring:
+    """Story ALP-501 — ``debug_e2e`` settings thread through ``gather_phase1_inputs``.
+
+    The orchestrator must detect debug-e2e mode by ``context.debug_e2e is not
+    None`` (P3 — no parallel boolean flag) and route the bundle's
+    ``account_queries`` / ``ca_queries`` to ``gather_phase1_inputs`` via the
+    Protocol-typed factory kwargs (the seam ALP-494 carved out). Production
+    callers (``context.debug_e2e is None``) must continue to pass ``None`` so
+    the gatherer falls back to its inline Alpaca-backed defaults.
+    """
+
+    async def test_debug_e2e_threads_query_factories_through_phase1(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``debug_e2e`` populated → factories non-None + resolve to bundle queries."""
+        from alphamind.scheduler.debug_e2e.broker import (
+            LogOnlyAccountStateQueries,
+            LogOnlyCorporateActionsQueries,
+        )
+        from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
+        from alphamind.scheduler.debug_e2e.settings import DebugE2ESettings
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        account_queries = LogOnlyAccountStateQueries(SYNTHETIC_PORTFOLIO)
+        ca_queries = LogOnlyCorporateActionsQueries()
+        debug_settings = DebugE2ESettings(
+            account_queries=account_queries,
+            ca_queries=ca_queries,
+            emitter_factory=lambda _inv_id: NOOP_PROGRESS_EMITTER,
+        )
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+                debug_e2e=debug_settings,
+            ),
+            trigger_type="manual",
+            trigger_source="debug_e2e_cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        gather_kw = captured["gather"]
+        # Both factories are wired and yield the bundle's query instances.
+        assert gather_kw["account_queries_factory"] is not None
+        assert gather_kw["ca_queries_factory"] is not None
+
+        venue = gather_kw["venue_config"]
+        mode = gather_kw["execution_mode"]
+        assert gather_kw["account_queries_factory"](venue, mode) is account_queries
+        assert gather_kw["ca_queries_factory"](venue, mode) is ca_queries
+
+    async def test_production_path_leaves_query_factories_at_none(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``context.debug_e2e is None`` → factories are ``None`` (Alpaca defaults run)."""
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        gather_kw = captured["gather"]
+        # The orchestrator must pass the kwargs explicitly so the call signature
+        # is stable; ``None`` is the canonical "use the Alpaca default" value.
+        assert gather_kw.get("account_queries_factory") is None
+        assert gather_kw.get("ca_queries_factory") is None

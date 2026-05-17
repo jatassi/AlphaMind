@@ -428,18 +428,19 @@ def test_decision_not_execution_contract_with_composition_root_exception() -> No
     # ``state.config`` still aggregates the per-feature CA config under
     # ``execution.corporate_actions``, so ``submit_envelope.persist``
     # carries a ``decision -> state.config -> execution`` indirect path.
+    # ALP-501 turned on ``exclude_type_checking_imports = True`` globally
+    # so the four ``submit_envelope.*`` edges that were ``TYPE_CHECKING``-
+    # only (``dispatch -> order_modify``, ``persist -> oms.broker_dispatch``,
+    # ``server -> broker_adapter``, ``server -> oms.broker_dispatch``) no
+    # longer register as graph edges and are absent from this baseline.
     pkg = "alphamind.decision.portfolio_manager.submit_envelope"
     expected_edges = {
         f"{pkg}.dispatch -> alphamind.execution.broker_adapter",
         f"{pkg}.dispatch -> alphamind.execution.broker_adapter.errors",
-        f"{pkg}.dispatch -> alphamind.execution.broker_adapter.order_modify",
         f"{pkg}.dispatch -> alphamind.execution.broker_adapter.order_options",
         f"{pkg}.dispatch -> alphamind.execution.oms.broker_dispatch",
-        f"{pkg}.persist -> alphamind.execution.oms.broker_dispatch",
         f"{pkg}.persist -> alphamind.execution.write_paths.phase2",
         f"{pkg}.process -> alphamind.execution.oms.command_ids",
-        f"{pkg}.server -> alphamind.execution.broker_adapter",
-        f"{pkg}.server -> alphamind.execution.oms.broker_dispatch",
         "alphamind.state.config -> alphamind.execution.corporate_actions.config",
     }
     assert set(ignored) == expected_edges, (
