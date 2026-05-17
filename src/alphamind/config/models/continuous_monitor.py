@@ -26,7 +26,7 @@ pre-resolved decision (E):
   ``cascade_dispatch_placeholder_risk_reward_ratio`` — operator-visible
   interim defaults for the cascade dispatcher's per-position ADV and
   risk/reward signals while the monitor's market-data path does not yet
-  expose them. The follow-up issue replaces both with live signals.
+  expose them. ALP-508 replaces both with live signals.
 
 This file is loaded directly by ``alphamind.config.load`` and surfaced on
 ``ResolvedConfig.continuous_monitor``; the resolver does not cascade it
@@ -55,7 +55,7 @@ class ContinuousMonitorConfig(BaseModel):
     subscription_refresh_seconds: int = Field(default=30, ge=1)
     max_reconnect_attempts: int = Field(ge=1)
     supervisor_shutdown_timeout_seconds: int = Field(ge=1)
-    # ALP-507 — operator-visible placeholders; ALP-508 retires both once the
-    # monitor's market-data path exposes live ADV / R/R signals.
     cascade_dispatch_placeholder_adv_to_position_size_ratio: float = Field(default=10.0, ge=0.0)
+    # No lower bound: ``PositionRiskReward.risk_reward_ratio`` accepts negative
+    # values during gap-throughs (position past invalidation but not yet stopped).
     cascade_dispatch_placeholder_risk_reward_ratio: float = Field(default=2.0)

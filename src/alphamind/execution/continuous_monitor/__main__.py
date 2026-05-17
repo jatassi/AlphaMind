@@ -49,6 +49,7 @@ from alphamind.execution.continuous_monitor.breach_loop import (
     register_breach_loop_task,
 )
 from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
+    DispatchPlaceholders,
     load_breach_loop_resolved_config,
     make_dispatch_context_provider,
     make_library_config_factory,
@@ -361,12 +362,8 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     # would cost.
     resolved_config = load_breach_loop_resolved_config(config_dir)
     portfolio_state_config = load_portfolio_state_config(config_dir / "portfolio_state.yaml")
-    # Single ``IvProvider`` instance shared by the breach-loop task and the
-    # cascade dispatcher so re-projection in ``handle_immediate_breach`` reads
-    # identical IV values to the per-tick evaluation that fired the breach.
-    # Today the bootstrap implementation is empty; once the Polygon-backed
-    # production adapter lands, swapping this single binding upgrades both
-    # call sites at once.
+    # One IvProvider shared by the breach-loop evaluator and the cascade
+    # dispatcher's re-projection so both observe identical IV values.
     iv_provider = FixtureIvProvider(surface={}, realized_vol={})
     snapshot_provider = make_snapshot_provider(
         session_factory=db_session_factory,
@@ -393,10 +390,12 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
         library_config_factory=library_config_factory,
         underlying_cache=underlying_cache_typed,
         iv_provider=iv_provider,
-        placeholder_adv_to_position_size_ratio=(
-            monitor_config.cascade_dispatch_placeholder_adv_to_position_size_ratio
+        placeholders=DispatchPlaceholders(
+            adv_to_position_size_ratio=(
+                monitor_config.cascade_dispatch_placeholder_adv_to_position_size_ratio
+            ),
+            risk_reward_ratio=monitor_config.cascade_dispatch_placeholder_risk_reward_ratio,
         ),
-        placeholder_risk_reward_ratio=monitor_config.cascade_dispatch_placeholder_risk_reward_ratio,
         progressive_tiers=progressive_tiers,
         open_positions_provider=open_positions_view_provider,
     )

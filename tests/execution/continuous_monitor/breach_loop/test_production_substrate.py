@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -41,7 +41,9 @@ from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
 )
+from alphamind.config.models.regimes import Regime
 from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
+    DispatchPlaceholders,
     load_breach_loop_resolved_config,
     make_dispatch_context_provider,
     make_invocation_id_provider_sync,
@@ -69,9 +71,17 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
 )
 from alphamind.portfolio_state.views.positions import PositionView
-from alphamind.risk_guardrails.guardrail_evaluation import FixtureIvProvider, MarketInputs
-from alphamind.risk_guardrails.regime_adaptation import RegimeAdaptationOutput
-from alphamind.risk_guardrails.regime_adaptation.types import RegimeAdaptationState
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    FixtureIvProvider,
+    MarketInputs,
+)
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    PortfolioStateSnapshot as LibrarySnapshot,
+)
+from alphamind.risk_guardrails.regime_adaptation import (
+    RegimeAdaptationOutput,
+    build_synthetic_regime_output,
+)
 from alphamind.state.config import StatePersistenceConfig
 from alphamind.state.invocation_context import (
     ProcessLifetimeRecord,
@@ -359,7 +369,7 @@ class TestSubmitEnvelope:
 
 
 # ---------------------------------------------------------------------------
-# make_dispatch_context_provider — ALP-507
+# make_dispatch_context_provider
 # ---------------------------------------------------------------------------
 
 
@@ -372,7 +382,7 @@ def _equity_position_view(
     cost_basis: float = 150.0,
     market_value_usd: float = 1500.0,
 ) -> PositionView:
-    """Build a PositionView for an equity position — mirrors the dispatcher tests' helper."""
+    """Minimal open equity ``PositionView`` for dispatch-context tests."""
     as_of = datetime(2026, 5, 17, 14, 30, tzinfo=UTC)
     details = EquityPositionDetails(
         ticker=Symbol(ticker),
@@ -417,12 +427,8 @@ def _equity_position_view(
     )
 
 
-def _make_library_snapshot(*, portfolio_value_usd: float = 100_000.0) -> Any:
+def _make_library_snapshot(*, portfolio_value_usd: float = 100_000.0) -> LibrarySnapshot:
     """Construct a minimal :class:`LibrarySnapshot` for context-provider tests."""
-    from alphamind.risk_guardrails.guardrail_evaluation import (
-        PortfolioStateSnapshot as LibrarySnapshot,
-    )
-
     return LibrarySnapshot(
         portfolio_value_usd=portfolio_value_usd,
         cash_usd=10_000.0,
@@ -443,33 +449,12 @@ def _make_library_snapshot(*, portfolio_value_usd: float = 100_000.0) -> Any:
 
 
 def _make_regime_output() -> RegimeAdaptationOutput:
-    """Construct a minimal :class:`RegimeAdaptationOutput` for context-provider tests."""
-    from alphamind.config.models.regimes import Regime
-
-    state = RegimeAdaptationState(
-        as_of="2026-05-17T14:30:00Z",
+    """Synthetic ``RegimeAdaptationOutput`` for context-provider tests."""
+    return build_synthetic_regime_output(
+        active_risk_parameters=_active_parameter_set(),
+        runtime_active_regime=Regime.normal,
         invocation_id="inv-test",
-        active_regime=Regime.normal,
-        prior_regime=None,
-        transition_state=RegimeTransitionState.STABLE,
-        transition_invocations_remaining=0,
-        transition_started_invocation_id=None,
-        transition_origin_regime=None,
-        active_overlays=(),
-        distillation_regime_label="normal",
-        distillation_vix_level=15.0,
-        regime_skip_emergency=False,
-    )
-    return RegimeAdaptationOutput(
-        runtime_dimensions_active_regime=Regime.normal,
-        runtime_dimensions_active_overlays=(),
-        overlay_activation_decisions=(),
-        effective_limits={},
-        active_risk_parameter_set=_active_parameter_set(),
-        regime_transition_breaches=(),
-        regime_skip_emergency=False,
-        new_persisted_state=state,
-        audit_log_entries=(),
+        now=datetime(2026, 5, 17, 14, 30, tzinfo=UTC),
     )
 
 
@@ -481,7 +466,7 @@ class TestMakeDispatchContextProvider:
         snapshot = _make_library_snapshot()
         regime_output = _make_regime_output()
 
-        async def _snapshot_provider() -> Any:
+        async def _snapshot_provider() -> LibrarySnapshot:
             return snapshot
 
         async def _regime_provider() -> RegimeAdaptationOutput:
@@ -496,8 +481,9 @@ class TestMakeDispatchContextProvider:
             ),
             underlying_cache=UnderlyingPriceCache(),
             iv_provider=iv,
-            placeholder_adv_to_position_size_ratio=10.0,
-            placeholder_risk_reward_ratio=2.0,
+            placeholders=DispatchPlaceholders(
+                adv_to_position_size_ratio=10.0, risk_reward_ratio=2.0
+            ),
         )
         context = await provider()
         # ``BreachDispatchContext.market_inputs`` is typed as the protocol;
@@ -515,7 +501,7 @@ class TestMakeDispatchContextProvider:
             _equity_position_view(position_id="p2", ticker="MSFT"),
         )
 
-        async def _snapshot_provider() -> Any:
+        async def _snapshot_provider() -> LibrarySnapshot:
             return snapshot
 
         async def _regime_provider() -> RegimeAdaptationOutput:
@@ -532,8 +518,9 @@ class TestMakeDispatchContextProvider:
             ),
             underlying_cache=UnderlyingPriceCache(),
             iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
-            placeholder_adv_to_position_size_ratio=10.0,
-            placeholder_risk_reward_ratio=2.0,
+            placeholders=DispatchPlaceholders(
+                adv_to_position_size_ratio=10.0, risk_reward_ratio=2.0
+            ),
             open_positions_provider=_open_positions_provider,
         )
         context = await provider()
@@ -544,7 +531,7 @@ class TestMakeDispatchContextProvider:
         snapshot = _make_library_snapshot()
         regime_output = _make_regime_output()
 
-        async def _snapshot_provider() -> Any:
+        async def _snapshot_provider() -> LibrarySnapshot:
             return snapshot
 
         async def _regime_provider() -> RegimeAdaptationOutput:
@@ -558,8 +545,9 @@ class TestMakeDispatchContextProvider:
             ),
             underlying_cache=UnderlyingPriceCache(),
             iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
-            placeholder_adv_to_position_size_ratio=10.0,
-            placeholder_risk_reward_ratio=2.0,
+            placeholders=DispatchPlaceholders(
+                adv_to_position_size_ratio=10.0, risk_reward_ratio=2.0
+            ),
         )
         context = await provider()
         assert context.open_positions == ()
@@ -575,7 +563,7 @@ class TestMakeDispatchContextProvider:
             _equity_position_view(position_id="p2", ticker="MSFT"),
         )
 
-        async def _snapshot_provider() -> Any:
+        async def _snapshot_provider() -> LibrarySnapshot:
             return snapshot
 
         async def _regime_provider() -> RegimeAdaptationOutput:
@@ -592,8 +580,9 @@ class TestMakeDispatchContextProvider:
             ),
             underlying_cache=UnderlyingPriceCache(),
             iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
-            placeholder_adv_to_position_size_ratio=42.0,
-            placeholder_risk_reward_ratio=7.5,
+            placeholders=DispatchPlaceholders(
+                adv_to_position_size_ratio=42.0, risk_reward_ratio=7.5
+            ),
             open_positions_provider=_open_positions_provider,
         )
         context = await provider()
