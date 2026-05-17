@@ -103,7 +103,14 @@ def ticker_scope_from_assets(resolved: Any) -> tuple[str, ...]:
 
 
 def sectors_config_from_assets(resolved: Any) -> dict[str, list[str]]:
-    """Extract the per-sector ticker buckets from the resolved assets config.
+    """Project ``resolved.assets.sectors`` into the analysis-layer sector map.
+
+    ``assets.yaml`` keeps ``tech`` and ``semis`` separate so each can carry
+    its own discovery-source ETF (XLK / SOXX). The analysis layer collapses
+    them into a single ``tech_semis`` researcher (matches the ``Sector``
+    enum and the ``sector_classification.domain_researcher`` storage value),
+    so this helper merges the two raw buckets and emits exactly the three
+    canonical keys: ``tech_semis`` / ``financials`` / ``energy``.
 
     Logs a warning and returns an empty dict when the resolved config
     lacks ``assets`` / ``assets.sectors``.
@@ -114,4 +121,9 @@ def sectors_config_from_assets(resolved: Any) -> dict[str, list[str]]:
     if not hasattr(resolved.assets, "sectors"):
         log.warning("resolved.assets has no 'sectors' attribute; sectors_config empty")
         return {}
-    return {sector: list(tickers) for sector, tickers in resolved.assets.sectors.items()}
+    raw = {sector: list(tickers) for sector, tickers in resolved.assets.sectors.items()}
+    return {
+        "tech_semis": raw.get("tech", []) + raw.get("semis", []),
+        "financials": raw.get("financials", []),
+        "energy": raw.get("energy", []),
+    }

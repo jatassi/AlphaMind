@@ -124,16 +124,39 @@ def test_ticker_scope_from_assets_missing_returns_empty(caplog: Any) -> None:
     assert caplog.records  # at least one warning
 
 
-def test_sectors_config_from_assets_returns_dict() -> None:
-    """``sectors_config_from_assets`` returns a mutable copy of the sector map."""
+def test_sectors_config_from_assets_projects_to_three_canonical_keys() -> None:
+    """Merges raw ``tech`` + ``semis`` into ``tech_semis`` and emits exactly the
+    three analysis-layer canonical keys (matches the ``Sector`` enum)."""
     from alphamind.config.assets_views import sectors_config_from_assets
 
-    sectors = {"TECH": ["AAPL", "MSFT"], "ENERGY": ["XOM"]}
+    sectors = {
+        "tech": ["AAPL", "MSFT"],
+        "semis": ["NVDA", "AMD"],
+        "financials": ["JPM"],
+        "energy": ["XOM"],
+    }
     resolved = _FakeResolved(_FakeAssets(sectors))
 
     result = sectors_config_from_assets(resolved)
 
-    assert result == {"TECH": ["AAPL", "MSFT"], "ENERGY": ["XOM"]}
+    assert result == {
+        "tech_semis": ["AAPL", "MSFT", "NVDA", "AMD"],
+        "financials": ["JPM"],
+        "energy": ["XOM"],
+    }
+
+
+def test_sectors_config_from_assets_tolerates_missing_raw_buckets() -> None:
+    """Missing raw ``tech``/``semis``/``financials``/``energy`` keys contribute
+    empty lists rather than raising — mirrors the warn-and-fallback pattern of
+    the sibling helpers."""
+    from alphamind.config.assets_views import sectors_config_from_assets
+
+    resolved = _FakeResolved(_FakeAssets({"semis": ["NVDA"]}))
+
+    result = sectors_config_from_assets(resolved)
+
+    assert result == {"tech_semis": ["NVDA"], "financials": [], "energy": []}
 
 
 def test_sectors_config_from_assets_missing_returns_empty(caplog: Any) -> None:
