@@ -398,6 +398,13 @@ class RuleProjection:
     a floor (e.g., ``min_cash_reserve_pct``) and ``False`` when ``limit`` is a
     cap (every other rule). Callers branching on rule semantics read this flag
     rather than maintaining a parallel registry of inverse-rule IDs.
+
+    ``breaching_position_id`` identifies the position whose state triggered
+    the rule. Per-position rules (``position_max_loss_*_pct``,
+    ``single_short_max_pct``) populate it so the continuous-monitor cascade
+    dispatcher routes the close envelope to the exact breaching position
+    instead of re-scanning the open-positions list for the worst in-class
+    loser. ``None`` for portfolio-scope rules.
     """
 
     rule: str
@@ -408,6 +415,7 @@ class RuleProjection:
     headroom_remaining: float
     unit: str
     inverse: bool = False
+    breaching_position_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

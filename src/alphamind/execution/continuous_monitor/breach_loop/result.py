@@ -40,6 +40,14 @@ class RuleEvaluation:
     values. ``classification`` is ``None`` when the rule is not breaching;
     populated with the rule's static ``BreachResponse`` (``immediate_engine``
     or ``deferred_to_pm``) when ``zone == RiskZone.BLOCKED``.
+
+    ``breaching_position_id`` carries the library's identification of the
+    position whose state triggered the rule. Populated for per-position rules
+    (``position_max_loss_*_pct``, ``single_short_max_pct``) and ``None`` for
+    portfolio-scope rules (drawdown, gross exposure, net long, etc.) — the
+    cascade dispatcher's per-rule kwargs providers trust this field over a
+    re-scan of ``open_positions`` so ties don't reroute the cascade onto a
+    different position than the one whose breach fired the rule.
     """
 
     rule_id: str
@@ -48,6 +56,7 @@ class RuleEvaluation:
     overage: float
     zone: RiskZone
     classification: BreachResponse | None
+    breaching_position_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

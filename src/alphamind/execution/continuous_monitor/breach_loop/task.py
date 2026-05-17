@@ -239,6 +239,7 @@ async def _run_one_tick(  # noqa: PLR0913
             current_value=projection.current,
             limit_value=projection.limit,
             inverse=projection.inverse,
+            breaching_position_id=projection.breaching_position_id,
             escalation_zones=library_config.escalation_zones,
             breach_response_lookup=breach_response_lookup,
         )
@@ -304,6 +305,7 @@ def _build_rule_evaluation(
     current_value: float,
     limit_value: float,
     inverse: bool,
+    breaching_position_id: str | None,
     escalation_zones: Mapping[str, EscalationZones],
     breach_response_lookup: Mapping[str, BreachResponse],
 ) -> RuleEvaluation:
@@ -348,6 +350,7 @@ def _build_rule_evaluation(
         overage=overage,
         zone=zone,
         classification=classification,
+        breaching_position_id=breaching_position_id,
     )
 
 
