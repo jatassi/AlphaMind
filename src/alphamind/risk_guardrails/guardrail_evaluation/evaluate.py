@@ -174,18 +174,30 @@ def _check_underlying_in_market(proposal: ProposedDelta, *, market: MarketInputs
 
 
 def _check_asset_type_legs_consistency(proposal: ProposedDelta) -> list[str]:
-    """asset_type vs option_legs: EQUITY ⇔ legs is None; OPTION ⇒ ≥1 leg; STRATEGY ⇒ ≥2 legs."""
+    """asset_type vs option_legs.
+
+    EQUITY ⇔ legs is None. OPEN/ADD on OPTION/STRATEGY synthesize new exposure
+    and require the leg breakdown. CLOSE/ADJUST/CANCEL read stored fields on
+    the existing position or contribute zero, so legs are not required for
+    those actions. When legs *are* supplied on any options/strategy proposal,
+    they must satisfy the per-asset-type minimums (OPTION ≥ 1, STRATEGY ≥ 2).
+    """
     legs = proposal.option_legs
     if proposal.asset_type is AssetType.EQUITY:
         if legs is not None:
             return [f"proposal {proposal.id!r}: EQUITY must not carry option_legs"]
         return []
     if legs is None:
-        return [f"proposal {proposal.id!r}: {proposal.asset_type.value} requires option_legs"]
-    if proposal.asset_type is AssetType.OPTION and len(legs) < 1:
-        return [f"proposal {proposal.id!r}: OPTION requires at least 1 leg"]
-    if proposal.asset_type is AssetType.STRATEGY and len(legs) < 2:
-        return [f"proposal {proposal.id!r}: STRATEGY requires at least 2 legs"]
+        if proposal.action in (Action.OPEN, Action.ADD):
+            return [f"proposal {proposal.id!r}: {proposal.asset_type.value} requires option_legs"]
+        return []
+    min_legs = 2 if proposal.asset_type is AssetType.STRATEGY else 1
+    if len(legs) < min_legs:
+        word = "leg" if min_legs == 1 else "legs"
+        return [
+            f"proposal {proposal.id!r}: {proposal.asset_type.value} "
+            f"requires at least {min_legs} {word}"
+        ]
     return []
 
 

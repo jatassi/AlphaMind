@@ -19,6 +19,7 @@ from __future__ import annotations
 from alphamind.risk_guardrails.guardrail_evaluation.rules._helpers import (
     RuleSpec,
     existing_position,
+    signed_notional_for_contribution,
 )
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
     Action,
@@ -75,7 +76,8 @@ def make_sector_concentration_spec(sector: str) -> RuleSpec:
     ) -> float:
         if proposal.sector != sector:
             return 0.0
-        return dae.signed_notional_usd / state.portfolio_value_usd * 100.0
+        signed = signed_notional_for_contribution(proposal, dae, state)
+        return signed / state.portfolio_value_usd * 100.0
 
     return RuleSpec(
         rule_id=f"sector_concentration_{sector}",
@@ -102,7 +104,8 @@ def _net_long_contribute(
     config: LibraryConfig,
 ) -> float:
     """Signed contribution: positive ``signed_notional`` increases net long."""
-    return dae.signed_notional_usd / state.portfolio_value_usd * 100.0
+    signed = signed_notional_for_contribution(proposal, dae, state)
+    return signed / state.portfolio_value_usd * 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +124,8 @@ def _net_short_contribute(
     config: LibraryConfig,
 ) -> float:
     """Flip sign: short OPENs (signed_notional<0) contribute positively."""
-    return -dae.signed_notional_usd / state.portfolio_value_usd * 100.0
+    signed = signed_notional_for_contribution(proposal, dae, state)
+    return -signed / state.portfolio_value_usd * 100.0
 
 
 # ---------------------------------------------------------------------------

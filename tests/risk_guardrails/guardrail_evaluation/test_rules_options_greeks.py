@@ -142,7 +142,12 @@ def _option_dae(
 def _existing_option_position(
     *,
     position_id: str = "POS-OPT",
+    direction: Direction = Direction.LONG,
+    asset_type: AssetType = AssetType.OPTION,
     quantity: float = 10.0,
+    notional_usd: float = 2_000.0,
+    delta_adjusted_exposure_usd: float = 4_500.0,
+    delta: float = 0.45,
     theta: float = -0.10,
     vega: float = 0.20,
 ) -> ExistingPosition:
@@ -150,11 +155,11 @@ def _existing_option_position(
         position_id=position_id,
         underlying=Symbol("AAPL"),
         sector="tech",
-        direction=Direction.LONG,
-        asset_type=AssetType.OPTION,
-        notional_usd=2_000.0,
-        delta_adjusted_exposure_usd=4_500.0,
-        current_greeks=Greeks(delta=0.45, gamma=0.02, theta=theta, vega=vega),
+        direction=direction,
+        asset_type=asset_type,
+        notional_usd=notional_usd,
+        delta_adjusted_exposure_usd=delta_adjusted_exposure_usd,
+        current_greeks=Greeks(delta=delta, gamma=0.02, theta=theta, vega=vega),
         daily_borrow_cost_usd=None,
         reserves_capital_usd=0.0,
         quantity=quantity,
@@ -205,6 +210,70 @@ def test_options_delta_contribute_zero_for_equity() -> None:
     state = _snapshot(portfolio_value_usd=100_000.0)
     spec = _spec_by_id(build_active_specs(config), "options_delta_pct")
     assert spec.contribute(_equity_proposal(), _equity_dae(), state, config) == 0.0
+
+
+def _empty_dae(proposal_id: str) -> DeltaAdjustedExposure:
+    """Simulates the option_legs=None short-circuit in compute_delta_adjusted_exposure."""
+    return DeltaAdjustedExposure(
+        proposal_id=proposal_id,
+        signed_notional_usd=0.0,
+        net_greeks=Greeks(0.0, 0.0, 0.0, 0.0),
+        iv_used=None,
+        iv_source=None,
+        unbuffered_delta=None,
+    )
+
+
+def test_options_delta_contribute_close_on_strategy_uses_existing_dae() -> None:
+    """CLOSE on a STRATEGY position with empty proposal DAE: options_delta
+    contribution falls back to ``existing.delta_adjusted_exposure_usd``."""
+    config = _config()
+    existing = _existing_option_position(
+        position_id="POS-STRAT",
+        asset_type=AssetType.STRATEGY,
+        notional_usd=4_000.0,
+        delta_adjusted_exposure_usd=4_500.0,
+    )
+    state = _snapshot(
+        portfolio_value_usd=100_000.0,
+        existing_positions={"POS-STRAT": existing},
+    )
+    spec = _spec_by_id(build_active_specs(config), "options_delta_pct")
+    proposal = _option_proposal(
+        proposal_id="P-STRAT",
+        quantity=4.0,
+        asset_type=AssetType.STRATEGY,
+        action=Action.CLOSE,
+        existing_position_id="POS-STRAT",
+    )
+    # Contribution = -existing.dae / pv * 100 = -4.5%
+    assert spec.contribute(proposal, _empty_dae("P-STRAT"), state, config) == pytest.approx(-4.5)
+
+
+def test_options_delta_contribute_close_on_bearish_option_increases() -> None:
+    """CLOSE on an OPTION with negative delta-adjusted exposure (e.g. long
+    put): options_delta moves up because the bearish position is removed.
+    Helper returns -existing.dae = -(-2_000) = +2_000 → +2.0%."""
+    config = _config()
+    existing = _existing_option_position(
+        position_id="POS-OPT-BEAR",
+        notional_usd=1_500.0,
+        delta_adjusted_exposure_usd=-2_000.0,
+        quantity=5.0,
+        delta=-0.40,
+    )
+    state = _snapshot(
+        portfolio_value_usd=100_000.0,
+        existing_positions={"POS-OPT-BEAR": existing},
+    )
+    spec = _spec_by_id(build_active_specs(config), "options_delta_pct")
+    proposal = _option_proposal(
+        proposal_id="P-OPT-BEAR",
+        quantity=5.0,
+        action=Action.CLOSE,
+        existing_position_id="POS-OPT-BEAR",
+    )
+    assert spec.contribute(proposal, _empty_dae("P-OPT-BEAR"), state, config) == pytest.approx(2.0)
 
 
 # ---------------------------------------------------------------------------

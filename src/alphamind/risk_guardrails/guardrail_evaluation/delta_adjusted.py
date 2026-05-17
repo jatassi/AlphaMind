@@ -61,6 +61,18 @@ def compute_delta_adjusted_exposure(
     if proposal.action in (Action.ADJUST, Action.CANCEL):
         return _exposure_neutral(proposal)
 
+    # CLOSE on options/strategy may omit ``option_legs`` — a close assessment
+    # references an existing position whose legs are already on the book
+    # (ALP-504). With no legs to re-price, the library does not synthesize a
+    # proposal DAE; the rule contributions read from
+    # ``existing.delta_adjusted_exposure_usd`` instead.
+    if (
+        proposal.action is Action.CLOSE
+        and proposal.asset_type is not AssetType.EQUITY
+        and proposal.option_legs is None
+    ):
+        return _exposure_neutral(proposal)
+
     direction_sign = 1.0 if proposal.direction is Direction.LONG else -1.0
     # ``CLOSE`` reduces exposure, so signed notional carries the *direction of
     # change* — opposite the proposal's ``direction``. The rule-contribution
@@ -116,7 +128,12 @@ class _LegResult:
 
 
 def _exposure_neutral(proposal: ProposedDelta) -> DeltaAdjustedExposure:
-    """Result for ``ADJUST``/``CANCEL`` — exposure-neutral by definition.
+    """Result for actions where the library does not synthesize a proposal DAE.
+
+    Used for ``ADJUST``/``CANCEL`` (exposure-neutral by definition) and for
+    ``CLOSE`` on options/strategy without ``option_legs`` (no leg breakdown to
+    re-price; the rule contributions read the existing position's stored
+    DAE).
 
     Greeks are zero for options (so the rule-contribution math sees zero
     impact on theta/vega budgets) and ``None`` for equity (the dataclass
