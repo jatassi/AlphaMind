@@ -11,8 +11,10 @@ pure: no clock reads, no I/O.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections import defaultdict
+from collections.abc import Callable, Sequence
 
+from alphamind.portfolio_state.records.orders import OrderRecord, OrderRole
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -98,6 +100,42 @@ def _accumulate_portfolio_greeks(
 
 
 # ---------------------------------------------------------------------------
+# Per-position reserved-capital derivation
+# ---------------------------------------------------------------------------
+
+
+_ENTRY_ROLES: frozenset[OrderRole] = frozenset({OrderRole.ENTRY, OrderRole.ADD_ENTRY})
+
+
+def _build_position_reservations(
+    pending_orders: Sequence[OrderRecord],
+) -> dict[str, float]:
+    """Mirror ``_order_notional_estimate`` in ``execution/write_paths/phase2/cancel.py``
+    so each position's view of "what will the OMS release on CANCEL" matches what
+    ``_release_capital`` will actually subtract. The cancel path uses
+    ``limit_price (or stop_trigger_price) * remaining_quantity`` for ENTRY/ADD_ENTRY
+    legs; protective legs never reserve capital and market orders carry no price.
+
+    Note: this per-position basis can disagree with the portfolio-level
+    ``cash_ledger.reserved_capital_usd``, which sums the original PM-command
+    ``dollar_value`` amounts reserved at submission. The divergence is the same
+    one the OMS cancel path already acknowledges as "best-effort capital
+    estimate"; mirroring it keeps the rule's projected-after value consistent
+    with the post-cancel ledger.
+    """
+    reservations: dict[str, float] = defaultdict(float)
+    for order in pending_orders:
+        if order.role not in _ENTRY_ROLES or order.position_id is None:
+            continue
+        pp = order.price_parameters
+        px = pp.limit_price if pp.limit_price is not None else pp.stop_trigger_price
+        if px is None:
+            continue
+        reservations[order.position_id] += px * order.remaining_quantity
+    return dict(reservations)
+
+
+# ---------------------------------------------------------------------------
 # Public translator
 # ---------------------------------------------------------------------------
 
@@ -178,6 +216,8 @@ def to_library_snapshot(
         raise ValueError(msg)
     position_max_size_pct = _rule.value
 
+    position_reservations = _build_position_reservations(snapshot.pending_orders)
+
     # Single pass over all positions: compute portfolio_value_usd, aggregate portfolio
     # greeks, daily borrow cost, and build the existing_positions map.
     all_positions = (*snapshot.open_positions, *snapshot.pending_positions)
@@ -255,8 +295,7 @@ def to_library_snapshot(
             delta_adjusted_exposure_usd=float(pos.delta_adjusted_exposure_usd),
             current_greeks=current_greeks,
             daily_borrow_cost_usd=daily_borrow_cost_usd,
-            # reserves_capital_usd: 0.0 — PositionRecord does not carry this field
-            reserves_capital_usd=0.0,
+            reserves_capital_usd=position_reservations.get(pos.position_id, 0.0),
             quantity=quantity,
         )
 
