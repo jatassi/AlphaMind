@@ -9,8 +9,6 @@ breaches through ``selector_for(rule_id)`` without any caller-specific glue.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,31 +18,18 @@ import pytest
 import alphamind.decision.portfolio_manager.models  # noqa: F401  # break OMS ↔ PM import cycle
 from alphamind._kernel.ids import (
     BracketId,
-    OrderId,
     PositionId,
     Symbol,
     ThesisId,
 )
 from alphamind._kernel.money import money, price, signed_money
-from alphamind._kernel.regime import RegimeTransitionState
-from alphamind.commands.engine_envelope import EngineEnvelope as OmsEngineEnvelope
 from alphamind.config.loaders import read_yaml_file
 from alphamind.config.models.guardrails import BreachResponse, GuardrailsConfig
-from alphamind.decision.portfolio_manager.submit_envelope import (
-    Acknowledgment,
-    SubmissionResult,
-)
-from alphamind.execution.continuous_monitor.breach_loop.result import (
-    BreachLoopResult,
-    RuleEvaluation,
-)
-from alphamind.execution.continuous_monitor.cascade_dispatch import (
-    TriggerIdGenerator,
-)
+from alphamind.execution.continuous_monitor.breach_loop.result import RuleEvaluation
+from alphamind.execution.continuous_monitor.cascade_dispatch import TriggerIdGenerator
 from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
     BreachDispatchContext,
     CascadeDispatcher,
-    DeferralEvent,
 )
 from alphamind.execution.continuous_monitor.cascade_dispatch.per_rule_kwargs import (
     build_per_rule_kwargs_providers,
@@ -52,16 +37,8 @@ from alphamind.execution.continuous_monitor.cascade_dispatch.per_rule_kwargs imp
 from alphamind.execution.continuous_monitor.cascade_dispatch.selectors import (
     RULE_SELECTOR_DISPATCH,
 )
-from alphamind.execution.guardrail_enforcement.orchestrator import (
-    Phase1EnforcementResult,
-)
-from alphamind.portfolio_state.aggregates.risk_parameters import (
-    ActiveRiskParameterSet,
-)
 from alphamind.portfolio_state.records.positions import (
     Direction,
-    EquityPositionDetails,
-    LocateStatus,
     OptionContractType,
     OptionGreeks,
     OptionsPositionDetails,
@@ -71,16 +48,25 @@ from alphamind.portfolio_state.records.positions import (
 )
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import (
-    BreachBehaviorConfig,
-    DrawdownSample,
-    DrawdownTier,
     PositionLiquidity,
     PositionRiskReward,
     RegimeLabel,
     RiskZone,
 )
+from tests.execution.continuous_monitor.cascade_dispatch.conftest import (
+    NOW,
+    RecordingDeferralSink,
+    RecordingSubmit,
+    ScriptedLibrary,
+    StubLibraryConfig,
+    StubLibraryOutput,
+    StubMarketInputs,
+    StubPortfolioState,
+    equity_view,
+    make_breach_config,
+    make_breach_loop_result,
+)
 
-_NOW = datetime(2026, 5, 17, 14, 30, 0, tzinfo=UTC)
 _SESSION_ID = "monsession-x"
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -88,73 +74,8 @@ _GUARDRAILS_YAML = _REPO_ROOT / "config" / "guardrails.yaml"
 
 
 # ---------------------------------------------------------------------------
-# PositionView builders — minimal fixtures wired through the canonical record
-# constructor so the dispatcher consumes the same shape it sees in production.
+# Options-specific PositionView builder — only used in this file.
 # ---------------------------------------------------------------------------
-
-
-def _equity_view(
-    *,
-    position_id: str,
-    ticker: str = "NVDA",
-    direction: Direction = Direction.LONG,
-    cost_basis: float = 150.0,
-    share_count: float = 10.0,
-    unrealized_pnl_usd: float = -52.5,
-    position_weight_pct: float = 10.0,
-) -> PositionView:
-    short_fields: dict[str, Any] = (
-        {
-            "borrow_rate_pct": 0.5,
-            "locate_status": LocateStatus.LOCATED,
-            "margin_held_usd": 750.0,
-        }
-        if direction is Direction.SHORT
-        else {}
-    )
-    details = EquityPositionDetails(
-        ticker=Symbol(ticker),
-        share_count=share_count,
-        average_cost_basis_per_share=cost_basis,
-        **short_fields,
-    )
-    record = PositionRecord(
-        position_id=PositionId(position_id),
-        thesis_id=ThesisId(f"THE-{position_id}"),
-        bracket_id=BracketId(f"BRK-{position_id}"),
-        status=PositionStatus.OPEN,
-        direction=direction,
-        entry_timestamp=_NOW,
-        details=details,
-        execution_history=(
-            PositionFill(
-                fill_timestamp=_NOW,
-                fill_price=price(cost_basis),
-                fill_quantity=share_count,
-                slippage=signed_money(0.0),
-                fees=money(0.0),
-            ),
-        ),
-        realized_pnl_to_date_usd=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
-    )
-    sign = 1.0 if direction == Direction.LONG else -1.0
-    cost = cost_basis * share_count
-    return PositionView(
-        record=record,
-        current_market_value_usd=signed_money(cost + unrealized_pnl_usd),
-        unrealized_pnl_usd=signed_money(unrealized_pnl_usd),
-        unrealized_pnl_pct=unrealized_pnl_usd / cost * 100.0,
-        position_weight_pct=position_weight_pct * sign,
-        position_age_hours=2.0,
-        notional_exposure_usd=money(cost),
-        delta_adjusted_exposure_usd=signed_money(cost * sign),
-        distance_to_target_usd=signed_money(10.0),
-        distance_to_stop_usd=signed_money(5.0),
-        risk_reward_at_current=2.0,
-    )
 
 
 def _options_view(
@@ -182,11 +103,11 @@ def _options_view(
         bracket_id=BracketId(f"BRK-{position_id}"),
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
-        entry_timestamp=_NOW,
+        entry_timestamp=NOW,
         details=details,
         execution_history=(
             PositionFill(
-                fill_timestamp=_NOW,
+                fill_timestamp=NOW,
                 fill_price=price(cost_per_contract),
                 fill_quantity=contract_count,
                 slippage=signed_money(0.0),
@@ -215,85 +136,8 @@ def _options_view(
 
 
 # ---------------------------------------------------------------------------
-# BreachDispatchContext + Library + dispatcher stubs
+# Context and rule-evaluation builders
 # ---------------------------------------------------------------------------
-
-
-def _make_breach_config() -> BreachBehaviorConfig:
-    return BreachBehaviorConfig(
-        forced_reduction_short_trim_target_pct_of_limit=95.0,
-        forced_reduction_total_short_immediate_threshold_pct_of_limit=110.0,
-        drawdown_velocity_window_minutes=5,
-        drawdown_velocity_threshold_pct_of_daily_limit=50.0,
-        multi_rule_breach_simultaneous_deferred_rules_count=2,
-        cascade_max_steps=5,
-        delta_buffer_secondary_check_buffer_factor=1.0,
-        emergency_invocation_cooldown_minutes=30,
-    )
-
-
-@dataclass(frozen=True)
-class _StubLibraryOutput:
-    per_rule: tuple[Any, ...]
-
-
-@dataclass(frozen=True)
-class _StubLibraryConfig:
-    effective_limits: dict[str, float]
-
-
-@dataclass(frozen=True)
-class _StubPortfolioState:
-    label: str = "default"
-
-
-@dataclass(frozen=True)
-class _StubMarketInputs:
-    label: str = "default"
-
-
-@dataclass
-class _ScriptedLibrary:
-    outputs: list[_StubLibraryOutput]
-    calls: list[dict[str, Any]] = field(default_factory=list)
-
-    def __call__(
-        self,
-        *,
-        state: Any,
-        proposals: Sequence[Any],
-        config: Any,
-        market: Any,
-        delta_buffer_factor: float = 1.0,
-    ) -> _StubLibraryOutput:
-        self.calls.append({"state": state, "proposals": tuple(proposals)})
-        idx = min(len(self.calls) - 1, len(self.outputs) - 1)
-        return self.outputs[idx]
-
-
-@dataclass
-class _RecordingSubmit:
-    calls: list[OmsEngineEnvelope] = field(default_factory=list)
-
-    async def __call__(self, envelope: OmsEngineEnvelope) -> SubmissionResult:
-        self.calls.append(envelope)
-        return SubmissionResult(
-            command_ordinal=0,
-            status="accepted",
-            command_id=f"{envelope.envelope_id}.0",
-            acknowledgment=Acknowledgment(
-                position_id=envelope.commands[0].position_id,
-                order_id=OrderId(f"ORD-{envelope.commands[0].position_id}"),
-            ),
-        )
-
-
-@dataclass
-class _RecordingDeferralSink:
-    calls: list[DeferralEvent] = field(default_factory=list)
-
-    async def __call__(self, event: DeferralEvent) -> None:
-        self.calls.append(event)
 
 
 def _make_context(positions: tuple[PositionView, ...]) -> BreachDispatchContext:
@@ -304,18 +148,18 @@ def _make_context(positions: tuple[PositionView, ...]) -> BreachDispatchContext:
     risk_reward = tuple(
         PositionRiskReward(position_id=p.position_id, risk_reward_ratio=2.0) for p in positions
     )
-    library = _ScriptedLibrary(
+    library = ScriptedLibrary(
         outputs=[
-            _StubLibraryOutput(per_rule=()),
-            _StubLibraryOutput(per_rule=()),
+            StubLibraryOutput(per_rule=()),
+            StubLibraryOutput(per_rule=()),
         ]
     )
     return BreachDispatchContext(
         open_positions=positions,
         liquidity=liquidity,
         risk_reward_metric=risk_reward,
-        library_snapshot=_StubPortfolioState(),
-        library_config=_StubLibraryConfig(
+        library_snapshot=StubPortfolioState(),
+        library_config=StubLibraryConfig(
             effective_limits={
                 "position_max_loss_equity_pct": 1.0,
                 "position_max_loss_options_pct": 1.0,
@@ -324,40 +168,12 @@ def _make_context(positions: tuple[PositionView, ...]) -> BreachDispatchContext:
                 "single_short_max_pct": 1.0,
             }
         ),
-        market_inputs=_StubMarketInputs(),
+        market_inputs=StubMarketInputs(),
         evaluate_proposals=library,
         portfolio_value_usd=100_000.0,
         active_regime=RegimeLabel.ELEVATED,
         progressive_tiers=(),
         breach_classification={},
-    )
-
-
-def _make_phase1_result() -> Phase1EnforcementResult:
-    return Phase1EnforcementResult(
-        active_risk_parameters=ActiveRiskParameterSet(
-            regime_label=RegimeLabel.ELEVATED,
-            transition_state=RegimeTransitionState.STABLE,
-            transition_invocations_remaining=0,
-            parameter_change_flag=False,
-            entries=(),
-            active_overlays=(),
-        ),
-        drawdown_tier=DrawdownTier.CONSTRAINED,
-    )
-
-
-def _make_breach_loop_result(rule: RuleEvaluation) -> BreachLoopResult:
-    return BreachLoopResult(
-        as_of=_NOW,
-        phase1_result=_make_phase1_result(),
-        rule_evaluations=(rule,),
-        halt_state=None,
-        immediate_action_breaches=(rule,),
-        drawdown_velocity_sample=DrawdownSample(
-            sampled_at=_NOW,
-            intraday_drawdown_pct=1.0,
-        ),
     )
 
 
@@ -392,7 +208,7 @@ def test_factory_returns_provider_per_immediate_engine_rule_in_guardrails() -> N
         for rule in guardrails.rules
         if rule.breach_response is BreachResponse.immediate_engine
     }
-    providers = build_per_rule_kwargs_providers(breach_behavior_config=_make_breach_config())
+    providers = build_per_rule_kwargs_providers(breach_behavior_config=make_breach_config())
     assert set(providers.keys()) == expected
 
 
@@ -402,7 +218,7 @@ def test_factory_keys_match_dispatch_table_exactly() -> None:
     Renaming one without the other (the structural class of bug this PR
     fixes) is what this symmetric check catches in CI.
     """
-    providers = build_per_rule_kwargs_providers(breach_behavior_config=_make_breach_config())
+    providers = build_per_rule_kwargs_providers(breach_behavior_config=make_breach_config())
     assert set(providers.keys()) == set(RULE_SELECTOR_DISPATCH.keys())
 
 
@@ -413,8 +229,8 @@ def test_factory_keys_match_dispatch_table_exactly() -> None:
 
 def test_drawdown_provider_returns_open_positions_and_liquidity() -> None:
     """Drawdown providers feed ``select_for_drawdown_breach(open_positions, liquidity)``."""
-    providers = build_per_rule_kwargs_providers(breach_behavior_config=_make_breach_config())
-    positions = (_equity_view(position_id="POS-1", unrealized_pnl_usd=-300.0),)
+    providers = build_per_rule_kwargs_providers(breach_behavior_config=make_breach_config())
+    positions = (equity_view(position_id="POS-1", unrealized_pnl_usd=-300.0),)
     context = _make_context(positions)
 
     for rule_id in ("daily_drawdown_pct", "cumulative_drawdown_pct"):
@@ -429,15 +245,15 @@ def test_drawdown_provider_returns_open_positions_and_liquidity() -> None:
     [
         (
             "position_max_loss_equity_pct",
-            lambda: _equity_view(position_id="POS-EQ-1", unrealized_pnl_usd=-60.0),
+            lambda: equity_view(position_id="POS-EQ-1", unrealized_pnl_usd=-60.0),
             "POS-EQ-1",
-            _equity_view(position_id="POS-EQ-DEEPER", unrealized_pnl_usd=-90.0),
+            equity_view(position_id="POS-EQ-DEEPER", unrealized_pnl_usd=-90.0),
         ),
         (
             "position_max_loss_options_pct",
             lambda: _options_view(position_id="POS-OPT-1", unrealized_pnl_usd=-80.0),
             "POS-OPT-1",
-            _equity_view(position_id="POS-EQ-LOSER", unrealized_pnl_usd=-200.0),
+            equity_view(position_id="POS-EQ-LOSER", unrealized_pnl_usd=-200.0),
         ),
     ],
 )
@@ -454,7 +270,7 @@ def test_position_max_loss_provider_passes_breaching_id_from_rule(
     "other" position carries a deeper loss to guard against accidental re-scan
     masquerading as correct behavior.
     """
-    providers = build_per_rule_kwargs_providers(breach_behavior_config=_make_breach_config())
+    providers = build_per_rule_kwargs_providers(breach_behavior_config=make_breach_config())
     breaching = make_breaching_view()
     context = _make_context((breaching, other_view))
 
@@ -482,8 +298,8 @@ def test_position_max_loss_provider_raises_when_rule_lacks_breaching_id(rule_id:
     projection; ``None`` indicates the rule classifier surfaced an immediate
     breach without identifying a breaching position.
     """
-    providers = build_per_rule_kwargs_providers(breach_behavior_config=_make_breach_config())
-    positions = (_equity_view(position_id="POS-1", unrealized_pnl_usd=-60.0),)
+    providers = build_per_rule_kwargs_providers(breach_behavior_config=make_breach_config())
+    positions = (equity_view(position_id="POS-1", unrealized_pnl_usd=-60.0),)
     context = _make_context(positions)
 
     rule = _evaluation(rule_id=rule_id, current=4.0, limit=3.0)
@@ -493,15 +309,15 @@ def test_position_max_loss_provider_raises_when_rule_lacks_breaching_id(rule_id:
 
 def test_single_short_max_provider_passes_breaching_id_limit_and_config() -> None:
     """``single_short_max_pct`` routes ``rule.breaching_position_id`` + limit + config."""
-    breach_config = _make_breach_config()
+    breach_config = make_breach_config()
     providers = build_per_rule_kwargs_providers(breach_behavior_config=breach_config)
-    long_eq = _equity_view(position_id="POS-LONG-1", position_weight_pct=2.0)
-    breaching_short = _equity_view(
+    long_eq = equity_view(position_id="POS-LONG-1", position_weight_pct=2.0)
+    breaching_short = equity_view(
         position_id="POS-SHORT-BIG",
         direction=Direction.SHORT,
         position_weight_pct=4.0,
     )
-    other_short = _equity_view(
+    other_short = equity_view(
         position_id="POS-SHORT-OTHER",
         direction=Direction.SHORT,
         position_weight_pct=5.0,
@@ -524,8 +340,8 @@ def test_single_short_max_provider_passes_breaching_id_limit_and_config() -> Non
 
 def test_single_short_max_provider_raises_when_rule_lacks_breaching_id() -> None:
     """The provider raises when ``rule.breaching_position_id`` is None."""
-    providers = build_per_rule_kwargs_providers(breach_behavior_config=_make_breach_config())
-    breaching_short = _equity_view(
+    providers = build_per_rule_kwargs_providers(breach_behavior_config=make_breach_config())
+    breaching_short = equity_view(
         position_id="POS-SHORT-1",
         direction=Direction.SHORT,
         position_weight_pct=4.0,
@@ -554,13 +370,13 @@ async def test_dispatcher_with_built_providers_handles_one_breach_per_registered
     pins the submitted envelope's ``position_id`` to the only breaching
     position in its context.
     """
-    breach_config = _make_breach_config()
+    breach_config = make_breach_config()
     providers = build_per_rule_kwargs_providers(breach_behavior_config=breach_config)
-    equity_max_loss = _equity_view(position_id="POS-EQ", unrealized_pnl_usd=-60.0)
+    equity_max_loss = equity_view(position_id="POS-EQ", unrealized_pnl_usd=-60.0)
     options_max_loss = _options_view(position_id="POS-OPT", unrealized_pnl_usd=-80.0)
-    daily_loser = _equity_view(position_id="POS-DD", unrealized_pnl_usd=-100.0)
-    cumulative_loser = _equity_view(position_id="POS-CD", unrealized_pnl_usd=-100.0)
-    oversized_short = _equity_view(
+    daily_loser = equity_view(position_id="POS-DD", unrealized_pnl_usd=-100.0)
+    cumulative_loser = equity_view(position_id="POS-CD", unrealized_pnl_usd=-100.0)
+    oversized_short = equity_view(
         position_id="POS-SH", direction=Direction.SHORT, position_weight_pct=4.0
     )
     # ``breaching_position_id`` is the rule-evaluation field per-position
@@ -587,8 +403,8 @@ async def test_dispatcher_with_built_providers_handles_one_breach_per_registered
             limit=limit,
             breaching_position_id=breaching_position_id,
         )
-        submit = _RecordingSubmit()
-        deferral_sink = _RecordingDeferralSink()
+        submit = RecordingSubmit()
+        deferral_sink = RecordingDeferralSink()
 
         def _context_provider(ctx: BreachDispatchContext = context) -> BreachDispatchContext:
             return ctx
@@ -601,9 +417,9 @@ async def test_dispatcher_with_built_providers_handles_one_breach_per_registered
             submit_envelope=submit,
             deferral_sink=deferral_sink,
             per_rule_kwargs_providers=providers,
-            now=lambda: _NOW,
+            now=lambda: NOW,
         )
-        result = _make_breach_loop_result(rule)
+        result = make_breach_loop_result(evaluations=(rule,))
         await dispatcher.handle_immediate_breach(result, rule)
 
         assert deferral_sink.calls == [], (
