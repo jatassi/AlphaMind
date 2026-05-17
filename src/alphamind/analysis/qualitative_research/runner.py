@@ -35,6 +35,9 @@ from alphamind.analysis.qualitative_research.input_bundle import (
     InputBundle,
     assemble_input_bundle,
 )
+from alphamind.analysis.qualitative_research.input_bundle_integrity import (
+    log_input_bundle_integrity_warnings,
+)
 from alphamind.analysis.qualitative_research.loaders import (
     QualitativeInputs,
     load_qualitative_inputs,
@@ -78,15 +81,20 @@ class QualitativeResearcherResult:
 # ---------------------------------------------------------------------------
 
 
+def _noop_integrity_check(**_kw: object) -> None:
+    """Default ``integrity_check_fn`` — used when tests don't supply one."""
+
+
 @dataclass(frozen=True)
 class _Deps:
-    """Collects the four injectable callables so ``_run_qualitative_researcher``
+    """Collects the injectable callables so ``_run_qualitative_researcher``
     stays under the linter's argument-count threshold."""
 
     inputs_loader: Callable[..., QualitativeInputs]
     digest_renderer: Callable[..., NewsDigest]
     bundle_assembler: Callable[..., InputBundle]
     harness_fn: Callable[..., Coroutine[Any, Any, HarnessSuccess]]
+    integrity_check_fn: Callable[..., None] = _noop_integrity_check
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +180,15 @@ async def _run_qualitative_researcher(  # noqa: PLR0913 — signature dictated b
         inputs=inputs,
     )
     logger.info("input bundle assembled (length=%d)", len(bundle.bundle_text))
+
+    # Diagnostic-only WARN logs for the four input-bundle integrity gaps
+    # ALP-492 documents. The check never raises.
+    deps.integrity_check_fn(
+        as_of=as_of,
+        regime_label=universal_regime_label,
+        inputs=inputs,
+        news_digest=news_digest,
+    )
 
     # HarnessFailure propagates up unchanged — the runner does NOT catch and
     # degrade.  The pipeline-level orchestrator handles fail-closed semantics.
@@ -271,6 +288,21 @@ async def run_qualitative_researcher(
             archive_root=archive_root,
         )
 
+    def _integrity_check_fn(
+        *,
+        as_of: datetime,
+        regime_label: Mapping[str, Any],
+        inputs: QualitativeInputs,
+        news_digest: NewsDigest,
+    ) -> None:
+        log_input_bundle_integrity_warnings(
+            session,
+            as_of=as_of,
+            regime_label=regime_label,
+            inputs=inputs,
+            news_digest=news_digest,
+        )
+
     return await _run_qualitative_researcher(
         invocation_id=invocation_id,
         as_of=as_of,
@@ -284,6 +316,7 @@ async def run_qualitative_researcher(
             digest_renderer=_digest_renderer,
             bundle_assembler=assemble_input_bundle,
             harness_fn=_harness_fn,
+            integrity_check_fn=_integrity_check_fn,
         ),
         archive_root=archive_root,
     )
