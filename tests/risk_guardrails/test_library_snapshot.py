@@ -66,6 +66,15 @@ from alphamind.portfolio_state.snapshot import (
     SectorExposureEntry,
 )
 from alphamind.portfolio_state.views.positions import PositionView
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    Action,
+    DeltaAdjustedExposure,
+    EscalationZones,
+    FeatureFlagsView,
+    LibraryConfig,
+    ProposedDelta,
+    build_active_specs,
+)
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
     AssetType,
     Greeks,
@@ -1222,6 +1231,7 @@ def _make_pending_entry_order(
     remaining_quantity: float = 50.0,
     filled_quantity: float = 0.0,
     order_type: OrderType = OrderType.LIMIT,
+    status: OrderStatus = OrderStatus.PENDING,
 ) -> OrderRecord:
     pp = PriceParameters(limit_price=limit_price, stop_trigger_price=stop_trigger_price)
     quantity = filled_quantity + remaining_quantity
@@ -1236,7 +1246,7 @@ def _make_pending_entry_order(
         price_parameters=pp,
         quantity=quantity,
         duration=OrderDuration.GTC,
-        status=OrderStatus.PENDING,
+        status=status,
         alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
         alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
         submission_timestamp=_PHASE1,
@@ -1398,6 +1408,70 @@ def test_existing_positions_reserves_capital_stop_trigger_price_fallback() -> No
     assert lib.existing_positions["POS-AAPL"].reserves_capital_usd == pytest.approx(4_900.0)
 
 
+def test_existing_positions_reserves_capital_uses_remaining_quantity() -> None:
+    """PARTIALLY_FILLED orders contribute ``remaining_quantity * px`` — not
+    total ``quantity``. The OMS-side ``_order_notional_estimate`` uses the
+    same field; a regression to ``quantity`` would over-state the release.
+    """
+    pos = _make_equity_position_view(
+        "POS-AAPL",
+        "AAPL",
+        Direction.LONG,
+        share_count=30.0,
+        market_value_usd=3_000.0,
+        notional_usd=3_000.0,
+        delta_adjusted_usd=3_000.0,
+        position_weight_pct=3.0,
+    )
+    order = _make_pending_entry_order(
+        order_id="ORD-PARTIAL",
+        position_id="POS-AAPL",
+        ticker="AAPL",
+        role=OrderRole.ADD_ENTRY,
+        limit_price=100.0,
+        filled_quantity=30.0,
+        remaining_quantity=20.0,
+        status=OrderStatus.PARTIALLY_FILLED,
+    )
+    snapshot = _make_pydantic_snapshot(open_positions=[pos], pending_orders=[order])
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    # 100 * remaining_quantity (20) = 2000; would be 5000 if quantity were used
+    assert lib.existing_positions["POS-AAPL"].reserves_capital_usd == pytest.approx(2_000.0)
+
+
+def test_existing_positions_reserves_capital_orphan_order_ignored() -> None:
+    """A pending order whose position_id matches no open/pending position is
+    silently dropped — the per-position map is keyed on positions present in
+    the snapshot. The snapshot's own invariants (``snapshot.py``) make this
+    state structurally improbable in production, but pinning the behavior
+    documents the contract.
+    """
+    pos = _make_equity_position_view(
+        "POS-AAPL",
+        "AAPL",
+        Direction.LONG,
+        share_count=100.0,
+        market_value_usd=10_000.0,
+        notional_usd=10_000.0,
+        delta_adjusted_usd=10_000.0,
+        position_weight_pct=10.0,
+    )
+    orphan = _make_pending_entry_order(
+        order_id="ORD-ORPHAN",
+        position_id="POS-NONEXISTENT",
+        ticker="AAPL",
+        role=OrderRole.ENTRY,
+        limit_price=99.0,
+        remaining_quantity=10.0,
+    )
+    snapshot = _make_pydantic_snapshot(open_positions=[pos], pending_orders=[orphan])
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    assert set(lib.existing_positions.keys()) == {"POS-AAPL"}
+    assert lib.existing_positions["POS-AAPL"].reserves_capital_usd == pytest.approx(0.0)
+
+
 def test_existing_positions_reserves_capital_multiple_orders_summed() -> None:
     """Multiple entry-class pending orders on the same position sum together."""
     pos = _make_equity_position_view(
@@ -1440,16 +1514,6 @@ def test_cancel_contribution_releases_reserved_capital_end_to_end() -> None:
     this contribution silently 0.0.
     """
     from types import MappingProxyType
-
-    from alphamind.risk_guardrails.guardrail_evaluation import (
-        Action,
-        DeltaAdjustedExposure,
-        EscalationZones,
-        FeatureFlagsView,
-        LibraryConfig,
-        ProposedDelta,
-        build_active_specs,
-    )
 
     pos = _make_equity_position_view(
         "POS-AAPL",
