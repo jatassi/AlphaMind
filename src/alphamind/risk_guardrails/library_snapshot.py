@@ -148,10 +148,8 @@ def _select_single_short_max(
 
     ``compute_position_weight_pct`` derives ``position_weight_pct`` from
     ``abs(position_market_value_usd)``, so the field is always >= 0; no abs()
-    needed. Lexicographic ``position_id`` is the tiebreaker so identical books
-    produce identical projection state (the breach loop reads the position id
-    off the projection to route the cascade-dispatcher close envelope).
-    Returns ``(0.0, None)`` when the book holds no shorts.
+    needed. Lexicographic ``position_id`` is the tiebreaker. Returns
+    ``(0.0, None)`` when the book holds no shorts.
     """
     shorts = [p for p in open_positions if p.direction == Direction.SHORT]
     if not shorts:

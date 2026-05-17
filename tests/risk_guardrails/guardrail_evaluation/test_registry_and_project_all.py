@@ -408,22 +408,19 @@ def test_project_all_propagates_breaching_position_id_for_single_short_max() -> 
     assert single_short.breaching_position_id == "POS-BIGGEST-SHORT"
 
 
-def test_project_all_breaching_position_id_none_for_portfolio_scope_rules() -> None:
-    """Rules without a ``read_breaching_position_id`` hook project ``None``."""
+def test_project_all_breaching_position_id_none_for_non_per_position_rules() -> None:
+    """Only rules with a ``read_breaching_position_id`` hook project a value.
+
+    Inverted assertion (rather than enumerating known portfolio-scope rules)
+    so a future per-position rule cannot silently leave its hook unwired
+    without this test failing.
+    """
     config = _full_config(active_sectors=("tech",))
     state = _snapshot(single_short_max_pct=0.0)
     projections = project_all(proposals_with_dae=(), state=state, config=config)
 
-    portfolio_scope_rules = {
-        "net_long_pct",
-        "net_short_pct",
-        "gross_exposure_pct",
-        "total_short_pct",
-        "daily_drawdown_pct",
-        "cumulative_drawdown_pct",
-    }
     for projection in projections:
-        if projection.rule in portfolio_scope_rules:
+        if projection.rule != "single_short_max_pct":
             assert projection.breaching_position_id is None
 
 
