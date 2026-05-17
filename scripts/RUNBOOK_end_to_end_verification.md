@@ -119,6 +119,51 @@ Argparse surface:
 `check_no_alpaca` scans the captured subprocess stderr stream directly — no
 separate `--pipeline-log` flag is needed.
 
+## Monitoring progress mid-run
+
+`verify_debug_e2e.py` is silent during the 5–15 minute run — it only prints
+the PASS/FAIL lines after the subprocess exits. To stream phase events in
+real time, poll the active invocation's `progress.jsonl` from a second
+shell:
+
+```bash
+f=$(ls -td .archive/verify-debug-e2e/invocations/inv-* 2>/dev/null | head -1)/progress.jsonl
+matched=$(grep -cE '"(phase_start|phase_done|agent_response)"' "$f" 2>/dev/null || echo 0)
+echo "armed: $matched backlog matches in $f"
+prev=0
+while true; do
+  cur=$(wc -l < "$f" 2>/dev/null | tr -d ' '); cur=${cur:-0}
+  if [ "$cur" -gt "$prev" ]; then
+    sed -n "$((prev+1)),${cur}p" "$f" \
+        | grep -E '"(phase_start|phase_done|agent_response)"' || true
+    prev=$cur
+  fi
+  sleep 2
+done
+```
+
+Three things worth doing this way rather than the more obvious `tail -F`:
+
+- **Polling beats `tail -F` on Windows Git Bash.** `tail -F | grep` has
+  intermittent pipe-buffering quirks that swallow output even with
+  `--line-buffered`. The polling loop has fewer moving parts (no FS
+  notifications, no long-lived pipe) and just works.
+- **The `armed:` line is a regex self-test.** If you see `armed: 0` when
+  the file already has phase events, your pattern is wrong (or matches
+  the wrong whitespace) — fix it before relying on the monitor instead
+  of staring at silence for 10 minutes wondering whether the pipeline
+  is dead. The original bug that motivated this section: a regex written
+  as `"event":"phase_start"` (no space) never matched the JSONL events,
+  which `json.dumps` formats as `"event": "phase_start"` (default
+  `": "` separator).
+- **Match the value, not the `"event":` prefix.** Patterns like
+  `'"(phase_start|phase_done|agent_response)"'` are robust to either
+  formatter spacing.
+
+Drop the grep entirely to see every event including `agent_request` and
+intra-phase progress. The `_pre_invocation` directory carries only the
+pre-invocation seed event and is filtered out by the `inv-*` glob above.
+
 To drive the CLI directly without the wrapper (e.g., when iterating on
 the underlying mode rather than the check semantics):
 
