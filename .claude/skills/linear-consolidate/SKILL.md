@@ -52,9 +52,9 @@ This isn't optional. A pilot run found one cosmetic drift (`18 entries` vs `19 e
 
 `save_issue` can update state, but there is no `archive_issue` or `delete_issue` tool. Both must happen in the UI. Don't try; don't promise the operator otherwise. The skill's job ends after the parent body is saved and verified — the operator does the bulk-delete by selecting all sub-issues in the parent's sub-issue panel and pressing Cmd+Delete.
 
-### 4. Verification step uses a Sonnet subagent
+### 4. Verification step uses a Haiku subagent
 
-Parity-checking 10–30 sub-issue bodies against local files is purely mechanical comparison — no synthesis, no judgment. Delegate it to a Sonnet subagent with explicit mapping (`ALP-XX ↔ filename.md`) and a strict ignore list (frontmatter, heading-level, link rewriting, `<issue id>` injections). The main thread keeps drift resolution and body drafting because those need cross-reference judgment.
+Parity-checking 10–30 sub-issue bodies against local files is purely mechanical comparison — no synthesis, no judgment. Delegate it to a Haiku subagent with explicit mapping (`ALP-XX ↔ filename.md`) and a strict ignore list (frontmatter, heading-level, link rewriting, `<issue id>` injections). The main thread keeps drift resolution and body drafting because those need cross-reference judgment.
 
 ## Procedure
 
@@ -73,13 +73,13 @@ If `docs/_archive/implementation/<layer>/<feature>/` doesn't exist (or exists bu
 **Procedure:**
 
 1. Create the directory: `mkdir -p docs/_archive/implementation/<layer>/<feature>/`. The `<layer>` segment must match the existing convention (`foundation`, `01-data-layer`, `02-distillation-layer`, `03-analysis-layer`, `04-decision-layer`, `05-execution-layer`, `06-risk-guardrails`) — list `docs/_archive/implementation/` first to confirm naming.
-2. Dispatch a Sonnet subagent with the explicit ALP-ID list and instructions to:
+2. Dispatch a Haiku subagent with the explicit ALP-ID list and instructions to:
    - For each ALP-ID, call `mcp__linear-server__get_issue` and capture the `description` field verbatim
    - Derive the filename from the issue title — strip the `## ` heading and convert `01a — Bracket-thesis coverage cross-validator` → `01a-bracket-thesis-coverage-cross-validator.md` (lowercase, hyphens, drop punctuation that doesn't survive in filenames)
    - Write each body via the `Write` tool to `docs/_archive/implementation/<layer>/<feature>/<filename>.md` — the body becomes the entire file content (no frontmatter, no wrapper); the `# 01a — Title` header inside the body is the file's own H1
    - If `get_issue` returns a body containing the `...(truncated)` marker (rare — the MCP usually returns full bodies but occasionally clips at ~5KB), record the ALP-ID in a `TRUNCATED_IDS` list and continue
    - Return a markdown table: `| ALP-ID | File | Bytes | Status |` with status = WRITTEN / TRUNCATED / FAILED
-3. Title the dispatch with `[Sonnet]` per the project's subagent-title convention.
+3. Title the dispatch with `[Haiku]` per the project's subagent-title convention.
 4. After the subagent returns, verify each file exists and is non-empty: `ls -la docs/_archive/implementation/<layer>/<feature>/ | wc -l` should equal the sub-issue count + 1 (for the dot-entry).
 5. **For each TRUNCATED_IDS entry**, the operator must paste the full body manually from the Linear web UI — the MCP cannot return more than its API gives. Surface the truncated ID list to the operator and pause until they confirm the file is complete.
 6. Once all archives exist locally, proceed to Phase 2 (or skip Phase 2 if the archives are sourced from the same Linear bodies — parity is trivially perfect by construction).
@@ -88,14 +88,14 @@ If `docs/_archive/implementation/<layer>/<feature>/` doesn't exist (or exists bu
 
 ### Phase 2 — Verify parity
 
-Dispatch a Sonnet subagent with the explicit mapping and instructions to:
+Dispatch a Haiku subagent with the explicit mapping and instructions to:
 - Fetch each Linear issue's body via `get_issue`
 - Read each local file
 - Compare for substantive parity (Goal, Scope, Acceptance criteria, Verification)
 - Ignore frontmatter, heading-level, link rewriting, `<issue id>` injections, `## Depends on` sections present locally but not in Linear
 - Return a markdown table: `| ALP-ID | File | Status | Notes |` with status = MATCH / DRIFT / OTHER, and a summary `X/N MATCH, Y DRIFT, Z OTHER. Safe to delete: <yes/no/conditional>`
 
-Title the dispatch with `[Sonnet]` per the project's subagent-title convention.
+Title the dispatch with `[Haiku]` per the project's subagent-title convention.
 
 #### MCP `get_issue` truncates at ~5KB
 
