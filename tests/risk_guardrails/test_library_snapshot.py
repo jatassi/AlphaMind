@@ -13,6 +13,9 @@ from datetime import UTC, date, datetime
 import pytest
 
 from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
     PositionId,
     Symbol,
 )
@@ -32,6 +35,16 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterSet,
 )
 from alphamind.portfolio_state.records.cash import CashLedger
+from alphamind.portfolio_state.records.orders import (
+    EquityInstrumentSpec,
+    OrderDirection,
+    OrderDuration,
+    OrderRecord,
+    OrderRole,
+    OrderStatus,
+    OrderType,
+    PriceParameters,
+)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -96,6 +109,7 @@ def _make_pydantic_snapshot(
     directional_exposure: DirectionalExposure | None = None,
     cash_ledger: CashLedger | None = None,
     active_risk_parameters: ActiveRiskParameterSet | None = None,
+    pending_orders: Sequence[OrderRecord] = (),
 ) -> PortfolioStateSnapshot:
     """Build a minimal PortfolioStateSnapshot for testing."""
     if directional_exposure is None:
@@ -208,7 +222,7 @@ def _make_pydantic_snapshot(
         active_theses=(),
         recent_thesis_resolutions=(),
         cash_ledger=cash_ledger,
-        pending_orders=(),
+        pending_orders=tuple(pending_orders),
         risk_budget=risk_budget,
         active_risk_parameters=active_risk_parameters,
         intra_invocation_changelog=(),
@@ -1190,3 +1204,328 @@ def test_strategy_position_ticker_and_greeks() -> None:
     assert ep.current_greeks is not None
     assert ep.current_greeks.delta == pytest.approx(0.3)
     assert ep.current_greeks.vega == pytest.approx(0.20)
+
+
+# ---------------------------------------------------------------------------
+# ALP-506 — reserves_capital_usd derivation from pending entry/add-entry orders
+# ---------------------------------------------------------------------------
+
+
+def _make_pending_entry_order(
+    *,
+    order_id: str,
+    position_id: str,
+    ticker: str,
+    role: OrderRole,
+    limit_price: float | None = 100.0,
+    stop_trigger_price: float | None = None,
+    remaining_quantity: float = 50.0,
+    filled_quantity: float = 0.0,
+    order_type: OrderType = OrderType.LIMIT,
+) -> OrderRecord:
+    pp = PriceParameters(limit_price=limit_price, stop_trigger_price=stop_trigger_price)
+    quantity = filled_quantity + remaining_quantity
+    return OrderRecord(
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id),
+        bracket_id=BracketId(f"BRK-{order_id}"),
+        role=role,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
+        direction=OrderDirection.BUY,
+        order_type=order_type,
+        price_parameters=pp,
+        quantity=quantity,
+        duration=OrderDuration.GTC,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
+        submission_timestamp=_PHASE1,
+        last_update_timestamp=_PHASE1,
+        filled_quantity=filled_quantity,
+        avg_fill_price=None,
+        remaining_quantity=remaining_quantity,
+        modification_count=0,
+        originating_thesis_id=None,
+        originating_pm_command_id=None,
+        age_hours=1.0,
+    )
+
+
+def test_existing_positions_reserves_capital_from_pending_entry_limit() -> None:
+    """ALP-506: a PENDING position with a pending entry LIMIT order gets its
+    ``reserves_capital_usd`` populated as ``limit_price * remaining_quantity``,
+    mirroring the OMS-side ``_order_notional_estimate`` formula in
+    ``execution/write_paths/phase2/cancel.py``.
+    """
+    pos = _make_equity_position_view(
+        "POS-AAPL",
+        "AAPL",
+        Direction.LONG,
+        share_count=50.0,
+        market_value_usd=0.0,
+        notional_usd=5_000.0,
+        delta_adjusted_usd=5_000.0,
+        position_weight_pct=5.0,
+        status=PositionStatus.PENDING,
+    )
+    order = _make_pending_entry_order(
+        order_id="ORD-1",
+        position_id="POS-AAPL",
+        ticker="AAPL",
+        role=OrderRole.ENTRY,
+        limit_price=100.0,
+        remaining_quantity=50.0,
+    )
+    snapshot = _make_pydantic_snapshot(pending_positions=[pos], pending_orders=[order])
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    ep = lib.existing_positions["POS-AAPL"]
+    assert ep.reserves_capital_usd == pytest.approx(5_000.0)
+
+
+def test_existing_positions_reserves_capital_open_position_with_add_entry() -> None:
+    """ADD_ENTRY pending limit on an OPEN position contributes the same way."""
+    pos = _make_equity_position_view(
+        "POS-AAPL",
+        "AAPL",
+        Direction.LONG,
+        share_count=100.0,
+        market_value_usd=10_000.0,
+        notional_usd=10_000.0,
+        delta_adjusted_usd=10_000.0,
+        position_weight_pct=10.0,
+    )
+    order = _make_pending_entry_order(
+        order_id="ORD-ADD-1",
+        position_id="POS-AAPL",
+        ticker="AAPL",
+        role=OrderRole.ADD_ENTRY,
+        limit_price=105.0,
+        remaining_quantity=20.0,
+    )
+    snapshot = _make_pydantic_snapshot(open_positions=[pos], pending_orders=[order])
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    ep = lib.existing_positions["POS-AAPL"]
+    assert ep.reserves_capital_usd == pytest.approx(2_100.0)
+
+
+def test_existing_positions_reserves_capital_protective_legs_ignored() -> None:
+    """Protective legs (TAKE_PROFIT/PRICE_STOP/TIME_STOP/CLOSE) reserve no
+    capital — ``_release_capital`` is only invoked for ENTRY / ADD_ENTRY.
+    """
+    pos = _make_equity_position_view(
+        "POS-AAPL",
+        "AAPL",
+        Direction.LONG,
+        share_count=100.0,
+        market_value_usd=10_000.0,
+        notional_usd=10_000.0,
+        delta_adjusted_usd=10_000.0,
+        position_weight_pct=10.0,
+    )
+    take_profit = _make_pending_entry_order(
+        order_id="ORD-TP",
+        position_id="POS-AAPL",
+        ticker="AAPL",
+        role=OrderRole.TAKE_PROFIT,
+        limit_price=120.0,
+        remaining_quantity=100.0,
+    )
+    snapshot = _make_pydantic_snapshot(open_positions=[pos], pending_orders=[take_profit])
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    assert lib.existing_positions["POS-AAPL"].reserves_capital_usd == pytest.approx(0.0)
+
+
+def test_existing_positions_reserves_capital_market_order_zero() -> None:
+    """MARKET entry orders carry no price parameters → no reservation."""
+    pos = _make_equity_position_view(
+        "POS-AAPL",
+        "AAPL",
+        Direction.LONG,
+        share_count=50.0,
+        market_value_usd=0.0,
+        notional_usd=5_000.0,
+        delta_adjusted_usd=5_000.0,
+        position_weight_pct=5.0,
+        status=PositionStatus.PENDING,
+    )
+    order = _make_pending_entry_order(
+        order_id="ORD-MKT",
+        position_id="POS-AAPL",
+        ticker="AAPL",
+        role=OrderRole.ENTRY,
+        limit_price=None,
+        stop_trigger_price=None,
+        remaining_quantity=50.0,
+        order_type=OrderType.MARKET,
+    )
+    snapshot = _make_pydantic_snapshot(pending_positions=[pos], pending_orders=[order])
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    assert lib.existing_positions["POS-AAPL"].reserves_capital_usd == pytest.approx(0.0)
+
+
+def test_existing_positions_reserves_capital_stop_trigger_price_fallback() -> None:
+    """STOP_LIMIT and STOP entry orders fall back to ``stop_trigger_price``
+    when ``limit_price`` is absent, matching ``_order_notional_estimate``.
+    """
+    pos = _make_equity_position_view(
+        "POS-AAPL",
+        "AAPL",
+        Direction.LONG,
+        share_count=50.0,
+        market_value_usd=0.0,
+        notional_usd=5_000.0,
+        delta_adjusted_usd=5_000.0,
+        position_weight_pct=5.0,
+        status=PositionStatus.PENDING,
+    )
+    order = _make_pending_entry_order(
+        order_id="ORD-STOP",
+        position_id="POS-AAPL",
+        ticker="AAPL",
+        role=OrderRole.ENTRY,
+        limit_price=None,
+        stop_trigger_price=98.0,
+        remaining_quantity=50.0,
+        order_type=OrderType.STOP,
+    )
+    snapshot = _make_pydantic_snapshot(pending_positions=[pos], pending_orders=[order])
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    assert lib.existing_positions["POS-AAPL"].reserves_capital_usd == pytest.approx(4_900.0)
+
+
+def test_existing_positions_reserves_capital_multiple_orders_summed() -> None:
+    """Multiple entry-class pending orders on the same position sum together."""
+    pos = _make_equity_position_view(
+        "POS-AAPL",
+        "AAPL",
+        Direction.LONG,
+        share_count=100.0,
+        market_value_usd=10_000.0,
+        notional_usd=10_000.0,
+        delta_adjusted_usd=10_000.0,
+        position_weight_pct=10.0,
+    )
+    order_a = _make_pending_entry_order(
+        order_id="ORD-A",
+        position_id="POS-AAPL",
+        ticker="AAPL",
+        role=OrderRole.ADD_ENTRY,
+        limit_price=100.0,
+        remaining_quantity=20.0,
+    )
+    order_b = _make_pending_entry_order(
+        order_id="ORD-B",
+        position_id="POS-AAPL",
+        ticker="AAPL",
+        role=OrderRole.ADD_ENTRY,
+        limit_price=110.0,
+        remaining_quantity=10.0,
+    )
+    snapshot = _make_pydantic_snapshot(open_positions=[pos], pending_orders=[order_a, order_b])
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    # 100*20 + 110*10 = 2000 + 1100 = 3100
+    assert lib.existing_positions["POS-AAPL"].reserves_capital_usd == pytest.approx(3_100.0)
+
+
+def test_cancel_contribution_releases_reserved_capital_end_to_end() -> None:
+    """ALP-506 integration: a CANCEL proposal on a position backed by a pending
+    entry limit order contributes the expected release magnitude to
+    ``pending_order_capital_pct`` — the upstream zero-stamping bug that made
+    this contribution silently 0.0.
+    """
+    from types import MappingProxyType
+
+    from alphamind.risk_guardrails.guardrail_evaluation import (
+        Action,
+        DeltaAdjustedExposure,
+        EscalationZones,
+        FeatureFlagsView,
+        LibraryConfig,
+        ProposedDelta,
+        build_active_specs,
+    )
+
+    pos = _make_equity_position_view(
+        "POS-AAPL",
+        "AAPL",
+        Direction.LONG,
+        share_count=50.0,
+        market_value_usd=0.0,
+        notional_usd=5_000.0,
+        delta_adjusted_usd=5_000.0,
+        position_weight_pct=5.0,
+        status=PositionStatus.PENDING,
+    )
+    order = _make_pending_entry_order(
+        order_id="ORD-1",
+        position_id="POS-AAPL",
+        ticker="AAPL",
+        role=OrderRole.ENTRY,
+        limit_price=100.0,
+        remaining_quantity=50.0,
+    )
+    cash_ledger = CashLedger(
+        current_cash_usd=95_000.0,
+        settled_cash_usd=95_000.0,
+        reserved_capital_usd=5_000.0,
+        available_buying_power_usd=90_000.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=95.0,
+        true_deployable_capital_usd=90_000.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
+    )
+    snapshot = _make_pydantic_snapshot(
+        pending_positions=[pos],
+        pending_orders=[order],
+        cash_ledger=cash_ledger,
+    )
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    keys = ("min_cash_reserve_pct", "pending_order_capital_pct")
+    config = LibraryConfig(
+        effective_limits=MappingProxyType({k: 20.0 for k in keys}),
+        escalation_zones=MappingProxyType(
+            {k: EscalationZones(warning=70.0, critical=85.0, hard_block=95.0) for k in keys}
+        ),
+        feature_flags=FeatureFlagsView(options_enabled=True, short_selling_enabled=True),
+        active_sectors=("tech",),
+        active_regime="normal",
+        active_profile="medium",
+        conservative_buffer_pct=10.0,
+    )
+    spec = next(s for s in build_active_specs(config) if s.rule_id == "pending_order_capital_pct")
+    proposal = ProposedDelta(
+        id="P-CANCEL-1",
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=LibDirection.LONG,
+        asset_type=AssetType.EQUITY,
+        notional_usd=0.0,
+        quantity=50.0,
+        option_legs=None,
+        action=Action.CANCEL,
+        existing_position_id="POS-AAPL",
+    )
+    dae = DeltaAdjustedExposure(
+        proposal_id="P-CANCEL-1",
+        signed_notional_usd=0.0,
+        net_greeks=None,
+        iv_used=None,
+        iv_source=None,
+        unbuffered_delta=None,
+    )
+
+    # Expected contribution releases the full reserved amount, scaled by
+    # portfolio value (PENDING position has zero market value, so the cash
+    # ledger is the entire denominator).
+    expected_pct = -5_000.0 / 95_000.0 * 100.0
+    assert spec.contribute(proposal, dae, lib, config) == pytest.approx(expected_pct)

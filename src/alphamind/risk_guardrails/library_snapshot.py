@@ -11,8 +11,9 @@ pure: no clock reads, no I/O.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
+from alphamind.portfolio_state.records.orders import OrderRecord, OrderRole
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -98,6 +99,42 @@ def _accumulate_portfolio_greeks(
 
 
 # ---------------------------------------------------------------------------
+# Per-position reserved-capital derivation (ALP-506)
+# ---------------------------------------------------------------------------
+
+
+_ENTRY_ROLES: frozenset[OrderRole] = frozenset({OrderRole.ENTRY, OrderRole.ADD_ENTRY})
+
+
+def _build_position_reservations(
+    pending_orders: Iterable[OrderRecord],
+) -> dict[str, float]:
+    """Sum per-position reserved capital from pending entry-class orders.
+
+    Mirrors ``_order_notional_estimate`` in
+    ``execution/write_paths/phase2/cancel.py``: a cancelled ENTRY/ADD_ENTRY
+    order releases ``limit_price (or stop_trigger_price) * remaining_quantity``
+    from ``cash_ledger.reserved_capital_usd``. Computing the per-position view
+    with the same formula keeps the rule's CANCEL contribution arithmetically
+    consistent with what the OMS will actually release. Protective legs and
+    market orders contribute zero — the former never reserve capital, the
+    latter carry no price parameters.
+    """
+    reservations: dict[str, float] = {}
+    for order in pending_orders:
+        if order.role not in _ENTRY_ROLES or order.position_id is None:
+            continue
+        pp = order.price_parameters
+        px = pp.limit_price if pp.limit_price is not None else pp.stop_trigger_price
+        if px is None:
+            continue
+        reservations[order.position_id] = (
+            reservations.get(order.position_id, 0.0) + px * order.remaining_quantity
+        )
+    return reservations
+
+
+# ---------------------------------------------------------------------------
 # Public translator
 # ---------------------------------------------------------------------------
 
@@ -178,6 +215,10 @@ def to_library_snapshot(
         raise ValueError(msg)
     position_max_size_pct = _rule.value
 
+    # Per-position reserved capital (ALP-506) — derived from pending entry-class
+    # orders so CANCEL contributions release the same magnitude the OMS will.
+    position_reservations = _build_position_reservations(snapshot.pending_orders)
+
     # Single pass over all positions: compute portfolio_value_usd, aggregate portfolio
     # greeks, daily borrow cost, and build the existing_positions map.
     all_positions = (*snapshot.open_positions, *snapshot.pending_positions)
@@ -255,8 +296,7 @@ def to_library_snapshot(
             delta_adjusted_exposure_usd=float(pos.delta_adjusted_exposure_usd),
             current_greeks=current_greeks,
             daily_borrow_cost_usd=daily_borrow_cost_usd,
-            # reserves_capital_usd: 0.0 — PositionRecord does not carry this field
-            reserves_capital_usd=0.0,
+            reserves_capital_usd=position_reservations.get(pos.position_id, 0.0),
             quantity=quantity,
         )
 
