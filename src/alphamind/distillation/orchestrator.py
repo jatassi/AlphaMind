@@ -39,11 +39,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
+import statistics
 import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -110,7 +113,7 @@ from alphamind.distillation.sector_assembly import (
     assemble_sector_output,
     load_sector_roster,
 )
-from alphamind.persistence.models import MacroObservations
+from alphamind.persistence.models import MacroObservations, OhlcvBars
 
 logger = logging.getLogger(__name__)
 
@@ -593,14 +596,103 @@ def _latest_macro_value(session: Session, series_id: str) -> float | None:
 _VVIX_PERCENTILE_PLACEHOLDER: float = 50.0
 
 
-def _build_regime_snapshot(session: Session) -> tuple[RegimeSnapshot, str | None]:
+# Realized-vol computation pinned to SPY daily log returns annualized via
+# the standard √252 trading-days factor. The lookback fetches calendar days
+# rather than trading days; 35 calendar days yields ≥21 trading days
+# (enough for the 20-day window) under the worst-case U.S. holiday density.
+_REALIZED_VOL_BENCHMARK_TICKER: str = "SPY"
+_TIMEFRAME_DAILY: str = "1d"
+_TRADING_DAYS_PER_YEAR: int = 252
+_REALIZED_VOL_SHORT_WINDOW: int = 5
+_REALIZED_VOL_LONG_WINDOW: int = 20
+_REALIZED_VOL_LOOKBACK_DAYS: int = 35
+
+
+def _annualized_window_stdev(returns: Sequence[float], window: int) -> float:
+    """Sample-stdev of the last ``window`` returns, annualized via √252.
+
+    Returns ``0.0`` when fewer than ``window`` returns are available so the
+    caller can fall back to the placeholder snapshot without fabricating a
+    vol reading from too little data.
+    """
+    if len(returns) < window:
+        return 0.0
+    return float(statistics.stdev(returns[-window:]) * math.sqrt(_TRADING_DAYS_PER_YEAR))
+
+
+def _realized_vols_from_log_returns(returns: Sequence[float]) -> tuple[float, float]:
+    """Return ``(realized_vol_5d, realized_vol_20d)`` from daily log returns."""
+    return (
+        _annualized_window_stdev(returns, _REALIZED_VOL_SHORT_WINDOW),
+        _annualized_window_stdev(returns, _REALIZED_VOL_LONG_WINDOW),
+    )
+
+
+def _load_spy_closes(session: Session, *, as_of: datetime) -> list[float]:
+    """Ascending SPY daily ``adj_close`` over the realized-vol lookback window."""
+    range_end = _format_as_of(as_of)
+    range_start = _format_as_of(as_of - timedelta(days=_REALIZED_VOL_LOOKBACK_DAYS))
+    stmt = (
+        select(OhlcvBars.adj_close)
+        .where(
+            OhlcvBars.ticker == _REALIZED_VOL_BENCHMARK_TICKER,
+            OhlcvBars.timeframe == _TIMEFRAME_DAILY,
+            OhlcvBars.period_start >= range_start,
+            OhlcvBars.period_start <= range_end,
+        )
+        .order_by(OhlcvBars.period_start)
+    )
+    return [float(v) for v in session.execute(stmt).scalars().all()]
+
+
+def _spy_log_returns(closes: Sequence[float]) -> list[float]:
+    """Day-over-day log returns from ascending SPY closes.
+
+    Non-positive closes are a data-corruption signal: SPY adjusted closes are
+    bounded strictly above zero. The function logs a WARN per occurrence and
+    substitutes ``0.0`` so a single bad bar doesn't take the whole window out;
+    the WARN makes the bad bar visible in operator logs rather than silently
+    deflating realized vol.
+    """
+    out: list[float] = []
+    for prior, latest in pairwise(closes):
+        if prior <= 0.0 or latest <= 0.0:
+            logger.warning(
+                "realized-vol: non-positive SPY close in pair (prior=%r, latest=%r) — "
+                "substituting 0.0 return; investigate upstream OHLCV ingest",
+                prior,
+                latest,
+            )
+            out.append(0.0)
+        else:
+            out.append(math.log(latest / prior))
+    return out
+
+
+def _compute_realized_vols(session: Session, *, as_of: datetime) -> tuple[float, float]:
+    """Annualized SPY realized vol over 5 and 20 trading days at or before ``as_of``.
+
+    Returns ``(0.0, 0.0)`` when fewer than two SPY closes are available — the
+    placeholder caller (``_build_regime_snapshot``) propagates that state so
+    the downstream emitter can mark the regime block as data-degraded.
+    """
+    closes = _load_spy_closes(session, as_of=as_of)
+    if len(closes) < 2:
+        return 0.0, 0.0
+    return _realized_vols_from_log_returns(_spy_log_returns(closes))
+
+
+def _build_regime_snapshot(
+    session: Session, *, as_of: datetime
+) -> tuple[RegimeSnapshot, str | None]:
     """Build a :class:`RegimeSnapshot` plus an optional bootstrap reason.
 
-    Reads VIX (``VIXCLS``) directly. The remaining series (VX1 future,
-    VVIX percentile, realized vol) carry conservative placeholders when
-    the underlying series are missing — per story 09's dispatch
-    instruction the regime block emits with ``BOOTSTRAP`` calibration in
-    that case rather than blocking the orchestrator.
+    Reads VIX (``VIXCLS``) and SPY daily closes directly. The VX1 / VVIX
+    series remain conservative placeholders when missing — per story 09's
+    dispatch instruction the regime block emits rather than blocking the
+    orchestrator. Realized vol is computed from SPY log returns when closes
+    are available; absent SPY data, both windows fall back to ``0.0`` and
+    the downstream input-bundle integrity check surfaces the gap.
 
     Returns ``(snapshot, None)`` when VIX is observed and
     ``(snapshot, "regime: VIXCLS observation missing")`` when it is not.
@@ -609,6 +701,7 @@ def _build_regime_snapshot(session: Session) -> tuple[RegimeSnapshot, str | None
     a real VIX print of exactly zero would otherwise mis-tag.
     """
     vix = _latest_macro_value(session, "VIXCLS")
+    realized_vol_5d, realized_vol_20d = _compute_realized_vols(session, as_of=as_of)
     if vix is None:
         # No VIX series available — emit a placeholder snapshot tagged as
         # bootstrap so the regime block surfaces with the right state.
@@ -616,8 +709,8 @@ def _build_regime_snapshot(session: Session) -> tuple[RegimeSnapshot, str | None
             vix_level=0.0,
             vx1_minus_vix=0.0,
             vvix_percentile=_VVIX_PERCENTILE_PLACEHOLDER,
-            realized_vol_5d=0.0,
-            realized_vol_20d=0.0,
+            realized_vol_5d=realized_vol_5d,
+            realized_vol_20d=realized_vol_20d,
             vix_trailing_20d_mean=None,
             prior_term_structure_backwardation=False,
         )
@@ -626,8 +719,8 @@ def _build_regime_snapshot(session: Session) -> tuple[RegimeSnapshot, str | None
         vix_level=vix,
         vx1_minus_vix=0.0,
         vvix_percentile=_VVIX_PERCENTILE_PLACEHOLDER,
-        realized_vol_5d=0.0,
-        realized_vol_20d=0.0,
+        realized_vol_5d=realized_vol_5d,
+        realized_vol_20d=realized_vol_20d,
         vix_trailing_20d_mean=None,
         prior_term_structure_backwardation=False,
     )
@@ -642,7 +735,7 @@ def _refresh_regime(
 ) -> tuple[RegimeRefreshResult, OutputBlock]:
     """Phase 3 — refresh the regime row and assemble the universal block."""
     classification, transition = _build_regime_thresholds(config)
-    snapshot, bootstrap_reason = _build_regime_snapshot(session)
+    snapshot, bootstrap_reason = _build_regime_snapshot(session, as_of=as_of)
     calibration_state = (
         CalibrationState.BOOTSTRAP if bootstrap_reason is not None else CalibrationState.CALIBRATED
     )
