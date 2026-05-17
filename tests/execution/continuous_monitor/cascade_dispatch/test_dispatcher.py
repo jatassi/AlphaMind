@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -44,6 +43,7 @@ from tests.execution.continuous_monitor.cascade_dispatch.conftest import (
     StubLibraryOutput,
     StubMarketInputs,
     StubPortfolioState,
+    StubRuleProjection,
     equity_view,
     make_breach_config,
     make_breach_loop_result,
@@ -53,20 +53,8 @@ _SESSION_ID = "monsession-a"
 
 
 # ---------------------------------------------------------------------------
-# File-local stubs and builders
+# File-local builders
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class _StubRuleProjection:
-    rule: str
-    status: str
-    current: float
-    limit: float
-    projected_after: float
-    headroom_remaining: float
-    unit: str
-    inverse: bool = False
 
 
 def _per_position_breach_eval(*, rule_id: str = "position_max_loss_equity_pct") -> RuleEvaluation:
@@ -242,7 +230,7 @@ async def test_deferred_to_pm_does_not_submit_logs_deferral() -> None:
             StubLibraryOutput(per_rule=()),  # baseline (clean)
             StubLibraryOutput(  # post-close → introduces a new FAIL
                 per_rule=(
-                    _StubRuleProjection(
+                    StubRuleProjection(
                         rule="total_short_pct",
                         status="FAIL",
                         current=35.0,
@@ -298,7 +286,7 @@ async def test_secondary_breach_avoided_submits_alternate_envelope() -> None:
             StubLibraryOutput(per_rule=()),  # baseline for primary check
             StubLibraryOutput(  # post-primary-close — introduces a fail
                 per_rule=(
-                    _StubRuleProjection(
+                    StubRuleProjection(
                         rule="total_short_pct",
                         status="FAIL",
                         current=35.0,
@@ -455,7 +443,7 @@ async def test_breach_cascade_submits_chained_envelopes_in_order_with_shared_cas
             StubLibraryOutput(per_rule=()),  # 3 (pre-cascade baseline)
             StubLibraryOutput(  # 4 — post-1st-close, introduces a new fail
                 per_rule=(
-                    _StubRuleProjection(
+                    StubRuleProjection(
                         rule="daily_drawdown_pct",
                         status="FAIL",
                         current=6.0,

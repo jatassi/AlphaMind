@@ -1,17 +1,15 @@
 """Shared fixtures for cascade-dispatch tests.
 
-Centralizes the stubs, recorders, and builders used by ``test_dispatcher.py``
-and ``test_per_rule_kwargs.py``. ``equity_view`` reconciles the two callers'
-PositionView builders: cost-derived market value plus short-equity defaults
-(``locate_status``, ``borrow_rate_pct``, ``margin_held_usd``). ``ScriptedLibrary``
-keeps the broader ``(state, proposals, config, market, delta_buffer_factor)``
-recording shape from ``test_dispatcher.py`` so dispatcher tests retain their
-call-shape assertions.
+Library Protocol stubs (``ScriptedLibrary``, ``StubRuleProjection``, etc.)
+re-export from ``tests.risk_guardrails.breach_behavior.fixtures`` — the
+canonical home for cascade-orchestration test fakes. The local additions are
+the recorders (``RecordingSubmit``, ``RecordingDeferralSink``), the PositionView
+builder (``equity_view``), and the breach-loop builders that the dispatcher
+tests consume.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -24,7 +22,6 @@ from alphamind._kernel.ids import (
     ThesisId,
 )
 from alphamind._kernel.money import money, price, signed_money
-from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.commands.engine_envelope import EngineEnvelope as OmsEngineEnvelope
 from alphamind.config.models.guardrails import BreachResponse
 from alphamind.decision.portfolio_manager.submit_envelope import (
@@ -41,9 +38,6 @@ from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
 from alphamind.execution.guardrail_enforcement.orchestrator import (
     Phase1EnforcementResult,
 )
-from alphamind.portfolio_state.aggregates.risk_parameters import (
-    ActiveRiskParameterSet,
-)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -59,57 +53,32 @@ from alphamind.risk_guardrails.breach_behavior import (
     DrawdownTier,
     RegimeLabel,
 )
+from tests.risk_guardrails.breach_behavior.fixtures import (
+    ScriptedLibrary,
+    StubLibraryConfig,
+    StubLibraryOutput,
+    StubMarketInputs,
+    StubPortfolioState,
+    StubRuleProjection,
+    make_active_risk_parameters,
+)
+
+__all__ = [
+    "NOW",
+    "RecordingDeferralSink",
+    "RecordingSubmit",
+    "ScriptedLibrary",
+    "StubLibraryConfig",
+    "StubLibraryOutput",
+    "StubMarketInputs",
+    "StubPortfolioState",
+    "StubRuleProjection",
+    "equity_view",
+    "make_breach_config",
+    "make_breach_loop_result",
+]
 
 NOW = datetime(2026, 5, 17, 14, 30, 0, tzinfo=UTC)
-
-
-@dataclass(frozen=True)
-class StubLibraryOutput:
-    per_rule: tuple[Any, ...]
-
-
-@dataclass(frozen=True)
-class StubLibraryConfig:
-    effective_limits: dict[str, float]
-
-
-@dataclass(frozen=True)
-class StubPortfolioState:
-    label: str = "default"
-
-
-@dataclass(frozen=True)
-class StubMarketInputs:
-    label: str = "default"
-
-
-@dataclass
-class ScriptedLibrary:
-    """``evaluate_proposals`` stub — returns ``outputs[i]`` on the i-th call."""
-
-    outputs: list[StubLibraryOutput]
-    calls: list[dict[str, Any]] = field(default_factory=list)
-
-    def __call__(
-        self,
-        *,
-        state: Any,
-        proposals: Sequence[Any],
-        config: Any,
-        market: Any,
-        delta_buffer_factor: float = 1.0,
-    ) -> StubLibraryOutput:
-        self.calls.append(
-            {
-                "state": state,
-                "proposals": tuple(proposals),
-                "config": config,
-                "market": market,
-                "delta_buffer_factor": delta_buffer_factor,
-            }
-        )
-        idx = min(len(self.calls) - 1, len(self.outputs) - 1)
-        return self.outputs[idx]
 
 
 @dataclass
@@ -151,7 +120,13 @@ def equity_view(
     unrealized_pnl_usd: float = -52.5,
     position_weight_pct: float = 10.0,
 ) -> PositionView:
-    """Build a PositionView for an equity position. Short defaults compose cleanly."""
+    """Build an equity ``PositionView`` with cost-derived market value.
+
+    ``current_market_value_usd`` is derived as ``cost_basis * share_count +
+    unrealized_pnl_usd``; tests that need a specific market value should
+    choose ``unrealized_pnl_usd`` accordingly. Short positions automatically
+    receive locate / borrow-rate / margin defaults.
+    """
     short_fields: dict[str, Any] = (
         {
             "borrow_rate_pct": 0.5,
@@ -219,26 +194,18 @@ def make_breach_config() -> BreachBehaviorConfig:
     )
 
 
-def make_phase1_result() -> Phase1EnforcementResult:
-    """Build a minimal Phase1EnforcementResult — fields most tests don't read."""
-    return Phase1EnforcementResult(
-        active_risk_parameters=ActiveRiskParameterSet(
-            regime_label=RegimeLabel.ELEVATED,
-            transition_state=RegimeTransitionState.STABLE,
-            transition_invocations_remaining=0,
-            parameter_change_flag=False,
-            entries=(),
-            active_overlays=(),
+def make_breach_loop_result(*, evaluations: tuple[RuleEvaluation, ...]) -> BreachLoopResult:
+    immediate = tuple(e for e in evaluations if e.classification is BreachResponse.immediate_engine)
+    phase1_result = Phase1EnforcementResult(
+        active_risk_parameters=make_active_risk_parameters(
+            regime=RegimeLabel.ELEVATED,
+            rule_values={},
         ),
         drawdown_tier=DrawdownTier.CONSTRAINED,
     )
-
-
-def make_breach_loop_result(*, evaluations: tuple[RuleEvaluation, ...]) -> BreachLoopResult:
-    immediate = tuple(e for e in evaluations if e.classification is BreachResponse.immediate_engine)
     return BreachLoopResult(
         as_of=NOW,
-        phase1_result=make_phase1_result(),
+        phase1_result=phase1_result,
         rule_evaluations=evaluations,
         halt_state=None,
         immediate_action_breaches=immediate,
