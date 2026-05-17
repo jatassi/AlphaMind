@@ -50,11 +50,3 @@ max_reconnect_attempts: 5
 # Stops a task that swallows CancelledError from stalling the process so NSSM
 # can restart promptly. Defaulted at 5s per ALP-432 scope section 7.
 supervisor_shutdown_timeout_seconds: 5
-
-# Interim placeholders the cascade dispatcher applies to every per-position
-# liquidity / risk-reward entry until the monitor's market-data path exposes
-# live per-symbol ADV and per-position invalidation/target distances. ALP-508
-# replaces both with live signals; until then these values are operator-visible
-# here rather than hidden inside the substrate code.
-cascade_dispatch_placeholder_adv_to_position_size_ratio: 10.0
-cascade_dispatch_placeholder_risk_reward_ratio: 2.0

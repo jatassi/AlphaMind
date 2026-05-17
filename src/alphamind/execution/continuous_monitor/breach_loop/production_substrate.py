@@ -22,7 +22,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
@@ -51,6 +50,7 @@ from alphamind.config.resolver import (
 from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
     BreachDispatchContext,
 )
+from alphamind.persistence.models import OhlcvBars
 from alphamind.portfolio_state import PortfolioStateConfig
 from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
@@ -65,6 +65,7 @@ from alphamind.portfolio_state.pricing import (
     PriceSource,
     StubCurrentPriceProvider,
 )
+from alphamind.portfolio_state.records.positions import resolve_ticker
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import (
     PositionLiquidity,
@@ -100,10 +101,11 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
-    "DispatchPlaceholders",
+    "AdvProvider",
     "LibraryConfigFactory",
     "OpenPositionsViewProvider",
     "load_breach_loop_resolved_config",
+    "make_adv_provider",
     "make_dispatch_context_provider",
     "make_invocation_id_provider_sync",
     "make_library_config_factory",
@@ -675,24 +677,105 @@ def make_open_positions_view_provider(
 
 
 # ---------------------------------------------------------------------------
+# ADV provider — per-symbol 20-day average daily volume from OhlcvBars
+# ---------------------------------------------------------------------------
+
+
+AdvProvider = Callable[[], Awaitable[Mapping[str, float]]]
+
+_OHLCV_DAILY_TIMEFRAME = "1d"
+_DEFAULT_ADV_LOOKBACK_DAYS = 20
+
+
+def make_adv_provider(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    lookback_days: int = _DEFAULT_ADV_LOOKBACK_DAYS,
+) -> AdvProvider:
+    """Return a provider of per-ticker ADV (average daily volume in shares).
+
+    Computes the trailing-``lookback_days`` average of ``adj_volume`` from
+    :class:`OhlcvBars` (timeframe ``"1d"``) per ticker. The cascade
+    dispatcher uses the returned mapping to derive each open position's
+    ``adv_to_position_size_ratio`` (= ``adv_shares * underlying_price /
+    position_notional_usd``) — higher means more liquid relative to size.
+
+    The provider is awaited fresh per immediate breach so the dispatcher
+    sees newly-ingested daily bars without a daemon restart. Daily bars
+    refresh once per session, so the SELECT cost is amortized across the
+    rare immediate-breach path.
+    """
+    from sqlalchemy import func
+
+    async def _provider() -> Mapping[str, float]:
+        async with session_factory() as sess:
+            row_number = (
+                func.row_number()
+                .over(
+                    partition_by=OhlcvBars.ticker,
+                    order_by=OhlcvBars.period_start.desc(),
+                )
+                .label("rn")
+            )
+            ranked = (
+                select(
+                    OhlcvBars.ticker,
+                    OhlcvBars.adj_volume,
+                    row_number,
+                )
+                .where(OhlcvBars.timeframe == _OHLCV_DAILY_TIMEFRAME)
+                .subquery()
+            )
+            stmt = (
+                select(
+                    ranked.c.ticker,
+                    func.avg(ranked.c.adj_volume).label("adv"),
+                )
+                .where(ranked.c.rn <= lookback_days)
+                .group_by(ranked.c.ticker)
+            )
+            result = await sess.execute(stmt)
+            return {str(ticker): float(adv) for ticker, adv in result.all() if adv is not None}
+
+    return _provider
+
+
+# ---------------------------------------------------------------------------
 # context_provider — builds BreachDispatchContext per dispatch
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
-class DispatchPlaceholders:
-    """Per-position ADV / R/R signals the dispatcher applies until ALP-508 lands.
-
-    Both values are operator-visible via ``config/continuous_monitor.yaml``
-    and retire together when the monitor's market-data path exposes the
-    live signals.
-    """
-
-    adv_to_position_size_ratio: float
-    risk_reward_ratio: float
-
-
 DispatchContextProvider = Callable[[], Awaitable[BreachDispatchContext]]
+
+
+def _compute_adv_to_position_size_ratio(
+    position: PositionView,
+    *,
+    adv_shares_by_ticker: Mapping[str, float],
+    underlying_prices: Mapping[str, float],
+) -> float:
+    """Return ``(ADV_shares * underlying_price) / position_notional_usd``.
+
+    Falls back to ``0.0`` (lowest liquidity, treated as worst-tiebreaker)
+    when any input is missing or non-positive: the underlying isn't priced
+    on the live cache, the ADV provider has no row for the ticker, the
+    notional is zero, or any value is negative. The cascade selectors
+    require an entry per open position, so the fallback keeps the contract
+    intact rather than excluding the position from selection.
+    """
+    ticker = resolve_ticker(position.details)
+    if ticker is None:
+        return 0.0
+    adv_shares = adv_shares_by_ticker.get(str(ticker))
+    if adv_shares is None or adv_shares <= 0.0:
+        return 0.0
+    price = underlying_prices.get(str(ticker))
+    if price is None or price <= 0.0:
+        return 0.0
+    notional = float(position.notional_exposure_usd)
+    if notional <= 0.0:
+        return 0.0
+    return (adv_shares * price) / notional
 
 
 def make_dispatch_context_provider(  # noqa: PLR0913 — composition root; each parameter is one production-substrate seam
@@ -702,7 +785,7 @@ def make_dispatch_context_provider(  # noqa: PLR0913 — composition root; each 
     library_config_factory: LibraryConfigFactory,
     underlying_cache: UnderlyingPriceCache,
     iv_provider: IvProvider,
-    placeholders: DispatchPlaceholders,
+    adv_provider: AdvProvider,
     progressive_tiers: tuple[ProgressiveTier, ...] = (),
     open_positions_provider: OpenPositionsViewProvider | None = None,
     risk_free_rate: float = _DEFAULT_RISK_FREE_RATE,
@@ -712,10 +795,13 @@ def make_dispatch_context_provider(  # noqa: PLR0913 — composition root; each 
 
     The caller threads ``iv_provider`` — the same instance the breach-loop
     task itself reads — so cascade re-projections and breach-loop
-    evaluations see identical IV lookups. ``placeholders`` carries the
-    operator-visible interim defaults for the per-position ADV and
-    risk/reward signals; ALP-508 retires both once the monitor's
-    market-data path exposes the live signals.
+    evaluations see identical IV lookups. ``adv_provider`` returns the
+    per-ticker 20-day average daily volume (shares); the provider combines
+    it with live underlying prices and each position's notional to derive
+    ``PositionLiquidity.adv_to_position_size_ratio``. ``PositionRiskReward``
+    is read directly from :attr:`PositionView.risk_reward_at_current` (None
+    on positions without a bracket → ``0.0``, worst-of-the-worst per the
+    margin-call selector's ranking).
 
     ``open_positions_provider`` is an optional async callable returning the
     assembled :class:`PositionView` tuple for the per-tick context. When
@@ -729,12 +815,13 @@ def make_dispatch_context_provider(  # noqa: PLR0913 — composition root; each 
     """
 
     async def _provider() -> BreachDispatchContext:
-        library_snapshot, regime_output = await asyncio.gather(
-            snapshot_provider(), regime_provider()
+        library_snapshot, regime_output, adv_shares_by_ticker = await asyncio.gather(
+            snapshot_provider(), regime_provider(), adv_provider()
         )
         library_config = library_config_factory(regime_output.active_risk_parameter_set)
+        underlying_prices = {t: q.price for t, q in underlying_cache.get_all().items()}
         market_inputs = MarketInputs(
-            underlying_prices={t: q.price for t, q in underlying_cache.get_all().items()},
+            underlying_prices=underlying_prices,
             risk_free_rate=risk_free_rate,
             iv_provider=iv_provider,
             as_of=now(),
@@ -745,14 +832,20 @@ def make_dispatch_context_provider(  # noqa: PLR0913 — composition root; each 
         liquidity = tuple(
             PositionLiquidity(
                 position_id=p.position_id,
-                adv_to_position_size_ratio=placeholders.adv_to_position_size_ratio,
+                adv_to_position_size_ratio=_compute_adv_to_position_size_ratio(
+                    p,
+                    adv_shares_by_ticker=adv_shares_by_ticker,
+                    underlying_prices=underlying_prices,
+                ),
             )
             for p in open_positions
         )
         risk_reward = tuple(
             PositionRiskReward(
                 position_id=p.position_id,
-                risk_reward_ratio=placeholders.risk_reward_ratio,
+                risk_reward_ratio=(
+                    p.risk_reward_at_current if p.risk_reward_at_current is not None else 0.0
+                ),
             )
             for p in open_positions
         )

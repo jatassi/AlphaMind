@@ -49,8 +49,8 @@ from alphamind.execution.continuous_monitor.breach_loop import (
     register_breach_loop_task,
 )
 from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
-    DispatchPlaceholders,
     load_breach_loop_resolved_config,
+    make_adv_provider,
     make_dispatch_context_provider,
     make_library_config_factory,
     make_open_positions_view_provider,
@@ -222,7 +222,6 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         supervisor,
         underlying_cache=underlying_cache,
         session=session,
-        monitor_config=config,
         breach_behavior_config=breach_behavior_config,
         breach_response_lookup=breach_response_lookup,
         db_session_factory=db_session_factory,
@@ -296,7 +295,6 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     *,
     underlying_cache: object,
     session: MonitorSession,
-    monitor_config: ContinuousMonitorConfig,
     breach_behavior_config: BreachBehaviorConfig,
     breach_response_lookup: Mapping[str, BreachResponse],
     db_session_factory: async_sessionmaker[AsyncSession],
@@ -384,18 +382,14 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
         portfolio_state_config=portfolio_state_config,
         state_persistence_config=state_persistence_config,
     )
+    adv_provider = make_adv_provider(session_factory=db_session_factory)
     dispatch_context_provider = make_dispatch_context_provider(
         snapshot_provider=snapshot_provider,
         regime_provider=regime_provider,
         library_config_factory=library_config_factory,
         underlying_cache=underlying_cache_typed,
         iv_provider=iv_provider,
-        placeholders=DispatchPlaceholders(
-            adv_to_position_size_ratio=(
-                monitor_config.cascade_dispatch_placeholder_adv_to_position_size_ratio
-            ),
-            risk_reward_ratio=monitor_config.cascade_dispatch_placeholder_risk_reward_ratio,
-        ),
+        adv_provider=adv_provider,
         progressive_tiers=progressive_tiers,
         open_positions_provider=open_positions_view_provider,
     )
