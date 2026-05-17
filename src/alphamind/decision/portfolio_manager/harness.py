@@ -31,16 +31,26 @@ is used. Tests pass a stub so no test touches the Anthropic API.
 
 from __future__ import annotations
 
-# ruff: noqa: N818  # Exception class names mirror sibling harness names by spec.
-import asyncio
 import json
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
+from alphamind.analysis._harness_core import (
+    ContextOverflowFailure,
+    HarnessFailure,
+    MalformedOutputFailure,
+    SDKFailure,
+    TimeoutFailure,
+    _add_tokens,
+    _load_prompt,
+    _render_raw_response,
+    invoke_sdk,
+)
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.analysis.synthesizer.retrieval_tools import build_retrieve_brief_mcp_server
@@ -80,28 +90,6 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Per-process system-prompt cache
-# ---------------------------------------------------------------------------
-
-# Maps prompt file path → loaded prompt text. No invalidation needed: the
-# pipeline process restarts on agents.yaml edits per the deploy-time vs.
-# invocation-time classification in configuration-management.md. Mirrors the
-# analyst's pattern.
-_PROMPT_CACHE: dict[str, str] = {}
-_PROMPT_CACHE_LOCK = asyncio.Lock()
-
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-
-
-async def _load_prompt(prompt_path: str) -> str:
-    """Load system prompt from *prompt_path*, caching per process."""
-    async with _PROMPT_CACHE_LOCK:
-        if prompt_path not in _PROMPT_CACHE:
-            _PROMPT_CACHE[prompt_path] = (_REPO_ROOT / prompt_path).read_text(encoding="utf-8")
-        return _PROMPT_CACHE[prompt_path]
-
-
-# ---------------------------------------------------------------------------
 # Multi-turn budget
 # ---------------------------------------------------------------------------
 
@@ -129,111 +117,6 @@ _TOOL_NAME_PREFIXES: tuple[str, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# Exception hierarchy
-# ---------------------------------------------------------------------------
-
-
-class HarnessFailure(Exception):
-    """Base class for all harness-level failures.
-
-    Every subclass carries *agent_name* and *invocation_id* so the caller
-    (the runner, story 08) has full context for the failure log.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        agent_name: str,
-        invocation_id: str,
-    ) -> None:
-        super().__init__(message)
-        self.agent_name = agent_name
-        self.invocation_id = invocation_id
-
-
-class MalformedOutputFailure(HarnessFailure):
-    """Exhausted retries on parse failure.
-
-    Carries the raw response text from both attempts when a retry occurred,
-    plus the underlying error trail.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        agent_name: str,
-        invocation_id: str,
-        raw_response_initial: str | None = None,
-        raw_response_retry: str | None = None,
-        cause: Exception | None = None,
-    ) -> None:
-        super().__init__(message, agent_name=agent_name, invocation_id=invocation_id)
-        self.raw_response_initial = raw_response_initial
-        self.raw_response_retry = raw_response_retry
-        self.cause = cause
-
-
-class ContextOverflowFailure(HarnessFailure):
-    """Structural failure paired with ``stop_reason: max_tokens``.
-
-    The pipeline aborts immediately — no corrective retry is attempted.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        agent_name: str,
-        invocation_id: str,
-        raw_response: str | None = None,
-    ) -> None:
-        super().__init__(message, agent_name=agent_name, invocation_id=invocation_id)
-        self.raw_response = raw_response
-
-
-class SDKFailure(HarnessFailure):
-    """Non-recoverable SDK error (auth, model API error, network, CLI error)."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        agent_name: str,
-        invocation_id: str,
-        cause: Exception | None = None,
-    ) -> None:
-        super().__init__(message, agent_name=agent_name, invocation_id=invocation_id)
-        self.cause = cause
-
-
-class TimeoutFailure(HarnessFailure):
-    """Invocation exceeded ``agent_config.latency_budget_seconds``."""
-
-
-class _CLIResultError(Exception):
-    """Internal signal: ResultMessage carried is_error=True.
-
-    Raised from inside ``_collect_response`` so the caller can convert into
-    the appropriate ``HarnessFailure`` subclass with full agent-name /
-    invocation-id context. Not part of the public API.
-    """
-
-    def __init__(
-        self,
-        *,
-        error_text: str,
-        partial_response: str,
-        stop_reason: str | None,
-    ) -> None:
-        super().__init__(error_text)
-        self.error_text = error_text
-        self.partial_response = partial_response
-        self.stop_reason = stop_reason
-
-
-# ---------------------------------------------------------------------------
 # HarnessSuccess
 # ---------------------------------------------------------------------------
 
@@ -256,111 +139,6 @@ class HarnessSuccess:
     wall_clock_seconds: float
     stop_reason: str | None
     submission_log: tuple[SubmissionLogEntry, ...]
-
-
-# ---------------------------------------------------------------------------
-# SDK response accumulation helpers
-# ---------------------------------------------------------------------------
-
-
-def _tokens_from_usage(usage: dict[str, Any], previous: TokensUsed) -> TokensUsed:
-    """Merge an SDK ``usage`` dict into *previous*, preserving fields the SDK omits."""
-    return TokensUsed(
-        input_tokens=usage.get("input_tokens", previous.input_tokens),
-        output_tokens=usage.get("output_tokens", previous.output_tokens),
-        cache_read_tokens=usage.get("cache_read_input_tokens", previous.cache_read_tokens),
-        cache_write_tokens=usage.get("cache_creation_input_tokens", previous.cache_write_tokens),
-    )
-
-
-def _add_tokens(a: TokensUsed, b: TokensUsed) -> TokensUsed:
-    """Sum two :class:`TokensUsed` instances field-wise."""
-    return TokensUsed(
-        input_tokens=a.input_tokens + b.input_tokens,
-        output_tokens=a.output_tokens + b.output_tokens,
-        cache_read_tokens=a.cache_read_tokens + b.cache_read_tokens,
-        cache_write_tokens=a.cache_write_tokens + b.cache_write_tokens,
-    )
-
-
-def _absorb_metadata(
-    message: Any,
-    *,
-    stop_reason: str | None,
-    tokens: TokensUsed,
-) -> tuple[str | None, TokensUsed]:
-    """Update accumulator state from any message that carries metadata — pure transformation."""
-    if message.stop_reason:
-        stop_reason = message.stop_reason
-    if message.usage:
-        tokens = _tokens_from_usage(message.usage, tokens)
-    return stop_reason, tokens
-
-
-async def _collect_response(
-    sdk_query_fn: Callable[..., AsyncIterator[Any]],
-    *,
-    prompt: str,
-    options: Any,
-) -> tuple[dict[str, Any] | None, str, str | None, TokensUsed, int]:
-    """Drive the SDK generator to completion.
-
-    Returns ``(structured_output, response_text, stop_reason, tokens_used,
-    tool_calls)``.
-
-    ``structured_output`` is the dict the API delivers on ``ResultMessage``
-    when ``output_format`` is set; ``None`` when the SDK did not populate it.
-    The concatenated ``response_text`` is preserved alongside for diagnostic
-    forensics — JSON-mode runs typically have empty text but Sonnet/Opus
-    occasionally narrate between tool calls.
-
-    ``tool_calls`` counts only ``ToolUseBlock``s whose ``name`` starts with
-    one of :data:`_TOOL_NAME_PREFIXES`; the SDK's JSON-Schema output mode
-    injects ``ToolSearch`` and ``StructuredOutput`` pseudo-events that would
-    otherwise inflate the count.
-    """
-    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
-
-    text_parts: list[str] = []
-    structured_output: dict[str, Any] | None = None
-    stop_reason: str | None = None
-    tokens = TokensUsed(input_tokens=0, output_tokens=0, cache_read_tokens=0, cache_write_tokens=0)
-    tool_calls = 0
-
-    query_iter = sdk_query_fn(prompt=prompt, options=options)
-    try:
-        async for message in query_iter:
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        text_parts.append(block.text)
-                    elif isinstance(block, ToolUseBlock) and block.name.startswith(
-                        _TOOL_NAME_PREFIXES
-                    ):
-                        tool_calls += 1
-                stop_reason, tokens = _absorb_metadata(
-                    message, stop_reason=stop_reason, tokens=tokens
-                )
-            elif isinstance(message, ResultMessage):
-                stop_reason, tokens = _absorb_metadata(
-                    message, stop_reason=stop_reason, tokens=tokens
-                )
-                raw_so = getattr(message, "structured_output", None)
-                if isinstance(raw_so, dict):
-                    structured_output = raw_so
-                if message.is_error:
-                    raise _CLIResultError(
-                        error_text=message.result or "(no result text)",
-                        partial_response="".join(text_parts),
-                        stop_reason=stop_reason,
-                    )
-                break
-    finally:
-        # Close from this task; GC-time aclose() races the SDK reader and
-        # prints "asynchronous generator is already running" to stderr.
-        await cast(AsyncGenerator[Any], query_iter).aclose()
-
-    return structured_output, "".join(text_parts), stop_reason, tokens, tool_calls
 
 
 # ---------------------------------------------------------------------------
@@ -557,23 +335,6 @@ def _parse_payload(
         return None, _build_retry_message_for_parse_error(exc)
 
     return output, None
-
-
-def _render_raw_response(payload: dict[str, Any] | None, response_text: str) -> str:
-    """Format the SDK response for diagnostic archive and exception payloads.
-
-    The structured-output dict is the load-bearing artifact; any text the
-    agent emitted alongside (rare in JSON mode but seen under provocation)
-    is preserved as a leading section so forensic review is not lossy.
-    """
-    parts: list[str] = []
-    if response_text:
-        parts.append(response_text)
-    if payload is not None:
-        parts.append(json.dumps(payload, indent=2, sort_keys=True))
-    else:
-        parts.append("(structured_output not populated)")
-    return "\n\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -819,6 +580,8 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     broker_dispatch: BrokerDispatch | None = None,
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "pm",
 ) -> HarnessSuccess:
     """Invoke the PM agent and return :class:`HarnessSuccess`.
 
@@ -924,6 +687,8 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
             sdk_query_fn=sdk_query_fn,
             get_submit_envelope_state=get_submit_envelope_state,
             archive_root=archive_root,
+            progress=progress,
+            phase=phase,
         )
 
 
@@ -938,14 +703,17 @@ async def _run_invocation(  # noqa: PLR0913 — internal helper threading runner
     sdk_query_fn: Callable[..., AsyncIterator[Any]],
     get_submit_envelope_state: Callable[[], SubmitEnvelopeState],
     archive_root: Path | None,
+    progress: ProgressEmitter,
+    phase: str,
 ) -> HarnessSuccess:
     """Drive the two-attempt SDK loop with *options* already constructed.
 
     Extracted so ``invoke_pm`` can hold the system-prompt tempfile open for
     the entire invocation (Attempts 1 and 2 share the same options/prompt_path).
-    """
-    from claude_agent_sdk import ClaudeSDKError, CLIConnectionError
 
+    Each SDK call routes through :func:`invoke_sdk` so the single emit point
+    fires ``agent_request`` / ``agent_response`` on the supplied *progress*.
+    """
     diag = _DiagState(
         agent_name=agent_name,
         invocation_id=invocation_id,
@@ -957,53 +725,32 @@ async def _run_invocation(  # noqa: PLR0913 — internal helper threading runner
     )
     wall_start = time.monotonic()
 
-    def _flush_failure(stop_reason: str | None = None) -> None:
-        diag.write(
-            success=False,
-            wall_clock_seconds=time.monotonic() - wall_start,
-            stop_reason=stop_reason,
-        )
-
     async def _invoke(
         prompt: str,
     ) -> tuple[dict[str, Any] | None, str, str | None, TokensUsed, int]:
-        """Run one SDK call with the configured timeout."""
-        try:
-            return await asyncio.wait_for(
-                _collect_response(sdk_query_fn, prompt=prompt, options=options),
-                timeout=float(agent_config.latency_budget_seconds),
-            )
-        except TimeoutError as exc:
-            _flush_failure()
-            raise TimeoutFailure(
-                f"Invocation exceeded latency budget of {agent_config.latency_budget_seconds}s",
-                agent_name=agent_name,
-                invocation_id=invocation_id,
-            ) from exc
-        except _CLIResultError as exc:
-            _flush_failure(exc.stop_reason)
-            raise SDKFailure(
-                f"CLI returned is_error=True: {exc.error_text}",
-                agent_name=agent_name,
-                invocation_id=invocation_id,
-            ) from exc
-        except CLIConnectionError as exc:
-            _flush_failure()
-            raise SDKFailure(
-                f"Authentication or connection failure — ensure CLAUDE_CODE_OAUTH_TOKEN "
-                f"is set and valid. Underlying error: {exc}",
-                agent_name=agent_name,
-                invocation_id=invocation_id,
-                cause=exc,
-            ) from exc
-        except ClaudeSDKError as exc:
-            _flush_failure()
-            raise SDKFailure(
-                f"Non-recoverable SDK error: {exc}",
-                agent_name=agent_name,
-                invocation_id=invocation_id,
-                cause=exc,
-            ) from exc
+        """Run one SDK call routed through the shared :func:`invoke_sdk` driver."""
+        outcome = await invoke_sdk(
+            sdk_query_fn=sdk_query_fn,
+            prompt=prompt,
+            options=options,
+            diag=diag,
+            budget_seconds=float(agent_config.latency_budget_seconds),
+            init_stall_timeout_seconds=None,
+            wall_start=wall_start,
+            agent_name=agent_name,
+            invocation_id=invocation_id,
+            on_cli_result_error="sdk_failure",
+            tool_name_prefix=_TOOL_NAME_PREFIXES,
+            progress=progress,
+            phase=phase,
+        )
+        return (
+            outcome.structured_output,
+            outcome.response_text,
+            outcome.stop_reason,
+            outcome.tokens_used,
+            outcome.tool_calls,
+        )
 
     # ------------------------------------------------------------------
     # Attempt 1: initial call

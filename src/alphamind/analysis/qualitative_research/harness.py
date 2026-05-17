@@ -28,6 +28,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._harness_core import (
     _PROMPT_CACHE,
     ContextOverflowFailure,
@@ -291,7 +292,7 @@ def _build_sdk_options(
 # ---------------------------------------------------------------------------
 
 
-async def invoke_qualitative_researcher(
+async def invoke_qualitative_researcher(  # noqa: PLR0913 — public signature is fixed by ALP-249 spec plus ALP-497's progress / phase kwargs
     *,
     agent_config: BaseAgentConfig,
     user_message: str,
@@ -300,6 +301,8 @@ async def invoke_qualitative_researcher(
     universe: frozenset[str],
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "qualitative",
 ) -> HarnessSuccess:
     """Invoke the qualitative-researcher agent and return a validated :class:`HarnessSuccess`.
 
@@ -354,6 +357,8 @@ async def invoke_qualitative_researcher(
             invocation_id=invocation_id,
             on_cli_result_error="context_overflow",
             tool_name_prefix=_TOOL_NAME_PREFIX,
+            progress=progress,
+            phase=phase,
         )
         return (
             outcome.structured_output,

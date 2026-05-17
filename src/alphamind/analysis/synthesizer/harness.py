@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._harness_core import (
     _PROMPT_CACHE,
     ContextOverflowFailure,
@@ -159,6 +160,8 @@ async def invoke_synthesizer(
     portfolio_reader: SynthesizerPortfolioStateReader,
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "synthesizer",
 ) -> HarnessSuccess:
     """Invoke the synthesizer agent and return :class:`HarnessSuccess`.
 
@@ -208,6 +211,8 @@ async def invoke_synthesizer(
         agent_name=agent_name,
         invocation_id=invocation_id,
         on_cli_result_error="sdk_failure",
+        progress=progress,
+        phase=phase,
     )
 
     response_text = outcome.response_text
