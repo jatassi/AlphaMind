@@ -56,6 +56,11 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
+from alphamind.scheduler.debug_e2e.broker import (
+    LogOnlyAccountStateQueries,
+    LogOnlyCorporateActionsQueries,
+)
+from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
 from alphamind.scheduler.debug_e2e.settings import DebugE2ESettings
 from alphamind.state.invocation_context.records import (
     ProcessLifetimeRecord,
@@ -200,7 +205,11 @@ def _make_context(
         env_path=env_path,
         venue_config=_make_venue_config(),
         execution_mode=ExecutionMode.paper,
-        debug_e2e=DebugE2ESettings(emitter_factory=_factory),
+        debug_e2e=DebugE2ESettings(
+            account_queries=LogOnlyAccountStateQueries(SYNTHETIC_PORTFOLIO),
+            ca_queries=LogOnlyCorporateActionsQueries(),
+            emitter_factory=_factory,
+        ),
     )
 
 
