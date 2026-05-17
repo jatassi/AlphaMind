@@ -158,10 +158,12 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     """
     resolved = _fixture_resolved()
     digest = compute_snapshot_hash(serialize_resolved_config(resolved))
-    # Pin updated 2026-05-16 after PR #59 re-baselined the adaptive researcher's
-    # ``output_token_budget`` from 36000 → 40000 (commit ``bade790``); the
-    # fixture's canonical bytes shifted by exactly that value change.
-    expected = "04bb38eb15ea76eda7827da8db88bd597cdee963b528772f2be187d1b5a2c1bb"
+    # Pin updated 2026-05-17 after ALP-507 added two cascade-dispatch placeholder
+    # knobs (``cascade_dispatch_placeholder_adv_to_position_size_ratio`` and
+    # ``cascade_dispatch_placeholder_risk_reward_ratio``) to
+    # ``continuous_monitor.yaml``; the fixture's canonical bytes shifted by
+    # exactly those two field additions.
+    expected = "51051a32236d1ea42eb59fffe2609f628c1f8ed260a18362b6c45eb133f53df4"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

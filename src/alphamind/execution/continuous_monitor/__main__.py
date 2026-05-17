@@ -49,9 +49,11 @@ from alphamind.execution.continuous_monitor.breach_loop import (
     register_breach_loop_task,
 )
 from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
+    DispatchPlaceholders,
     load_breach_loop_resolved_config,
     make_dispatch_context_provider,
     make_library_config_factory,
+    make_open_positions_view_provider,
     make_regime_provider,
     make_snapshot_provider,
     make_submit_envelope,
@@ -220,6 +222,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         supervisor,
         underlying_cache=underlying_cache,
         session=session,
+        monitor_config=config,
         breach_behavior_config=breach_behavior_config,
         breach_response_lookup=breach_response_lookup,
         db_session_factory=db_session_factory,
@@ -293,6 +296,7 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     *,
     underlying_cache: object,
     session: MonitorSession,
+    monitor_config: ContinuousMonitorConfig,
     breach_behavior_config: BreachBehaviorConfig,
     breach_response_lookup: Mapping[str, BreachResponse],
     db_session_factory: async_sessionmaker[AsyncSession],
@@ -358,6 +362,9 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     # would cost.
     resolved_config = load_breach_loop_resolved_config(config_dir)
     portfolio_state_config = load_portfolio_state_config(config_dir / "portfolio_state.yaml")
+    # One IvProvider shared by the breach-loop evaluator and the cascade
+    # dispatcher's re-projection so both observe identical IV values.
+    iv_provider = FixtureIvProvider(surface={}, realized_vol={})
     snapshot_provider = make_snapshot_provider(
         session_factory=db_session_factory,
         underlying_cache=underlying_cache_typed,
@@ -370,12 +377,27 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
         resolved=resolved_config,
     )
     library_config_factory = make_library_config_factory(resolved=resolved_config)
+    open_positions_view_provider = make_open_positions_view_provider(
+        session_factory=db_session_factory,
+        underlying_cache=underlying_cache_typed,
+        resolved=resolved_config,
+        portfolio_state_config=portfolio_state_config,
+        state_persistence_config=state_persistence_config,
+    )
     dispatch_context_provider = make_dispatch_context_provider(
         snapshot_provider=snapshot_provider,
         regime_provider=regime_provider,
         library_config_factory=library_config_factory,
         underlying_cache=underlying_cache_typed,
+        iv_provider=iv_provider,
+        placeholders=DispatchPlaceholders(
+            adv_to_position_size_ratio=(
+                monitor_config.cascade_dispatch_placeholder_adv_to_position_size_ratio
+            ),
+            risk_reward_ratio=monitor_config.cascade_dispatch_placeholder_risk_reward_ratio,
+        ),
         progressive_tiers=progressive_tiers,
+        open_positions_provider=open_positions_view_provider,
     )
     submit_envelope = make_submit_envelope(
         session_factory=db_session_factory,
@@ -429,7 +451,7 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
         regime_provider=regime_provider,
         progressive_tiers=progressive_tiers,
         library_config_factory=library_config_factory,
-        iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
+        iv_provider=iv_provider,
         risk_free_rate=0.045,
         breach_response_lookup=breach_response_lookup,
         market_hours=calendar_cache,

@@ -19,8 +19,10 @@ pin the closure contracts.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
@@ -55,18 +57,21 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterSet,
 )
 from alphamind.portfolio_state.assembler import assemble_snapshot
+from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.consumers.synthesizer import adapt_ticker_sector_resolver
+from alphamind.portfolio_state.freshness import AssembledSnapshot
 from alphamind.portfolio_state.pricing import (
     PriceQuote,
     PriceSource,
     StubCurrentPriceProvider,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import (
     PositionLiquidity,
     PositionRiskReward,
 )
 from alphamind.risk_guardrails.guardrail_evaluation import (
-    FixtureIvProvider,
+    IvProvider,
     LibraryConfig,
     MarketInputs,
     evaluate_proposals,
@@ -95,11 +100,14 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
+    "DispatchPlaceholders",
     "LibraryConfigFactory",
+    "OpenPositionsViewProvider",
     "load_breach_loop_resolved_config",
     "make_dispatch_context_provider",
     "make_invocation_id_provider_sync",
     "make_library_config_factory",
+    "make_open_positions_view_provider",
     "make_regime_provider",
     "make_snapshot_provider",
     "make_submit_envelope",
@@ -383,6 +391,59 @@ async def _load_active_risk_parameters_from_row(
 
 
 # ---------------------------------------------------------------------------
+# Shared inner assembly — snapshot and open-positions providers both use this
+# ---------------------------------------------------------------------------
+
+
+async def _assemble_for_breach_loop_tick(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    state_persistence_config: StatePersistenceConfig,
+    underlying_cache: UnderlyingPriceCache,
+    portfolio_state_config: PortfolioStateConfig,
+    bootstrap_parameters: ActiveRiskParameterSet,
+    position_sector_resolver: SectorResolver,
+    invocation_row: tuple[str, str, str] | None,
+    as_of: datetime,
+) -> AssembledSnapshot:
+    """Run the assemble pipeline once for the supplied invocation row.
+
+    Shared by :func:`make_snapshot_provider` and
+    :func:`make_open_positions_view_provider` so the row read,
+    parameter-set hydration, repository construction, and
+    :func:`assemble_snapshot` call do not duplicate per provider. Callers
+    own the upstream ``_read_latest_invocation_row`` so each can apply its
+    own bootstrap policy (sentinel vs. short-circuit) before invoking.
+    """
+    invocation_id = _BOOTSTRAP_SENTINEL if invocation_row is None else invocation_row[0]
+    active = await _load_active_risk_parameters_from_row(
+        invocation_row, fallback=bootstrap_parameters
+    )
+
+    def _active_provider() -> ActiveRiskParameterSet:
+        return active
+
+    def _prior_provider(_snapshot_path: str) -> ActiveRiskParameterSet:
+        return active
+
+    repository = build_sql_portfolio_state_repository(
+        session_factory=session_factory,
+        invocation_id=invocation_id,
+        active_risk_parameters_provider=_active_provider,
+        prior_active_risk_parameters_provider=_prior_provider,
+        config=state_persistence_config,
+    )
+    price_provider = _build_price_provider(underlying_cache, as_of=as_of)
+    return assemble_snapshot(
+        repository=repository,
+        price_provider=price_provider,
+        sector_resolver=position_sector_resolver,
+        config=portfolio_state_config,
+        now=as_of,
+    )
+
+
+# ---------------------------------------------------------------------------
 # snapshot_provider
 # ---------------------------------------------------------------------------
 
@@ -401,12 +462,12 @@ def make_snapshot_provider(
 ) -> SnapshotProvider:
     """Build the breach-loop's per-tick :class:`LibrarySnapshot` provider.
 
-    Each call resolves the most recent invocation_id, constructs a
-    :class:`SqlPortfolioStateRepository` scoped to it, drives
-    :func:`assemble_snapshot` against current underlying prices from the
-    monitor's :class:`UnderlyingPriceCache`, and translates the result via
-    :func:`to_library_snapshot`. The pricing provider is built per call
-    from the live cache so the snapshot reads the freshest spots.
+    Each call resolves the most recent invocation_id, runs the shared
+    :func:`_assemble_for_breach_loop_tick` pipeline against current
+    underlying prices from the monitor's :class:`UnderlyingPriceCache`, and
+    translates the result via :func:`to_library_snapshot`. The pricing
+    provider is built per call from the live cache so the snapshot reads
+    the freshest spots.
 
     Daemon-owned configs (``resolved``, ``portfolio_state_config``,
     ``state_persistence_config``) are loaded once at startup and shared
@@ -422,29 +483,15 @@ def make_snapshot_provider(
 
     async def _provider() -> LibrarySnapshot:
         row = await _read_latest_invocation_row(session_factory)
-        invocation_id = _BOOTSTRAP_SENTINEL if row is None else row[0]
-        active = await _load_active_risk_parameters_from_row(row, fallback=bootstrap_parameters)
-
-        def _active_provider() -> ActiveRiskParameterSet:
-            return active
-
-        def _prior_provider(_snapshot_path: str) -> ActiveRiskParameterSet:
-            return active
-
-        repository = build_sql_portfolio_state_repository(
+        assembled = await _assemble_for_breach_loop_tick(
             session_factory=session_factory,
-            invocation_id=invocation_id,
-            active_risk_parameters_provider=_active_provider,
-            prior_active_risk_parameters_provider=_prior_provider,
-            config=state_persistence_config,
-        )
-        price_provider = _build_price_provider(underlying_cache, as_of=now())
-        assembled = assemble_snapshot(
-            repository=repository,
-            price_provider=price_provider,
-            sector_resolver=position_sector_resolver,
-            config=portfolio_state_config,
-            now=now(),
+            state_persistence_config=state_persistence_config,
+            underlying_cache=underlying_cache,
+            portfolio_state_config=portfolio_state_config,
+            bootstrap_parameters=bootstrap_parameters,
+            position_sector_resolver=position_sector_resolver,
+            invocation_row=row,
+            as_of=now(),
         )
         return to_library_snapshot(
             assembled.snapshot,
@@ -570,72 +617,143 @@ def _resolve_regime_from_label(
 
 
 # ---------------------------------------------------------------------------
+# open_positions_view provider — assembles PositionViews for the dispatcher
+# ---------------------------------------------------------------------------
+
+
+OpenPositionsViewProvider = Callable[[], Awaitable[tuple[PositionView, ...]]]
+
+
+def make_open_positions_view_provider(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    underlying_cache: UnderlyingPriceCache,
+    resolved: ResolvedConfig,
+    portfolio_state_config: PortfolioStateConfig,
+    state_persistence_config: StatePersistenceConfig,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> OpenPositionsViewProvider:
+    """Return a per-tick provider of open :class:`PositionView` instances.
+
+    The cascade dispatcher's :class:`BreachDispatchContext` needs the
+    snapshot-assembler-built :class:`PositionView` instances (with computed
+    market-value / weight / DAE fields), not raw :class:`PositionRecord`
+    rows from :class:`SqlOpenPositionsReader`. This provider walks the
+    shared :func:`_assemble_for_breach_loop_tick` pipeline and returns the
+    ``open_positions`` slice of the resulting :class:`PortfolioStateSnapshot`.
+
+    Bootstrap behavior (no invocation rows in the DB) short-circuits to an
+    empty tuple so the dispatcher's selectors no-op and the breach loop
+    tick continues. :func:`make_snapshot_provider` does NOT share this
+    tolerance — its sentinel-id path relies on a seeded invocation row to
+    satisfy the assembler's repository contract.
+    """
+    bootstrap_parameters = _build_active_risk_parameters(
+        rule_values=resolved.rule_values,
+        regime=Regime(resolved.regime_label),
+    )
+    ticker_sector_resolver = _build_sector_resolver(resolved)
+    position_sector_resolver = adapt_ticker_sector_resolver(ticker_sector_resolver)
+
+    async def _provider() -> tuple[PositionView, ...]:
+        row = await _read_latest_invocation_row(session_factory)
+        if row is None:
+            return ()
+        assembled = await _assemble_for_breach_loop_tick(
+            session_factory=session_factory,
+            state_persistence_config=state_persistence_config,
+            underlying_cache=underlying_cache,
+            portfolio_state_config=portfolio_state_config,
+            bootstrap_parameters=bootstrap_parameters,
+            position_sector_resolver=position_sector_resolver,
+            invocation_row=row,
+            as_of=now(),
+        )
+        return assembled.snapshot.open_positions
+
+    return _provider
+
+
+# ---------------------------------------------------------------------------
 # context_provider — builds BreachDispatchContext per dispatch
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class DispatchPlaceholders:
+    """Per-position ADV / R/R signals the dispatcher applies until ALP-508 lands.
+
+    Both values are operator-visible via ``config/continuous_monitor.yaml``
+    and retire together when the monitor's market-data path exposes the
+    live signals.
+    """
+
+    adv_to_position_size_ratio: float
+    risk_reward_ratio: float
 
 
 DispatchContextProvider = Callable[[], Awaitable[BreachDispatchContext]]
 
 
-def make_dispatch_context_provider(
+def make_dispatch_context_provider(  # noqa: PLR0913 — composition root; each parameter is one production-substrate seam
     *,
     snapshot_provider: SnapshotProvider,
     regime_provider: RegimeProvider,
     library_config_factory: LibraryConfigFactory,
     underlying_cache: UnderlyingPriceCache,
+    iv_provider: IvProvider,
+    placeholders: DispatchPlaceholders,
     progressive_tiers: tuple[ProgressiveTier, ...] = (),
-    open_positions_reader: Callable[[], Awaitable[tuple[Any, ...]]] | None = None,
+    open_positions_provider: OpenPositionsViewProvider | None = None,
     risk_free_rate: float = _DEFAULT_RISK_FREE_RATE,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> DispatchContextProvider:
     """Return an async context provider the cascade dispatcher awaits per immediate breach.
 
-    The dispatcher (post-ALP-453) awaits a sync-or-async context provider.
-    Production wiring is async because every read (SQL snapshot, regime,
-    library config) is async. The breach loop calls
-    ``await on_immediate_breach(...)`` which awaits
-    ``dispatcher.handle_immediate_breach`` which awaits this provider.
+    The caller threads ``iv_provider`` — the same instance the breach-loop
+    task itself reads — so cascade re-projections and breach-loop
+    evaluations see identical IV lookups. ``placeholders`` carries the
+    operator-visible interim defaults for the per-position ADV and
+    risk/reward signals; ALP-508 retires both once the monitor's
+    market-data path exposes the live signals.
 
-    Liquidity defaults to a constant ADV ratio (``10.0``) and risk/reward
-    defaults to ``2.0`` per position — the live ADV / R/R signals do not
-    yet flow into the monitor process, so the dispatcher's secondary-breach
-    arithmetic uses the same conservative defaults the verify script uses.
-    Replacing these with live signals is a follow-up once the monitor's
-    market-data path exposes them.
-
-    ``open_positions_reader`` is an optional reader returning
-    ``tuple[PositionView, ...]`` for the per-tick context. When omitted,
-    the context's ``open_positions`` is empty and the dispatcher relies on
-    its per-rule kwargs providers to surface the breaching position. The
-    daemon's wiring currently leaves this empty because the per-rule kwargs
-    providers are out of scope for ALP-453 — the dispatcher will not fire
-    without that map populated.
+    ``open_positions_provider`` is an optional async callable returning the
+    assembled :class:`PositionView` tuple for the per-tick context. When
+    omitted, the context's ``open_positions`` is empty and the dispatcher's
+    downstream selectors short-circuit — the breach loop tick still
+    completes without firing a cascade.
 
     ``progressive_tiers`` flows into :class:`BreachDispatchContext` so the
     cascade orchestrator's follow-up loop has the cumulative-drawdown tier
     sequence (driven by ``GuardrailsConfig.rules`` at daemon startup).
     """
-    _iv_provider = _EMPTY_IV_PROVIDER
 
     async def _provider() -> BreachDispatchContext:
-        library_snapshot = await snapshot_provider()
-        regime_output = await regime_provider()
+        library_snapshot, regime_output = await asyncio.gather(
+            snapshot_provider(), regime_provider()
+        )
         library_config = library_config_factory(regime_output.active_risk_parameter_set)
         market_inputs = MarketInputs(
             underlying_prices={t: q.price for t, q in underlying_cache.get_all().items()},
             risk_free_rate=risk_free_rate,
-            iv_provider=_iv_provider,
+            iv_provider=iv_provider,
             as_of=now(),
         )
-        open_positions: tuple[Any, ...] = ()
-        if open_positions_reader is not None:
-            open_positions = await open_positions_reader()
+        open_positions: tuple[PositionView, ...] = ()
+        if open_positions_provider is not None:
+            open_positions = await open_positions_provider()
         liquidity = tuple(
-            PositionLiquidity(position_id=p.position_id, adv_to_position_size_ratio=10.0)
+            PositionLiquidity(
+                position_id=p.position_id,
+                adv_to_position_size_ratio=placeholders.adv_to_position_size_ratio,
+            )
             for p in open_positions
         )
         risk_reward = tuple(
-            PositionRiskReward(position_id=p.position_id, risk_reward_ratio=2.0)
+            PositionRiskReward(
+                position_id=p.position_id,
+                risk_reward_ratio=placeholders.risk_reward_ratio,
+            )
             for p in open_positions
         )
         return BreachDispatchContext(
@@ -656,9 +774,6 @@ def make_dispatch_context_provider(
         )
 
     return _provider
-
-
-_EMPTY_IV_PROVIDER = FixtureIvProvider(surface={}, realized_vol={})
 
 
 # ---------------------------------------------------------------------------

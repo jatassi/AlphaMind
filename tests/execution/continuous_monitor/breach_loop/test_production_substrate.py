@@ -21,6 +21,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -29,14 +30,25 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 # alphamind.execution.oms (engine-stub MCP) and alphamind.decision.portfolio_manager.
 # Mirrors the breaker comment in tests/execution/oms/test_submit_engine_envelope.py.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
+from alphamind._kernel.ids import (
+    BracketId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
 )
+from alphamind.config.models.regimes import Regime
 from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
+    DispatchPlaceholders,
     load_breach_loop_resolved_config,
+    make_dispatch_context_provider,
     make_invocation_id_provider_sync,
     make_library_config_factory,
+    make_open_positions_view_provider,
     make_regime_provider,
     make_snapshot_provider,
     make_submit_envelope,
@@ -50,6 +62,25 @@ from alphamind.portfolio_state import load_portfolio_state_config
 from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
+)
+from alphamind.portfolio_state.records.positions import (
+    Direction,
+    EquityPositionDetails,
+    PositionFill,
+    PositionRecord,
+    PositionStatus,
+)
+from alphamind.portfolio_state.views.positions import PositionView
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    FixtureIvProvider,
+    MarketInputs,
+)
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    PortfolioStateSnapshot as LibrarySnapshot,
+)
+from alphamind.risk_guardrails.regime_adaptation import (
+    RegimeAdaptationOutput,
+    build_synthetic_regime_output,
 )
 from alphamind.state.config import StatePersistenceConfig
 from alphamind.state.invocation_context import (
@@ -335,3 +366,271 @@ class TestSubmitEnvelope:
             ),
         )
         assert callable(submit)
+
+
+# ---------------------------------------------------------------------------
+# make_dispatch_context_provider
+# ---------------------------------------------------------------------------
+
+
+def _equity_position_view(
+    *,
+    position_id: str,
+    ticker: str = "NVDA",
+    direction: Direction = Direction.LONG,
+    share_count: float = 10.0,
+    cost_basis: float = 150.0,
+    market_value_usd: float = 1500.0,
+) -> PositionView:
+    """Minimal open equity ``PositionView`` for dispatch-context tests."""
+    as_of = datetime(2026, 5, 17, 14, 30, tzinfo=UTC)
+    details = EquityPositionDetails(
+        ticker=Symbol(ticker),
+        share_count=share_count,
+        average_cost_basis_per_share=cost_basis,
+    )
+    record = PositionRecord(
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THE-{position_id}"),
+        bracket_id=BracketId(f"BRK-{position_id}"),
+        status=PositionStatus.OPEN,
+        direction=direction,
+        entry_timestamp=as_of,
+        details=details,
+        execution_history=(
+            PositionFill(
+                fill_timestamp=as_of,
+                fill_price=price(cost_basis),
+                fill_quantity=share_count,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
+            ),
+        ),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    sign = 1.0 if direction == Direction.LONG else -1.0
+    return PositionView(
+        record=record,
+        current_market_value_usd=signed_money(market_value_usd),
+        unrealized_pnl_usd=signed_money(0.0),
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=10.0 * sign,
+        position_age_hours=2.0,
+        notional_exposure_usd=money(market_value_usd),
+        delta_adjusted_exposure_usd=signed_money(market_value_usd * sign),
+        distance_to_target_usd=signed_money(10.0),
+        distance_to_stop_usd=signed_money(5.0),
+        risk_reward_at_current=2.0,
+    )
+
+
+def _make_library_snapshot(*, portfolio_value_usd: float = 100_000.0) -> LibrarySnapshot:
+    """Construct a minimal :class:`LibrarySnapshot` for context-provider tests."""
+    return LibrarySnapshot(
+        portfolio_value_usd=portfolio_value_usd,
+        cash_usd=10_000.0,
+        reserved_for_pending_orders_usd=0.0,
+        sector_exposure_pct={},
+        net_long_pct=10.0,
+        net_short_pct=0.0,
+        gross_pct=10.0,
+        options_delta_pct=0.0,
+        portfolio_theta_pct_per_day=0.0,
+        portfolio_vega_pct_per_iv_point=0.0,
+        total_short_pct=0.0,
+        single_short_max_pct=0.0,
+        daily_borrow_cost_pct=0.0,
+        position_max_size_pct=10.0,
+        existing_positions={},
+    )
+
+
+def _make_regime_output() -> RegimeAdaptationOutput:
+    """Synthetic ``RegimeAdaptationOutput`` for context-provider tests."""
+    return build_synthetic_regime_output(
+        active_risk_parameters=_active_parameter_set(),
+        runtime_active_regime=Regime.normal,
+        invocation_id="inv-test",
+        now=datetime(2026, 5, 17, 14, 30, tzinfo=UTC),
+    )
+
+
+class TestMakeDispatchContextProvider:
+    """The dispatcher's per-tick context-builder threads live deps into BreachDispatchContext."""
+
+    async def test_iv_provider_threaded_into_market_inputs(self, config_dir: Path) -> None:
+        """The IV provider the caller passes is the one consumers see on the context."""
+        snapshot = _make_library_snapshot()
+        regime_output = _make_regime_output()
+
+        async def _snapshot_provider() -> LibrarySnapshot:
+            return snapshot
+
+        async def _regime_provider() -> RegimeAdaptationOutput:
+            return regime_output
+
+        iv = FixtureIvProvider(surface={}, realized_vol={})
+        provider = make_dispatch_context_provider(
+            snapshot_provider=_snapshot_provider,
+            regime_provider=_regime_provider,
+            library_config_factory=make_library_config_factory(
+                resolved=load_breach_loop_resolved_config(config_dir),
+            ),
+            underlying_cache=UnderlyingPriceCache(),
+            iv_provider=iv,
+            placeholders=DispatchPlaceholders(
+                adv_to_position_size_ratio=10.0, risk_reward_ratio=2.0
+            ),
+        )
+        context = await provider()
+        # ``BreachDispatchContext.market_inputs`` is typed as the protocol;
+        # cast to the concrete ``MarketInputs`` to assert the IV provider
+        # identity ran through.
+        market_inputs = cast(MarketInputs, context.market_inputs)
+        assert market_inputs.iv_provider is iv
+
+    async def test_open_positions_populated_from_provider(self, config_dir: Path) -> None:
+        """When ``open_positions_provider`` returns N positions, the context carries N."""
+        snapshot = _make_library_snapshot()
+        regime_output = _make_regime_output()
+        positions = (
+            _equity_position_view(position_id="p1", ticker="AAPL"),
+            _equity_position_view(position_id="p2", ticker="MSFT"),
+        )
+
+        async def _snapshot_provider() -> LibrarySnapshot:
+            return snapshot
+
+        async def _regime_provider() -> RegimeAdaptationOutput:
+            return regime_output
+
+        async def _open_positions_provider() -> tuple[PositionView, ...]:
+            return positions
+
+        provider = make_dispatch_context_provider(
+            snapshot_provider=_snapshot_provider,
+            regime_provider=_regime_provider,
+            library_config_factory=make_library_config_factory(
+                resolved=load_breach_loop_resolved_config(config_dir),
+            ),
+            underlying_cache=UnderlyingPriceCache(),
+            iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
+            placeholders=DispatchPlaceholders(
+                adv_to_position_size_ratio=10.0, risk_reward_ratio=2.0
+            ),
+            open_positions_provider=_open_positions_provider,
+        )
+        context = await provider()
+        assert context.open_positions == positions
+
+    async def test_open_positions_empty_when_provider_absent(self, config_dir: Path) -> None:
+        """No ``open_positions_provider`` → empty ``open_positions`` and zero liquidity/R/R."""
+        snapshot = _make_library_snapshot()
+        regime_output = _make_regime_output()
+
+        async def _snapshot_provider() -> LibrarySnapshot:
+            return snapshot
+
+        async def _regime_provider() -> RegimeAdaptationOutput:
+            return regime_output
+
+        provider = make_dispatch_context_provider(
+            snapshot_provider=_snapshot_provider,
+            regime_provider=_regime_provider,
+            library_config_factory=make_library_config_factory(
+                resolved=load_breach_loop_resolved_config(config_dir),
+            ),
+            underlying_cache=UnderlyingPriceCache(),
+            iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
+            placeholders=DispatchPlaceholders(
+                adv_to_position_size_ratio=10.0, risk_reward_ratio=2.0
+            ),
+        )
+        context = await provider()
+        assert context.open_positions == ()
+        assert context.liquidity == ()
+        assert context.risk_reward_metric == ()
+
+    async def test_placeholder_ratios_apply_per_position(self, config_dir: Path) -> None:
+        """Each PositionLiquidity / PositionRiskReward carries the configured placeholder."""
+        snapshot = _make_library_snapshot()
+        regime_output = _make_regime_output()
+        positions = (
+            _equity_position_view(position_id="p1", ticker="AAPL"),
+            _equity_position_view(position_id="p2", ticker="MSFT"),
+        )
+
+        async def _snapshot_provider() -> LibrarySnapshot:
+            return snapshot
+
+        async def _regime_provider() -> RegimeAdaptationOutput:
+            return regime_output
+
+        async def _open_positions_provider() -> tuple[PositionView, ...]:
+            return positions
+
+        provider = make_dispatch_context_provider(
+            snapshot_provider=_snapshot_provider,
+            regime_provider=_regime_provider,
+            library_config_factory=make_library_config_factory(
+                resolved=load_breach_loop_resolved_config(config_dir),
+            ),
+            underlying_cache=UnderlyingPriceCache(),
+            iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
+            placeholders=DispatchPlaceholders(
+                adv_to_position_size_ratio=42.0, risk_reward_ratio=7.5
+            ),
+            open_positions_provider=_open_positions_provider,
+        )
+        context = await provider()
+        assert tuple(liq.adv_to_position_size_ratio for liq in context.liquidity) == (42.0, 42.0)
+        assert tuple(r.risk_reward_ratio for r in context.risk_reward_metric) == (7.5, 7.5)
+
+
+class TestMakeOpenPositionsViewProvider:
+    """The PositionView-tuple provider feeds the dispatcher's context per immediate breach."""
+
+    async def test_empty_db_returns_empty(
+        self,
+        db_session_factory: async_sessionmaker[AsyncSession],
+        config_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """No invocation row → empty tuple (bootstrap path, no cascade fires)."""
+        provider = make_open_positions_view_provider(
+            session_factory=db_session_factory,
+            underlying_cache=UnderlyingPriceCache(),
+            resolved=load_breach_loop_resolved_config(config_dir),
+            portfolio_state_config=load_portfolio_state_config(config_dir / "portfolio_state.yaml"),
+            state_persistence_config=StatePersistenceConfig(
+                pm_decision_log_sliding_window_invocations=10,
+                snapshot_read_timeout_seconds=5.0,
+                pip_freeze_snapshot_root=str(tmp_path / "pip"),
+                invocation_provenance_root=str(tmp_path / "prov"),
+            ),
+        )
+        assert await provider() == ()
+
+    def test_provider_constructs(
+        self,
+        db_session_factory: async_sessionmaker[AsyncSession],
+        config_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """``make_open_positions_view_provider`` returns a callable closure."""
+        provider = make_open_positions_view_provider(
+            session_factory=db_session_factory,
+            underlying_cache=UnderlyingPriceCache(),
+            resolved=load_breach_loop_resolved_config(config_dir),
+            portfolio_state_config=load_portfolio_state_config(config_dir / "portfolio_state.yaml"),
+            state_persistence_config=StatePersistenceConfig(
+                pm_decision_log_sliding_window_invocations=10,
+                snapshot_read_timeout_seconds=5.0,
+                pip_freeze_snapshot_root=str(tmp_path / "pip"),
+                invocation_provenance_root=str(tmp_path / "prov"),
+            ),
+        )
+        assert callable(provider)
