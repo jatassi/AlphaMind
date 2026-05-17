@@ -65,7 +65,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from alphamind._kernel.mode import PipelineMode
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.config.assets_views import (
-    active_sectors_from_resolved,
     build_sector_resolver,
     sectors_config_from_assets,
     ticker_scope_from_assets,
@@ -103,10 +102,9 @@ from alphamind.portfolio_state.pricing import (
 )
 from alphamind.risk_guardrails.breach_behavior.halt_state import compute_halt_state
 from alphamind.risk_guardrails.breach_behavior.types import HaltState
-from alphamind.risk_guardrails.guardrail_evaluation import (
-    FeatureFlagsView,
-    LibraryConfig,
-    MarketInputs,
+from alphamind.risk_guardrails.guardrail_evaluation import MarketInputs
+from alphamind.risk_guardrails.guardrail_evaluation.effective_limits import (
+    from_resolved_config,
 )
 from alphamind.risk_guardrails.regime_adaptation import (
     build_active_risk_parameters,
@@ -272,19 +270,8 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     """Assemble the kwargs ``run_decision_pipeline`` requires."""
     resolved = pipeline_config.resolved
 
-    feature_flags = FeatureFlagsView(
-        options_enabled=resolved.feature_flags.options_enabled,
-        short_selling_enabled=resolved.feature_flags.short_selling_enabled,
-    )
-    library_config = LibraryConfig(
-        effective_limits=resolved.rule_values,
-        escalation_zones={},  # populated by upstream guardrail composition; minimal default here
-        feature_flags=feature_flags,
-        active_sectors=tuple(sorted(active_sectors_from_resolved(resolved))),
-        active_regime=resolved.regime_label,
-        active_profile=resolved.profile_label,
-        conservative_buffer_pct=0.0,
-    )
+    library_config = from_resolved_config(resolved)
+    feature_flags = library_config.feature_flags
     library_market = phase1_market_inputs
 
     return {

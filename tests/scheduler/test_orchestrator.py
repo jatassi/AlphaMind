@@ -953,6 +953,82 @@ class TestRunInvocationSnapshotWiring:
         assert assemble_count == 1
 
 
+class TestRunInvocationLibraryConfigWiring:
+    """The orchestrator's decision-pipeline ``library_config`` (ALP-505).
+
+    Pre-ALP-505 the orchestrator built ``LibraryConfig`` inline with
+    ``escalation_zones={}`` and ``conservative_buffer_pct=0.0`` — placeholders
+    the comment promised "upstream guardrail composition" would fill but
+    nothing did. The pre-processor's first ``project_all`` then crashed on
+    ``config.escalation_zones[spec.effective_limit_key]``; the conservative
+    buffer silently zeroed every options-pricing buffer; and risk-budget
+    classifications silently collapsed to NORMAL.
+
+    Fix routes ``_build_decision_kwargs`` through the canonical
+    ``from_resolved_config`` adapter so escalation zones and the buffer come
+    from the same place every other caller reads them.
+    """
+
+    async def test_library_config_escalation_zones_match_effective_limits(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Every rule in ``effective_limits`` has a matching escalation-zones entry."""
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        library_config = captured["decision"]["library_config"]
+        assert library_config.escalation_zones.keys() == library_config.effective_limits.keys()
+
+    async def test_library_config_conservative_buffer_matches_resolved(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``conservative_buffer_pct`` is the resolved execution.conservative_delta_buffer_pct."""
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        library_config = captured["decision"]["library_config"]
+        # Shipped ``config/execution.yaml`` carries conservative_delta_buffer_pct=10.
+        assert library_config.conservative_buffer_pct == 10.0
+
+
 class TestRunInvocationFailuresThreeTxBoundaries:
     """Failure semantics at the three transaction boundaries (ALP-449).
 

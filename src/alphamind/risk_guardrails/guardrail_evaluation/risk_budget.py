@@ -63,16 +63,15 @@ def build_risk_budget_consumption(
     * ``limit_value = config.effective_limits[spec.effective_limit_key]``
     * ``headroom = limit_value - current_value`` (signed; matches the
       ``RiskBudgetEntry`` validator's strict equality contract).
-    * ``zone`` classifies via the per-rule escalation zones when present.
-      Inverse rules (``spec.inverse=True``) mirror the projection engine's
-      convention (``projection.py:_classify``) — FAIL below the floor,
-      WARNING within ``MIN_RULE_WARNING_BAND_PCT`` above the floor, NORMAL
-      otherwise — collapsed to three of the four ``RiskZone`` values
-      (NORMAL / WARNING / BLOCKED; CRITICAL is unused for inverse).
-      Rules missing from ``config.escalation_zones`` default to
-      ``RiskZone.NORMAL`` — the scheduler-orchestrator path currently
-      passes an empty zone mapping, and the builder must remain usable
-      across both that path and the breach-loop path.
+    * ``zone`` classifies via the per-rule escalation zones. Inverse rules
+      (``spec.inverse=True``) mirror the projection engine's convention
+      (``projection.py:_classify``) — FAIL below the floor, WARNING within
+      ``MIN_RULE_WARNING_BAND_PCT`` above the floor, NORMAL otherwise —
+      collapsed to three of the four ``RiskZone`` values
+      (NORMAL / WARNING / BLOCKED; CRITICAL is unused for inverse). A rule
+      missing from ``config.escalation_zones`` raises ``KeyError``; both
+      caller paths (scheduler and breach loop) build the config through
+      ``from_resolved_config``, which fills the zones for every rule.
 
     ``cumulative_invocation_impact_value`` is ``0.0`` at snapshot-build
     time: no proposals have been validated yet. ``headroom_pct_of_limit``
@@ -84,7 +83,7 @@ def build_risk_budget_consumption(
     for spec in build_active_specs(config):
         current = spec.read_current(snapshot, config)
         limit = config.effective_limits[spec.effective_limit_key]
-        zones = config.escalation_zones.get(spec.effective_limit_key)
+        zones = config.escalation_zones[spec.effective_limit_key]
         entries.append(
             RiskBudgetEntry(
                 rule_id=spec.rule_id,
@@ -132,7 +131,7 @@ def _headroom_pct(current_value: float, limit_value: float, *, inverse: bool) ->
 def _classify_zone(
     current_value: float,
     limit_value: float,
-    zones: EscalationZones | None,
+    zones: EscalationZones,
     *,
     inverse: bool,
 ) -> RiskZone:
@@ -144,14 +143,9 @@ def _classify_zone(
     (→ BLOCKED) below the floor, WARNING within ``MIN_RULE_WARNING_BAND_PCT``
     above the floor, NORMAL otherwise.
 
-    Returns ``RiskZone.NORMAL`` when *zones* is ``None`` — the scheduler
-    orchestrator's inline ``LibraryConfig`` passes an empty ``escalation_zones``
-    map today, and the builder defends against that without crashing.
     Raises ``ValueError`` on ``limit_value <= 0`` or ``current_value < 0``
     (real data corruption that the rest of the system would refuse).
     """
-    if zones is None:
-        return RiskZone.NORMAL
     if limit_value <= 0:
         msg = f"limit_value must be > 0; got {limit_value}"
         raise ValueError(msg)
