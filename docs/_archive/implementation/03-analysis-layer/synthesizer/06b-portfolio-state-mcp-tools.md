@@ -1,118 +1,68 @@
----
-status: not_started
-completed_date:
-commit_id:
----
-
 # 06b — Portfolio-state MCP tools
 
 ## Goal
 
-Wrap the three `PortfolioStateReader` methods (`get_positions_summary`, `get_active_theses_summary`, `get_exposure_snapshot` from story 05b) as Claude Agent SDK MCP tools the synthesizer's harness wires into its `ClaudeAgentOptions(allowed_tools=...)`. The tools render the typed value objects into compact text representations the synthesizer's LLM consumes as tool returns.
+Wrap the three `SynthesizerPortfolioStateReader` methods (`get_positions_summary`, `get_active_theses_summary`, `get_exposure_snapshot`) as Claude Agent SDK MCP tools the synthesizer's harness wires into its `ClaudeAgentOptions`. The tools render the typed value objects into compact text representations the synthesizer's LLM consumes as tool returns.
 
-The synthesizer is the only consumer; per the design, decision-layer agents have their own deeper portfolio-state surfaces (strategist's full thesis records, PM's thesis-component retrieval).
+The reader Protocol and value objects are already implemented at `src/alphamind/portfolio_state/consumers/synthesizer.py` (shipped under the Portfolio state work tree, ALP-53). This story adds the MCP-tool wrapping only.
 
 ## Reading
 
-- `docs/design/03-analysis-layer/synthesizer.md` § Portfolio state tools — the tool inventory, return shapes, and the explicit out-of-scope list (P/L, thesis components, capital efficiency, system health, activity log, derived metrics)
-- `docs/design/03-analysis-layer/synthesizer.md` § Purpose — usage pattern: cross-referencing market signals against the current portfolio
-- `docs/architecture/llm-integration.md` § Tool registration — MCP `@tool` registration pattern, return-shape convention
-- `docs/implementation/03-analysis-layer/synthesizer/05b-portfolio-state-read-protocol.md` — the `PortfolioStateReader` protocol and the three value objects
-- `docs/implementation/03-analysis-layer/synthesizer/06a-retrieve-brief-mcp-tool.md` — the sibling MCP-tool factory pattern (mirror its structure for consistency)
+* `docs/architecture/llm-integration.md` § Tool registration — MCP registration pattern using `claude_agent_sdk.tool` plus `create_sdk_mcp_server`.
+* `docs/architecture/llm-integration.md` § Tool protocol — return-type discipline (tools return `{"content": [{"type": "text", "text": ...}]}`).
+* `docs/design/03-analysis-layer/synthesizer.md` § Portfolio state tools — the three tools' purpose and return contract.
+* `src/alphamind/portfolio_state/consumers/synthesizer.py` — `SynthesizerPortfolioStateReader` Protocol plus value objects (`SynthesizerPositionSummary`, `SynthesizerThesisSummary`, `SynthesizerExposureSnapshot`, `SynthesizerView`) plus concrete adapter (`SnapshotBackedSynthesizerReader`). **Import these directly; do not redefine.**
+* `src/alphamind/analysis/qualitative_research/harness.py` — pattern reference for MCP-server construction. Note: the synthesizer's wiring uses **per-invocation closures** rather than the `TOOLS` registry — see parent issue § Notes for the orchestrator.
+* [ALP-208](https://linear.app/alphamind-jatassi/issue/ALP-208) (story 08) — the harness that calls this story's factory and wires the result into `ClaudeAgentOptions`.
 
 ## Depends on
 
-- 05b (`PortfolioStateReader`, `PositionSummary`, `ThesisSummary`, `ExposureSnapshot`)
+Nothing in this work tree — the consumer module is already shipped.
 
 ## Scope
 
-In scope: under `src/alphamind/analysis/synthesizer/tools/` —
+Module path is `src/alphamind/analysis/synthesizer/portfolio_tools.py`. The module defines a factory that builds the per-invocation MCP server bound to a specific reader, plus three private renderer helpers.
 
-- `portfolio_state.py` defining a single factory:
+#### Factory signature
 
-  - `def make_portfolio_state_tools(reader: PortfolioStateReader) -> tuple[Callable, Callable, Callable]` returning the three SDK `@tool`-decorated async callables in declared order: `(get_positions_summary_tool, get_active_theses_summary_tool, get_exposure_snapshot_tool)`. Like the `retrieve_brief` factory (story 06a), the factory pattern injects the per-invocation `PortfolioStateReader` via closure; the runner (story 10) calls it once per invocation.
+`build_portfolio_state_mcp_server(reader: SynthesizerPortfolioStateReader, *, server_name: str = "alphamind_synthesizer_portfolio") -> tuple[dict[str, McpSdkServerConfig], list[str]]`. Returns `(mcp_servers_dict, allowed_tool_names)` ready for direct assignment to `ClaudeAgentOptions.mcp_servers` and `ClaudeAgentOptions.allowed_tools`. The allowed-tools list contains three names of the form `mcp__alphamind_synthesizer_portfolio__<tool>`.
 
-  - Each tool's name and description match the agent-config tool list (story 02):
+#### Implementation pattern
 
-    - `get_positions_summary` — `"Current open positions: ticker, direction, sector, size as percentage of portfolio, position age in hours."`. Argument schema: `{}` (no arguments).
-    - `get_active_theses_summary` — `"Active thesis snapshots: ticker, thesis one-liner, key catalyst, time expectation."`. Argument schema: `{}`.
-    - `get_exposure_snapshot` — `"Portfolio exposure profile: per-sector breakdown, net directional exposure, gross exposure."`. Argument schema: `{}`.
+Define three async handlers inside the factory. Each handler closes over the `reader` parameter and follows the same shape — call the reader's async method, render the result to text, and return the standard MCP content envelope `{"content": [{"type": "text", "text": <rendered>}]}`.
 
-  - Return-shape conventions (deterministic compact text the LLM reads as a tool return):
+The three handler names are `get_positions_summary`, `get_active_theses_summary`, `get_exposure_snapshot`. Each `@tool` decorator declares an empty input schema (`{"type": "object", "properties": {}}`) since the tools take no arguments. After defining all three, call `create_sdk_mcp_server(name=server_name, tools=[h1, h2, h3])` and build the allowed-tools list.
 
-    - **`get_positions_summary`** — Calls `reader.get_positions_summary()`. Renders into:
-      ```
-      OPEN POSITIONS (count: {N})
-      {ticker} | {direction} | {sector} | size {size_pct:.1f}% | age {position_age_hours:.1f}h
-      ...
-      ```
-      Empty case: `OPEN POSITIONS (count: 0)\n(no open positions)`. Sort: by `size_pct` descending, ties broken by `ticker` ascending.
+#### Renderer helpers
 
-    - **`get_active_theses_summary`** — Calls `reader.get_active_theses_summary()`. Renders into:
-      ```
-      ACTIVE THESES (count: {N})
-      [{position_id}] {ticker}: {summary}
-        Catalyst: {key_catalyst} | Time: {time_expectation_hours}
-      ...
-      ```
-      Empty case: `ACTIVE THESES (count: 0)\n(no active theses)`. Sort: by `position_id` ascending (stable lookup against the strategist's referencing).
+Three private functions render the typed value objects into compact, LLM-readable text. Each renderer covers an empty-input branch that returns a graceful sentence rather than an empty string or exception.
 
-    - **`get_exposure_snapshot`** — Calls `reader.get_exposure_snapshot()`. Renders into:
-      ```
-      EXPOSURE SNAPSHOT
-      Net directional: {net_directional_pct:+.1f}%
-      Gross: {gross_exposure_pct:.1f}%
-      Sector breakdown:
-        {sector}: {pct:+.1f}%
-        ...
-      ```
-      Sector entries sorted by absolute exposure descending; ties broken by sector name ascending. Empty `sector_exposure_pct` renders `Sector breakdown:\n  (no sector exposure)`. Always returns the snapshot — there is no "no portfolio" case (a zero-position portfolio still has a snapshot with zero exposures).
+* `_render_positions(positions: tuple[SynthesizerPositionSummary, ...]) -> str` — one line per position summarising ticker, direction, sector, size %, position age. Empty input renders to `"No open positions."`.
+* `_render_theses(theses: tuple[SynthesizerThesisSummary, ...]) -> str` — one line per thesis summarising ticker, summary, key catalyst, time expectation. Empty input renders to `"No active theses."`.
+* `_render_exposure(snapshot: SynthesizerExposureSnapshot) -> str` — sector breakdown plus net directional plus gross exposure. All-zero exposure renders to `"No exposure (all positions flat or empty book)."`.
 
-  - Each tool wraps its rendered text in `{"content": [{"type": "text", "text": rendered}]}` per the SDK convention.
+#### Tests
 
-  - Error semantics: if `reader` raises (e.g., the production reader hits a database error), the tool catches the exception and returns `{"content": [{"type": "text", "text": f"Portfolio state unavailable: {error_message}"}], "is_error": True}`. The synthesizer's prompt instructs the LLM that an `is_error: True` response means it should narrate without portfolio context for this synthesis cycle. This treatment is consistent with the `retrieve_brief` "missing reference" semantics — both are recoverable-by-the-LLM tool errors, not SDK-level abort triggers.
+Test module path is `tests/analysis/synthesizer/test_portfolio_tools.py`. Test cases listed below.
 
-- Unit tests under `tests/analysis/synthesizer/`:
-  - The factory returns three callables in the declared order with the documented tool names.
-  - `get_positions_summary_tool()` against a `StubPortfolioStateReader` with three positions returns the expected formatted text; positions are sorted by `size_pct` descending; ties broken by ticker.
-  - Empty-positions case renders `(no open positions)` with the count line.
-  - `get_active_theses_summary_tool()` against three theses returns the expected text; theses sorted by `position_id` ascending.
-  - Empty-theses case renders `(no active theses)`.
-  - `get_exposure_snapshot_tool()` against a snapshot with three sectors returns the expected text; sectors sorted by absolute exposure descending.
-  - Snapshot with empty `sector_exposure_pct` renders `(no sector exposure)`.
-  - Reader exception → tool returns `is_error: True` payload with the exception message; tool does not re-raise.
-  - Tools created from different `PortfolioStateReader` instances do not share state.
-  - Determinism: identical reader state → identical rendered text across repeated calls.
+* `test_factory_returns_server_and_allowed_tools` — shape of return value with three tool names.
+* `test_positions_handler_returns_text` — fixture reader returning two positions; handler returns text containing both tickers.
+* `test_theses_handler_returns_text` — fixture reader returning a thesis; handler returns text containing the thesis summary.
+* `test_exposure_handler_returns_text` — text contains sector and net exposure values.
+* `test_empty_state_handlers_return_graceful_text` — reader returning empty tuples or zero exposure produces non-empty graceful messages, not exceptions.
+* `test_handlers_use_async_reader_methods` — each handler awaits the reader's async method.
 
-Out of scope:
-- Wiring the tools into the synthesizer's `ClaudeAgentOptions(allowed_tools=...)` — story 08 (harness) does this.
-- The production `PortfolioStateReader` implementation — a future execution-layer or data-layer-internal work tree; this story tests against `StubPortfolioStateReader` from story 05b.
-- Caching tool returns within an invocation — the synthesizer typically calls each tool 0–1 times per invocation per the design's "on quiet days, none of these tools may be called" framing; caching adds complexity for negligible gain.
-- Decision-layer portfolio-state tools (the strategist's full thesis records via `get_thesis_components`, the PM's `get_thesis_components` retrieval) — those live in their own work trees with deeper read surfaces.
+## Out of scope
 
-## Notes
-
-The compact text rendering format is chosen for LLM-readability + token efficiency rather than machine-parseability. The synthesizer's LLM is the consumer; it reads the formatted text once per tool call and reasons about it in narrative form. There is no downstream parser; the structured value objects (story 05b) are not preserved past the tool boundary.
-
-Sort orders are documented and tested so the synthesizer's prompt can reference them ("the largest position is at the top of `OPEN POSITIONS`"). Without a stable sort, the prompt would have to reason about ordering each time, and prompt-cache hit rate would degrade because identical reader state could produce different text across calls.
-
-The `is_error: True` treatment of reader failures matches the `retrieve_brief` tool's missing-reference semantics. Per `llm-agent-failure-handling.md § Tool-use error`, raised tool exceptions are SDK-level errors that trigger one retry then abort. Treating "portfolio state momentarily unavailable" as a recoverable in-LLM signal preserves the synthesizer's fail-closed semantics where they belong (the LLM's structural validity) without making transient infrastructure issues escalate to invocation aborts.
-
-The portfolio-state runtime does not yet exist on `main`; story 05b's `StubPortfolioStateReader` is the only concrete implementation at story-completion time. The runner (story 10) wires the stub for tests; production wiring lands when the runtime work tree lands. This story does NOT block on the runtime — the protocol-and-tools surface is fully testable against the stub.
-
-Per [`feedback_simplify_before_building.md`](../../../../.claude/projects/-Users-jatassi-Git-AlphaMind/memory/feedback_simplify_before_building.md), do NOT introduce a `ToolRegistry` or `ToolBundle` class. The factory returns a tuple; the harness destructures it; the SDK consumes the three callables individually. No abstraction layer.
-
-The `reader` argument is typed as `PortfolioStateReader`. Both the production reader (when it exists) and `StubPortfolioStateReader` satisfy the protocol per story 05b. Mypy enforces this; tests verify both shapes work.
+* Implementing or modifying `SynthesizerPortfolioStateReader` or its value objects (already shipped under ALP-53).
+* Implementing the production wiring of `SnapshotBackedSynthesizerReader` (the harness story 08 supplies the reader instance per-invocation).
+* The harness-level wiring of these tools into `ClaudeAgentOptions` (story 08).
 
 ## Acceptance criteria
 
-- [ ] `make_portfolio_state_tools(reader)` returns three SDK `@tool`-decorated async callables in declared order with the documented names.
-- [ ] `get_positions_summary` renders the documented format; sorts by `size_pct` desc then ticker asc; empty case renders `(no open positions)`.
-- [ ] `get_active_theses_summary` renders the documented format; sorts by `position_id` asc; empty case renders `(no active theses)`.
-- [ ] `get_exposure_snapshot` renders the documented format; sectors sorted by absolute exposure desc; empty `sector_exposure_pct` renders `(no sector exposure)`.
-- [ ] Each tool wraps output in `{"content": [{"type": "text", "text": rendered}]}`.
-- [ ] Reader exception → tool returns `is_error: True` with exception message; tool does not re-raise.
-- [ ] Tools created from different `PortfolioStateReader` instances do not share state.
-- [ ] Identical reader state produces identical rendered text across repeated calls (determinism).
-- [ ] Tool names match the `tools` list in `config/agents.yaml` for the synthesizer (story 02).
-- [ ] `uv run ruff check . && uv run ruff format . && uv run mypy && uv run pytest` all pass.
+- [ ] `build_portfolio_state_mcp_server(reader)` returns `(mcp_servers_dict, allowed_tools)` with three tool names.
+- [ ] Each handler renders its value object to LLM-readable text.
+- [ ] Empty inputs produce graceful text, not exceptions.
+- [ ] All three handlers `await` the reader's async methods.
+- [ ] No redefinition of `SynthesizerPortfolioStateReader` or any of its value objects.
+- [ ] `uv run ruff check . && uv run ruff format . && uv run mypy && uv run pytest -n auto` all pass.
