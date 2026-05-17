@@ -279,12 +279,9 @@ def test_zone_blocked_at_threshold() -> None:
 
 
 def test_raises_when_zones_missing_for_a_rule() -> None:
-    # Pre-ALP-505 the scheduler-orchestrator path passed ``escalation_zones={}``
-    # into LibraryConfig, and the builder defended against that by returning
-    # RiskZone.NORMAL. The scheduler is now routed through the canonical
-    # ``from_resolved_config`` adapter, so every caller supplies zones for
-    # every rule. A missing entry is a real bug — the builder must raise so
-    # silent NORMAL classifications can't hide a consumption breach.
+    # Every caller path builds the config through ``from_resolved_config``,
+    # which fills zones for every rule. A missing entry is a real bug — silent
+    # NORMAL classifications can't hide a consumption breach.
     config = _config(escalation_zones={})
     snapshot = _snapshot()
 

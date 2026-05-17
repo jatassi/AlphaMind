@@ -102,8 +102,8 @@ from alphamind.portfolio_state.pricing import (
 )
 from alphamind.risk_guardrails.breach_behavior.halt_state import compute_halt_state
 from alphamind.risk_guardrails.breach_behavior.types import HaltState
-from alphamind.risk_guardrails.guardrail_evaluation import MarketInputs
-from alphamind.risk_guardrails.guardrail_evaluation.effective_limits import (
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    MarketInputs,
     from_resolved_config,
 )
 from alphamind.risk_guardrails.regime_adaptation import (
@@ -271,8 +271,6 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     resolved = pipeline_config.resolved
 
     library_config = from_resolved_config(resolved)
-    feature_flags = library_config.feature_flags
-    library_market = phase1_market_inputs
 
     return {
         "assembled_snapshot": assembled_snapshot,
@@ -293,11 +291,11 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
         "sector_resolver": sector_resolver,
         "borrow_cost_resolver": None,
         "library_config": library_config,
-        "library_market": library_market,
-        "profile_feature_flags": feature_flags,
+        "library_market": phase1_market_inputs,
+        "profile_feature_flags": library_config.feature_flags,
         "state_delivery_config": state_delivery_config,
-        "options_enabled": feature_flags.options_enabled,
-        "short_selling_enabled": feature_flags.short_selling_enabled,
+        "options_enabled": library_config.feature_flags.options_enabled,
+        "short_selling_enabled": library_config.feature_flags.short_selling_enabled,
         "active_sectors": frozenset(library_config.active_sectors),
         "invocation_id": invocation_id,
         "timestamp": now,

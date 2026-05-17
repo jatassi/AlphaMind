@@ -141,7 +141,9 @@ def _classify_zone(
     against the supplied escalation thresholds. Inverse rules mirror the
     projection engine's convention (``projection.py:_classify``): FAIL
     (→ BLOCKED) below the floor, WARNING within ``MIN_RULE_WARNING_BAND_PCT``
-    above the floor, NORMAL otherwise.
+    above the floor, NORMAL otherwise. ``zones`` is required; the caller's
+    subscript at :func:`build_risk_budget_consumption` raises ``KeyError``
+    upstream when a rule has no zones entry.
 
     Raises ``ValueError`` on ``limit_value <= 0`` or ``current_value < 0``
     (real data corruption that the rest of the system would refuse).

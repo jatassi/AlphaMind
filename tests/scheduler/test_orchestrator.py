@@ -969,14 +969,14 @@ class TestRunInvocationLibraryConfigWiring:
     from the same place every other caller reads them.
     """
 
-    async def test_library_config_escalation_zones_match_effective_limits(
+    async def test_library_config_zones_and_buffer_match_resolved(
         self,
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Every rule in ``effective_limits`` has a matching escalation-zones entry."""
+        """Every rule has an escalation-zones entry; buffer carries the resolved value."""
         from alphamind.scheduler.orchestrator import run_invocation
 
         captured: dict[str, Any] = {}
@@ -997,35 +997,8 @@ class TestRunInvocationLibraryConfigWiring:
 
         library_config = captured["decision"]["library_config"]
         assert library_config.escalation_zones.keys() == library_config.effective_limits.keys()
-
-    async def test_library_config_conservative_buffer_matches_resolved(
-        self,
-        async_factory: async_sessionmaker[AsyncSession],
-        env_path: Path,
-        archive_root: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """``conservative_buffer_pct`` is the resolved execution.conservative_delta_buffer_pct."""
-        from alphamind.scheduler.orchestrator import run_invocation
-
-        captured: dict[str, Any] = {}
-        _patch_no_op_pipeline(monkeypatch, captured=captured)
-
-        await run_invocation(
-            context=_make_context(
-                session_factory=async_factory,
-                env_path=env_path,
-                archive_root=archive_root,
-            ),
-            trigger_type="manual",
-            trigger_source="cli",
-            trigger_reason="test",
-            firing_run_type=RunType.market_hours_rolling,
-            now=_NOW,
-        )
-
-        library_config = captured["decision"]["library_config"]
-        # Shipped ``config/execution.yaml`` carries conservative_delta_buffer_pct=10.
+        # ``config/execution.yaml`` sets conservative_delta_buffer_pct=10; assert that
+        # value survives the adapter into ``library_config``.
         assert library_config.conservative_buffer_pct == 10.0
 
 
