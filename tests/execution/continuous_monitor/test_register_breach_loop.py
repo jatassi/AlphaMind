@@ -29,6 +29,7 @@ from unittest import mock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 import alphamind.decision.portfolio_manager.models  # noqa: F401 — break OMS↔PM cycle
 from alphamind._kernel.money import money
@@ -141,6 +142,7 @@ def _make_calendar_cache() -> TradingCalendarCache:
 
 async def test_register_breach_loop_uses_shared_trigger_ids(
     db_session_factory: async_sessionmaker[AsyncSession],
+    sync_session_factory: sessionmaker[Session],
 ) -> None:
     """The cascade dispatcher consumes the trigger_ids passed by the daemon."""
     session = _session()
@@ -165,6 +167,7 @@ async def test_register_breach_loop_uses_shared_trigger_ids(
             breach_behavior_config=_breach_behavior_config(),
             breach_response_lookup=breach_response_lookup,
             db_session_factory=db_session_factory,
+            sync_session_factory=sync_session_factory,
             trigger_ids=shared_trigger_ids,
             progressive_tiers=(),
             account_state_queries=_SolventAccountQueries(),
@@ -180,6 +183,7 @@ async def test_register_breach_loop_uses_shared_trigger_ids(
 
 async def test_register_breach_loop_registers_breach_loop_task(
     db_session_factory: async_sessionmaker[AsyncSession],
+    sync_session_factory: sessionmaker[Session],
 ) -> None:
     """The supervisor ends up with a ``breach_loop`` task registered."""
     session = _session()
@@ -191,6 +195,7 @@ async def test_register_breach_loop_registers_breach_loop_task(
         breach_behavior_config=_breach_behavior_config(),
         breach_response_lookup=MappingProxyType({}),
         db_session_factory=db_session_factory,
+        sync_session_factory=sync_session_factory,
         trigger_ids=TriggerIdGenerator(session_id=session.session_id),
         progressive_tiers=(),
         account_state_queries=_SolventAccountQueries(),
@@ -203,6 +208,7 @@ async def test_register_breach_loop_registers_breach_loop_task(
 
 async def test_register_breach_loop_wires_real_activity_log_sink(
     db_session_factory: async_sessionmaker[AsyncSession],
+    sync_session_factory: sessionmaker[Session],
 ) -> None:
     """Regression — the supervisor's breach-loop task receives a real
     activity_log_sink that persists entries via db_session_factory.
@@ -230,6 +236,7 @@ async def test_register_breach_loop_wires_real_activity_log_sink(
             breach_behavior_config=_breach_behavior_config(),
             breach_response_lookup=MappingProxyType({}),
             db_session_factory=db_session_factory,
+            sync_session_factory=sync_session_factory,
             trigger_ids=TriggerIdGenerator(session_id=session.session_id),
             progressive_tiers=(),
             account_state_queries=_SolventAccountQueries(),
@@ -253,6 +260,7 @@ async def test_register_breach_loop_wires_real_activity_log_sink(
 
 async def test_register_breach_loop_threads_trigger_ids_to_emergency_callback(
     db_session_factory: async_sessionmaker[AsyncSession],
+    sync_session_factory: sessionmaker[Session],
 ) -> None:
     """Regression (ALP-453) — the emergency callback consumes the same
     ``TriggerIdGenerator`` as the cascade dispatcher, not a freshly-minted one.
@@ -284,6 +292,7 @@ async def test_register_breach_loop_threads_trigger_ids_to_emergency_callback(
             breach_behavior_config=_breach_behavior_config(),
             breach_response_lookup=MappingProxyType({}),
             db_session_factory=db_session_factory,
+            sync_session_factory=sync_session_factory,
             trigger_ids=shared,
             progressive_tiers=(),
             account_state_queries=_SolventAccountQueries(),
@@ -312,6 +321,7 @@ def test_emergency_trigger_reexports_canonical_trigger_id_generator() -> None:
 
 async def test_register_breach_loop_passes_progressive_tiers(
     db_session_factory: async_sessionmaker[AsyncSession],
+    sync_session_factory: sessionmaker[Session],
 ) -> None:
     """ALP-453 — ``progressive_tiers`` is sourced from the
     cumulative-drawdown rule in ``GuardrailsConfig`` rather than passed as ``()``.
@@ -340,6 +350,7 @@ async def test_register_breach_loop_passes_progressive_tiers(
             breach_behavior_config=_breach_behavior_config(),
             breach_response_lookup=MappingProxyType({}),
             db_session_factory=db_session_factory,
+            sync_session_factory=sync_session_factory,
             trigger_ids=TriggerIdGenerator(session_id=session.session_id),
             progressive_tiers=sample_tiers,
             account_state_queries=_SolventAccountQueries(),
@@ -355,6 +366,7 @@ async def test_register_breach_loop_passes_progressive_tiers(
 
 async def test_register_breach_loop_wires_calendar_cache_market_hours(
     db_session_factory: async_sessionmaker[AsyncSession],
+    sync_session_factory: sessionmaker[Session],
 ) -> None:
     """ALP-453 — ``market_hours`` is the supplied :class:`TradingCalendarCache`
     rather than the always-closed ``_ClosedMarket`` stub.
@@ -380,6 +392,7 @@ async def test_register_breach_loop_wires_calendar_cache_market_hours(
             breach_behavior_config=_breach_behavior_config(),
             breach_response_lookup=MappingProxyType({}),
             db_session_factory=db_session_factory,
+            sync_session_factory=sync_session_factory,
             trigger_ids=TriggerIdGenerator(session_id=session.session_id),
             progressive_tiers=(),
             account_state_queries=_SolventAccountQueries(),
@@ -397,6 +410,7 @@ async def test_register_breach_loop_wires_calendar_cache_market_hours(
 
 async def test_register_breach_loop_wires_alpaca_margin_call_observer(
     db_session_factory: async_sessionmaker[AsyncSession],
+    sync_session_factory: sessionmaker[Session],
 ) -> None:
     """ALP-453 — the emergency callback consumes :class:`AlpacaMarginCallObserver`
     backed by the supplied broker queries, not the no-op default.
@@ -428,6 +442,7 @@ async def test_register_breach_loop_wires_alpaca_margin_call_observer(
             breach_behavior_config=_breach_behavior_config(),
             breach_response_lookup=MappingProxyType({}),
             db_session_factory=db_session_factory,
+            sync_session_factory=sync_session_factory,
             trigger_ids=TriggerIdGenerator(session_id=session.session_id),
             progressive_tiers=(),
             account_state_queries=queries,

@@ -59,6 +59,7 @@ from alphamind.state.invocation_context.records import (
     process_lifetime_record_to_row,
 )
 from alphamind.state.tables.invocations import InvocationRow
+from tests.scheduler._regime_helpers import make_regime_output
 
 _NOW = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -406,11 +407,16 @@ def _patch_no_op_pipeline(
         captured["dispatch"] = kw
         return Phase2Summary(commands_submitted=0, commands_rejected=0)
 
+    def _regime_stub(**kw: Any) -> Any:
+        captured["regime"] = kw
+        return make_regime_output(now=_NOW)
+
     monkeypatch.setattr(module, "gather_phase1_inputs", _gather_stub)
     monkeypatch.setattr(module, "process_unprocessed_fills", _process_stub)
     monkeypatch.setattr(module, "run_analysis_pipeline", _analysis_stub)
     monkeypatch.setattr(module, "run_decision_pipeline", _decision_stub)
     monkeypatch.setattr(module, "dispatch_phase2", _dispatch_stub)
+    monkeypatch.setattr(module, "_resolve_regime_adaptation_for_invocation", _regime_stub)
 
 
 class TestRunInvocationHappyPath:
@@ -1075,9 +1081,13 @@ def _stub_only_llm_and_broker(
     async def _decision_stub(**_kw: Any) -> Any:
         return _make_decision_result()
 
+    def _regime_stub(**_kw: Any) -> Any:
+        return make_regime_output(now=_NOW)
+
     monkeypatch.setattr(module, "gather_phase1_inputs", _gather_stub)
     monkeypatch.setattr(module, "run_analysis_pipeline", _analysis_stub)
     monkeypatch.setattr(module, "run_decision_pipeline", _decision_stub)
+    monkeypatch.setattr(module, "_resolve_regime_adaptation_for_invocation", _regime_stub)
 
 
 _REQUIRED_INVOCATION_ROW_COLUMNS: tuple[str, ...] = (

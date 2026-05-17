@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from dotenv import load_dotenv
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.config.guardrails_helpers import (
     load_cumulative_drawdown_progressive_tiers,
@@ -49,6 +50,7 @@ from alphamind.execution.continuous_monitor.breach_loop import (
     register_breach_loop_task,
 )
 from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
+    load_breach_loop_loaded_config,
     load_breach_loop_resolved_config,
     make_adv_provider,
     make_assembled_snapshot_provider,
@@ -101,7 +103,12 @@ from alphamind.execution.continuous_monitor.underlying_stream.reader import (
 from alphamind.execution.venue_configuration.calendar_cache import (
     TradingCalendarCache,
 )
-from alphamind.persistence.session import make_async_engine, make_async_session_factory
+from alphamind.persistence.session import (
+    make_async_engine,
+    make_async_session_factory,
+    make_engine,
+    make_session_factory,
+)
 from alphamind.portfolio_state import load_portfolio_state_config
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
@@ -110,6 +117,8 @@ from alphamind.risk_guardrails.breach_behavior import (
     load_breach_behavior_config,
 )
 from alphamind.risk_guardrails.guardrail_evaluation import FixtureIvProvider
+from alphamind.risk_guardrails.regime_adaptation import load_config_fan
+from alphamind.scripts._common import load_distillation_config
 from alphamind.state.config import (
     StatePersistenceConfig,
     load_state_persistence_config,
@@ -192,6 +201,12 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     )
     engine = make_async_engine()
     db_session_factory = make_async_session_factory(engine)
+    # Sync engine pair for ``resolve_regime_adaptation`` (sync ``Session`` per
+    # ALP-454 (C)). The regime resolver runs inside ``asyncio.to_thread`` from
+    # the breach loop's regime provider; threading through a sync engine
+    # avoids the async-bridge cost and matches the scheduler's pair pattern.
+    sync_engine = make_engine()
+    sync_session_factory: sessionmaker[Session] = make_session_factory(sync_engine)
     open_positions_reader = SqlOpenPositionsReader(db_session_factory)
     # One ``AccountStateQueries`` + one ``TradingCalendarCache`` are shared
     # across the breach loop (market-hours predicate, margin-call observer),
@@ -229,6 +244,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         breach_behavior_config=breach_behavior_config,
         breach_response_lookup=breach_response_lookup,
         db_session_factory=db_session_factory,
+        sync_session_factory=sync_session_factory,
         trigger_ids=trigger_ids,
         progressive_tiers=progressive_tiers,
         account_state_queries=account_state_queries,
@@ -250,6 +266,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     try:
         await supervisor.run()
     finally:
+        sync_engine.dispose()
         await engine.dispose()
         log.info("monitor session end: session_id=%s", session.session_id)
 
@@ -302,6 +319,7 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     breach_behavior_config: BreachBehaviorConfig,
     breach_response_lookup: Mapping[str, BreachResponse],
     db_session_factory: async_sessionmaker[AsyncSession],
+    sync_session_factory: sessionmaker[Session],
     trigger_ids: TriggerIdGenerator,
     progressive_tiers: tuple[ProgressiveTier, ...],
     account_state_queries: AccountQueriesProtocol,
@@ -381,8 +399,18 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
         assembled_snapshot_provider=assembled_snapshot_provider,
         library_snapshot_translator=library_snapshot_translator,
     )
+    # ALP-513 — assemble the resolver's slow-changing input fan once at daemon
+    # startup; the per-tick regime provider reuses it for every
+    # ``resolve_regime_adaptation`` invocation.
+    regime_config_fan = load_config_fan(
+        config_dir=config_dir,
+        loaded_config=load_breach_loop_loaded_config(config_dir),
+        distillation_config=load_distillation_config(config_dir / "distillation.yaml"),
+    )
     regime_provider = make_regime_provider(
         session_factory=db_session_factory,
+        sync_session_factory=sync_session_factory,
+        config_fan=regime_config_fan,
         resolved=resolved_config,
     )
     library_config_factory = make_library_config_factory(resolved=resolved_config)

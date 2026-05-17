@@ -66,6 +66,7 @@ from alphamind.state.invocation_context.records import (
     ProcessLifetimeRecord,
     process_lifetime_record_to_row,
 )
+from tests.scheduler._regime_helpers import make_regime_output
 from tests.scheduler.test_progress import RecordingProgressEmitter
 
 _NOW = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
@@ -471,11 +472,15 @@ def _patch_no_op_pipeline_with_progress_emit(monkeypatch: pytest.MonkeyPatch) ->
 
         return Phase2Summary(commands_submitted=0, commands_rejected=0)
 
+    def _regime_stub(**_kw: Any) -> Any:
+        return make_regime_output(now=_NOW)
+
     monkeypatch.setattr(module, "gather_phase1_inputs", _gather_stub)
     monkeypatch.setattr(module, "process_unprocessed_fills", _process_stub)
     monkeypatch.setattr(module, "run_analysis_pipeline", _analysis_stub)
     monkeypatch.setattr(module, "run_decision_pipeline", _decision_stub)
     monkeypatch.setattr(module, "dispatch_phase2", _dispatch_stub)
+    monkeypatch.setattr(module, "_resolve_regime_adaptation_for_invocation", _regime_stub)
 
 
 # ---------------------------------------------------------------------------

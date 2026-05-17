@@ -69,18 +69,27 @@ class PipelineConfig:
     :class:`alphamind.config.resolver.LoadedConfig`, which carries the parsed
     Pydantic-model bundle handed to :func:`compose_config`. Both are
     invocation-scoped data carriers; this one is what the pipeline runs against.
+
+    ``loaded`` retains the parsed input bundle so downstream consumers (e.g.
+    the regime-adaptation resolver wiring) can read it without re-running the
+    14-file YAML parse pass.
     """
 
     resolved: ResolvedConfig
     snapshot: SnapshotResult
+    loaded: LoadedConfig
 
 
-def _parse_loaded_config(config_dir: Path) -> LoadedConfig:
+def parse_loaded_config(config_dir: Path) -> LoadedConfig:
     """Parse every YAML in ``config_dir`` into the resolver's input bundle.
 
     Each per-file ``model_validate`` invocation runs the parse-time validators
     (story 03* / 04*); ``pydantic.ValidationError`` propagates on the first
     failure. The bundle loaders already encapsulate their subdirectory layout.
+
+    Public so the regime-adaptation resolver wiring (ALP-513) can rebuild
+    :class:`LoadedConfig` for its input fan without re-running the full
+    pipeline-config snapshot pass.
     """
     return LoadedConfig(
         main=MainConfig.model_validate(read_yaml_file(config_dir / "main.yaml")),
@@ -126,7 +135,7 @@ def load_full_config(
     :func:`compose_config` and stay under the 8-arg cap.
     """
     # 1. Parse-time validation. ValidationError propagates.
-    inputs = _parse_loaded_config(config_dir)
+    inputs = parse_loaded_config(config_dir)
 
     # 2. Cross-reference validation. CrossReferenceError propagates.
     env_keys = read_env_keys(env_path)
@@ -157,4 +166,4 @@ def load_full_config(
     )
 
     # 6. Wrap.
-    return PipelineConfig(resolved=resolved, snapshot=snapshot_result)
+    return PipelineConfig(resolved=resolved, snapshot=snapshot_result, loaded=inputs)
