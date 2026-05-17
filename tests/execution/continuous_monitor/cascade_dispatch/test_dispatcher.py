@@ -10,9 +10,7 @@ re-implement them.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -21,230 +19,42 @@ import pytest
 # ``submit_envelope_mcp``-derived symbols (mirror of the discipline in
 # ``tests/execution/oms/test_submit_engine_envelope.py``).
 import alphamind.decision.portfolio_manager.models  # noqa: F401
-from alphamind._kernel.ids import (
-    BracketId,
-    OrderId,
-    PositionId,
-    Symbol,
-    ThesisId,
-)
-from alphamind._kernel.money import money, price, signed_money
-from alphamind._kernel.regime import RegimeTransitionState
-from alphamind.commands.engine_envelope import (
-    EngineEnvelope as OmsEngineEnvelope,
-)
+from alphamind._kernel.ids import PositionId, Symbol
 from alphamind.config.models.guardrails import BreachResponse
-from alphamind.decision.portfolio_manager.submit_envelope import (
-    Acknowledgment,
-    SubmissionResult,
-)
-from alphamind.execution.continuous_monitor.breach_loop.result import (
-    BreachLoopResult,
-    RuleEvaluation,
-)
-from alphamind.execution.continuous_monitor.cascade_dispatch import (
-    TriggerIdGenerator,
-)
+from alphamind.execution.continuous_monitor.breach_loop.result import RuleEvaluation
+from alphamind.execution.continuous_monitor.cascade_dispatch import TriggerIdGenerator
 from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
     BreachDispatchContext,
     CascadeDispatcher,
-    DeferralEvent,
-)
-from alphamind.execution.guardrail_enforcement.orchestrator import (
-    Phase1EnforcementResult,
-)
-from alphamind.portfolio_state.aggregates.risk_parameters import (
-    ActiveRiskParameterSet,
-)
-from alphamind.portfolio_state.records.positions import (
-    Direction,
-    EquityPositionDetails,
-    PositionFill,
-    PositionRecord,
-    PositionStatus,
 )
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import (
-    BreachBehaviorConfig,
-    DrawdownSample,
-    DrawdownTier,
     PositionLiquidity,
     PositionRiskReward,
     RegimeLabel,
     RiskZone,
 )
+from tests.execution.continuous_monitor.cascade_dispatch.conftest import (
+    NOW,
+    RecordingDeferralSink,
+    RecordingSubmit,
+    ScriptedLibrary,
+    StubLibraryConfig,
+    StubLibraryOutput,
+    StubMarketInputs,
+    StubPortfolioState,
+    StubRuleProjection,
+    equity_view,
+    make_breach_config,
+    make_breach_loop_result,
+)
 
-_NOW = datetime(2026, 5, 11, 14, 30, 0, tzinfo=UTC)
 _SESSION_ID = "monsession-a"
 
 
 # ---------------------------------------------------------------------------
-# Stub guardrail-evaluation primitives
+# File-local builders
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class _StubRuleProjection:
-    rule: str
-    status: str
-    current: float
-    limit: float
-    projected_after: float
-    headroom_remaining: float
-    unit: str
-    inverse: bool = False
-
-
-@dataclass(frozen=True)
-class _StubLibraryOutput:
-    per_rule: tuple[_StubRuleProjection, ...]
-
-
-@dataclass(frozen=True)
-class _StubLibraryConfig:
-    effective_limits: dict[str, float]
-
-
-@dataclass(frozen=True)
-class _StubPortfolioState:
-    label: str = "default"
-
-
-@dataclass(frozen=True)
-class _StubMarketInputs:
-    label: str = "default"
-
-
-@dataclass
-class _ScriptedLibrary:
-    """``evaluate_proposals`` stub — returns ``outputs[i]`` on the i-th call."""
-
-    outputs: list[_StubLibraryOutput]
-    calls: list[dict[str, Any]] = field(default_factory=list)
-
-    def __call__(
-        self,
-        *,
-        state: Any,
-        proposals: Sequence[Any],
-        config: Any,
-        market: Any,
-        delta_buffer_factor: float = 1.0,
-    ) -> _StubLibraryOutput:
-        self.calls.append(
-            {
-                "state": state,
-                "proposals": tuple(proposals),
-                "config": config,
-                "market": market,
-                "delta_buffer_factor": delta_buffer_factor,
-            }
-        )
-        idx = min(len(self.calls) - 1, len(self.outputs) - 1)
-        return self.outputs[idx]
-
-
-# ---------------------------------------------------------------------------
-# Builders — PositionView, breach config, dispatch context
-# ---------------------------------------------------------------------------
-
-
-def _equity_position_view(
-    *,
-    position_id: str,
-    ticker: str,
-    direction: Direction = Direction.LONG,
-    share_count: float = 10.0,
-    cost_basis: float = 150.0,
-    market_value_usd: float = 1500.0,
-    unrealized_pnl_usd: float = -200.0,
-    position_weight_pct: float = 10.0,
-) -> PositionView:
-    """Build a PositionView for an equity position. Long-only by default."""
-    details = EquityPositionDetails(
-        ticker=Symbol(ticker),
-        share_count=share_count,
-        average_cost_basis_per_share=cost_basis,
-    )
-    record = PositionRecord(
-        position_id=PositionId(position_id),
-        thesis_id=ThesisId(f"THE-{position_id}"),
-        bracket_id=BracketId(f"BRK-{position_id}"),
-        status=PositionStatus.OPEN,
-        direction=direction,
-        entry_timestamp=_NOW,
-        details=details,
-        execution_history=(
-            PositionFill(
-                fill_timestamp=_NOW,
-                fill_price=price(cost_basis),
-                fill_quantity=share_count,
-                slippage=signed_money(0.0),
-                fees=money(0.0),
-            ),
-        ),
-        realized_pnl_to_date_usd=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
-    )
-    sign = 1.0 if direction == Direction.LONG else -1.0
-    return PositionView(
-        record=record,
-        current_market_value_usd=signed_money(market_value_usd),
-        unrealized_pnl_usd=signed_money(unrealized_pnl_usd),
-        unrealized_pnl_pct=unrealized_pnl_usd / (cost_basis * share_count) * 100.0,
-        position_weight_pct=position_weight_pct * sign,
-        position_age_hours=2.0,
-        notional_exposure_usd=money(market_value_usd),
-        delta_adjusted_exposure_usd=signed_money(market_value_usd * sign),
-        distance_to_target_usd=signed_money(10.0),
-        distance_to_stop_usd=signed_money(5.0),
-        risk_reward_at_current=2.0,
-    )
-
-
-def _make_breach_config() -> BreachBehaviorConfig:
-    return BreachBehaviorConfig(
-        forced_reduction_short_trim_target_pct_of_limit=95.0,
-        forced_reduction_total_short_immediate_threshold_pct_of_limit=110.0,
-        drawdown_velocity_window_minutes=5,
-        drawdown_velocity_threshold_pct_of_daily_limit=50.0,
-        multi_rule_breach_simultaneous_deferred_rules_count=2,
-        cascade_max_steps=5,
-        delta_buffer_secondary_check_buffer_factor=1.0,
-        emergency_invocation_cooldown_minutes=30,
-    )
-
-
-def _make_phase1_result() -> Phase1EnforcementResult:
-    """Build a minimal Phase1EnforcementResult — fields most tests don't read."""
-    return Phase1EnforcementResult(
-        active_risk_parameters=ActiveRiskParameterSet(
-            regime_label=RegimeLabel.ELEVATED,
-            transition_state=RegimeTransitionState.STABLE,
-            transition_invocations_remaining=0,
-            parameter_change_flag=False,
-            entries=(),
-            active_overlays=(),
-        ),
-        drawdown_tier=DrawdownTier.CONSTRAINED,
-    )
-
-
-def _make_breach_loop_result(*, evaluations: tuple[RuleEvaluation, ...]) -> BreachLoopResult:
-    immediate = tuple(e for e in evaluations if e.classification is BreachResponse.immediate_engine)
-    return BreachLoopResult(
-        as_of=_NOW,
-        phase1_result=_make_phase1_result(),
-        rule_evaluations=evaluations,
-        halt_state=None,
-        immediate_action_breaches=immediate,
-        drawdown_velocity_sample=DrawdownSample(
-            sampled_at=_NOW,
-            intraday_drawdown_pct=1.0,
-        ),
-    )
 
 
 def _per_position_breach_eval(*, rule_id: str = "position_max_loss_equity_pct") -> RuleEvaluation:
@@ -258,45 +68,16 @@ def _per_position_breach_eval(*, rule_id: str = "position_max_loss_equity_pct") 
     )
 
 
-@dataclass
-class _RecordingSubmit:
-    """Stub for the OMS submit-engine-envelope callable."""
-
-    calls: list[OmsEngineEnvelope] = field(default_factory=list)
-
-    async def __call__(self, envelope: OmsEngineEnvelope) -> SubmissionResult:
-        self.calls.append(envelope)
-        return SubmissionResult(
-            command_ordinal=0,
-            status="accepted",
-            command_id=f"{envelope.envelope_id}.0",
-            acknowledgment=Acknowledgment(
-                position_id=envelope.commands[0].position_id,
-                order_id=OrderId(f"ORD-{envelope.commands[0].position_id}"),
-            ),
-        )
-
-
-@dataclass
-class _RecordingDeferralSink:
-    """Stub for the deferral-event callable the dispatcher emits on deferred_to_pm."""
-
-    calls: list[DeferralEvent] = field(default_factory=list)
-
-    async def __call__(self, event: DeferralEvent) -> None:
-        self.calls.append(event)
-
-
 def _make_dispatch_context(
     *,
     breaching_position_id: str = "POS-NVDA-1",
-    secondary_breach_library: _ScriptedLibrary | None = None,
+    secondary_breach_library: ScriptedLibrary | None = None,
     portfolio_value_usd: float = 100_000.0,
     extra_positions: tuple[PositionView, ...] = (),
     primary_rule: str = "position_max_loss_equity_pct",
 ) -> BreachDispatchContext:
     """Build a per-tick context with one breaching position + a passing secondary check."""
-    breaching = _equity_position_view(
+    breaching = equity_view(
         position_id=breaching_position_id,
         ticker=Symbol("NVDA"),
         unrealized_pnl_usd=-3_500.0,
@@ -317,18 +98,18 @@ def _make_dispatch_context(
         for p in positions
     )
     if secondary_breach_library is None:
-        secondary_breach_library = _ScriptedLibrary(
+        secondary_breach_library = ScriptedLibrary(
             outputs=[
-                _StubLibraryOutput(per_rule=()),  # baseline
-                _StubLibraryOutput(per_rule=()),  # post-close — same; no new failures
+                StubLibraryOutput(per_rule=()),  # baseline
+                StubLibraryOutput(per_rule=()),  # post-close — same; no new failures
             ]
         )
     return BreachDispatchContext(
         open_positions=positions,
         liquidity=liquidity,
         risk_reward_metric=risk_reward,
-        library_snapshot=_StubPortfolioState(),
-        library_config=_StubLibraryConfig(
+        library_snapshot=StubPortfolioState(),
+        library_config=StubLibraryConfig(
             effective_limits={
                 primary_rule: 1.0,
                 "position_max_loss_equity_pct": 1.0,
@@ -340,18 +121,13 @@ def _make_dispatch_context(
                 "margin_call": 1.0,
             }
         ),
-        market_inputs=_StubMarketInputs(),
+        market_inputs=StubMarketInputs(),
         evaluate_proposals=secondary_breach_library,
         portfolio_value_usd=portfolio_value_usd,
         active_regime=RegimeLabel.ELEVATED,
         progressive_tiers=(),
         breach_classification={},
     )
-
-
-# ---------------------------------------------------------------------------
-# Per-rule keyword-arg providers
-# ---------------------------------------------------------------------------
 
 
 def _per_position_max_loss_kwargs_provider(
@@ -383,12 +159,12 @@ async def test_happy_path_submits_one_envelope_for_per_position_max_loss() -> No
     """Per_position_max_loss breach → selector picks breaching position →
     secondary check clean → exactly one envelope submitted with engine-guardrail subtype."""
     trigger_ids = TriggerIdGenerator(session_id=_SESSION_ID)
-    submit = _RecordingSubmit()
-    deferral_sink = _RecordingDeferralSink()
+    submit = RecordingSubmit()
+    deferral_sink = RecordingDeferralSink()
     context = _make_dispatch_context()
     dispatcher = CascadeDispatcher(
         monitor_session_id=_SESSION_ID,
-        breach_config=_make_breach_config(),
+        breach_config=make_breach_config(),
         trigger_ids=trigger_ids,
         context_provider=lambda: context,
         submit_envelope=submit,
@@ -396,11 +172,11 @@ async def test_happy_path_submits_one_envelope_for_per_position_max_loss() -> No
         per_rule_kwargs_providers={
             "position_max_loss_equity_pct": _per_position_max_loss_kwargs_provider,
         },
-        now=lambda: _NOW,
+        now=lambda: NOW,
     )
 
     rule = _per_position_breach_eval()
-    result = _make_breach_loop_result(evaluations=(rule,))
+    result = make_breach_loop_result(evaluations=(rule,))
     await dispatcher.handle_immediate_breach(result, rule)
 
     assert len(submit.calls) == 1
@@ -414,23 +190,23 @@ async def test_happy_path_envelope_and_command_ids_match_canonical_patterns() ->
     """The envelope id matches ``MON.<session>.<trigger>`` and the OMS-derived
     command_id matches ``MON.<session>.<trigger>.0``."""
     trigger_ids = TriggerIdGenerator(session_id=_SESSION_ID)
-    submit = _RecordingSubmit()
+    submit = RecordingSubmit()
     context = _make_dispatch_context()
     dispatcher = CascadeDispatcher(
         monitor_session_id=_SESSION_ID,
-        breach_config=_make_breach_config(),
+        breach_config=make_breach_config(),
         trigger_ids=trigger_ids,
         context_provider=lambda: context,
         submit_envelope=submit,
-        deferral_sink=_RecordingDeferralSink(),
+        deferral_sink=RecordingDeferralSink(),
         per_rule_kwargs_providers={
             "position_max_loss_equity_pct": _per_position_max_loss_kwargs_provider,
         },
-        now=lambda: _NOW,
+        now=lambda: NOW,
     )
 
     rule = _per_position_breach_eval()
-    result = _make_breach_loop_result(evaluations=(rule,))
+    result = make_breach_loop_result(evaluations=(rule,))
     await dispatcher.handle_immediate_breach(result, rule)
 
     envelope = submit.calls[0]
@@ -445,16 +221,16 @@ async def test_deferred_to_pm_does_not_submit_logs_deferral() -> None:
     """When the secondary-breach check yields deferred_to_pm and no alternate is
     found, the dispatcher does NOT submit and logs the deferral."""
     trigger_ids = TriggerIdGenerator(session_id=_SESSION_ID)
-    submit = _RecordingSubmit()
-    deferral_sink = _RecordingDeferralSink()
+    submit = RecordingSubmit()
+    deferral_sink = RecordingDeferralSink()
     # Scripted library: baseline = (); post-close = one new FAIL rule;
     # the orchestrator will treat this as a secondary breach.
-    library = _ScriptedLibrary(
+    library = ScriptedLibrary(
         outputs=[
-            _StubLibraryOutput(per_rule=()),  # baseline (clean)
-            _StubLibraryOutput(  # post-close → introduces a new FAIL
+            StubLibraryOutput(per_rule=()),  # baseline (clean)
+            StubLibraryOutput(  # post-close → introduces a new FAIL
                 per_rule=(
-                    _StubRuleProjection(
+                    StubRuleProjection(
                         rule="total_short_pct",
                         status="FAIL",
                         current=35.0,
@@ -471,7 +247,7 @@ async def test_deferred_to_pm_does_not_submit_logs_deferral() -> None:
     context = _make_dispatch_context(secondary_breach_library=library)
     dispatcher = CascadeDispatcher(
         monitor_session_id=_SESSION_ID,
-        breach_config=_make_breach_config(),
+        breach_config=make_breach_config(),
         trigger_ids=trigger_ids,
         context_provider=lambda: context,
         submit_envelope=submit,
@@ -479,11 +255,11 @@ async def test_deferred_to_pm_does_not_submit_logs_deferral() -> None:
         per_rule_kwargs_providers={
             "position_max_loss_equity_pct": _per_position_max_loss_kwargs_provider,
         },
-        now=lambda: _NOW,
+        now=lambda: NOW,
     )
 
     rule = _per_position_breach_eval()
-    result = _make_breach_loop_result(evaluations=(rule,))
+    result = make_breach_loop_result(evaluations=(rule,))
     await dispatcher.handle_immediate_breach(result, rule)
 
     assert submit.calls == []
@@ -498,19 +274,19 @@ async def test_secondary_breach_avoided_submits_alternate_envelope() -> None:
     is found, the dispatcher submits the alternate envelope tagged
     ``secondary_breach_avoided``."""
     trigger_ids = TriggerIdGenerator(session_id=_SESSION_ID)
-    submit = _RecordingSubmit()
-    deferral_sink = _RecordingDeferralSink()
+    submit = RecordingSubmit()
+    deferral_sink = RecordingDeferralSink()
     # Three projections per call:
     # call 1: baseline (clean)
     # call 2: primary close → introduces FAIL on rule X (deferred_to_pm)
     # call 3: alternate close on extra position → baseline (alternate search)
     # call 4: alternate close → clean (no secondary breach)
-    library = _ScriptedLibrary(
+    library = ScriptedLibrary(
         outputs=[
-            _StubLibraryOutput(per_rule=()),  # baseline for primary check
-            _StubLibraryOutput(  # post-primary-close — introduces a fail
+            StubLibraryOutput(per_rule=()),  # baseline for primary check
+            StubLibraryOutput(  # post-primary-close — introduces a fail
                 per_rule=(
-                    _StubRuleProjection(
+                    StubRuleProjection(
                         rule="total_short_pct",
                         status="FAIL",
                         current=35.0,
@@ -521,11 +297,11 @@ async def test_secondary_breach_avoided_submits_alternate_envelope() -> None:
                     ),
                 )
             ),
-            _StubLibraryOutput(per_rule=()),  # baseline for alternate's secondary check
-            _StubLibraryOutput(per_rule=()),  # post-alternate-close — clean
+            StubLibraryOutput(per_rule=()),  # baseline for alternate's secondary check
+            StubLibraryOutput(per_rule=()),  # post-alternate-close — clean
         ]
     )
-    alternate = _equity_position_view(
+    alternate = equity_view(
         position_id=PositionId("POS-AMD-1"),
         ticker=Symbol("AMD"),
         unrealized_pnl_usd=-1_000.0,
@@ -536,7 +312,7 @@ async def test_secondary_breach_avoided_submits_alternate_envelope() -> None:
     )
     dispatcher = CascadeDispatcher(
         monitor_session_id=_SESSION_ID,
-        breach_config=_make_breach_config(),
+        breach_config=make_breach_config(),
         trigger_ids=trigger_ids,
         context_provider=lambda: context,
         submit_envelope=submit,
@@ -544,11 +320,11 @@ async def test_secondary_breach_avoided_submits_alternate_envelope() -> None:
         per_rule_kwargs_providers={
             "position_max_loss_equity_pct": _per_position_max_loss_kwargs_provider,
         },
-        now=lambda: _NOW,
+        now=lambda: NOW,
     )
 
     rule = _per_position_breach_eval()
-    result = _make_breach_loop_result(evaluations=(rule,))
+    result = make_breach_loop_result(evaluations=(rule,))
     await dispatcher.handle_immediate_breach(result, rule)
 
     assert len(submit.calls) == 1
@@ -568,13 +344,13 @@ async def test_rejects_deferred_classification_rule_as_structural_error() -> Non
     context = _make_dispatch_context()
     dispatcher = CascadeDispatcher(
         monitor_session_id=_SESSION_ID,
-        breach_config=_make_breach_config(),
+        breach_config=make_breach_config(),
         trigger_ids=trigger_ids,
         context_provider=lambda: context,
-        submit_envelope=_RecordingSubmit(),
-        deferral_sink=_RecordingDeferralSink(),
+        submit_envelope=RecordingSubmit(),
+        deferral_sink=RecordingDeferralSink(),
         per_rule_kwargs_providers={},
-        now=lambda: _NOW,
+        now=lambda: NOW,
     )
 
     rule = RuleEvaluation(
@@ -585,7 +361,7 @@ async def test_rejects_deferred_classification_rule_as_structural_error() -> Non
         zone=RiskZone.BLOCKED,
         classification=BreachResponse.immediate_engine,
     )
-    result = _make_breach_loop_result(evaluations=(rule,))
+    result = make_breach_loop_result(evaluations=(rule,))
     with pytest.raises(ValueError, match="sector_concentration"):
         await dispatcher.handle_immediate_breach(result, rule)
 
@@ -593,23 +369,23 @@ async def test_rejects_deferred_classification_rule_as_structural_error() -> Non
 async def test_trigger_ids_strictly_increase_over_sequential_breaches() -> None:
     """50 sequential breaches → strictly increasing trigger ids starting at 1."""
     trigger_ids = TriggerIdGenerator(session_id=_SESSION_ID)
-    submit = _RecordingSubmit()
+    submit = RecordingSubmit()
     context = _make_dispatch_context()
     dispatcher = CascadeDispatcher(
         monitor_session_id=_SESSION_ID,
-        breach_config=_make_breach_config(),
+        breach_config=make_breach_config(),
         trigger_ids=trigger_ids,
         context_provider=lambda: context,
         submit_envelope=submit,
-        deferral_sink=_RecordingDeferralSink(),
+        deferral_sink=RecordingDeferralSink(),
         per_rule_kwargs_providers={
             "position_max_loss_equity_pct": _per_position_max_loss_kwargs_provider,
         },
-        now=lambda: _NOW,
+        now=lambda: NOW,
     )
 
     rule = _per_position_breach_eval()
-    result = _make_breach_loop_result(evaluations=(rule,))
+    result = make_breach_loop_result(evaluations=(rule,))
 
     def _make_provider(captured: BreachDispatchContext) -> Callable[[], BreachDispatchContext]:
         def _provider() -> BreachDispatchContext:
@@ -623,15 +399,15 @@ async def test_trigger_ids_strictly_increase_over_sequential_breaches() -> None:
         context = _make_dispatch_context()
         dispatcher = CascadeDispatcher(
             monitor_session_id=_SESSION_ID,
-            breach_config=_make_breach_config(),
+            breach_config=make_breach_config(),
             trigger_ids=trigger_ids,
             context_provider=_make_provider(context),
             submit_envelope=submit,
-            deferral_sink=_RecordingDeferralSink(),
+            deferral_sink=RecordingDeferralSink(),
             per_rule_kwargs_providers={
                 "position_max_loss_equity_pct": _per_position_max_loss_kwargs_provider,
             },
-            now=lambda: _NOW,
+            now=lambda: NOW,
         )
         await dispatcher.handle_immediate_breach(result, rule)
 
@@ -644,9 +420,9 @@ async def test_breach_cascade_submits_chained_envelopes_in_order_with_shared_cas
     surfaces additional immediate-engine FAILs), the dispatcher submits each
     envelope in the order returned, all sharing the same cascade_id."""
     trigger_ids = TriggerIdGenerator(session_id=_SESSION_ID)
-    submit = _RecordingSubmit()
+    submit = RecordingSubmit()
     # Two positions so post-close cascade has a follow-up candidate to close.
-    alternate = _equity_position_view(
+    alternate = equity_view(
         position_id=PositionId("POS-AMD-1"),
         ticker=Symbol("AMD"),
         unrealized_pnl_usd=-1_000.0,
@@ -660,14 +436,14 @@ async def test_breach_cascade_submits_chained_envelopes_in_order_with_shared_cas
     #   call 5: secondary check on follow-up   → baseline (clean)
     #   call 6: secondary check on follow-up   → post-close clean
     #   call 7: post-2nd-close in cascade loop → no more new failures
-    library = _ScriptedLibrary(
+    library = ScriptedLibrary(
         outputs=[
-            _StubLibraryOutput(per_rule=()),  # 1
-            _StubLibraryOutput(per_rule=()),  # 2
-            _StubLibraryOutput(per_rule=()),  # 3 (pre-cascade baseline)
-            _StubLibraryOutput(  # 4 — post-1st-close, introduces a new fail
+            StubLibraryOutput(per_rule=()),  # 1
+            StubLibraryOutput(per_rule=()),  # 2
+            StubLibraryOutput(per_rule=()),  # 3 (pre-cascade baseline)
+            StubLibraryOutput(  # 4 — post-1st-close, introduces a new fail
                 per_rule=(
-                    _StubRuleProjection(
+                    StubRuleProjection(
                         rule="daily_drawdown_pct",
                         status="FAIL",
                         current=6.0,
@@ -678,9 +454,9 @@ async def test_breach_cascade_submits_chained_envelopes_in_order_with_shared_cas
                     ),
                 )
             ),
-            _StubLibraryOutput(per_rule=()),  # 5 (secondary baseline for follow-up)
-            _StubLibraryOutput(per_rule=()),  # 6 (post-close clean)
-            _StubLibraryOutput(per_rule=()),  # 7 (post-2nd-close, no more fails)
+            StubLibraryOutput(per_rule=()),  # 5 (secondary baseline for follow-up)
+            StubLibraryOutput(per_rule=()),  # 6 (post-close clean)
+            StubLibraryOutput(per_rule=()),  # 7 (post-2nd-close, no more fails)
         ]
     )
     context_base = _make_dispatch_context(
@@ -732,20 +508,20 @@ async def test_breach_cascade_submits_chained_envelopes_in_order_with_shared_cas
     context = replace(context_base, breach_classification=classification)
     dispatcher = CascadeDispatcher(
         monitor_session_id=_SESSION_ID,
-        breach_config=_make_breach_config(),
+        breach_config=make_breach_config(),
         trigger_ids=trigger_ids,
         context_provider=lambda: context,
         submit_envelope=submit,
-        deferral_sink=_RecordingDeferralSink(),
+        deferral_sink=RecordingDeferralSink(),
         per_rule_kwargs_providers={
             "position_max_loss_equity_pct": _per_position_max_loss_kwargs_provider,
         },
         follow_up_selector=_follow_up_selector,
-        now=lambda: _NOW,
+        now=lambda: NOW,
     )
 
     rule = _per_position_breach_eval()
-    result = _make_breach_loop_result(evaluations=(rule,))
+    result = make_breach_loop_result(evaluations=(rule,))
     await dispatcher.handle_immediate_breach(result, rule)
 
     # At least two envelopes are submitted in order; all share the cascade_id.
@@ -763,18 +539,18 @@ async def test_margin_call_cascade_submits_returned_envelopes_in_order() -> None
     from alphamind.risk_guardrails.breach_behavior import MarginCallEvent
 
     trigger_ids = TriggerIdGenerator(session_id=_SESSION_ID)
-    submit = _RecordingSubmit()
+    submit = RecordingSubmit()
     # Without breach_classification, orchestrator emits exactly one envelope
     # (the margin call liquidation itself). For this test that's the contract:
     # the dispatcher submits whatever the orchestrator returns, in order.
-    library = _ScriptedLibrary(
+    library = ScriptedLibrary(
         outputs=[
-            _StubLibraryOutput(per_rule=()),  # baseline
-            _StubLibraryOutput(per_rule=()),  # post-close — clean
+            StubLibraryOutput(per_rule=()),  # baseline
+            StubLibraryOutput(per_rule=()),  # post-close — clean
         ]
     )
     # margin call selector picks worst R/R; add a couple positions.
-    second = _equity_position_view(
+    second = equity_view(
         position_id=PositionId("POS-AMD-1"),
         ticker=Symbol("AMD"),
         unrealized_pnl_usd=-1_500.0,
@@ -786,17 +562,17 @@ async def test_margin_call_cascade_submits_returned_envelopes_in_order() -> None
     )
     dispatcher = CascadeDispatcher(
         monitor_session_id=_SESSION_ID,
-        breach_config=_make_breach_config(),
+        breach_config=make_breach_config(),
         trigger_ids=trigger_ids,
         context_provider=lambda: context,
         submit_envelope=submit,
-        deferral_sink=_RecordingDeferralSink(),
+        deferral_sink=RecordingDeferralSink(),
         per_rule_kwargs_providers={},
-        now=lambda: _NOW,
+        now=lambda: NOW,
     )
 
     event = MarginCallEvent(
-        issued_at=_NOW,
+        issued_at=NOW,
         additional_margin_required_usd=5_000.0,
     )
     await dispatcher.handle_margin_call(event)
