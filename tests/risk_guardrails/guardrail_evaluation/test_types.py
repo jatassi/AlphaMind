@@ -393,6 +393,8 @@ def test_public_api_surface_matches_documented_re_exports() -> None:
         # Library entry point (story 05)
         "LibraryInputError",
         "evaluate_proposals",
+        # Risk-budget projection (ALP-503)
+        "build_risk_budget_consumption",
     }
 
     public = {name for name in dir(module) if not name.startswith("_")}

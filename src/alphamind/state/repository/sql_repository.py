@@ -538,8 +538,12 @@ class SqlPortfolioStateRepository:
         return self._active_risk_parameters_provider()
 
     def get_risk_budget_consumption(self) -> RiskBudgetConsumption:
-        # Zero-valued passthrough; the assembler computes actual consumption
-        # by combining position + cash + active_risk_parameters in story 07.
+        # Empty passthrough — the decision pipeline overlays the real budget
+        # via ``build_risk_budget_consumption`` after ``to_library_snapshot``
+        # (ALP-503). The Protocol method is retained because the assembler
+        # still threads a value through ``PortfolioStateSnapshot.risk_budget``
+        # for non-decision-pipeline callers (breach loop + monitor snapshot
+        # provider), which do not currently read the field.
         return RiskBudgetConsumption(entries=())
 
     # ------------------------------------------------------------------
