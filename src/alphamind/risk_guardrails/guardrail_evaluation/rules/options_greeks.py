@@ -57,9 +57,19 @@ def _options_delta_contribute(
     """For options/strategies, signed contribution = signed_notional / value.
 
     Equity proposals contribute 0 — the rule constrains options-only delta.
+
+    CLOSE on options/strategy mirrors the theta/vega CLOSE pattern: read the
+    existing position's stored delta-adjusted exposure (negated, because the
+    close removes that exposure). The proposal's DAE is zero whenever the
+    strategist's close assessment omits ``option_legs`` — ALP-504.
     """
     if proposal.asset_type is AssetType.EQUITY:
         return 0.0
+    if proposal.action is Action.CLOSE:
+        existing = existing_position(proposal, state)
+        if existing is None:
+            return 0.0
+        return -existing.delta_adjusted_exposure_usd / state.portfolio_value_usd * 100.0
     return dae.signed_notional_usd / state.portfolio_value_usd * 100.0
 
 

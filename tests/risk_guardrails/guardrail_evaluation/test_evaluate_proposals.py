@@ -987,6 +987,88 @@ def test_strategy_with_single_leg_raises() -> None:
         )
 
 
+def test_close_on_strategy_with_no_legs_is_accepted() -> None:
+    """CLOSE on an existing STRATEGY position with ``option_legs=None`` is valid.
+
+    A CLOSE assessment legitimately doesn't carry the leg breakdown — the
+    existing position already knows its legs. The validator must accept this
+    case (regression for ALP-504); the rule contributions then read
+    ``existing.delta_adjusted_exposure_usd`` instead of the empty proposal DAE.
+    """
+    existing = ExistingPosition(
+        position_id=PositionId("POS-STRAT"),
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.STRATEGY,
+        notional_usd=4_000.0,
+        delta_adjusted_exposure_usd=4_500.0,
+        current_greeks=None,
+        daily_borrow_cost_usd=None,
+        reserves_capital_usd=0.0,
+    )
+    state = _snapshot(existing_positions={"POS-STRAT": existing})
+    proposal = ProposedDelta(
+        id="REC-CLOSE-STRAT",
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.STRATEGY,
+        notional_usd=4_000.0,
+        quantity=4.0,
+        option_legs=None,
+        action=Action.CLOSE,
+        existing_position_id="POS-STRAT",
+    )
+
+    output = evaluate_proposals(
+        state=state,
+        proposals=(proposal,),
+        config=_full_config(),
+        market=_market(),
+    )
+
+    assert "REC-CLOSE-STRAT" in output.delta_adjusted
+
+
+def test_close_on_option_with_no_legs_is_accepted() -> None:
+    """CLOSE on an existing OPTION position with ``option_legs=None`` is valid (ALP-504)."""
+    existing = ExistingPosition(
+        position_id=PositionId("POS-OPT"),
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.OPTION,
+        notional_usd=2_000.0,
+        delta_adjusted_exposure_usd=2_250.0,
+        current_greeks=None,
+        daily_borrow_cost_usd=None,
+        reserves_capital_usd=0.0,
+    )
+    state = _snapshot(existing_positions={"POS-OPT": existing})
+    proposal = ProposedDelta(
+        id="REC-CLOSE-OPT",
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.OPTION,
+        notional_usd=2_000.0,
+        quantity=5.0,
+        option_legs=None,
+        action=Action.CLOSE,
+        existing_position_id="POS-OPT",
+    )
+
+    output = evaluate_proposals(
+        state=state,
+        proposals=(proposal,),
+        config=_full_config(),
+        market=_market(),
+    )
+
+    assert "REC-CLOSE-OPT" in output.delta_adjusted
+
+
 def test_close_with_no_existing_position_id_raises() -> None:
     """CLOSE without ``existing_position_id`` raises."""
     bad = _equity(

@@ -207,6 +207,92 @@ def test_options_delta_contribute_zero_for_equity() -> None:
     assert spec.contribute(_equity_proposal(), _equity_dae(), state, config) == 0.0
 
 
+def test_options_delta_contribute_close_on_strategy_uses_existing_dae() -> None:
+    """CLOSE on a STRATEGY position with empty proposal DAE: options_delta
+    contribution falls back to ``existing.delta_adjusted_exposure_usd`` (ALP-504).
+
+    Mirrors the theta/vega CLOSE pattern (``_existing_greek_dollars``) for the
+    delta-adjusted exposure axis."""
+    config = _config()
+    existing = ExistingPosition(
+        position_id="POS-STRAT",
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.STRATEGY,
+        notional_usd=4_000.0,
+        delta_adjusted_exposure_usd=4_500.0,
+        current_greeks=None,
+        daily_borrow_cost_usd=None,
+        reserves_capital_usd=0.0,
+    )
+    state = _snapshot(
+        portfolio_value_usd=100_000.0,
+        existing_positions={"POS-STRAT": existing},
+    )
+    spec = _spec_by_id(build_active_specs(config), "options_delta_pct")
+    proposal = _option_proposal(
+        proposal_id="P-STRAT",
+        quantity=4.0,
+        asset_type=AssetType.STRATEGY,
+        action=Action.CLOSE,
+        existing_position_id="POS-STRAT",
+    )
+    # Empty DAE — simulates the option_legs=None path.
+    dae = DeltaAdjustedExposure(
+        proposal_id="P-STRAT",
+        signed_notional_usd=0.0,
+        net_greeks=Greeks(0.0, 0.0, 0.0, 0.0),
+        iv_used=None,
+        iv_source=None,
+        unbuffered_delta=None,
+    )
+    # Contribution = -existing.dae / pv * 100 = -4.5%
+    assert spec.contribute(proposal, dae, state, config) == pytest.approx(-4.5)
+
+
+def test_options_delta_contribute_close_on_bearish_option_increases() -> None:
+    """CLOSE on an OPTION position with negative delta-adjusted exposure
+    (bearish — e.g. long put): options_delta contribution is +X/pv*100 (the
+    options_delta moves up because the bearish position is removed)."""
+    config = _config()
+    existing = ExistingPosition(
+        position_id="POS-OPT-BEAR",
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.OPTION,
+        notional_usd=1_500.0,
+        delta_adjusted_exposure_usd=-2_000.0,
+        current_greeks=Greeks(delta=-0.40, gamma=0.02, theta=-0.05, vega=0.15),
+        daily_borrow_cost_usd=None,
+        reserves_capital_usd=0.0,
+        quantity=5.0,
+    )
+    state = _snapshot(
+        portfolio_value_usd=100_000.0,
+        existing_positions={"POS-OPT-BEAR": existing},
+    )
+    spec = _spec_by_id(build_active_specs(config), "options_delta_pct")
+    proposal = _option_proposal(
+        proposal_id="P-OPT-BEAR",
+        quantity=5.0,
+        asset_type=AssetType.OPTION,
+        action=Action.CLOSE,
+        existing_position_id="POS-OPT-BEAR",
+    )
+    dae = DeltaAdjustedExposure(
+        proposal_id="P-OPT-BEAR",
+        signed_notional_usd=0.0,
+        net_greeks=Greeks(0.0, 0.0, 0.0, 0.0),
+        iv_used=None,
+        iv_source=None,
+        unbuffered_delta=None,
+    )
+    # Contribution = -existing.dae / pv * 100 = -(-2_000)/100_000*100 = +2.0
+    assert spec.contribute(proposal, dae, state, config) == pytest.approx(2.0)
+
+
 # ---------------------------------------------------------------------------
 # portfolio_theta_pct_per_day
 # ---------------------------------------------------------------------------

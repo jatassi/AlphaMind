@@ -265,7 +265,11 @@ def test_sector_concentration_contribute_zero_for_other_sector() -> None:
 def test_sector_concentration_contribute_negative_for_close() -> None:
     """CLOSE in the sector reduces concentration via signed_notional_usd<0."""
     config = _config(active_sectors=("tech",))
-    state = _snapshot(portfolio_value_usd=100_000.0)
+    existing = _existing(direction=Direction.LONG, notional_usd=5_000.0)
+    state = _snapshot(
+        portfolio_value_usd=100_000.0,
+        existing_positions={"POS-1": existing},
+    )
     spec = _spec_by_id(build_active_specs(config), "sector_concentration_tech")
     proposal = _proposal(
         sector="tech",
@@ -275,6 +279,48 @@ def test_sector_concentration_contribute_negative_for_close() -> None:
     )
     dae = _dae(signed_notional_usd=-5_000.0)
     assert spec.contribute(proposal, dae, state, config) == pytest.approx(-5.0)
+
+
+def test_sector_concentration_contribute_close_on_strategy_uses_existing_dae() -> None:
+    """CLOSE on a STRATEGY (or OPTION) position with empty proposal DAE
+    falls back to ``existing.delta_adjusted_exposure_usd`` — without this, the
+    rule reports zero impact (ALP-504)."""
+    config = _config(active_sectors=("tech",))
+    existing = _existing(
+        direction=Direction.LONG,
+        asset_type=AssetType.STRATEGY,
+        notional_usd=4_000.0,
+    )
+    # ``existing.delta_adjusted_exposure_usd`` defaults to ``notional_usd``; for
+    # this scenario use a distinct DAE to prove the rule reads it, not notional.
+    existing_with_dae = ExistingPosition(
+        position_id=existing.position_id,
+        underlying=existing.underlying,
+        sector=existing.sector,
+        direction=existing.direction,
+        asset_type=existing.asset_type,
+        notional_usd=existing.notional_usd,
+        delta_adjusted_exposure_usd=4_500.0,
+        current_greeks=existing.current_greeks,
+        daily_borrow_cost_usd=existing.daily_borrow_cost_usd,
+        reserves_capital_usd=existing.reserves_capital_usd,
+    )
+    state = _snapshot(
+        portfolio_value_usd=100_000.0,
+        existing_positions={"POS-1": existing_with_dae},
+    )
+    spec = _spec_by_id(build_active_specs(config), "sector_concentration_tech")
+    proposal = _proposal(
+        sector="tech",
+        asset_type=AssetType.STRATEGY,
+        action=Action.CLOSE,
+        notional_usd=4_000.0,
+        existing_position_id="POS-1",
+    )
+    # Empty DAE — simulates the option_legs=None path producing zero.
+    dae = _dae(signed_notional_usd=0.0)
+    # Contribution = -existing.dae / pv * 100 = -4.5%
+    assert spec.contribute(proposal, dae, state, config) == pytest.approx(-4.5)
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +350,75 @@ def test_net_long_contribute_signed() -> None:
     assert spec.contribute(short_open, short_dae, state, config) == pytest.approx(-5.0)
 
 
+def test_net_long_contribute_close_on_strategy_uses_existing_dae() -> None:
+    """CLOSE on a STRATEGY position with empty proposal DAE: net_long contribution
+    must come from ``existing.delta_adjusted_exposure_usd`` (ALP-504)."""
+    config = _config()
+    existing = ExistingPosition(
+        position_id="POS-STRAT",
+        underlying=Symbol("ABC"),
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.STRATEGY,
+        notional_usd=4_000.0,
+        delta_adjusted_exposure_usd=4_500.0,
+        current_greeks=None,
+        daily_borrow_cost_usd=None,
+        reserves_capital_usd=0.0,
+    )
+    state = _snapshot(
+        portfolio_value_usd=100_000.0,
+        existing_positions={"POS-STRAT": existing},
+    )
+    spec = _spec_by_id(build_active_specs(config), "net_long_pct")
+    proposal = _proposal(
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.STRATEGY,
+        action=Action.CLOSE,
+        notional_usd=4_000.0,
+        existing_position_id="POS-STRAT",
+    )
+    dae = _dae(signed_notional_usd=0.0)
+    # Closing a +4_500 DAE position: net_long contribution = -4_500 / 100_000 * 100 = -4.5
+    assert spec.contribute(proposal, dae, state, config) == pytest.approx(-4.5)
+
+
+def test_net_long_contribute_close_on_short_strategy_increases_net_long() -> None:
+    """CLOSE on a SHORT-direction STRATEGY position: closing bearish exposure
+    raises net_long. ``existing.delta_adjusted_exposure_usd`` is negative for
+    a bearish position, so contribution = -(-X) = +X."""
+    config = _config()
+    existing = ExistingPosition(
+        position_id="POS-STRAT-BEAR",
+        underlying=Symbol("ABC"),
+        sector="tech",
+        direction=Direction.SHORT,
+        asset_type=AssetType.STRATEGY,
+        notional_usd=3_000.0,
+        delta_adjusted_exposure_usd=-3_500.0,
+        current_greeks=None,
+        daily_borrow_cost_usd=None,
+        reserves_capital_usd=0.0,
+    )
+    state = _snapshot(
+        portfolio_value_usd=100_000.0,
+        existing_positions={"POS-STRAT-BEAR": existing},
+    )
+    spec = _spec_by_id(build_active_specs(config), "net_long_pct")
+    proposal = _proposal(
+        sector="tech",
+        direction=Direction.SHORT,
+        asset_type=AssetType.STRATEGY,
+        action=Action.CLOSE,
+        notional_usd=3_000.0,
+        existing_position_id="POS-STRAT-BEAR",
+    )
+    dae = _dae(signed_notional_usd=0.0)
+    # Closing a -3_500 DAE position: net_long contribution = +3.5
+    assert spec.contribute(proposal, dae, state, config) == pytest.approx(3.5)
+
+
 # ---------------------------------------------------------------------------
 # net_short_pct
 # ---------------------------------------------------------------------------
@@ -326,6 +441,41 @@ def test_net_short_contribute_flipped_sign() -> None:
     short_dae = _dae(signed_notional_usd=-5_000.0)
     # -(-5_000) / 100_000 * 100 = +5
     assert spec.contribute(short_open, short_dae, state, config) == pytest.approx(5.0)
+
+
+def test_net_short_contribute_close_on_short_strategy_decreases_net_short() -> None:
+    """CLOSE on a SHORT STRATEGY position with empty proposal DAE: net_short
+    contribution comes from ``existing.delta_adjusted_exposure_usd`` (ALP-504).
+    Mirrors the existing OPEN path's sign flip: contribution = +existing.dae / pv * 100."""
+    config = _config()
+    existing = ExistingPosition(
+        position_id="POS-STRAT-BEAR",
+        underlying=Symbol("ABC"),
+        sector="tech",
+        direction=Direction.SHORT,
+        asset_type=AssetType.STRATEGY,
+        notional_usd=3_000.0,
+        delta_adjusted_exposure_usd=-3_500.0,
+        current_greeks=None,
+        daily_borrow_cost_usd=None,
+        reserves_capital_usd=0.0,
+    )
+    state = _snapshot(
+        portfolio_value_usd=100_000.0,
+        existing_positions={"POS-STRAT-BEAR": existing},
+    )
+    spec = _spec_by_id(build_active_specs(config), "net_short_pct")
+    proposal = _proposal(
+        sector="tech",
+        direction=Direction.SHORT,
+        asset_type=AssetType.STRATEGY,
+        action=Action.CLOSE,
+        notional_usd=3_000.0,
+        existing_position_id="POS-STRAT-BEAR",
+    )
+    dae = _dae(signed_notional_usd=0.0)
+    # Closing -3_500 DAE position: net_short contribution = +(-3_500)/100_000*100 = -3.5
+    assert spec.contribute(proposal, dae, state, config) == pytest.approx(-3.5)
 
 
 # ---------------------------------------------------------------------------

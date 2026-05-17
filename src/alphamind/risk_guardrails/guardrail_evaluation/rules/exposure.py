@@ -75,7 +75,8 @@ def make_sector_concentration_spec(sector: str) -> RuleSpec:
     ) -> float:
         if proposal.sector != sector:
             return 0.0
-        return dae.signed_notional_usd / state.portfolio_value_usd * 100.0
+        signed = _close_or_dae_signed_notional(proposal, dae, state)
+        return signed / state.portfolio_value_usd * 100.0
 
     return RuleSpec(
         rule_id=f"sector_concentration_{sector}",
@@ -102,7 +103,8 @@ def _net_long_contribute(
     config: LibraryConfig,
 ) -> float:
     """Signed contribution: positive ``signed_notional`` increases net long."""
-    return dae.signed_notional_usd / state.portfolio_value_usd * 100.0
+    signed = _close_or_dae_signed_notional(proposal, dae, state)
+    return signed / state.portfolio_value_usd * 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +123,39 @@ def _net_short_contribute(
     config: LibraryConfig,
 ) -> float:
     """Flip sign: short OPENs (signed_notional<0) contribute positively."""
-    return -dae.signed_notional_usd / state.portfolio_value_usd * 100.0
+    signed = _close_or_dae_signed_notional(proposal, dae, state)
+    return -signed / state.portfolio_value_usd * 100.0
+
+
+# ---------------------------------------------------------------------------
+# CLOSE-aware signed-notional helper
+# ---------------------------------------------------------------------------
+
+
+def _close_or_dae_signed_notional(
+    proposal: ProposedDelta,
+    dae: DeltaAdjustedExposure,
+    state: PortfolioStateSnapshot,
+) -> float:
+    """Pick the right signed-notional source for the rule contribution.
+
+    For OPEN/ADD, ``dae.signed_notional_usd`` is the proposal's projected
+    delta-adjusted exposure. For CLOSE on options/strategy, the proposal
+    legitimately carries ``option_legs=None`` (the close references an
+    existing position whose legs are already known), so the DAE computed at
+    ``delta_adjusted.py`` is zero — see ALP-504. In that case the contribution
+    must come from the existing position's stored DAE, negated because the
+    close *removes* that exposure from the book.
+
+    For ADJUST/CANCEL the DAE is exposure-neutral (zero) by design; this
+    helper still returns zero for those actions.
+    """
+    if proposal.action is Action.CLOSE:
+        existing = existing_position(proposal, state)
+        if existing is None:
+            return 0.0
+        return -existing.delta_adjusted_exposure_usd
+    return dae.signed_notional_usd
 
 
 # ---------------------------------------------------------------------------
