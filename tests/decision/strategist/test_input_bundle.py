@@ -712,7 +712,7 @@ def test_normal_mode_section_ordering() -> None:
     envelope_idx = out.index("=== GUARDRAIL STATE")
     tools_idx = out.index("=== AVAILABLE TOOLS ===")
     portfolio_idx = out.index("=== PORTFOLIO STATE ===")
-    brief_idx = out.index("=== SYNTHESIZER BRIEF ===")
+    brief_idx = out.index("=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) ===")
     assert envelope_idx < tools_idx < portfolio_idx < brief_idx
 
 
@@ -814,7 +814,7 @@ def test_defensive_posture_section_ordering() -> None:
     envelope_idx = out.index("=== GUARDRAIL STATE")
     tools_idx = out.index("=== AVAILABLE TOOLS ===")
     portfolio_idx = out.index("=== PORTFOLIO STATE ===")
-    brief_idx = out.index("=== SYNTHESIZER BRIEF ===")
+    brief_idx = out.index("=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) ===")
     assert envelope_idx < tools_idx < portfolio_idx < brief_idx
 
 
@@ -1099,7 +1099,7 @@ def test_empty_pm_decision_log_renders_none() -> None:
         sector_label_display=_SECTOR_LABELS,
     )
     pm_idx = out.index("=== ACTIVITY LOG (recent PM decisions) ===")
-    brief_idx = out.index("=== SYNTHESIZER BRIEF ===")
+    brief_idx = out.index("=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) ===")
     block = out[pm_idx:brief_idx]
     assert "None" in block
 

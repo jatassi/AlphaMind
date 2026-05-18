@@ -89,7 +89,7 @@ _PORTFOLIO_HEADER = "=== PORTFOLIO STATE ==="
 _BETWEEN_INVOCATION_CLOSURES_HEADER = "=== ACTIVITY LOG (between-invocation closures) ==="
 _INTRA_LOG_HEADER = "=== ACTIVITY LOG (intra-invocation) ==="
 _PM_LOG_HEADER = "=== ACTIVITY LOG (recent PM decisions) ==="
-_BRIEF_HEADER = "=== SYNTHESIZER BRIEF ==="
+_BRIEF_HEADER = "=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) ==="
 _NONE_LINE = "  None"
 
 _DEFENSIVE_POSTURE_TOOL_NOTE = (

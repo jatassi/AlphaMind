@@ -159,3 +159,71 @@ def test_schema_required_list_matches_test_fixture() -> None:
         f"Update _RECOMMENDATION_REQUIRED in this file to match the schema, "
         f"then confirm the prompt's <example_output> covers all fields."
     )
+
+
+# ---------------------------------------------------------------------------
+# ALP-547: prompt distinguishes inline preview from canonical brief, and the
+# retrieve_brief tool_policy requires retrieval before bailing on
+# high-magnitude references.
+# ---------------------------------------------------------------------------
+
+
+_TOOL_POLICY_RE = re.compile(r"<tool_policy>(.*?)</tool_policy>", re.DOTALL)
+
+
+def _retrieve_brief_policy_block() -> str:
+    """Return the retrieve_brief sub-block within ``<tool_policy>``.
+
+    Slices from the ``retrieve_brief(ref_id)`` bullet to either the next
+    backtick-prefixed bullet (another tool) or to the end of the
+    ``<tool_policy>`` block.
+    """
+    content = _read_prompt()
+    policy_match = _TOOL_POLICY_RE.search(content)
+    assert policy_match is not None, "prompts/decision/analyst.md is missing a <tool_policy> block."
+    policy = policy_match.group(1)
+    start = policy.index("`retrieve_brief")
+    rest = policy[start:]
+    next_tool = re.search(r"\n\n`[A-Za-z_]", rest[1:])
+    end = next_tool.start() + 1 if next_tool is not None else len(rest)
+    return rest[:end]
+
+
+def test_prompt_distinguishes_inline_preview_from_canonical_brief() -> None:
+    """ALP-547 root cause #1: the prompt must label the inline brief section
+    as a preview/preface so the analyst doesn't treat the synthesizer's
+    framing sentence as the full brief.
+    """
+    content = _read_prompt().lower()
+    assert "preview" in content or "preface" in content, (
+        "prompts/decision/analyst.md must label the inline brief section as a "
+        "preview/preface (not the canonical brief). Without this the analyst "
+        "treats the synthesizer's framing sentence as the brief itself and "
+        "bails on 'incomplete brief' (see ALP-547)."
+    )
+
+
+def test_retrieve_brief_policy_requires_retrieval_before_bailing_on_high_magnitude_refs() -> None:
+    """ALP-547 root cause #2: the retrieve_brief tool_policy must require at
+    least one retrieval before emitting empty recommendations when the
+    preview cites a high-magnitude / load-bearing reference.
+    """
+    policy = _retrieve_brief_policy_block().lower()
+    assert "sigma" in policy, (
+        "retrieve_brief tool_policy must name a sigma-magnitude threshold "
+        "for the required-retrieval-before-bailing rule (ALP-547)."
+    )
+    assert "load-bearing" in policy, (
+        "retrieve_brief tool_policy must reference 'load-bearing' framing for "
+        "the required-retrieval rule (ALP-547)."
+    )
+    bail_terms = (
+        "empty recommendations",
+        '"recommendations": []',
+        "no thesis",
+        "before bailing",
+    )
+    assert any(term in policy for term in bail_terms), (
+        f"retrieve_brief tool_policy must address the empty-recommendations "
+        f"bailout that ALP-547 fixes. Expected one of: {bail_terms}."
+    )
