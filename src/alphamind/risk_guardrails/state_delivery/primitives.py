@@ -396,13 +396,12 @@ def _classify_position_zone(value: float, limit: float) -> RiskZone:
 
 
 def _classify_loss_zone(pnl_pct: float, max_loss_pct: float | None) -> RiskZone:
-    """Classify how close a position's signed P/L is to its max-loss floor.
+    """Zone of a position's signed P/L vs. its max-loss floor (``-max_loss_pct``).
 
-    *max_loss_pct* is the positive magnitude of the loss cap (e.g., ``80.0``
-    means a 80% loss is the floor; the signed limit is ``-80.0``). The zone
-    is driven by ``-pnl_pct / max_loss_pct`` — the fraction of the loss cap
-    consumed by the current signed P/L — so a position with positive P/L
-    yields a non-positive ratio and stays NORMAL.
+    Positive P/L yields a non-positive ratio against the negative floor and
+    stays NORMAL. CRITICAL is the worst loss-zone level — BLOCKED is reserved
+    for size-cap breaches where the operator action is "no more sizing", not
+    "close the position".
     """
     if max_loss_pct is None or max_loss_pct <= 0:
         return RiskZone.NORMAL
@@ -414,16 +413,16 @@ def _classify_loss_zone(pnl_pct: float, max_loss_pct: float | None) -> RiskZone:
     return RiskZone.NORMAL
 
 
-_ZONE_SEVERITY: dict[RiskZone, int] = {
-    RiskZone.NORMAL: 0,
-    RiskZone.WARNING: 1,
-    RiskZone.CRITICAL: 2,
-    RiskZone.BLOCKED: 3,
-}
+_ZONE_ORDER: tuple[RiskZone, ...] = (
+    RiskZone.NORMAL,
+    RiskZone.WARNING,
+    RiskZone.CRITICAL,
+    RiskZone.BLOCKED,
+)
 
 
 def _max_severity_zone(*zones: RiskZone) -> RiskZone:
-    return max(zones, key=_ZONE_SEVERITY.__getitem__)
+    return max(zones, key=_ZONE_ORDER.index)
 
 
 def _max_loss_for(active: ActiveRiskParameterSet, rule_id: str) -> float | None:
@@ -482,8 +481,8 @@ def render_position_proximity_block(
     Each row shows position weight against the per-position size limit, the
     unrealized P/L of cost, the per-instrument-type max-loss annotation when
     the corresponding ``position_max_loss_*`` parameter is present, and a
-    zone tag (``[⚠ WARNING]`` / ``[CRITICAL]`` / ``[BLOCKED]``) for any
-    position whose weight crosses the warning threshold.
+    zone tag (``[⚠ WARNING]`` / ``[CRITICAL]`` / ``[BLOCKED]``) whose severity
+    is the max of the size-proximity and loss-proximity zones.
     """
     rows: list[str] = [_POSITION_PROXIMITY_HEADER]
     if not positions:

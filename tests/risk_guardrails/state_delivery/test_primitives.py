@@ -724,7 +724,7 @@ def test_directional_headroom_block_is_deterministic() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Position proximity block — loss-zone signed comparison (ALP-550)
+# Position proximity block — loss-zone signed comparison
 # ---------------------------------------------------------------------------
 
 
@@ -874,7 +874,9 @@ def test_position_proximity_zero_pnl_with_max_loss_is_normal() -> None:
         positions=(pos,),
         active_risk_parameters=_make_active_parameters_for_proximity(),
     )
-    assert "[" not in rendered.splitlines()[1]
+    assert "[\U0001f534 CRITICAL]" not in rendered
+    assert "[⚠ WARNING]" not in rendered
+    assert "[BLOCKED]" not in rendered
 
 
 def test_position_proximity_size_proximity_still_drives_tag_when_loss_normal() -> None:
