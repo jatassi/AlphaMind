@@ -62,11 +62,10 @@ _MIN_SPREAD_FLOOR_DOLLARS = Decimal("0.01")
 # sqrt denominator is on an O(1-10000) scale for typical US equities.
 _ADV_DOLLAR_SCALE = Decimal(1000000)
 
-# Defensive minimum for the input clamps. ADV/price of 0 means data was
-# unavailable upstream — the wedge layer should have caught that. The
-# clamp prevents a div-by-zero crash in the harness's pure path.
+# Defensive minimum for ADV. ADV of 0 means data was unavailable upstream —
+# the wedge layer should have caught that. The clamp prevents a div-by-zero
+# crash in the harness's pure path.
 _ADV_SHARES_EPSILON = Decimal(1)
-_PRICE_EPSILON = Decimal("0.01")
 
 
 def estimate_spread(
@@ -89,8 +88,7 @@ def estimate_spread(
     ----------
     fill_price:
         Paper fill price per share (equities) or per contract (options).
-        Clamped to a small positive epsilon before the model to avoid
-        a zero-price div in the (defensive) unhappy path.
+        Constructed via ``price()`` which rejects non-positive values.
     adv_shares:
         Average daily volume in shares (equities) or contracts (options),
         sourced upstream from the data-pipeline ADV projection. Clamped
@@ -111,12 +109,7 @@ def estimate_spread(
     Money
         Non-negative spread in dollars. Always >= floor * buffer.
     """
-    # Clamp inputs defensively. The wedge layer should have surfaced
-    # missing-data conditions earlier; these guards prevent a crash if
-    # the contract is breached.
     price_decimal = Decimal(fill_price)
-    if price_decimal < _PRICE_EPSILON:
-        price_decimal = _PRICE_EPSILON
 
     adv_decimal = Decimal(str(adv_shares))
     if adv_decimal < _ADV_SHARES_EPSILON:
