@@ -29,7 +29,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Literal
 
-from alphamind._kernel.money import Money, Price
+from alphamind._kernel.money import Money, Price, money
 from alphamind.config.models.execution import FeeSchedule
 from alphamind.portfolio_state.records.positions import InstrumentType
 
@@ -97,7 +97,7 @@ def _equity_fees(
         notional = fill_price * qty
         total += taf_rate * qty + sec_rate * notional
 
-    return Money(total)
+    return money(total)
 
 
 def _options_fees(
@@ -122,4 +122,4 @@ def _options_fees(
     occ_rate = Decimal(str(schedule.occ_per_options_contract))
     total += (orf_rate + occ_rate) * qty
 
-    return Money(total)
+    return money(total)

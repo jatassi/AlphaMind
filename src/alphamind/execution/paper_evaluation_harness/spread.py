@@ -45,7 +45,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from alphamind._kernel.money import Money, Price
+from alphamind._kernel.money import Money, Price, money
 
 __all__ = ["estimate_spread"]
 
@@ -130,4 +130,4 @@ def estimate_spread(
     # Apply the intraday-widening buffer (calibrator, not safety factor).
     buffered = floored * (Decimal(1) + buffer_decimal / Decimal(100))
 
-    return Money(buffered)
+    return money(buffered)

@@ -95,4 +95,4 @@ def estimate_impact(
     # Convert via str to avoid binary-float drift in Decimal arithmetic.
     scalar_decimal = Decimal(str(scalar))
 
-    return Money(estimated_spread * scalar_decimal)
+    return money(estimated_spread * scalar_decimal)
