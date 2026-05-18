@@ -988,7 +988,7 @@ class TestAtmIvBaselineState:
         )
 
         cv = results["AAPL"]
-        assert cv.state is CalibrationState.BOOTSTRAP
+        assert cv.state is CalibrationState.ACCUMULATING
         assert cv.bootstrap_reason is not None
         assert "atm_iv" in cv.bootstrap_reason
 

@@ -512,7 +512,7 @@ def test_orchestrator_diagnostic_counts_populated(
     outputs = _run_orchestrator(populated_session, archive_root=tmp_path)
     assert outputs.total_blocks >= 1  # At minimum, the regime block.
     assert outputs.total_anomalies >= 0
-    assert outputs.bootstrap_block_count >= 0
+    assert outputs.non_calibrated_block_count >= 0
 
 
 def test_orchestrator_persists_ticker_realized_vol(

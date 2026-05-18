@@ -376,11 +376,11 @@ Renders the per-invocation distillation calibration-state reduction so the opera
 
 | Pane | Content | Source |
 |---|---|---|
-| Per-invocation mix bar | Stacked-segment bar; one segment per `calibration_state` (`calibrated` / `bootstrap` / `unavailable`); segment width proportional to the block count in that state. Hover or tap reveals the underlying counts plus the `by_audience` and `by_block_kind` breakdowns. | `data/provenance/invocations/<id>/data_calibration_state.json` |
+| Per-invocation mix bar | Stacked-segment bar; one segment per `calibration_state` (`calibrated` / `accumulating` / `unavailable`); segment width proportional to the block count in that state. Hover or tap reveals the underlying counts plus the `by_audience` and `by_block_kind` breakdowns. | `data/provenance/invocations/<id>/data_calibration_state.json` |
 | Trailing 7-day mix trend | Stacked area chart of percent-of-blocks in each state per invocation across the trailing 7-day window. | Snapshot files for the trailing 7 invocations |
-| Stuck-in-bootstrap alert | Panel-level warning lists every `<block_id>` that has been continuously `bootstrap` or `unavailable` across the trailing 30-day window, alongside its last `calibrated` invocation (or "never" for the cold-start case). Cross-references the [warm-up duration estimate](02-distillation-layer/threshold-calibration.md#warm-up-duration-estimate) so the operator interprets persistent bootstrap state against the expected calibration horizon. | Snapshot files for the trailing 30 invocations |
+| Stuck-in-non-calibrated alert | Panel-level warning lists every `<block_id>` that has been continuously `accumulating` or `unavailable` across the trailing 30-day window, alongside its last `calibrated` invocation (or "never" for the cold-start case). Cross-references the [warm-up duration estimate](02-distillation-layer/threshold-calibration.md#warm-up-duration-estimate) so the operator interprets persistent non-calibrated state against the expected calibration horizon. | Snapshot files for the trailing 30 invocations |
 
-Click any block-kind row in the mix breakdown → drill-in side panel renders the per-ticker / per-pair / per-contract breakdown for that kind's most-recent invocation, with the matching `bootstrap_reasons` / `unavailable_reasons` strings inline.
+Click any block-kind row in the mix breakdown → drill-in side panel renders the per-ticker / per-pair / per-contract breakdown for that kind's most-recent invocation, with the matching `accumulating_reasons` / `unavailable_reasons` strings inline.
 
 ### F. Quality and feedback
 

@@ -339,7 +339,7 @@ def test_gap2_only_bootstrap_baselines_no_warning(
 ) -> None:
     # Bootstrap baselines do not count toward the calibrated threshold.
     for i in range(SENTIMENT_CALIBRATED_BASELINE_WARN_THRESHOLD + 5):
-        _baseline(session, f"TKR{i}", calibration_state="bootstrap")
+        _baseline(session, f"TKR{i}", calibration_state="accumulating")
     session.commit()
 
     regime_label = {"realized_vol_5d": 0.1, "realized_vol_20d": 0.1}

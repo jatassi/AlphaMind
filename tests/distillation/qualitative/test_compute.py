@@ -129,7 +129,7 @@ class TestNewsPriceDivergence:
             price_changes={"AAPL": 0.10},
         )
         blocks = compute_news_price_divergence_blocks(inputs, min_articles=5)
-        assert blocks[0].calibration_state is CalibrationState.BOOTSTRAP
+        assert blocks[0].calibration_state is CalibrationState.ACCUMULATING
         reason = blocks[0].bootstrap_reason
         assert reason is not None
         assert "news_price_divergence_min_articles: 3 < 5" in reason
@@ -216,10 +216,10 @@ class TestSentimentPercentile:
         )
         blocks = compute_sentiment_percentile_blocks(inputs, sentiment_min_observations=30)
         entry = blocks[0].payload["per_ticker"]["MSFT"]
-        assert entry["calibration_state"] == CalibrationState.BOOTSTRAP.value
+        assert entry["calibration_state"] == CalibrationState.ACCUMULATING.value
         assert entry["baseline_mean"] == pytest.approx(0.05)
         assert entry["baseline_stdev"] == pytest.approx(0.40)
-        assert blocks[0].calibration_state is CalibrationState.BOOTSTRAP
+        assert blocks[0].calibration_state is CalibrationState.ACCUMULATING
 
     def test_unavailable_when_pool_and_per_ticker_both_empty(self) -> None:
         inputs = SentimentPercentileInputs(

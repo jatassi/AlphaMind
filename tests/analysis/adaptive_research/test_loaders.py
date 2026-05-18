@@ -80,7 +80,7 @@ def _outputs(blocks: tuple[OutputBlock, ...]) -> DistillationOutputs:
         as_of=_AS_OF,
         total_blocks=len(blocks),
         total_anomalies=sum(len(b.anomaly_flags) for b in blocks),
-        bootstrap_block_count=0,
+        non_calibrated_block_count=0,
         all_blocks=blocks,
     )
 

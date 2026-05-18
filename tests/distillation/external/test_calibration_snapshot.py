@@ -29,7 +29,9 @@ from typing import Any
 
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.calibration_snapshot import (
+    OPERATOR_SUMMARY_SCHEMA_VERSION,
     write_calibration_state_snapshot,
+    write_operator_data_health_summary,
 )
 from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
 from alphamind.distillation.orchestrator import DistillationOutputs
@@ -109,7 +111,7 @@ def _build_outputs(
         as_of=_AS_OF,
         total_blocks=len(blocks),
         total_anomalies=0,
-        bootstrap_block_count=sum(
+        non_calibrated_block_count=sum(
             1 for block in blocks if block.calibration_state is not CalibrationState.CALIBRATED
         ),
         all_blocks=blocks,
@@ -121,8 +123,13 @@ def _build_outputs(
 # ---------------------------------------------------------------------------
 
 
-def test_writer_emits_schema_version_one(tmp_path: Path) -> None:
-    """Tracer bullet — the writer produces a JSON file whose ``schema_version`` equals ``"1"``."""
+def test_writer_emits_schema_version_two(tmp_path: Path) -> None:
+    """Tracer bullet — the writer produces a JSON file whose ``schema_version`` equals ``"2"``.
+
+    Bumped from ``"1"`` in ALP-540 because the ``by_state`` keyspace now
+    carries ``accumulating`` instead of ``bootstrap`` and the per-block
+    reason map was renamed ``accumulating_reasons``.
+    """
     outputs = _build_outputs(blocks=())
     path = write_calibration_state_snapshot(
         outputs=outputs,
@@ -135,7 +142,7 @@ def test_writer_emits_schema_version_one(tmp_path: Path) -> None:
     )
     assert path == expected_path
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == "1"
+    assert payload["schema_version"] == "2"
 
 
 def test_writer_creates_invocation_directory(tmp_path: Path) -> None:
@@ -167,12 +174,12 @@ def test_writer_empty_input_produces_zero_counts(tmp_path: Path) -> None:
     assert payload["summary"]["total_blocks"] == 0
     assert payload["summary"]["by_state"] == {
         "calibrated": 0,
-        "bootstrap": 0,
+        "accumulating": 0,
         "unavailable": 0,
     }
     assert payload["summary"]["by_audience"] == {}
     assert payload["summary"]["by_block_kind"] == {}
-    assert payload["bootstrap_reasons"] == {}
+    assert payload["accumulating_reasons"] == {}
     assert payload["unavailable_reasons"] == {}
 
 
@@ -192,7 +199,7 @@ def test_writer_aggregates_per_state_counts(tmp_path: Path) -> None:
         _block(
             block_id="q3.options_flow",
             audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="iv_rank: 4 < 30",
         ),
         _block(
@@ -213,7 +220,7 @@ def test_writer_aggregates_per_state_counts(tmp_path: Path) -> None:
     assert payload["summary"]["total_blocks"] == 4
     assert payload["summary"]["by_state"] == {
         "calibrated": 2,
-        "bootstrap": 1,
+        "accumulating": 1,
         "unavailable": 1,
     }
 
@@ -231,7 +238,7 @@ def test_writer_aggregates_per_audience_counts(tmp_path: Path) -> None:
             audience=frozenset(
                 {OutputAudience.SECTOR_TECH_SEMIS, OutputAudience.UNIVERSAL_BROADCAST}
             ),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="sentiment: 2 < 5",
         ),
     )
@@ -244,8 +251,8 @@ def test_writer_aggregates_per_audience_counts(tmp_path: Path) -> None:
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     assert payload["summary"]["by_audience"] == {
-        "sector_tech_semis": {"calibrated": 1, "bootstrap": 1, "unavailable": 0},
-        "universal_broadcast": {"calibrated": 0, "bootstrap": 1, "unavailable": 0},
+        "sector_tech_semis": {"calibrated": 1, "accumulating": 1, "unavailable": 0},
+        "universal_broadcast": {"calibrated": 0, "accumulating": 1, "unavailable": 0},
     }
 
 
@@ -260,7 +267,7 @@ def test_writer_aggregates_per_block_kind_counts(tmp_path: Path) -> None:
         _block(
             block_id="q1.volume_anomaly",
             audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="volume_baseline: 12 < 20",
         ),
         _block(
@@ -278,8 +285,8 @@ def test_writer_aggregates_per_block_kind_counts(tmp_path: Path) -> None:
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     assert payload["summary"]["by_block_kind"] == {
-        "q1.volume_anomaly": {"calibrated": 1, "bootstrap": 1, "unavailable": 0},
-        "regime.label": {"calibrated": 1, "bootstrap": 0, "unavailable": 0},
+        "q1.volume_anomaly": {"calibrated": 1, "accumulating": 1, "unavailable": 0},
+        "regime.label": {"calibrated": 1, "accumulating": 0, "unavailable": 0},
     }
 
 
@@ -289,13 +296,13 @@ def test_writer_captures_bootstrap_reasons(tmp_path: Path) -> None:
         _block(
             block_id="q1.volume_anomaly",
             audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="volume_baseline: 12 < 20",
         ),
         _block(
             block_id="qual.sentiment_percentile",
             audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="sentiment: 2 < 5",
         ),
         _block(
@@ -312,12 +319,12 @@ def test_writer_captures_bootstrap_reasons(tmp_path: Path) -> None:
     )
     payload = json.loads(path.read_text(encoding="utf-8"))
 
-    assert payload["bootstrap_reasons"] == {
+    assert payload["accumulating_reasons"] == {
         "q1.volume_anomaly": "volume_baseline: 12 < 20",
         "qual.sentiment_percentile": "sentiment: 2 < 5",
     }
     # Calibrated blocks must not appear.
-    assert "q3.options_flow" not in payload["bootstrap_reasons"]
+    assert "q3.options_flow" not in payload["accumulating_reasons"]
     assert payload["unavailable_reasons"] == {}
 
 
@@ -333,7 +340,7 @@ def test_writer_captures_unavailable_reasons(tmp_path: Path) -> None:
         _block(
             block_id="q1.volume_anomaly",
             audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="volume_baseline: 12 < 20",
         ),
     )
@@ -348,7 +355,7 @@ def test_writer_captures_unavailable_reasons(tmp_path: Path) -> None:
     assert payload["unavailable_reasons"] == {
         "q12.event_novelty": "event_history: 0 < 3 (cross-sectional pool empty)",
     }
-    assert payload["bootstrap_reasons"] == {
+    assert payload["accumulating_reasons"] == {
         "q1.volume_anomaly": "volume_baseline: 12 < 20",
     }
 
@@ -381,7 +388,7 @@ def test_writer_is_deterministic(tmp_path: Path) -> None:
             audience=frozenset(
                 {OutputAudience.SECTOR_FINANCIALS, OutputAudience.UNIVERSAL_BROADCAST}
             ),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="iv_rank: 4 < 30",
         ),
         _block(
@@ -418,7 +425,7 @@ def test_writer_end_to_end_schema_shape(tmp_path: Path) -> None:
         _block(
             block_id="q1.volume_anomaly",
             audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="volume_baseline: 12 < 20",
         ),
         _block(
@@ -447,7 +454,7 @@ def test_writer_end_to_end_schema_shape(tmp_path: Path) -> None:
         "invocation_id",
         "as_of",
         "summary",
-        "bootstrap_reasons",
+        "accumulating_reasons",
         "unavailable_reasons",
     }
     # Summary structure.
@@ -461,13 +468,128 @@ def test_writer_end_to_end_schema_shape(tmp_path: Path) -> None:
     # Per-state vocabulary matches the CalibrationState enum.
     assert set(payload["summary"]["by_state"]) == {
         "calibrated",
-        "bootstrap",
+        "accumulating",
         "unavailable",
     }
     # Reason maps populated for non-calibrated blocks only.
-    assert payload["bootstrap_reasons"] == {
+    assert payload["accumulating_reasons"] == {
         "q1.volume_anomaly": "volume_baseline: 12 < 20",
     }
     assert payload["unavailable_reasons"] == {
         "q3.options_flow": "iv_rank: 0 < 30 (cross-sectional pool empty)",
     }
+
+
+# ---------------------------------------------------------------------------
+# Operator data-health summary writer (ALP-540 Layer 2)
+# ---------------------------------------------------------------------------
+
+
+def test_operator_summary_empty_blocks(tmp_path: Path) -> None:
+    """Empty fixture produces a summary with all zeros and empty per-state lists."""
+    outputs = _build_outputs(blocks=())
+    path = write_operator_data_health_summary(
+        outputs=outputs,
+        invocation_id="inv-id",
+        archive_root=tmp_path,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["schema_version"] == OPERATOR_SUMMARY_SCHEMA_VERSION
+    assert payload["summary"] == {"calibrated": 0, "accumulating": 0, "unavailable": 0}
+    assert payload["unavailable"] == []
+    assert payload["accumulating"] == []
+
+
+def test_operator_summary_mixed_state_blocks(tmp_path: Path) -> None:
+    """Per-state lists carry one entry per non-calibrated block, block-id-sorted."""
+    blocks = (
+        _block(
+            block_id="q1.volume_anomaly",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.CALIBRATED,
+        ),
+        _block(
+            block_id="q6.dollar_attribution",
+            audience=frozenset({OutputAudience.UNIVERSAL_BROADCAST}),
+            state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason="dollar_attribution: DTWEXBGS history unavailable",
+        ),
+        _block(
+            block_id="q6.funding_stress",
+            audience=frozenset({OutputAudience.UNIVERSAL_BROADCAST}),
+            state=CalibrationState.ACCUMULATING,
+            bootstrap_reason="funding_stress_min_observations: 11 < 60",
+        ),
+        # Second unavailable block — order-stability assertion below.
+        _block(
+            block_id="q7.intermarket_regime.gld_real_yields",
+            audience=frozenset({OutputAudience.CORRELATION_REGIME_BRIEF}),
+            state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason="gld_real_yields_observations: 0 < 60 (0 observations)",
+        ),
+    )
+    outputs = _build_outputs(blocks=blocks)
+    path = write_operator_data_health_summary(
+        outputs=outputs,
+        invocation_id="inv-id",
+        archive_root=tmp_path,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["summary"] == {"calibrated": 1, "accumulating": 1, "unavailable": 2}
+    assert payload["unavailable"] == [
+        {
+            "module": "q6.dollar_attribution",
+            "reason": "dollar_attribution: DTWEXBGS history unavailable",
+        },
+        {
+            "module": "q7.intermarket_regime.gld_real_yields",
+            "reason": "gld_real_yields_observations: 0 < 60 (0 observations)",
+        },
+    ]
+    assert payload["accumulating"] == [
+        {
+            "module": "q6.funding_stress",
+            "reason": "funding_stress_min_observations: 11 < 60",
+        },
+    ]
+
+
+def test_operator_summary_writes_to_archive_root_invocation_path(tmp_path: Path) -> None:
+    """The operator summary lands at <archive_root>/invocations/<id>/data_calibration_state.json."""
+    outputs = _build_outputs(blocks=())
+    path = write_operator_data_health_summary(
+        outputs=outputs,
+        invocation_id="inv-XYZ",
+        archive_root=tmp_path,
+    )
+    assert path == tmp_path / "invocations" / "inv-XYZ" / "data_calibration_state.json"
+    assert path.exists()
+
+
+def test_operator_summary_is_deterministic(tmp_path: Path) -> None:
+    """Two writer calls on the same fixture produce byte-identical files."""
+    blocks = (
+        _block(
+            block_id="q6.dollar_attribution",
+            audience=frozenset({OutputAudience.UNIVERSAL_BROADCAST}),
+            state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason="DTWEXBGS unavailable",
+        ),
+        _block(
+            block_id="q6.funding_stress",
+            audience=frozenset({OutputAudience.UNIVERSAL_BROADCAST}),
+            state=CalibrationState.ACCUMULATING,
+            bootstrap_reason="11 < 60",
+        ),
+    )
+    outputs = _build_outputs(blocks=blocks)
+
+    path_a = write_operator_data_health_summary(
+        outputs=outputs, invocation_id="inv-id", archive_root=tmp_path / "a"
+    )
+    path_b = write_operator_data_health_summary(
+        outputs=outputs, invocation_id="inv-id", archive_root=tmp_path / "b"
+    )
+    assert path_a.read_bytes() == path_b.read_bytes()

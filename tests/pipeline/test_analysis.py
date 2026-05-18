@@ -301,7 +301,7 @@ def _distillation_outputs() -> DistillationOutputs:
         as_of=_AS_OF,
         total_blocks=0,
         total_anomalies=0,
-        bootstrap_block_count=0,
+        non_calibrated_block_count=0,
         all_blocks=(),
     )
 

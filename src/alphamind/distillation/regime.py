@@ -713,7 +713,7 @@ def assemble_regime_block(
       direction-of-change input the count uses is visible to consumers)
 
     Calibration state on the block is whatever the refresh result
-    carries — typically ``CALIBRATED``, but ``BOOTSTRAP`` when an
+    carries — typically ``CALIBRATED``, but ``ACCUMULATING`` when an
     underlying series (e.g. VX1) was unavailable per the story
     dispatch instruction.
 

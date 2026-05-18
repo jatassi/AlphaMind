@@ -17,7 +17,11 @@ import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from alphamind.distillation._calibration_core import CalibratedValue, CalibrationState
+from alphamind.distillation._calibration_core import (
+    CalibratedValue,
+    CalibrationState,
+    decide_calibration_state,
+)
 
 ATM_IV_BASELINE_KIND = "atm_iv"
 """Baseline kind tag for the ATM-IV trailing baseline rows."""
@@ -92,7 +96,7 @@ def compute_atm_iv_baseline(
     stdev = statistics.pstdev(history) if n > 1 else 0.0
     latest = history[-1]
     percentile = _percentile_rank(history, latest)
-    state = CalibrationState.CALIBRATED if n >= min_observations else CalibrationState.BOOTSTRAP
+    state = decide_calibration_state(observed_n=n, required_n=min_observations)
     reason = (
         None
         if state is CalibrationState.CALIBRATED

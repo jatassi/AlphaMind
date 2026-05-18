@@ -153,12 +153,13 @@ class TestRefreshContractHistoryHappyPath:
 
 
 # ---------------------------------------------------------------------------
-# Bootstrap — no snapshot in scope → state is bootstrap, row written
+# Unavailable — no snapshot in scope → state is unavailable, row written
+# (per ALP-540: zero observations indicates collector failure, not warm-up).
 # ---------------------------------------------------------------------------
 
 
-class TestRefreshContractHistoryBootstrapPath:
-    def test_writes_bootstrap_row_when_no_snapshot_yet(self, session: Session) -> None:
+class TestRefreshContractHistoryUnavailablePath:
+    def test_writes_unavailable_row_when_no_snapshot_yet(self, session: Session) -> None:
         _add_contract(session, "pm-001")
         # No snapshots seeded.
         session.commit()
@@ -170,7 +171,7 @@ class TestRefreshContractHistoryBootstrapPath:
             min_observations=CONTRACT_HISTORY_MIN_OBSERVATIONS,
         )
         cv = result["pm-001"]
-        assert cv.state is CalibrationState.BOOTSTRAP
+        assert cv.state is CalibrationState.UNAVAILABLE
         assert cv.bootstrap_reason is not None
 
         row = session.execute(
@@ -178,7 +179,7 @@ class TestRefreshContractHistoryBootstrapPath:
                 DistillationContractHistory.contract_id == "pm-001",
             )
         ).scalar_one()
-        assert row.calibration_state == "bootstrap"
+        assert row.calibration_state == "unavailable"
 
 
 # ---------------------------------------------------------------------------

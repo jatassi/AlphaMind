@@ -53,11 +53,13 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
 from alphamind._kernel.invocations import (
+    CALIBRATION_SNAPSHOT_FILENAME,
     INVOCATIONS_DIRNAME,
     RESOLVED_CONFIG_FILENAME,
 )
@@ -72,6 +74,7 @@ __all__ = [
     "check_jsonl_ordering",
     "check_no_alpaca",
     "check_synthetic_portfolio_visibility",
+    "format_data_health_block",
     "main",
 ]
 
@@ -836,6 +839,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     _emit(results, check_invocation_summary(output.stdout))
 
     _print_summary(results)
+    # ALP-540: elevate per-series data health to the operator so collector
+    # failures (``unavailable``) don't masquerade as warm-up state
+    # (``accumulating``) inside a green run.
+    _print_data_health(archive_root=args.archive_root, invocation_id=invocation_id)
     return 0 if all(r.passed for r in results) else 1
 
 
@@ -843,6 +850,88 @@ def _print_summary(results: list[CheckResult]) -> None:
     passed = sum(1 for r in results if r.passed)
     total = len(results)
     print(f"=== DEBUG-E2E VERIFICATION === {passed}/{total} checks passed")
+
+
+# ---------------------------------------------------------------------------
+# DATA HEALTH block
+# ---------------------------------------------------------------------------
+
+
+_OPERATOR_SNAPSHOT_SCHEMA_VERSION = "1"
+"""Schema version of the operator-facing data-health snapshot we render.
+
+Must match
+:data:`alphamind.distillation.calibration_snapshot.OPERATOR_SUMMARY_SCHEMA_VERSION`.
+The renderer refuses to interpret any other version so an internal V2
+snapshot accidentally landing at this path doesn't render as silent zeros.
+"""
+
+
+def format_data_health_block(snapshot: dict[str, Any]) -> str:
+    """Render the operator-facing DATA HEALTH block from a calibration snapshot.
+
+    Reads the structured ``data_calibration_state.json`` payload written by
+    :func:`alphamind.distillation.calibration_snapshot.write_operator_data_health_summary`
+    and renders a scannable block keyed on the three calibration states. The
+    ``unavailable`` list elevates collector failures to the operator's
+    attention; the ``accumulating`` list reports series still warming up.
+
+    Tolerates two failure modes:
+
+    - Missing / empty snapshot (distillation didn't run, JSON read failed,
+      bootstrap-seed ``{}``) → a single ``"(no calibration snapshot)"`` line.
+    - Wrong schema version (internal V2 snapshot landed at the operator
+      path) → a single ``"(unrecognized snapshot schema_version=…)"`` line
+      so the operator notices instead of seeing silent zeros.
+    """
+    lines: list[str] = ["=== DATA HEALTH ==="]
+    summary = snapshot.get("summary")
+    if not isinstance(summary, dict):
+        lines.append("  (no calibration snapshot — distillation may not have run)")
+        return "\n".join(lines)
+    version = snapshot.get("schema_version")
+    if version != _OPERATOR_SNAPSHOT_SCHEMA_VERSION:
+        lines.append(f"  (unrecognized snapshot schema_version={version!r})")
+        return "\n".join(lines)
+
+    calibrated = int(summary.get("calibrated", 0))
+    accumulating = int(summary.get("accumulating", 0))
+    unavailable = int(summary.get("unavailable", 0))
+    lines.append(
+        f"  calibrated={calibrated}  accumulating={accumulating}  unavailable={unavailable}"
+    )
+
+    for state_label, header, entries in (
+        ("UNAVAILABLE", "operator action required", snapshot.get("unavailable") or []),
+        ("ACCUMULATING", "collector healthy, wait", snapshot.get("accumulating") or []),
+    ):
+        if not entries:
+            continue
+        lines.append("")
+        lines.append(f"  {state_label} ({len(entries)}) — {header}:")
+        for entry in entries:
+            module = str(entry.get("module", "?"))
+            reason = str(entry.get("reason", ""))
+            lines.append(f"    - {module}: {reason}")
+
+    return "\n".join(lines)
+
+
+def _print_data_health(*, archive_root: Path, invocation_id: str) -> None:
+    """Read the calibration snapshot and print the DATA HEALTH block.
+
+    Robust to a missing or malformed snapshot — prints the block header
+    with a "(no calibration snapshot)" line in either case so the operator
+    sees the section in every run.
+    """
+    snapshot_path = (
+        archive_root / INVOCATIONS_DIRNAME / invocation_id / CALIBRATION_SNAPSHOT_FILENAME
+    )
+    try:
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        snapshot = {}
+    print(format_data_health_block(snapshot))
 
 
 if __name__ == "__main__":  # pragma: no cover - operator entry point

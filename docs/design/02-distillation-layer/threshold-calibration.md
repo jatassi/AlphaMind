@@ -167,35 +167,35 @@ Schema (`schema_version: "1"`):
 
 ```json
 {
-  "schema_version": "1",
+  "schema_version": "2",
   "invocation_id": "<uuid>",
   "as_of": "<ISO8601 UTC>",
   "summary": {
     "total_blocks": 42,
     "by_state": {
       "calibrated": 34,
-      "bootstrap": 7,
+      "accumulating": 7,
       "unavailable": 1
     },
     "by_audience": {
-      "sector_tech_semis": {"calibrated": 12, "bootstrap": 2, "unavailable": 0},
-      "sector_financials": {"calibrated": 10, "bootstrap": 1, "unavailable": 0},
-      "sector_energy": {"calibrated": 8, "bootstrap": 2, "unavailable": 1},
-      "correlation_regime_brief": {"calibrated": 3, "bootstrap": 1, "unavailable": 0},
-      "universal_broadcast": {"calibrated": 1, "bootstrap": 1, "unavailable": 0}
+      "sector_tech_semis": {"calibrated": 12, "accumulating": 2, "unavailable": 0},
+      "sector_financials": {"calibrated": 10, "accumulating": 1, "unavailable": 0},
+      "sector_energy": {"calibrated": 8, "accumulating": 2, "unavailable": 1},
+      "correlation_regime_brief": {"calibrated": 3, "accumulating": 1, "unavailable": 0},
+      "universal_broadcast": {"calibrated": 1, "accumulating": 1, "unavailable": 0}
     },
     "by_block_kind": {
-      "q1.volume_anomaly": {"calibrated": 60, "bootstrap": 5, "unavailable": 0},
-      "q1.price_move_anomaly": {"calibrated": 65, "bootstrap": 0, "unavailable": 0},
-      "q3.options_flow": {"calibrated": 0, "bootstrap": 65, "unavailable": 0},
-      "regime.label": {"calibrated": 1, "bootstrap": 0, "unavailable": 0}
+      "q1.volume_anomaly": {"calibrated": 60, "accumulating": 5, "unavailable": 0},
+      "q1.price_move_anomaly": {"calibrated": 65, "accumulating": 0, "unavailable": 0},
+      "q3.options_flow": {"calibrated": 0, "accumulating": 65, "unavailable": 0},
+      "regime.label": {"calibrated": 1, "accumulating": 0, "unavailable": 0}
     }
   },
-  "bootstrap_reasons": {
-    "<block_id>": "<bootstrap_reason string from CalibratedValue>"
+  "accumulating_reasons": {
+    "<block_id>": "<reason string from CalibratedValue>"
   },
   "unavailable_reasons": {
-    "<block_id>": "<unavailable_reason string from CalibratedValue>"
+    "<block_id>": "<reason string from CalibratedValue>"
   }
 }
 ```
@@ -205,7 +205,7 @@ Field semantics:
 - `total_blocks` and `by_state` count each `OutputBlock` instance once.
 - `by_audience` counts each (audience, block) pair: a multi-audience block contributes one count to every audience in its `audience` set, so the per-audience sums may exceed `total_blocks`.
 - `by_block_kind` keys mirror the `block_id` namespacing convention from [external.md § Output format](external.md) (`<category>.<short_name>`); per-ticker blocks aggregate under their block-kind key so the summary stays scannable.
-- `bootstrap_reasons` and `unavailable_reasons` record only blocks whose state is `bootstrap` or `unavailable`; calibrated blocks are absent from the maps to keep the file small.
+- `accumulating_reasons` and `unavailable_reasons` record only blocks whose state is `accumulating` or `unavailable`; calibrated blocks are absent from the maps to keep the file small. The vocabulary split (ALP-540) replaced the prior `bootstrap_reasons` map and bumped the schema to `"2"`.
 
 The writer emits deterministic JSON (sorted keys, fixed indentation) so two runs against the same `DistillationOutputs` produce byte-identical files; the determinism contract aligns with the structured-text envelope from [external.md § Output format](external.md) so the snapshot and the markdown archive cannot drift.
 

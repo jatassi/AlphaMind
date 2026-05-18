@@ -157,7 +157,7 @@ def _single_aggregated() -> AggregatedReport:
             ),
             CalibrationStateBreakdownEntry(
                 regime_label="normal",
-                calibration_state="bootstrap",
+                calibration_state="accumulating",
                 candidate_count=3,
                 baseline_count=None,
             ),
@@ -275,7 +275,7 @@ def _diff_aggregated() -> AggregatedReport:
             ),
             CalibrationStateBreakdownEntry(
                 regime_label="normal",
-                calibration_state="bootstrap",
+                calibration_state="accumulating",
                 candidate_count=3,
                 baseline_count=4,
             ),

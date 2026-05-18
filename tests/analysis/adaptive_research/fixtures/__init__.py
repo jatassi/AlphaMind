@@ -138,7 +138,7 @@ def _build_distillation_outputs(
         as_of=_parse_dt(payload["as_of"]),
         total_blocks=int(payload["total_blocks"]),
         total_anomalies=int(payload["total_anomalies"]),
-        bootstrap_block_count=int(payload["bootstrap_block_count"]),
+        non_calibrated_block_count=int(payload["non_calibrated_block_count"]),
         all_blocks=all_blocks,
     )
 

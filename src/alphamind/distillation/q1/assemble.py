@@ -157,10 +157,12 @@ _RETURN_MIN_LEN: int = _BASE_ONE + _BASE_ONE
 def _baseline_calibration_state(baseline: TickerBaselineRow | None) -> CalibrationState:
     """Map an on-disk ``calibration_state`` text to the enum.
 
-    Returns BOOTSTRAP when no baseline row exists.
+    Returns UNAVAILABLE when no baseline row exists — per ALP-540, missing
+    upstream data signals a collector failure (operator action required),
+    not a "give it time" condition.
     """
     if baseline is None:
-        return CalibrationState.BOOTSTRAP
+        return CalibrationState.UNAVAILABLE
     return CalibrationState(baseline.calibration_state)
 
 
@@ -327,8 +329,11 @@ def _compute_gap_per_ticker(
             ),
             min_events=gap_fill_min_events,
         )
-        if fill.state is CalibrationState.BOOTSTRAP and block_state is CalibrationState.CALIBRATED:
-            block_state = CalibrationState.BOOTSTRAP
+        if (
+            fill.state is CalibrationState.ACCUMULATING
+            and block_state is CalibrationState.CALIBRATED
+        ):
+            block_state = CalibrationState.ACCUMULATING
             block_reason = fill.bootstrap_reason
         elif (
             fill.state is CalibrationState.UNAVAILABLE
@@ -478,12 +483,16 @@ def _atr_regime_label_and_tag(
     atr: float,
     atr_baseline: TickerBaselineRow | None,
 ) -> tuple[str, CalibrationState, str | None]:
-    """Return ``(atr_regime_label, calibration_state, bootstrap_reason)``."""
+    """Return ``(atr_regime_label, calibration_state, bootstrap_reason)``.
+
+    A missing baseline row is :attr:`CalibrationState.UNAVAILABLE` per
+    ALP-540 — the absence indicates collector failure, not "give it time."
+    """
     if atr_baseline is None:
-        return "neutral", CalibrationState.BOOTSTRAP, f"atr_baseline missing for {ticker}"
+        return "neutral", CalibrationState.UNAVAILABLE, f"atr_baseline missing for {ticker}"
     state = _baseline_calibration_state(atr_baseline)
     reason: str | None = None
-    if state is CalibrationState.BOOTSTRAP:
+    if state is CalibrationState.ACCUMULATING:
         reason = f"atr_baseline_days: {atr_baseline.n_observations} < {atr_baseline.window_days}"
     atr_regime = classify_atr_regime(
         current_atr=float(atr),
@@ -536,10 +545,12 @@ def _trend_state_payload_for_ticker(
         "volatility_regime": vol_regime,
         "atr_regime": atr_regime_label,
     }
-    if ema.bootstrap_reason is not None or atr_state is CalibrationState.BOOTSTRAP:
+    if atr_state is CalibrationState.UNAVAILABLE:
+        return payload, CalibrationState.UNAVAILABLE, atr_reason
+    if ema.bootstrap_reason is not None or atr_state is CalibrationState.ACCUMULATING:
         return (
             payload,
-            CalibrationState.BOOTSTRAP,
+            CalibrationState.ACCUMULATING,
             ema.bootstrap_reason if ema.bootstrap_reason is not None else atr_reason,
         )
     return payload, CalibrationState.CALIBRATED, None
@@ -565,10 +576,16 @@ def _compute_trend_state_per_ticker(
         payload, ticker_state, ticker_reason = result
         out[ticker] = payload
         if (
-            ticker_state is CalibrationState.BOOTSTRAP
+            ticker_state is CalibrationState.UNAVAILABLE
+            and block_state is not CalibrationState.UNAVAILABLE
+        ):
+            block_state = CalibrationState.UNAVAILABLE
+            block_reason = ticker_reason
+        elif (
+            ticker_state is CalibrationState.ACCUMULATING
             and block_state is CalibrationState.CALIBRATED
         ):
-            block_state = CalibrationState.BOOTSTRAP
+            block_state = CalibrationState.ACCUMULATING
             block_reason = ticker_reason
     return out, block_state, block_reason
 
@@ -664,13 +681,23 @@ def _record_volume_anomaly(
         "severity": flag.severity,
     }
     if (
-        baseline_state is CalibrationState.BOOTSTRAP
+        baseline_state is CalibrationState.UNAVAILABLE
+        and acc.block_state is not CalibrationState.UNAVAILABLE
+    ):
+        return _AnomalyDetectionAccumulator(
+            per_ticker=acc.per_ticker,
+            flags=acc.flags,
+            block_state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason=_bootstrap_reason_for_baseline(baseline, kind="volume"),
+        )
+    if (
+        baseline_state is CalibrationState.ACCUMULATING
         and acc.block_state is CalibrationState.CALIBRATED
     ):
         return _AnomalyDetectionAccumulator(
             per_ticker=acc.per_ticker,
             flags=acc.flags,
-            block_state=CalibrationState.BOOTSTRAP,
+            block_state=CalibrationState.ACCUMULATING,
             bootstrap_reason=_bootstrap_reason_for_baseline(baseline, kind="volume"),
         )
     return acc
@@ -712,11 +739,24 @@ def _record_price_move_anomaly(
         "atr_multiple": float(flag.magnitude),
         "severity": flag.severity,
     }
-    if atr_state is CalibrationState.BOOTSTRAP and acc.block_state is CalibrationState.CALIBRATED:
+    if (
+        atr_state is CalibrationState.UNAVAILABLE
+        and acc.block_state is not CalibrationState.UNAVAILABLE
+    ):
         return _AnomalyDetectionAccumulator(
             per_ticker=acc.per_ticker,
             flags=acc.flags,
-            block_state=CalibrationState.BOOTSTRAP,
+            block_state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason=_bootstrap_reason_for_baseline(baseline, kind="atr"),
+        )
+    if (
+        atr_state is CalibrationState.ACCUMULATING
+        and acc.block_state is CalibrationState.CALIBRATED
+    ):
+        return _AnomalyDetectionAccumulator(
+            per_ticker=acc.per_ticker,
+            flags=acc.flags,
+            block_state=CalibrationState.ACCUMULATING,
             bootstrap_reason=_bootstrap_reason_for_baseline(baseline, kind="atr"),
         )
     return acc
@@ -948,23 +988,34 @@ def _block_state_from_baselines(
     tickers: Sequence[str],
     baselines: Mapping[str, TickerBaselineRow | None],
 ) -> tuple[CalibrationState, str | None]:
-    """Compute the block-level calibration state from per-ticker baselines."""
+    """Compute the block-level calibration state from per-ticker baselines.
+
+    The block escalates to :attr:`CalibrationState.UNAVAILABLE` if any
+    ticker carries that state (collector failure overrides "give it
+    time"); otherwise falls back to :attr:`CalibrationState.ACCUMULATING`
+    on the first sub-calibrated ticker.
+    """
     state = CalibrationState.CALIBRATED
     reason: str | None = None
     for ticker in tickers:
         baseline = baselines.get(ticker)
         ticker_state = _baseline_calibration_state(baseline)
-        if ticker_state is not CalibrationState.CALIBRATED:
-            state = CalibrationState.BOOTSTRAP
-            if reason is None:
-                if baseline is None:
-                    reason = f"baseline missing for {ticker}"
-                else:
-                    reason = (
-                        f"baseline_days: {baseline.n_observations} "
-                        f"< {baseline.window_days} for {ticker}"
-                    )
-            break
+        if ticker_state is CalibrationState.UNAVAILABLE:
+            ticker_reason = (
+                f"baseline missing for {ticker}"
+                if baseline is None
+                else f"baseline calibration_state=unavailable for {ticker}"
+            )
+            return CalibrationState.UNAVAILABLE, ticker_reason
+        if ticker_state is CalibrationState.ACCUMULATING and state is CalibrationState.CALIBRATED:
+            # baseline is guaranteed non-None here: a None baseline maps to
+            # UNAVAILABLE in _baseline_calibration_state and short-circuits
+            # via the branch above.
+            assert baseline is not None
+            state = CalibrationState.ACCUMULATING
+            reason = (
+                f"baseline_days: {baseline.n_observations} < {baseline.window_days} for {ticker}"
+            )
     return state, reason
 
 

@@ -1,4 +1,4 @@
-"""Calibration state and bootstrap fallback framework — story 02-distillation/04.
+"""Calibration state and fallback framework — story 02-distillation/04, ALP-540.
 
 Every per-category distillation computation routes its output through this
 module so a uniform three-state ``calibration_state`` tag accompanies the
@@ -7,18 +7,19 @@ the strategist as ``Signal quality`` per
 ``docs/design/02-distillation-layer/threshold-calibration.md`` § Bootstrap
 policy.
 
-Three states exist:
+Three states exist (post-ALP-540 vocabulary):
 
 - ``CALIBRATED`` — every input reached its ``*_min_observations`` threshold
   and the value comes from per-ticker / per-pair / per-contract rolling
   state.
-- ``BOOTSTRAP`` — at least one input is below its observation minimum; a
-  cross-sectional pooled fallback substitutes for the missing per-key
-  baseline. ``bootstrap_reason`` names the missing input.
-- ``UNAVAILABLE`` — the fallback itself cannot be computed (e.g., the
-  cross-sectional pool is empty during pre-bootstrap deployment). The
-  output is omitted; downstream consumers see a missing block rather than
-  a misleading zero.
+- ``ACCUMULATING`` — at least one input has some observations but is below
+  its minimum threshold; a cross-sectional pooled fallback substitutes for
+  the missing per-key baseline. Time alone resolves the state — no operator
+  action required. ``bootstrap_reason`` names the missing input.
+- ``UNAVAILABLE`` — zero observations for the input (collector failure,
+  vendor outage, missing series) or the cross-sectional pool itself is
+  empty. The output is omitted and the operator must investigate; downstream
+  consumers see a missing block rather than a misleading zero.
 
 The framework is upstream of the persistence schema. The string values of
 :class:`CalibrationState` equal the ``calibration_state`` CHECK-constraint

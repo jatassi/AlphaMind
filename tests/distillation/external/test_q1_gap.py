@@ -210,7 +210,7 @@ class TestResolveGapFillProbability:
             as_of="2026-04-25T00:00:00Z",
             min_events=GAP_FILL_MIN_EVENTS,
         )
-        assert result.state is CalibrationState.BOOTSTRAP
+        assert result.state is CalibrationState.ACCUMULATING
         # Sector pool: MSFT 30 filled + AAPL 3 unfilled = 30/33 fill rate.
         assert result.value == pytest.approx(30.0 / 33.0)
 

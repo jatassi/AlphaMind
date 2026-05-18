@@ -167,7 +167,7 @@ class TestIntraSectorCorrelationHappyPath:
         # Diagonal is exactly 1.
         assert short_matrix["AAPL"]["AAPL"] == pytest.approx(1.0, abs=1e-9)
         # Calibration: only 3 returns observed → bootstrap.
-        assert block.calibration_state is CalibrationState.BOOTSTRAP
+        assert block.calibration_state is CalibrationState.ACCUMULATING
 
 
 # ---------------------------------------------------------------------------

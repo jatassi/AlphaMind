@@ -198,7 +198,7 @@ class TestRefreshTickerBaselinesBootstrapPath:
         )
 
         cv = result["AAPL"]
-        assert cv.state is CalibrationState.BOOTSTRAP
+        assert cv.state is CalibrationState.ACCUMULATING
         assert cv.bootstrap_reason is not None
         assert "volume_min_observations" in cv.bootstrap_reason
         assert "3 < 20" in cv.bootstrap_reason
@@ -209,7 +209,7 @@ class TestRefreshTickerBaselinesBootstrapPath:
                 DistillationTickerBaseline.ticker == "AAPL",
             )
         ).scalar_one()
-        assert row.calibration_state == "bootstrap"
+        assert row.calibration_state == "accumulating"
         assert row.n_observations == 3
 
 

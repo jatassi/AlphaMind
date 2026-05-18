@@ -432,8 +432,13 @@ def test_assemble_q6_blocks_from_inputs_calibrated_path() -> None:
         assert block.audience == frozenset({OutputAudience.UNIVERSAL_BROADCAST})
 
 
-def test_assemble_q6_blocks_from_inputs_bootstrap_path() -> None:
-    """Missing yield-curve / inflation / dollar inputs emit bootstrap stubs in their place."""
+def test_assemble_q6_blocks_from_inputs_unavailable_path() -> None:
+    """Missing yield-curve / inflation / dollar inputs emit unavailable stubs.
+
+    Per ALP-540 these block_ids are tagged ``unavailable`` when the
+    upstream FRED series is missing — operator action required, not "give
+    it time."
+    """
     inputs = Q6Inputs(
         as_of=datetime(2026, 5, 15, tzinfo=UTC),
         yield_curve=None,
@@ -452,10 +457,9 @@ def test_assemble_q6_blocks_from_inputs_bootstrap_path() -> None:
         "q6.funding_stress",
         "q6.market_liquidity",
     ]
-    # Bootstrap stubs carry BOOTSTRAP state and empty payload.
     for block_id in ("q6.yield_curve_regime", "q6.inflation_regime", "q6.dollar_attribution"):
         block = next(b for b in blocks if b.block_id == block_id)
-        assert block.calibration_state is CalibrationState.BOOTSTRAP
+        assert block.calibration_state is CalibrationState.UNAVAILABLE
         assert block.payload == {}
 
 

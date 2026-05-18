@@ -147,7 +147,7 @@ class LeadLagPairInputs:
 
     ``persisted`` carries the most recent ``distillation_pair_lag`` row's
     ``(lead_lag_days_estimate, n_pair_events, calibration_state)`` triple,
-    or ``None`` when no row exists at or before ``as_of`` (the BOOTSTRAP
+    or ``None`` when no row exists at or before ``as_of`` (the UNAVAILABLE
     branch).
     """
 
@@ -169,7 +169,7 @@ def compute_lead_lag_pure(
 
     1. Detect overdue and inversion flags via :func:`_detect_overdue_and_inversion`.
     2. Project the persisted ``distillation_pair_lag`` snapshot into the
-       block payload; absent rows route through the BOOTSTRAP branch.
+       block payload; absent rows route through the UNAVAILABLE branch.
     3. Emit one :class:`OutputBlock` addressed to
        :attr:`OutputAudience.CORRELATION_REGIME_BRIEF`.
 
@@ -189,8 +189,8 @@ def compute_lead_lag_pure(
         if inputs.persisted is None:
             estimate_days = float(pair.max_days)
             n_pair_events = 0
-            state = CalibrationState.BOOTSTRAP
-            reason: str | None = f"pair_lag_history_missing:{pair.pair_key}: 0 < 1"
+            state = CalibrationState.UNAVAILABLE
+            reason: str | None = f"pair_lag_history_missing:{pair.pair_key}: 0 observations"
         else:
             estimate_days_raw, n_pair_events_raw, state_str = inputs.persisted
             estimate_days = float(estimate_days_raw)

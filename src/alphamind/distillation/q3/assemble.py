@@ -145,8 +145,9 @@ def _calibration_for_per_ticker(
 
     The block reads ``calibration_state`` and ``bootstrap_reason`` from each
     ticker's payload. Worst-state-wins: if any ticker is UNAVAILABLE the
-    block is UNAVAILABLE; else if any is BOOTSTRAP the block is BOOTSTRAP.
-    Tickers that don't carry a state are treated as CALIBRATED.
+    block is UNAVAILABLE; else if any is ACCUMULATING the block is
+    ACCUMULATING. Tickers that don't carry a state are treated as
+    CALIBRATED.
     """
     worst = CalibrationState.CALIBRATED
     reason: str | None = None
@@ -159,9 +160,12 @@ def _calibration_for_per_ticker(
             return CalibrationState.UNAVAILABLE, str(
                 ticker_payload.get("bootstrap_reason", "unavailable")
             )
-        if state is CalibrationState.BOOTSTRAP and worst is CalibrationState.CALIBRATED:
-            worst = CalibrationState.BOOTSTRAP
-            reason = str(ticker_payload.get("bootstrap_reason", "bootstrap"))
+        if state is CalibrationState.ACCUMULATING and worst is CalibrationState.CALIBRATED:
+            # UNAVAILABLE > ACCUMULATING > CALIBRATED escalation: only
+            # promote on first non-calibrated; the UNAVAILABLE branch
+            # above short-circuits before we ever reach here for that case.
+            worst = CalibrationState.ACCUMULATING
+            reason = str(ticker_payload.get("bootstrap_reason", "accumulating"))
     return worst, reason
 
 

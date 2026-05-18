@@ -17,9 +17,10 @@ Reference docs:
   "Anomaly flags: Binary flags plus magnitude per detected anomaly,
   grouped for easy scanning" — motivates the severity-grouped layout.
 - ``docs/design/02-distillation-layer/threshold-calibration.md``
-  § Downstream propagation — a volume anomaly on a ``bootstrap``
-  baseline is weaker than the same anomaly on a ``calibrated``
-  baseline; this motivates per-anomaly calibration-state visibility.
+  § Downstream propagation — a volume anomaly on a non-calibrated
+  baseline (``accumulating`` or ``unavailable``) is weaker than the
+  same anomaly on a ``calibrated`` baseline; this motivates
+  per-anomaly calibration-state visibility.
 - ``docs/design/03-analysis-layer/domain-researchers/tech-semis.md``
   § Domain researcher output contract — the analyst-side severity
   taxonomy preserved here unchanged.
@@ -96,8 +97,9 @@ class AnomalySummary:
     """An :class:`AnomalyFlag` paired with its source-block context.
 
     The downstream consumer reads ``calibration_state`` to weight the
-    anomaly — a volume anomaly on a ``bootstrap`` baseline is weaker
-    than the same anomaly on a ``calibrated`` baseline per
+    anomaly — a volume anomaly on a non-calibrated baseline
+    (``accumulating`` / ``unavailable``) is weaker than the same anomaly
+    on a ``calibrated`` baseline per
     ``docs/design/02-distillation-layer/threshold-calibration.md``
     § Downstream propagation.
     """
@@ -175,7 +177,7 @@ def _anomaly_sort_key(summary: AnomalySummary) -> tuple[int, float, str]:
 # specified by ``docs/design/02-distillation-layer/external.md``
 # § Output format ("grouped for easy scanning"). Empty severity sections
 # are omitted entirely; the calibration state is visible per anomaly so
-# downstream consumers can weight ``bootstrap``-tagged anomalies lower
+# downstream consumers can weight non-calibrated anomalies lower
 # without parsing the underlying block.
 
 _SEVERITY_HEADER: dict[AnomalySeverity, str] = {

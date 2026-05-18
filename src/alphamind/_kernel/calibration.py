@@ -8,7 +8,15 @@ emit them.
 
 The string values are part of the persistence contract — every distillation
 table's ``calibration_state`` column has a CHECK constraint accepting exactly
-``calibrated``, ``bootstrap``, ``unavailable``.
+``calibrated``, ``accumulating``, ``unavailable``.
+
+Three operator-meaningful states (ALP-540):
+
+- ``calibrated`` — sufficient observations; signal is reliable.
+- ``accumulating`` — collector healthy, observations strictly between zero
+  and the required minimum; time alone resolves it.
+- ``unavailable`` — zero observations (collector failure / vendor error /
+  series missing) or no fallback computable; operator action required.
 """
 
 from __future__ import annotations
@@ -23,7 +31,7 @@ __all__ = [
 
 CALIBRATION_STATE_VALUES: tuple[str, str, str] = (
     "calibrated",
-    "bootstrap",
+    "accumulating",
     "unavailable",
 )
 """The schema CHECK-constraint accepts exactly these three strings.
@@ -42,5 +50,5 @@ class CalibrationState(StrEnum):
     """
 
     CALIBRATED = "calibrated"
-    BOOTSTRAP = "bootstrap"
+    ACCUMULATING = "accumulating"
     UNAVAILABLE = "unavailable"

@@ -828,10 +828,10 @@ class TestRegimeOutputBlock:
     def test_block_carries_calibration_state_through(self) -> None:
         block = assemble_regime_block(
             result=_result_for_block(
-                calibration_state=CalibrationState.BOOTSTRAP,
+                calibration_state=CalibrationState.ACCUMULATING,
                 bootstrap_reason="vx1_unavailable: VX1 series not in macro_observations",
             ),
             freshness_ts=FRESHNESS_TS,
         )
-        assert block.calibration_state is CalibrationState.BOOTSTRAP
+        assert block.calibration_state is CalibrationState.ACCUMULATING
         assert block.bootstrap_reason == ("vx1_unavailable: VX1 series not in macro_observations")

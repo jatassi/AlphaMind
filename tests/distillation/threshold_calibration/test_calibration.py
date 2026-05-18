@@ -148,18 +148,18 @@ def _add_event(
 class TestCalibrationStateEnum:
     """Three-state tag values match the schema CHECK constraint exactly."""
 
-    def test_members_are_calibrated_bootstrap_unavailable(self) -> None:
+    def test_members_are_calibrated_accumulating_unavailable(self) -> None:
         assert {m.value for m in CalibrationState} == {
             "calibrated",
-            "bootstrap",
+            "accumulating",
             "unavailable",
         }
 
     def test_calibrated_value_string(self) -> None:
         assert CalibrationState.CALIBRATED.value == "calibrated"
 
-    def test_bootstrap_value_string(self) -> None:
-        assert CalibrationState.BOOTSTRAP.value == "bootstrap"
+    def test_accumulating_value_string(self) -> None:
+        assert CalibrationState.ACCUMULATING.value == "accumulating"
 
     def test_unavailable_value_string(self) -> None:
         assert CalibrationState.UNAVAILABLE.value == "unavailable"
@@ -204,14 +204,14 @@ class TestCalibratedValue:
     def test_carries_bootstrap_reason_when_state_is_bootstrap(self) -> None:
         wrapped = CalibratedValue(
             value=0.42,
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="sentiment_min_observations: 12 < 30",
         )
         assert wrapped.bootstrap_reason == "sentiment_min_observations: 12 < 30"
 
 
 class TestDecideCalibrationState:
-    """``observed >= required`` is the only boundary that matters.
+    """Three-state decision rule per ALP-540.
 
     Boundary cases use the sentiment min-observations default (30) so the
     test reflects the canonical example from
@@ -219,7 +219,7 @@ class TestDecideCalibrationState:
     """
 
     def test_calibrated_at_exact_threshold(self) -> None:
-        """``n == required`` is calibrated, not bootstrap."""
+        """``n == required`` is calibrated, not accumulating."""
         assert decide_calibration_state(observed_n=30, required_n=30) is (
             CalibrationState.CALIBRATED
         )
@@ -229,18 +229,21 @@ class TestDecideCalibrationState:
             CalibrationState.CALIBRATED
         )
 
-    def test_bootstrap_one_below_threshold(self) -> None:
-        """``n == required - 1`` is bootstrap."""
+    def test_accumulating_one_below_threshold(self) -> None:
+        """``n == required - 1`` is accumulating."""
         assert decide_calibration_state(observed_n=29, required_n=30) is (
-            CalibrationState.BOOTSTRAP
+            CalibrationState.ACCUMULATING
         )
 
-    def test_bootstrap_with_zero_observations(self) -> None:
-        assert decide_calibration_state(observed_n=0, required_n=30) is (CalibrationState.BOOTSTRAP)
+    def test_unavailable_with_zero_observations(self) -> None:
+        """Zero observations escalates to UNAVAILABLE per ALP-540."""
+        assert decide_calibration_state(observed_n=0, required_n=30) is (
+            CalibrationState.UNAVAILABLE
+        )
 
-    def test_never_returns_unavailable(self) -> None:
-        """The framework does not infer UNAVAILABLE from low counts."""
-        for n in (0, 1, 5, 29, 30, 100):
+    def test_no_misclassification_above_zero(self) -> None:
+        """Any positive sub-threshold count is ACCUMULATING (never UNAVAILABLE)."""
+        for n in (1, 5, 29):
             assert (
                 decide_calibration_state(observed_n=n, required_n=30)
                 is not CalibrationState.UNAVAILABLE
@@ -273,13 +276,13 @@ class TestTagWithFallback:
             fallback=lambda: 0.50,
         )
         assert result.value == 0.50
-        assert result.state is CalibrationState.BOOTSTRAP
+        assert result.state is CalibrationState.ACCUMULATING
         assert result.bootstrap_reason == "sentiment_min_observations: 12 < 30"
 
     def test_unavailable_path_when_fallback_returns_none(self) -> None:
-        """Pre-bootstrap deployment: pool itself is empty → UNAVAILABLE."""
+        """Pool itself is empty with positive observations → UNAVAILABLE."""
         result = tag_with_fallback(
-            observed_n=0,
+            observed_n=5,
             required_n=30,
             input_name="sentiment_min_observations",
             computed_value=None,
@@ -288,8 +291,27 @@ class TestTagWithFallback:
         assert result.value is None
         assert result.state is CalibrationState.UNAVAILABLE
         assert result.bootstrap_reason is not None
-        assert "sentiment_min_observations: 0 < 30" in result.bootstrap_reason
+        assert "sentiment_min_observations: 5 < 30" in result.bootstrap_reason
         assert "pool" in result.bootstrap_reason.lower()
+
+    def test_unavailable_path_when_zero_observations(self) -> None:
+        """Zero observations short-circuits to UNAVAILABLE per ALP-540."""
+
+        def _fallback_must_not_run() -> object:
+            raise AssertionError("fallback must not run when observed_n == 0")
+
+        result = tag_with_fallback(
+            observed_n=0,
+            required_n=30,
+            input_name="sentiment_min_observations",
+            computed_value=None,
+            fallback=_fallback_must_not_run,
+        )
+        assert result.value is None
+        assert result.state is CalibrationState.UNAVAILABLE
+        assert result.bootstrap_reason is not None
+        assert "sentiment_min_observations: 0 < 30" in result.bootstrap_reason
+        assert "0 observations" in result.bootstrap_reason
 
     def test_bootstrap_reason_carries_input_name_and_count_comparison(self) -> None:
         result = tag_with_fallback(
@@ -321,7 +343,7 @@ class TestTagWithFallback:
             computed_value=None,
             fallback=lambda: 0.40,
         )
-        assert result.state is CalibrationState.BOOTSTRAP
+        assert result.state is CalibrationState.ACCUMULATING
         assert result.value == 0.40
 
 
@@ -397,7 +419,7 @@ class TestSectorPooledVolumeBaseline:
             as_of=as_of,
             mean=999.0,
             stdev=999.0,
-            calibration_state="bootstrap",
+            calibration_state="accumulating",
         )
         session.commit()
 

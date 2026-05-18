@@ -187,7 +187,7 @@ def load_etf_iv_divergence_inputs(
     row, computes ``etf_iv`` and ``single_name_aggregate_iv`` at ``as_of``,
     and reads the trailing-``baseline_days`` spread mean/stdev. Sectors
     whose ETF or constituent IV cannot be resolved are omitted; the caller
-    sees them as "no signal" rather than as bootstrap.
+    sees them as "no signal" rather than as a non-calibrated entry.
     """
     out: dict[str, dict[str, float | str]] = {}
     for sector, tickers in sorted_sector_tickers.items():

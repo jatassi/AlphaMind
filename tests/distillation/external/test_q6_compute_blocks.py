@@ -676,17 +676,19 @@ class TestColdStart:
         blocks = compute_q6_blocks(session, config=config, as_of=AS_OF)
         yc_block = next(b for b in blocks if b.block_id == "q6.yield_curve_regime")
         assert yc_block.calibration_state in {
-            CalibrationState.BOOTSTRAP,
+            CalibrationState.ACCUMULATING,
             CalibrationState.UNAVAILABLE,
         }
 
-    def test_funding_stress_no_history_emits_bootstrap_block(self, session: Session) -> None:
-        # No prior composite rows → ``refresh_funding_stress_composite``
-        # tags the result BOOTSTRAP because trailing history < min_observations.
+    def test_funding_stress_no_history_emits_unavailable_block(self, session: Session) -> None:
+        # No prior composite rows → ``refresh_funding_stress_composite`` sees
+        # zero trailing observations. Per ALP-540 the new vocabulary tags
+        # zero-observation cases UNAVAILABLE (collector failure / cold start
+        # of the persistence row), not ACCUMULATING.
         config = _build_distillation_config()
         blocks = compute_q6_blocks(session, config=config, as_of=AS_OF)
         fs_block = next(b for b in blocks if b.block_id == "q6.funding_stress")
-        assert fs_block.calibration_state is CalibrationState.BOOTSTRAP
+        assert fs_block.calibration_state is CalibrationState.UNAVAILABLE
 
     def test_no_series_at_all_does_not_crash(self, session: Session) -> None:
         # Empty database is the absolute cold start. The wrapper still

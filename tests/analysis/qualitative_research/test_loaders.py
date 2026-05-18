@@ -771,7 +771,7 @@ class TestLoadSentimentAggregates:
             stdev=0.2,
             n_observations=5,  # Very few observations
             as_of_str=_ISO,
-            calibration_state="bootstrap",
+            calibration_state="accumulating",
         )
         session.commit()
 

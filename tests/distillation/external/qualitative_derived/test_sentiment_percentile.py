@@ -228,7 +228,7 @@ class TestSentimentPercentileBootstrap:
             mean=0.0,
             stdev=0.1,
             n_observations=10,
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
         )
         # MSFT acts as the universe-pool source: calibrated with 50 obs
         _add_baseline(
@@ -259,18 +259,24 @@ class TestSentimentPercentileBootstrap:
         block = blocks[0]
         # Block-level state escalates to BOOTSTRAP because at least one
         # per-ticker entry is bootstrap-tagged.
-        assert block.calibration_state is CalibrationState.BOOTSTRAP
+        assert block.calibration_state is CalibrationState.ACCUMULATING
         entry = block.payload["per_ticker"]["AAPL"]
-        assert entry["calibration_state"] == "bootstrap"
+        assert entry["calibration_state"] == "accumulating"
         # Baseline used should be the universe pool (mean=0.05, stdev=0.2)
         assert entry["baseline_mean"] == pytest.approx(0.05)
         assert entry["baseline_stdev"] == pytest.approx(0.2)
         assert "bootstrap_reason" in entry
 
-    def test_bootstrap_when_no_per_ticker_baseline_row_exists(self, session: Session) -> None:
+    def test_no_entry_when_per_ticker_baseline_row_missing(self, session: Session) -> None:
+        """No per-ticker baseline row → 0 observations → UNAVAILABLE → entry omitted.
+
+        Per ALP-540 the framework no longer substitutes the universe pool when
+        the per-ticker collector wrote zero rows; the missing series is an
+        operator-facing UNAVAILABLE signal, and the ticker is dropped from
+        the block payload (with no block at all when AAPL is the sole scope).
+        """
         _add_ticker(session, "AAPL")
         _add_ticker(session, "MSFT")
-        # No AAPL baseline; MSFT calibrated to act as pool
         _add_baseline(
             session,
             ticker=Symbol("MSFT"),
@@ -295,9 +301,7 @@ class TestSentimentPercentileBootstrap:
             as_of="2026-04-26T03:00:00Z",
             sentiment_min_observations=SENTIMENT_MIN_OBSERVATIONS,
         )
-        assert len(blocks) == 1
-        entry = blocks[0].payload["per_ticker"]["AAPL"]
-        assert entry["calibration_state"] == "bootstrap"
+        assert blocks == []
 
 
 # ---------------------------------------------------------------------------

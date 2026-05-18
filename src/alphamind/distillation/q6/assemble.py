@@ -207,25 +207,27 @@ def _build_macro_surprise_anomaly_block(
     )
 
 
-def _build_bootstrap_block(
+def _build_unavailable_block(
     *,
     block_id: str,
     bootstrap_reason: str,
     freshness_ts: datetime,
 ) -> OutputBlock:
-    """Build a stand-in q6 block when an essential input is missing.
+    """Build a stand-in q6 block when an essential input series is missing.
 
     Used for the yield-curve / inflation / dollar paths whose existing
     ``_build_*_block`` helpers hardcode ``CalibrationState.CALIBRATED``.
-    The bootstrap block carries an empty payload and no anomaly flags so a
-    downstream consumer sees the calibration tag (and the
+    The block carries :attr:`CalibrationState.UNAVAILABLE` per ALP-540 —
+    missing FRED/macro inputs are collector failures requiring operator
+    action, not "wait for more data." Empty payload + no anomaly flags so
+    a downstream consumer reads the calibration tag (and the
     ``bootstrap_reason`` it carries) rather than a fabricated label.
     """
     return OutputBlock(
         block_id=block_id,
         audience=UNIVERSAL_BROADCAST_AUDIENCE,
         freshness_ts=freshness_ts,
-        calibration_state=CalibrationState.BOOTSTRAP,
+        calibration_state=CalibrationState.UNAVAILABLE,
         bootstrap_reason=bootstrap_reason,
         payload={},
         anomaly_flags=(),
@@ -278,9 +280,9 @@ def assemble_q6_blocks_from_inputs(inputs: Q6Inputs) -> list[OutputBlock]:
 
     When all three label-input classifiers (yield-curve, inflation,
     dollar) produced a result, the calibrated path runs through
-    :func:`assemble_q6_blocks`. Missing label-inputs route through the
-    bootstrap stub builder so the block_id is preserved but the
-    calibration tag accurately reports the gap.
+    :func:`assemble_q6_blocks`. Missing label-inputs route through
+    :func:`_build_unavailable_block` so the block_id is preserved but
+    the calibration tag accurately reports the gap.
     """
     if (
         inputs.yield_curve is not None
@@ -304,7 +306,7 @@ def assemble_q6_blocks_from_inputs(inputs: Q6Inputs) -> list[OutputBlock]:
         blocks.append(_build_yield_curve_block(inputs.yield_curve, freshness_ts=inputs.as_of))
     else:
         blocks.append(
-            _build_bootstrap_block(
+            _build_unavailable_block(
                 block_id="q6.yield_curve_regime",
                 bootstrap_reason="yield_curve: required FRED DGS series unavailable",
                 freshness_ts=inputs.as_of,
@@ -314,7 +316,7 @@ def assemble_q6_blocks_from_inputs(inputs: Q6Inputs) -> list[OutputBlock]:
         blocks.append(_build_inflation_block(inputs.inflation, freshness_ts=inputs.as_of))
     else:
         blocks.append(
-            _build_bootstrap_block(
+            _build_unavailable_block(
                 block_id="q6.inflation_regime",
                 bootstrap_reason="inflation: T10YIE history unavailable",
                 freshness_ts=inputs.as_of,
@@ -326,7 +328,7 @@ def assemble_q6_blocks_from_inputs(inputs: Q6Inputs) -> list[OutputBlock]:
         )
     else:
         blocks.append(
-            _build_bootstrap_block(
+            _build_unavailable_block(
                 block_id="q6.dollar_attribution",
                 bootstrap_reason="dollar_attribution: DTWEXBGS history unavailable",
                 freshness_ts=inputs.as_of,

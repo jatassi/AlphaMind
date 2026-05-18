@@ -62,7 +62,7 @@ class TestDetectVolumeAnomaly:
             baseline_mean=baseline_mean,
             baseline_stdev=baseline_stdev,
             sigma_threshold=threshold_sigma,
-            calibration_state=CalibrationState.BOOTSTRAP,
+            calibration_state=CalibrationState.ACCUMULATING,
         )
         assert flag is not None
         assert flag.severity == "investigate_if_persists"
@@ -129,7 +129,7 @@ class TestDetectPriceMoveAnomaly:
             price_move=price_move,
             atr=atr,
             atr_multiple_threshold=atr_threshold,
-            calibration_state=CalibrationState.BOOTSTRAP,
+            calibration_state=CalibrationState.ACCUMULATING,
         )
         assert flag is not None
         assert flag.severity == "investigate_if_persists"

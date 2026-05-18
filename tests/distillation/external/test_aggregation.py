@@ -111,7 +111,7 @@ def test_collect_anomalies_extracts_every_flag_into_summaries() -> None:
         block_id="q1.volume_anomaly",
         audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS, OutputAudience.UNIVERSAL_BROADCAST}),
         anomaly_flags=(flag_one, flag_two),
-        calibration_state=CalibrationState.BOOTSTRAP,
+        calibration_state=CalibrationState.ACCUMULATING,
         bootstrap_reason="volume_baseline: 5 < 20",
     )
 
@@ -125,7 +125,7 @@ def test_collect_anomalies_extracts_every_flag_into_summaries() -> None:
                 {OutputAudience.SECTOR_TECH_SEMIS, OutputAudience.UNIVERSAL_BROADCAST}
             ),
             flagged_at=datetime(2026, 4, 27, 14, 30, tzinfo=UTC),
-            calibration_state=CalibrationState.BOOTSTRAP,
+            calibration_state=CalibrationState.ACCUMULATING,
         ),
         AnomalySummary(
             flag=flag_two,
@@ -134,7 +134,7 @@ def test_collect_anomalies_extracts_every_flag_into_summaries() -> None:
                 {OutputAudience.SECTOR_TECH_SEMIS, OutputAudience.UNIVERSAL_BROADCAST}
             ),
             flagged_at=datetime(2026, 4, 27, 14, 30, tzinfo=UTC),
-            calibration_state=CalibrationState.BOOTSTRAP,
+            calibration_state=CalibrationState.ACCUMULATING,
         ),
     }
     assert set(summaries) == expected
@@ -346,24 +346,24 @@ def test_format_anomaly_summary_omits_empty_severity_sections() -> None:
 def test_format_anomaly_summary_includes_calibration_state_per_anomaly() -> None:
     """Calibration state is visible on every anomaly line.
 
-    Downstream LLMs weight bootstrap-tagged anomalies lower per
+    Downstream LLMs weight non-calibrated anomalies lower per
     ``docs/design/02-distillation-layer/threshold-calibration.md``
     § Downstream propagation.
     """
     base_ts = datetime(2026, 4, 27, 14, 30, tzinfo=UTC)
     audience_set = frozenset({OutputAudience.SECTOR_TECH_SEMIS})
-    bootstrap_summary = AnomalySummary(
-        flag=AnomalyFlag(name="bootstrap_anomaly", magnitude=2.5, severity="investigate_now"),
+    accumulating_summary = AnomalySummary(
+        flag=AnomalyFlag(name="accumulating_anomaly", magnitude=2.5, severity="investigate_now"),
         source_block_id="q1.a",
         audiences=audience_set,
         flagged_at=base_ts,
-        calibration_state=CalibrationState.BOOTSTRAP,
+        calibration_state=CalibrationState.ACCUMULATING,
     )
 
-    rendered = format_anomaly_summary([bootstrap_summary])
+    rendered = format_anomaly_summary([accumulating_summary])
 
-    assert "calibration bootstrap" in rendered
-    assert "bootstrap_anomaly" in rendered
+    assert "calibration accumulating" in rendered
+    assert "accumulating_anomaly" in rendered
 
 
 def test_format_anomaly_summary_zero_flags_renders_zero_count_header() -> None:

@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.orchestrator import (
     _build_regime_snapshot,
     _compute_realized_vols,
@@ -240,7 +241,8 @@ def test_build_regime_snapshot_uses_real_realized_vols_when_spy_available(
     _seed_spy_closes(session, closes, end_date=AS_OF)
     session.commit()
 
-    snapshot, bootstrap_reason = _build_regime_snapshot(session, as_of=AS_OF)
+    snapshot, calibration_state, bootstrap_reason = _build_regime_snapshot(session, as_of=AS_OF)
+    assert calibration_state is CalibrationState.CALIBRATED
     assert bootstrap_reason is None
     assert snapshot.vix_level == pytest.approx(17.26)
     assert snapshot.realized_vol_5d > 0.0
@@ -263,14 +265,18 @@ def test_build_regime_snapshot_falls_back_when_spy_absent(session: Session) -> N
     )
     session.commit()
 
-    snapshot, bootstrap_reason = _build_regime_snapshot(session, as_of=AS_OF)
-    assert bootstrap_reason is None  # VIX present -> CALIBRATED
+    snapshot, calibration_state, bootstrap_reason = _build_regime_snapshot(session, as_of=AS_OF)
+    assert calibration_state is CalibrationState.CALIBRATED  # VIX present
+    assert bootstrap_reason is None
     assert snapshot.realized_vol_5d == 0.0
     assert snapshot.realized_vol_20d == 0.0
 
 
-def test_build_regime_snapshot_vix_missing_keeps_bootstrap_path(session: Session) -> None:
-    snapshot, bootstrap_reason = _build_regime_snapshot(session, as_of=AS_OF)
+def test_build_regime_snapshot_vix_missing_emits_unavailable(session: Session) -> None:
+    snapshot, calibration_state, bootstrap_reason = _build_regime_snapshot(session, as_of=AS_OF)
+    # Per ALP-540: zero VIX observations is a collector failure, not a
+    # warm-up state — the regime block should surface as UNAVAILABLE.
+    assert calibration_state is CalibrationState.UNAVAILABLE
     assert bootstrap_reason == "regime: VIXCLS observation missing"
     assert snapshot.vix_level == 0.0
     assert snapshot.realized_vol_5d == 0.0
@@ -313,7 +319,7 @@ def test_vol_expansion_label_fires_when_rv_rising_and_vix_elevated(
     )
     session.commit()
 
-    snapshot, _bootstrap = _build_regime_snapshot(session, as_of=AS_OF)
+    snapshot, _state, _reason = _build_regime_snapshot(session, as_of=AS_OF)
     assert snapshot.realized_vol_5d > snapshot.realized_vol_20d > 0.0
 
     thresholds = RegimeClassificationThresholds(

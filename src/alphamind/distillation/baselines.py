@@ -41,6 +41,7 @@ from sqlalchemy.orm import Session
 from alphamind.distillation.calibration import (
     CalibratedValue,
     CalibrationState,
+    decide_calibration_state,
 )
 from alphamind.persistence.models import (
     DistillationCompositeState,
@@ -522,9 +523,7 @@ def refresh_ticker_baselines(
                     evicted_values=outflow_values,
                 )
             stdev = _stdev_from_m2(n=n, m2=m2)
-            state = (
-                CalibrationState.CALIBRATED if n >= min_observations else CalibrationState.BOOTSTRAP
-            )
+            state = decide_calibration_state(observed_n=n, required_n=min_observations)
             _upsert_ticker_baseline(
                 session,
                 _TickerBaselineRow(
@@ -727,11 +726,7 @@ def refresh_pair_lag(
                 lag_returns=lag_returns,
                 max_lag_days=max_lag_days,
             )
-            state = (
-                CalibrationState.CALIBRATED
-                if n_events >= min_events
-                else CalibrationState.BOOTSTRAP
-            )
+            state = decide_calibration_state(observed_n=n_events, required_n=min_events)
             _upsert_pair_lag(
                 session,
                 lead=lead,
@@ -862,20 +857,24 @@ def refresh_contract_history(
     2. Read the immediately preceding ``distillation_contract_history`` row
        to compute ``delta_pp_since_prior`` in percentage points.
     3. UPSERT a row keyed ``(contract_id, snapshot_ts == as_of)``.
-    4. When no snapshot exists yet, write a bootstrap row at zero so the
+    4. When no snapshot exists yet, write an ``unavailable`` row at zero so the
        orchestrator sees a tagged-but-unknown reading rather than a missing
-       block.
+       block. The zero-snapshot case maps to ``unavailable`` per the
+       ALP-540 vocabulary: no observations → operator action required, not
+       "give it time."
     """
     out: dict[str, CalibratedValue] = {}
     with _refresh_transaction(session):
         for contract_id in contract_scope:
             snapshot = _select_latest_snapshot(session, contract_id=contract_id, as_of=as_of)
             if snapshot is None:
-                state = CalibrationState.BOOTSTRAP
+                state = CalibrationState.UNAVAILABLE
                 yes_probability = 0.0
                 liquidity_usd = 0.0
                 delta_pp = 0.0
-                reason: str | None = f"contract_history_min_observations: 0 < {min_observations}"
+                reason: str | None = (
+                    f"contract_history_min_observations: 0 < {min_observations} (0 observations)"
+                )
             else:
                 yes_probability, liquidity_raw = snapshot
                 liquidity_usd = liquidity_raw if liquidity_raw is not None else 0.0
@@ -1297,11 +1296,18 @@ def refresh_event_history(
                 as_of=as_of,
                 only_resolved=True,
             )
-            state = (
-                CalibrationState.CALIBRATED
-                if n_resolved >= min_events
-                else CalibrationState.BOOTSTRAP
-            )
+            # Event-history calibration is gated on RESOLVED events (events
+            # whose outcome is known) — only resolved events contribute to the
+            # downstream rate. But the "0 → UNAVAILABLE" branch keys on
+            # ``n_events`` (total detected, resolved or pending): a series
+            # with detected-but-pending events is collecting properly and
+            # belongs in ACCUMULATING, not UNAVAILABLE.
+            if n_resolved >= min_events:
+                state = CalibrationState.CALIBRATED
+            elif n_events == 0:
+                state = CalibrationState.UNAVAILABLE
+            else:
+                state = CalibrationState.ACCUMULATING
             reason: str | None = (
                 None
                 if state is CalibrationState.CALIBRATED
@@ -1433,11 +1439,7 @@ def refresh_composite_state(
             direction=alert_direction,
         )
         n_history = len(history)
-        state = (
-            CalibrationState.CALIBRATED
-            if n_history >= min_observations
-            else CalibrationState.BOOTSTRAP
-        )
+        state = decide_calibration_state(observed_n=n_history, required_n=min_observations)
         reason: str | None = (
             None
             if state is CalibrationState.CALIBRATED
