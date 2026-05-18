@@ -42,7 +42,6 @@ from alphamind.decision.strategist.models import (
 )
 from alphamind.decision.strategist.validation import (
     ValidationError,
-    ValidationFailure,
     ValidationResult,
     ValidationWarning,
     validate_strategist_output,
@@ -1180,12 +1179,6 @@ class TestValidationTypesAreFrozenDataclasses:
     """Per ALP-475, strategist validation public types are
     ``@dataclass(frozen=True, slots=True)``.
     """
-
-    def test_validation_failure_is_frozen_dataclass(self) -> None:
-        failure = ValidationFailure(field_path="x.y", rule="r1", message="m1")
-        assert dataclasses.is_dataclass(ValidationFailure)
-        with pytest.raises(dataclasses.FrozenInstanceError):
-            failure.message = "mutated"  # type: ignore[misc]
 
     def test_validation_warning_is_frozen_dataclass(self) -> None:
         warn = ValidationWarning(field_path="x.y", rule="r1", message="m1")

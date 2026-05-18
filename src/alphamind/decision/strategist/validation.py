@@ -46,12 +46,8 @@ from alphamind.decision.strategist.models import (
     StrategistOutput,
 )
 
-# ValidationError replaces the old ValidationFailure name.
-ValidationFailure = ValidationError
-
 __all__ = [
     "ValidationError",
-    "ValidationFailure",
     "ValidationResult",
     "ValidationWarning",
     "validate_strategist_output",
@@ -79,7 +75,7 @@ def _check_ids_unique(
     id_attr: str,
     collection_name: str,
     rule: str,
-) -> Iterable[ValidationFailure]:
+) -> Iterable[ValidationError]:
     """Yield a failure for each duplicate ID within *items*.
 
     The two id-uniqueness invariants (assessment_id, pending_order_assessment_id)
@@ -90,7 +86,7 @@ def _check_ids_unique(
     for i, item in enumerate(items):
         identifier: str = getattr(item, id_attr)
         if identifier in seen:
-            yield ValidationFailure(
+            yield ValidationError(
                 field_path=f"{collection_name}[{i}].{id_attr}",
                 rule=rule,
                 message=(
@@ -105,7 +101,7 @@ def _check_linked_position_assessment_id(
     pending_orders: tuple[PendingOrderAssessment, ...],
     *,
     assessment_ids: frozenset[str],
-) -> Iterable[ValidationFailure]:
+) -> Iterable[ValidationError]:
     """Pending-order ``linked_position_assessment_id`` resolves in the same document.
 
     Each populated ``linked_position_assessment_id`` must equal an
@@ -116,7 +112,7 @@ def _check_linked_position_assessment_id(
         if link is None:
             continue
         if link not in assessment_ids:
-            yield ValidationFailure(
+            yield ValidationError(
                 field_path=f"pending_order_assessments[{i}].linked_position_assessment_id",
                 rule="linked_position_assessment_id_resolves",
                 message=(
@@ -131,7 +127,7 @@ def _check_remedy_flag_pairing(
     assessments: tuple[PositionAssessment, ...],
     *,
     portfolio_observations: PortfolioLevelObservations,
-) -> Iterable[ValidationFailure]:
+) -> Iterable[ValidationError]:
     """``remedy_flag`` ↔ ``addressed_breaches[].breach_id`` are mutually-covering.
 
     Each unique ``breach_id`` in
@@ -152,7 +148,7 @@ def _check_remedy_flag_pairing(
             continue
         remedy_flags.add(remedy)
         if remedy not in addressed_ids:
-            yield ValidationFailure(
+            yield ValidationError(
                 field_path=f"position_assessments[{i}].remedy_flag",
                 rule="remedy_flag_pairing",
                 message=(
@@ -161,7 +157,7 @@ def _check_remedy_flag_pairing(
                 ),
             )
     for breach_id in addressed_ids - remedy_flags:
-        yield ValidationFailure(
+        yield ValidationError(
             field_path=(
                 "portfolio_level_observations.regime_transition_summary.addressed_breaches"
             ),
@@ -175,7 +171,7 @@ def _check_remedy_flag_pairing(
 
 def _check_defensive_posture_summary_present(
     output: StrategistOutput,
-) -> Iterable[ValidationFailure]:
+) -> Iterable[ValidationError]:
     """When ``mode == "defensive_posture"``, the summary block must exist.
 
     The schema's :class:`StrategistOutput` model_validator enforces this on
@@ -186,7 +182,7 @@ def _check_defensive_posture_summary_present(
         output.mode == "defensive_posture"
         and output.portfolio_level_observations.defensive_posture_summary is None
     ):
-        yield ValidationFailure(
+        yield ValidationError(
             field_path=("portfolio_level_observations.defensive_posture_summary"),
             rule="defensive_posture_summary_present",
             message=(
@@ -198,7 +194,7 @@ def _check_defensive_posture_summary_present(
 
 def _check_addressed_uncured_disjoint(
     portfolio_observations: PortfolioLevelObservations,
-) -> Iterable[ValidationFailure]:
+) -> Iterable[ValidationError]:
     """A breach is either addressed or uncured, never both."""
     summary = portfolio_observations.regime_transition_summary
     if summary is None:
@@ -206,7 +202,7 @@ def _check_addressed_uncured_disjoint(
     addressed_ids = {b.breach_id for b in summary.addressed_breaches}
     for j, uncured in enumerate(summary.uncured_breaches):
         if uncured.breach_id in addressed_ids:
-            yield ValidationFailure(
+            yield ValidationError(
                 field_path=(
                     f"portfolio_level_observations.regime_transition_summary."
                     f"uncured_breaches[{j}].breach_id"
@@ -221,10 +217,10 @@ def _check_addressed_uncured_disjoint(
 
 def _check_sector_active(
     assessment: PositionAssessment, *, field_prefix: str, active_sectors: frozenset[str]
-) -> Iterable[ValidationFailure]:
+) -> Iterable[ValidationError]:
     """``sector`` is a member of ``active_sectors``."""
     if assessment.sector not in active_sectors:
-        yield ValidationFailure(
+        yield ValidationError(
             field_path=f"{field_prefix}.sector",
             rule="sector_not_active",
             message=(
@@ -236,7 +232,7 @@ def _check_sector_active(
 
 def _check_action_parameters_match(
     assessment: PositionAssessment, *, field_prefix: str
-) -> Iterable[ValidationFailure]:
+) -> Iterable[ValidationError]:
     """``action_parameters.action`` must equal ``recommended_action``.
 
     The discriminator on the action-parameters union catches this on parse,
@@ -249,7 +245,7 @@ def _check_action_parameters_match(
     if assessment.action_parameters is None:
         return
     if assessment.action_parameters.action != assessment.recommended_action:
-        yield ValidationFailure(
+        yield ValidationError(
             field_path=f"{field_prefix}.action_parameters.action",
             rule="action_parameters_match",
             message=(
@@ -270,7 +266,7 @@ def _check_narrative_references(
     *,
     field_path: str,
     retrieval_store: RetrievalStore,
-) -> Iterable[ValidationFailure]:
+) -> Iterable[ValidationError]:
     """Resolve every canonical-prefix ``[XX-N]`` token in ``narrative``.
 
     ``None`` narratives are skipped. Non-canonical prefixes (e.g. internal
@@ -291,7 +287,7 @@ def _check_narrative_references(
         if parse_reference_id(ref_id) is None:
             continue
         if retrieval_store.lookup(ref_id) is None:
-            yield ValidationFailure(
+            yield ValidationError(
                 field_path=field_path,
                 rule="unknown_reference",
                 message=(
@@ -300,7 +296,7 @@ def _check_narrative_references(
                 ),
             )
     for prefix in find_bare_prefix_citations(narrative):
-        yield ValidationFailure(
+        yield ValidationError(
             field_path=field_path,
             rule="bare_prefix_citation",
             message=(
@@ -343,7 +339,7 @@ def _check_position_assessment_references(
     *,
     field_prefix: str,
     retrieval_store: RetrievalStore,
-) -> Iterable[ValidationFailure]:
+) -> Iterable[ValidationError]:
     """Layer-3 resolution for every narrative field on a position assessment."""
     for name in _POSITION_NARRATIVE_FIELDS:
         yield from _check_narrative_references(
@@ -358,7 +354,7 @@ def _check_pending_order_references(
     *,
     field_prefix: str,
     retrieval_store: RetrievalStore,
-) -> Iterable[ValidationFailure]:
+) -> Iterable[ValidationError]:
     """Layer-3 resolution for every narrative field on a pending-order assessment."""
     for name in _PENDING_ORDER_NARRATIVE_FIELDS:
         yield from _check_narrative_references(
@@ -372,7 +368,7 @@ def _check_portfolio_observation_references(
     observations: PortfolioLevelObservations,
     *,
     retrieval_store: RetrievalStore,
-) -> Iterable[ValidationFailure]:
+) -> Iterable[ValidationError]:
     """Layer-3 resolution for every narrative field at the portfolio level."""
     for name in _PORTFOLIO_NARRATIVE_FIELDS:
         yield from _check_narrative_references(

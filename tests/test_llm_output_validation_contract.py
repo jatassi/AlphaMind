@@ -35,6 +35,10 @@ from alphamind.analysis._harness_core import (
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.commands.validation_results import ValidationError, ValidationResult
 
+# Derived from the production type alias so adding a new arm to
+# CLIResultErrorMapping automatically ratchets the contract assertion:
+# any agent whose on_cli_result_error literal isn't in the new union
+# surfaces the drift at test time.
 _CLI_RESULT_ERROR_ARMS: frozenset[str] = frozenset(typing.get_args(CLIResultErrorMapping))
 _EMPTY_RETRIEVAL_STORE = RetrievalStore(entries={}, freshness_by_source={})
 
@@ -642,9 +646,9 @@ def test_bare_prefix_citation_detected(agent: AgentSpec) -> None:
 def test_no_separate_validation_failure_class(agent: AgentSpec) -> None:
     """ALP-520 unified ``ValidationFailure`` into ``ValidationError``.
 
-    When a validator module still exports ``ValidationFailure`` (the
-    strategist keeps it for backwards compatibility), it must be the
-    canonical :class:`ValidationError` rather than a distinct class.
+    Guards against regressions that re-introduce ``ValidationFailure`` as a
+    distinct class. If any validator module re-exports the symbol, it must
+    alias :class:`ValidationError` — never be its own dataclass.
     """
     if not agent.has_validator:
         pytest.skip("synthesizer has no validator")

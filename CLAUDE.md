@@ -23,7 +23,7 @@ Alert the user before disabling the linter or any rule in any form — including
 uv run pytest --testmon -n auto
 ```
 
-`--testmon` skips tests whose Python dependencies haven't changed since the last run (cache in `.testmondata`, gitignored). `-n auto` allocates one worker per CPU core. When verifying a narrow slice, scope to the relevant path: `uv run pytest tests/config/ --testmon -n auto`.
+`--testmon` skips tests whose Python dependencies haven't changed since the last run (cache in `.testmondata`, intentionally tracked in-tree so testmon's selection survives fresh clones and CI re-runs). `-n auto` allocates one worker per CPU core. When verifying a narrow slice, scope to the relevant path: `uv run pytest tests/config/ --testmon -n auto`.
 
 **Drop `--testmon` and run the full suite ONLY when one of these specific scenarios applies:**
 - Changing `conftest.py`, fixtures, or other test-collection hooks — testmon doesn't track collection-time graph changes

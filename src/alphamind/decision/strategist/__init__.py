@@ -49,7 +49,6 @@ from alphamind.decision.strategist.runner import (
 )
 from alphamind.decision.strategist.validation import (
     ValidationError,
-    ValidationFailure,
     ValidationResult,
     ValidationWarning,
     validate_strategist_output,
@@ -90,7 +89,6 @@ __all__ = [
     "ThesisStatus",
     "TimeoutFailure",
     "ValidationError",
-    "ValidationFailure",
     "ValidationResult",
     "ValidationWarning",
     "load_strategist_agent_config",

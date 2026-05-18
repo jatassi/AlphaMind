@@ -32,8 +32,9 @@ class ValidationError:
 
     ``rule`` carries the analyst/strategist/researcher vocabulary (e.g.
     ``"invalidation_leg_id_pairing"``); ``criterion`` carries the PM
-    evaluation-criterion-set vocabulary. Both default to ``None`` so neither
-    call-site is forced to supply the other's field.
+    evaluation-criterion-set vocabulary. ``rule`` defaults to ``""`` (empty)
+    and ``criterion`` to ``None`` so neither call-site is forced to supply
+    the other's field.
     """
 
     field_path: str
@@ -44,7 +45,11 @@ class ValidationError:
 
 @dataclass(frozen=True, slots=True)
 class ValidationWarning:
-    """A soft Layer-2 violation that does not disqualify the output."""
+    """A soft Layer-2 violation that does not disqualify the output.
+
+    Same field semantics as :class:`ValidationError` — ``rule`` defaults to
+    ``""`` and ``criterion`` to ``None``.
+    """
 
     field_path: str
     message: str
