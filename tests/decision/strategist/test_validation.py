@@ -41,6 +41,7 @@ from alphamind.decision.strategist.models import (
     StrategistOutput,
 )
 from alphamind.decision.strategist.validation import (
+    ValidationError,
     ValidationFailure,
     ValidationResult,
     ValidationWarning,
@@ -156,8 +157,8 @@ class TestTracerBaseline:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "PASS"
-        assert result.failures == ()
+        assert result.is_valid
+        assert result.errors == ()
         assert result.warnings == ()
 
 
@@ -205,8 +206,8 @@ class TestActionParametersMatch:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        rules = [f.rule for f in result.failures]
+        assert not result.is_valid
+        rules = [f.rule for f in result.errors]
         assert "action_parameters_match" in rules
 
     def test_matching_action_parameters_passes(self) -> None:
@@ -229,7 +230,7 @@ class TestActionParametersMatch:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        rules = [f.rule for f in result.failures]
+        rules = [f.rule for f in result.errors]
         assert "action_parameters_match" not in rules
 
 
@@ -248,8 +249,8 @@ class TestAssessmentIdUnique:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        rules = [f.rule for f in result.failures]
+        assert not result.is_valid
+        rules = [f.rule for f in result.errors]
         assert "assessment_id_unique" in rules
 
     def test_distinct_assessment_ids_pass(self) -> None:
@@ -261,7 +262,7 @@ class TestAssessmentIdUnique:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        rules = [f.rule for f in result.failures]
+        rules = [f.rule for f in result.errors]
         assert "assessment_id_unique" not in rules
 
 
@@ -284,8 +285,8 @@ class TestPendingOrderAssessmentIdUnique:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        rules = [f.rule for f in result.failures]
+        assert not result.is_valid
+        rules = [f.rule for f in result.errors]
         assert "pending_order_assessment_id_unique" in rules
 
     def test_distinct_pending_order_assessment_ids_pass(self) -> None:
@@ -301,7 +302,7 @@ class TestPendingOrderAssessmentIdUnique:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        rules = [f.rule for f in result.failures]
+        rules = [f.rule for f in result.errors]
         assert "pending_order_assessment_id_unique" not in rules
 
 
@@ -323,8 +324,8 @@ class TestLinkedPositionAssessmentId:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        rules = [f.rule for f in result.failures]
+        assert not result.is_valid
+        rules = [f.rule for f in result.errors]
         assert "linked_position_assessment_id_resolves" in rules
 
     def test_linked_position_assessment_id_resolves_passes(self) -> None:
@@ -339,7 +340,7 @@ class TestLinkedPositionAssessmentId:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        rules = [f.rule for f in result.failures]
+        rules = [f.rule for f in result.errors]
         assert "linked_position_assessment_id_resolves" not in rules
 
     def test_no_linked_position_assessment_id_no_failure(self) -> None:
@@ -355,7 +356,7 @@ class TestLinkedPositionAssessmentId:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        rules = [f.rule for f in result.failures]
+        rules = [f.rule for f in result.errors]
         assert "linked_position_assessment_id_resolves" not in rules
 
 
@@ -407,8 +408,8 @@ class TestRemedyFlagBreachPairing:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        rules = [f.rule for f in result.failures]
+        assert not result.is_valid
+        rules = [f.rule for f in result.errors]
         assert "remedy_flag_pairing" in rules
 
     def test_addressed_breach_without_remedy_flag_is_failure(self) -> None:
@@ -443,8 +444,8 @@ class TestRemedyFlagBreachPairing:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        rules = [f.rule for f in result.failures]
+        assert not result.is_valid
+        rules = [f.rule for f in result.errors]
         assert "remedy_flag_pairing" in rules
 
     def test_balanced_remedy_flag_and_addressed_breach_pass(self) -> None:
@@ -475,7 +476,7 @@ class TestRemedyFlagBreachPairing:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        rules = [f.rule for f in result.failures]
+        rules = [f.rule for f in result.errors]
         assert "remedy_flag_pairing" not in rules
 
 
@@ -518,8 +519,8 @@ class TestAddressedUncuredDisjoint:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        rules = [f.rule for f in result.failures]
+        assert not result.is_valid
+        rules = [f.rule for f in result.errors]
         assert "addressed_uncured_disjoint" in rules
 
     def test_disjoint_addressed_and_uncured_passes(self) -> None:
@@ -555,7 +556,7 @@ class TestAddressedUncuredDisjoint:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        rules = [f.rule for f in result.failures]
+        rules = [f.rule for f in result.errors]
         assert "addressed_uncured_disjoint" not in rules
 
 
@@ -574,8 +575,8 @@ class TestSectorInActiveSectors:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=frozenset({"semis", "financials", "energy"}),
         )
-        assert result.overall == "FAIL"
-        rules = [f.rule for f in result.failures]
+        assert not result.is_valid
+        rules = [f.rule for f in result.errors]
         assert "sector_not_active" in rules
 
     def test_sector_inside_active_set_passes(self) -> None:
@@ -586,7 +587,7 @@ class TestSectorInActiveSectors:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=frozenset({"semis"}),
         )
-        rules = [f.rule for f in result.failures]
+        rules = [f.rule for f in result.errors]
         assert "sector_not_active" not in rules
 
 
@@ -617,7 +618,7 @@ class TestDefensivePostureSummaryPresence:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        rules = [f.rule for f in result.failures]
+        rules = [f.rule for f in result.errors]
         assert "defensive_posture_summary_present" not in rules
 
     def test_defensive_posture_without_summary_is_failure(self) -> None:
@@ -639,8 +640,8 @@ class TestDefensivePostureSummaryPresence:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        rules = [f.rule for f in result.failures]
+        assert not result.is_valid
+        rules = [f.rule for f in result.errors]
         assert "defensive_posture_summary_present" in rules
 
 
@@ -660,8 +661,8 @@ class TestLayer3PositionAssessmentReferences:
             retrieval_store=_retrieval_store(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        unknown_failures = [f for f in result.failures if f.rule == "unknown_reference"]
+        assert not result.is_valid
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
         assert any("SA-TECH-99" in f.message for f in unknown_failures)
         assert any("status_rationale" in f.field_path for f in unknown_failures)
 
@@ -675,8 +676,8 @@ class TestLayer3PositionAssessmentReferences:
             retrieval_store=_retrieval_store(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        unknown_failures = [f for f in result.failures if f.rule == "unknown_reference"]
+        assert not result.is_valid
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
         assert any("QR-99" in f.message for f in unknown_failures)
         assert any("action_rationale" in f.field_path for f in unknown_failures)
 
@@ -696,8 +697,8 @@ class TestLayer3PositionAssessmentReferences:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        unknown_failures = [f for f in result.failures if f.rule == "unknown_reference"]
+        assert not result.is_valid
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
         assert any("SA-FIN-99" in f.message for f in unknown_failures)
         assert any("reduce_rationale" in f.field_path for f in unknown_failures)
 
@@ -722,8 +723,8 @@ class TestLayer3PositionAssessmentReferences:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        unknown_failures = [f for f in result.failures if f.rule == "unknown_reference"]
+        assert not result.is_valid
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
         assert any("AR-99" in f.message for f in unknown_failures)
         assert any("add_conviction_justification" in f.field_path for f in unknown_failures)
 
@@ -744,8 +745,8 @@ class TestLayer3PositionAssessmentReferences:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        unknown_failures = [f for f in result.failures if f.rule == "unknown_reference"]
+        assert not result.is_valid
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
         assert any("CR-99" in f.message for f in unknown_failures)
         assert any("adjustment_rationale" in f.field_path for f in unknown_failures)
 
@@ -777,8 +778,8 @@ class TestLayer3PositionAssessmentReferences:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        unknown_failures = [f for f in result.failures if f.rule == "unknown_reference"]
+        assert not result.is_valid
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
         assert any("QR-CW-99" in f.message for f in unknown_failures)
         assert any("remedy_rationale" in f.field_path for f in unknown_failures)
 
@@ -792,8 +793,8 @@ class TestLayer3PositionAssessmentReferences:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        unknown_failures = [f for f in result.failures if f.rule == "unknown_reference"]
+        assert not result.is_valid
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
         assert any("SA-ENERGY-99" in f.message for f in unknown_failures)
         assert any("cross_position_observations" in f.field_path for f in unknown_failures)
 
@@ -807,7 +808,7 @@ class TestLayer3PositionAssessmentReferences:
             retrieval_store=_retrieval_store("SA-TECH-2"),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        rules = [f.rule for f in result.failures]
+        rules = [f.rule for f in result.errors]
         assert "unknown_reference" not in rules
 
     def test_non_canonical_prefix_skipped(self) -> None:
@@ -821,7 +822,7 @@ class TestLayer3PositionAssessmentReferences:
             retrieval_store=_retrieval_store(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        rules = [f.rule for f in result.failures]
+        rules = [f.rule for f in result.errors]
         assert "unknown_reference" not in rules
 
 
@@ -836,8 +837,8 @@ class TestLayer3PendingOrderReferences:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        unknown_failures = [f for f in result.failures if f.rule == "unknown_reference"]
+        assert not result.is_valid
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
         assert any("SA-TECH-99" in f.message for f in unknown_failures)
         assert any("drift_rationale" in f.field_path for f in unknown_failures)
 
@@ -851,8 +852,8 @@ class TestLayer3PendingOrderReferences:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        unknown_failures = [f for f in result.failures if f.rule == "unknown_reference"]
+        assert not result.is_valid
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
         assert any("QR-99" in f.message for f in unknown_failures)
         # Field path should reference pending_order_assessments
         assert any(
@@ -872,8 +873,8 @@ class TestLayer3PortfolioLevelReferences:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        unknown_failures = [f for f in result.failures if f.rule == "unknown_reference"]
+        assert not result.is_valid
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
         assert any("SA-TECH-99" in f.message for f in unknown_failures)
         assert any("aggregate_thesis_health" in f.field_path for f in unknown_failures)
 
@@ -887,8 +888,8 @@ class TestLayer3PortfolioLevelReferences:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        unknown_failures = [f for f in result.failures if f.rule == "unknown_reference"]
+        assert not result.is_valid
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
         assert any("SA-FIN-99" in f.message for f in unknown_failures)
         assert any("sector_balance_shifts" in f.field_path for f in unknown_failures)
 
@@ -902,8 +903,8 @@ class TestLayer3PortfolioLevelReferences:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        unknown_failures = [f for f in result.failures if f.rule == "unknown_reference"]
+        assert not result.is_valid
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
         assert any("CR-99" in f.message for f in unknown_failures)
         assert any("thesis_dependency_warnings" in f.field_path for f in unknown_failures)
 
@@ -917,8 +918,8 @@ class TestLayer3PortfolioLevelReferences:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        unknown_failures = [f for f in result.failures if f.rule == "unknown_reference"]
+        assert not result.is_valid
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
         assert any("AR-99" in f.message for f in unknown_failures)
         assert any("capital_allocation_observations" in f.field_path for f in unknown_failures)
 
@@ -943,8 +944,8 @@ class TestLayer3PortfolioLevelReferences:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        unknown_failures = [f for f in result.failures if f.rule == "unknown_reference"]
+        assert not result.is_valid
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
         assert any("QR-CW-99" in f.message for f in unknown_failures)
         assert any("capital_preservation_notes" in f.field_path for f in unknown_failures)
 
@@ -1007,8 +1008,8 @@ class TestSchemaValidHappyPath:
             retrieval_store=_retrieval_store("SA-TECH-2", "SA-FIN-4", "QR-2", "CR-3"),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "PASS"
-        assert result.failures == ()
+        assert result.is_valid
+        assert result.errors == ()
         assert result.warnings == ()
 
 
@@ -1030,9 +1031,9 @@ class TestSyntheticFailScenarios:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
+        assert not result.is_valid
         link_failures = [
-            f for f in result.failures if f.rule == "linked_position_assessment_id_resolves"
+            f for f in result.errors if f.rule == "linked_position_assessment_id_resolves"
         ]
         assert any("linked_position_assessment_id" in f.field_path for f in link_failures)
 
@@ -1058,8 +1059,8 @@ class TestSyntheticFailScenarios:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        remedy_failures = [f for f in result.failures if f.rule == "remedy_flag_pairing"]
+        assert not result.is_valid
+        remedy_failures = [f for f in result.errors if f.rule == "remedy_flag_pairing"]
         assert any("remedy_flag" in f.field_path for f in remedy_failures)
 
     def test_unresolvable_qr_99_reference(self) -> None:
@@ -1072,8 +1073,8 @@ class TestSyntheticFailScenarios:
             retrieval_store=_retrieval_store(),
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
-        assert result.overall == "FAIL"
-        unknown_failures = [f for f in result.failures if f.rule == "unknown_reference"]
+        assert not result.is_valid
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
         assert any(
             "QR-99" in f.message and "status_rationale" in f.field_path for f in unknown_failures
         )
@@ -1086,8 +1087,8 @@ class TestSyntheticFailScenarios:
             retrieval_store=_store_with_baseline_refs(),
             active_sectors=frozenset({"semis", "financials"}),
         )
-        assert result.overall == "FAIL"
-        sector_failures = [f for f in result.failures if f.rule == "sector_not_active"]
+        assert not result.is_valid
+        sector_failures = [f for f in result.errors if f.rule == "sector_not_active"]
         assert any("sector" in f.field_path for f in sector_failures)
 
 
@@ -1110,8 +1111,8 @@ class TestAggregation:
             retrieval_store=_retrieval_store(),
             active_sectors=frozenset({"semis", "financials"}),
         )
-        assert result.overall == "FAIL"
-        rules = {f.rule for f in result.failures}
+        assert not result.is_valid
+        rules = {f.rule for f in result.errors}
         assert "sector_not_active" in rules
         assert "unknown_reference" in rules
         assert "assessment_id_unique" in rules
@@ -1140,7 +1141,8 @@ class TestValidationTypesAreFrozenDataclasses:
             warn.rule = "mutated"  # type: ignore[misc]
 
     def test_validation_result_is_frozen_dataclass(self) -> None:
-        result = ValidationResult(overall="PASS", failures=(), warnings=())
+        result = ValidationResult(errors=(), warnings=())
         assert dataclasses.is_dataclass(ValidationResult)
+        assert result.is_valid is True
         with pytest.raises(dataclasses.FrozenInstanceError):
-            result.overall = "FAIL"  # type: ignore[misc]
+            result.errors = (ValidationError(field_path="x", rule="r", message="m"),)  # type: ignore[misc]

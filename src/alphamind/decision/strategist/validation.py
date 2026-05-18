@@ -20,7 +20,7 @@ cross-field invariants for the strategist agent's output:
 Per parent issue ALP-116 § Pre-resolved decisions (C), heuristic anti-pattern
 checks (e.g., ``sunk_cost_persistence``, ``rationalized_continuation``) are
 out of scope — those are PM-side judgment calls. The harness (story 06)
-treats ``overall == "FAIL"`` as a corrective-retry trigger; warnings never
+treats ``not result.is_valid`` as a corrective-retry trigger; warnings never
 gate.
 """
 
@@ -28,11 +28,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import Literal
 
 from alphamind.analysis.synthesizer.models import parse_reference_id
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
+from alphamind.commands.validation_results import ValidationError, ValidationResult, ValidationWarning
 from alphamind.decision.strategist.models import (
     PendingOrderAssessment,
     PortfolioLevelObservations,
@@ -40,47 +39,16 @@ from alphamind.decision.strategist.models import (
     StrategistOutput,
 )
 
+# ValidationError replaces the old ValidationFailure name.
+ValidationFailure = ValidationError
+
 __all__ = [
+    "ValidationError",
     "ValidationFailure",
     "ValidationResult",
     "ValidationWarning",
     "validate_strategist_output",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Public types
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class ValidationFailure:
-    """A single Layer-2/3 violation found in a :class:`StrategistOutput`."""
-
-    field_path: str
-    rule: str
-    message: str
-
-
-@dataclass(frozen=True, slots=True)
-class ValidationWarning:
-    """A soft Layer-2 violation that does not disqualify the output."""
-
-    field_path: str
-    rule: str
-    message: str
-
-
-@dataclass(frozen=True, slots=True)
-class ValidationResult:
-    """Aggregate outcome of running :func:`validate_strategist_output`.
-
-    ``overall == "PASS"`` iff ``failures`` is empty. Warnings never disqualify.
-    """
-
-    overall: Literal["PASS", "FAIL"]
-    failures: tuple[ValidationFailure, ...]
-    warnings: tuple[ValidationWarning, ...]
 
 
 # ---------------------------------------------------------------------------
@@ -428,9 +396,9 @@ def validate_strategist_output(
     Returns
     -------
     ValidationResult
-        ``overall == "PASS"`` iff no failures. Warnings never disqualify.
+        ``is_valid=True`` iff no errors. Warnings never disqualify.
     """
-    failures: list[ValidationFailure] = []
+    failures: list[ValidationError] = []
 
     failures.extend(
         _check_ids_unique(
@@ -490,7 +458,6 @@ def validate_strategist_output(
     )
 
     return ValidationResult(
-        overall="PASS" if not failures else "FAIL",
-        failures=tuple(failures),
+        errors=tuple(failures),
         warnings=(),
     )
