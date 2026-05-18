@@ -27,6 +27,7 @@ def _make_summary_stub(invocation_id: str = "inv-stub-1") -> Any:
     return InvocationSummary(
         invocation_id=invocation_id,
         trigger_type="manual",
+        trigger_source="cli",
         firing_run_type=RunType.market_hours_rolling,
         phase1_summary=Phase1Summary(
             fills_processed=0,

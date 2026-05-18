@@ -258,20 +258,26 @@ def _build_sdk_options(
 # multiple sibling researcher invocations race for the same OAuth token.
 _INIT_STALL_TIMEOUT_SECONDS = 60.0
 
-# Between-message stall watchdog. The SDK occasionally produces an initial
-# ``SystemMessage`` at subprocess spawn then hangs without ever streaming
-# response content — the call burns the full outer budget with zero output.
-# 180s is conservative enough to absorb genuine extended-thinking gaps while
-# catching the dead-loss subprocess case in <⅓ of the 600s budget so the
-# retry path can engage with a fresh subprocess.
-_BETWEEN_MESSAGE_STALL_SECONDS = 180.0
+# Between-message stall watchdog disabled (2026-05-18). The previous 180s
+# threshold was firing falsely against Sonnet 4.6's extended-thinking
+# gaps — the model can spend 3-6 minutes silently building structured
+# output before any AssistantMessage hits the stream (verified by the
+# subprocess-isolation diagnostic: BOTH stall-retry attempts fired at
+# 180s with zero output tokens against the byte-identical
+# user_message.md the in-isolation run succeeded with). The outer
+# ``latency_budget_seconds`` already bounds the call; the init watchdog
+# still catches the CLI-spawn-failure case fast. See
+# ``docs/_investigation/debug-e2e-sdk-stall.md``.
+_BETWEEN_MESSAGE_STALL_SECONDS: float | None = None
 
 # Launch jitter applied to each domain researcher's SDK call. The
 # orchestrator fans out three sectors under :class:`asyncio.TaskGroup`,
 # which spawns three SDK subprocesses within milliseconds of each other.
 # Random jitter on ``[0, 0.5s]`` spreads the subprocess spawns out enough
 # to reduce OAuth-token concurrency contention without measurably extending
-# wall clock.
+# wall clock. The deterministic 4-way stall observed on 2026-05-18 is
+# handled by the global SDK-call semaphore in
+# :func:`alphamind.analysis._harness_core.invoke_sdk`, not by larger jitter.
 _LAUNCH_JITTER_SECONDS = 0.5
 
 

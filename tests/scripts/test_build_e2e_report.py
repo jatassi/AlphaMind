@@ -52,11 +52,12 @@ def _ts(offset_s: float) -> str:
 
 
 def _full_progress_stream() -> list[dict[str, Any]]:
-    """12 in-invocation phase pairs + 10 SDK call pairs in dependency-respecting order.
+    """12 in-invocation phase pairs + 9 SDK call pairs in dependency-respecting order.
 
     The pre-invocation ``seed`` event is intentionally absent — it lives
     in the sibling ``_pre_invocation`` archive directory per parent
-    issue ALP-493 § D.
+    issue ALP-493 § D. Distillation is the deterministic numerical
+    orchestrator and emits no SDK call (parent issue § E).
     """
     s: list[dict[str, Any]] = []
 
@@ -105,16 +106,6 @@ def _full_progress_stream() -> list[dict[str, Any]]:
     phase("snapshot_assembly", 4, 5)
 
     s.append({"event": "phase_start", "phase": "distillation", "timestamp": _ts(6)})
-    sdk_pair(
-        phase_name="distillation",
-        agent="distillation",
-        model="claude-sonnet-4-5",
-        req=7,
-        resp=12,
-        input_tokens=12000,
-        output_tokens=3000,
-        tool_calls=0,
-    )
     s.append({"event": "phase_done", "phase": "distillation", "timestamp": _ts(13)})
 
     s.append({"event": "phase_start", "phase": "domain_researchers", "timestamp": _ts(14)})
@@ -293,9 +284,9 @@ def test_load_invocation_archive_returns_typed_view(
     )
     assert archive.invocation_id == invocation_id
     assert archive.archive_root == archive_root
-    # 12 phase_start + 12 phase_done + 10 agent_request + 10 agent_response
-    # = 44 events in the canonical fixture above (1 phase_start emitted per
-    # in-invocation phase, 1 phase_done per phase, plus 10 SDK
+    # 12 phase_start + 12 phase_done + 9 agent_request + 9 agent_response
+    # = 42 events in the canonical fixture above (1 phase_start emitted per
+    # in-invocation phase, 1 phase_done per phase, plus 9 SDK
     # request/response pairs).
     assert len(archive.events) > 0
     assert archive.resolved_config["active_profile"] == "balanced"
@@ -411,7 +402,6 @@ def test_build_sdk_call_rows_yields_one_row_per_agent_request_response(
     events = _full_progress_stream()
     rows = report_module.build_sdk_call_rows(events)
     keys = [(r.phase, r.agent) for r in rows]
-    assert ("distillation", "distillation") in keys
     assert ("domain_researchers", "tech_semis_researcher") in keys
     assert ("domain_researchers", "financials_researcher") in keys
     assert ("domain_researchers", "energy_researcher") in keys
@@ -421,7 +411,7 @@ def test_build_sdk_call_rows_yields_one_row_per_agent_request_response(
     assert ("analyst", "analyst") in keys
     assert ("strategist", "strategist") in keys
     assert ("pm", "portfolio_manager") in keys
-    assert len(rows) == 10  # 10 SDK call pairs per parent ALP-493 § E
+    assert len(rows) == 9  # 9 SDK call pairs per parent ALP-493 § E
 
 
 def test_build_sdk_call_rows_carries_response_metrics(

@@ -210,6 +210,7 @@ def _make_summary_for_stub() -> Any:
     return InvocationSummary(
         invocation_id="inv-debug-e2e-1",
         trigger_type="manual",
+        trigger_source="debug_e2e_cli",
         firing_run_type=RunType.market_hours_rolling,
         phase1_summary=Phase1Summary(
             fills_processed=0,

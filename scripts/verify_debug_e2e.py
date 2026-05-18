@@ -15,7 +15,7 @@ driving a real subprocess:
 * :func:`check_archive_directory` — ``<archive>/invocations/<id>/``
   exists with ``resolved_config.json`` and ``progress.jsonl``.
 * :func:`check_jsonl_ordering` — 12 in-invocation
-  ``phase_start``/``phase_done`` pairs plus 10
+  ``phase_start``/``phase_done`` pairs plus 9
   ``agent_request``/``agent_response`` pairs in dependency order;
   ``domain_researchers``/``qualitative`` and
   ``analyst``/``strategist`` parallel-overlap pairs tolerated. The
@@ -202,13 +202,14 @@ _PHASE_PREDECESSORS: dict[str, frozenset[str]] = {
     "phase2": frozenset({"pm"}),
 }
 
-# 10 SDK call pairs per parent issue ALP-493 § (E) — distillation, 3
-# domain-researcher sectors (tech_semis, financials, energy), qualitative,
-# adaptive, synthesizer, analyst, strategist, pm. Each is a ``(phase,
-# agent)`` tuple so we can match the request/response events by their
-# joint identity.
+# 9 SDK call pairs per parent issue ALP-493 § (E) — 3 domain-researcher
+# sectors (tech_semis, financials, energy) under the single
+# ``domain_researchers`` phase, plus 6 single-call pairs (qualitative,
+# adaptive, synthesizer, analyst, strategist, pm). Distillation is the
+# deterministic 7-phase numerical orchestrator and emits no SDK call.
+# Each entry is a ``(phase, agent)`` tuple so we can match the
+# request/response events by their joint identity.
 _SDK_CALL_PAIRS: tuple[tuple[str, str], ...] = (
-    ("distillation", "distillation"),
     ("domain_researchers", "tech_semis_researcher"),
     ("domain_researchers", "financials_researcher"),
     ("domain_researchers", "energy_researcher"),
@@ -256,7 +257,7 @@ def check_jsonl_ordering(path: Path) -> CheckResult:
        (``domain_researchers``/``qualitative`` and
        ``analyst``/``strategist``) are NOT each other's predecessors, so
        their event interleaving validates either way.
-    4. **10 SDK call pairs.** Each of the 10 ``(phase, agent)`` tuples in
+    4. **9 SDK call pairs.** Each of the 9 ``(phase, agent)`` tuples in
        ``_SDK_CALL_PAIRS`` emits one ``agent_request`` followed by one
        ``agent_response``.
     """
@@ -424,7 +425,7 @@ def _check_agent_response_fields(
 
 
 def _check_sdk_call_pairs(events: list[dict[str, object]]) -> str | None:
-    """Validate the 10 SDK call request/response pairs."""
+    """Validate the 9 SDK call request/response pairs."""
     seen_requests: set[tuple[str, str]] = set()
     matched_pairs: set[tuple[str, str]] = set()
     for index, ev in enumerate(events):

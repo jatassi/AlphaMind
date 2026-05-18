@@ -178,8 +178,9 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
     stream the verify script inspects.
 
     Each ``agent_request`` is paired with its ``agent_response`` to give
-    10 SDK call pairs (distillation, 3 domain researchers, qualitative,
-    adaptive, synthesizer, analyst, strategist, pm).
+    9 SDK call pairs (3 domain researchers, qualitative, adaptive,
+    synthesizer, analyst, strategist, pm). Distillation is the
+    deterministic numerical orchestrator and emits no SDK call.
     """
     t = datetime(2026, 5, 16, 12, 0, 0, tzinfo=UTC)
 
@@ -194,29 +195,6 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
     stream.append({"event": "phase_done", "phase": "snapshot_assembly", "timestamp": ts(5)})
 
     stream.append({"event": "phase_start", "phase": "distillation", "timestamp": ts(6)})
-    stream.append(
-        {
-            "event": "agent_request",
-            "phase": "distillation",
-            "agent": "distillation",
-            "model": "sonnet",
-            "timestamp": ts(7),
-        }
-    )
-    stream.append(
-        {
-            "event": "agent_response",
-            "phase": "distillation",
-            "agent": "distillation",
-            "model": "sonnet",
-            "duration_s": 1.0,
-            "input_tokens": 100,
-            "output_tokens": 50,
-            "tool_calls": 0,
-            "stop_reason": "end_turn",
-            "timestamp": ts(8),
-        }
-    )
     stream.append({"event": "phase_done", "phase": "distillation", "timestamp": ts(9)})
 
     # domain_researchers + qualitative open in parallel; the four
@@ -583,7 +561,7 @@ def test_check_jsonl_ordering_fails_on_non_monotonic_timestamp(
 def test_check_jsonl_ordering_fails_on_missing_agent_request_response_pair(
     verify_module: ModuleType, tmp_path: Path
 ) -> None:
-    """FAIL if fewer than 10 SDK call pairs are present."""
+    """FAIL if fewer than 9 SDK call pairs are present."""
     stream = [
         e
         for e in _canonical_event_stream()

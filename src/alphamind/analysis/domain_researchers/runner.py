@@ -22,8 +22,12 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
+from alphamind.analysis._sdk_subprocess import invoke_domain_researcher_in_subprocess
 from alphamind.analysis._shared import Sector, TokensUsed
-from alphamind.analysis.domain_researchers.harness import HarnessSuccess, invoke_domain_researcher
+from alphamind.analysis.domain_researchers.harness import (  # noqa: F401  -- kept for tests that inject the in-process harness
+    HarnessSuccess,
+    invoke_domain_researcher,
+)
 from alphamind.analysis.domain_researchers.input_bundle import InputBundle, assemble_input_bundle
 from alphamind.analysis.domain_researchers.models import SectorBrief
 from alphamind.analysis.domain_researchers.qualitative_input import (
@@ -283,7 +287,7 @@ async def run_domain_researcher(  # noqa: PLR0913 — public signature plus ALP-
         deps=_Deps(
             qualitative_loader=_qualitative_loader,
             bundle_assembler=assemble_input_bundle,
-            harness_fn=invoke_domain_researcher,
+            harness_fn=invoke_domain_researcher_in_subprocess,
         ),
         archive_root=archive_root,
         progress=progress,

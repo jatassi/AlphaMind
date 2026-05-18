@@ -743,7 +743,7 @@ def test_render_pm_header_renders_drawdown_context_with_signed_daily_pnl_positiv
     )
     assert "Drawdown context:" in rendered
     assert "  Daily P/L:     +0.5% (NORMAL)" in rendered
-    assert "  Daily limit:   2.5% — headroom: 2.0%" in rendered
+    assert "  Daily limit:   2.5% — headroom: 1.0%" in rendered
     assert "  Cumulative:    1.5% from HWM (NORMAL)" in rendered
 
 
@@ -1705,7 +1705,7 @@ def test_render_pm_header_micro_fixture_full_render() -> None:
             "",
             "Drawdown context:",
             "  Daily P/L:     +0.5% (NORMAL)",
-            "  Daily limit:   2.5% — headroom: 2.0%",
+            "  Daily limit:   2.5% — headroom: 1.0%",
             "  Cumulative:    1.5% from HWM (NORMAL)",
             "",
             "Recent engine-originated actions (since last invocation):",
@@ -1902,7 +1902,7 @@ def test_render_pm_header_full_system_fixture_full_render() -> None:
             "",
             "Drawdown context:",
             "  Daily P/L:     +0.5% (NORMAL)",
-            "  Daily limit:   2.5% — headroom: 2.0%",
+            "  Daily limit:   2.5% — headroom: 1.0%",
             "  Cumulative:    1.5% from HWM (NORMAL)",
             "",
             "Recent engine-originated actions (since last invocation):",

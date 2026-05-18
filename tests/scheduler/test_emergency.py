@@ -212,6 +212,7 @@ def _make_invocation_summary(
     return InvocationSummary(
         invocation_id=invocation_id,
         trigger_type="emergency",
+        trigger_source="continuous_monitor",
         firing_run_type=RunType.emergency,
         phase1_summary=Phase1Summary(
             fills_processed=0,

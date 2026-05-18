@@ -31,11 +31,12 @@ invariant the prior per-feature verify suite collectively covered:
   intentionally NOT part of the real-invocation stream the verify
   script inspects — operators can read that file directly for
   seed-step debugging.
-- All 10 SDK call pairs landed with `agent_request`/`agent_response` pairs
+- All 9 SDK call pairs landed with `agent_request`/`agent_response` pairs
   carrying `duration_s` / `input_tokens` / `output_tokens` / `tool_calls` /
-  `stop_reason` (parent issue § E). The 10 are: distillation, 3 domain
-  researchers (tech_semis, financials, energy), qualitative, adaptive,
-  synthesizer, analyst, strategist, pm.
+  `stop_reason` (parent issue § E). The 9 are: 3 domain researchers
+  (tech_semis, financials, energy), qualitative, adaptive, synthesizer,
+  analyst, strategist, pm. Distillation is the deterministic 7-phase
+  numerical orchestrator and emits no SDK call.
 - The synthetic portfolio seeded cleanly (8 positions, 8 theses, cash
   ledger at $24,440).
 - No Alpaca HTTP traffic leaked into the subprocess's captured
@@ -105,6 +106,14 @@ invariant the prior per-feature verify suite collectively covered:
 
 ## Invocation
 
+Right after launching the verify, **arm the progress monitor in a
+second shell** — see [Monitoring progress mid-run](#monitoring-progress-mid-run)
+below. The verify wrapper is silent during the 5–15 minute run, so
+without the monitor a stalled SDK call or empty agent response stays
+invisible until the wrapper finally exits. Arm AFTER launching (not
+before), so the monitor's `ls -td` selector locks onto the new
+invocation directory rather than a stale prior run.
+
 The wrapped verify harness is the standard entry point:
 
 ```bash
@@ -138,26 +147,91 @@ separate `--pipeline-log` flag is needed.
 
 ## Monitoring progress mid-run
 
-`verify_debug_e2e.py` is silent during the 5–15 minute run — it only prints
-the PASS/FAIL lines after the subprocess exits. To stream phase events in
-real time, poll the active invocation's `progress.jsonl` from a second
-shell:
+**Arm the monitor below in a second shell right after launching
+`verify_debug_e2e.py`** — the script waits up to a few seconds for the
+new invocation's `progress.jsonl` to land, then tails it.
+`verify_debug_e2e.py` is silent during the 5–15 minute run and only
+prints PASS/FAIL lines after the subprocess exits. Without a monitor
+an operator stares at silence for the full run and only learns about a
+stalled SDK call, an empty agent response (`stop_reason: null`,
+`output_tokens: 0`), or a mid-pipeline crash when the wrapper finally
+exits — by which point the run is already spent. With the monitor,
+every phase transition and every SDK call boundary lands in the
+operator's shell in real time, and unexplained silence between events
+is itself a signal.
+
+This is the authoritative implementation. Copy it verbatim into a
+second shell. Claude Code operators driving the verify via the harness
+should pass the same shell command to the `Monitor` tool — each
+emitted line becomes one notification.
 
 ```bash
-f=$(ls -td .archive/verify-debug-e2e/invocations/inv-* 2>/dev/null | head -1)/progress.jsonl
-matched=$(grep -cE '"(phase_start|phase_done|agent_response)"' "$f" 2>/dev/null || echo 0)
+# === AUTHORITATIVE e2e progress monitor — arm right after launching verify ===
+# Waits for the latest invocation's progress.jsonl to land, then polls it
+# and emits every phase_start / phase_done / agent_request / agent_response
+# event as it is written.
+
+set -u
+ARCHIVE_ROOT="${ARCHIVE_ROOT:-.archive/verify-debug-e2e}"
+PATTERN='"(phase_start|phase_done|agent_request|agent_response)"'
+
+echo "waiting for $ARCHIVE_ROOT/invocations/inv-*/progress.jsonl ..."
+while true; do
+  f=$(ls -td "$ARCHIVE_ROOT"/invocations/inv-*/progress.jsonl 2>/dev/null | head -1)
+  if [ -n "$f" ] && [ -f "$f" ]; then break; fi
+  sleep 2
+done
+matched=$(grep -cE "$PATTERN" "$f" 2>/dev/null || echo 0)
 echo "armed: $matched backlog matches in $f"
+
 prev=0
 while true; do
   cur=$(wc -l < "$f" 2>/dev/null | tr -d ' '); cur=${cur:-0}
   if [ "$cur" -gt "$prev" ]; then
-    sed -n "$((prev+1)),${cur}p" "$f" \
-        | grep -E '"(phase_start|phase_done|agent_response)"' || true
+    sed -n "$((prev+1)),${cur}p" "$f" | grep -E "$PATTERN" || true
     prev=$cur
   fi
   sleep 2
 done
 ```
+
+**Why "right after launching" and not "before".** `ls -td` picks the
+most recently modified `inv-*/progress.jsonl`. If you arm before the
+verify launches AND prior runs sit in the archive root, the script
+locks onto the most recent stale file and tails it forever — silence,
+no error. Two ways to avoid this:
+
+1. **Arm right after launching the verify.** The new run's directory
+   appears within a second or two, and `ls -td` then ranks it above
+   any prior runs. This is the recommended pattern.
+2. **Clear stale archives first** (`rm -rf
+   "$ARCHIVE_ROOT/invocations"`) before arming, so there is no prior
+   `progress.jsonl` for the wait loop to lock onto.
+
+The earlier two-step variant (`d=$(ls -td ...)` then `f="$d/progress.jsonl"`)
+proved fragile in practice: an empty-glob expansion + the path-join can
+silently leave the loop spinning. The single-step `ls -td .../inv-*/progress.jsonl`
+fails closed — if no file matches, the wait loop loops; if one does,
+the loop breaks. Stick with the form above.
+
+What to watch for as events arrive:
+
+- **`phase_start` / `phase_done` pairs** — the 12 in-invocation phases
+  (`phase1`, `snapshot_assembly`, `distillation`, `domain_researchers`,
+  `qualitative`, `adaptive`, `synthesizer`, `analyst`, `strategist`,
+  `pre_processor`, `pm`, `phase2`) fire in dependency-respecting order;
+  `domain_researchers`+`qualitative` and `analyst`+`strategist` overlap
+  under their respective TaskGroups.
+- **`agent_response` with `stop_reason: null` and `output_tokens: 0`** —
+  the SDK call returned an empty stream without raising. The harness
+  records `success: false` in `analysis/<agent>/metadata.json`; the
+  pipeline typically aborts shortly after on a downstream consumer.
+- **Long silence between events** — distillation is ~3–4 min (no SDK
+  events, only `phase_start`/`phase_done`); each Sonnet researcher is
+  ~5–6 min; the strategist scenario is the typical long pole at decision
+  time. Silence beyond ~10 min during an active phase usually means the
+  SDK call has stalled — check the verify wrapper's captured stderr
+  for `TimeoutFailure` from `_harness_core.invoke_sdk`.
 
 Three things worth doing this way rather than the more obvious `tail -F`:
 
@@ -174,11 +248,11 @@ Three things worth doing this way rather than the more obvious `tail -F`:
   which `json.dumps` formats as `"event": "phase_start"` (default
   `": "` separator).
 - **Match the value, not the `"event":` prefix.** Patterns like
-  `'"(phase_start|phase_done|agent_response)"'` are robust to either
-  formatter spacing.
+  `'"(phase_start|phase_done|agent_request|agent_response)"'` are robust
+  to either formatter spacing.
 
-Drop the grep entirely to see every event including `agent_request` and
-intra-phase progress. The `_pre_invocation` directory carries only the
+To see every event including intra-phase progress, widen `PATTERN` to
+`.` (drop the grep). The `_pre_invocation` directory carries only the
 pre-invocation seed event and is filtered out by the `inv-*` glob above.
 
 To drive the CLI directly without the wrapper (e.g., when iterating on
@@ -200,7 +274,7 @@ Seven PASS lines on a clean run, in order:
 PASS: auth — all required env vars present (CLAUDE_CODE_OAUTH_TOKEN)
 PASS: subprocess — debug-e2e subprocess exited 0
 PASS: archive_directory — directory + resolved_config.json + progress.jsonl present at <archive>/invocations/<id>
-PASS: jsonl_ordering — 12/12 phases with paired start/done in dependency order; 10/10 SDK call pairs matched
+PASS: jsonl_ordering — 12/12 phases with paired start/done in dependency order; 9/9 SDK call pairs matched
 PASS: synthetic_portfolio — positions=8, theses=8, cash_ledger.current_cash_usd=24440.0
 PASS: no_alpaca — no alpaca indicators in captured stream
 PASS: invocation_summary — staleness_flag=false, trigger_source='debug_e2e_cli', commands_submitted=N
@@ -236,11 +310,11 @@ sidecar at `scripts/_e2e_report_assets/style.css`.
 ## Wall-clock + cost
 
 A clean debug-e2e run wires one Sonnet pass through the analysis layer
-(distillation + 3 sector researchers + qualitative + adaptive +
-synthesizer = 7 Sonnet calls) and one Opus pass through the four
-decision agents (analyst + strategist + PM = 3 Opus calls; the proposal
-pre-processor is deterministic and emits no SDK call). Approximate
-cost:
+(3 sector researchers + qualitative + adaptive + synthesizer = 6 Sonnet
+calls; distillation is deterministic and emits no SDK call) and one
+Opus pass through the four decision agents (analyst + strategist + PM
+= 3 Opus calls; the proposal pre-processor is deterministic and emits
+no SDK call). Approximate cost:
 
 | Layer    | Model  | Input tokens | Output tokens |
 |----------|--------|--------------|---------------|
@@ -268,7 +342,7 @@ timings.
 | `FAIL: jsonl_ordering — missing phase_start for <name>`  | A pipeline stage never emitted its `phase_start` | Cross-check `src/alphamind/pipeline/{analysis,decision}.py` against the 12-in-invocation-phase ladder |
 | `FAIL: jsonl_ordering — phase_done for <name> precedes its own phase_start` | An emitter mis-emits | Same as above |
 | `FAIL: jsonl_ordering — non-monotonic timestamp`         | Clock skew or out-of-order write | Inspect the JSONL line referenced in the message; the fsync per write should have prevented this |
-| `FAIL: jsonl_ordering — missing agent_request/response pair(s)` | An SDK call site bypassed `_harness_core.invoke_sdk` | Cross-check the failing agent's harness against the 10 SDK pairs in parent § E |
+| `FAIL: jsonl_ordering — missing agent_request/response pair(s)` | An SDK call site bypassed `_harness_core.invoke_sdk` | Cross-check the failing agent's harness against the 9 SDK pairs in parent § E |
 | `FAIL: synthetic_portfolio — required table(s) missing`  | DB not migrated to head | Delete the debug DB; the CLI re-migrates on next run |
 | `FAIL: synthetic_portfolio — positions count expected 8` | Seeder didn't run | Either the seeder raised (check stderr) or a downstream stage truncated `positions` |
 | `FAIL: synthetic_portfolio — cash_ledger.current_cash_usd expected 24440.0` | Seeder bug or a downstream write mutated the row | Cross-check `wipe_and_seed` against `SYNTHETIC_PORTFOLIO.starting_cash_usd` |

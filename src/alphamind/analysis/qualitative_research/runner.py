@@ -27,10 +27,11 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
+from alphamind.analysis._sdk_subprocess import invoke_qualitative_researcher_in_subprocess
 from alphamind.analysis._shared import Sector, TokensUsed
 from alphamind.analysis.qualitative_research.harness import (
     HarnessSuccess,
-    invoke_qualitative_researcher,
+    invoke_qualitative_researcher,  # noqa: F401  -- kept for tests that inject the in-process harness
 )
 from alphamind.analysis.qualitative_research.input_bundle import (
     InputBundle,
@@ -286,11 +287,10 @@ async def run_qualitative_researcher(  # noqa: PLR0913 — signature dictated by
         universe: frozenset[str],
         archive_root: Path | None,
     ) -> HarnessSuccess:
-        return await invoke_qualitative_researcher(
+        return await invoke_qualitative_researcher_in_subprocess(
             agent_config=agent_config,
             user_message=user_message,
             invocation_id=invocation_id,
-            session=session,
             universe=universe,
             archive_root=archive_root,
             progress=progress,

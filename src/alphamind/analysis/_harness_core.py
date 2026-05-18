@@ -77,6 +77,51 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
+# Global cap on concurrent SDK calls
+# ---------------------------------------------------------------------------
+
+# The Claude Agent SDK's local CLI subprocess + per-agent MCP-server
+# proliferation produces a deterministic contention point at any
+# concurrency above one. Empirical findings (2026-05-18 debug-e2e runs):
+# - 4 concurrent (no cap): one agent deterministically stalls on the
+#   180s between-message watchdog twice in a row (376-378s wall clock).
+# - 4 concurrent with cap=3: still one of the three running agents
+#   deterministically stalls — the failing agent rotates run-to-run
+#   (energy in runs 1/2; tech_semis in run 3) but the count is always
+#   exactly one.
+# - 4 concurrent with cap=2: qualitative_researcher (no between-message
+#   watchdog) stalls 360s with zero output tokens, surfaces as
+#   "Invocation exceeded latency budget" rather than the watchdog path
+#   but with the same zero-token signature.
+# - 1 concurrent (isolation repro): same agent + same input succeeds
+#   in 222s.
+# Capping at one serializes the analysis-layer SDK fan-out, matching
+# the only configuration that has been observed to complete cleanly.
+# Wall-clock cost: the 4-way analysis fan-out runs as four sequential
+# waves of one — roughly 4x the parallel baseline (~20 min for the
+# analysis SDK calls against a ~5 min parallel baseline). Acceptable
+# for a debug verify gate; revisit if the underlying SDK + OAuth +
+# Windows + MCP stack tolerates higher concurrency in the future.
+_MAX_CONCURRENT_SDK_CALLS = 1
+_sdk_call_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_sdk_call_semaphore() -> asyncio.Semaphore:
+    """Lazy-init the process-global SDK-call semaphore.
+
+    Deferred construction avoids ``asyncio.Semaphore`` binding to a
+    no-running-loop context at module import. The first call inside an
+    event loop materialises the instance; subsequent calls return the
+    same object. Single-threaded async guarantees the first-call check
+    is atomic.
+    """
+    global _sdk_call_semaphore
+    if _sdk_call_semaphore is None:
+        _sdk_call_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_SDK_CALLS)
+    return _sdk_call_semaphore
+
+
+# ---------------------------------------------------------------------------
 # Diagnostic-state Protocol
 # ---------------------------------------------------------------------------
 
@@ -698,17 +743,18 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
     )
     for stall_attempt in range(1, stall_attempts + 1):
         try:
-            outcome = await asyncio.wait_for(
-                _collect_response(
-                    sdk_query_fn,
-                    prompt=prompt,
-                    options=options,
-                    init_stall_timeout_seconds=init_stall_timeout_seconds,
-                    between_message_stall_seconds=between_message_stall_seconds,
-                    tool_name_prefix=tool_name_prefix,
-                ),
-                timeout=budget_seconds,
-            )
+            async with _get_sdk_call_semaphore():
+                outcome = await asyncio.wait_for(
+                    _collect_response(
+                        sdk_query_fn,
+                        prompt=prompt,
+                        options=options,
+                        init_stall_timeout_seconds=init_stall_timeout_seconds,
+                        between_message_stall_seconds=between_message_stall_seconds,
+                        tool_name_prefix=tool_name_prefix,
+                    ),
+                    timeout=budget_seconds,
+                )
         except _StuckSDKCall as exc:
             if stall_attempt < stall_attempts:
                 continue

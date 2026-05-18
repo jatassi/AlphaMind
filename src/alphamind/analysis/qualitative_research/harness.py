@@ -357,7 +357,7 @@ async def invoke_qualitative_researcher(  # noqa: PLR0913 — public signature i
             options=options,
             diag=diag,
             budget_seconds=float(agent_config.latency_budget_seconds),
-            init_stall_timeout_seconds=None,
+            init_stall_timeout_seconds=60.0,
             concurrent_launch_jitter_seconds=_LAUNCH_JITTER_SECONDS,
             wall_start=wall_start,
             agent_name=agent_name,
