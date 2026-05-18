@@ -1,7 +1,5 @@
-"""Paper evaluation harness — placeholder namespace (scheduled for ALP-130)."""
+"""Paper-evaluation harness — calibrates Alpaca paper fills with estimated live-execution drag."""
 
-from __future__ import annotations
+from alphamind.execution.paper_evaluation_harness.fees import compute_regulatory_fees
 
-
-def __getattr__(name: str) -> object:
-    raise NotImplementedError("paper_evaluation_harness scheduled for ALP-130")
+__all__ = ["compute_regulatory_fees"]

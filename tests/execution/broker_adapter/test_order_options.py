@@ -51,6 +51,7 @@ from alphamind.commands.command_models import (
 )
 from alphamind.config.models.execution import (
     ExecutionConfig,
+    FeeSchedule,
     GreeksRefresh,
     PaperHarness,
 )
@@ -90,6 +91,13 @@ def _execution_config(window_seconds: int = 30) -> ExecutionConfig:
                 ExecOrderType.limit: 0.0001,
                 ExecOrderType.stop: 0.0001,
             },
+            fee_schedule=FeeSchedule(
+                cat_per_executed_share=0.0,
+                taf_per_share_sells=0.0,
+                sec_pct_of_notional_sells=0.0,
+                orf_per_options_contract=0.0,
+                occ_per_options_contract=0.0,
+            ),
         ),
         pl_target_margin_pct=0.05,
     )
