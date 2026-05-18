@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 import pytest
 
 from alphamind.distillation._calibration_core import CalibrationState
-from alphamind.distillation.output import OutputAudience
+from alphamind.distillation.output import OutputAudience, OutputBlock
 from alphamind.distillation.q7 import LeadLagPair
 from alphamind.distillation.q7._loaders import (
     LeadLagInputs,
@@ -577,156 +577,175 @@ class TestCorrelationRegimeChangeCompute:
 
 
 class TestCorrelationBreakdownDataAlignmentGuards:
-    """ALP-541: phantom breakdowns from sparse data / near-zero baselines."""
+    """ALP-541: phantom breakdowns from sparse data / near-zero baselines.
+
+    Each guard test is constructed so the pair *would* fire a breakdown
+    block on the pre-PR code (passes ``_FISHER_Z_MIN_SAMPLES`` floor and
+    ``magnitude >= correlation_breakdown_sigma``), and only the specific
+    new ALP-541 guard the test targets suppresses it. Without that pin,
+    a regression that disables the new guards would not be caught here.
+    """
 
     @staticmethod
-    def _breakdown_inducing_returns() -> tuple[list[float], list[float]]:
-        """60-day series whose recent 20 days invert the prior 40-day correlation.
+    def _pair_breakdown_params(
+        *,
+        min_overlap_fraction: float = 0.9,
+        noise_floor: float = 0.05,
+    ) -> CorrelationRegimeChangeParameters:
+        return CorrelationRegimeChangeParameters(
+            short_window_days=20,
+            long_window_days=60,
+            correlation_breakdown_sigma=1.0,
+            correlation_min_overlap_fraction=min_overlap_fraction,
+            correlation_noise_floor=noise_floor,
+            dispersion_window_days=20,
+            dispersion_sigma=1.5,
+            media_silence_hours=12,
+        )
 
-        Used by the guard tests to stage a pair that *would* fire a breakdown
-        block at sigma 1.0 if not for the data-alignment guards.
+    @staticmethod
+    def _filtered_pair_blocks(blocks: list[OutputBlock]) -> list[OutputBlock]:
+        """Return pair-level breakdown blocks (drop the dispersion shift block)."""
+        return [
+            b
+            for b in blocks
+            if b.block_id.startswith("q7.correlation_breakdown.")
+            and b.block_id != "q7.correlation_breakdown.dispersion_shift"
+        ]
+
+    def test_overlap_guard_filters_pair_below_window_fraction(self) -> None:
+        """B has 35 days — passes Fisher-z floor (>4) but fails 90% overlap on prior.
+
+        With ``short_window_days=20`` and ``correlation_min_overlap_fraction=0.9``:
+        ``short_overlap_min = 18``, ``prior_overlap_min = 36``. B's series has
+        only 35 days, so ``prior_overlap = min(40, 15) = 15`` — above the
+        Fisher-z floor of 4 (so the pre-existing guard passes) but below 36.
+        B's tail 20 days invert A's tail: pre-PR code would fire a high-magnitude
+        breakdown (since ``_pearson_correlation`` returns 0 on the cross-length
+        prior slices and the inverted short produces -1 correlation). Only the
+        new overlap-fraction guard catches it.
         """
-        long_a = [0.01, -0.005, 0.008, -0.012, 0.006] * 8
-        long_b = [r + 0.0001 * (i % 3) for i, r in enumerate(long_a)]
+        long_a = [0.01, -0.005, 0.008, -0.012, 0.006] * 8  # 40 days
         short_a = [0.01, -0.02, 0.015, 0.005, -0.01,
                    0.012, -0.018, 0.02, -0.005, 0.008,
                    -0.015, 0.01, -0.005, 0.012, -0.008,
                    0.005, -0.012, 0.018, -0.01, 0.005]  # fmt: skip
-        short_b = [-x for x in short_a]
-        return long_a + short_a, long_b + short_b
+        a_full = long_a + short_a
+        # B carries only 35 days: 15 days of overlap with A's prior tail
+        # then 20 days inverted. prior_overlap = 15 → fails 0.9 * 40 = 36
+        # but passes the Fisher-z floor of 4.
+        b_full = long_a[-15:] + [-x for x in short_a]
+        returns_by_ticker = {"A": tuple(a_full), "B": tuple(b_full)}
 
-    def test_pair_with_sparse_history_emits_no_breakdown_block(self) -> None:
-        """A ticker with only 25% of the long-window observations is filtered.
-
-        Reproduces the CTRA_TSLA phantom: B's series is too short to align
-        against A's prior window, so ``_pearson_correlation`` returns 0.0 and
-        the sigma-test inflates the deviation. The overlap guard must skip
-        this pair entirely rather than publishing a phantom breakdown.
-        """
-        params = CorrelationRegimeChangeParameters(
-            short_window_days=20,
-            long_window_days=60,
-            correlation_breakdown_sigma=1.0,
-            correlation_min_overlap_fraction=0.9,
-            correlation_noise_floor=0.05,
-            dispersion_window_days=20,
-            dispersion_sigma=1.5,
-            media_silence_hours=12,
-        )
-        a_full, _ = self._breakdown_inducing_returns()
-        # B has only 15 observations — far below 90% of the 60-day window.
-        returns_by_ticker = {
-            "A": tuple(a_full),
-            "B": tuple(a_full[-15:]),
-        }
         blocks = compute_correlation_regime_change_pure(
             universe_tickers=("A", "B"),
             long_returns_by_ticker=returns_by_ticker,
             qualifying_news_present=True,
-            params=params,
+            params=self._pair_breakdown_params(),
             as_of=_as_of(),
         )
-        pair_blocks = [
-            b
-            for b in blocks
-            if b.block_id.startswith("q7.correlation_breakdown.")
-            and b.block_id != "q7.correlation_breakdown.dispersion_shift"
-        ]
-        assert pair_blocks == [], (
-            f"expected no pair-level breakdowns for a sparse-history pair; "
-            f"got {[b.block_id for b in pair_blocks]}"
+        assert self._filtered_pair_blocks(blocks) == []
+
+        # Pin the "would fire on pre-PR code" baseline by relaxing the new
+        # guard and confirming the pair does emit a breakdown — without this,
+        # the assertion above could pass on any code path that drops the pair
+        # for unrelated reasons.
+        relaxed = compute_correlation_regime_change_pure(
+            universe_tickers=("A", "B"),
+            long_returns_by_ticker=returns_by_ticker,
+            qualifying_news_present=True,
+            params=self._pair_breakdown_params(min_overlap_fraction=0.0, noise_floor=0.0),
+            as_of=_as_of(),
+        )
+        assert self._filtered_pair_blocks(relaxed), (
+            "fixture should fire a breakdown when guards are relaxed — otherwise "
+            "the guard test is vacuous"
         )
 
-    def test_pair_with_near_zero_long_correlation_emits_no_breakdown_block(self) -> None:
-        """A pair whose long-window correlation magnitude is below the floor is filtered.
+    def test_noise_floor_guard_filters_pair_with_low_long_correlation(self) -> None:
+        """Long-window correlation magnitude below the noise floor is filtered.
 
-        Reproduces the C_GOOGL phantom: the short-window correlation drifts
-        to a near-zero magnitude that, against a plausible long-window
-        baseline, looks like a 3-sigma shift — but only because the test is
-        comparing two essentially-zero values. The noise-floor guard must
-        block the sigma-flag when ``|long_corr|`` is below the floor.
+        Stages a pair with ``prior_corr ≈ +0.71``, ``short_corr ≈ -0.71``, and
+        ``long_corr ≈ +0.24``. The sigma-test on this pair fires at magnitude
+        ≈ 6.0 (well above ``breakdown_sigma=1.0``) on pre-PR code, but
+        ``|long_corr| ≈ 0.24 < noise_floor=0.5`` — only the new noise-floor
+        guard suppresses the flag.
         """
-        # Construct a pair whose 60-day correlation is essentially zero
-        # (A and B are nearly uncorrelated across the window) but whose
-        # short-window correlation drifts away from zero enough to look
-        # like a 1-sigma shift at sigma 1.0.
-        long_a = [0.01, -0.01, 0.012, -0.008, 0.005, -0.013, 0.009, -0.004] * 8
-        long_b = [(-1.0 if i % 2 else 1.0) * 0.011 for i in range(len(long_a))]
+        # A: alternating ±0.01. Orthogonal "noise" pattern: ±0.01 with a
+        # different alternation period (i // 2), uncorrelated with A.
+        prior_a = [0.01 if i % 2 == 0 else -0.01 for i in range(40)]
+        short_a_seq = [0.01 if i % 2 == 0 else -0.01 for i in range(20)]
+        prior_noise = [0.01 if (i // 2) % 2 == 0 else -0.01 for i in range(40)]
+        short_noise = [0.01 if (i // 2) % 2 == 0 else -0.01 for i in range(20)]
+        # B = 0.5*A + 0.5*noise in prior (cor ≈ +0.71),
+        #     -0.5*A + 0.5*noise in short (cor ≈ -0.71).
+        prior_b = [0.5 * prior_a[i] + 0.5 * prior_noise[i] for i in range(40)]
+        short_b = [-0.5 * short_a_seq[i] + 0.5 * short_noise[i] for i in range(20)]
         returns_by_ticker = {
-            "A": tuple(long_a),
-            "B": tuple(long_b),
+            "A": tuple(prior_a + short_a_seq),
+            "B": tuple(prior_b + short_b),
         }
-        params = CorrelationRegimeChangeParameters(
-            short_window_days=20,
-            long_window_days=60,
-            correlation_breakdown_sigma=1.0,
-            correlation_min_overlap_fraction=0.9,
-            correlation_noise_floor=0.5,  # aggressive floor so any near-zero baseline trips it
-            dispersion_window_days=20,
-            dispersion_sigma=1.5,
-            media_silence_hours=12,
-        )
+
         blocks = compute_correlation_regime_change_pure(
             universe_tickers=("A", "B"),
             long_returns_by_ticker=returns_by_ticker,
             qualifying_news_present=True,
-            params=params,
+            # Aggressive floor: 0.5 > the staged long_corr ≈ 0.24.
+            params=self._pair_breakdown_params(noise_floor=0.5),
             as_of=_as_of(),
         )
-        pair_blocks = [
-            b
-            for b in blocks
-            if b.block_id.startswith("q7.correlation_breakdown.")
-            and b.block_id != "q7.correlation_breakdown.dispersion_shift"
-        ]
-        assert pair_blocks == [], (
-            f"expected no pair-level breakdowns when |long_corr| is below the floor; "
-            f"got {[(b.block_id, b.payload.get('long_correlation')) for b in pair_blocks]}"
+        assert self._filtered_pair_blocks(blocks) == []
+
+        # Pin the "would fire on pre-PR code" baseline: with noise_floor=0 the
+        # same pair emits a high-magnitude breakdown.
+        relaxed = compute_correlation_regime_change_pure(
+            universe_tickers=("A", "B"),
+            long_returns_by_ticker=returns_by_ticker,
+            qualifying_news_present=True,
+            params=self._pair_breakdown_params(noise_floor=0.0),
+            as_of=_as_of(),
         )
+        relaxed_pair_blocks = self._filtered_pair_blocks(relaxed)
+        assert relaxed_pair_blocks, (
+            "fixture should fire a breakdown when the noise floor is disabled — "
+            "otherwise the guard test is vacuous"
+        )
+        # Sanity-check the staged long_corr is below the aggressive floor and
+        # the deviation magnitude clears the sigma gate.
+        payload = relaxed_pair_blocks[0].payload
+        assert abs(payload["long_correlation"]) < 0.5
+        assert payload["deviation_sigma"] >= 1.0
 
     def test_breakdown_block_payload_carries_overlap_observation_count(self) -> None:
-        """A breakdown block's payload exposes the overlapping observation count.
+        """AC #3 — breakdown payload exposes ``n_overlapping_observations``.
 
-        AC #3 — downstream agents auditing a sigma-flag need to see both
-        the long-window correlation magnitude (already present) and the
-        count of overlapping observations the sigma-test ran on. Without
-        it, the synthesizer can't distinguish a high-sigma flag computed
-        on full history from one computed on a sparse-overlap edge case
-        that squeaked past the guard.
-
-        ``correlation_noise_floor=0.0`` here because the breakdown-inducing
-        fixture inverts B's returns in the short window — that drags the
-        long-window correlation to ~0, which the noise-floor guard would
-        legitimately filter; the payload-shape assertion is orthogonal.
+        Downstream agents auditing a sigma-flag need to see both the
+        long-window correlation magnitude (``long_correlation``) and the
+        count of overlapping observations the sigma-test ran on so a
+        high-sigma flag computed on full history can be distinguished from
+        one computed on a sparse-overlap edge case that squeaked past the
+        overlap guard.
         """
-        params = CorrelationRegimeChangeParameters(
-            short_window_days=20,
-            long_window_days=60,
-            correlation_breakdown_sigma=1.0,
-            correlation_min_overlap_fraction=0.9,
-            correlation_noise_floor=0.0,
-            dispersion_window_days=20,
-            dispersion_sigma=1.5,
-            media_silence_hours=12,
-        )
-        a_full, b_full = self._breakdown_inducing_returns()
+        # Reuse the noise-floor test's fixture which produces a real
+        # breakdown when the noise floor is disabled.
+        prior_a = [0.01 if i % 2 == 0 else -0.01 for i in range(40)]
+        short_a_seq = [0.01 if i % 2 == 0 else -0.01 for i in range(20)]
+        prior_noise = [0.01 if (i // 2) % 2 == 0 else -0.01 for i in range(40)]
+        short_noise = [0.01 if (i // 2) % 2 == 0 else -0.01 for i in range(20)]
+        prior_b = [0.5 * prior_a[i] + 0.5 * prior_noise[i] for i in range(40)]
+        short_b = [-0.5 * short_a_seq[i] + 0.5 * short_noise[i] for i in range(20)]
         returns_by_ticker = {
-            "A": tuple(a_full),
-            "B": tuple(b_full),
+            "A": tuple(prior_a + short_a_seq),
+            "B": tuple(prior_b + short_b),
         }
         blocks = compute_correlation_regime_change_pure(
             universe_tickers=("A", "B"),
             long_returns_by_ticker=returns_by_ticker,
             qualifying_news_present=True,
-            params=params,
+            params=self._pair_breakdown_params(noise_floor=0.0),
             as_of=_as_of(),
         )
-        pair_blocks = [
-            b
-            for b in blocks
-            if b.block_id.startswith("q7.correlation_breakdown.")
-            and b.block_id != "q7.correlation_breakdown.dispersion_shift"
-        ]
+        pair_blocks = self._filtered_pair_blocks(blocks)
         assert pair_blocks, "expected at least one breakdown block from the staged pair"
         payload = pair_blocks[0].payload
         assert payload["n_overlapping_observations"] == 60

@@ -106,22 +106,13 @@ def _correlation_breakdown_blocks(
 ) -> list[OutputBlock]:
     """Emit one block per pair whose recent correlation broke from the prior baseline.
 
-    ALP-541 added two preconditions that filter phantom breakdowns:
-
-    - **Observation count guard** — short, prior, and long windows must each
-      carry at least ``ceil(window_days * correlation_min_overlap_fraction)``
-      overlapping observations between the two tickers. Sparse pairs (one
-      ticker brand-new in the universe, holiday-misaligned series) misspecify
-      the sigma-test denominator; the math inflates and the pair becomes a false
-      positive.
-    - **Magnitude noise-floor guard** — the long-window correlation
-      magnitude must clear ``correlation_noise_floor`` before the sigma-test
-      runs. When ``|long_corr|`` is near zero the short-window deviation
-      is dominated by noise rather than a genuine shift in joint
-      dynamics.
-
-    Pairs failing either guard are dropped before any flag is emitted, so the
-    downstream synthesizer brief never sees them.
+    Suppresses the two phantom-breakdown patterns documented on
+    :class:`CorrelationRegimeChangeParameters`: sparse-overlap pairs whose
+    sigma-test denominator is misspecified, and near-zero-baseline pairs
+    where the short-window deviation is dominated by noise rather than a
+    genuine shift in joint dynamics. Both classes are dropped before the
+    flag is constructed, so the downstream synthesizer brief never sees
+    them.
     """
     prior_window_days = long_window_days - short_window_days
     if prior_window_days < _FISHER_Z_MIN_SAMPLES:
@@ -133,7 +124,6 @@ def _correlation_breakdown_blocks(
 
     short_overlap_min = math.ceil(short_window_days * correlation_min_overlap_fraction)
     prior_overlap_min = math.ceil(prior_window_days * correlation_min_overlap_fraction)
-    long_overlap_min = math.ceil(long_window_days * correlation_min_overlap_fraction)
 
     short_matrix = _correlation_matrix(short_returns)
     prior_returns: dict[str, list[float]] = {
@@ -141,29 +131,26 @@ def _correlation_breakdown_blocks(
     }
     prior_matrix = _correlation_matrix(prior_returns)
 
+    # Per-ticker length lookups so the inner loop doesn't re-len() the
+    # same series 2N times across the pair iteration.
+    short_lens = {ticker: len(series) for ticker, series in short_returns.items()}
+    prior_lens = {ticker: len(series) for ticker, series in prior_returns.items()}
+    long_lens = {ticker: len(series) for ticker, series in long_returns.items()}
+
     tickers = sorted(short_matrix)
     blocks: list[OutputBlock] = []
     for i, row in enumerate(tickers):
         for col in tickers[i + 1 :]:
-            short_overlap = min(
-                len(short_returns.get(row, ())),
-                len(short_returns.get(col, ())),
-            )
-            prior_overlap = min(
-                len(prior_returns.get(row, [])),
-                len(prior_returns.get(col, [])),
-            )
-            long_overlap = min(
-                len(long_returns.get(row, ())),
-                len(long_returns.get(col, ())),
-            )
+            short_overlap = min(short_lens.get(row, 0), short_lens.get(col, 0))
+            prior_overlap = min(prior_lens.get(row, 0), prior_lens.get(col, 0))
+            long_overlap = min(long_lens.get(row, 0), long_lens.get(col, 0))
+            # Hard floor — below 4 observations the Fisher-z null variance
+            # (``1/(N-3)``) is undefined; the overlap-fraction guard is the
+            # tighter check at production defaults but the floor stays as
+            # the math invariant for any configuration.
             if min(short_overlap, prior_overlap) < _FISHER_Z_MIN_SAMPLES:
                 continue
-            if (
-                short_overlap < short_overlap_min
-                or prior_overlap < prior_overlap_min
-                or long_overlap < long_overlap_min
-            ):
+            if short_overlap < short_overlap_min or prior_overlap < prior_overlap_min:
                 continue
             long_corr = _pearson_correlation(long_returns[row], long_returns[col])
             if abs(long_corr) < correlation_noise_floor:
