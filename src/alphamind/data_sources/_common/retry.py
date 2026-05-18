@@ -16,6 +16,7 @@ from enum import StrEnum
 from typing import ParamSpec, TypeVar
 
 import httpx
+import requests.exceptions
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -59,19 +60,38 @@ def _is_transient_status(code: int) -> bool:
     return code == 429 or code >= 500
 
 
+# Transport-layer transients that surface without an HTTP status, across the
+# three HTTP clients in use: httpx (most collectors), urllib (fredapi), and
+# requests (finnhub-python). All share the vendor-outage blast radius and the
+# same idempotent-GET retry shape, so they collapse to one branch.
+#
+# - ``httpx.TimeoutException`` covers Connect/Read/Write/Pool timeouts.
+# - ``httpx.NetworkError`` covers ConnectError (DNS / connection-refused),
+#   ReadError, WriteError, and CloseError.
+# - ``urllib.error.URLError`` / bare ``ConnectionResetError`` is the
+#   urllib-side equivalent.
+# - ``requests.exceptions.ConnectionError`` and ``requests.exceptions.Timeout``
+#   cover the requests-backed SDKs (incl. ReadTimeout / ConnectTimeout
+#   subclasses).
+_TRANSIENT_TRANSPORT_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    httpx.TimeoutException,
+    httpx.NetworkError,
+    urllib.error.URLError,
+    ConnectionResetError,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+)
+
+
 def _is_retryable(exc: BaseException) -> bool:
     """Return True when ``exc`` is a transient error worth retrying."""
-    if isinstance(exc, httpx.TimeoutException):
-        return True
+    # HTTPError must be matched before URLError (its parent) so 4xx auth
+    # failures don't fall through to the unconditional-transient branch.
     if isinstance(exc, httpx.HTTPStatusError):
         return _is_transient_status(exc.response.status_code)
     if isinstance(exc, urllib.error.HTTPError):
         return _is_transient_status(exc.code)
-    if isinstance(exc, urllib.error.URLError | ConnectionResetError):
-        # Connection-reset / refused / DNS failure surface as URLError (or a
-        # bare ConnectionResetError) without an HTTP status. Treat as
-        # transient — they share the vendor-outage blast radius and retrying
-        # them is the same idempotent GET.
+    if isinstance(exc, _TRANSIENT_TRANSPORT_EXCEPTIONS):
         return True
     if isinstance(exc, ValueError):
         # fredapi wraps urllib.HTTPError as ValueError; original is on __context__.

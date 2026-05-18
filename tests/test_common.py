@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+import requests.exceptions
 from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind._kernel.ids import Symbol
@@ -369,6 +370,36 @@ class TestWithRetriesCritical:
 
         result = cdn_502()
         assert result == "ok"
+        assert call_count == 2
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            httpx.ConnectError("getaddrinfo failed"),
+            httpx.ReadError("connection reset"),
+            requests.exceptions.ConnectionError("connection refused"),
+            requests.exceptions.ReadTimeout("read timed out"),
+        ],
+        ids=[
+            "httpx.ConnectError",
+            "httpx.ReadError",
+            "requests.ConnectionError",
+            "requests.ReadTimeout",
+        ],
+    )
+    def test_critical_retries_on_transient_transport_exception(self, exc: BaseException) -> None:
+        """Transport-layer transients across httpx, urllib, and requests retry."""
+        call_count = 0
+
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def flaky() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise exc
+            return "ok"
+
+        assert flaky() == "ok"
         assert call_count == 2
 
 
@@ -756,6 +787,7 @@ class TestResumeSince:
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker as _sessionmaker
 
+        import alphamind.state.tables  # noqa: F401  # register Brief → invocations FK target
         from alphamind.persistence.models import Base
 
         engine = create_engine("sqlite:///:memory:")
@@ -853,6 +885,7 @@ class TestActiveUniverseTickers:
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker as _sessionmaker
 
+        import alphamind.state.tables  # noqa: F401  # register Brief → invocations FK target
         from alphamind.persistence.models import AssetUniverse, Base
 
         engine = create_engine("sqlite:///:memory:")
