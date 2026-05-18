@@ -15,6 +15,7 @@ from types import MappingProxyType
 import pytest
 
 from alphamind._kernel.ids import PositionId, Symbol
+from alphamind._kernel.money import money
 from alphamind.risk_guardrails.guardrail_evaluation import (
     Action,
     AssetType,
@@ -202,7 +203,7 @@ def _equity(
         sector=sector,
         direction=direction,
         asset_type=AssetType.EQUITY,
-        notional_usd=notional_usd,
+        notional_usd=money(notional_usd),
         quantity=notional_usd / _SPOT,
         option_legs=None,
         action=action,
@@ -239,7 +240,7 @@ def _option(
         sector=sector,
         direction=direction,
         asset_type=asset_type,
-        notional_usd=1_000.0,
+        notional_usd=money(1_000.0),
         quantity=quantity,
         option_legs=tuple(legs),
         action=action,
@@ -909,7 +910,7 @@ def test_equity_with_option_legs_raises_library_input_error() -> None:
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,
-        notional_usd=1_000.0,
+        notional_usd=money(1_000.0),
         quantity=10.0,
         option_legs=(
             OptionLeg(
@@ -940,7 +941,7 @@ def test_option_without_legs_raises() -> None:
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.OPTION,
-        notional_usd=1_000.0,
+        notional_usd=money(1_000.0),
         quantity=1.0,
         option_legs=None,
         action=Action.OPEN,
@@ -964,7 +965,7 @@ def test_strategy_with_single_leg_raises() -> None:
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.STRATEGY,
-        notional_usd=1_000.0,
+        notional_usd=money(1_000.0),
         quantity=1.0,
         option_legs=(
             OptionLeg(
@@ -1022,7 +1023,7 @@ def _close_proposal(
         sector="tech",
         direction=Direction.LONG,
         asset_type=asset_type,
-        notional_usd=notional_usd,
+        notional_usd=money(notional_usd),
         quantity=quantity,
         option_legs=None,
         action=Action.CLOSE,
@@ -1208,7 +1209,7 @@ def test_aggregated_errors_lists_every_violation() -> None:
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,
-        notional_usd=1_000.0,
+        notional_usd=money(1_000.0),
         quantity=10.0,
         option_legs=(
             OptionLeg(

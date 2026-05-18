@@ -603,7 +603,7 @@ def test_reduce_emits_close_with_partial_notional() -> None:
 
     assert delta.action == Action.CLOSE
     assert delta.quantity == 30.0
-    assert abs(delta.notional_usd - 4_500.0) < 0.01  # 30/100 * 15000
+    assert abs(float(delta.notional_usd) - 4_500.0) < 0.01  # 30/100 * 15000
 
 
 # ===========================================================================

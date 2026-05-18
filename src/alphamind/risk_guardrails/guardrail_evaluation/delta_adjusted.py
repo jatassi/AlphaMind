@@ -82,7 +82,7 @@ def compute_delta_adjusted_exposure(
     if proposal.asset_type is AssetType.EQUITY:
         return DeltaAdjustedExposure(
             proposal_id=proposal.id,
-            signed_notional_usd=sign * proposal.notional_usd,
+            signed_notional_usd=sign * float(proposal.notional_usd),
             net_greeks=None,
             iv_used=None,
             iv_source=None,
