@@ -395,6 +395,36 @@ def _classify_position_zone(value: float, limit: float) -> RiskZone:
     return RiskZone.NORMAL
 
 
+def _classify_loss_zone(pnl_pct: float, max_loss_pct: float | None) -> RiskZone:
+    """Zone of a position's signed P/L vs. its max-loss floor (``-max_loss_pct``).
+
+    Positive P/L yields a non-positive ratio against the negative floor and
+    stays NORMAL. CRITICAL is the worst loss-zone level — BLOCKED is reserved
+    for size-cap breaches where the operator action is "no more sizing", not
+    "close the position".
+    """
+    if max_loss_pct is None or max_loss_pct <= 0:
+        return RiskZone.NORMAL
+    loss_progress = -pnl_pct / max_loss_pct
+    if loss_progress >= _ZONE_CRITICAL_THRESHOLD:
+        return RiskZone.CRITICAL
+    if loss_progress >= _ZONE_WARNING_THRESHOLD:
+        return RiskZone.WARNING
+    return RiskZone.NORMAL
+
+
+_ZONE_ORDER: tuple[RiskZone, ...] = (
+    RiskZone.NORMAL,
+    RiskZone.WARNING,
+    RiskZone.CRITICAL,
+    RiskZone.BLOCKED,
+)
+
+
+def _max_severity_zone(*zones: RiskZone) -> RiskZone:
+    return max(zones, key=_ZONE_ORDER.index)
+
+
 def _max_loss_for(active: ActiveRiskParameterSet, rule_id: str) -> float | None:
     for entry in active.entries:
         if entry.rule_id == rule_id:
@@ -431,7 +461,9 @@ def _render_proximity_row(
     max_loss = _max_loss_for_position(pos, max_loss_equity, max_loss_options)
     if max_loss is not None:
         suffix = f" (max loss: -{max_loss:.1f}%)"
-    zone = _classify_position_zone(pos.position_weight_pct, per_position_max_pct)
+    size_zone = _classify_position_zone(pos.position_weight_pct, per_position_max_pct)
+    loss_zone = _classify_loss_zone(pos.unrealized_pnl_pct, max_loss)
+    zone = _max_severity_zone(size_zone, loss_zone)
     zone_tag = f" [{render_zone_tag(zone)}]" if zone != RiskZone.NORMAL else ""
     return (
         f"  {padded_id} {weight}% of portfolio (max {max_pct}%) "
@@ -449,8 +481,8 @@ def render_position_proximity_block(
     Each row shows position weight against the per-position size limit, the
     unrealized P/L of cost, the per-instrument-type max-loss annotation when
     the corresponding ``position_max_loss_*`` parameter is present, and a
-    zone tag (``[⚠ WARNING]`` / ``[CRITICAL]`` / ``[BLOCKED]``) for any
-    position whose weight crosses the warning threshold.
+    zone tag (``[⚠ WARNING]`` / ``[CRITICAL]`` / ``[BLOCKED]``) whose severity
+    is the max of the size-proximity and loss-proximity zones.
     """
     rows: list[str] = [_POSITION_PROXIMITY_HEADER]
     if not positions:
