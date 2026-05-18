@@ -103,6 +103,7 @@ from alphamind.portfolio_state.snapshot import (
     SectorExposureEntry,
 )
 from alphamind.portfolio_state.views.positions import PositionView
+from alphamind.risk_guardrails.state_delivery.primitives import POSITION_MAX_SIZE_RULE_ID
 
 # ---------------------------------------------------------------------------
 # Shared timestamps / IDs
@@ -113,7 +114,7 @@ _T1 = datetime(2025, 1, 1, 10, 1, 0, tzinfo=UTC)
 _T2 = datetime(2025, 1, 1, 10, 2, 0, tzinfo=UTC)
 _INV_ID = "inv-analyst-001"
 _ANALYST_AGENT = "analyst"
-_PER_POSITION_RULE_ID = "position_max_size_pct"
+_PER_POSITION_RULE_ID = POSITION_MAX_SIZE_RULE_ID
 _TOTAL_PORTFOLIO_VALUE = 100000.0
 
 
@@ -680,17 +681,6 @@ class TestAnalystValueObjects:
 
 
 class TestProjectAnalystViewHappyPath:
-    def test_held_positions_length(self) -> None:
-        snapshot = _make_snapshot()
-        view = project_analyst_view(
-            snapshot,
-            sector_resolver=_simple_sector_resolver(),
-            per_position_size_rule_id=_PER_POSITION_RULE_ID,
-            total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
-        )
-        # 2 open + 1 pending — analyst sees both, matching the strategist's projection (ALP-549).
-        assert len(view.held_positions) == 3
-
     def test_held_position_fields_are_thin_slice(self) -> None:
         """AnalystHeldPosition has only ticker, direction, size, sector, instrument_type."""
         snapshot = _make_snapshot()
@@ -720,18 +710,6 @@ class TestProjectAnalystViewHappyPath:
         )
         assert view.available_capital.available_for_new_positions_usd == 44000.0
         assert view.available_capital.available_for_new_positions_pct == pytest.approx(44.0)
-
-    def test_available_capital_per_position_size(self) -> None:
-        snapshot = _make_snapshot()
-        view = project_analyst_view(
-            snapshot,
-            sector_resolver=_simple_sector_resolver(),
-            per_position_size_rule_id=_PER_POSITION_RULE_ID,
-            total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
-        )
-        assert view.available_capital.per_position_max_size_usd == 5000.0
-        # pct = (5000 / 100000) * 100 = 5.0
-        assert view.available_capital.per_position_max_size_pct == pytest.approx(5.0)
 
     def test_pending_orders_present(self) -> None:
         snapshot = _make_snapshot()

@@ -169,12 +169,12 @@ def _make_active_risk_parameters() -> ActiveRiskParameterSet:
         parameter_change_flag=False,
         entries=(
             ActiveRiskParameterEntry(
-                rule_id="max_position_size_usd",
-                rule_label="Max position size",
-                value=25_000.0,
-                unit="USD",
+                rule_id="position_max_size_pct",
+                rule_label="Position max size",
+                value=5.0,
+                unit="pct",
                 regime_multiplier_applied=1.0,
-                base_value=25_000.0,
+                base_value=5.0,
             ),
         ),
         active_overlays=(),

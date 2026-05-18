@@ -162,7 +162,7 @@ class TestSectionBProjectionConsistency:
         self._analyst_view = project_analyst_view(
             self._snapshot,
             sector_resolver=self._sector_resolver,
-            per_position_size_rule_id="max_position_size_usd",
+            per_position_size_rule_id="position_max_size_pct",
             total_portfolio_value_usd=total_value,
         )
         self._strategist_view = project_strategist_view(self._snapshot)
@@ -188,9 +188,6 @@ class TestSectionBProjectionConsistency:
         assert pm_ids == strat_ids
 
     def test_analyst_held_positions_match_open_and_pending(self) -> None:
-        # ALP-549: analyst held_positions must include pending too, matching the
-        # strategist's set; otherwise Hard Blocks fire while the analyst sees
-        # Held=None for snapshots whose positions are still PENDING.
         snap_ids = {p.position_id for p in self._snapshot.open_positions} | {
             p.position_id for p in self._snapshot.pending_positions
         }
@@ -543,13 +540,13 @@ class TestSectionEDeterminism:
         v1 = project_analyst_view(
             r1.snapshot,
             sector_resolver=sector_resolver,
-            per_position_size_rule_id="max_position_size_usd",
+            per_position_size_rule_id="position_max_size_pct",
             total_portfolio_value_usd=total_value,
         )
         v2 = project_analyst_view(
             r2.snapshot,
             sector_resolver=sector_resolver,
-            per_position_size_rule_id="max_position_size_usd",
+            per_position_size_rule_id="position_max_size_pct",
             total_portfolio_value_usd=total_value,
         )
         assert v1 == v2
@@ -577,7 +574,7 @@ class TestSectionFEdgeCases:
         view = project_analyst_view(
             self._snapshot,
             sector_resolver=self._sector_resolver,
-            per_position_size_rule_id="max_position_size_usd",
+            per_position_size_rule_id="position_max_size_pct",
             total_portfolio_value_usd=100_000.0,
         )
         assert view is not None
