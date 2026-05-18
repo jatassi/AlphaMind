@@ -208,9 +208,7 @@ def test_options_buy_fees_are_cat_orf_occ_only(
 # ---------------------------------------------------------------------------
 
 
-def test_options_sell_fees_include_sec(
-    config: PaperHarness, fee_schedule: FeeSchedule
-) -> None:
+def test_options_sell_fees_include_sec(config: PaperHarness, fee_schedule: FeeSchedule) -> None:
     from alphamind.execution.paper_evaluation_harness import compute_live_execution_estimate
 
     qty = 5  # contracts
@@ -418,9 +416,7 @@ def test_harness_module_has_no_db_or_http_or_config_loader_imports() -> None:
     import ast
     import pathlib
 
-    src = pathlib.Path(
-        "src/alphamind/execution/paper_evaluation_harness/harness.py"
-    ).read_text()
+    src = pathlib.Path("src/alphamind/execution/paper_evaluation_harness/harness.py").read_text()
     tree = ast.parse(src)
 
     imported_names: list[str] = []
