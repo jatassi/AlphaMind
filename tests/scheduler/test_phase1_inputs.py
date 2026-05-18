@@ -396,3 +396,81 @@ class TestGatherPhase1Inputs:
         }
         assert isinstance(inputs.market_inputs.iv_provider, FixtureIvProvider)
         assert inputs.market_inputs.as_of == _NOW
+
+    async def test_market_inputs_iv_provider_populates_realized_vol_for_open_positions(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+    ) -> None:
+        """ALP-530 — the IV provider's ``realized_vol`` mapping is populated
+        from ``ticker_realized_vol`` for every position underlying that has
+        a row in the table. Underlyings without a row are absent from the
+        mapping (the consumer's surface->fallback->error chain still
+        terminates correctly via the existing fixture surface)."""
+        from alphamind.persistence.models import AssetUniverse, TickerRealizedVolRow
+        from alphamind.scheduler import phase1_inputs as module
+
+        positions = (
+            _make_position_snapshot("AAPL", 175.0),
+            _make_position_snapshot("MSFT", 410.0),
+        )
+
+        session, handle = await _open_phase1_handle(
+            async_factory=async_factory,
+            env_path=env_path,
+            archive_root=archive_root,
+        )
+        # Seed the realized_vol row tied to this invocation. AAPL needs an
+        # asset_universe row for the ticker_realized_vol FK; MSFT is
+        # intentionally absent so the assertion that "MSFT not in mapping"
+        # validates the per-position filtering.
+        async with async_factory() as seed_session:
+            seed_session.add(
+                AssetUniverse(
+                    asset_id="asset-aapl",
+                    ticker="AAPL",
+                    full_name="Apple Inc.",
+                    asset_class="equity",
+                    asset_role="universe",
+                    exchange="NASDAQ",
+                    is_active=1,
+                    added_date="2020-01-01",
+                    last_updated="2026-05-07T00:00:00Z",
+                )
+            )
+            await seed_session.flush()
+            seed_session.add(
+                TickerRealizedVolRow(
+                    ticker="AAPL",
+                    as_of_date="2026-05-07",
+                    trailing_30d_realized_vol=0.27,
+                    invocation_id=handle.invocation_id,
+                    computed_at="2026-05-07T00:00:00Z",
+                )
+            )
+            await seed_session.commit()
+        try:
+            inputs = await module.gather_phase1_inputs(
+                handle=handle,
+                venue_config=_make_venue_config(),
+                execution_mode=ExecutionMode.paper,
+                as_of=_NOW,
+                account_queries_factory=lambda v, m: _StubQueries(
+                    account=_make_account_snapshot(), positions=positions
+                ),
+                ca_queries_factory=lambda v, m: _StubCorporateActionsQueries(),
+            )
+        finally:
+            await session.close()
+
+        iv_provider = inputs.market_inputs.iv_provider
+        assert isinstance(iv_provider, FixtureIvProvider)
+        # Inspect the internal mapping. ``FixtureIvProvider`` doesn't expose
+        # the realized_vol dict on its public surface; the seam below relies
+        # on the structural shape established in story 02b.
+        realized_vol_map = iv_provider._realized_vol
+        assert "AAPL" in realized_vol_map
+        assert realized_vol_map["AAPL"].underlying == "AAPL"
+        assert realized_vol_map["AAPL"].trailing_30d_realized_vol == pytest.approx(0.27)
+        assert "MSFT" not in realized_vol_map
