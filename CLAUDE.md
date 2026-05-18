@@ -17,15 +17,22 @@ Alert the user before disabling the linter or any rule in any form — including
 
 ## Testing
 
-Always run the test suite parallelized via pytest-xdist:
+Default: run the test suite incrementally with pytest-testmon + xdist:
 
 ```bash
-uv run pytest -n auto
+uv run pytest --testmon -n auto
 ```
 
-`-n auto` allocates one worker per CPU core. Never invoke `pytest` without `-n auto` — including from subagents and worktree verification. When verifying a narrow slice, scope to the relevant path: `uv run pytest tests/config/ -n auto`.
+`--testmon` skips tests whose Python dependencies haven't changed since the last run (cache in `.testmondata`, gitignored). `-n auto` allocates one worker per CPU core. When verifying a narrow slice, scope to the relevant path: `uv run pytest tests/config/ --testmon -n auto`.
 
-If a test passes serially but fails under xdist, the cause is test-order dependence (typically `sys.modules` mutation or shared filesystem state). Fix the test — do not fall back to serial.
+**Drop `--testmon` and run the full suite when:**
+- Changing `conftest.py`, fixtures, or other test-collection hooks — testmon doesn't track collection-time graph changes
+- Changing non-Python files tests depend on (YAML configs, JSON fixtures, SQL, schema files) — testmon only tracks Python imports
+- Before claiming a feature done or opening a PR — final verification must exercise everything
+- After pulling main or rebasing — the local cache reflects your prior state, not the merged state
+- If you suspect the cache is stale or are seeing implausible skips — delete `.testmondata` and retry
+
+Never invoke `pytest` without `-n auto` — including from subagents and worktree verification. If a test passes serially but fails under xdist, the cause is test-order dependence (typically `sys.modules` mutation or shared filesystem state). Fix the test — do not fall back to serial.
 
 ## Spawning Subagents
 

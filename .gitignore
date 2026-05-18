@@ -7,6 +7,9 @@ __pycache__/
 .venv/
 venv/
 
+# pytest-testmon cache (local incremental-test state)
+.testmondata*
+
 # Office lock files (LibreOffice / OpenOffice)
 .~lock.*#
 
