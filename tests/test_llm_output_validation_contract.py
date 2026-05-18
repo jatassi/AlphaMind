@@ -18,6 +18,7 @@ import json
 import typing
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import cache
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -25,9 +26,17 @@ from typing import Any
 import pytest
 
 from alphamind._kernel.ids import InvocationId
-from alphamind.analysis._harness_core import DiagState, HarnessFailure, invoke_sdk
+from alphamind.analysis._harness_core import (
+    CLIResultErrorMapping,
+    DiagState,
+    HarnessFailure,
+    invoke_sdk,
+)
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.commands.validation_results import ValidationError, ValidationResult
+
+_CLI_RESULT_ERROR_ARMS: frozenset[str] = frozenset(typing.get_args(CLIResultErrorMapping))
+_EMPTY_RETRIEVAL_STORE = RetrievalStore(entries={}, freshness_by_source={})
 
 # ---------------------------------------------------------------------------
 # Agent parametrization table
@@ -156,8 +165,6 @@ def test_harness_module_imports(agent: AgentSpec) -> None:
         assert hasattr(mod, "EmptyResponseFailure")
     if agent.has_validator:
         validation = _validation_module_for(agent)
-        # Locks ALP-520 identity: every validator-bearing module's
-        # ``ValidationResult`` symbol resolves to the canonical class.
         assert validation.ValidationResult is ValidationResult
 
 
@@ -372,6 +379,7 @@ def test_diag_record_writes_on_failure_path(agent: AgentSpec, tmp_path: Path) ->
 # ---------------------------------------------------------------------------
 
 
+@cache
 def _invoke_sdk_call_kwargs(agent: AgentSpec) -> tuple[dict[str, Any], ...]:
     """Statically extract the keyword arguments of every ``invoke_sdk(...)``
     call in *agent*'s harness source.
@@ -380,6 +388,9 @@ def _invoke_sdk_call_kwargs(agent: AgentSpec) -> tuple[dict[str, Any], ...]:
     single call site whose ``on_cli_result_error`` literal is the
     contract, and runtime stubbing would require fabricating four MCP
     servers' worth of decision-layer state to reach the call site.
+
+    Cached because two parametrized tests share the result; AgentSpec is
+    frozen so it's hashable.
     """
     mod = _harness(agent)
     source = Path(mod.__file__).read_text(encoding="utf-8")  # type: ignore[arg-type]
@@ -407,6 +418,11 @@ def test_invoke_sdk_on_cli_result_error_arm(agent: AgentSpec) -> None:
     agent's expected classification arm — ``"context_overflow"`` for
     analysis harnesses, ``"sdk_failure"`` for decision and synthesizer.
     """
+    assert agent.on_cli_result_error in _CLI_RESULT_ERROR_ARMS, (
+        f"{agent.name}: expected arm {agent.on_cli_result_error!r} is not in "
+        f"CLIResultErrorMapping {_CLI_RESULT_ERROR_ARMS}; AGENTS table is "
+        "out of sync with the production type alias"
+    )
     calls = _invoke_sdk_call_kwargs(agent)
     assert calls, f"{agent.name}: no invoke_sdk call sites found"
     for kwargs in calls:
@@ -537,10 +553,9 @@ def _build_minimal_output_for(agent: AgentSpec) -> Any:
 
 def _build_validator_kwargs(agent: AgentSpec) -> dict[str, Any]:
     """Construct the per-validator keyword inputs required to invoke it."""
-    store = RetrievalStore(entries={}, freshness_by_source={})
     active_sectors = frozenset({"tech", "semis", "financials", "energy"})
     if agent.name in {"analyst", "strategist"}:
-        return {"retrieval_store": store, "active_sectors": active_sectors}
+        return {"retrieval_store": _EMPTY_RETRIEVAL_STORE, "active_sectors": active_sectors}
     if agent.name in {"qualitative_research", "domain_researchers"}:
         return {}
     if agent.name == "adaptive_research":
