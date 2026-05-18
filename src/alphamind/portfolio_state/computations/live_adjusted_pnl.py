@@ -16,13 +16,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from alphamind._kernel.ids import PositionId
-from alphamind._kernel.money import DECIMAL_ZERO, Money, signed_money
+from alphamind._kernel.money import DECIMAL_ZERO, Money, money
 from alphamind.state.records import FillRecord
 
 
 def compute_position_live_drag(fills: tuple[FillRecord, ...]) -> Money:
     """Sum live-execution drag across a position's fills."""
-    return signed_money(
+    return money(
         sum(
             (
                 est.estimated_spread_usd
@@ -43,9 +43,9 @@ def compute_portfolio_live_drag(
 
     The returned :class:`Money` is suitable as the "live-adjusted P/L delta"
     that downstream consumers subtract from raw realized P/L. Returns
-    ``signed_money("0")`` for an empty mapping.
+    ``money("0")`` for an empty mapping.
     """
     total = DECIMAL_ZERO
     for fills in fills_by_position.values():
         total += compute_position_live_drag(fills)
-    return signed_money(total)
+    return money(total)
