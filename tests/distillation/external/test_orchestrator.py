@@ -515,6 +515,36 @@ def test_orchestrator_diagnostic_counts_populated(
     assert outputs.bootstrap_block_count >= 0
 
 
+def test_orchestrator_persists_ticker_realized_vol(
+    populated_session: Session, tmp_path: Path
+) -> None:
+    """ALP-530 — the orchestrator's Phase 2 hook writes one row per
+    in-scope ticker into ``ticker_realized_vol``. Subsequent reads via
+    ``read_realized_vol_map`` see the populated map.
+    """
+    from alphamind.persistence.models import TickerRealizedVolRow
+
+    invocation_id = "20260425T120000Z-rvol"
+    _run_orchestrator(populated_session, archive_root=tmp_path, invocation_id=invocation_id)
+
+    rows = (
+        populated_session.execute(
+            select(TickerRealizedVolRow).where(
+                TickerRealizedVolRow.invocation_id == invocation_id
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # The fixture seeds 60 daily bars for each of the seven sector tickers;
+    # 30-day realized vol is well-defined for every one of them, so the
+    # persister writes one row per ticker.
+    assert {r.ticker for r in rows} == set(_SECTOR_TICKERS.keys())
+    for row in rows:
+        assert row.as_of_date == "2026-04-25"
+        assert row.trailing_30d_realized_vol >= 0.0
+
+
 def test_orchestrator_writes_invocation_archive_files(
     populated_session: Session, tmp_path: Path
 ) -> None:
