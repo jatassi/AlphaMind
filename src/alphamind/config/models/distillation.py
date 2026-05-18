@@ -29,6 +29,7 @@ from alphamind.distillation._config_domain import (
     PredictionMarketDomainConfig,
     RegimeClassificationDomainConfig,
     RegimeTransitionDomainConfig,
+    SeverityCapsDomainConfig,
     TrackedCategoryOverrideDomainConfig,
     _freeze_tracked_categories,
 )
@@ -341,6 +342,28 @@ class PredictionMarket(BaseModel):
         )
 
 
+class SeverityCaps(BaseModel):
+    """Calibration-state severity-cap exemption surface (ALP-544).
+
+    The cap rule itself is implicit in :mod:`alphamind.distillation._severity_cap`
+    (calibrated → no cap, accumulating → investigate_if_persists,
+    unavailable → note_for_context). ``exempt_flag_names`` lists anomaly
+    flags whose producer-side severity is preserved regardless of the
+    surrounding block's calibration state — used when the underlying
+    signal is structural (single macro surprise, single ETF imbalance)
+    and does not gain accuracy with more history.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    exempt_flag_names: tuple[str, ...] = Field(default=())
+
+    def to_domain(self) -> SeverityCapsDomainConfig:
+        return SeverityCapsDomainConfig(
+            exempt_flag_names=frozenset(self.exempt_flag_names),
+        )
+
+
 class DistillationConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -351,6 +374,7 @@ class DistillationConfig(BaseModel):
     narrative_lag: NarrativeLag
     persistence_windows: PersistenceWindows
     prediction_market: PredictionMarket
+    severity_caps: SeverityCaps = Field(default_factory=SeverityCaps)
 
     def to_domain(self) -> DistillationDomainConfig:
         """Project the Pydantic config onto its frozen-dataclass mirror.
@@ -367,4 +391,5 @@ class DistillationConfig(BaseModel):
             narrative_lag=self.narrative_lag.to_domain(),
             persistence_windows=self.persistence_windows.to_domain(),
             prediction_market=self.prediction_market.to_domain(),
+            severity_caps=self.severity_caps.to_domain(),
         )

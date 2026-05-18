@@ -515,6 +515,36 @@ def test_orchestrator_diagnostic_counts_populated(
     assert outputs.non_calibrated_block_count >= 0
 
 
+def test_orchestrator_caps_severity_in_non_calibrated_blocks(
+    populated_session: Session, tmp_path: Path
+) -> None:
+    """ALP-544 — no anomaly flag in a non-calibrated block survives at ``investigate_now``.
+
+    The orchestrator routes ``all_blocks`` through
+    :func:`alphamind.distillation._severity_cap.cap_blocks_for_calibration`
+    before aggregation. Any ``accumulating`` block's flags must be capped
+    at ``investigate_if_persists`` or weaker; any ``unavailable`` block's
+    flags must be capped at ``note_for_context``.
+    """
+    from alphamind.distillation._calibration_core import CalibrationState
+
+    outputs = _run_orchestrator(populated_session, archive_root=tmp_path)
+
+    for block in outputs.all_blocks:
+        if block.calibration_state is CalibrationState.CALIBRATED:
+            continue
+        for flag in block.anomaly_flags:
+            assert flag.severity != "investigate_now", (
+                f"block {block.block_id} is {block.calibration_state.value}, "
+                f"but flag {flag.name} survived at investigate_now"
+            )
+            if block.calibration_state is CalibrationState.UNAVAILABLE:
+                assert flag.severity == "note_for_context", (
+                    f"unavailable block {block.block_id} flag {flag.name} "
+                    f"should be note_for_context, got {flag.severity}"
+                )
+
+
 def test_orchestrator_persists_ticker_realized_vol(
     populated_session: Session, tmp_path: Path
 ) -> None:

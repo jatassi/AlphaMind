@@ -39,6 +39,7 @@ from alphamind.config.models.distillation import (
     PredictionMarket,
     RegimeClassification,
     RegimeTransition,
+    SeverityCaps,
     TrackedCategoryOverride,
 )
 from alphamind.distillation._config_domain import (
@@ -51,6 +52,7 @@ from alphamind.distillation._config_domain import (
     PredictionMarketDomainConfig,
     RegimeClassificationDomainConfig,
     RegimeTransitionDomainConfig,
+    SeverityCapsDomainConfig,
     TrackedCategoryOverrideDomainConfig,
 )
 
@@ -274,6 +276,29 @@ def test_to_domain_mirrors_persistence_windows_fields() -> None:
         assert getattr(dom, field_name) == getattr(pyd, field_name)
 
 
+def test_to_domain_mirrors_severity_caps_exempt_flag_names() -> None:
+    """SeverityCaps round-trips its exempt-flag-names tuple as a frozenset."""
+    pydantic_cfg = _build_test_pydantic_config().model_copy(
+        update={
+            "severity_caps": SeverityCaps(
+                exempt_flag_names=("macro_surprise_anomaly", "etf_vs_single_name_divergence")
+            )
+        }
+    )
+    domain = pydantic_cfg.to_domain()
+    assert isinstance(domain.severity_caps, SeverityCapsDomainConfig)
+    assert domain.severity_caps.exempt_flag_names == frozenset(
+        {"macro_surprise_anomaly", "etf_vs_single_name_divergence"}
+    )
+
+
+def test_severity_caps_default_is_empty_frozenset() -> None:
+    """Omitting severity_caps from the Pydantic surface yields an empty exempt set."""
+    pydantic_cfg = _build_test_pydantic_config()
+    domain = pydantic_cfg.to_domain()
+    assert domain.severity_caps.exempt_flag_names == frozenset()
+
+
 def test_to_domain_mirrors_prediction_market_fields_and_categories() -> None:
     pydantic_cfg = _build_test_pydantic_config()
     domain = pydantic_cfg.to_domain()
@@ -346,6 +371,9 @@ def test_yaml_to_pydantic_to_domain_preserves_every_field() -> None:
                             actual_map[cat_key].min_volume_24h_usd
                             == cat_payload["min_volume_24h_usd"]
                         )
+                elif key == "exempt_flag_names":
+                    # Stored as frozenset on the domain side; JSON-dumped as list.
+                    assert getattr(dom_section, key) == frozenset(expected)
                 else:
                     assert getattr(dom_section, key) == expected
         else:  # pragma: no cover — top-level fields are always sub-models in this schema

@@ -8,31 +8,18 @@ Two detections key off the indicator computations in this story:
 - ``price_move_anomaly``: today's daily-bar move exceeds
   ``price_move_atr_multiple`` times ATR.
 
-Both detections downgrade severity to ``investigate_if_persists`` when the
-calibration state is non-``calibrated`` (``accumulating`` or ``unavailable``)
-per ``docs/implementation/02-distillation-layer/08a-q1-price-volume-indicators.md``
-section "Anomaly detections".
+Both detections emit ``investigate_now`` at the producer; the
+calibration-state cap in :mod:`alphamind.distillation._severity_cap`
+(ALP-544) is the single publishing-layer policy that downgrades severity
+based on the surrounding block's state. The producer no longer maps
+calibration state to severity — that policy lives once at the publishing
+layer so the operator's exempt-flag-names configuration applies
+uniformly across every emitting module.
 """
 
 from __future__ import annotations
 
-from alphamind.distillation._calibration_core import CalibrationState
-from alphamind.distillation.output import AnomalyFlag, AnomalySeverity
-
-
-def _severity_for_state(state: CalibrationState) -> AnomalySeverity:
-    """Map calibration state → default anomaly severity.
-
-    A non-calibrated anomaly is genuinely weaker evidence than the same
-    anomaly against per-ticker history; surfacing this through severity
-    (rather than swallowing the flag) lets downstream consumers act on it
-    while weighting conviction appropriately. Per ALP-540 the same
-    weaker-evidence treatment applies to both ``accumulating`` (not yet
-    enough data) and ``unavailable`` (no data) states.
-    """
-    if state is CalibrationState.CALIBRATED:
-        return "investigate_now"
-    return "investigate_if_persists"
+from alphamind.distillation.output import AnomalyFlag
 
 
 def detect_volume_anomaly(
@@ -41,7 +28,6 @@ def detect_volume_anomaly(
     baseline_mean: float,
     baseline_stdev: float,
     sigma_threshold: float,
-    calibration_state: CalibrationState,
 ) -> AnomalyFlag | None:
     """Detect a volume anomaly relative to a per-ticker rolling baseline.
 
@@ -64,7 +50,7 @@ def detect_volume_anomaly(
     return AnomalyFlag(
         name="volume_anomaly",
         magnitude=deviation_sigma,
-        severity=_severity_for_state(calibration_state),
+        severity="investigate_now",
     )
 
 
@@ -73,7 +59,6 @@ def detect_price_move_anomaly(
     price_move: float,
     atr: float,
     atr_multiple_threshold: float,
-    calibration_state: CalibrationState,
 ) -> AnomalyFlag | None:
     """Detect a price-move anomaly relative to ATR.
 
@@ -92,7 +77,7 @@ def detect_price_move_anomaly(
     return AnomalyFlag(
         name="price_move_anomaly",
         magnitude=multiple,
-        severity=_severity_for_state(calibration_state),
+        severity="investigate_now",
     )
 
 

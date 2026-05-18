@@ -668,7 +668,6 @@ def _record_volume_anomaly(
         baseline_mean=float(baseline.mean),
         baseline_stdev=float(baseline.stdev),
         sigma_threshold=sigma_threshold,
-        calibration_state=baseline_state,
     )
     if flag is None:
         return acc
@@ -728,7 +727,6 @@ def _record_price_move_anomaly(
         price_move=move,
         atr=float(atr),
         atr_multiple_threshold=atr_multiple_threshold,
-        calibration_state=atr_state,
     )
     if flag is None:
         return acc

@@ -57,6 +57,7 @@ from sqlalchemy.orm import Session
 
 from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation._repository_sql import SqlDistillationRepository
+from alphamind.distillation._severity_cap import cap_blocks_for_calibration
 from alphamind.distillation.aggregation import (
     AnomalySummary,
     collect_anomalies,
@@ -1107,7 +1108,10 @@ async def run_external_distillation(
         config=config,
         as_of=as_of,
     )
-    all_blocks = [*indicator_blocks, regime_block]
+    all_blocks = cap_blocks_for_calibration(
+        [*indicator_blocks, regime_block],
+        exempt_flag_names=config.severity_caps.exempt_flag_names,
+    )
     logger.info(
         "phase 3 (regime classification) complete: label=%s elapsed=%.3fs",
         regime_result.regime_label.value,
@@ -1118,6 +1122,10 @@ async def run_external_distillation(
     # to populate the diagnostic counts the orchestrator returns; the
     # assemblers (Phase 5) re-derive the same partitioning from the
     # block list, so the dicts here are not threaded forward.
+    #
+    # ALP-544: ``all_blocks`` above has already been routed through
+    # :func:`cap_blocks_for_calibration` so every consumer below sees
+    # severities capped by the source block's calibration state.
     phase_start = time.monotonic()
     partitioned = partition_blocks(all_blocks)
     anomaly_summaries: list[AnomalySummary] = collect_anomalies(all_blocks)

@@ -175,6 +175,20 @@ class PredictionMarketDomainConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SeverityCapsDomainConfig:
+    """Domain-typed mirror of ``config.models.distillation.SeverityCaps``.
+
+    ``exempt_flag_names`` lists anomaly-flag names whose severity should
+    NOT be downgraded by the calibration-state cap (ALP-544). The cap
+    rule itself is implicit (calibrated → no cap, accumulating →
+    investigate_if_persists, unavailable → note_for_context); this field
+    surfaces the structural-signal exemption needed by AC #4.
+    """
+
+    exempt_flag_names: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
 class DistillationDomainConfig:
     """Frozen-dataclass mirror of ``config.models.DistillationConfig``.
 
@@ -190,6 +204,7 @@ class DistillationDomainConfig:
     narrative_lag: NarrativeLagDomainConfig
     persistence_windows: PersistenceWindowsDomainConfig
     prediction_market: PredictionMarketDomainConfig
+    severity_caps: SeverityCapsDomainConfig
 
 
 def _freeze_tracked_categories(
@@ -209,5 +224,6 @@ __all__ = [
     "PredictionMarketDomainConfig",
     "RegimeClassificationDomainConfig",
     "RegimeTransitionDomainConfig",
+    "SeverityCapsDomainConfig",
     "TrackedCategoryOverrideDomainConfig",
 ]

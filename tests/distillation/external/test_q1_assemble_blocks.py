@@ -583,10 +583,18 @@ class TestBootstrapPath:
             "Expected at least one ACCUMULATING block when baselines are sub-threshold"
         )
 
-    def test_bootstrap_anomaly_severity_downgrades_to_investigate_if_persists(
+    def test_q1_producer_emits_investigate_now_under_accumulating_baseline(
         self, session: Session
     ) -> None:
-        """A volume spike against a BOOTSTRAP baseline reports investigate_if_persists."""
+        """ALP-544 — the q1 producer emits investigate_now regardless of baseline state.
+
+        Severity downgrade now lives at the publishing-layer cap
+        (:mod:`alphamind.distillation._severity_cap`), not at the
+        producer. This test pins the producer's contract: every fired
+        volume spike carries ``investigate_now`` at the block boundary;
+        the orchestrator's cap downgrades when the block's
+        calibration_state is non-CALIBRATED.
+        """
         _seed_universe_and_sectors(session)
         end = datetime(2026, 4, 25, tzinfo=UTC)
         days = 60
@@ -605,7 +613,7 @@ class TestBootstrapPath:
             .values(adj_volume=10_000_000)
         )
         as_of_iso = _format_iso_z(end)
-        # Seed BOOTSTRAP baselines.
+        # Seed ACCUMULATING baselines.
         for ticker in _SECTOR_TICKERS:
             _seed_baseline(
                 session,
@@ -639,8 +647,9 @@ class TestBootstrapPath:
         firing_severities = [
             flag.severity for block in anomaly_blocks for flag in block.anomaly_flags
         ]
-        assert "investigate_if_persists" in firing_severities, (
-            f"Expected at least one investigate_if_persists severity; got {firing_severities}"
+        assert firing_severities, "Expected at least one anomaly flag for the volume spike"
+        assert all(s == "investigate_now" for s in firing_severities), (
+            f"Producer must emit investigate_now uniformly; got {firing_severities}"
         )
 
 

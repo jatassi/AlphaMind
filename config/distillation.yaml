@@ -86,3 +86,17 @@ prediction_market:
     election:        { min_volume_24h_usd: 25000 }
     china_policy:    {}
     conflict:        {}
+
+# ALP-544 — calibration-state severity cap exemptions.
+#
+# The cap rule is implicit (src/alphamind/distillation/_severity_cap.py):
+#   calibrated   → severity unchanged
+#   accumulating → max severity investigate_if_persists
+#   unavailable  → max severity note_for_context
+#
+# Add an anomaly-flag name here only when its severity is structural —
+# independent of history length — and should fire at full strength even
+# when the surrounding block isn't calibrated. Default is empty: every
+# flag is subject to the cap.
+severity_caps:
+  exempt_flag_names: []
