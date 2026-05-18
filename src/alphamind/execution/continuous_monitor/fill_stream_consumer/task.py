@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -39,6 +39,7 @@ from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
 )
+from alphamind.state.records import FillRecord
 from alphamind.state.tables.fill_records import FillRecordRow
 
 log = logging.getLogger(__name__)
@@ -52,6 +53,11 @@ log = logging.getLogger(__name__)
 TradingStreamFactory = Callable[[ExecutionMode], object]
 TradingClientFactory = Callable[[ExecutionMode], object]
 AccountStateQueriesFactory = Callable[[object], object]
+# Per ALP-528 (paper-evaluation harness wedge): paper-mode wiring passes a
+# callable that enriches each translated FillRecord with a
+# ``live_execution_estimate`` before persistence. Live-mode passes ``None`` so
+# the hot path is unchanged.
+EnrichmentCallable = Callable[[FillRecord], Awaitable[FillRecord]]
 
 
 async def run_fill_stream_consumer(
@@ -62,6 +68,7 @@ async def run_fill_stream_consumer(
     stream_factory: TradingStreamFactory,
     trading_client_factory: TradingClientFactory,
     account_state_queries_factory: AccountStateQueriesFactory,
+    enrichment_callable: EnrichmentCallable | None = None,
 ) -> None:
     """Run-forever fill-stream consumer.
 
@@ -90,12 +97,14 @@ async def run_fill_stream_consumer(
                 queries,
                 since=since,
                 session_factory=session_factory,
+                enrichment_callable=enrichment_callable,
             )
 
         try:
             await _consume_stream(
                 stream_factory(session.mode),
                 session_factory=session_factory,
+                enrichment_callable=enrichment_callable,
             )
             # ``_consume_stream`` is run-forever; a clean return is treated
             # the same as a failure (a buggy stream that closes immediately
@@ -132,6 +141,7 @@ async def _consume_stream(
     stream: object,
     *,
     session_factory: async_sessionmaker[AsyncSession],
+    enrichment_callable: EnrichmentCallable | None,
 ) -> None:
     """Drain :func:`subscribe_trade_updates` until the generator exits.
 
@@ -145,7 +155,11 @@ async def _consume_stream(
     gen = subscribe_trade_updates(stream)  # type: ignore[arg-type]
     try:
         async for report in gen:
-            await _persist_one(report, session_factory=session_factory)
+            await _persist_one(
+                report,
+                session_factory=session_factory,
+                enrichment_callable=enrichment_callable,
+            )
     finally:
         await gen.aclose()
 
@@ -154,8 +168,15 @@ async def _persist_one(
     report: FillReport,
     *,
     session_factory: async_sessionmaker[AsyncSession],
+    enrichment_callable: EnrichmentCallable | None,
 ) -> None:
-    """Translate a single ``FillReport`` and append it in its own transaction."""
+    """Translate a single ``FillReport`` and append it in its own transaction.
+
+    Paper-mode wiring (per ALP-528) injects ``enrichment_callable`` so each
+    translated :class:`FillRecord` is enriched with a
+    ``live_execution_estimate`` before persistence. Live mode passes ``None``;
+    the column persists as NULL and the hot path is unchanged.
+    """
     record = fill_report_to_fill_record(report)
     log.debug(
         "fill report received: event_type=%s client_order_id=%s fill_timestamp=%s",
@@ -165,6 +186,8 @@ async def _persist_one(
     )
     if record is None:
         return
+    if enrichment_callable is not None:
+        record = await enrichment_callable(record)
     async with session_factory() as db:
         await append_fill_record(db, record)
         await db.commit()
@@ -175,6 +198,7 @@ async def _replay_recovery(
     *,
     since: datetime,
     session_factory: async_sessionmaker[AsyncSession],
+    enrichment_callable: EnrichmentCallable | None,
 ) -> None:
     """Drain :func:`recover_missed_fills_since` and persist every report."""
     # The queries object honours the recovery primitive's ``_OrdersSource``
@@ -182,7 +206,11 @@ async def _replay_recovery(
     # we don't pin to ``AccountStateQueries`` and can swap in a stub.
     gen: AsyncIterator[FillReport] = recover_missed_fills_since(queries, since=since)  # type: ignore[arg-type]
     async for report in gen:
-        await _persist_one(report, session_factory=session_factory)
+        await _persist_one(
+            report,
+            session_factory=session_factory,
+            enrichment_callable=enrichment_callable,
+        )
 
 
 async def _latest_fill_timestamp(
