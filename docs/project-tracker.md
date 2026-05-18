@@ -66,7 +66,7 @@ Cross-cutting policies and reference specs that constrain implementation but are
 
 ### Operational tooling
 
-- [ ] **LLM output validation** ([ALP-127](https://linear.app/alphamind-jatassi/issue/ALP-127)) — _requirements pending_ — [design](design/testing/llm-output-validation.md)
+- [ ] **LLM output validation** ([ALP-127](https://linear.app/alphamind-jatassi/issue/ALP-127)) — _stories drafted_ — [design](design/testing/llm-output-validation.md)
 - [ ] **Paper-evaluation harness** ([ALP-130](https://linear.app/alphamind-jatassi/issue/ALP-130)) — _requirements pending_ — [design](design/05-execution-layer/paper-evaluation-harness.md)
 - [ ] **Counterfactual replay engine** ([ALP-129](https://linear.app/alphamind-jatassi/issue/ALP-129)) — _requirements pending_ — [design](design/05-execution-layer/counterfactual-replay-engine.md)
 - [ ] **Command center** ([ALP-128](https://linear.app/alphamind-jatassi/issue/ALP-128)) — _requirements pending_ — [design](design/command-center.md), [pipeline schema](design/pipeline-control-and-events-schema.md), [monitor schema](design/monitor-control-and-events-schema.md)
