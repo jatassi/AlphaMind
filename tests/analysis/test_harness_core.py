@@ -668,7 +668,7 @@ async def test_invoke_applies_concurrent_launch_jitter(
         uniform_calls.append((lo, hi))
         return 0.0  # don't actually wait
 
-    monkeypatch.setattr(core.random, "uniform", _capture_uniform)
+    monkeypatch.setattr("alphamind.analysis._harness_core.random.uniform", _capture_uniform)
 
     async def _stub(**_: Any) -> AsyncIterator[Any]:
         yield _make_sdk_assistant(text="hi")
@@ -703,7 +703,7 @@ async def test_invoke_skips_jitter_when_disabled(
         uniform_calls.append((lo, hi))
         return 0.0
 
-    monkeypatch.setattr(core.random, "uniform", _capture_uniform)
+    monkeypatch.setattr("alphamind.analysis._harness_core.random.uniform", _capture_uniform)
 
     async def _stub(**_: Any) -> AsyncIterator[Any]:
         yield _make_sdk_assistant(text="hi")
