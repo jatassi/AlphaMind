@@ -184,13 +184,13 @@ def _render_calendar(inputs: QualitativeInputs) -> str:
     return "\n".join(lines)
 
 
-_THESES_STUB = "(no active theses — execution-layer thesis model pending per ALP-111)."
+_NO_ACTIVE_THESES = "(no active theses)."
 
 
 def _render_theses(inputs: QualitativeInputs) -> str:
     """Render active thesis summaries sorted by thesis_id."""
     if not inputs.theses:
-        return _THESES_STUB
+        return _NO_ACTIVE_THESES
     rows = sorted(inputs.theses, key=lambda t: t.thesis_id)
     return "\n".join(
         f"[{t.thesis_id}] {t.ticker}: {t.summary}"

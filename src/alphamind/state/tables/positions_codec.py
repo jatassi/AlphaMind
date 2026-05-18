@@ -215,6 +215,16 @@ def _details_from_dict(payload: dict[str, Any]) -> PositionDetailsPayload:
     raise ValueError(msg)
 
 
+def details_from_json(details_json_str: str) -> PositionDetailsPayload:
+    """Parse a position-row ``details_json`` blob into the typed payload.
+
+    Public seam for read paths that want the typed details payload without
+    paying for full :class:`PositionRecord` rehydration (which carries its
+    own status / execution-history invariants on top of the details).
+    """
+    return _details_from_dict(json.loads(details_json_str))
+
+
 def record_to_row(record: PositionRecord) -> PositionRow:
     """Project a ``PositionRecord`` to its ``PositionRow`` form.
 

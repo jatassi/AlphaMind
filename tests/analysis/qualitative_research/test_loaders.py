@@ -6,6 +6,7 @@ tests exercise real query paths rather than mocked internals.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
@@ -35,11 +36,18 @@ from alphamind.persistence.models import (
     DistillationTickerBaseline,
     EarningsEventDetails,
     EventCalendar,
+    NewsArticles,
+    NewsArticleTickers,
+    OhlcvBars,
     PredictionMarketContracts,
     PredictionMarketSnapshots,
     SectorClassification,
 )
 from alphamind.persistence.session import make_engine, make_session_factory
+
+# Importing the state.tables package registers ThesisRow / ThesisComponentRow /
+# PositionRow on ``Base.metadata`` so ``create_all`` sees them.
+from alphamind.state.tables import PositionRow, ThesisRow
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -187,6 +195,146 @@ def _add_contract_history(
     )
 
 
+def _add_daily_bar(
+    session: Session,
+    ticker: str,
+    period_start_dt: datetime,
+    *,
+    adj_close: float,
+) -> None:
+    """Seed a single daily ``OhlcvBars`` row with ``timeframe='1d'``."""
+    period_start = period_start_dt.astimezone(UTC).strftime("%Y-%m-%d")
+    period_end = period_start_dt.astimezone(UTC).strftime("%Y-%m-%d")
+    session.add(
+        OhlcvBars(
+            ticker=ticker,
+            timeframe="1d",
+            period_start=period_start,
+            period_end=period_end,
+            session="regular",
+            adj_open=adj_close,
+            adj_high=adj_close,
+            adj_low=adj_close,
+            adj_close=adj_close,
+            adj_volume=1_000_000,
+            adj_vwap=None,
+            unadj_open=adj_close,
+            unadj_high=adj_close,
+            unadj_low=adj_close,
+            unadj_close=adj_close,
+            unadj_volume=1_000_000,
+            unadj_vwap=None,
+            trade_count=None,
+            source="test",
+            ingested_at=_ISO,
+        )
+    )
+
+
+def _add_news_article(
+    session: Session,
+    *,
+    article_id: str,
+    ticker: str,
+    published_at: str,
+) -> None:
+    """Add a NewsArticles + matching NewsArticleTickers row, flushing in
+    FK-safe order."""
+    session.add(
+        NewsArticles(
+            article_id=article_id,
+            source="test",
+            source_outlet=None,
+            source_credibility_tier=None,
+            url=None,
+            language="en",
+            headline_text="headline",
+            body_path=None,
+            published_at=published_at,
+            ingested_at=published_at,
+            vendor_sentiment_score=None,
+            vendor_sentiment_label=None,
+            topic_tags=None,
+            cross_ticker_cluster_id=None,
+        )
+    )
+    session.flush()
+    session.add(
+        NewsArticleTickers(
+            article_id=article_id,
+            ticker=ticker,
+            is_primary=1,
+            vendor_sentiment_score=None,
+            vendor_sentiment_label=None,
+        )
+    )
+
+
+def _add_thesis_and_position(
+    session: Session,
+    *,
+    thesis_id: str = "TH-001",
+    position_id: str = "POS-001",
+    ticker: str = "NVDA",
+    summary: str = "Bull thesis on AI capex",
+    key_catalyst: str = "Q1 earnings beat",
+    time_expectation_hours: float = 48.0,
+    thesis_status: str = "ACTIVE",
+    position_status: str = "OPEN",
+    generation_timestamp: str = _ISO,
+) -> None:
+    """Seed a position + thesis pair atomically.
+
+    The position carries an equity ``details_json`` blob so the loader's
+    ``resolve_ticker`` path returns ``ticker``. The thesis stores ``summary``
+    on the row and ``key_catalyst`` inside ``narrative_json`` per
+    ``theses_codec.py``.
+
+    Both rows go in a single transaction; the ``positions↔theses`` FK pair is
+    declared DEFERRABLE INITIALLY DEFERRED so the cycle resolves at COMMIT.
+    """
+    _add_ticker(session, ticker)
+    details_json = json.dumps(
+        {
+            "instrument_type": "EQUITY",
+            "ticker": ticker,
+            "share_count": 100.0,
+            "average_cost_basis_per_share": 100.0,
+        }
+    )
+    session.add(
+        PositionRow(
+            position_id=position_id,
+            thesis_id=thesis_id,
+            bracket_id=None,
+            status=position_status,
+            direction="LONG",
+            entry_timestamp=None,
+            instrument_type="EQUITY",
+            details_json=details_json,
+            execution_history_json="[]",
+            realized_pnl_to_date_usd=None,
+            corporate_action_adjustment_needed=0,
+            parent_position_id=None,
+            origin=None,
+        )
+    )
+    session.add(
+        ThesisRow(
+            thesis_id=thesis_id,
+            position_id=position_id,
+            status=thesis_status,
+            resolution_timestamp=None,
+            resolution_category=None,
+            summary=summary,
+            time_expectation_hours=time_expectation_hours,
+            position_size_rationale=None,
+            generation_timestamp=generation_timestamp,
+            narrative_json=json.dumps({"key_catalyst": key_catalyst}),
+        )
+    )
+
+
 def _add_event(
     session: Session,
     event_id: str,
@@ -236,18 +384,180 @@ class TestImports:
 
 
 # ---------------------------------------------------------------------------
-# 2. load_active_thesis_summaries — stub returns ()
+# 2. load_active_thesis_summaries
 # ---------------------------------------------------------------------------
 
 
 class TestLoadActiveThesisSummaries:
-    def test_returns_empty_tuple(self, session: Session) -> None:
+    def test_empty_db_returns_empty(self, session: Session) -> None:
         result = load_active_thesis_summaries(session, as_of=AS_OF)
         assert result == ()
 
-    def test_docstring_mentions_alp_111(self) -> None:
-        doc = load_active_thesis_summaries.__doc__ or ""
-        assert "ALP-111" in doc
+    def test_active_thesis_returned_with_ticker_from_position(self, session: Session) -> None:
+        _add_thesis_and_position(
+            session,
+            thesis_id="TH-001",
+            position_id="POS-001",
+            ticker="NVDA",
+            summary="Bull thesis on AI capex",
+            key_catalyst="Q1 earnings beat",
+            time_expectation_hours=48.0,
+        )
+        session.commit()
+
+        result = load_active_thesis_summaries(session, as_of=AS_OF)
+        assert len(result) == 1
+        thesis = result[0]
+        assert thesis.thesis_id == "TH-001"
+        assert thesis.ticker == "NVDA"
+        assert thesis.summary == "Bull thesis on AI capex"
+        assert thesis.key_catalyst == "Q1 earnings beat"
+        assert thesis.time_expectation_hours == 48
+
+    def test_resolved_and_cancelled_theses_excluded(self, session: Session) -> None:
+        _add_thesis_and_position(
+            session,
+            thesis_id="TH-active",
+            position_id="POS-1",
+            ticker="NVDA",
+            thesis_status="ACTIVE",
+        )
+        _add_thesis_and_position(
+            session,
+            thesis_id="TH-resolved",
+            position_id="POS-2",
+            ticker="AAPL",
+            thesis_status="RESOLVED",
+        )
+        _add_thesis_and_position(
+            session,
+            thesis_id="TH-cancelled",
+            position_id="POS-3",
+            ticker="TSLA",
+            thesis_status="CANCELLED",
+        )
+        session.commit()
+
+        result = load_active_thesis_summaries(session, as_of=AS_OF)
+        thesis_ids = [t.thesis_id for t in result]
+        assert thesis_ids == ["TH-active"]
+
+    def test_closed_positions_excluded(self, session: Session) -> None:
+        # An ACTIVE thesis whose backing position has been CLOSED should not
+        # surface; the qualitative researcher only takes context from the
+        # live book.
+        _add_thesis_and_position(
+            session,
+            thesis_id="TH-open",
+            position_id="POS-open",
+            ticker="NVDA",
+            position_status="OPEN",
+        )
+        _add_thesis_and_position(
+            session,
+            thesis_id="TH-pending",
+            position_id="POS-pending",
+            ticker="AAPL",
+            position_status="PENDING",
+        )
+        _add_thesis_and_position(
+            session,
+            thesis_id="TH-closed",
+            position_id="POS-closed",
+            ticker="TSLA",
+            position_status="CLOSED",
+        )
+        session.commit()
+
+        result = load_active_thesis_summaries(session, as_of=AS_OF)
+        thesis_ids = {t.thesis_id for t in result}
+        assert thesis_ids == {"TH-open", "TH-pending"}
+
+    def test_results_sorted_by_thesis_id(self, session: Session) -> None:
+        _add_thesis_and_position(session, thesis_id="TH-ccc", position_id="POS-c", ticker="NVDA")
+        _add_thesis_and_position(session, thesis_id="TH-aaa", position_id="POS-a", ticker="AAPL")
+        _add_thesis_and_position(session, thesis_id="TH-bbb", position_id="POS-b", ticker="TSLA")
+        session.commit()
+
+        result = load_active_thesis_summaries(session, as_of=AS_OF)
+        thesis_ids = [t.thesis_id for t in result]
+        assert thesis_ids == ["TH-aaa", "TH-bbb", "TH-ccc"]
+
+    def test_theses_generated_after_as_of_excluded(self, session: Session) -> None:
+        # A thesis born in the future relative to as_of must not leak into
+        # the renderer.
+        future_iso = (AS_OF + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_thesis_and_position(
+            session,
+            thesis_id="TH-future",
+            position_id="POS-future",
+            ticker="NVDA",
+            generation_timestamp=future_iso,
+        )
+        session.commit()
+
+        result = load_active_thesis_summaries(session, as_of=AS_OF)
+        assert result == ()
+
+    def test_options_position_returns_underlying_ticker(self, session: Session) -> None:
+        _add_ticker(session, "NVDA")
+        options_details = json.dumps(
+            {
+                "instrument_type": "OPTIONS",
+                "underlying_ticker": "NVDA",
+                "strike_price": 500.0,
+                "expiration_date": "2026-06-19",
+                "contract_type": "CALL",
+                "contract_count": 1.0,
+                "contract_multiplier": 100.0,
+                "premium_paid_per_contract": 12.50,
+                "greeks": {
+                    "delta": 0.55,
+                    "gamma": 0.01,
+                    "theta": -0.05,
+                    "vega": 0.10,
+                    "as_of_timestamp": None,
+                    "iv_used": None,
+                    "refresh_failed": False,
+                },
+            }
+        )
+        session.add(
+            PositionRow(
+                position_id="POS-opt",
+                thesis_id="TH-opt",
+                bracket_id=None,
+                status="OPEN",
+                direction="LONG",
+                entry_timestamp=None,
+                instrument_type="OPTIONS",
+                details_json=options_details,
+                execution_history_json="[]",
+                realized_pnl_to_date_usd=None,
+                corporate_action_adjustment_needed=0,
+                parent_position_id=None,
+                origin=None,
+            )
+        )
+        session.add(
+            ThesisRow(
+                thesis_id="TH-opt",
+                position_id="POS-opt",
+                status="ACTIVE",
+                resolution_timestamp=None,
+                resolution_category=None,
+                summary="Upside call",
+                time_expectation_hours=24.0,
+                position_size_rationale=None,
+                generation_timestamp=_ISO,
+                narrative_json=json.dumps({"key_catalyst": "Earnings"}),
+            )
+        )
+        session.commit()
+
+        result = load_active_thesis_summaries(session, as_of=AS_OF)
+        assert len(result) == 1
+        assert result[0].ticker == "NVDA"
 
 
 # ---------------------------------------------------------------------------
@@ -488,12 +798,24 @@ class TestLoadSentimentAggregates:
         assert 0.0 <= agg.percentile_vs_self <= 1.0
         assert isinstance(agg.data_freshness, datetime)
 
-    def test_v1_stub_fields_are_none(self, session: Session) -> None:
-        """V1 stub fields (rate_of_change, volume, divergence_flag) emit None.
+    def test_rate_of_change_is_latest_minus_prior_mean(self, session: Session) -> None:
+        """``rate_of_change`` = latest sentiment-baseline mean minus the prior row's mean."""
+        _add_ticker(session, "NVDA")
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=prior_iso
+        )
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.5, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        session.commit()
 
-        These are not yet computed — the LLM should read them as "data pending"
-        rather than the misleading "value is zero / no signal".
-        """
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        assert len(result) == 1
+        assert result[0].rate_of_change == pytest.approx(0.4)
+
+    def test_rate_of_change_none_when_single_baseline_row(self, session: Session) -> None:
+        """No prior baseline → rate_of_change=None (degrades gracefully)."""
         _add_ticker(session, "NVDA")
         _add_sentiment_baseline(
             session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=_ISO
@@ -502,10 +824,193 @@ class TestLoadSentimentAggregates:
 
         result = load_sentiment_aggregates(session, as_of=AS_OF)
         assert len(result) == 1
-        agg = result[0]
-        assert agg.rate_of_change is None
-        assert agg.volume is None
-        assert agg.divergence_flag is None
+        assert result[0].rate_of_change is None
+
+    def test_volume_counts_article_tickers_in_window(self, session: Session) -> None:
+        """``volume`` = count of ``news_article_tickers`` rows whose article
+        ``published_at`` falls in the rate-of-change window
+        ``(prior_baseline.as_of, latest_baseline.as_of]``.
+        """
+        _add_ticker(session, "NVDA")
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=prior_iso
+        )
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.5, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+
+        # Three in-window articles, one too old, one too new.
+        in_window_a = (AS_OF - timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        in_window_b = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        in_window_c = (AS_OF - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        too_old = (AS_OF - timedelta(days=8)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        too_new = (AS_OF + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for article_id, ts in (
+            ("art-in-1", in_window_a),
+            ("art-in-2", in_window_b),
+            ("art-in-3", in_window_c),
+            ("art-old", too_old),
+            ("art-new", too_new),
+        ):
+            _add_news_article(session, article_id=article_id, ticker="NVDA", published_at=ts)
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        assert len(result) == 1
+        assert result[0].volume == 3
+
+    def test_volume_none_when_no_prior_baseline(self, session: Session) -> None:
+        """Without a prior baseline there's no window — volume falls back to None."""
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        assert len(result) == 1
+        assert result[0].volume is None
+
+    def test_volume_window_boundary_inclusivity(self, session: Session) -> None:
+        """Lower edge is exclusive (prior_baseline timestamp itself excluded);
+        upper edge is inclusive (latest_baseline timestamp itself counted).
+        """
+        _add_ticker(session, "NVDA")
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=prior_iso
+        )
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.5, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        # Boundary articles: one at the lower edge (excluded), one at the upper
+        # edge (included), one strictly inside (included).
+        in_window_iso = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_news_article(
+            session, article_id="art-lower-edge", ticker="NVDA", published_at=prior_iso
+        )
+        _add_news_article(session, article_id="art-upper-edge", ticker="NVDA", published_at=_ISO)
+        _add_news_article(
+            session, article_id="art-inside", ticker="NVDA", published_at=in_window_iso
+        )
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        assert len(result) == 1
+        assert result[0].volume == 2
+
+    def test_volume_uses_per_ticker_window_when_panel_desynced(self, session: Session) -> None:
+        """Tickers with desynced refresh timestamps each get their own window."""
+        _add_ticker(session, "NVDA")
+        _add_ticker(session, "AAPL")
+        # NVDA: prior 7 days ago, latest at AS_OF.
+        nvda_prior = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.0, stdev=0.3, n_observations=100, as_of_str=nvda_prior
+        )
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.4, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        # AAPL: backfilled — prior 30 days ago, latest 1 day ago.
+        aapl_prior = (AS_OF - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        aapl_latest = (AS_OF - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_sentiment_baseline(
+            session, "AAPL", mean=0.0, stdev=0.3, n_observations=100, as_of_str=aapl_prior
+        )
+        _add_sentiment_baseline(
+            session, "AAPL", mean=0.4, stdev=0.3, n_observations=100, as_of_str=aapl_latest
+        )
+        # Article in NVDA's 7-day window only (would also fall in AAPL's 30-day
+        # window) → NVDA volume=1. The reverse: an article 20 days back falls
+        # inside AAPL's window but outside NVDA's → AAPL volume=1, NVDA=0.
+        in_nvda_window = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        only_aapl_window = (AS_OF - timedelta(days=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_news_article(
+            session, article_id="art-nvda", ticker="NVDA", published_at=in_nvda_window
+        )
+        _add_news_article(
+            session, article_id="art-aapl", ticker="AAPL", published_at=only_aapl_window
+        )
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        volume_by_ticker = {r.ticker: r.volume for r in result}
+        assert volume_by_ticker == {"NVDA": 1, "AAPL": 1}
+
+    def test_divergence_flag_true_when_sentiment_positive_price_negative(
+        self, session: Session
+    ) -> None:
+        """Positive sentiment + negative price return → ``divergence_flag=True``."""
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.4, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        # Latest price 95, prior price 100 → -5% return.
+        _add_daily_bar(session, "NVDA", AS_OF, adj_close=95.0)
+        _add_daily_bar(session, "NVDA", AS_OF - timedelta(days=5), adj_close=100.0)
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        assert len(result) == 1
+        assert result[0].divergence_flag is True
+
+    def test_divergence_flag_false_when_directions_agree(self, session: Session) -> None:
+        """Positive sentiment + positive price return → ``divergence_flag=False``."""
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.4, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        _add_daily_bar(session, "NVDA", AS_OF, adj_close=105.0)
+        _add_daily_bar(session, "NVDA", AS_OF - timedelta(days=5), adj_close=100.0)
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        assert len(result) == 1
+        assert result[0].divergence_flag is False
+
+    def test_divergence_flag_false_when_signal_below_threshold(self, session: Session) -> None:
+        """Sentiment magnitude under the threshold suppresses the flag."""
+        _add_ticker(session, "NVDA")
+        # Tiny positive sentiment that should not trigger the flag.
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.001, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        _add_daily_bar(session, "NVDA", AS_OF, adj_close=95.0)
+        _add_daily_bar(session, "NVDA", AS_OF - timedelta(days=5), adj_close=100.0)
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        assert len(result) == 1
+        assert result[0].divergence_flag is False
+
+    def test_divergence_flag_none_when_no_price_history(self, session: Session) -> None:
+        """No price bars → divergence_flag falls back to None."""
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.4, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        assert len(result) == 1
+        assert result[0].divergence_flag is None
+
+    def test_divergence_flag_none_when_only_one_price_bar(self, session: Session) -> None:
+        """One daily bar satisfies both lookback anchors → can't compute a
+        return, so divergence_flag stays None."""
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.4, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        # Single bar at AS_OF — same bar will satisfy both "latest" and "prior"
+        # anchor lookups.
+        _add_daily_bar(session, "NVDA", AS_OF, adj_close=100.0)
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        assert len(result) == 1
+        assert result[0].divergence_flag is None
 
 
 # ---------------------------------------------------------------------------

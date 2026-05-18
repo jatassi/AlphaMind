@@ -216,7 +216,7 @@ def test_empty_theses_placeholder() -> None:
         digest=_DIGEST,
         inputs=_make_inputs(theses=()),
     )
-    placeholder = "(no active theses — execution-layer thesis model pending per ALP-111)."
+    placeholder = "(no active theses)."
     assert placeholder in bundle.bundle_text
 
 
@@ -550,9 +550,10 @@ def test_prediction_market_low_liquidity_appended() -> None:
     assert "[LOW LIQUIDITY]" in bundle.bundle_text
 
 
-def test_sentiment_renders_pending_for_none_stub_fields() -> None:
-    """When the v1 stub fields are None, the renderer prints 'pending' so the
-    LLM reads them as 'data not available yet' rather than 'no signal'.
+def test_sentiment_renders_pending_for_none_fields() -> None:
+    """When optional fields are None (source data missing), the renderer prints
+    ``pending`` so the LLM reads them as "data not available yet" rather than
+    "no signal".
     """
     from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
@@ -577,7 +578,7 @@ def test_sentiment_renders_pending_for_none_stub_fields() -> None:
 
 
 def test_sentiment_renders_concrete_values_when_present() -> None:
-    """When the v1 stub fields are populated (future), the renderer prints them."""
+    """When all sentiment fields are populated, the renderer prints them inline."""
     from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
     )
