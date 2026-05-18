@@ -311,21 +311,21 @@ def _seed_universe(session: Session, as_of: datetime, *, n_days: int = 61) -> No
     _seed_macro(
         session,
         series_id="DFII10",
-        source="FRED",
+        source="fred",
         values=[1.5] * n_days,
         start_day=start_day,
     )
     _seed_macro(
         session,
         series_id="DCOILWTICO",
-        source="EIA",
+        source="fred",
         values=[70.0] * n_days,
         start_day=start_day,
     )
     _seed_macro(
         session,
         series_id="VIXCLS",
-        source="FRED",
+        source="fred",
         values=[15.0] * n_days,
         start_day=start_day,
     )

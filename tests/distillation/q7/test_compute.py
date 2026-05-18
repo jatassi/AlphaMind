@@ -275,6 +275,53 @@ class TestIntermarketRegimeCompute:
         assert spy_tlt.payload["regime_label"] == "inflation_environment"
         assert spy_tlt.payload["correlation"] == pytest.approx(1.0)
 
+    def test_zero_observations_emit_null_numeric_fields_per_block(self) -> None:
+        # Every input series empty — the unavailable case ALP-537 targets.
+        # The block carries UNAVAILABLE calibration (ALP-540) AND the
+        # numeric payload fields surface as None, not 0.0 — so a downstream
+        # consumer can't read a fabricated zero correlation/beta.
+        blocks = compute_intermarket_regime_pure(
+            closes_by_ticker={
+                "SPY": (),
+                "TLT": (),
+                "GLD": (),
+                "XLE": (),
+            },
+            macros_by_series={
+                "DFII10": (),
+                "VIXCLS": (),
+                "DCOILWTICO": (),
+            },
+            window_days=60,
+            short_window_days=20,
+            as_of=_as_of(),
+        )
+        by_id = {b.block_id: b for b in blocks}
+
+        spy_tlt = by_id["q7.intermarket_regime.spy_tlt"]
+        assert spy_tlt.calibration_state is CalibrationState.UNAVAILABLE
+        assert spy_tlt.payload["correlation"] is None
+        # regime_label is meaningless without a correlation to read it from.
+        assert spy_tlt.payload["regime_label"] is None
+        assert spy_tlt.anomaly_flags == ()
+
+        gld = by_id["q7.intermarket_regime.gld_real_yields"]
+        assert gld.calibration_state is CalibrationState.UNAVAILABLE
+        assert gld.payload["correlation"] is None
+        assert gld.anomaly_flags == ()
+
+        oil = by_id["q7.intermarket_regime.oil_xle_beta"]
+        assert oil.calibration_state is CalibrationState.UNAVAILABLE
+        assert oil.payload["long_beta"] is None
+        assert oil.payload["short_beta"] is None
+        assert oil.payload["beta_drift"] is None
+        assert oil.anomaly_flags == ()
+
+        vix = by_id["q7.intermarket_regime.vix_spy"]
+        assert vix.calibration_state is CalibrationState.UNAVAILABLE
+        assert vix.payload["correlation"] is None
+        assert vix.anomaly_flags == ()
+
 
 # ---------------------------------------------------------------------------
 # intra_sector_correlation_compute

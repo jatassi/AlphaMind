@@ -35,17 +35,30 @@ TLT_TICKER = "TLT"
 GLD_TICKER = "GLD"
 XLE_TICKER = "XLE"
 
-REAL_YIELD_SOURCE = "FRED"
+REAL_YIELD_SOURCE = "fred"
 REAL_YIELD_SERIES = "DFII10"
-"""10-year TIPS yield from FRED — the real-yield series quant 7d cites."""
+"""10-year TIPS yield from FRED — the real-yield series quant 7d cites.
 
-VIX_SOURCE = "FRED"
+Source string matches the lowercase ``"fred"`` token written by the FRED
+collector (``alphamind.data_sources.fred.macro._SOURCE``); the loader's
+``source ==`` filter must match the producer's casing for the row to surface.
+ALP-537 traced the e2e "0 observations" symptom on this series to a
+constants-vs-collector case mismatch (uppercase ``"FRED"``).
+"""
+
+VIX_SOURCE = "fred"
 VIX_SERIES = "VIXCLS"
 """VIX close from FRED — the volatility-index series intermarket monitors."""
 
-OIL_SOURCE = "EIA"
+OIL_SOURCE = "fred"
 OIL_SERIES = "DCOILWTICO"
-"""WTI crude price series from EIA — used as the oil leg of oil-vs-XLE beta."""
+"""WTI crude price series from FRED — used as the oil leg of oil-vs-XLE beta.
+
+DCOILWTICO ships in :mod:`alphamind.data_sources.fred.series.DAILY_SERIES`,
+not the EIA adapter (whose WTI series is ``eia.wti_spot_price``); ALP-537
+traced the e2e "0 observations" symptom on ``oil_xle_beta`` to a constants
+mismatch (``OIL_SOURCE = "EIA"``) that filtered the FRED-written rows out.
+"""
 
 # Beta-drift threshold in absolute units (story 08d): "flag when beta moves
 # > 0.5 from 60-day mean". Encoded as a named constant so the rule is
@@ -105,13 +118,20 @@ def _spy_tlt_regime_block(
     """Stocks-vs-bonds regime: positive (inflation) vs. negative (growth)."""
     spy_returns = _log_returns_from_closes(spy_closes)
     tlt_returns = _log_returns_from_closes(tlt_closes)
-    correlation = _pearson_correlation(spy_returns, tlt_returns)
-    regime_label = "inflation_environment" if correlation > 0.0 else "growth_environment"
+    n_observations = min(len(spy_returns), len(tlt_returns))
     state, reason = _calibration_for_window(
-        n_observations=min(len(spy_returns), len(tlt_returns)),
+        n_observations=n_observations,
         required=window_days,
         input_name="spy_tlt_correlation_observations",
     )
+    correlation: float | None
+    regime_label: str | None
+    if n_observations == 0:
+        correlation = None
+        regime_label = None
+    else:
+        correlation = _pearson_correlation(spy_returns, tlt_returns)
+        regime_label = "inflation_environment" if correlation > 0.0 else "growth_environment"
     return OutputBlock(
         block_id=f"{_BLOCK_NAMESPACE}.intermarket_regime.spy_tlt",
         audience=frozenset(
@@ -147,25 +167,27 @@ def _gld_real_yields_block(
     # ``gld_returns``.
     yield_deltas: list[float] = [b - a for a, b in pairwise(real_yields)]
     n = min(len(gld_returns), len(yield_deltas))
-    correlation = _pearson_correlation(gld_returns[-n:], yield_deltas[-n:])
-
-    flags: list[AnomalyFlag] = []
-    # Textbook regime is negative correlation; a realized correlation above
-    # the threshold has flipped sign and counts as divergence.
-    if correlation > _GOLD_REAL_YIELDS_DIVERGENCE_THRESHOLD:
-        flags.append(
-            AnomalyFlag(
-                name="gold_real_yields_divergence",
-                magnitude=abs(correlation),
-                severity="investigate_if_persists",
-            )
-        )
-
     state, reason = _calibration_for_window(
         n_observations=n,
         required=window_days,
         input_name="gld_real_yields_observations",
     )
+    correlation: float | None
+    flags: list[AnomalyFlag] = []
+    if n == 0:
+        correlation = None
+    else:
+        correlation = _pearson_correlation(gld_returns[-n:], yield_deltas[-n:])
+        # Textbook regime is negative correlation; a realized correlation above
+        # the threshold has flipped sign and counts as divergence.
+        if correlation > _GOLD_REAL_YIELDS_DIVERGENCE_THRESHOLD:
+            flags.append(
+                AnomalyFlag(
+                    name="gold_real_yields_divergence",
+                    magnitude=abs(correlation),
+                    severity="investigate_if_persists",
+                )
+            )
     return OutputBlock(
         block_id=f"{_BLOCK_NAMESPACE}.intermarket_regime.gld_real_yields",
         audience=frozenset(
@@ -197,31 +219,38 @@ def _oil_xle_beta_block(
     """Oil vs. XLE beta stability: fire when beta drifts >0.5 from baseline."""
     xle_returns = _log_returns_from_closes(xle_closes)
     oil_returns = _log_returns_from_closes(oil_values)
-    long_beta = _rolling_beta(underlying_returns=xle_returns, factor_returns=oil_returns)
-    # Recent beta — the trailing ``short_window_days`` returns. The split
-    # makes a regime flip detectable distinctly from the long baseline.
-    short_n = min(short_window_days, len(xle_returns))
-    short_beta = _rolling_beta(
-        underlying_returns=xle_returns[-short_n:],
-        factor_returns=oil_returns[-short_n:],
-    )
-    drift = abs(short_beta - long_beta)
-
-    flags: list[AnomalyFlag] = []
-    if drift > _OIL_XLE_BETA_DRIFT_THRESHOLD:
-        flags.append(
-            AnomalyFlag(
-                name="oil_xle_beta_drift",
-                magnitude=drift,
-                severity="investigate_if_persists",
-            )
-        )
-
+    n_observations = min(len(xle_returns), len(oil_returns))
     state, reason = _calibration_for_window(
-        n_observations=min(len(xle_returns), len(oil_returns)),
+        n_observations=n_observations,
         required=window_days,
         input_name="oil_xle_beta_observations",
     )
+    long_beta: float | None
+    short_beta: float | None
+    drift: float | None
+    flags: list[AnomalyFlag] = []
+    if n_observations == 0:
+        long_beta = None
+        short_beta = None
+        drift = None
+    else:
+        long_beta = _rolling_beta(underlying_returns=xle_returns, factor_returns=oil_returns)
+        # Recent beta — the trailing ``short_window_days`` returns. The split
+        # makes a regime flip detectable distinctly from the long baseline.
+        short_n = min(short_window_days, len(xle_returns))
+        short_beta = _rolling_beta(
+            underlying_returns=xle_returns[-short_n:],
+            factor_returns=oil_returns[-short_n:],
+        )
+        drift = abs(short_beta - long_beta)
+        if drift > _OIL_XLE_BETA_DRIFT_THRESHOLD:
+            flags.append(
+                AnomalyFlag(
+                    name="oil_xle_beta_drift",
+                    magnitude=drift,
+                    severity="investigate_if_persists",
+                )
+            )
     return OutputBlock(
         block_id=f"{_BLOCK_NAMESPACE}.intermarket_regime.oil_xle_beta",
         audience=frozenset(
@@ -256,25 +285,27 @@ def _vix_spy_block(
     # VIX is a level series; compute day-over-day deltas as the "return".
     vix_deltas = [b - a for a, b in pairwise(vix_values)]
     n = min(len(spy_returns), len(vix_deltas))
-    correlation = _pearson_correlation(spy_returns[-n:], vix_deltas[-n:])
-
-    flags: list[AnomalyFlag] = []
-    # Standard regime: VIX falls when SPY rises (negative correlation). When
-    # the realized correlation flips non-negative, divergence fires.
-    if correlation > 0.0:
-        flags.append(
-            AnomalyFlag(
-                name="vix_spy_divergence",
-                magnitude=abs(correlation),
-                severity="investigate_if_persists",
-            )
-        )
-
     state, reason = _calibration_for_window(
         n_observations=n,
         required=window_days,
         input_name="vix_spy_observations",
     )
+    correlation: float | None
+    flags: list[AnomalyFlag] = []
+    if n == 0:
+        correlation = None
+    else:
+        correlation = _pearson_correlation(spy_returns[-n:], vix_deltas[-n:])
+        # Standard regime: VIX falls when SPY rises (negative correlation).
+        # When the realized correlation flips non-negative, divergence fires.
+        if correlation > 0.0:
+            flags.append(
+                AnomalyFlag(
+                    name="vix_spy_divergence",
+                    magnitude=abs(correlation),
+                    severity="investigate_if_persists",
+                )
+            )
     return OutputBlock(
         block_id=f"{_BLOCK_NAMESPACE}.intermarket_regime.vix_spy",
         audience=frozenset(

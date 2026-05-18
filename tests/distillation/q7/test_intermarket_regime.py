@@ -107,7 +107,7 @@ def _seed_macro(
     series_id: str,
     values: list[float],
     start_day: datetime,
-    source: str = "FRED",
+    source: str = "fred",
 ) -> None:
     for i, v in enumerate(values):
         observation_date = (start_day + timedelta(days=i)).strftime("%Y-%m-%d")
@@ -161,7 +161,6 @@ class TestIntermarketStocksVsBonds:
             series_id="DCOILWTICO",
             values=[70.0] * 61,
             start_day=start_day,
-            source="EIA",
         )
         _seed_macro(
             session,
@@ -211,7 +210,6 @@ class TestIntermarketStocksVsBonds:
             series_id="DCOILWTICO",
             values=[70.0] * 61,
             start_day=start_day,
-            source="EIA",
         )
         _seed_macro(
             session,
@@ -271,7 +269,6 @@ class TestIntermarketGoldVsRealYields:
             series_id="DCOILWTICO",
             values=[70.0] * 61,
             start_day=start_day,
-            source="EIA",
         )
         _seed_macro(
             session,
@@ -329,7 +326,6 @@ class TestIntermarketOilVsXLEBeta:
             series_id="DCOILWTICO",
             values=oil_closes,
             start_day=start_day,
-            source="EIA",
         )
         _seed_path(session, ticker=Symbol("XLE"), closes=xle_closes, start_day=start_day)
         _seed_path(session, ticker=Symbol("SPY"), closes=[400.0] * 61, start_day=start_day)
@@ -389,7 +385,6 @@ class TestIntermarketVixVsSpy:
             series_id="DCOILWTICO",
             values=[70.0] * 61,
             start_day=start_day,
-            source="EIA",
         )
         session.commit()
 
