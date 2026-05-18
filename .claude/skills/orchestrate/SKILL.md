@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Use to drive an AlphaMind feature's implementation work tree end-to-end — fetch the parent Linear Issue, dispatch its sub-issues to subagents in dependency-respecting waves, verify each, integrate to a feature branch, then PR → e2e verification → /review → address feedback → land → update project-tracker → notify. Triggers on `/orchestrate <Feature>` and operator phrases like "orchestrate Breach behavior", "implement the Synthesizer feature", "drive Domain researchers to completion", "build out State persistence", "execute the Portfolio manager work tree", "land the X feature". Assumes the work tree has already been drafted via `/draft-user-stories` (parent Issue exists with sub-issues + dependency graph + orchestrator notes). Use this skill whenever the operator asks to implement, build, drive, execute, land, or complete an AlphaMind feature that has a drafted Linear work tree, even if they don't say "orchestrate". Do NOT use for one-off story dispatch (just call `Agent` directly), bug fixes, refactors, or features without a Linear parent Issue.
+description: Use to drive an AlphaMind feature's implementation work tree end-to-end — fetch the parent Linear Issue, dispatch its sub-issues to subagents in dependency-respecting waves, verify each, integrate to a feature branch, then PR → pre-review triage → drift-check → /review → address feedback → update project-tracker → land → notify. Triggers on `/orchestrate <Feature>` and operator phrases like "orchestrate Breach behavior", "implement the Synthesizer feature", "drive Domain researchers to completion", "build out State persistence", "execute the Portfolio manager work tree", "land the X feature". Assumes the work tree has already been drafted via `/draft-user-stories` (parent Issue exists with sub-issues + dependency graph + orchestrator notes). Use this skill whenever the operator asks to implement, build, drive, execute, land, or complete an AlphaMind feature that has a drafted Linear work tree, even if they don't say "orchestrate". Do NOT use for one-off story dispatch (just call `Agent` directly), bug fixes, refactors, or features without a Linear parent Issue.
 ---
 
 # Orchestrate an AlphaMind feature implementation
@@ -19,7 +19,7 @@ These are project invariants that override any default behavior. Track them with
 - **Always tag the model in the `Agent` tool's `description` field** (`[Sonnet] 04a — Zone classifier`, `[Opus] 03 — Canonical types`). Visible-at-a-glance model selection is a CLAUDE.md requirement.
 - **Run the full lint + test chain after each parallelized wave merges** to the feature branch. Catches integration issues that pass per-story but fail in combination. Commands: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest --testmon -n auto`. Both `--testmon` and `-n auto` are mandatory per CLAUDE.md on every pytest invocation — per-story, dispatch prompts, mid-wave, AND wave-end. The single exception in this skill is the explicit pre-/review drift-check (completion-sequence step 4 below) which drops `--testmon` to surface any testmon-cache drift before /review runs. Never invoke `pytest` without `-n auto`, including from subagents.
 - **A story blocked mid-implementation gets `state="Blocked"` in Linear,** plus a `blockedBy` link to the blocking issue if one exists in Linear (use `save_issue(id=..., state="Blocked", blockedBy=[...])`). If the blocker isn't in Linear, surface it in the final summary instead.
-- **Do not skip the post-completion sequence.** PR → e2e verification → pre-review triage → pre-/review full-suite drift-check (no `--testmon`) → /review → address feedback → update `docs/project-tracker.md` → land → clean local git → PushNotification. Add these as tasks before the work begins (see below).
+- **Do not skip the post-completion sequence.** PR → pre-review triage → pre-/review full-suite drift-check (no `--testmon`) → /review → address feedback → update `docs/project-tracker.md` → land → clean local git → PushNotification. Add these as tasks before the work begins (see below).
 
 ## Pre-flight
 
@@ -59,16 +59,15 @@ Before any dispatch:
 Use `TaskCreate` once, up front, to register everything you must not drop. Two groups:
 
 - **One task per sub-issue** — title `<NN — Title>`, status `pending`. As you dispatch, mark `in_progress`; as you verify and merge, mark `completed`.
-- **Completion-sequence tasks** — register all nine before the work begins so they cannot be forgotten:
+- **Completion-sequence tasks** — register all eight before the work begins so they cannot be forgotten:
   1. `Open PR to main`
-  2. `Run end-to-end verification (per-feature verify script)`
-  3. `Pre-review triage of work-tree residue`
-  4. `Pre-/review full-suite drift-check (no --testmon)`
-  5. `Spawn /review subagent`
-  6. `Address review feedback`
-  7. `Update docs/project-tracker.md status to _done_`
-  8. `Land PR and clean local git state`
-  9. `Send PushNotification summarizing completed work`
+  2. `Pre-review triage of work-tree residue`
+  3. `Pre-/review full-suite drift-check (no --testmon)`
+  4. `Spawn /review subagent`
+  5. `Address review feedback`
+  6. `Update docs/project-tracker.md status to _done_`
+  7. `Land PR and clean local git state`
+  8. `Send PushNotification summarizing completed work`
 
 ### 5. Create and push the feature branch
 
@@ -267,26 +266,7 @@ The explicit `--head <feature-branch> --base main` is required: without it, gh r
 
 Capture the PR URL.
 
-### 2. Run end-to-end verification
-
-The work tree's final story produced (or updated) the per-feature verify script and runbook, plus an insertion into `scripts/RUNBOOK_end_to_end_verification.md`. From that story's body, identify the verify-script path (typically `scripts/verify_<feature>.py`) and run it from the feature-branch checkout:
-
-```bash
-uv run python scripts/verify_<feature>.py
-```
-
-Confirm the output matches the pass/fail shape documented in `scripts/RUNBOOK_<feature>.md`. Read the runbook's failure-mode triage table before reacting to any red signal — most failures have known causes documented there.
-
-**On failure**, classify and act in-session where possible:
-
-- **Straightforward fixes** — apply directly on the feature branch, commit with a descriptive message, push to the PR, and re-run the verify script. Repeat until green. Examples: missing import, stale fixture, config-key typo, runbook command that drifted from the actual script flag, output-shape mismatch from a recent rename, an env-var the script expects but the runbook didn't document. The wave-end gate covered unit-test regressions; this step covers what only e2e exercises.
-- **Fixes requiring operator input** — surface to the operator with the verify-script output and your recommended next step, then pause. Examples: an algorithmic bug uncovered by e2e but masked by unit tests, schema drift between this work tree's expected inputs and a sibling's actually-produced shape, vendor API behavior the spec didn't anticipate, a missing API key, a failure that points to a design-doc ambiguity.
-
-The bar for "straightforward": the fix is contained to one or two files in this work tree, has no behavioral implication beyond the work tree's existing scope, and you can describe both the bug and the fix in two sentences. Anything that rewrites an algorithm, expands scope, or touches a sibling work tree's contract is operator-input territory.
-
-Do not advance to the /review step on a failing or unrun verification — the verification establishes that what the PR ships actually runs end-to-end, and a /review on broken code wastes the reviewer's cycles on issues a re-run would have caught.
-
-### 3. Pre-review triage of subagent-reported deferrals
+### 2. Pre-review triage of subagent-reported deferrals
 
 Throughout the run, implementing subagents will report items they deferred or scope-shrunk — narrowed implementations, unresolved follow-ups, design questions they didn't have authority to answer, work they explicitly handed back to the orchestrator. Track these as you go (a scratch list in your head or in TaskCreate notes is fine; the per-story task notifications also preserve them). Before /review, walk the consolidated list and reason about each one with a bias toward addressing now.
 
@@ -310,7 +290,7 @@ Anything else, fix now.
 
 When the triage list is empty, record that explicitly ("Pre-review triage: no addressable deferrals") and proceed to the drift-check.
 
-### 4. Full-suite drift-check (no `--testmon`)
+### 3. Full-suite drift-check (no `--testmon`)
 
 Run the full test suite with `--testmon` dropped, exactly once, on the feature branch before /review runs:
 
@@ -332,7 +312,7 @@ On failure, the cause is almost always a testmon false-skip from one of the wave
 
 When clean, proceed to /review.
 
-### 5. Spawn /review subagent
+### 4. Spawn /review subagent
 
 ```
 Agent({
@@ -346,7 +326,7 @@ Agent({
 
 Wait for completion. The result is a list of suggestions.
 
-### 6. Address review feedback
+### 5. Address review feedback
 
 Assess each suggestion with **bias toward acceptance** — the reviewer is calibrated and the feedback typically warrants action. Reject only with explicit reason (e.g., "this would re-introduce the X anti-pattern", "this contradicts the Y design constraint"). For accepted suggestions:
 
@@ -368,11 +348,11 @@ After the subagent reports back, verify and merge into the feature branch as in 
 
 After all accepted feedback is addressed, push the new commits to the PR.
 
-### 7. Update docs/project-tracker.md
+### 6. Update docs/project-tracker.md
 
 Edit the feature's bullet under "Ready for implementation": change `_in progress_` (or whatever transient status it had) to `_done_`. Commit with a message like `chore(project-tracker): mark <feature> done`. This commit goes on the feature branch and rides the same PR.
 
-### 8. Land PR and clean local git state
+### 7. Land PR and clean local git state
 
 - Wait for CI green on the PR (if CI exists).
 - **Before `gh pr merge`, sweep stale `main`-bearing worktrees.** Run `git worktree list` and look for orphan worktrees from prior sessions checked out to `main` (typical naming: `.claude/worktrees/<random-name>` with no `agent-` prefix). `gh pr merge` switches the local checkout to `main` to apply the merge and fails with `fatal: 'main' is already used by worktree at <path>` if a stale `main` worktree exists. Confirm the orphan's `git -C <path> status --short` is clean (no uncommitted work), then `git worktree remove -f -f <path>`. Diagnose only if the worktree has uncommitted work — rare for orphans, but possible if it represents the operator's in-progress side work.
@@ -423,7 +403,7 @@ This discards uncommitted edits and untracked files inside the worktree without 
 
 Verify clean state: `git status` shows nothing pending.
 
-### 9. PushNotification
+### 8. PushNotification
 
 Send a notification summarizing the run:
 
@@ -474,7 +454,7 @@ Surface blockers immediately, do not work around them:
 - **Dispatching multiple stories that share a target file in the same wave.** When two or more stories all create or edit the same file (e.g., three sub-stories each adding a test case to one shared file), parallel worktrees produce independent versions of the file and the cherry-picks conflict at integration time. Either sequence them across waves, merge them into one story, or — if the parent Issue's notes say "story A creates the file; siblings ADD to it" — dispatch story A first, wait for merge + push, then dispatch the siblings.
 - **Running `pytest` without `-n auto`** anywhere — your verification, the subagent's verification, the wave gate. CLAUDE.md is strict; serial pytest runs hide xdist-only failures.
 - **Running `pytest` without `--testmon`** anywhere in this skill except the single explicit drift-check step (completion-sequence step 4, before /review). CLAUDE.md mandates `--testmon` on every pytest invocation; this skill's per-story checks, dispatch prompts, mid-wave checks, AND wave-end gates all use `--testmon -n auto`. The pre-/review drift-check is the one place this skill drops `--testmon` — and only there. When you write a verbatim pytest command into a dispatch prompt, default to `uv run pytest --testmon -n auto`.
-- **Trusting subagent self-reports.** They sometimes report "done" with uncommitted changes (`feedback_subagent_must_commit`). Always verify with `git log <feature-branch>..<subagent-branch>` and `git status` in the worktree. Per-story tests cover per-story acceptance criteria, but they often don't exercise the production-call path end-to-end. The /review can surface integration gaps the wave gates miss — e.g., a Phase 1 transaction commit and a repository snapshot-read each working in isolation, but the production caller unable to string them together because a sentinel field (`phase1_completed_at`) is never set on the production write path; the e2e verify script masks the gap by manually pre-stamping it. **A verify script that fakes a missing wire is a yellow flag the orchestrator should catch on integration** — when reviewing the e2e verify story's diff, scan for synthetic timestamp/state stamps that production code should but doesn't write. If found, mark them as a pre-merge follow-up.
+- **Trusting subagent self-reports.** They sometimes report "done" with uncommitted changes (`feedback_subagent_must_commit`). Always verify with `git log <feature-branch>..<subagent-branch>` and `git status` in the worktree. Per-story tests cover per-story acceptance criteria, but they often don't exercise the production-call path end-to-end. The /review can surface integration gaps the wave gates miss — e.g., a Phase 1 transaction commit and a repository snapshot-read each working in isolation, but the production caller unable to string them together because a sentinel field (`phase1_completed_at`) is never set on the production write path. When a story's tests rely on synthetic timestamps or state stamps that production code should but doesn't write, treat them as a yellow flag — scan for such constructs during verification and mark them as a pre-merge follow-up.
 - **Skipping the wave-end global lint+test gate.** Per-story verification doesn't catch integration issues. The global gate is cheap; skipping it costs more later.
 - **Restating the parent Issue's orchestrator notes here.** This skill provides defaults; the parent Issue provides feature-specific overrides. Read both; apply them additively.
 - **Marking the post-completion tasks `completed` early.** Mark each only after the action observably succeeded (PR open and visible, /review subagent returned, etc.).
