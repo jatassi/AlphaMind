@@ -69,11 +69,11 @@ from alphamind.portfolio_state.events.activity_log import (
     GreeksRefreshFailedDetail,
 )
 from alphamind.portfolio_state.records.positions import (
-    OptionContractType,
     OptionGreeks,
     OptionsPositionDetails,
     PositionRecord,
     StrategyPositionDetails,
+    occ_symbol_for_options,
 )
 
 log = logging.getLogger(__name__)
@@ -143,20 +143,6 @@ class GreeksWriter(Protocol):
 # ---------------------------------------------------------------------------
 # Pure helpers
 # ---------------------------------------------------------------------------
-
-
-def occ_symbol_for_options(details: OptionsPositionDetails) -> str:
-    """Build the OCC contract symbol the collector writes to ``options_contract_snapshots``.
-
-    Format: ``O:{UNDERLYING}{YYMMDD}{C|P}{strike_milli}`` where ``strike_milli``
-    is the strike multiplied by 1000, zero-padded to 8 digits. This is the
-    Polygon convention used by ``data_sources/polygon/options.py`` and the
-    industry-standard OCC encoding.
-    """
-    expiry = details.expiration_date.strftime("%y%m%d")
-    cp = "C" if details.contract_type is OptionContractType.CALL else "P"
-    strike_milli = round(details.strike_price * 1000)
-    return f"O:{details.underlying_ticker}{expiry}{cp}{strike_milli:08d}"
 
 
 def _spot_for_position(position: PositionRecord, cache: UnderlyingPriceCache) -> float | None:

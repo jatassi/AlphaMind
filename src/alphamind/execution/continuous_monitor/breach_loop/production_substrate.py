@@ -102,6 +102,7 @@ from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
 from alphamind.state.repository import (
+    SqlOptionPriceProvider,
     build_sql_portfolio_state_repository,
 )
 from alphamind.state.tables.invocations import InvocationRow
@@ -422,9 +423,11 @@ async def _assemble_for_breach_loop_tick(
         config=state_persistence_config,
     )
     price_provider = _build_price_provider(underlying_cache, as_of=as_of)
+    option_price_provider = SqlOptionPriceProvider(session_factory=session_factory)
     return assemble_snapshot(
         repository=repository,
         price_provider=price_provider,
+        option_price_provider=option_price_provider,
         sector_resolver=position_sector_resolver,
         config=portfolio_state_config,
         now=as_of,

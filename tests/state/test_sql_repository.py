@@ -1716,6 +1716,7 @@ async def test_assemble_snapshot_against_sql_repo_produces_populated_snapshot(
         PriceQuote,
         PriceSource,
         StubCurrentPriceProvider,
+        StubOptionPriceProvider,
     )
 
     _, factory = db
@@ -1778,6 +1779,7 @@ async def test_assemble_snapshot_against_sql_repo_produces_populated_snapshot(
         is_stale=False,
     )
     price_provider = StubCurrentPriceProvider({"AAPL": quote}, now=_NOW)
+    option_price_provider = StubOptionPriceProvider({}, now=_NOW)
 
     def _sector_resolver(_pos: PositionRecord) -> str | None:
         return "Tech"
@@ -1785,6 +1787,7 @@ async def test_assemble_snapshot_against_sql_repo_produces_populated_snapshot(
     assembled = assemble_snapshot(
         repository=repo,
         price_provider=price_provider,
+        option_price_provider=option_price_provider,
         sector_resolver=_sector_resolver,
         config=config,
         now=_NOW,

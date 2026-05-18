@@ -22,6 +22,9 @@ from alphamind.state.repository.activity_log_queries import (
     read_position_modification_trail,
     read_recent_pm_decision_log,
 )
+from alphamind.state.repository.sql_option_price_provider import (
+    SqlOptionPriceProvider,
+)
 from alphamind.state.repository.sql_repository import (
     SqlPortfolioStateRepository,
 )
@@ -53,6 +56,7 @@ def build_sql_portfolio_state_repository(
 
 
 __all__ = [
+    "SqlOptionPriceProvider",
     "SqlPortfolioStateRepository",
     "build_sql_portfolio_state_repository",
     "read_intra_invocation_changelog",

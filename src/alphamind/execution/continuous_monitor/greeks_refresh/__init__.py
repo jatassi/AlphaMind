@@ -41,7 +41,6 @@ from alphamind.execution.continuous_monitor.greeks_refresh.state import (
 )
 from alphamind.execution.continuous_monitor.greeks_refresh.task import (
     GreeksWriter,
-    occ_symbol_for_options,
     run_greeks_refresh,
 )
 from alphamind.execution.continuous_monitor.greeks_refresh.wiring import (
@@ -56,7 +55,6 @@ __all__ = [
     "SqlGreeksWriter",
     "fetch_iv_from_options_chains",
     "fetch_iv_quotes_batch",
-    "occ_symbol_for_options",
     "recompute_greeks",
     "recompute_strategy_greeks",
     "register_greeks_refresh_task",

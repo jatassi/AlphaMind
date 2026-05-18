@@ -28,7 +28,11 @@ from alphamind.portfolio_state.consumers.portfolio_manager import project_portfo
 from alphamind.portfolio_state.consumers.strategist import project_strategist_view
 from alphamind.portfolio_state.consumers.synthesizer import project_synthesizer_view
 from alphamind.portfolio_state.freshness import AssembledSnapshot
-from alphamind.portfolio_state.pricing import PriceQuote, StubCurrentPriceProvider
+from alphamind.portfolio_state.pricing import (
+    PriceQuote,
+    StubCurrentPriceProvider,
+    StubOptionPriceProvider,
+)
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.repository import (
     RepositoryConsistencyError,
@@ -67,9 +71,11 @@ def _assemble(fixture_inputs: _FixtureInputs) -> AssembledSnapshot:
     repo_fixture, quotes, sector_resolver, config, now = fixture_inputs
     repo = StubPortfolioStateRepository(repo_fixture)
     price_provider = StubCurrentPriceProvider(quotes, now)
+    option_price_provider = StubOptionPriceProvider({}, now)
     return assemble_snapshot(
         repository=repo,
         price_provider=price_provider,
+        option_price_provider=option_price_provider,
         sector_resolver=sector_resolver,
         config=config,
         now=now,
@@ -423,6 +429,7 @@ class TestSectionDFreshness:
         result = assemble_snapshot(
             repository=repo,
             price_provider=price_provider,
+            option_price_provider=StubOptionPriceProvider({}, now),
             sector_resolver=_make_sector_resolver({}),
             config=config,
             now=now,
@@ -449,6 +456,7 @@ class TestSectionDFreshness:
         result = assemble_snapshot(
             repository=repo,
             price_provider=price_provider,
+            option_price_provider=StubOptionPriceProvider({}, now),
             sector_resolver=_make_sector_resolver({}),
             config=config,
             now=now,
@@ -474,6 +482,7 @@ class TestSectionDFreshness:
         result = assemble_snapshot(
             repository=repo,
             price_provider=price_provider,
+            option_price_provider=StubOptionPriceProvider({}, now),
             sector_resolver=_make_sector_resolver({}),
             config=config,
             now=now,
@@ -738,6 +747,9 @@ class TestSectionGRepositoryErrors:
         return assemble_snapshot(
             repository=repo,
             price_provider=price_provider,
+            option_price_provider=StubOptionPriceProvider(
+                {}, datetime(2025, 6, 1, 9, 30, 0, tzinfo=UTC)
+            ),
             sector_resolver=_make_sector_resolver({}),
             config=config,
             now=datetime(2025, 6, 1, 9, 30, 0, tzinfo=UTC),
