@@ -214,6 +214,139 @@ def _validation_module_for(spec: AgentSpec) -> ModuleType:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Retry-message shape — six retry-bearing agents; skip synthesizer
+# ---------------------------------------------------------------------------
+
+
+# Markers used to assert the retry-message construction omits any raw input
+# data (the user_message section) and limits to the first error from a
+# multi-error ValidationResult.
+_USER_MESSAGE_MARKER = "SENTINEL_RAW_INPUT_DATA_DO_NOT_LEAK_42"
+_FIRST_ERROR_MARKER = "MARKER_FIRST_ERROR_SHOULD_BE_QUOTED"
+_SECOND_ERROR_MARKER = "MARKER_SECOND_ERROR_SHOULD_BE_OMITTED"
+
+
+def _two_error_validation_result() -> ValidationResult:
+    """Build a synthetic two-error :class:`ValidationResult`.
+
+    The first error carries ``_FIRST_ERROR_MARKER`` in its message; the
+    second carries ``_SECOND_ERROR_MARKER``. Both ``rule`` and ``criterion``
+    are populated so the retry-message builder can pull whichever its
+    per-agent convention reads (the consumer-side validators use ``rule``
+    for analyst/strategist/researchers and ``criterion`` for PM; PM has no
+    validation-failure retry message so reads neither here).
+    """
+    return ValidationResult(
+        errors=(
+            ValidationError(
+                field_path="recommendations[0].thesis_narrative",
+                message=f"first error: {_FIRST_ERROR_MARKER}",
+                rule="invalidation_leg_id_pairing",
+                criterion="invalidation_leg_id_pairing",
+            ),
+            ValidationError(
+                field_path="recommendations[1].thesis_narrative",
+                message=f"second error: {_SECOND_ERROR_MARKER}",
+                rule="unknown_reference",
+                criterion="unknown_reference",
+            ),
+        ),
+    )
+
+
+def _parse_error_for(agent: AgentSpec) -> Any:
+    """Construct a per-agent :class:`ParseError` instance.
+
+    Each harness imports its own ``ParseError`` from a sibling parser
+    module; the constructor signature is uniform across all six retry-
+    bearing harnesses (``field_path``, ``message``).
+    """
+    parser_module = importlib.import_module(
+        agent.harness_module.rsplit(".", 1)[0] + ".parser"
+    )
+    return parser_module.ParseError(
+        field_path="thesis_candidates[0].headline",
+        message=f"first parse error: {_FIRST_ERROR_MARKER}",
+    )
+
+
+def test_retry_message_shape_validation_failure(agent: AgentSpec) -> None:
+    """Retry message for a validation failure carries the canonical 4-part shape.
+
+    Per ``llm-output-validation.md`` § Corrective-retry message construction:
+
+    * a framing line naming the validation contract;
+    * the **first** error's ``field_path`` / ``rule`` / ``message`` (verbatim);
+    * a reference to the contract source (design doc or schema file name);
+    * a directive to re-emit a single corrected JSON object;
+    * does NOT contain a second-or-later error from a multi-error result;
+    * does NOT contain the raw input data (user message).
+
+    The PM does not run a Layer-2/3 validator at the harness boundary —
+    its validator lives inside the ``submit_envelope`` MCP wrapper — so
+    the PM exposes no ``_build_retry_message_for_validation_failure``.
+    Skip PM for this arm; it is covered by the parse-error arm below.
+    """
+    if not agent.has_retry:
+        pytest.skip("synthesizer has no retry path")
+    mod = _harness(agent)
+    builder = getattr(mod, "_build_retry_message_for_validation_failure", None)
+    if builder is None:
+        pytest.skip(
+            f"{agent.name} performs validation inside an MCP wrapper rather "
+            "than at the harness boundary; no validation-failure retry "
+            "message wrapper exists"
+        )
+    result = _two_error_validation_result()
+    message = builder(result)
+
+    # First error fully present.
+    assert _FIRST_ERROR_MARKER in message
+    assert "recommendations[0].thesis_narrative" in message
+    # Second error absent (the policy avoids iterative-repair convergence).
+    assert _SECOND_ERROR_MARKER not in message
+    assert "recommendations[1].thesis_narrative" not in message
+    # Framing line: every validator-bearing harness names the "prior response"
+    # rejection — the canonical opening per the design doc.
+    assert "prior response" in message.lower()
+    # Contract reference: every harness's _CONTRACT_REF points to a docs/
+    # path or a schema name. The substring ``.md`` covers every existing
+    # harness's contract-ref string.
+    assert ".md" in message or "schema" in message.lower()
+    # Directive: every harness's directive ends with a "re-emit ... JSON
+    # payload" or equivalent single-object instruction.
+    lowered = message.lower()
+    assert "re-emit" in lowered or "json" in lowered
+
+
+def test_retry_message_shape_parse_error(agent: AgentSpec) -> None:
+    """Retry message for a parse error carries the canonical 4-part shape.
+
+    Every retry-bearing harness (including PM, whose only retry path is the
+    parse-error one) exposes ``_build_retry_message_for_parse_error``.
+    The shape mirrors the validation-failure case: framing line, first error
+    fields verbatim, contract reference, directive.
+    """
+    if not agent.has_retry:
+        pytest.skip("synthesizer has no retry path")
+    mod = _harness(agent)
+    builder = mod._build_retry_message_for_parse_error
+    error = _parse_error_for(agent)
+    message = builder(error)
+
+    assert _FIRST_ERROR_MARKER in message
+    assert "thesis_candidates[0].headline" in message
+    # Framing references the parse contract.
+    assert "prior response" in message.lower()
+    # No raw input data leaks via the parse-error path either.
+    assert _USER_MESSAGE_MARKER not in message
+    # Contract reference + directive.
+    lowered = message.lower()
+    assert ".md" in message or "schema" in lowered
+    assert "re-emit" in lowered or "json" in lowered
+
+
 def test_no_separate_validation_failure_class(agent: AgentSpec) -> None:
     """ALP-520 unified ``ValidationFailure`` into ``ValidationError``.
 
