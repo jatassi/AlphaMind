@@ -112,7 +112,7 @@ def test_validation_error_is_pydantic_model() -> None:
 
 
 def test_validation_result_is_pydantic_model() -> None:
-    result = ValidationResult(is_valid=True, errors=())
+    result = ValidationResult(errors=())
     assert result.is_valid is True
     assert result.errors == ()
 

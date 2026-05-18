@@ -13,41 +13,15 @@ first error in the corrective-retry message.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
 
 from alphamind.analysis.qualitative_research.models import QualitativeBrief
+from alphamind.commands.validation_results import ValidationError, ValidationResult
 
 __all__ = [
     "ValidationError",
     "ValidationResult",
     "validate_qualitative_brief",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Public types
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class ValidationError:
-    """A single structural violation found in a :class:`QualitativeBrief`.
-
-    Mirrors the error-record shape produced by the JSON Schema validator so
-    the harness can build corrective-retry messages from a uniform type.
-    """
-
-    field_path: str
-    rule: str
-    message: str
-
-
-@dataclass(frozen=True, slots=True)
-class ValidationResult:
-    """Aggregate outcome of running :func:`validate_qualitative_brief`."""
-
-    is_valid: bool
-    errors: tuple[ValidationError, ...]
 
 
 # ---------------------------------------------------------------------------
@@ -230,4 +204,4 @@ def validate_qualitative_brief(
         errors.extend(check(brief))
     if universe is not None:
         errors.extend(_check_ticker_in_universe(brief, universe))
-    return ValidationResult(is_valid=not errors, errors=tuple(errors))
+    return ValidationResult(errors=tuple(errors))

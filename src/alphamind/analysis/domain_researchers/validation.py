@@ -13,43 +13,15 @@ first error in the corrective-retry message per the fail-fast, fail-once policy.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
 
 from alphamind.analysis.domain_researchers.models import SECTOR_PREFIX, SectorBrief
+from alphamind.commands.validation_results import ValidationError, ValidationResult
 
 __all__ = [
     "ValidationError",
     "ValidationResult",
     "validate_brief",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Public types
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class ValidationError:
-    """A single structural violation found in a :class:`SectorBrief`.
-
-    Mirrors the error-record shape produced by the JSON Schema validator so
-    the harness (story 07) can build corrective-retry messages from a uniform
-    type regardless of whether the underlying validator is formal-schema or
-    hand-written.
-    """
-
-    field_path: str
-    rule: str
-    message: str
-
-
-@dataclass(frozen=True, slots=True)
-class ValidationResult:
-    """Aggregate outcome of running :func:`validate_brief`."""
-
-    is_valid: bool
-    errors: tuple[ValidationError, ...]
 
 
 # ---------------------------------------------------------------------------
@@ -210,4 +182,4 @@ def validate_brief(brief: SectorBrief) -> ValidationResult:
     errors: list[ValidationError] = []
     for check in _CHECKS:
         errors.extend(check(brief))
-    return ValidationResult(is_valid=not errors, errors=tuple(errors))
+    return ValidationResult(errors=tuple(errors))
