@@ -72,3 +72,15 @@ def test_compute_position_live_drag_sums_three_identical_estimates() -> None:
     )
     # Per-fill drag = 2 + 1 + 0.50 = 3.50; 3 fills → 10.50.
     assert compute_position_live_drag(fills) == money("10.50")
+
+
+def test_compute_position_live_drag_skips_none_estimates() -> None:
+    from alphamind.portfolio_state.computations import compute_position_live_drag
+
+    fills = (
+        _fill_record(fill_id="fill-0", live_execution_estimate=_ESTIMATE_2_1_050),
+        _fill_record(fill_id="fill-1", live_execution_estimate=None),
+        _fill_record(fill_id="fill-2", live_execution_estimate=_ESTIMATE_2_1_050),
+    )
+    # None fill contributes 0; two non-None fills × 3.50 = 7.00.
+    assert compute_position_live_drag(fills) == money("7.00")
