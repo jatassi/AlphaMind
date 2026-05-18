@@ -113,7 +113,7 @@ _T1 = datetime(2025, 1, 1, 10, 1, 0, tzinfo=UTC)
 _T2 = datetime(2025, 1, 1, 10, 2, 0, tzinfo=UTC)
 _INV_ID = "inv-analyst-001"
 _ANALYST_AGENT = "analyst"
-_PER_POSITION_RULE_ID = "per_position_size"
+_PER_POSITION_RULE_ID = "position_max_size_pct"
 _TOTAL_PORTFOLIO_VALUE = 100000.0
 
 
@@ -406,12 +406,12 @@ def _make_risk_budget() -> RiskBudgetConsumption:
     return RiskBudgetConsumption(entries=())
 
 
-def _make_active_risk_params_with_size_rule(rule_value: float = 5000.0) -> ActiveRiskParameterSet:
+def _make_active_risk_params_with_size_rule(rule_value: float = 5.0) -> ActiveRiskParameterSet:
     entry = ActiveRiskParameterEntry(
         rule_id=_PER_POSITION_RULE_ID,
-        rule_label="Per-position max size USD",
+        rule_label="Position max size",
         value=rule_value,
-        unit="USD",
+        unit="pct",
         regime_multiplier_applied=1.0,
         base_value=rule_value,
     )
@@ -688,8 +688,8 @@ class TestProjectAnalystViewHappyPath:
             per_position_size_rule_id=_PER_POSITION_RULE_ID,
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
         )
-        # 2 open positions
-        assert len(view.held_positions) == 2
+        # 2 open + 1 pending — analyst sees both, matching the strategist's projection (ALP-549).
+        assert len(view.held_positions) == 3
 
     def test_held_position_fields_are_thin_slice(self) -> None:
         """AnalystHeldPosition has only ticker, direction, size, sector, instrument_type."""
@@ -810,6 +810,43 @@ class TestProjectAnalystViewEmpty:
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
         )
         assert view.available_capital.available_for_new_positions_usd == 44000.0
+
+
+class TestAnalystViewMatchesStrategist:
+    """Regressions for ALP-549 — analyst saw $5 per-position-max + Held=None
+    while strategist/PM saw $4,748 + 8 positions for the same snapshot.
+    """
+
+    def test_per_position_max_treats_rule_value_as_pct_of_portfolio(self) -> None:
+        """``position_max_size_pct.value`` is a percent (unit="pct"). The
+        analyst's USD cap is ``pct/100 * portfolio_value``, not the raw value.
+        """
+        snapshot = _make_snapshot(
+            active_risk_parameters=_make_active_risk_params_with_size_rule(rule_value=5.0),
+        )
+        view = project_analyst_view(
+            snapshot,
+            sector_resolver=_simple_sector_resolver(),
+            per_position_size_rule_id=_PER_POSITION_RULE_ID,
+            total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+        )
+        assert view.available_capital.per_position_max_size_pct == pytest.approx(5.0)
+        assert view.available_capital.per_position_max_size_usd == pytest.approx(5000.0)
+
+    def test_held_positions_includes_pending(self) -> None:
+        """Strategist's view bundles open + pending; the analyst's must too —
+        otherwise a snapshot whose positions are still PENDING reads as
+        ``Held positions: None`` while the strategist sees the same positions.
+        """
+        snapshot = _make_snapshot()
+        view = project_analyst_view(
+            snapshot,
+            sector_resolver=_simple_sector_resolver(),
+            per_position_size_rule_id=_PER_POSITION_RULE_ID,
+            total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+        )
+        position_ids = {p.position_id for p in view.held_positions}
+        assert position_ids == {"POS-001", "POS-002", "POS-PEND"}
 
 
 class TestProjectAnalystViewDeterminism:

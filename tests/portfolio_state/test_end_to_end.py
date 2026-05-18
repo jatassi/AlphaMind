@@ -187,10 +187,15 @@ class TestSectionBProjectionConsistency:
         pm_ids = {pv.position.position_id for pv in self._pm_view.positions}
         assert pm_ids == strat_ids
 
-    def test_analyst_held_positions_are_open_only(self) -> None:
-        open_ids = {p.position_id for p in self._snapshot.open_positions}
+    def test_analyst_held_positions_match_open_and_pending(self) -> None:
+        # ALP-549: analyst held_positions must include pending too, matching the
+        # strategist's set; otherwise Hard Blocks fire while the analyst sees
+        # Held=None for snapshots whose positions are still PENDING.
+        snap_ids = {p.position_id for p in self._snapshot.open_positions} | {
+            p.position_id for p in self._snapshot.pending_positions
+        }
         analyst_ids = {hp.position_id for hp in self._analyst_view.held_positions}
-        assert analyst_ids == open_ids
+        assert analyst_ids == snap_ids
 
     def test_synthesizer_sector_exposure_keys_match_strategist_sectors(self) -> None:
         strat_sectors = {e.sector for e in self._strategist_view.sector_exposure}

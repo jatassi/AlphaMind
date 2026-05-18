@@ -82,8 +82,11 @@ def _project_held_positions(
     snapshot: PortfolioStateSnapshot,
     sector_resolver: SectorResolver,
 ) -> tuple[AnalystHeldPosition, ...]:
+    # Combine open + pending so the analyst sees the same set as the strategist
+    # (``_project_position_views``) and matches the rule-budget consumption that
+    # drives Hard Blocks (ALP-549).
     result = []
-    for pos in snapshot.open_positions:
+    for pos in (*snapshot.open_positions, *snapshot.pending_positions):
         ticker = _ticker_from_position(pos)
         sector = sector_resolver(pos.record) or "UNCLASSIFIED"
         result.append(
@@ -116,9 +119,12 @@ def _project_available_capital(
         ),
         None,
     )
-    per_position_usd = rule_entry.value if rule_entry is not None else 0.0
-    per_position_pct = (
-        (per_position_usd / total_portfolio_value_usd * 100.0)
+    # The rule (``position_max_size_pct``) carries unit="pct"; convert to USD
+    # via the portfolio value so the analyst's cap matches the strategist/PM
+    # renderer (ALP-549).
+    per_position_pct = rule_entry.value if rule_entry is not None else 0.0
+    per_position_usd = (
+        (per_position_pct / 100.0 * total_portfolio_value_usd)
         if total_portfolio_value_usd > 0
         else 0.0
     )
