@@ -73,7 +73,7 @@ def _is_transient_status(code: int) -> bool:
 # - ``requests.exceptions.ConnectionError`` and ``requests.exceptions.Timeout``
 #   cover the requests-backed SDKs (incl. ReadTimeout / ConnectTimeout
 #   subclasses).
-_TRANSIENT_NETWORK_EXCEPTIONS: tuple[type[BaseException], ...] = (
+_TRANSIENT_TRANSPORT_EXCEPTIONS: tuple[type[BaseException], ...] = (
     httpx.TimeoutException,
     httpx.NetworkError,
     urllib.error.URLError,
@@ -91,7 +91,7 @@ def _is_retryable(exc: BaseException) -> bool:
         return _is_transient_status(exc.response.status_code)
     if isinstance(exc, urllib.error.HTTPError):
         return _is_transient_status(exc.code)
-    if isinstance(exc, _TRANSIENT_NETWORK_EXCEPTIONS):
+    if isinstance(exc, _TRANSIENT_TRANSPORT_EXCEPTIONS):
         return True
     if isinstance(exc, ValueError):
         # fredapi wraps urllib.HTTPError as ValueError; original is on __context__.

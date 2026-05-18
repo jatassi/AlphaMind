@@ -1078,12 +1078,3 @@ class Brief(Base):
     created_at: Mapped[str] = mapped_column(Text)
 
     __table_args__ = (_check_in("brief_kind", _BRIEF_KINDS, "ck_briefs_brief_kind"),)
-
-
-# Register the state-persistence tables on ``Base.metadata`` whenever this
-# module loads, so consumers calling ``Base.metadata.create_all`` (tests,
-# ad-hoc scripts) resolve the ``Brief`` → ``invocations`` foreign key
-# without having to remember the side-effect import themselves. The state
-# table modules import ``Base`` from here, so the import has to live at the
-# bottom of the file — after ``Base`` is defined.
-from alphamind.state import tables as _state_tables  # noqa: E402, F401
