@@ -83,7 +83,7 @@ def _project_held_positions(
     sector_resolver: SectorResolver,
 ) -> tuple[AnalystHeldPosition, ...]:
     result = []
-    for pos in snapshot.open_positions:
+    for pos in (*snapshot.open_positions, *snapshot.pending_positions):
         ticker = _ticker_from_position(pos)
         sector = sector_resolver(pos.record) or "UNCLASSIFIED"
         result.append(
@@ -116,9 +116,9 @@ def _project_available_capital(
         ),
         None,
     )
-    per_position_usd = rule_entry.value if rule_entry is not None else 0.0
-    per_position_pct = (
-        (per_position_usd / total_portfolio_value_usd * 100.0)
+    per_position_pct = rule_entry.value if rule_entry is not None else 0.0
+    per_position_usd = (
+        (per_position_pct / 100.0 * total_portfolio_value_usd)
         if total_portfolio_value_usd > 0
         else 0.0
     )

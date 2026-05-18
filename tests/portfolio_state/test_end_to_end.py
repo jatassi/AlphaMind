@@ -162,7 +162,7 @@ class TestSectionBProjectionConsistency:
         self._analyst_view = project_analyst_view(
             self._snapshot,
             sector_resolver=self._sector_resolver,
-            per_position_size_rule_id="max_position_size_usd",
+            per_position_size_rule_id="position_max_size_pct",
             total_portfolio_value_usd=total_value,
         )
         self._strategist_view = project_strategist_view(self._snapshot)
@@ -187,10 +187,12 @@ class TestSectionBProjectionConsistency:
         pm_ids = {pv.position.position_id for pv in self._pm_view.positions}
         assert pm_ids == strat_ids
 
-    def test_analyst_held_positions_are_open_only(self) -> None:
-        open_ids = {p.position_id for p in self._snapshot.open_positions}
+    def test_analyst_held_positions_match_open_and_pending(self) -> None:
+        snap_ids = {p.position_id for p in self._snapshot.open_positions} | {
+            p.position_id for p in self._snapshot.pending_positions
+        }
         analyst_ids = {hp.position_id for hp in self._analyst_view.held_positions}
-        assert analyst_ids == open_ids
+        assert analyst_ids == snap_ids
 
     def test_synthesizer_sector_exposure_keys_match_strategist_sectors(self) -> None:
         strat_sectors = {e.sector for e in self._strategist_view.sector_exposure}
@@ -538,13 +540,13 @@ class TestSectionEDeterminism:
         v1 = project_analyst_view(
             r1.snapshot,
             sector_resolver=sector_resolver,
-            per_position_size_rule_id="max_position_size_usd",
+            per_position_size_rule_id="position_max_size_pct",
             total_portfolio_value_usd=total_value,
         )
         v2 = project_analyst_view(
             r2.snapshot,
             sector_resolver=sector_resolver,
-            per_position_size_rule_id="max_position_size_usd",
+            per_position_size_rule_id="position_max_size_pct",
             total_portfolio_value_usd=total_value,
         )
         assert v1 == v2
@@ -572,7 +574,7 @@ class TestSectionFEdgeCases:
         view = project_analyst_view(
             self._snapshot,
             sector_resolver=self._sector_resolver,
-            per_position_size_rule_id="max_position_size_usd",
+            per_position_size_rule_id="position_max_size_pct",
             total_portfolio_value_usd=100_000.0,
         )
         assert view is not None
