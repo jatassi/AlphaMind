@@ -726,6 +726,7 @@ def load_q7_inputs(
         correlation_breakdown_sigma=config.narrative_lag.correlation_breakdown_sigma,
         correlation_min_overlap_fraction=config.narrative_lag.correlation_min_overlap_fraction,
         correlation_noise_floor=config.narrative_lag.correlation_noise_floor,
+        correlation_breakdown_fdr_q=config.narrative_lag.correlation_breakdown_fdr_q,
         dispersion_window_days=pw.correlation_short_days,
         dispersion_sigma=config.narrative_lag.narrative_lag_correlation_shift_sigma,
         media_silence_hours=config.narrative_lag.narrative_lag_media_silence_hours,

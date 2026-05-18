@@ -118,14 +118,17 @@ class NarrativeLagDomainConfig:
 
     ALP-541 added the two data-alignment guards on the correlation breakdown
     sigma-test: ``correlation_min_overlap_fraction`` and
-    ``correlation_noise_floor``. Both are validated at YAML parse time on
-    the Pydantic side and reach the compute path via this dataclass.
+    ``correlation_noise_floor``. ALP-542 added the Benjamini-Hochberg FDR
+    target ``correlation_breakdown_fdr_q``. All three are validated at YAML
+    parse time on the Pydantic side and reach the compute path via this
+    dataclass.
     """
 
     narrative_lag_correlation_shift_sigma: float
     correlation_breakdown_sigma: float
     correlation_min_overlap_fraction: float
     correlation_noise_floor: float
+    correlation_breakdown_fdr_q: float
     narrative_lag_media_silence_hours: int
 
 

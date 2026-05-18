@@ -44,6 +44,10 @@ _FISHER_Z_DF_CORRECTION: int = 3
 # evaluates to ~4.95, which keeps real signal well-separated from the cap.
 _ATANH_CLIP: float = 0.9999
 
+# Standard-normal CDF mapping uses ``erfc(|z| / sqrt(2))``; precompute so the
+# bare ``sqrt(2.0)`` literal doesn't trip the magic-number audit.
+_SQRT_TWO: float = math.sqrt(2.0)
+
 
 @dataclass(frozen=True)
 class CorrelationRegimeChangeParameters:
@@ -70,6 +74,18 @@ class CorrelationRegimeChangeParameters:
       magnitude must clear this absolute value before a sigma-test is run.
       When ``|long_corr|`` is near zero the short-window deviation is
       dominated by noise rather than a genuine shift in joint dynamics.
+
+    ALP-542 added the Benjamini-Hochberg FDR correction at the publish
+    layer: a pair-wise sigma-test runs N*(N-1)/2 hypotheses per invocation,
+    so the bare sigma threshold (which is single-test) produces a phantom
+    flag count that grows with the universe size.
+
+    - ``correlation_breakdown_fdr_q`` — Benjamini-Hochberg false-discovery
+      rate target. The sigma for each guard-surviving pair is mapped to a
+      two-tailed p-value and BH is applied across the candidate pool; only
+      pairs whose BH-adjusted q-value clears the target are published.
+      The raw sigma floor still applies as an emit gate so operator-set
+      magnitude requirements survive.
     """
 
     short_window_days: int
@@ -77,6 +93,7 @@ class CorrelationRegimeChangeParameters:
     correlation_breakdown_sigma: float
     correlation_min_overlap_fraction: float
     correlation_noise_floor: float
+    correlation_breakdown_fdr_q: float
     dispersion_window_days: int
     dispersion_sigma: float
     media_silence_hours: int
@@ -93,16 +110,65 @@ def _fisher_z(correlation: float) -> float:
     return math.atanh(clipped)
 
 
+def _two_tailed_p_value(z: float) -> float:
+    """P(|Z| ≥ |z|) for a standard normal Z.
+
+    Computed via the complementary error function so the tail probability
+    stays well-conditioned at large |z| (where ``1 - Phi(z)`` underflows
+    to zero in float64).
+    """
+    return math.erfc(abs(z) / _SQRT_TWO)
+
+
+def _benjamini_hochberg_q_values(p_values: Sequence[float]) -> tuple[float, ...]:
+    """BH-adjusted q-values preserving input order.
+
+    Standard step-up Benjamini-Hochberg with the monotonicity-enforcing
+    cumulative minimum: ``q_(i) = min_{j ≥ i} p_(j) * m / j`` for the
+    sorted p-values, clamped to ``[0, 1]``. The result reindexed to the
+    input order so callers can pair each p-value with its q-value
+    without a separate bookkeeping table.
+    """
+    m = len(p_values)
+    if m == 0:
+        return ()
+    indexed = sorted(enumerate(p_values), key=lambda item: item[1])
+    adjusted = [p * m / (rank + 1) for rank, (_, p) in enumerate(indexed)]
+    # Enforce monotonicity by walking from the largest rank backwards —
+    # ``reversed(range(len-1))`` iterates indices ``len-2 .. 0`` without a
+    # bare ``-2`` literal in the slice arithmetic.
+    for i in reversed(range(len(adjusted) - 1)):
+        adjusted[i] = min(adjusted[i], adjusted[i + 1])
+    q_values = [0.0] * m
+    for sorted_rank, (orig_idx, _) in enumerate(indexed):
+        q_values[orig_idx] = min(adjusted[sorted_rank], 1.0)
+    return tuple(q_values)
+
+
+@dataclass(frozen=True, slots=True)
+class _BreakdownCandidate:
+    """One pair that passed the data-alignment guards.
+
+    Carries the inputs the publish layer needs to construct an
+    :class:`OutputBlock` once BH-FDR has decided which candidates clear
+    the publish gate.
+    """
+
+    row: str
+    col: str
+    short_corr: float
+    long_corr: float
+    magnitude: float
+    long_overlap: int
+    short_overlap: int
+
+
 def _correlation_breakdown_blocks(
     *,
     long_returns: Mapping[str, Sequence[float]],
     short_returns: Mapping[str, Sequence[float]],
-    correlation_breakdown_sigma: float,
-    correlation_min_overlap_fraction: float,
-    correlation_noise_floor: float,
+    params: CorrelationRegimeChangeParameters,
     as_of: datetime,
-    short_window_days: int,
-    long_window_days: int,
 ) -> list[OutputBlock]:
     """Emit one block per pair whose recent correlation broke from the prior baseline.
 
@@ -110,10 +176,16 @@ def _correlation_breakdown_blocks(
     :class:`CorrelationRegimeChangeParameters`: sparse-overlap pairs whose
     sigma-test denominator is misspecified, and near-zero-baseline pairs
     where the short-window deviation is dominated by noise rather than a
-    genuine shift in joint dynamics. Both classes are dropped before the
-    flag is constructed, so the downstream synthesizer brief never sees
-    them.
+    genuine shift in joint dynamics.
+
+    ALP-542 layers Benjamini-Hochberg FDR control on top of the raw sigma
+    floor: every guard-surviving pair gets a two-tailed p-value, BH is
+    applied across the candidate pool at ``correlation_breakdown_fdr_q``,
+    and a pair is published only when its BH-adjusted q-value clears the
+    target *and* its raw deviation sigma clears ``correlation_breakdown_sigma``.
     """
+    short_window_days = params.short_window_days
+    long_window_days = params.long_window_days
     prior_window_days = long_window_days - short_window_days
     if prior_window_days < _FISHER_Z_MIN_SAMPLES:
         return []
@@ -122,8 +194,8 @@ def _correlation_breakdown_blocks(
         + 1.0 / (prior_window_days - _FISHER_Z_DF_CORRECTION)
     )
 
-    short_overlap_min = math.ceil(short_window_days * correlation_min_overlap_fraction)
-    prior_overlap_min = math.ceil(prior_window_days * correlation_min_overlap_fraction)
+    short_overlap_min = math.ceil(short_window_days * params.correlation_min_overlap_fraction)
+    prior_overlap_min = math.ceil(prior_window_days * params.correlation_min_overlap_fraction)
 
     short_matrix = _correlation_matrix(short_returns)
     prior_returns: dict[str, list[float]] = {
@@ -138,7 +210,7 @@ def _correlation_breakdown_blocks(
     long_lens = {ticker: len(series) for ticker, series in long_returns.items()}
 
     tickers = sorted(short_matrix)
-    blocks: list[OutputBlock] = []
+    candidates: list[_BreakdownCandidate] = []
     for i, row in enumerate(tickers):
         for col in tickers[i + 1 :]:
             short_overlap = min(short_lens.get(row, 0), short_lens.get(col, 0))
@@ -153,44 +225,70 @@ def _correlation_breakdown_blocks(
             if short_overlap < short_overlap_min or prior_overlap < prior_overlap_min:
                 continue
             long_corr = _pearson_correlation(long_returns[row], long_returns[col])
-            if abs(long_corr) < correlation_noise_floor:
+            if abs(long_corr) < params.correlation_noise_floor:
                 continue
             recent_corr = short_matrix[row][col]
             prior_corr = prior_matrix[row][col]
             magnitude = abs(_fisher_z(recent_corr) - _fisher_z(prior_corr)) / null_stdev
-            if magnitude < correlation_breakdown_sigma:
-                continue
-            state, reason = _calibration_for_window(
-                n_observations=min(short_overlap, long_overlap),
-                required=short_window_days,
-                input_name="correlation_breakdown_observations",
-            )
-            blocks.append(
-                OutputBlock(
-                    block_id=f"{_BLOCK_NAMESPACE}.correlation_breakdown.{row}_{col}",
-                    audience=frozenset({OutputAudience.CORRELATION_REGIME_BRIEF}),
-                    freshness_ts=as_of,
-                    calibration_state=state,
-                    bootstrap_reason=reason,
-                    payload={
-                        "pair": [row, col],
-                        "short_correlation": recent_corr,
-                        "long_correlation": long_corr,
-                        "deviation_sigma": magnitude,
-                        "short_window_days": short_window_days,
-                        "long_window_days": long_window_days,
-                        "n_overlapping_observations": long_overlap,
-                    },
-                    anomaly_flags=(
-                        AnomalyFlag(
-                            name=f"correlation_breakdown_flag:{row}:{col}",
-                            magnitude=magnitude,
-                            severity="investigate_now",
-                        ),
-                    ),
-                    regime_context=None,
+            candidates.append(
+                _BreakdownCandidate(
+                    row=row,
+                    col=col,
+                    short_corr=recent_corr,
+                    long_corr=long_corr,
+                    magnitude=magnitude,
+                    long_overlap=long_overlap,
+                    short_overlap=short_overlap,
                 )
             )
+
+    # BH-FDR operates on the full guard-surviving candidate pool — the
+    # sigma floor is intentionally applied *after* BH so the multiplicity
+    # correction sees the full population of tested hypotheses, not just
+    # those that happened to clear the magnitude gate.
+    p_values = tuple(_two_tailed_p_value(c.magnitude) for c in candidates)
+    q_values = _benjamini_hochberg_q_values(p_values)
+
+    blocks: list[OutputBlock] = []
+    for candidate, q_value in zip(candidates, q_values, strict=True):
+        if q_value > params.correlation_breakdown_fdr_q:
+            continue
+        if candidate.magnitude < params.correlation_breakdown_sigma:
+            continue
+        state, reason = _calibration_for_window(
+            n_observations=min(candidate.short_overlap, candidate.long_overlap),
+            required=short_window_days,
+            input_name="correlation_breakdown_observations",
+        )
+        blocks.append(
+            OutputBlock(
+                block_id=(
+                    f"{_BLOCK_NAMESPACE}.correlation_breakdown.{candidate.row}_{candidate.col}"
+                ),
+                audience=frozenset({OutputAudience.CORRELATION_REGIME_BRIEF}),
+                freshness_ts=as_of,
+                calibration_state=state,
+                bootstrap_reason=reason,
+                payload={
+                    "pair": [candidate.row, candidate.col],
+                    "short_correlation": candidate.short_corr,
+                    "long_correlation": candidate.long_corr,
+                    "deviation_sigma": candidate.magnitude,
+                    "q_value": q_value,
+                    "short_window_days": short_window_days,
+                    "long_window_days": long_window_days,
+                    "n_overlapping_observations": candidate.long_overlap,
+                },
+                anomaly_flags=(
+                    AnomalyFlag(
+                        name=f"correlation_breakdown_flag:{candidate.row}:{candidate.col}",
+                        magnitude=candidate.magnitude,
+                        severity="investigate_now",
+                    ),
+                ),
+                regime_context=None,
+            )
+        )
     return blocks
 
 
@@ -339,12 +437,8 @@ def compute_correlation_regime_change_pure(
     breakdown_blocks = _correlation_breakdown_blocks(
         short_returns=short_returns,
         long_returns=long_returns_by_ticker,
-        correlation_breakdown_sigma=params.correlation_breakdown_sigma,
-        correlation_min_overlap_fraction=params.correlation_min_overlap_fraction,
-        correlation_noise_floor=params.correlation_noise_floor,
+        params=params,
         as_of=as_of,
-        short_window_days=params.short_window_days,
-        long_window_days=params.long_window_days,
     )
     dispersion_block = _dispersion_shift_block(
         universe_tickers=universe_tickers,

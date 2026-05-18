@@ -1,26 +1,26 @@
-"""Pure-compute tests for q7 (ALP-486) — no SQLite, no Session.
+"""Pure-compute tests for q7 (ALP-486) -- no SQLite, no Session.
 
 ALP-486 propagated the compute/load boundary split (piloted in ALP-467) to
 q7. Each compute core is testable from hand-built frozen inputs with no
 ORM or in-memory database. The tests in this module construct inputs
-directly and assert on the pure return shape — proving the q7 compute
+directly and assert on the pure return shape -- proving the q7 compute
 path is genuinely pure and safe to call under
 ``asyncio.TaskGroup`` + ``asyncio.to_thread``.
 
 Coverage:
 
-- breadth_internals_compute — pct-above-EMA / advance-decline / equal-vs-cap.
-- cross_sector_rotation_compute — velocity slow/sharp branches, narrative
+- breadth_internals_compute -- pct-above-EMA / advance-decline / equal-vs-cap.
+- cross_sector_rotation_compute -- velocity slow/sharp branches, narrative
   rate/growth/risk-appetite branches.
-- intermarket_regime_compute — four sub-blocks (spy_tlt / gld_real_yields /
+- intermarket_regime_compute -- four sub-blocks (spy_tlt / gld_real_yields /
   oil_xle_beta / vix_spy), divergence flag firing.
-- intra_sector_correlation_compute — short/long matrices, pair divergence
+- intra_sector_correlation_compute -- short/long matrices, pair divergence
   flags, suppression when short matches long.
-- lead_lag_compute — overdue lag flag, inversion flag, persisted estimate
+- lead_lag_compute -- overdue lag flag, inversion flag, persisted estimate
   passthrough.
-- correlation_regime_change_compute — breakdown blocks, dispersion shift,
+- correlation_regime_change_compute -- breakdown blocks, dispersion shift,
   narrative-lag flag.
-- assemble — pure :func:`assemble_q7_blocks_from_inputs` over a frozen
+- assemble -- pure :func:`assemble_q7_blocks_from_inputs` over a frozen
   :class:`Q7Inputs`.
 """
 
@@ -65,7 +65,7 @@ from alphamind.distillation.q7.lead_lag_compute import (
 
 
 def _flat_closes(n: int, base: float = 100.0) -> tuple[float, ...]:
-    """``n`` identical closes — zero variance, zero returns."""
+    """``n`` identical closes -- zero variance, zero returns."""
     return tuple(base for _ in range(n))
 
 
@@ -276,9 +276,9 @@ class TestIntermarketRegimeCompute:
         assert spy_tlt.payload["correlation"] == pytest.approx(1.0)
 
     def test_zero_observations_emit_null_numeric_fields_per_block(self) -> None:
-        # Every input series empty — the unavailable case ALP-537 targets.
+        # Every input series empty -- the unavailable case ALP-537 targets.
         # The block carries UNAVAILABLE calibration (ALP-540) AND the
-        # numeric payload fields surface as None, not 0.0 — so a downstream
+        # numeric payload fields surface as None, not 0.0 -- so a downstream
         # consumer can't read a fabricated zero correlation/beta.
         blocks = compute_intermarket_regime_pure(
             closes_by_ticker={
@@ -418,8 +418,8 @@ class TestLeadLagCompute:
     def test_overdue_flag_silent_when_lag_tracks_lead(self) -> None:
         # When the lag's recent magnitude matches the lead's recent move,
         # the overdue-lag flag is suppressed. The structural inversion
-        # check is orthogonal — symmetric high-z data on both legs can
-        # still fire it — so the assertion narrows to overdue.
+        # check is orthogonal -- symmetric high-z data on both legs can
+        # still fire it -- so the assertion narrows to overdue.
         baseline = [0.001 * ((i % 2) - 0.5) for i in range(30)]
         lead_returns = [*baseline, 0.05]
         lag_returns = [*baseline, 0.04]  # tracked
@@ -479,11 +479,12 @@ class TestCorrelationRegimeChangeCompute:
             correlation_breakdown_sigma=2.0,
             correlation_min_overlap_fraction=0.9,
             correlation_noise_floor=0.05,
+            correlation_breakdown_fdr_q=1.0,
             dispersion_window_days=5,
             dispersion_sigma=1.5,
             media_silence_hours=12,
         )
-        # 10 days of returns across 3 tickers — the per-day cross-ticker
+        # 10 days of returns across 3 tickers -- the per-day cross-ticker
         # dispersion needs to vary across days so the trailing-window
         # stdev is positive (otherwise the z-score is undefined and the
         # block declines to emit).
@@ -513,6 +514,7 @@ class TestCorrelationRegimeChangeCompute:
             correlation_breakdown_sigma=1.0,  # low gate → breakdown easy to fire
             correlation_min_overlap_fraction=0.9,
             correlation_noise_floor=0.0,
+            correlation_breakdown_fdr_q=1.0,
             dispersion_window_days=20,
             dispersion_sigma=1.5,
             media_silence_hours=12,
@@ -548,6 +550,7 @@ class TestCorrelationRegimeChangeCompute:
             correlation_breakdown_sigma=1.0,
             correlation_min_overlap_fraction=0.9,
             correlation_noise_floor=0.0,
+            correlation_breakdown_fdr_q=1.0,
             dispersion_window_days=20,
             dispersion_sigma=1.5,
             media_silence_hours=12,
@@ -598,6 +601,7 @@ class TestCorrelationBreakdownDataAlignmentGuards:
             correlation_breakdown_sigma=1.0,
             correlation_min_overlap_fraction=min_overlap_fraction,
             correlation_noise_floor=noise_floor,
+            correlation_breakdown_fdr_q=1.0,
             dispersion_window_days=20,
             dispersion_sigma=1.5,
             media_silence_hours=12,
@@ -614,11 +618,11 @@ class TestCorrelationBreakdownDataAlignmentGuards:
         ]
 
     def test_overlap_guard_filters_pair_below_window_fraction(self) -> None:
-        """B has 35 days — passes Fisher-z floor (>4) but fails 90% overlap on prior.
+        """B has 35 days -- passes Fisher-z floor (>4) but fails 90% overlap on prior.
 
         With ``short_window_days=20`` and ``correlation_min_overlap_fraction=0.9``:
         ``short_overlap_min = 18``, ``prior_overlap_min = 36``. B's series has
-        only 35 days, so ``prior_overlap = min(40, 15) = 15`` — above the
+        only 35 days, so ``prior_overlap = min(40, 15) = 15`` -- above the
         Fisher-z floor of 4 (so the pre-existing guard passes) but below 36.
         B's tail 20 days invert A's tail: pre-PR code would fire a high-magnitude
         breakdown (since ``_pearson_correlation`` returns 0 on the cross-length
@@ -647,7 +651,7 @@ class TestCorrelationBreakdownDataAlignmentGuards:
         assert self._filtered_pair_blocks(blocks) == []
 
         # Pin the "would fire on pre-PR code" baseline by relaxing the new
-        # guard and confirming the pair does emit a breakdown — without this,
+        # guard and confirming the pair does emit a breakdown -- without this,
         # the assertion above could pass on any code path that drops the pair
         # for unrelated reasons.
         relaxed = compute_correlation_regime_change_pure(
@@ -658,7 +662,7 @@ class TestCorrelationBreakdownDataAlignmentGuards:
             as_of=_as_of(),
         )
         assert self._filtered_pair_blocks(relaxed), (
-            "fixture should fire a breakdown when guards are relaxed — otherwise "
+            "fixture should fire a breakdown when guards are relaxed -- otherwise "
             "the guard test is vacuous"
         )
 
@@ -668,7 +672,7 @@ class TestCorrelationBreakdownDataAlignmentGuards:
         Stages a pair with ``prior_corr ≈ +0.71``, ``short_corr ≈ -0.71``, and
         ``long_corr ≈ +0.24``. The sigma-test on this pair fires at magnitude
         ≈ 6.0 (well above ``breakdown_sigma=1.0``) on pre-PR code, but
-        ``|long_corr| ≈ 0.24 < noise_floor=0.5`` — only the new noise-floor
+        ``|long_corr| ≈ 0.24 < noise_floor=0.5`` -- only the new noise-floor
         guard suppresses the flag.
         """
         # A: alternating ±0.01. Orthogonal "noise" pattern: ±0.01 with a
@@ -707,7 +711,7 @@ class TestCorrelationBreakdownDataAlignmentGuards:
         )
         relaxed_pair_blocks = self._filtered_pair_blocks(relaxed)
         assert relaxed_pair_blocks, (
-            "fixture should fire a breakdown when the noise floor is disabled — "
+            "fixture should fire a breakdown when the noise floor is disabled -- "
             "otherwise the guard test is vacuous"
         )
         # Sanity-check the staged long_corr is below the aggressive floor and
@@ -717,7 +721,7 @@ class TestCorrelationBreakdownDataAlignmentGuards:
         assert payload["deviation_sigma"] >= 1.0
 
     def test_breakdown_block_payload_carries_overlap_observation_count(self) -> None:
-        """AC #3 — breakdown payload exposes ``n_overlapping_observations``.
+        """AC #3 -- breakdown payload exposes ``n_overlapping_observations``.
 
         Downstream agents auditing a sigma-flag need to see both the
         long-window correlation magnitude (``long_correlation``) and the
@@ -752,8 +756,232 @@ class TestCorrelationBreakdownDataAlignmentGuards:
         assert "long_correlation" in payload
 
 
+class TestCorrelationBreakdownMultipleComparison:
+    """ALP-542: BH-FDR correction on the correlation-breakdown sigma-test.
+
+    The sigma-test runs Nx(N-1)/2 pairwise hypotheses per invocation. Without a
+    multiple-comparison correction the expected false-positive count grows
+    linearly with the pair count; the production e2e invocation at
+    inv-20260518T111140Z (N=66, 2,145 pairs) produced 146 ``investigate_now``
+    flags -- well into the noise-dominated regime. These tests pin the
+    Benjamini-Hochberg FDR layer that suppresses those phantom flags while
+    leaving genuine high-sigma breakdowns untouched.
+    """
+
+    @staticmethod
+    def _params(
+        *,
+        breakdown_sigma: float = 1.0,
+        fdr_q: float = 1.0,
+        noise_floor: float = 0.0,
+    ) -> CorrelationRegimeChangeParameters:
+        return CorrelationRegimeChangeParameters(
+            short_window_days=20,
+            long_window_days=60,
+            correlation_breakdown_sigma=breakdown_sigma,
+            correlation_min_overlap_fraction=0.9,
+            correlation_noise_floor=noise_floor,
+            correlation_breakdown_fdr_q=fdr_q,
+            dispersion_window_days=20,
+            dispersion_sigma=1.5,
+            media_silence_hours=12,
+        )
+
+    @staticmethod
+    def _filtered_pair_blocks(blocks: list[OutputBlock]) -> list[OutputBlock]:
+        return [
+            b
+            for b in blocks
+            if b.block_id.startswith("q7.correlation_breakdown.")
+            and b.block_id != "q7.correlation_breakdown.dispersion_shift"
+        ]
+
+    @staticmethod
+    def _inverted_pair_returns() -> dict[str, tuple[float, ...]]:
+        """A/B prior 40d co-moving, recent 20d inverted -- strong breakdown."""
+        long_a = [0.01, -0.005, 0.008, -0.012, 0.006] * 8
+        long_b = [r + 0.0001 * (i % 3) for i, r in enumerate(long_a)]
+        short_a = [
+            0.01, -0.02, 0.015, 0.005, -0.01,
+            0.012, -0.018, 0.02, -0.005, 0.008,
+            -0.015, 0.01, -0.005, 0.012, -0.008,
+            0.005, -0.012, 0.018, -0.01, 0.005,
+        ]  # fmt: skip
+        short_b = [-x for x in short_a]
+        return {"A": tuple(long_a + short_a), "B": tuple(long_b + short_b)}
+
+    def test_breakdown_payload_carries_fdr_q_value(self) -> None:
+        """AC#3 -- every published flag exposes the BH-FDR-adjusted q-value."""
+        returns_by_ticker = self._inverted_pair_returns()
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=("A", "B"),
+            long_returns_by_ticker=returns_by_ticker,
+            qualifying_news_present=True,
+            params=self._params(fdr_q=1.0),
+            as_of=_as_of(),
+        )
+        pair_blocks = self._filtered_pair_blocks(blocks)
+        assert pair_blocks, "fixture should produce a breakdown block"
+        payload = pair_blocks[0].payload
+        assert "q_value" in payload, payload
+        q_value = payload["q_value"]
+        assert isinstance(q_value, float)
+        assert 0.0 <= q_value <= 1.0
+
+    def test_bh_fdr_filters_phantom_flags_on_noise_universe(self) -> None:
+        """AC#2 -- BH-FDR keeps the false-discovery rate bounded on noise.
+
+        Build a 12-ticker universe (66 pairs) where every series is
+        independently random -- under the null, BH at q=0.05 should yield
+        ~0 flags rather than the ~0.18 expected uncorrected (which would
+        round to 0 here, but on N=66 → 2,145 pairs the uncorrected count
+        was 146; the synthetic universe makes the contrast testable in
+        unit-test time).
+
+        The test pins the contrast: with ``fdr_q=1.0`` (BH effectively
+        off), the noise universe produces some phantom flags from the sigma
+        gate alone; with ``fdr_q=0.05`` BH suppresses them.
+        """
+        import random
+
+        rng = random.Random(20260518)
+        tickers = tuple(f"T{i:02d}" for i in range(12))
+        # 60 days of independent gaussian-ish noise per ticker.
+        returns: dict[str, tuple[float, ...]] = {
+            ticker: tuple(rng.gauss(0.0, 0.01) for _ in range(60)) for ticker in tickers
+        }
+
+        permissive = compute_correlation_regime_change_pure(
+            universe_tickers=tickers,
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            # Aggressive sigma-floor at 2.0 produces a population of "looks like
+            # a breakdown" candidates; BH at q=1.0 lets them all through.
+            params=self._params(breakdown_sigma=2.0, fdr_q=1.0, noise_floor=0.0),
+            as_of=_as_of(),
+        )
+        strict = compute_correlation_regime_change_pure(
+            universe_tickers=tickers,
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(breakdown_sigma=2.0, fdr_q=0.05, noise_floor=0.0),
+            as_of=_as_of(),
+        )
+
+        permissive_n = len(self._filtered_pair_blocks(permissive))
+        strict_n = len(self._filtered_pair_blocks(strict))
+        # Pin "the sigma-only gate produced some phantom flags" -- otherwise
+        # the contrast assertion would be vacuous.
+        assert permissive_n >= 1, (
+            f"noise fixture should produce >=1 phantom flag at sigma>=2.0; got {permissive_n}"
+        )
+        # BH at q=0.05 should suppress essentially all phantoms on pure noise.
+        assert strict_n <= 1, f"BH-FDR at q=0.05 should suppress phantom flags; got {strict_n}"
+
+    def test_high_sigma_breakdown_survives_bh_correction(self) -> None:
+        """AC#4 -- a genuine high-sigma breakdown is not filtered by BH-FDR.
+
+        The inverted-pair fixture produces a sigma well above 5 -- its
+        two-tailed p-value is far below any reasonable BH cutoff, so the
+        flag must survive a strict q=0.05 correction even when sharing
+        the candidate pool with noise pairs.
+        """
+        import random
+
+        rng = random.Random(20260518)
+        signal_returns = self._inverted_pair_returns()
+        # Add 10 pure-noise tickers alongside the genuine A/B pair so
+        # BH operates on a realistic candidate pool.
+        all_returns = dict(signal_returns)
+        for i in range(10):
+            ticker = f"N{i:02d}"
+            all_returns[ticker] = tuple(rng.gauss(0.0, 0.01) for _ in range(60))
+
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=tuple(all_returns.keys()),
+            long_returns_by_ticker=all_returns,
+            qualifying_news_present=True,
+            params=self._params(breakdown_sigma=3.0, fdr_q=0.05, noise_floor=0.0),
+            as_of=_as_of(),
+        )
+        pair_blocks = self._filtered_pair_blocks(blocks)
+        ab_blocks = [b for b in pair_blocks if "A_B" in b.block_id]
+        assert ab_blocks, (
+            f"genuine high-sigma A/B breakdown should survive BH at q=0.05; "
+            f"got pair blocks {[b.block_id for b in pair_blocks]}"
+        )
+        # The q-value on the genuine pair should be far below 0.05.
+        assert ab_blocks[0].payload["q_value"] < 0.01
+
+    def test_production_scale_universe_bounded_to_25_flags_at_q05(self) -> None:
+        """AC#2 -- N=66 universe (2,145 pairs) produces ≤25 flags at FDR=0.05.
+
+        Mirrors the inv-20260518T111140Z replay scale: tech + semis +
+        financials + energy → 66 active tickers → 2,145 unique pairs. The
+        production invocation produced 146 ``investigate_now`` flags from
+        a bare 3sigma threshold; BH-FDR at q=0.05 brings the expected
+        false-discovery count to ≤ q·N_rejections ≈ 1.25 even on noise,
+        and the AC budgets ≤25 to leave headroom for real signal.
+
+        The fixture is pure noise -- the bound holds against the noise
+        floor of the test. The companion
+        ``test_high_sigma_breakdown_survives_bh_correction`` pins that
+        genuine breakdowns are not killed by the same correction.
+        """
+        import random
+
+        rng = random.Random(20260518)
+        tickers = tuple(f"T{i:02d}" for i in range(66))
+        returns: dict[str, tuple[float, ...]] = {
+            ticker: tuple(rng.gauss(0.0, 0.01) for _ in range(60)) for ticker in tickers
+        }
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=tickers,
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(breakdown_sigma=3.0, fdr_q=0.05, noise_floor=0.0),
+            as_of=_as_of(),
+        )
+        pair_blocks = self._filtered_pair_blocks(blocks)
+        assert len(pair_blocks) <= 25, (
+            f"AC#2 -- BH-FDR at q=0.05 on 2,145 pairs should produce ≤25 "
+            f"investigate_now flags; got {len(pair_blocks)}"
+        )
+
+    def test_raw_sigma_floor_still_gates_published_flags(self) -> None:
+        """The configurable sigma floor remains a raw-magnitude gate on emission.
+
+        BH-FDR controls the false-discovery rate but doesn't impose a
+        magnitude floor -- operators retain the ``correlation_breakdown_sigma``
+        knob for the "this pair must clear N sigma in raw deviation regardless
+        of population statistics" floor.
+        """
+        returns_by_ticker = self._inverted_pair_returns()
+        # The A/B inversion fixture produces a very high sigma. Gate well above
+        # whatever the fixture emits so the sigma floor is the unit under test.
+        blocks_relaxed = compute_correlation_regime_change_pure(
+            universe_tickers=("A", "B"),
+            long_returns_by_ticker=returns_by_ticker,
+            qualifying_news_present=True,
+            params=self._params(breakdown_sigma=1.0, fdr_q=1.0),
+            as_of=_as_of(),
+        )
+        relaxed_pair = self._filtered_pair_blocks(blocks_relaxed)
+        assert relaxed_pair, "fixture must produce a pair-level breakdown at sigma >= 1"
+        emitted_sigma = float(relaxed_pair[0].payload["deviation_sigma"])
+        ceiling = emitted_sigma + 1.0
+        blocks_gated = compute_correlation_regime_change_pure(
+            universe_tickers=("A", "B"),
+            long_returns_by_ticker=returns_by_ticker,
+            qualifying_news_present=True,
+            params=self._params(breakdown_sigma=ceiling, fdr_q=1.0),
+            as_of=_as_of(),
+        )
+        assert self._filtered_pair_blocks(blocks_gated) == []
+
+
 # ---------------------------------------------------------------------------
-# assemble — pure assembly path
+# assemble -- pure assembly path
 # ---------------------------------------------------------------------------
 
 

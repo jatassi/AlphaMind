@@ -68,6 +68,11 @@ narrative_lag:
   #   looks like a "breakdown" against nothing.
   correlation_min_overlap_fraction:      0.9
   correlation_noise_floor:               0.05
+  # ALP-542 Benjamini-Hochberg false-discovery rate for the pairwise sigma-test.
+  # With ~2,000 pairs per invocation the 3-sigma threshold alone produces
+  # double-digit phantom flags from chance alone; BH at q=0.05 bounds the
+  # expected false-discovery proportion among published flags.
+  correlation_breakdown_fdr_q:           0.05
   narrative_lag_media_silence_hours:     12
 
 persistence_windows:
