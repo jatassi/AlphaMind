@@ -18,6 +18,12 @@ class PortfolioStateConfig:
     thesis_quality_aggregates_trailing_windows_days: tuple[int, ...]
     snapshot_freshness_max_phase1_to_snapshot_seconds: float
     snapshot_freshness_max_price_age_seconds: float
+    # Independent of ``max_price_age_seconds`` because the option-snapshot
+    # cadence (collector cron, every ~30 min) is materially slower than the
+    # underlying-quote stream (sub-second). A shared threshold would flag
+    # most healthy option snapshots stale and force the entry-premium
+    # fallback for ~half of each collector cycle.
+    snapshot_freshness_max_option_price_age_seconds: float
 
     def __post_init__(self) -> None:
         if self.pm_decision_log_sliding_window_invocations <= 0:
@@ -44,6 +50,12 @@ class PortfolioStateConfig:
                 f"got {self.snapshot_freshness_max_price_age_seconds}"
             )
             raise ValueError(msg)
+        if self.snapshot_freshness_max_option_price_age_seconds <= 0:
+            msg = (
+                "snapshot_freshness_max_option_price_age_seconds must be > 0; "
+                f"got {self.snapshot_freshness_max_option_price_age_seconds}"
+            )
+            raise ValueError(msg)
         if not self.thesis_quality_aggregates_trailing_windows_days:
             msg = "thesis_quality_aggregates_trailing_windows_days must be non-empty"
             raise ValueError(msg)
@@ -65,6 +77,7 @@ def _flatten_portfolio_state_yaml(raw: dict[str, Any]) -> dict[str, Any]:
         "thesis_quality_aggregates_trailing_windows_days": tuple(tq["trailing_windows_days"]),
         "snapshot_freshness_max_phase1_to_snapshot_seconds": sf["max_phase1_to_snapshot_seconds"],
         "snapshot_freshness_max_price_age_seconds": sf["max_price_age_seconds"],
+        "snapshot_freshness_max_option_price_age_seconds": sf["max_option_price_age_seconds"],
     }
 
 

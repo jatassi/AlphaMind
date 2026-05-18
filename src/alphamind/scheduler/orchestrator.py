@@ -150,6 +150,7 @@ from alphamind.state.invocation_context.records import (
     TriggerType,
 )
 from alphamind.state.repository import (
+    SqlOptionPriceProvider,
     build_sql_portfolio_state_repository,
 )
 from alphamind.state.tables.invocations import InvocationRow
@@ -675,6 +676,7 @@ def _assemble_phase1_snapshot(
         config=state_persistence_config,
     )
     price_provider = _price_provider_from_phase1(phase1_market_inputs)
+    option_price_provider = SqlOptionPriceProvider(session_factory=session_factory)
     # ``snapshot_assembled_at`` must be >= ``phase1_committed_at`` per
     # ``PortfolioStateSnapshot``'s ordering validator. Phase 1 stamps the row
     # with wall-clock-at-stamp-time; using a fresh ``datetime.now(UTC)`` here
@@ -684,6 +686,7 @@ def _assemble_phase1_snapshot(
     assembled = assemble_snapshot(
         repository=repository,
         price_provider=price_provider,
+        option_price_provider=option_price_provider,
         sector_resolver=adapt_ticker_sector_resolver(sector_resolver),
         config=portfolio_state_config,
         now=datetime.now(UTC),

@@ -22,12 +22,6 @@ Assembly sequence (16 steps — see function body for inline step labels):
   14. Compute parameter change flag.
   15. Normalise activity-log projections (already supplied by repository).
   16. Construct and return the snapshot.
-
-Known limitation — option pricing (Steps 5/6):
-  Option-contract mark-to-market uses ``premium_paid_per_contract`` as a
-  stand-in price rather than a live option quote.  The resulting
-  ``current_market_value_usd`` lags premium drift.  A future story can
-  introduce an OptionPriceProvider Protocol to close this gap.
 """
 
 from __future__ import annotations
@@ -79,7 +73,11 @@ from alphamind.portfolio_state.freshness import (
     PriceFetchOutcomes,
     compute_snapshot_freshness,
 )
-from alphamind.portfolio_state.pricing import CurrentPriceProvider, PriceQuote
+from alphamind.portfolio_state.pricing import (
+    CurrentPriceProvider,
+    OptionPriceProvider,
+    PriceQuote,
+)
 from alphamind.portfolio_state.records.activity_log import ActivityLogEntry
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import BracketRecord, OrderRecord
@@ -89,6 +87,7 @@ from alphamind.portfolio_state.records.positions import (
     OptionsPositionDetails,
     PositionRecord,
     StrategyPositionDetails,
+    occ_symbol_for_options,
 )
 from alphamind.portfolio_state.records.theses import RecentThesisResolution, ThesisRecord
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
@@ -165,6 +164,7 @@ def _build_assembled_snapshot(
 def _enrich_positions_with_price_classification(
     positions: tuple[PositionRecord, ...],
     price_map: dict[str, PriceQuote],
+    option_price_map: dict[str, PriceQuote],
     brackets_by_bracket_id: dict[str, BracketRecord],
     now: datetime,
     ids_fresh: set[str],
@@ -188,7 +188,11 @@ def _enrich_positions_with_price_classification(
             ids_stale.add(pos.position_id)
         else:
             ids_unknown.add(pos.position_id)
-        enriched.append(_enrich_position_first_pass(pos, price_map, brackets_by_bracket_id, now))
+        enriched.append(
+            _enrich_position_first_pass(
+                pos, price_map, option_price_map, brackets_by_bracket_id, now
+            )
+        )
     return enriched, oldest
 
 
@@ -203,8 +207,9 @@ def _resolve_pricing_tickers(
     """Return a deduplicated, ordered tuple of tickers needed to price *positions*.
 
     Equity   → equity_details.ticker
-    Options  → options_details.underlying_ticker (underlying for delta-adjusted
-               exposure; option premium is handled via premium_paid_per_contract)
+    Options  → options_details.underlying_ticker (notional + delta-adjusted
+               exposure are computed against the underlying spot; option mark-
+               to-market is driven by :func:`_resolve_option_occ_symbols`)
     Strategy → each leg's options.underlying_ticker
     """
     seen: dict[str, None] = {}  # preserves insertion order
@@ -217,6 +222,26 @@ def _resolve_pricing_tickers(
         else:  # STRATEGY
             for leg in details.legs:
                 seen[leg.options.underlying_ticker] = None
+    return tuple(seen)
+
+
+def _resolve_option_occ_symbols(
+    positions: tuple[PositionRecord, ...],
+) -> tuple[str, ...]:
+    """Return a deduplicated, ordered tuple of OCC contract symbols to mark to market.
+
+    Options  → ``occ_symbol_for_options(options_details)``
+    Strategy → each leg's ``occ_symbol_for_options(leg.options)``
+    Equity positions contribute no symbols.
+    """
+    seen: dict[str, None] = {}
+    for pos in positions:
+        details = pos.details
+        if isinstance(details, OptionsPositionDetails):
+            seen[occ_symbol_for_options(details)] = None
+        elif isinstance(details, StrategyPositionDetails):
+            for leg in details.legs:
+                seen[occ_symbol_for_options(leg.options)] = None
     return tuple(seen)
 
 
@@ -267,9 +292,50 @@ def _price_fields_equity(
     )
 
 
+def _option_mark_price(
+    *,
+    position_id: str,
+    occ_symbol: str,
+    option_price_map: dict[str, PriceQuote],
+    entry_premium: float,
+) -> float:
+    """Pick the per-contract MTM price: live quote when fresh, else entry premium.
+
+    Mirrors the equity path's fall-through pattern but never zeroes out — when
+    no live quote is available the position is still worth the premium paid,
+    and the operator wants a finite MV in the view instead of a sentinel that
+    silently drops the position out of weight / drawdown attribution. The
+    fallback is logged at WARNING so an operator monitoring the assembler can
+    distinguish "live MTM is driving the snapshot" from "every option fell
+    back to entry premium" — the symptom of a stalled collector.
+    """
+    quote = option_price_map.get(occ_symbol)
+    if quote is None:
+        log.warning(
+            "option price snapshot missing for position %s contract %s; "
+            "falling back to entry premium %.4f",
+            position_id,
+            occ_symbol,
+            entry_premium,
+        )
+        return entry_premium
+    if quote.is_stale:
+        log.warning(
+            "option price snapshot stale for position %s contract %s "
+            "(as_of=%s); falling back to entry premium %.4f",
+            position_id,
+            occ_symbol,
+            quote.as_of_timestamp.isoformat(),
+            entry_premium,
+        )
+        return entry_premium
+    return quote.price_usd
+
+
 def _price_fields_options(
     position: PositionRecord,
     price_map: dict[str, PriceQuote],
+    option_price_map: dict[str, PriceQuote],
 ) -> _PriceFields:
     assert isinstance(position.details, OptionsPositionDetails)
     details = position.details
@@ -284,9 +350,16 @@ def _price_fields_options(
         return _ZERO_PRICE_FIELDS
     if raw_underlying.is_stale:
         return _ZERO_PRICE_FIELDS
-    premium = details.premium_paid_per_contract
-    mv_quote = dataclasses.replace(raw_underlying, price_usd=premium)
-    cost_basis = details.contract_count * details.contract_multiplier * premium
+    mv_price = _option_mark_price(
+        position_id=position.position_id,
+        occ_symbol=occ_symbol_for_options(details),
+        option_price_map=option_price_map,
+        entry_premium=details.premium_paid_per_contract,
+    )
+    mv_quote = dataclasses.replace(raw_underlying, price_usd=mv_price)
+    cost_basis = (
+        details.contract_count * details.contract_multiplier * details.premium_paid_per_contract
+    )
     return _PriceFields(
         current_market_value_usd=compute_market_value_usd(position, mv_quote),
         notional_exposure_usd=compute_notional_exposure_usd(position, raw_underlying),
@@ -299,6 +372,7 @@ def _price_fields_options(
 def _price_fields_strategy(
     position: PositionRecord,
     price_map: dict[str, PriceQuote],
+    option_price_map: dict[str, PriceQuote],
 ) -> _PriceFields:
     assert isinstance(position.details, StrategyPositionDetails)
     details = position.details
@@ -316,15 +390,21 @@ def _price_fields_strategy(
             return _ZERO_PRICE_FIELDS
         leg_prices[leg.leg_id] = raw_leg
 
-    premium_prices: dict[str, PriceQuote] = {
+    mv_leg_prices: dict[str, PriceQuote] = {
         leg.leg_id: dataclasses.replace(
-            leg_prices[leg.leg_id], price_usd=leg.options.premium_paid_per_contract
+            leg_prices[leg.leg_id],
+            price_usd=_option_mark_price(
+                position_id=position.position_id,
+                occ_symbol=occ_symbol_for_options(leg.options),
+                option_price_map=option_price_map,
+                entry_premium=leg.options.premium_paid_per_contract,
+            ),
         )
         for leg in details.legs
     }
     first_leg = details.legs[0] if details.legs else None
     return _PriceFields(
-        current_market_value_usd=compute_strategy_market_value_usd(position, premium_prices),
+        current_market_value_usd=compute_strategy_market_value_usd(position, mv_leg_prices),
         notional_exposure_usd=compute_strategy_notional_exposure_usd(position, leg_prices),
         delta_adjusted_exposure_usd=compute_strategy_delta_adjusted_exposure_usd(
             position, leg_prices
@@ -334,16 +414,10 @@ def _price_fields_strategy(
     )
 
 
-_PRICE_FIELD_DISPATCH = {
-    InstrumentType.EQUITY: _price_fields_equity,
-    InstrumentType.OPTIONS: _price_fields_options,
-    InstrumentType.STRATEGY: _price_fields_strategy,
-}
-
-
 def _enrich_position_first_pass(
     position: PositionRecord,
     price_map: dict[str, PriceQuote],
+    option_price_map: dict[str, PriceQuote],
     brackets_by_bracket_id: dict[str, BracketRecord],
     now: datetime,
 ) -> PositionView:
@@ -353,11 +427,22 @@ def _enrich_position_first_pass(
     ``position_weight_pct`` field is set to 0.0 here as a placeholder; the
     second-pass enrichment (after total portfolio value is known) updates it.
 
-    Missing-price / stale-price handling: when the pricing ticker is absent
-    from *price_map*, or the returned quote has ``is_stale=True``, all
-    market-value / exposure fields are set to 0.0 and assembly continues.
+    Missing-price / stale-price handling: when the underlying-pricing ticker
+    is absent from *price_map*, or the returned quote has ``is_stale=True``,
+    all market-value / exposure fields are set to 0.0 and assembly continues.
+    For OPTIONS / STRATEGY positions a missing or stale option-contract quote
+    falls back to ``premium_paid_per_contract`` (per-leg for strategies) so
+    the MV stays finite even when ``options_contract_snapshots`` is empty.
     """
-    pf = _PRICE_FIELD_DISPATCH[position.instrument_type](position, price_map)
+    if position.instrument_type == InstrumentType.EQUITY:
+        pf = _price_fields_equity(position, price_map)
+    elif position.instrument_type == InstrumentType.OPTIONS:
+        pf = _price_fields_options(position, price_map, option_price_map)
+    elif position.instrument_type == InstrumentType.STRATEGY:
+        pf = _price_fields_strategy(position, price_map, option_price_map)
+    else:
+        msg = f"unhandled instrument_type: {position.instrument_type}"
+        raise AssertionError(msg)
     bracket = brackets_by_bracket_id.get(position.bracket_id or "")
 
     unrealized_pnl_usd = compute_unrealized_pnl_usd(
@@ -413,6 +498,7 @@ def assemble_snapshot(
     *,
     repository: PortfolioStateRepository,
     price_provider: CurrentPriceProvider,
+    option_price_provider: OptionPriceProvider,
     sector_resolver: SectorResolver,
     config: PortfolioStateConfig,
     now: datetime,
@@ -420,7 +506,9 @@ def assemble_snapshot(
     """Assemble an AssembledSnapshot (snapshot + freshness sidecar) from repository and prices.
 
     All parameters are keyword-only. ``now`` is supplied by the caller so the
-    assembler is testable without a clock fixture.
+    assembler is testable without a clock fixture. ``option_price_provider``
+    supplies live option-contract mark-to-market quotes keyed by OCC symbol;
+    a missing or stale quote falls back to ``premium_paid_per_contract``.
 
     Raises:
         RepositoryReadError / RepositoryConsistencyError: propagated without
@@ -483,13 +571,25 @@ def assemble_snapshot(
     )
 
     # ------------------------------------------------------------------
-    # Step 5 — Fetch current prices
+    # Step 5 — Fetch current prices (underlyings + option contracts)
     # ------------------------------------------------------------------
     all_positions: tuple[PositionRecord, ...] = (*open_positions_raw, *pending_positions_raw)
     pricing_tickers = _resolve_pricing_tickers(all_positions)
     price_map = price_provider.get_quotes(
         tickers=pricing_tickers,
         freshness_threshold_seconds=config.snapshot_freshness_max_price_age_seconds,
+    )
+    # Option-contract MTM. The OCC-symbol pull is independent of the
+    # underlying pull; equity-only portfolios resolve no OCC symbols and the
+    # provider returns ``{}``. Freshness uses
+    # ``snapshot_freshness_max_option_price_age_seconds`` (default 2100s)
+    # rather than the underlying knob because the collector's snapshot
+    # cadence (~30 min, per ``config/collector_schedule.yaml``) is
+    # materially slower than the live underlying-quote stream.
+    option_occ_symbols = _resolve_option_occ_symbols(all_positions)
+    option_price_map = option_price_provider.get_quotes(
+        option_occ_symbols,
+        freshness_threshold_seconds=config.snapshot_freshness_max_option_price_age_seconds,
     )
 
     # ------------------------------------------------------------------
@@ -505,6 +605,7 @@ def assemble_snapshot(
     enriched_open, oldest_open = _enrich_positions_with_price_classification(
         open_positions_raw,
         price_map,
+        option_price_map,
         brackets_by_bracket_id,
         now,
         _ids_fresh,
@@ -514,6 +615,7 @@ def assemble_snapshot(
     enriched_pending, oldest_pending = _enrich_positions_with_price_classification(
         pending_positions_raw,
         price_map,
+        option_price_map,
         brackets_by_bracket_id,
         now,
         _ids_fresh,

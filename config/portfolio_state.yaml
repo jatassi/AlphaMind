@@ -7,4 +7,9 @@ portfolio_state:
     trailing_windows_days: [5, 20]       # category 6 — windows for aggregate computation
   snapshot_freshness:
     max_phase1_to_snapshot_seconds: 30   # above this, log warning
-    max_price_age_seconds: 900           # current price freshness threshold
+    max_price_age_seconds: 900           # underlying-quote freshness threshold (live stream)
+    max_option_price_age_seconds: 2100   # option-snapshot freshness — collector cron fires
+                                          # every 30 min (config/collector_schedule.yaml,
+                                          # polygon.options at minutes 8,38), so 35 min gives
+                                          # one full cycle plus a 5-min commit grace before
+                                          # the assembler falls back to entry premium.

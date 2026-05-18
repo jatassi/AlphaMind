@@ -15,6 +15,7 @@ def test_yaml_parses_documented_defaults() -> None:
     assert cfg.thesis_quality_aggregates_trailing_windows_days == (5, 20)
     assert cfg.snapshot_freshness_max_phase1_to_snapshot_seconds == 30.0
     assert cfg.snapshot_freshness_max_price_age_seconds == 900.0
+    assert cfg.snapshot_freshness_max_option_price_age_seconds == 2100.0
 
 
 @pytest.mark.parametrize(
@@ -28,6 +29,8 @@ def test_yaml_parses_documented_defaults() -> None:
         ("snapshot_freshness_max_phase1_to_snapshot_seconds", 0.0),
         ("snapshot_freshness_max_price_age_seconds", -1.0),
         ("snapshot_freshness_max_price_age_seconds", 0.0),
+        ("snapshot_freshness_max_option_price_age_seconds", -1.0),
+        ("snapshot_freshness_max_option_price_age_seconds", 0.0),
     ],
 )
 def test_non_positive_value_fails_with_field_path(field: str, value: int | float) -> None:
@@ -37,6 +40,7 @@ def test_non_positive_value_fails_with_field_path(field: str, value: int | float
         "thesis_quality_aggregates_trailing_windows_days": (5, 20),
         "snapshot_freshness_max_phase1_to_snapshot_seconds": 30.0,
         "snapshot_freshness_max_price_age_seconds": 900.0,
+        "snapshot_freshness_max_option_price_age_seconds": 2100.0,
     }
     valid[field] = value
     with pytest.raises((ValueError, TypeError)) as exc_info:
@@ -53,6 +57,7 @@ def test_empty_trailing_windows_days_fails() -> None:
             thesis_quality_aggregates_trailing_windows_days=(),
             snapshot_freshness_max_phase1_to_snapshot_seconds=30.0,
             snapshot_freshness_max_price_age_seconds=900.0,
+            snapshot_freshness_max_option_price_age_seconds=2100.0,
         )
     assert "thesis_quality_aggregates_trailing_windows_days" in str(exc_info.value)
 
@@ -65,5 +70,6 @@ def test_negative_element_in_trailing_windows_days_fails() -> None:
             thesis_quality_aggregates_trailing_windows_days=(-1, 20),
             snapshot_freshness_max_phase1_to_snapshot_seconds=30.0,
             snapshot_freshness_max_price_age_seconds=900.0,
+            snapshot_freshness_max_option_price_age_seconds=2100.0,
         )
     assert "thesis_quality_aggregates_trailing_windows_days" in str(exc_info.value)

@@ -35,6 +35,7 @@ from alphamind.portfolio_state.pricing import (
     PriceQuote,
     PriceSource,
     StubCurrentPriceProvider,
+    StubOptionPriceProvider,
 )
 from alphamind.portfolio_state.records.activity_log import (
     ActivityLogEntry,
@@ -74,6 +75,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
     StrategyLeg,
     StrategyPositionDetails,
+    occ_symbol_for_options,
 )
 from alphamind.portfolio_state.records.theses import RecentThesisResolution, ThesisRecord
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
@@ -110,6 +112,7 @@ def _make_config() -> PortfolioStateConfig:
         thesis_quality_aggregates_trailing_windows_days=(5, 20),
         snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
         snapshot_freshness_max_price_age_seconds=60.0,
+        snapshot_freshness_max_option_price_age_seconds=300.0,
     )
 
 
@@ -581,6 +584,7 @@ def test_empty_portfolio_returns_valid_snapshot() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=config,
             now=_NOW,
@@ -624,6 +628,7 @@ def test_assemble_snapshot_call_returns_assembled_snapshot_not_coroutine() -> No
     result = assemble_snapshot(
         repository=repo,
         price_provider=provider,
+        option_price_provider=StubOptionPriceProvider({}, _NOW),
         sector_resolver=_null_sector_resolver,
         config=_make_config(),
         now=_NOW,
@@ -653,6 +658,7 @@ def test_single_equity_position_enrichment() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -734,6 +740,7 @@ def test_multi_position_rollup() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -796,6 +803,7 @@ def test_two_pass_weight_enrichment() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -833,6 +841,7 @@ def test_stale_price_does_not_abort_assembly(caplog: pytest.LogCaptureFixture) -
             assemble_snapshot(
                 repository=repo,
                 price_provider=provider,
+                option_price_provider=StubOptionPriceProvider({}, _NOW),
                 sector_resolver=_null_sector_resolver,
                 config=_make_config(),
                 now=_NOW,
@@ -864,6 +873,7 @@ def test_missing_ticker_from_get_quotes_treated_as_stale(caplog: pytest.LogCaptu
             assemble_snapshot(
                 repository=repo,
                 price_provider=provider,
+                option_price_provider=StubOptionPriceProvider({}, _NOW),
                 sector_resolver=_null_sector_resolver,
                 config=_make_config(),
                 now=_NOW,
@@ -893,6 +903,7 @@ def test_repository_read_error_propagates() -> None:
             assemble_snapshot(
                 repository=repo,
                 price_provider=provider,
+                option_price_provider=StubOptionPriceProvider({}, _NOW),
                 sector_resolver=_null_sector_resolver,
                 config=_make_config(),
                 now=_NOW,
@@ -915,6 +926,7 @@ def test_repository_consistency_error_propagates() -> None:
             assemble_snapshot(
                 repository=repo,
                 price_provider=provider,
+                option_price_provider=StubOptionPriceProvider({}, _NOW),
                 sector_resolver=_null_sector_resolver,
                 config=_make_config(),
                 now=_NOW,
@@ -937,6 +949,7 @@ def test_parameter_change_flag_false_when_no_prior_context() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -968,6 +981,7 @@ def test_parameter_change_flag_true_when_prior_params_differ() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -1011,6 +1025,7 @@ def test_drawdown_by_source_enriched_when_empty() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -1046,6 +1061,7 @@ def test_drawdown_by_source_not_overwritten_when_prepopulated() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -1080,6 +1096,7 @@ def test_pending_order_age_enriched() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -1118,6 +1135,7 @@ def test_strategy_position_missing_leg_price_handled_in_band() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -1146,6 +1164,7 @@ def test_determinism() -> None:
             assemble_snapshot(
                 repository=repo,
                 price_provider=provider,
+                option_price_provider=StubOptionPriceProvider({}, _NOW),
                 sector_resolver=_null_sector_resolver,
                 config=_make_config(),
                 now=_NOW,
@@ -1176,6 +1195,7 @@ def test_position_age_computed_from_entry_timestamp() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -1215,6 +1235,7 @@ def test_sector_resolver_used_for_sector_exposure() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=resolver,
             config=_make_config(),
             now=_NOW,
@@ -1247,6 +1268,7 @@ def test_assemble_snapshot_returns_assembled_snapshot_bundle() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -1295,6 +1317,7 @@ def test_assemble_snapshot_exposes_materialized_price_map() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -1332,6 +1355,7 @@ def test_assemble_snapshot_price_map_omits_unknown_ticker() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -1362,6 +1386,7 @@ def test_assemble_snapshot_price_map_empty_for_empty_portfolio() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -1403,6 +1428,7 @@ def test_assembler_recomputes_available_buying_power_from_canonical_formula() ->
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -1432,6 +1458,7 @@ def test_step_11_populates_regt_excess_trailing_fields_from_aggregates() -> None
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -1472,6 +1499,7 @@ def test_step_11_zero_aggregates_overwrite_persisted_placeholders() -> None:
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
@@ -1481,3 +1509,182 @@ def test_step_11_zero_aggregates_overwrite_persisted_placeholders() -> None:
     assert enriched.regt_excess_trailing_30d_usd == 0.0
     assert enriched.regt_excess_trailing_90d_usd == 0.0
     assert enriched.regt_excess_lifetime_usd == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Option pricing via OptionPriceProvider (ALP-516)
+#
+# The three required fixtures from the issue's acceptance criteria:
+#   1. Live snapshot present   → MV uses the live option quote
+#   2. Stale snapshot          → MV falls back to entry premium
+#   3. No snapshot             → MV falls back to entry premium
+# ---------------------------------------------------------------------------
+
+
+_OPT_UNDERLYING = "NVDA"
+_OPT_STRIKE = 500.0
+_OPT_EXPIRY = date(2026, 1, 16)
+_OPT_CONTRACT_TYPE = OptionContractType.CALL
+
+
+def _make_open_options_position(
+    *,
+    premium: float = 5.0,
+    contract_count: float = 2.0,
+) -> PositionRecord:
+    """Build a single open long-call options position for MV-pricing tests."""
+    details = OptionsPositionDetails(
+        underlying_ticker=Symbol(_OPT_UNDERLYING),
+        strike_price=_OPT_STRIKE,
+        expiration_date=_OPT_EXPIRY,
+        contract_type=_OPT_CONTRACT_TYPE,
+        contract_count=contract_count,
+        contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
+        premium_paid_per_contract=premium,
+        greeks=OptionGreeks(delta=0.6, gamma=0.01, theta=-0.5, vega=0.2),
+    )
+    fill = PositionFill(
+        fill_timestamp=_ENTRY_AT,
+        fill_price=price(premium),
+        fill_quantity=contract_count,
+        slippage=signed_money(0.0),
+        fees=money(0.0),
+    )
+    return PositionRecord(
+        position_id=PositionId("POS-OPT-001"),
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_ENTRY_AT,
+        details=details,
+        execution_history=(fill,),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+
+
+def _occ_symbol_for_test() -> str:
+    """Resolve the OCC symbol for the single test position via the shared helper."""
+    return occ_symbol_for_options(_make_open_options_position().details)  # type: ignore[arg-type]
+
+
+def _assemble_with_option_provider(
+    *,
+    option_quotes: dict[str, PriceQuote],
+    premium: float = 5.0,
+) -> AssembledSnapshot:
+    """Drive a single-option-position snapshot through ``assemble_snapshot``."""
+    pos = _make_open_options_position(premium=premium)
+    fixture = _make_fixture(
+        open_positions=(pos,),
+        cash_ledger=_make_cash_ledger(current_cash=0.0),
+    )
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider(
+        {_OPT_UNDERLYING: _make_fresh_quote(_OPT_UNDERLYING, 520.0)}, _NOW
+    )
+    option_provider = StubOptionPriceProvider(option_quotes, _NOW)
+    return assemble_snapshot(
+        repository=repo,
+        price_provider=provider,
+        option_price_provider=option_provider,
+        sector_resolver=_null_sector_resolver,
+        config=_make_config(),
+        now=_NOW,
+    )
+
+
+def test_option_pricing_uses_live_quote_when_fresh() -> None:
+    """A fresh option snapshot drives MV; entry premium is NOT used."""
+    occ = _occ_symbol_for_test()
+    live_premium = 7.50
+    quote = PriceQuote(
+        ticker=occ,
+        price_usd=live_premium,
+        as_of_timestamp=_NOW - timedelta(seconds=30),
+        source=PriceSource.INTRADAY_QUOTE,
+        is_stale=False,
+    )
+    assembled = _assemble_with_option_provider(option_quotes={occ: quote}, premium=5.0)
+    view = assembled.snapshot.open_positions[0]
+    # MV = 2 contracts * 100 multiplier * $7.50 = $1500
+    expected_mv = 2.0 * LISTED_OPTION_CONTRACT_MULTIPLIER * live_premium
+    assert float(view.current_market_value_usd) == pytest.approx(expected_mv)
+
+
+def test_option_pricing_falls_back_to_entry_premium_when_stale() -> None:
+    """A stale option snapshot is ignored; MV uses entry premium."""
+    occ = _occ_symbol_for_test()
+    quote = PriceQuote(
+        ticker=occ,
+        price_usd=7.50,
+        as_of_timestamp=_NOW - timedelta(seconds=600),
+        source=PriceSource.INTRADAY_QUOTE,
+        is_stale=False,  # The stub recomputes staleness against ``_NOW``.
+    )
+    assembled = _assemble_with_option_provider(option_quotes={occ: quote}, premium=5.0)
+    view = assembled.snapshot.open_positions[0]
+    # MV = 2 * 100 * $5.00 = $1000 (entry premium)
+    expected_mv = 2.0 * LISTED_OPTION_CONTRACT_MULTIPLIER * 5.0
+    assert float(view.current_market_value_usd) == pytest.approx(expected_mv)
+
+
+def test_option_pricing_falls_back_to_entry_premium_when_no_snapshot() -> None:
+    """An empty option provider keeps the entry-premium MV that pre-ALP-516 used."""
+    assembled = _assemble_with_option_provider(option_quotes={}, premium=5.0)
+    view = assembled.snapshot.open_positions[0]
+    expected_mv = 2.0 * LISTED_OPTION_CONTRACT_MULTIPLIER * 5.0
+    assert float(view.current_market_value_usd) == pytest.approx(expected_mv)
+
+
+def test_strategy_pricing_mixes_live_leg_with_entry_premium_leg() -> None:
+    """When one strategy leg has a live quote and the other does not, MV combines both."""
+    leg1_premium = 10.0
+    leg2_premium = 5.0
+    leg1_live = 12.5
+    pos = _make_strategy_position(premium1=leg1_premium, premium2=leg2_premium)
+    fixture = _make_fixture(
+        open_positions=(pos,),
+        cash_ledger=_make_cash_ledger(current_cash=0.0),
+    )
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider(
+        {"NVDA": _make_fresh_quote("NVDA", 520.0)},
+        _NOW,
+    )
+
+    assert isinstance(pos.details, StrategyPositionDetails)
+    leg1_occ = occ_symbol_for_options(pos.details.legs[0].options)
+    option_provider = StubOptionPriceProvider(
+        {
+            leg1_occ: PriceQuote(
+                ticker=leg1_occ,
+                price_usd=leg1_live,
+                as_of_timestamp=_NOW - timedelta(seconds=30),
+                source=PriceSource.INTRADAY_QUOTE,
+                is_stale=False,
+            ),
+        },
+        _NOW,
+    )
+
+    assembled = assemble_snapshot(
+        repository=repo,
+        price_provider=provider,
+        option_price_provider=option_provider,
+        sector_resolver=_null_sector_resolver,
+        config=_make_config(),
+        now=_NOW,
+    )
+    view = assembled.snapshot.open_positions[0]
+
+    # Leg 1 marks at the live quote, leg 2 falls back to entry premium.
+    # Each leg has contract_count=1, multiplier=100.
+    expected_mv = (
+        1.0 * LISTED_OPTION_CONTRACT_MULTIPLIER * leg1_live
+        + 1.0 * LISTED_OPTION_CONTRACT_MULTIPLIER * leg2_premium
+    )
+    assert float(view.current_market_value_usd) == pytest.approx(expected_mv)

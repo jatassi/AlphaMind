@@ -32,7 +32,11 @@ from alphamind.decision.strategist.runner import StrategistResult
 from alphamind.pipeline import _shared
 from alphamind.pipeline._shared import apply_agent_overrides
 from alphamind.pipeline.analysis import apply_agent_overrides as analysis_apply_overrides
-from alphamind.portfolio_state.pricing import PriceQuote, StubCurrentPriceProvider
+from alphamind.portfolio_state.pricing import (
+    PriceQuote,
+    StubCurrentPriceProvider,
+    StubOptionPriceProvider,
+)
 
 # ---------------------------------------------------------------------------
 # Hoist contract
@@ -150,9 +154,11 @@ def _pipeline_inputs_from_fixture(
 
     repository = StubPortfolioStateRepository(fixture)
     price_provider = StubCurrentPriceProvider(quotes, now)
+    option_price_provider = StubOptionPriceProvider({}, now)
     assembled = assemble_snapshot(
         repository=repository,
         price_provider=price_provider,
+        option_price_provider=option_price_provider,
         sector_resolver=adapt_ticker_sector_resolver(_sector_resolver),
         config=config,
         now=now,

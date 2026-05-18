@@ -215,6 +215,23 @@ def resolve_ticker(
     return None
 
 
+def occ_symbol_for_options(details: OptionsPositionDetails) -> str:
+    """Build the OCC contract symbol the collector writes to ``options_contract_snapshots``.
+
+    Format: ``O:{UNDERLYING}{YYMMDD}{C|P}{strike_milli}`` where ``strike_milli``
+    is the strike multiplied by 1000, zero-padded to 8 digits. This is the
+    Polygon convention used by ``data_sources/polygon/options.py`` and the
+    industry-standard OCC encoding. Both the greeks-refresh task and the
+    snapshot assembler's option-price reader key into the same table by this
+    symbol, so the single canonical builder lives here next to
+    :class:`OptionsPositionDetails`.
+    """
+    expiry = details.expiration_date.strftime("%y%m%d")
+    cp = "C" if details.contract_type is OptionContractType.CALL else "P"
+    strike_milli = round(details.strike_price * 1000)
+    return f"O:{details.underlying_ticker}{expiry}{cp}{strike_milli:08d}"
+
+
 @dataclass(frozen=True, slots=True)
 class PositionRecord:
     """Persistent record for a single position across all instrument types.

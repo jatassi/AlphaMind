@@ -27,7 +27,6 @@ from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.greeks_refresh import (
     IVQuote,
     LastRefreshState,
-    occ_symbol_for_options,
     run_greeks_refresh,
 )
 from alphamind.execution.continuous_monitor.greeks_refresh.task import (
@@ -53,6 +52,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
     StrategyLeg,
     StrategyPositionDetails,
+    occ_symbol_for_options,
 )
 
 # ---------------------------------------------------------------------------
