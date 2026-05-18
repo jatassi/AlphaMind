@@ -33,8 +33,11 @@ __all__ = [
 class CalibratedValue:
     """A computed value paired with its calibration tag.
 
-    Mirrors the legacy :class:`alphamind.distillation.calibration.CalibratedValue`
-    shape exactly — re-exported from there for backward compatibility.
+    ``bootstrap_reason`` is the operator-readable string explaining why the
+    state is non-calibrated. The field name predates the ALP-540 three-state
+    rename and is kept stable here to avoid churning the ~30 dataclasses that
+    forward it through the pipeline; the name is internal-Python-only and
+    never appears in operator-facing artifacts.
     """
 
     value: Any
@@ -43,10 +46,20 @@ class CalibratedValue:
 
 
 def decide_calibration_state(*, observed_n: int, required_n: int) -> CalibrationState:
-    """Return CALIBRATED when ``observed_n >= required_n``, else BOOTSTRAP."""
+    """Map ``(observed_n, required_n)`` to the three-state vocabulary (ALP-540).
+
+    - ``observed_n >= required_n`` → :attr:`CalibrationState.CALIBRATED`.
+    - ``0 < observed_n < required_n`` → :attr:`CalibrationState.ACCUMULATING`
+      (collector healthy, just need more time).
+    - ``observed_n == 0`` → :attr:`CalibrationState.UNAVAILABLE` (zero data
+      points indicates collector failure or vendor outage — operator action
+      required, not "give it time").
+    """
     if observed_n >= required_n:
         return CalibrationState.CALIBRATED
-    return CalibrationState.BOOTSTRAP
+    if observed_n == 0:
+        return CalibrationState.UNAVAILABLE
+    return CalibrationState.ACCUMULATING
 
 
 def tag_with_fallback(
@@ -59,25 +72,34 @@ def tag_with_fallback(
 ) -> CalibratedValue:
     """Decide the calibration state and wrap the result.
 
-    Three branches:
+    Four branches (ALP-540):
 
     - ``observed_n >= required_n`` — ``computed_value`` carried with
       :attr:`CalibrationState.CALIBRATED`; the fallback is not invoked.
-    - ``observed_n < required_n`` and ``fallback()`` returns a value —
-      fallback value carried with :attr:`CalibrationState.BOOTSTRAP` and a
-      compact ``"<input_name>: <observed_n> < <required_n>"`` reason.
-    - ``observed_n < required_n`` and ``fallback()`` returns ``None`` —
+    - ``observed_n == 0`` — ``value=None`` with
+      :attr:`CalibrationState.UNAVAILABLE`. The fallback is not invoked
+      because the operator-facing signal is "the series is missing,"
+      not "we substituted a pooled prior."
+    - ``0 < observed_n < required_n`` and ``fallback()`` returns a value —
+      fallback value carried with :attr:`CalibrationState.ACCUMULATING`
+      and a compact ``"<input_name>: <observed_n> < <required_n>"`` reason.
+    - ``0 < observed_n < required_n`` and ``fallback()`` returns ``None`` —
       ``value=None`` with :attr:`CalibrationState.UNAVAILABLE` and a reason
-      noting the pool was empty.
+      noting the cross-sectional pool was empty.
     """
-    state = decide_calibration_state(observed_n=observed_n, required_n=required_n)
-    if state is CalibrationState.CALIBRATED:
+    if observed_n >= required_n:
         return CalibratedValue(
             value=computed_value,
             state=CalibrationState.CALIBRATED,
             bootstrap_reason=None,
         )
     reason = f"{input_name}: {observed_n} < {required_n}"
+    if observed_n == 0:
+        return CalibratedValue(
+            value=None,
+            state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason=f"{reason} (0 observations)",
+        )
     fallback_value = fallback()
     if fallback_value is None:
         return CalibratedValue(
@@ -87,6 +109,6 @@ def tag_with_fallback(
         )
     return CalibratedValue(
         value=fallback_value,
-        state=CalibrationState.BOOTSTRAP,
+        state=CalibrationState.ACCUMULATING,
         bootstrap_reason=reason,
     )

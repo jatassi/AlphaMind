@@ -73,6 +73,7 @@ from alphamind.distillation.baselines import (
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.calibration_snapshot import (
     write_calibration_state_snapshot,
+    write_operator_data_health_summary,
 )
 from alphamind.distillation.contract_scope import resolve_prediction_market_scope
 from alphamind.distillation.correlation_brief import (
@@ -157,7 +158,7 @@ class DistillationOutputs:
     as_of: datetime
     total_blocks: int
     total_anomalies: int
-    bootstrap_block_count: int
+    non_calibrated_block_count: int
     all_blocks: tuple[OutputBlock, ...]
 
 
@@ -776,7 +777,9 @@ def _refresh_regime(
     classification, transition = _build_regime_thresholds(config)
     snapshot, bootstrap_reason = _build_regime_snapshot(session, as_of=as_of)
     calibration_state = (
-        CalibrationState.BOOTSTRAP if bootstrap_reason is not None else CalibrationState.CALIBRATED
+        CalibrationState.ACCUMULATING
+        if bootstrap_reason is not None
+        else CalibrationState.CALIBRATED
     )
     result = refresh_regime_state(
         session,
@@ -863,7 +866,7 @@ def _populate_brief_store(
 # ---------------------------------------------------------------------------
 
 
-def _count_bootstrap_blocks(blocks: Iterable[OutputBlock]) -> int:
+def _count_non_calibrated_blocks(blocks: Iterable[OutputBlock]) -> int:
     return sum(1 for block in blocks if block.calibration_state is not CalibrationState.CALIBRATED)
 
 
@@ -1179,7 +1182,7 @@ async def run_external_distillation(
         as_of=as_of,
         total_blocks=len(all_blocks),
         total_anomalies=sum(len(items) for items in grouped_anomalies.values()),
-        bootstrap_block_count=_count_bootstrap_blocks(all_blocks),
+        non_calibrated_block_count=_count_non_calibrated_blocks(all_blocks),
         all_blocks=tuple(all_blocks),
     )
 
@@ -1205,6 +1208,17 @@ async def run_external_distillation(
         invocation_id,
         provenance_root,
     )
+    # ALP-540: replace the bootstrap-seed scaffold at the archive root with
+    # the operator-facing data-health summary. The seed (written by
+    # ``_persist_data_calibration_snapshot`` at invocation start) is the
+    # ``{}`` placeholder the operator sees in failed e2e runs — Phase 6
+    # overwrites it with the structured per-state summary.
+    await asyncio.to_thread(
+        write_operator_data_health_summary,
+        outputs,
+        invocation_id,
+        archive_root,
+    )
     logger.info(
         "phase 6 (archive write) complete: dir=%s elapsed=%.3fs",
         archive_dir,
@@ -1226,10 +1240,10 @@ async def run_external_distillation(
     )
     logger.info(
         "run_external_distillation complete: total_blocks=%d total_anomalies=%d "
-        "bootstrap_blocks=%d elapsed=%.3fs",
+        "non_calibrated_blocks=%d elapsed=%.3fs",
         outputs.total_blocks,
         outputs.total_anomalies,
-        outputs.bootstrap_block_count,
+        outputs.non_calibrated_block_count,
         time.monotonic() - overall_start,
     )
     return outputs

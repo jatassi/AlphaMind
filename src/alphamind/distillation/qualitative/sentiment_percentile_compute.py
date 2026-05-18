@@ -204,18 +204,34 @@ def compute_sentiment_percentile_blocks(
 def _block_calibration(
     ticker_payloads: Mapping[str, Mapping[str, Any]],
 ) -> tuple[CalibrationState, str | None]:
-    """Compute the block-level calibration tag and (when bootstrap) the reason."""
-    bootstrap_tickers = [
+    """Compute the block-level calibration tag and (when non-calibrated) the reason.
+
+    A block escalates to :attr:`CalibrationState.UNAVAILABLE` if any ticker
+    payload carries that state; otherwise falls back to
+    :attr:`CalibrationState.ACCUMULATING` when at least one ticker is
+    non-calibrated.
+    """
+    unavailable_tickers = sorted(
         ticker
         for ticker, entry in ticker_payloads.items()
-        if entry["calibration_state"] != CalibrationState.CALIBRATED.value
-    ]
-    if not bootstrap_tickers:
-        return CalibrationState.CALIBRATED, None
-    return (
-        CalibrationState.BOOTSTRAP,
-        "sentiment_min_observations not met for: " + ", ".join(sorted(bootstrap_tickers)),
+        if entry["calibration_state"] == CalibrationState.UNAVAILABLE.value
     )
+    accumulating_tickers = sorted(
+        ticker
+        for ticker, entry in ticker_payloads.items()
+        if entry["calibration_state"] == CalibrationState.ACCUMULATING.value
+    )
+    if unavailable_tickers:
+        return (
+            CalibrationState.UNAVAILABLE,
+            "sentiment baseline unavailable for: " + ", ".join(unavailable_tickers),
+        )
+    if accumulating_tickers:
+        return (
+            CalibrationState.ACCUMULATING,
+            "sentiment_min_observations not met for: " + ", ".join(accumulating_tickers),
+        )
+    return CalibrationState.CALIBRATED, None
 
 
 __all__ = [

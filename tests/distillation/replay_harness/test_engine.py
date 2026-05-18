@@ -360,7 +360,7 @@ def _make_outputs_with_blocks(*blocks: OutputBlock, anomaly_count: int) -> Disti
         as_of=datetime(2026, 4, 25, tzinfo=UTC),
         total_blocks=len(blocks),
         total_anomalies=anomaly_count,
-        bootstrap_block_count=0,
+        non_calibrated_block_count=0,
         all_blocks=blocks,
     )
 
@@ -642,7 +642,7 @@ def test_minimal_slice_yields_few_anomalies_and_bootstrap_baselines(
         record for record in invocation.class_b_baseline_values if record.baseline_kind == "volume"
     ]
     assert volume_baselines, "expected at least one volume baseline row"
-    assert all(record.calibration_state == "bootstrap" for record in volume_baselines), (
+    assert all(record.calibration_state == "accumulating" for record in volume_baselines), (
         "minimal slice should produce bootstrap-tagged volume baselines, got "
         f"{[r.calibration_state for r in volume_baselines]}"
     )

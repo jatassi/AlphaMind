@@ -159,9 +159,9 @@ def _calibration_for_per_ticker(
             return CalibrationState.UNAVAILABLE, str(
                 ticker_payload.get("bootstrap_reason", "unavailable")
             )
-        if state is CalibrationState.BOOTSTRAP and worst is CalibrationState.CALIBRATED:
-            worst = CalibrationState.BOOTSTRAP
-            reason = str(ticker_payload.get("bootstrap_reason", "bootstrap"))
+        if state is CalibrationState.ACCUMULATING and worst is CalibrationState.CALIBRATED:
+            worst = CalibrationState.ACCUMULATING
+            reason = str(ticker_payload.get("bootstrap_reason", "accumulating"))
     return worst, reason
 
 

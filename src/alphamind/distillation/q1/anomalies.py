@@ -9,8 +9,8 @@ Two detections key off the indicator computations in this story:
   ``price_move_atr_multiple`` times ATR.
 
 Both detections downgrade severity to ``investigate_if_persists`` when the
-calibration state is ``bootstrap`` per
-``docs/implementation/02-distillation-layer/08a-q1-price-volume-indicators.md``
+calibration state is non-``calibrated`` (``accumulating`` or ``unavailable``)
+per ``docs/implementation/02-distillation-layer/08a-q1-price-volume-indicators.md``
 section "Anomaly detections".
 """
 
@@ -23,14 +23,16 @@ from alphamind.distillation.output import AnomalyFlag, AnomalySeverity
 def _severity_for_state(state: CalibrationState) -> AnomalySeverity:
     """Map calibration state → default anomaly severity.
 
-    A ``bootstrap``-tagged anomaly is genuinely weaker evidence than the
-    same anomaly against per-ticker history; surfacing this through severity
+    A non-calibrated anomaly is genuinely weaker evidence than the same
+    anomaly against per-ticker history; surfacing this through severity
     (rather than swallowing the flag) lets downstream consumers act on it
-    while weighting conviction appropriately.
+    while weighting conviction appropriately. Per ALP-540 the same
+    weaker-evidence treatment applies to both ``accumulating`` (not yet
+    enough data) and ``unavailable`` (no data) states.
     """
-    if state is CalibrationState.BOOTSTRAP:
-        return "investigate_if_persists"
-    return "investigate_now"
+    if state is CalibrationState.CALIBRATED:
+        return "investigate_now"
+    return "investigate_if_persists"
 
 
 def detect_volume_anomaly(

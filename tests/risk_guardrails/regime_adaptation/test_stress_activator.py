@@ -193,7 +193,7 @@ class TestEvaluateStressOverlayUncalibrated:
 
     @pytest.mark.parametrize(
         "calibration_state",
-        [CalibrationState.BOOTSTRAP, CalibrationState.UNAVAILABLE],
+        [CalibrationState.ACCUMULATING, CalibrationState.UNAVAILABLE],
     )
     def test_funding_stress_alert_with_uncalibrated_state_suppressed(
         self,
@@ -213,7 +213,7 @@ class TestEvaluateStressOverlayUncalibrated:
 
     @pytest.mark.parametrize(
         "calibration_state",
-        [CalibrationState.BOOTSTRAP, CalibrationState.UNAVAILABLE],
+        [CalibrationState.ACCUMULATING, CalibrationState.UNAVAILABLE],
     )
     def test_market_liquidity_alert_with_uncalibrated_state_suppressed(
         self,
@@ -239,7 +239,7 @@ class TestEvaluateStressOverlayMixedCalibration:
             funding_stress_alert_active=True,
             market_liquidity_alert_active=True,
             funding_stress_calibration_state=CalibrationState.CALIBRATED,
-            market_liquidity_calibration_state=CalibrationState.BOOTSTRAP,
+            market_liquidity_calibration_state=CalibrationState.ACCUMULATING,
             stress_overlay=_stress_overlay(),
         )
         assert decision.is_active is True
@@ -325,7 +325,7 @@ class TestFetchCompositeAlertStateHappyPath:
                 "market_liquidity",
                 "2026-04-15T12:00:00Z",
                 alert_active=0,
-                calibration_state="bootstrap",
+                calibration_state="accumulating",
             )
         )
         session.flush()
@@ -336,7 +336,7 @@ class TestFetchCompositeAlertStateHappyPath:
         assert state.funding_stress_calibration_state == CalibrationState.CALIBRATED
         assert state.funding_stress_as_of == "2026-04-15T12:00:00Z"
         assert state.market_liquidity_alert_active is False
-        assert state.market_liquidity_calibration_state == CalibrationState.BOOTSTRAP
+        assert state.market_liquidity_calibration_state == CalibrationState.ACCUMULATING
         assert state.market_liquidity_as_of == "2026-04-15T12:00:00Z"
 
 

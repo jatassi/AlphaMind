@@ -231,13 +231,23 @@ def _flag_tuple(magnitudes: Sequence[tuple[str, float]]) -> tuple[AnomalyFlag, .
 def _block_calibration(
     *, worst_evidence: int, min_articles: int
 ) -> tuple[CalibrationState, str | None]:
-    """Compute the block-level calibration tag and (when bootstrap) the reason."""
-    if worst_evidence < min_articles:
+    """Compute the block-level calibration tag and (when non-calibrated) the reason.
+
+    Per ALP-540: zero articles → :attr:`CalibrationState.UNAVAILABLE`
+    (collector failure); some articles but below ``min_articles`` →
+    :attr:`CalibrationState.ACCUMULATING`.
+    """
+    if worst_evidence >= min_articles:
+        return CalibrationState.CALIBRATED, None
+    if worst_evidence == 0:
         return (
-            CalibrationState.BOOTSTRAP,
-            f"news_price_divergence_min_articles: {worst_evidence} < {min_articles}",
+            CalibrationState.UNAVAILABLE,
+            f"news_price_divergence_min_articles: 0 < {min_articles} (0 observations)",
         )
-    return CalibrationState.CALIBRATED, None
+    return (
+        CalibrationState.ACCUMULATING,
+        f"news_price_divergence_min_articles: {worst_evidence} < {min_articles}",
+    )
 
 
 __all__ = [

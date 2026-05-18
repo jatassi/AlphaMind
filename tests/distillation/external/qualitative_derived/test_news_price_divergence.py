@@ -453,7 +453,7 @@ class TestNewsPriceDivergenceCalibrationGating:
         )
         assert len(blocks) == 1
         block = blocks[0]
-        assert block.calibration_state is CalibrationState.BOOTSTRAP
+        assert block.calibration_state is CalibrationState.ACCUMULATING
         assert block.bootstrap_reason is not None
         assert "news_price_divergence_min_articles" in block.bootstrap_reason
         assert "2 < 5" in block.bootstrap_reason

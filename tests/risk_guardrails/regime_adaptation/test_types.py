@@ -612,7 +612,7 @@ def test_composite_alert_state_constructible_with_populated_rows() -> None:
 def test_composite_alert_state_tolerates_none_as_of_fields() -> None:
     state = CompositeAlertState(
         funding_stress_alert_active=False,
-        funding_stress_calibration_state=CalibrationState.BOOTSTRAP,
+        funding_stress_calibration_state=CalibrationState.ACCUMULATING,
         market_liquidity_alert_active=False,
         market_liquidity_calibration_state=CalibrationState.UNAVAILABLE,
         funding_stress_as_of=None,

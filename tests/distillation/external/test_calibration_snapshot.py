@@ -109,7 +109,7 @@ def _build_outputs(
         as_of=_AS_OF,
         total_blocks=len(blocks),
         total_anomalies=0,
-        bootstrap_block_count=sum(
+        non_calibrated_block_count=sum(
             1 for block in blocks if block.calibration_state is not CalibrationState.CALIBRATED
         ),
         all_blocks=blocks,
@@ -121,8 +121,13 @@ def _build_outputs(
 # ---------------------------------------------------------------------------
 
 
-def test_writer_emits_schema_version_one(tmp_path: Path) -> None:
-    """Tracer bullet — the writer produces a JSON file whose ``schema_version`` equals ``"1"``."""
+def test_writer_emits_schema_version_two(tmp_path: Path) -> None:
+    """Tracer bullet — the writer produces a JSON file whose ``schema_version`` equals ``"2"``.
+
+    Bumped from ``"1"`` in ALP-540 because the ``by_state`` keyspace now
+    carries ``accumulating`` instead of ``bootstrap`` and the per-block
+    reason map was renamed ``accumulating_reasons``.
+    """
     outputs = _build_outputs(blocks=())
     path = write_calibration_state_snapshot(
         outputs=outputs,
@@ -135,7 +140,7 @@ def test_writer_emits_schema_version_one(tmp_path: Path) -> None:
     )
     assert path == expected_path
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == "1"
+    assert payload["schema_version"] == "2"
 
 
 def test_writer_creates_invocation_directory(tmp_path: Path) -> None:
@@ -167,12 +172,12 @@ def test_writer_empty_input_produces_zero_counts(tmp_path: Path) -> None:
     assert payload["summary"]["total_blocks"] == 0
     assert payload["summary"]["by_state"] == {
         "calibrated": 0,
-        "bootstrap": 0,
+        "accumulating": 0,
         "unavailable": 0,
     }
     assert payload["summary"]["by_audience"] == {}
     assert payload["summary"]["by_block_kind"] == {}
-    assert payload["bootstrap_reasons"] == {}
+    assert payload["accumulating_reasons"] == {}
     assert payload["unavailable_reasons"] == {}
 
 
@@ -192,7 +197,7 @@ def test_writer_aggregates_per_state_counts(tmp_path: Path) -> None:
         _block(
             block_id="q3.options_flow",
             audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="iv_rank: 4 < 30",
         ),
         _block(
@@ -213,7 +218,7 @@ def test_writer_aggregates_per_state_counts(tmp_path: Path) -> None:
     assert payload["summary"]["total_blocks"] == 4
     assert payload["summary"]["by_state"] == {
         "calibrated": 2,
-        "bootstrap": 1,
+        "accumulating": 1,
         "unavailable": 1,
     }
 
@@ -231,7 +236,7 @@ def test_writer_aggregates_per_audience_counts(tmp_path: Path) -> None:
             audience=frozenset(
                 {OutputAudience.SECTOR_TECH_SEMIS, OutputAudience.UNIVERSAL_BROADCAST}
             ),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="sentiment: 2 < 5",
         ),
     )
@@ -244,8 +249,8 @@ def test_writer_aggregates_per_audience_counts(tmp_path: Path) -> None:
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     assert payload["summary"]["by_audience"] == {
-        "sector_tech_semis": {"calibrated": 1, "bootstrap": 1, "unavailable": 0},
-        "universal_broadcast": {"calibrated": 0, "bootstrap": 1, "unavailable": 0},
+        "sector_tech_semis": {"calibrated": 1, "accumulating": 1, "unavailable": 0},
+        "universal_broadcast": {"calibrated": 0, "accumulating": 1, "unavailable": 0},
     }
 
 
@@ -260,7 +265,7 @@ def test_writer_aggregates_per_block_kind_counts(tmp_path: Path) -> None:
         _block(
             block_id="q1.volume_anomaly",
             audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="volume_baseline: 12 < 20",
         ),
         _block(
@@ -278,8 +283,8 @@ def test_writer_aggregates_per_block_kind_counts(tmp_path: Path) -> None:
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     assert payload["summary"]["by_block_kind"] == {
-        "q1.volume_anomaly": {"calibrated": 1, "bootstrap": 1, "unavailable": 0},
-        "regime.label": {"calibrated": 1, "bootstrap": 0, "unavailable": 0},
+        "q1.volume_anomaly": {"calibrated": 1, "accumulating": 1, "unavailable": 0},
+        "regime.label": {"calibrated": 1, "accumulating": 0, "unavailable": 0},
     }
 
 
@@ -289,13 +294,13 @@ def test_writer_captures_bootstrap_reasons(tmp_path: Path) -> None:
         _block(
             block_id="q1.volume_anomaly",
             audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="volume_baseline: 12 < 20",
         ),
         _block(
             block_id="qual.sentiment_percentile",
             audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="sentiment: 2 < 5",
         ),
         _block(
@@ -312,12 +317,12 @@ def test_writer_captures_bootstrap_reasons(tmp_path: Path) -> None:
     )
     payload = json.loads(path.read_text(encoding="utf-8"))
 
-    assert payload["bootstrap_reasons"] == {
+    assert payload["accumulating_reasons"] == {
         "q1.volume_anomaly": "volume_baseline: 12 < 20",
         "qual.sentiment_percentile": "sentiment: 2 < 5",
     }
     # Calibrated blocks must not appear.
-    assert "q3.options_flow" not in payload["bootstrap_reasons"]
+    assert "q3.options_flow" not in payload["accumulating_reasons"]
     assert payload["unavailable_reasons"] == {}
 
 
@@ -333,7 +338,7 @@ def test_writer_captures_unavailable_reasons(tmp_path: Path) -> None:
         _block(
             block_id="q1.volume_anomaly",
             audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="volume_baseline: 12 < 20",
         ),
     )
@@ -348,7 +353,7 @@ def test_writer_captures_unavailable_reasons(tmp_path: Path) -> None:
     assert payload["unavailable_reasons"] == {
         "q12.event_novelty": "event_history: 0 < 3 (cross-sectional pool empty)",
     }
-    assert payload["bootstrap_reasons"] == {
+    assert payload["accumulating_reasons"] == {
         "q1.volume_anomaly": "volume_baseline: 12 < 20",
     }
 
@@ -381,7 +386,7 @@ def test_writer_is_deterministic(tmp_path: Path) -> None:
             audience=frozenset(
                 {OutputAudience.SECTOR_FINANCIALS, OutputAudience.UNIVERSAL_BROADCAST}
             ),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="iv_rank: 4 < 30",
         ),
         _block(
@@ -418,7 +423,7 @@ def test_writer_end_to_end_schema_shape(tmp_path: Path) -> None:
         _block(
             block_id="q1.volume_anomaly",
             audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
-            state=CalibrationState.BOOTSTRAP,
+            state=CalibrationState.ACCUMULATING,
             bootstrap_reason="volume_baseline: 12 < 20",
         ),
         _block(
@@ -447,7 +452,7 @@ def test_writer_end_to_end_schema_shape(tmp_path: Path) -> None:
         "invocation_id",
         "as_of",
         "summary",
-        "bootstrap_reasons",
+        "accumulating_reasons",
         "unavailable_reasons",
     }
     # Summary structure.
@@ -461,11 +466,11 @@ def test_writer_end_to_end_schema_shape(tmp_path: Path) -> None:
     # Per-state vocabulary matches the CalibrationState enum.
     assert set(payload["summary"]["by_state"]) == {
         "calibrated",
-        "bootstrap",
+        "accumulating",
         "unavailable",
     }
     # Reason maps populated for non-calibrated blocks only.
-    assert payload["bootstrap_reasons"] == {
+    assert payload["accumulating_reasons"] == {
         "q1.volume_anomaly": "volume_baseline: 12 < 20",
     }
     assert payload["unavailable_reasons"] == {

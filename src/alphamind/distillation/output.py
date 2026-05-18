@@ -104,8 +104,12 @@ class OutputBlock:
       current wall clock so the invocation archive diffs cleanly across runs.
     - ``calibration_state`` / ``bootstrap_reason`` — the story-04 tag pair.
       ``bootstrap_reason`` is ``None`` when the state is
-      :attr:`CalibrationState.CALIBRATED` and a ``"<missing>: <observed> < <required>"``
-      string otherwise.
+      :attr:`CalibrationState.CALIBRATED` and an operator-readable
+      string otherwise. The Python field keeps the legacy
+      ``bootstrap_reason`` name (carried through ~30 dataclasses); the
+      operator-facing renderer (``format_block``) labels it ``reason``
+      per ALP-540 since the state now distinguishes ``accumulating``
+      from ``unavailable``.
     - ``payload`` — free-shape per-category content. The formatter renders it
       deterministically (sorted keys, fixed float precision) so the envelope
       contract holds regardless of payload shape.
@@ -246,7 +250,10 @@ def format_block(block: OutputBlock) -> str:
     ]
     calibration_part = block.calibration_state.value
     if block.calibration_state is not CalibrationState.CALIBRATED:
-        calibration_part += f" — bootstrap_reason: {block.bootstrap_reason}"
+        # The label is "reason" (not "bootstrap_reason") per ALP-540 — the
+        # state itself names whether the reason is accumulating or
+        # unavailable, so the prefix doesn't need to carry vocabulary.
+        calibration_part += f" — reason: {block.bootstrap_reason}"
     header_parts.append(calibration_part)
     if block.regime_context is not None:
         header_parts.append(f"regime: {block.regime_context}")

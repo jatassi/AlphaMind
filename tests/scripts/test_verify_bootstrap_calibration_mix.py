@@ -118,13 +118,13 @@ def _populate_typical_warm_up(session: Session) -> None:
     for kind in ("volume", "atr", "spread"):
         for i in range(10):
             ticker = f"T{i:02d}"
-            state = "calibrated" if i < 9 else "bootstrap"
+            state = "calibrated" if i < 9 else "accumulating"
             _seed_baseline(session, ticker=ticker, kind=kind, state=state)
     for i in range(10):
         ticker = f"T{i:02d}"
-        state = "bootstrap" if i < 7 else "calibrated"
+        state = "accumulating" if i < 7 else "calibrated"
         _seed_baseline(session, ticker=ticker, kind="sentiment", state=state)
-    pair_states = ("bootstrap", "bootstrap", "bootstrap", "calibrated")
+    pair_states = ("accumulating", "accumulating", "accumulating", "calibrated")
     for i, state in enumerate(pair_states):
         lead = f"T{i * 2:02d}"
         lag = f"T{i * 2 + 1:02d}"
@@ -157,7 +157,7 @@ def test_underaged_volume_baseline_fails(session: Session) -> None:
     # 5 of 10 volume baselines calibrated → below 80% lower bound.
     for i in range(10):
         ticker = f"T{i:02d}"
-        state = "calibrated" if i < 5 else "bootstrap"
+        state = "calibrated" if i < 5 else "accumulating"
         _seed_baseline(session, ticker=ticker, kind="volume", state=state)
     session.commit()
 
@@ -217,7 +217,7 @@ def test_kind_distribution_records_share(session: Session) -> None:
     assert isinstance(volume, KindDistribution)
     assert volume.total == 10
     assert volume.calibrated == 9
-    assert volume.bootstrap == 1
+    assert volume.accumulating == 1
     assert 0.85 < volume.calibrated_share <= 1.0
 
 
@@ -245,7 +245,7 @@ def _populate_cold_start(session: Session, *, universe_size: int = 10) -> None:
                 session,
                 ticker=ticker,
                 kind=kind,
-                state="bootstrap",
+                state="accumulating",
                 n_obs=5,
                 window_days=252,
             )
@@ -316,7 +316,7 @@ def test_cold_start_skipped_when_window_already_filled(session: Session) -> None
             session,
             ticker=Symbol(f"T{i:02d}"),
             kind="volume",
-            state="bootstrap",
+            state="accumulating",
             n_obs=252,
             window_days=252,
         )
@@ -336,13 +336,13 @@ def test_cold_start_skipped_when_a_row_is_calibrated(session: Session) -> None:
     session.flush()
     for i in range(10):
         # 5 calibrated, 5 bootstrap → calibrated_share=0.5, below 0.80 lower bound.
-        state = "calibrated" if i < 5 else "bootstrap"
+        state = "calibrated" if i < 5 else "accumulating"
         _seed_baseline(
             session,
             ticker=Symbol(f"T{i:02d}"),
             kind="volume",
             state=state,
-            n_obs=5 if state == "bootstrap" else 200,
+            n_obs=5 if state == "accumulating" else 200,
             window_days=252,
         )
     session.commit()
@@ -430,7 +430,7 @@ def test_partially_calibrated_lead_lag_still_fails_when_above_upper(
         ("T06", "T07"),
     )
     for i, (lead, lag) in enumerate(pair_specs):
-        state = "calibrated" if i < 3 else "bootstrap"
+        state = "calibrated" if i < 3 else "accumulating"
         _seed_pair(session, lead=lead, lag=lag, state=state, n_pair_events=20)
     session.commit()
 

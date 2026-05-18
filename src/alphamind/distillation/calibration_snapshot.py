@@ -39,11 +39,14 @@ if TYPE_CHECKING:
 # Schema vocabulary
 # ---------------------------------------------------------------------------
 
-SCHEMA_VERSION: str = "1"
+SCHEMA_VERSION: str = "2"
 """Schema version field value.
 
-Bumped only when the on-disk shape changes incompatibly. Future schema
-work owns its own migration; this story lays the bootstrap version.
+Bumped to ``"2"`` for ALP-540: the ``by_state`` keyspace now uses
+``accumulating`` instead of ``bootstrap``, and the per-block-reason map
+that was named ``bootstrap_reasons`` is now ``accumulating_reasons``
+(with ``unavailable_reasons`` unchanged). Downstream readers should
+branch on this version when consuming legacy snapshots.
 """
 
 
@@ -187,7 +190,7 @@ def write_calibration_state_snapshot(
             "by_audience": _aggregate_by_audience(blocks),
             "by_block_kind": _aggregate_by_block_kind(blocks),
         },
-        "bootstrap_reasons": _aggregate_reasons(blocks, CalibrationState.BOOTSTRAP),
+        "accumulating_reasons": _aggregate_reasons(blocks, CalibrationState.ACCUMULATING),
         "unavailable_reasons": _aggregate_reasons(blocks, CalibrationState.UNAVAILABLE),
     }
 
@@ -196,7 +199,86 @@ def write_calibration_state_snapshot(
     return target_path
 
 
+OPERATOR_SUMMARY_SCHEMA_VERSION: str = "1"
+"""Schema version for the operator-facing data-health summary (ALP-540)."""
+
+
+def _operator_summary_payload(outputs: DistillationOutputs, invocation_id: str) -> dict[str, Any]:
+    """Build the operator-facing data-health summary payload.
+
+    Shape (per ALP-540 § Layer 2):
+
+    .. code-block:: json
+
+        {
+          "schema_version": "1",
+          "invocation_id": "...",
+          "as_of": "...",
+          "summary": {"calibrated": N, "accumulating": M, "unavailable": K},
+          "unavailable": [{"module": "<block_id>", "reason": "..."}, ...],
+          "accumulating": [{"module": "<block_id>", "reason": "..."}, ...]
+        }
+
+    The per-block lists are emitted in block-id-sorted order. Both
+    ``unavailable`` and ``accumulating`` carry only ``module`` and
+    ``reason`` — the strawman fields ``since`` / ``eta_calibrated_at``
+    require historical state the orchestrator doesn't currently track,
+    and the reason text already encodes the ``observations < required``
+    delta for accumulating series.
+    """
+    counts = _aggregate_by_state(outputs.all_blocks)
+
+    def _per_block(state: CalibrationState) -> list[dict[str, str]]:
+        return [
+            {"module": block.block_id, "reason": block.bootstrap_reason or ""}
+            for block in sorted(outputs.all_blocks, key=lambda b: b.block_id)
+            if block.calibration_state is state
+        ]
+
+    return {
+        "schema_version": OPERATOR_SUMMARY_SCHEMA_VERSION,
+        "invocation_id": invocation_id,
+        "as_of": _format_as_of(outputs.as_of),
+        "summary": {
+            CalibrationState.CALIBRATED.value: counts[CalibrationState.CALIBRATED.value],
+            CalibrationState.ACCUMULATING.value: counts[CalibrationState.ACCUMULATING.value],
+            CalibrationState.UNAVAILABLE.value: counts[CalibrationState.UNAVAILABLE.value],
+        },
+        "unavailable": _per_block(CalibrationState.UNAVAILABLE),
+        "accumulating": _per_block(CalibrationState.ACCUMULATING),
+    }
+
+
+def write_operator_data_health_summary(
+    outputs: DistillationOutputs,
+    invocation_id: str,
+    archive_root: Path,
+) -> Path:
+    """Write the operator-facing data-health summary to the archive root.
+
+    The summary lands at
+    ``<archive_root>/invocations/<invocation_id>/data_calibration_state.json``,
+    overwriting the bootstrap-seed scaffold ``_persist_data_calibration_snapshot``
+    leaves there at invocation start. Per ALP-540 the operator reads this
+    file (and the verify-debug-e2e harness's ``=== DATA HEALTH ===`` block
+    rendered from it) to distinguish ``accumulating`` (give it time) from
+    ``unavailable`` (collector / vendor failure) series.
+
+    Distinct from :func:`write_calibration_state_snapshot`:
+
+    - This file lives at ``archive_root`` (operator-facing).
+    - It carries the issue's flat ``summary``/``unavailable``/``accumulating``
+      shape, not the internal ``by_audience``/``by_block_kind`` breakdown.
+    """
+    payload = _operator_summary_payload(outputs, invocation_id)
+    target_path = archive_root / INVOCATIONS_DIRNAME / invocation_id / CALIBRATION_SNAPSHOT_FILENAME
+    atomic_write_text(target_path, _serialize(payload))
+    return target_path
+
+
 __all__ = [
+    "OPERATOR_SUMMARY_SCHEMA_VERSION",
     "SCHEMA_VERSION",
     "write_calibration_state_snapshot",
+    "write_operator_data_health_summary",
 ]

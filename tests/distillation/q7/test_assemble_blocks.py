@@ -439,9 +439,13 @@ class TestAssembleQ7Blocks:
 
         blocks = assemble_q7_blocks(session, config=_build_config(), as_of=as_of)
 
-        assert blocks, "expected blocks even on the bootstrap path"
-        bootstrap_blocks = [b for b in blocks if b.calibration_state is CalibrationState.BOOTSTRAP]
-        assert bootstrap_blocks, "expected at least one BOOTSTRAP block on insufficient history"
+        assert blocks, "expected blocks even on the sub-calibrated path"
+        non_calibrated_blocks = [
+            b for b in blocks if b.calibration_state is not CalibrationState.CALIBRATED
+        ]
+        assert non_calibrated_blocks, (
+            "expected at least one non-calibrated block on insufficient history"
+        )
 
     def test_determinism_across_repeated_invocations(self, session: Session) -> None:
         """Two consecutive calls produce byte-identical rendered output."""

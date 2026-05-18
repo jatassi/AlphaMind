@@ -15,7 +15,7 @@ def test_calibration_state_members_and_values() -> None:
 
     assert tuple(member.value for member in CalibrationState) == (
         "calibrated",
-        "bootstrap",
+        "accumulating",
         "unavailable",
     )
 
@@ -33,7 +33,7 @@ def test_calibration_state_values_tuple_matches_enum() -> None:
     )
 
     assert tuple(member.value for member in CalibrationState) == CALIBRATION_STATE_VALUES
-    assert CALIBRATION_STATE_VALUES == ("calibrated", "bootstrap", "unavailable")
+    assert CALIBRATION_STATE_VALUES == ("calibrated", "accumulating", "unavailable")
 
 
 def test_kernel_calibration_has_zero_first_party_imports() -> None:

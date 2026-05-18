@@ -591,7 +591,7 @@ def test_calibration_breakdown_counts_observed_states() -> None:
             _build_invocation(
                 slice_id="s1",
                 index=i,
-                anomaly_flags=(_flag("volume_anomaly", calibration_state="bootstrap"),),
+                anomaly_flags=(_flag("volume_anomaly", calibration_state="accumulating"),),
             )
         )
     for i in range(95, 100):
@@ -612,7 +612,7 @@ def test_calibration_breakdown_counts_observed_states() -> None:
         (e.regime_label, e.calibration_state): e for e in report.calibration_breakdown.entries
     }
     assert by_state[("normal", "calibrated")].candidate_count == 80
-    assert by_state[("normal", "bootstrap")].candidate_count == 15
+    assert by_state[("normal", "accumulating")].candidate_count == 15
     assert by_state[("normal", "unavailable")].candidate_count == 5
     assert by_state[("normal", "calibrated")].baseline_count is None
 
@@ -633,13 +633,13 @@ def test_calibration_breakdown_counts_baseline_values_too() -> None:
                     baseline_kind="volume",
                     entity_key="T1",
                     value=1.0,
-                    calibration_state="bootstrap",
+                    calibration_state="accumulating",
                 ),
                 _baseline_value(
                     baseline_kind="volume",
                     entity_key="T2",
                     value=2.0,
-                    calibration_state="bootstrap",
+                    calibration_state="accumulating",
                 ),
             ),
         ),
@@ -654,13 +654,13 @@ def test_calibration_breakdown_counts_baseline_values_too() -> None:
         (e.regime_label, e.calibration_state): e for e in report.calibration_breakdown.entries
     }
     assert by_state[("normal", "calibrated")].candidate_count == 1
-    assert by_state[("normal", "bootstrap")].candidate_count == 2
+    assert by_state[("normal", "accumulating")].candidate_count == 2
 
 
 def test_calibration_breakdown_orders_entries_alphabetically() -> None:
     """Entries sorted by ``(regime_label, calibration_state)``."""
     invocations: list[InvocationOutputs] = []
-    for state in ("unavailable", "bootstrap", "calibrated"):
+    for state in ("unavailable", "accumulating", "calibrated"):
         invocations.append(
             _build_invocation(
                 slice_id="s1",
@@ -695,7 +695,7 @@ def test_calibration_breakdown_orders_entries_alphabetically() -> None:
     keys = [(e.regime_label, e.calibration_state) for e in report.calibration_breakdown.entries]
     assert keys == [
         ("crisis", "calibrated"),
-        ("normal", "bootstrap"),
+        ("normal", "accumulating"),
         ("normal", "calibrated"),
         ("normal", "unavailable"),
     ]
@@ -714,7 +714,7 @@ def test_calibration_breakdown_in_diff_mode_includes_baseline_count() -> None:
         _build_invocation(
             slice_id="s1",
             index=0,
-            anomaly_flags=(_flag("volume_anomaly", calibration_state="bootstrap"),),
+            anomaly_flags=(_flag("volume_anomaly", calibration_state="accumulating"),),
         ),
     )
     candidate_slice = _build_slice_result(
@@ -731,8 +731,8 @@ def test_calibration_breakdown_in_diff_mode_includes_baseline_count() -> None:
     }
     assert by_state[("normal", "calibrated")].candidate_count == 1
     assert by_state[("normal", "calibrated")].baseline_count == 0
-    assert by_state[("normal", "bootstrap")].candidate_count == 0
-    assert by_state[("normal", "bootstrap")].baseline_count == 1
+    assert by_state[("normal", "accumulating")].candidate_count == 0
+    assert by_state[("normal", "accumulating")].baseline_count == 1
 
 
 # ---------------------------------------------------------------------------

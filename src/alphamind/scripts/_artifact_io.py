@@ -330,7 +330,7 @@ def _distillation_outputs_to_dict(outputs: DistillationOutputs) -> dict[str, Any
         "as_of": _isoformat(outputs.as_of),
         "total_blocks": outputs.total_blocks,
         "total_anomalies": outputs.total_anomalies,
-        "bootstrap_block_count": outputs.bootstrap_block_count,
+        "non_calibrated_block_count": outputs.non_calibrated_block_count,
         "all_blocks": [_output_block_to_dict(block) for block in outputs.all_blocks],
         "sector_outputs": [
             _sector_output_to_dict(output) for output in outputs.sector_outputs.values()
@@ -357,7 +357,7 @@ def _distillation_outputs_from_dict(payload: dict[str, Any]) -> DistillationOutp
         as_of=_parse_dt(payload["as_of"]),
         total_blocks=int(payload["total_blocks"]),
         total_anomalies=int(payload["total_anomalies"]),
-        bootstrap_block_count=int(payload["bootstrap_block_count"]),
+        non_calibrated_block_count=int(payload["non_calibrated_block_count"]),
         all_blocks=tuple(_output_block_from_dict(block) for block in payload["all_blocks"]),
     )
 

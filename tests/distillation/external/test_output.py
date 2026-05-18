@@ -96,32 +96,32 @@ def test_format_block_is_byte_identical_on_repeated_calls() -> None:
     assert rendered_first.startswith("### q1.volume_anomaly | ")
 
 
-def test_format_block_omits_bootstrap_reason_when_calibrated() -> None:
-    """No bootstrap_reason segment when state is CALIBRATED."""
+def test_format_block_omits_reason_when_calibrated() -> None:
+    """No reason segment when state is CALIBRATED."""
     block = _make_block(calibration_state=CalibrationState.CALIBRATED)
     rendered = format_block(block)
-    assert "bootstrap_reason" not in rendered
+    assert "reason" not in rendered
     assert "| calibrated" in rendered
 
 
-def test_format_block_includes_bootstrap_reason_when_bootstrap() -> None:
-    """The bootstrap_reason segment appears when state is BOOTSTRAP."""
+def test_format_block_includes_reason_when_accumulating() -> None:
+    """The reason segment appears when state is ACCUMULATING."""
     block = _make_block(
-        calibration_state=CalibrationState.BOOTSTRAP,
+        calibration_state=CalibrationState.ACCUMULATING,
         bootstrap_reason="volume_baseline: 5 < 20",
     )
     rendered = format_block(block)
-    assert "| bootstrap — bootstrap_reason: volume_baseline: 5 < 20" in rendered
+    assert "| accumulating — reason: volume_baseline: 5 < 20" in rendered
 
 
-def test_format_block_includes_bootstrap_reason_when_unavailable() -> None:
-    """The bootstrap_reason segment appears when state is UNAVAILABLE."""
+def test_format_block_includes_reason_when_unavailable() -> None:
+    """The reason segment appears when state is UNAVAILABLE."""
     block = _make_block(
         calibration_state=CalibrationState.UNAVAILABLE,
         bootstrap_reason="volume_baseline: 0 < 20 (cross-sectional pool empty)",
     )
     rendered = format_block(block)
-    assert "| unavailable — bootstrap_reason:" in rendered
+    assert "| unavailable — reason:" in rendered
     assert "(cross-sectional pool empty)" in rendered
 
 
@@ -217,7 +217,7 @@ def test_format_block_full_shape_locks_envelope_layout() -> None:
         block_id="q1.volume_anomaly",
         audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
         freshness_ts=datetime(2026, 4, 27, 14, 30, tzinfo=UTC),
-        calibration_state=CalibrationState.BOOTSTRAP,
+        calibration_state=CalibrationState.ACCUMULATING,
         bootstrap_reason="volume_baseline: 5 < 20",
         payload={
             "z_score": 2.5,
@@ -231,7 +231,7 @@ def test_format_block_full_shape_locks_envelope_layout() -> None:
     )
     expected = (
         "### q1.volume_anomaly | freshness 2026-04-27T14:30:00+00:00"
-        " | bootstrap — bootstrap_reason: volume_baseline: 5 < 20"
+        " | accumulating — reason: volume_baseline: 5 < 20"
         " | regime: low_vol_compression\n"
         "context:\n"
         "  atr: 4.875\n"

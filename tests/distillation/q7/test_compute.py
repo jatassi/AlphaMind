@@ -130,7 +130,7 @@ class TestBreadthInternalsCompute:
             broad_market_closes=_walked_closes([0.0] * 10),
             as_of=_as_of(),
         )
-        assert block.calibration_state is CalibrationState.BOOTSTRAP
+        assert block.calibration_state is CalibrationState.ACCUMULATING
 
 
 # ---------------------------------------------------------------------------

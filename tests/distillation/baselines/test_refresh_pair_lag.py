@@ -153,12 +153,15 @@ class TestRefreshPairLagHappyPath:
 
 
 class TestRefreshPairLagBootstrapPath:
-    def test_writes_bootstrap_row_when_aligned_events_below_min(self, session: Session) -> None:
+    def test_writes_accumulating_row_when_aligned_events_below_min(self, session: Session) -> None:
         _add_ticker(session, "SMH")
         _add_ticker(session, "QQQ")
-        # Only five bars per ticker → 4 returns, 3 aligned at lag=1 — well
-        # below the 10-event minimum.
-        for day in range(1, 6):
+        # Seed bars inside the 20-day window ending at as_of=2026-04-25.
+        # Five bars at 2026-04-20..24 → 4 returns, 3 aligned at lag=1 — well
+        # below the 10-event minimum but strictly above zero, so the new
+        # ALP-540 vocabulary classifies as ``accumulating`` (collector
+        # healthy, just need more time).
+        for day in range(20, 25):
             ts = f"2026-04-{day:02d}T00:00:00Z"
             _add_close(session, ticker=Symbol("SMH"), period_start=ts, close=100.0 + day)
             _add_close(session, ticker=Symbol("QQQ"), period_start=ts, close=200.0 + day)
@@ -174,7 +177,7 @@ class TestRefreshPairLagBootstrapPath:
         )
 
         cv = result[("SMH", "QQQ")]
-        assert cv.state is CalibrationState.BOOTSTRAP
+        assert cv.state is CalibrationState.ACCUMULATING
         assert cv.bootstrap_reason is not None
         assert "pair_lag_min_events" in cv.bootstrap_reason
 
@@ -183,7 +186,32 @@ class TestRefreshPairLagBootstrapPath:
                 DistillationPairLag.lead_ticker == "SMH",
             )
         ).scalar_one()
-        assert row.calibration_state == "bootstrap"
+        assert row.calibration_state == "accumulating"
+
+    def test_writes_unavailable_row_when_no_aligned_events(self, session: Session) -> None:
+        """Per ALP-540, zero events → UNAVAILABLE (collector failure)."""
+        _add_ticker(session, "SMH")
+        _add_ticker(session, "QQQ")
+        # No bars inside the window → zero returns → zero pair events.
+        session.commit()
+
+        result = refresh_pair_lag(
+            session,
+            pair_scope=(("SMH", "QQQ"),),
+            as_of="2026-04-25T00:00:00Z",
+            window_days=PAIR_LAG_WINDOW_DAYS,
+            min_events=PAIR_LAG_MIN_EVENTS,
+            max_lag_days=PAIR_LAG_MAX_DAYS,
+        )
+
+        cv = result[("SMH", "QQQ")]
+        assert cv.state is CalibrationState.UNAVAILABLE
+        row = session.execute(
+            select(DistillationPairLag).where(
+                DistillationPairLag.lead_ticker == "SMH",
+            )
+        ).scalar_one()
+        assert row.calibration_state == "unavailable"
 
 
 # ---------------------------------------------------------------------------

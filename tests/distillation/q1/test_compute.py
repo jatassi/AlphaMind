@@ -42,7 +42,7 @@ def test_gap_fill_probability_sector_pool_when_bootstrap() -> None:
         sector_filled=30,
     )
     result = compute_gap_fill_probability(history=history, min_events=30)
-    assert result.state is CalibrationState.BOOTSTRAP
+    assert result.state is CalibrationState.ACCUMULATING
     assert result.value == pytest.approx(30.0 / 33.0)
 
 

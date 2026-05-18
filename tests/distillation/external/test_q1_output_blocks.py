@@ -131,8 +131,8 @@ class TestBuildQ1Block:
             sector="tech",
             per_ticker={"AAPL": {"gap_fill_probability": 0.45}},
             freshness_ts=datetime(2026, 4, 27, tzinfo=UTC),
-            calibration_state=CalibrationState.BOOTSTRAP,
+            calibration_state=CalibrationState.ACCUMULATING,
             bootstrap_reason="gap_fill_min_events: 5 < 30",
         )
-        assert block.calibration_state is CalibrationState.BOOTSTRAP
+        assert block.calibration_state is CalibrationState.ACCUMULATING
         assert block.bootstrap_reason == "gap_fill_min_events: 5 < 30"

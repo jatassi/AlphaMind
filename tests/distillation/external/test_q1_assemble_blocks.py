@@ -556,7 +556,7 @@ class TestBootstrapPath:
                 stdev=100_000.0,
                 n_observations=3,  # below min_observations
                 window_days=20,
-                state=CalibrationState.BOOTSTRAP,
+                state=CalibrationState.ACCUMULATING,
             )
             _seed_baseline(
                 session,
@@ -567,18 +567,20 @@ class TestBootstrapPath:
                 stdev=0.2,
                 n_observations=3,
                 window_days=14,
-                state=CalibrationState.BOOTSTRAP,
+                state=CalibrationState.ACCUMULATING,
             )
         session.commit()
 
         config = _build_distillation_config()
         blocks = assemble_q1_blocks(session, config=config, as_of=end)
 
-        # At least one block carries BOOTSTRAP — the volume-baseline-tag
+        # At least one block carries ACCUMULATING — the volume-baseline tag
         # propagates to the volume_profile / relative_performance blocks.
-        bootstrap_blocks = [b for b in blocks if b.calibration_state is CalibrationState.BOOTSTRAP]
-        assert bootstrap_blocks, (
-            "Expected at least one BOOTSTRAP-tagged block when baselines are bootstrap-flagged"
+        accumulating_blocks = [
+            b for b in blocks if b.calibration_state is CalibrationState.ACCUMULATING
+        ]
+        assert accumulating_blocks, (
+            "Expected at least one ACCUMULATING block when baselines are sub-threshold"
         )
 
     def test_bootstrap_anomaly_severity_downgrades_to_investigate_if_persists(
@@ -614,7 +616,7 @@ class TestBootstrapPath:
                 stdev=100_000.0,
                 n_observations=3,
                 window_days=20,
-                state=CalibrationState.BOOTSTRAP,
+                state=CalibrationState.ACCUMULATING,
             )
             _seed_baseline(
                 session,
@@ -625,7 +627,7 @@ class TestBootstrapPath:
                 stdev=0.2,
                 n_observations=3,
                 window_days=14,
-                state=CalibrationState.BOOTSTRAP,
+                state=CalibrationState.ACCUMULATING,
             )
         session.commit()
 

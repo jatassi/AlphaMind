@@ -189,8 +189,8 @@ def compute_lead_lag_pure(
         if inputs.persisted is None:
             estimate_days = float(pair.max_days)
             n_pair_events = 0
-            state = CalibrationState.BOOTSTRAP
-            reason: str | None = f"pair_lag_history_missing:{pair.pair_key}: 0 < 1"
+            state = CalibrationState.UNAVAILABLE
+            reason: str | None = f"pair_lag_history_missing:{pair.pair_key}: 0 observations"
         else:
             estimate_days_raw, n_pair_events_raw, state_str = inputs.persisted
             estimate_days = float(estimate_days_raw)

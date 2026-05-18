@@ -154,7 +154,7 @@ class TestRefreshEventHistoryDetection:
 
         cv = result["AAPL"]
         # Bootstrap: only 1 event observed so far, far below 30-event minimum.
-        assert cv.state is CalibrationState.BOOTSTRAP
+        assert cv.state is CalibrationState.ACCUMULATING
         assert cv.value["n_events"] == 1
         assert cv.value["n_resolved"] == 0
 

@@ -1,4 +1,4 @@
-"""Post-bootstrap calibration-mix verifier (story 13).
+"""Post-bootstrap calibration-mix verifier (story 13; ALP-540 vocabulary).
 
 After ``python -m alphamind.collector bootstrap`` completes, run the
 distillation orchestrator once and then this script. The script reads
@@ -10,22 +10,24 @@ asserts the distribution roughly matches
 
 - Volume / ATR / spread: ``calibrated`` after 20 trading days. After
   the standard 252-day bootstrap window most rows should be calibrated.
-- Sentiment: starts mostly ``bootstrap`` (vendor sentiment backfill
+- Sentiment: starts mostly ``accumulating`` (vendor sentiment backfill
   varies), trends to ``calibrated`` over the first 1-2 invocations.
-- Lead-lag pairs: starts mostly ``bootstrap`` (event-driven; meaningful
+- Lead-lag pairs: starts mostly ``accumulating`` (event-driven; meaningful
   after ~10 cycles per pair, typically 1-2 months).
 
 Bands are deliberately broad — the warm-up estimate is qualitative, not
 a numeric SLA. ``≥ 80%`` calibrated for high-frequency baselines and
-``≤ 70%`` calibrated for sentiment/lead-lag are the structural
-"calibrated mostly works / event-driven is mostly bootstrapping"
-checks the spec asks for.
+``≤ 50%`` calibrated for sentiment/lead-lag are the structural
+"calibrated mostly works / event-driven is mostly accumulating"
+checks the spec asks for. The label ``post-bootstrap`` here refers to
+the collector's one-time historical backfill (``collector bootstrap``
+subcommand), not the calibration-state value (now ``accumulating``).
 
 Cold-start exemption: on a freshly-migrated DB the first orchestrator
-invocation tags every per-ticker baseline ``bootstrap`` (the rolling
+invocation tags every per-ticker baseline ``accumulating`` (the rolling
 window has not filled yet), so the high-frequency lower bound trivially
 fails on day one. When every row carries the cold-start signature —
-all ``bootstrap``, every ``n_observations < window_days``, and the
+all ``accumulating``, every ``n_observations < window_days``, and the
 ticker count covers the configured universe — the verifier reports the
 band as ``DEFERRED`` instead of failing, mirroring the ``deferred=True``
 state-table pattern in ``verify_distillation``.
@@ -73,11 +75,11 @@ frequency baselines are universally ``calibrated`` after one month of
 operation. The threshold is the qualitative "mostly calibrated" band.
 """
 
-BOOTSTRAP_DOMINANT_UPPER_BOUND = 0.50
+ACCUMULATING_DOMINANT_UPPER_BOUND = 0.50
 """Event-driven kinds (sentiment / lead-lag) — calibrated share ≤ 50%.
 
-Sentiment is mostly ``bootstrap`` initially (vendor backfill depth
-varies); lead-lag pairs are mostly ``bootstrap`` for the first 1-2
+Sentiment is mostly ``accumulating`` initially (vendor backfill depth
+varies); lead-lag pairs are mostly ``accumulating`` for the first 1-2
 months. The qualitative band keeps the assertion permissive while
 catching a regression that flipped the dominance the wrong way.
 """
@@ -124,7 +126,7 @@ _KIND_BANDS: tuple[_KindBand, ...] = (
             "calibrated expected immediately post-bootstrap)."
         ),
         calibrated_share_lower=None,
-        calibrated_share_upper=BOOTSTRAP_DOMINANT_UPPER_BOUND,
+        calibrated_share_upper=ACCUMULATING_DOMINANT_UPPER_BOUND,
     ),
     _KindBand(
         kind="lead_lag",
@@ -134,7 +136,7 @@ _KIND_BANDS: tuple[_KindBand, ...] = (
             "immediately post-bootstrap)."
         ),
         calibrated_share_lower=None,
-        calibrated_share_upper=BOOTSTRAP_DOMINANT_UPPER_BOUND,
+        calibrated_share_upper=ACCUMULATING_DOMINANT_UPPER_BOUND,
     ),
 )
 
@@ -153,7 +155,7 @@ class KindDistribution:
     the cases where the qualitative band is structurally inapplicable:
 
     - ``cold_start_deferred`` — fresh-DB first invocation: all rows are
-      ``bootstrap`` with ``n_observations < window_days``. Applies to
+      ``accumulating`` with ``n_observations < window_days``. Applies to
       lower-bound bands (volume / atr / spread) only — the upper-bound
       bands trivially pass on cold start.
     - ``post_bootstrap_deferred`` — system has matured past the warm-up
@@ -170,7 +172,7 @@ class KindDistribution:
     table_name: str
     total: int
     calibrated: int
-    bootstrap: int
+    accumulating: int
     unavailable: int
     expected_calibrated_share_lower: float | None
     expected_calibrated_share_upper: float | None
@@ -204,7 +206,7 @@ class CalibrationMixReport:
 
 
 def _count_calibration_states(session: Session, *, band: _KindBand) -> tuple[int, int, int, int]:
-    """Return ``(total, calibrated, bootstrap, unavailable)`` for ``band``.
+    """Return ``(total, calibrated, accumulating, unavailable)`` for ``band``.
 
     The table-name dispatch is explicit (rather than reflective) so the
     schema is part of the verifier's contract — the assertion fails
@@ -231,10 +233,10 @@ def _count_calibration_states(session: Session, *, band: _KindBand) -> tuple[int
 
     counts = {state: int(n) for state, n in rows}
     calibrated = counts.get("calibrated", 0)
-    bootstrap = counts.get("bootstrap", 0)
+    accumulating = counts.get("accumulating", 0)
     unavailable = counts.get("unavailable", 0)
-    total = calibrated + bootstrap + unavailable
-    return total, calibrated, bootstrap, unavailable
+    total = calibrated + accumulating + unavailable
+    return total, calibrated, accumulating, unavailable
 
 
 def _band_holds(
@@ -265,7 +267,7 @@ def _cold_start_signature_holds(
 
     Three conditions, all required:
 
-    1. Every row's ``calibration_state`` is ``bootstrap``.
+    1. Every row's ``calibration_state`` is ``accumulating``.
     2. Every row's ``n_observations`` is strictly less than ``window_days``
        (the rolling window has not yet filled).
     3. When ``ticker_universe_size`` is known, the per-ticker row count
@@ -274,8 +276,9 @@ def _cold_start_signature_holds(
 
     Only meaningful for ticker-baseline kinds with a ``calibrated_share_lower``
     band. ``sentiment`` and ``lead_lag`` only carry an upper bound, so a
-    100%-bootstrap distribution already passes their band; the deferred-on-
-    cold-start path doesn't apply and the function returns False early.
+    100%-accumulating distribution already passes their band; the
+    deferred-on-cold-start path doesn't apply and the function returns
+    False early.
     """
     if band.table_name != "distillation_ticker_baseline" or band.calibrated_share_lower is None:
         return False
@@ -289,9 +292,9 @@ def _cold_start_signature_holds(
     ).all()
     if not rows:
         return False
-    bootstrap_value = CalibrationState.BOOTSTRAP.value
+    accumulating_value = CalibrationState.ACCUMULATING.value
     for _ticker, state, n_obs, win_days in rows:
-        if state != bootstrap_value or n_obs >= win_days:
+        if state != accumulating_value or n_obs >= win_days:
             return False
     return (
         ticker_universe_size is None
@@ -343,7 +346,7 @@ def compute_calibration_mix_report(
     distributions: list[KindDistribution] = []
     total_rows_seen = 0
     for band in _KIND_BANDS:
-        total, calibrated, bootstrap, unavailable = _count_calibration_states(session, band=band)
+        total, calibrated, accumulating, unavailable = _count_calibration_states(session, band=band)
         total_rows_seen += total
         share = calibrated / total if total > 0 else 0.0
         in_band = total > 0 and _band_holds(
@@ -370,7 +373,7 @@ def compute_calibration_mix_report(
                 table_name=band.table_name,
                 total=total,
                 calibrated=calibrated,
-                bootstrap=bootstrap,
+                accumulating=accumulating,
                 unavailable=unavailable,
                 expected_calibrated_share_lower=band.calibrated_share_lower,
                 expected_calibrated_share_upper=band.calibrated_share_upper,
@@ -423,7 +426,7 @@ def format_calibration_mix_report(report: CalibrationMixReport) -> str:
     lines.append("")
     lines.append("[ Calibration Mix ]")
     lines.append(
-        f"  {'kind':<12} {'total':>6} {'calibrated':>11} {'bootstrap':>10} "
+        f"  {'kind':<12} {'total':>6} {'calibrated':>11} {'accumulating':>13} "
         f"{'unavailable':>12} {'share':>7}  band"
     )
     for dist in report.distributions:
@@ -442,7 +445,7 @@ def format_calibration_mix_report(report: CalibrationMixReport) -> str:
             status = "OUT"
         lines.append(
             f"  {dist.kind:<12} {dist.total:>6} {dist.calibrated:>11} "
-            f"{dist.bootstrap:>10} {dist.unavailable:>12} {share_str}  "
+            f"{dist.accumulating:>13} {dist.unavailable:>12} {share_str}  "
             f"[{band_lower}..{band_upper}] {status}"
         )
 
@@ -496,7 +499,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 __all__ = [
-    "BOOTSTRAP_DOMINANT_UPPER_BOUND",
+    "ACCUMULATING_DOMINANT_UPPER_BOUND",
     "CALIBRATED_DOMINANT_LOWER_BOUND",
     "AssertionFailure",
     "CalibrationMixReport",

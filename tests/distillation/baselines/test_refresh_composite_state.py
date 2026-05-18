@@ -151,7 +151,7 @@ class TestRefreshCompositeStateBootstrapPath:
             alert_direction="upper",
         )
 
-        assert result.state is CalibrationState.BOOTSTRAP
+        assert result.state is CalibrationState.ACCUMULATING
         assert result.bootstrap_reason is not None
         assert "funding_stress_min_observations" in result.bootstrap_reason
 
@@ -160,7 +160,7 @@ class TestRefreshCompositeStateBootstrapPath:
                 DistillationCompositeState.as_of == "2026-04-25T00:00:00Z",
             )
         ).scalar_one()
-        assert row.calibration_state == "bootstrap"
+        assert row.calibration_state == "accumulating"
 
 
 # ---------------------------------------------------------------------------

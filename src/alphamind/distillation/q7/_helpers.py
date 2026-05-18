@@ -120,14 +120,23 @@ def _calibration_for_window(
     """Decide ``(state, bootstrap_reason)`` for a per-window correlation block.
 
     A correlation matrix's calibration is gated on having at least
-    ``required`` daily returns inside the window. Below that, the matrix is
-    still computed for visibility but tagged ``bootstrap`` so domain
-    researchers weight the percentile read accordingly.
+    ``required`` daily returns inside the window. Per ALP-540:
+
+    - ``n_observations == 0`` → :attr:`CalibrationState.UNAVAILABLE`
+      (collector failure — no data points at all).
+    - ``0 < n_observations < required`` → :attr:`CalibrationState.ACCUMULATING`
+      (collector healthy, just need more time; matrix still computed for
+      visibility so domain researchers can weight the percentile read).
     """
     if n_observations >= required:
         return CalibrationState.CALIBRATED, None
+    if n_observations == 0:
+        return (
+            CalibrationState.UNAVAILABLE,
+            f"{input_name}: 0 observations",
+        )
     return (
-        CalibrationState.BOOTSTRAP,
+        CalibrationState.ACCUMULATING,
         f"{input_name}: {n_observations} < {required}",
     )
 

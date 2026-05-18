@@ -348,7 +348,7 @@ def test_iv_rank_bootstrap_when_history_below_minimum(session: Session) -> None:
     iv_rank_blocks = [b for b in blocks if b.block_id == "q3.iv_rank"]
     assert iv_rank_blocks, "IV-rank block should be emitted even when bootstrap"
     block = iv_rank_blocks[0]
-    assert block.calibration_state is CalibrationState.BOOTSTRAP
+    assert block.calibration_state is CalibrationState.ACCUMULATING
     assert block.bootstrap_reason is not None
     assert "atm_iv" in block.bootstrap_reason
 

@@ -172,9 +172,9 @@ def test_atm_iv_baseline_bootstrap_below_min_observations() -> None:
     """Below-threshold n still produces a BOOTSTRAP rank with mean/stdev."""
     history = [0.20, 0.21, 0.22]
     result = compute_atm_iv_baseline(history, window_days=252, min_observations=60)
-    assert result.rank.state is CalibrationState.BOOTSTRAP
+    assert result.rank.state is CalibrationState.ACCUMULATING
     assert result.upsert is not None  # writes happen even in BOOTSTRAP
-    assert result.upsert.state is CalibrationState.BOOTSTRAP
+    assert result.upsert.state is CalibrationState.ACCUMULATING
     assert result.rank.bootstrap_reason == "atm_iv_min_observations: 3 < 60"
 
 
@@ -195,7 +195,7 @@ def test_atm_iv_baselines_per_ticker_pure_dispatch() -> None:
     }
     results = compute_atm_iv_baselines(history_by_ticker, window_days=252, min_observations=60)
     assert results["AAPL"].rank.state is CalibrationState.CALIBRATED
-    assert results["MSFT"].rank.state is CalibrationState.BOOTSTRAP
+    assert results["MSFT"].rank.state is CalibrationState.ACCUMULATING
     assert results["GOOG"].rank.state is CalibrationState.UNAVAILABLE
     assert results["AAPL"].upsert is not None
     assert results["GOOG"].upsert is None
