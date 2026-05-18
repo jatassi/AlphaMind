@@ -637,6 +637,104 @@ class TestIdempotency:
         assert len(rows) == 1
 
 
+class TestEnrichmentCallable:
+    """Story ALP-528 — ``enrichment_callable`` wedge wires in paper mode only.
+
+    Two cases:
+
+    * Default ``enrichment_callable=None`` (live mode): the record reaches
+      ``append_fill_record`` with ``live_execution_estimate IS NULL`` — same
+      shape as before the wedge landed.
+    * Fake callable (paper mode): the record reaches ``append_fill_record``
+      with ``live_execution_estimate`` non-None, populated by the wedge.
+    """
+
+    async def test_enrichment_callable_none_persists_null_estimate(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        stream = _FakeStream()
+        queries = _FakeAccountStateQueries()
+
+        task = asyncio.create_task(
+            run_fill_stream_consumer(
+                _session(),
+                _config(),
+                **_build_run_kwargs(session_factory, stream, queries),
+                enrichment_callable=None,
+            )
+        )
+
+        await _wait_for_handler(stream)
+        await stream.inject(
+            _trade_update(
+                event="fill",
+                order=_build_order(client_order_id="order-1"),
+                price=189.42,
+                qty=1.0,
+            )
+        )
+
+        rows = await _wait_for_rows(session_factory, expected=1)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert len(rows) == 1
+        (row,) = rows
+        assert row.live_execution_estimate_json is None
+
+    async def test_enrichment_callable_populates_estimate(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        from alphamind.portfolio_state.records.positions import LiveExecutionEstimate
+        from alphamind.state.records import FillRecord
+
+        async def fake_enrichment(record: FillRecord) -> FillRecord:
+            return record.model_copy(
+                update={
+                    "live_execution_estimate": LiveExecutionEstimate(
+                        estimated_spread_usd=money("0.01"),
+                        estimated_impact_usd=money("0.02"),
+                        estimated_regulatory_fees_usd=money("0.03"),
+                        live_adjusted_fill_price=price("189.50"),
+                    )
+                }
+            )
+
+        stream = _FakeStream()
+        queries = _FakeAccountStateQueries()
+
+        task = asyncio.create_task(
+            run_fill_stream_consumer(
+                _session(),
+                _config(),
+                **_build_run_kwargs(session_factory, stream, queries),
+                enrichment_callable=fake_enrichment,
+            )
+        )
+
+        await _wait_for_handler(stream)
+        await stream.inject(
+            _trade_update(
+                event="fill",
+                order=_build_order(client_order_id="order-1"),
+                price=189.42,
+                qty=1.0,
+            )
+        )
+
+        rows = await _wait_for_rows(session_factory, expected=1)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert len(rows) == 1
+        (row,) = rows
+        assert row.live_execution_estimate_json is not None
+
+
 async def _seed_prior_fill(
     session_factory: async_sessionmaker[AsyncSession],
     *,
