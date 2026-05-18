@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
+from alphamind._kernel.ids import PositionId, Symbol
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -16,6 +18,15 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
+from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
+from alphamind.portfolio_state.records.positions import (
+    Direction,
+    EquityPositionDetails,
+    PositionFill,
+    PositionRecord,
+    PositionStatus,
+)
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.state_delivery.primitives import (
     format_dollar,
     format_pct,
@@ -25,6 +36,7 @@ from alphamind.risk_guardrails.state_delivery.primitives import (
     render_envelope_open,
     render_hard_blocks_block,
     render_options_headroom_block,
+    render_position_proximity_block,
     render_regime_line,
     render_sector_headroom_block,
     render_zone_tag,
@@ -709,3 +721,186 @@ def test_directional_headroom_block_is_deterministic() -> None:
     first = render_directional_headroom_block(net_long=net_long, net_short=None, gross=gross)
     second = render_directional_headroom_block(net_long=net_long, net_short=None, gross=gross)
     assert first == second
+
+
+# ---------------------------------------------------------------------------
+# Position proximity block — loss-zone signed comparison (ALP-550)
+# ---------------------------------------------------------------------------
+
+
+def _make_strategist_position_view(
+    *,
+    position_id: str,
+    position_weight_pct: float,
+    unrealized_pnl_pct: float,
+) -> StrategistPositionView:
+    equity = EquityPositionDetails(
+        ticker=Symbol("AAA"),
+        share_count=100.0,
+        average_cost_basis_per_share=100.0,
+        borrow_rate_pct=None,
+        locate_status=None,
+        margin_held_usd=None,
+    )
+    record = PositionRecord(
+        position_id=PositionId(position_id),
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=datetime(2026, 4, 1, 14, 0, 0, tzinfo=UTC),
+        details=equity,
+        execution_history=(
+            PositionFill(
+                fill_timestamp=datetime(2026, 4, 1, 14, 0, 0, tzinfo=UTC),
+                fill_price=price(100.0),
+                fill_quantity=100.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
+            ),
+        ),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    view = PositionView(
+        record=record,
+        current_market_value_usd=signed_money(10_000.0),
+        unrealized_pnl_usd=signed_money(unrealized_pnl_pct * 100.0),
+        unrealized_pnl_pct=unrealized_pnl_pct,
+        position_weight_pct=position_weight_pct,
+        position_age_hours=24.0,
+        notional_exposure_usd=money(10_000.0),
+        delta_adjusted_exposure_usd=signed_money(10_000.0),
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
+    )
+    return StrategistPositionView(
+        position=view,
+        thesis=None,
+        bracket=None,
+        pending_orders=(),
+        modification_trail=(),
+    )
+
+
+def _make_active_parameters_for_proximity(
+    *,
+    per_position_max_pct: float = 5.0,
+    max_loss_equity_pct: float = 80.0,
+) -> ActiveRiskParameterSet:
+    return ActiveRiskParameterSet(
+        regime_label=RegimeLabel.NORMAL,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        parameter_change_flag=False,
+        entries=(
+            ActiveRiskParameterEntry(
+                rule_id="position_max_size_pct",
+                rule_label="Per-position max size",
+                value=per_position_max_pct,
+                unit="% of portfolio",
+                regime_multiplier_applied=1.0,
+                base_value=per_position_max_pct,
+            ),
+            ActiveRiskParameterEntry(
+                rule_id="position_max_loss_equity_pct",
+                rule_label="Equity max loss",
+                value=max_loss_equity_pct,
+                unit="% of cost",
+                regime_multiplier_applied=1.0,
+                base_value=max_loss_equity_pct,
+            ),
+        ),
+        active_overlays=(),
+    )
+
+
+def test_position_proximity_positive_pnl_exceeding_max_loss_magnitude_not_critical() -> None:
+    """ALP-550 AC#1: P/L=+19900%, max_loss=-80%, small size → no CRITICAL tag."""
+    pos = _make_strategist_position_view(
+        position_id="POS-001",
+        position_weight_pct=2.0,
+        unrealized_pnl_pct=19_900.0,
+    )
+    rendered = render_position_proximity_block(
+        positions=(pos,),
+        active_risk_parameters=_make_active_parameters_for_proximity(),
+    )
+    assert "[\U0001f534 CRITICAL]" not in rendered
+    assert "[⚠ WARNING]" not in rendered
+    assert "[BLOCKED]" not in rendered
+
+
+def test_position_proximity_loss_breach_flags_critical_or_blocked() -> None:
+    """ALP-550 AC#2: P/L=-85%, max_loss=-80%, small size → critical-level tag."""
+    pos = _make_strategist_position_view(
+        position_id="POS-001",
+        position_weight_pct=2.0,
+        unrealized_pnl_pct=-85.0,
+    )
+    rendered = render_position_proximity_block(
+        positions=(pos,),
+        active_risk_parameters=_make_active_parameters_for_proximity(),
+    )
+    assert "[\U0001f534 CRITICAL]" in rendered or "[BLOCKED]" in rendered
+
+
+def test_position_proximity_loss_approaching_max_loss_flags_warning() -> None:
+    """Loss progress in [0.70, 0.85) of max_loss → WARNING (signed comparison)."""
+    pos = _make_strategist_position_view(
+        position_id="POS-001",
+        position_weight_pct=2.0,
+        unrealized_pnl_pct=-60.0,  # 60/80 = 0.75 of max_loss
+    )
+    rendered = render_position_proximity_block(
+        positions=(pos,),
+        active_risk_parameters=_make_active_parameters_for_proximity(),
+    )
+    assert "[⚠ WARNING]" in rendered
+    assert "[\U0001f534 CRITICAL]" not in rendered
+
+
+def test_position_proximity_zero_pnl_with_max_loss_is_normal() -> None:
+    """P/L=0, well-under-size position → no zone tag emitted."""
+    pos = _make_strategist_position_view(
+        position_id="POS-001",
+        position_weight_pct=2.0,
+        unrealized_pnl_pct=0.0,
+    )
+    rendered = render_position_proximity_block(
+        positions=(pos,),
+        active_risk_parameters=_make_active_parameters_for_proximity(),
+    )
+    assert "[" not in rendered.splitlines()[1]
+
+
+def test_position_proximity_size_proximity_still_drives_tag_when_loss_normal() -> None:
+    """Existing size-based zone behavior preserved when loss zone is NORMAL."""
+    pos = _make_strategist_position_view(
+        position_id="POS-001",
+        position_weight_pct=4.5,  # 0.90 of 5.0 size cap → CRITICAL by size
+        unrealized_pnl_pct=10.0,
+    )
+    rendered = render_position_proximity_block(
+        positions=(pos,),
+        active_risk_parameters=_make_active_parameters_for_proximity(),
+    )
+    assert "[\U0001f534 CRITICAL]" in rendered
+
+
+def test_position_proximity_takes_max_severity_when_both_zones_fire() -> None:
+    """When size zone WARNING and loss zone CRITICAL, displayed tag is CRITICAL."""
+    pos = _make_strategist_position_view(
+        position_id="POS-001",
+        position_weight_pct=4.0,  # 0.80 of 5.0 → WARNING by size
+        unrealized_pnl_pct=-72.0,  # 72/80 = 0.90 → CRITICAL by loss
+    )
+    rendered = render_position_proximity_block(
+        positions=(pos,),
+        active_risk_parameters=_make_active_parameters_for_proximity(),
+    )
+    assert "[\U0001f534 CRITICAL]" in rendered
+    assert "[⚠ WARNING]" not in rendered

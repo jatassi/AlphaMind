@@ -395,6 +395,37 @@ def _classify_position_zone(value: float, limit: float) -> RiskZone:
     return RiskZone.NORMAL
 
 
+def _classify_loss_zone(pnl_pct: float, max_loss_pct: float | None) -> RiskZone:
+    """Classify how close a position's signed P/L is to its max-loss floor.
+
+    *max_loss_pct* is the positive magnitude of the loss cap (e.g., ``80.0``
+    means a 80% loss is the floor; the signed limit is ``-80.0``). The zone
+    is driven by ``-pnl_pct / max_loss_pct`` — the fraction of the loss cap
+    consumed by the current signed P/L — so a position with positive P/L
+    yields a non-positive ratio and stays NORMAL.
+    """
+    if max_loss_pct is None or max_loss_pct <= 0:
+        return RiskZone.NORMAL
+    loss_progress = -pnl_pct / max_loss_pct
+    if loss_progress >= _ZONE_CRITICAL_THRESHOLD:
+        return RiskZone.CRITICAL
+    if loss_progress >= _ZONE_WARNING_THRESHOLD:
+        return RiskZone.WARNING
+    return RiskZone.NORMAL
+
+
+_ZONE_SEVERITY: dict[RiskZone, int] = {
+    RiskZone.NORMAL: 0,
+    RiskZone.WARNING: 1,
+    RiskZone.CRITICAL: 2,
+    RiskZone.BLOCKED: 3,
+}
+
+
+def _max_severity_zone(*zones: RiskZone) -> RiskZone:
+    return max(zones, key=_ZONE_SEVERITY.__getitem__)
+
+
 def _max_loss_for(active: ActiveRiskParameterSet, rule_id: str) -> float | None:
     for entry in active.entries:
         if entry.rule_id == rule_id:
@@ -431,7 +462,9 @@ def _render_proximity_row(
     max_loss = _max_loss_for_position(pos, max_loss_equity, max_loss_options)
     if max_loss is not None:
         suffix = f" (max loss: -{max_loss:.1f}%)"
-    zone = _classify_position_zone(pos.position_weight_pct, per_position_max_pct)
+    size_zone = _classify_position_zone(pos.position_weight_pct, per_position_max_pct)
+    loss_zone = _classify_loss_zone(pos.unrealized_pnl_pct, max_loss)
+    zone = _max_severity_zone(size_zone, loss_zone)
     zone_tag = f" [{render_zone_tag(zone)}]" if zone != RiskZone.NORMAL else ""
     return (
         f"  {padded_id} {weight}% of portfolio (max {max_pct}%) "
