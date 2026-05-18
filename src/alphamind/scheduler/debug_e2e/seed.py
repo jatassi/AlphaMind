@@ -22,7 +22,20 @@ from typing import Any
 from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from alphamind._kernel.ids import AlpacaOrderId
 from alphamind.persistence.models import Base, Brief, RegimeAdaptationStateRow
+from alphamind.portfolio_state.records.orders import (
+    BracketLegEnforcement,
+    BracketLegStatus,
+    BracketLegType,
+    BracketStatus,
+    OrderClass,
+    OrderDirection,
+    OrderDuration,
+    OrderRole,
+    OrderStatus,
+    OrderType,
+)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     InstrumentType,
@@ -374,6 +387,115 @@ def _build_thesis_rows(
     return thesis_row, tuple(component_rows)
 
 
+def _bracket_id_for_position(position_index: int) -> str:
+    return f"debug-bracket-{position_index:02d}"
+
+
+def _entry_order_id_for_position(position_index: int) -> str:
+    return f"debug-entry-order-{position_index:02d}"
+
+
+def _build_entry_order_row(
+    *,
+    position_row: PositionRow,
+    order_id: str,
+    bracket_id: str,
+    now: datetime,
+) -> OrderRow:
+    """Synthesize the entry order each synthetic position is paired with.
+
+    The synthetic portfolio is shaped like a post-fill snapshot — every
+    position represents an entry that already filled — so the entry order
+    rides at ``FILLED`` status with the position's directional sign
+    encoded as the order direction. The position's
+    ``execution_history_json`` is left empty (the seed does not fabricate
+    a matching ``fill_records`` row); the close write-path in
+    :mod:`alphamind.execution.write_paths.phase2.close` reads only
+    ``position.share_count`` / ``position.contract_count`` to size the
+    close, so a missing fill record doesn't affect command persistence.
+    """
+    timestamp = _isoformat(now)
+    is_long = position_row.direction == Direction.LONG.value
+    order_direction = OrderDirection.BUY if is_long else OrderDirection.SELL
+    return OrderRow(
+        order_id=order_id,
+        position_id=position_row.position_id,
+        bracket_id=bracket_id,
+        order_role=OrderRole.ENTRY.value,
+        order_class=OrderClass.SIMPLE.value,
+        instrument_spec_json=position_row.details_json,
+        direction=order_direction.value,
+        order_type=OrderType.MARKET.value,
+        quantity=1.0,
+        price_parameters_json="{}",
+        duration=OrderDuration.DAY.value,
+        status=OrderStatus.FILLED.value,
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain_json=f'["alp-{order_id}"]',
+        submission_timestamp=timestamp,
+        last_update_timestamp=timestamp,
+        filled_quantity=1.0,
+        average_fill_price=None,
+        remaining_quantity=0.0,
+        modification_count=0,
+        metadata_json=(
+            '{"originating_thesis_id":null,"originating_pm_command_id":null,"age_hours":0.0}'
+        ),
+    )
+
+
+def _build_entry_bracket_row(
+    *,
+    bracket_id: str,
+    position_id: str,
+    entry_order_id: str,
+) -> BracketRow:
+    """Bracket parent for a synthetic position's entry order — ``ACTIVE`` status."""
+    return BracketRow(
+        bracket_id=bracket_id,
+        position_id=position_id,
+        status=BracketStatus.ACTIVE.value,
+        entry_order_id=entry_order_id,
+        entry_window_deadline=None,
+        corporate_action_cancellation_reason=None,
+        modification_history_json="[]",
+    )
+
+
+def _build_time_expiration_leg_row(
+    *,
+    bracket_id: str,
+    now: datetime,
+) -> BracketLegRow:
+    """Synthesize one ``TIME_EXPIRATION`` mechanical leg per bracket.
+
+    :class:`BracketRecord` validation requires ``protective_legs`` to be
+    non-empty and to carry at least one MECHANICAL leg in
+    ``{TAKE_PROFIT, PRICE_STOP, TIME_EXPIRATION}`` (the hard-backstop
+    requirement in ``portfolio_state/records/orders.py``). A
+    ``TIME_EXPIRATION`` leg with a future deadline is the simplest
+    satisfying option — no order_id, no underlying ticker, no pricing
+    needed; the trigger payload is just a timestamp.
+
+    Single leg per bracket: the seed needs validity, not richness.
+    Real production brackets carry the analyst's full leg set; the
+    debug-e2e seed only requires the FK + invariant minimum.
+    """
+    deadline = now + timedelta(days=30)
+    return BracketLegRow(
+        bracket_leg_id=f"{bracket_id}-leg-0",
+        bracket_id=bracket_id,
+        leg_index=0,
+        leg_type=BracketLegType.TIME_EXPIRATION.value,
+        order_id=None,
+        trigger_kind="TIME",
+        trigger_payload_json=json.dumps({"trigger_type": "time", "deadline": deadline.isoformat()}),
+        pl_anchor_json=None,
+        enforcement=BracketLegEnforcement.MECHANICAL.value,
+        leg_status=BracketLegStatus.ACTIVE.value,
+    )
+
+
 def _build_cash_ledger_row(starting_cash_usd: float, *, now: datetime) -> CashLedgerRow:
     """Translate ``starting_cash_usd`` into the singleton ``cash_ledger`` row."""
     cash = Decimal(str(starting_cash_usd))
@@ -447,7 +569,37 @@ async def wipe_and_seed(
         await session.execute(delete(table))
 
     for index, synthetic in enumerate(portfolio.positions):
-        session.add(_build_position_row(synthetic, position_index=index, now=now))
+        position_row = _build_position_row(synthetic, position_index=index, now=now)
+        bracket_id = _bracket_id_for_position(index)
+        entry_order_id = _entry_order_id_for_position(index)
+        # Link the position into its bracket + thesis cluster. The
+        # synthetic ``_build_position_row`` helpers leave ``bracket_id`` /
+        # ``thesis_id`` as ``None`` because they don't know the cluster
+        # ids; we fill them in here so the post-fill snapshot the seeder
+        # produces is internally consistent (every position references a
+        # real bracket and a real thesis).
+        position_row.bracket_id = bracket_id
+        position_row.thesis_id = f"debug-thesis-{index:02d}"
+        session.add(position_row)
+        # Cyclic FKs (orders.bracket_id ↔ brackets.entry_order_id) are
+        # deferred until commit, so the insertion order here doesn't
+        # matter — both rows exist by the time the FK check fires.
+        session.add(
+            _build_entry_order_row(
+                position_row=position_row,
+                order_id=entry_order_id,
+                bracket_id=bracket_id,
+                now=now,
+            )
+        )
+        session.add(
+            _build_entry_bracket_row(
+                bracket_id=bracket_id,
+                position_id=position_row.position_id,
+                entry_order_id=entry_order_id,
+            )
+        )
+        session.add(_build_time_expiration_leg_row(bracket_id=bracket_id, now=now))
 
     for synthetic_thesis in portfolio.theses:
         thesis_row, component_rows = _build_thesis_rows(synthetic_thesis, now=now)

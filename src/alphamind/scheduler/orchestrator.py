@@ -170,6 +170,7 @@ class InvocationSummary:
 
     invocation_id: str
     trigger_type: TriggerType
+    trigger_source: str
     firing_run_type: RunType
     phase1_summary: Phase1Summary
     commands_submitted: int
@@ -635,6 +636,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     return InvocationSummary(
         invocation_id=invocation_id,
         trigger_type=trigger_type,
+        trigger_source=trigger_source,
         firing_run_type=firing_run_type,
         phase1_summary=phase1_summary,
         commands_submitted=phase2_summary.commands_submitted,

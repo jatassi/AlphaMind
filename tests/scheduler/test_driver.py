@@ -293,6 +293,7 @@ def _patch_run_invocation(
         return InvocationSummary(
             invocation_id=invocation_id,
             trigger_type=kwargs["trigger_type"],
+            trigger_source=kwargs.get("trigger_source", "scheduled"),
             firing_run_type=kwargs["firing_run_type"],
             phase1_summary=Phase1Summary(
                 fills_processed=0,

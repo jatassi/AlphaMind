@@ -461,7 +461,7 @@ async def invoke_adaptive_researcher(
             options=call_options,
             diag=diag,
             budget_seconds=float(agent_config.latency_budget_seconds),
-            init_stall_timeout_seconds=None,
+            init_stall_timeout_seconds=60.0,
             wall_start=wall_start,
             agent_name=agent_name,
             invocation_id=invocation_id,

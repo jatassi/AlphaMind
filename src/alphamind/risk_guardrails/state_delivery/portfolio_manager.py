@@ -330,14 +330,22 @@ def _render_drawdown_context_block(
     daily_zone_tag = render_zone_tag(pm_view.drawdown.daily_zone)
     cumulative_zone_tag = render_zone_tag(pm_view.drawdown.cumulative_zone)
     daily_limit = require_param_entry(pm_view.active_risk_parameters, _DAILY_DRAWDOWN_RULE_ID)
-    daily_budget = require_budget_entry(pm_view.risk_budget, _DAILY_DRAWDOWN_RULE_ID)
+    # ``daily_drawdown_pct`` is not surfaced as a rule in the in-scope
+    # rule registry (``build_active_specs``) — it is configured as a
+    # parameter and consumed by the regime-adaptation + breach loop
+    # paths, but ``build_risk_budget_consumption`` projects only the
+    # capital / exposure / shorts / options-greeks registries. Compute
+    # the headroom inline from the parameter limit and the current
+    # intraday drawdown so the renderer doesn't require a budget entry
+    # the projection never produces.
+    daily_headroom_pct = max(0.0, daily_limit.value - pm_view.drawdown.intraday_drawdown_pct)
     daily_pnl_body = f"{_format_signed_pct(daily_pnl_pct)} ({daily_zone_tag})"
     rows = [
         _DRAWDOWN_CONTEXT_HEADER,
         _format_drawdown_row("Daily P/L", daily_pnl_body),
         _format_drawdown_row(
             "Daily limit",
-            f"{format_pct(daily_limit.value)}% — headroom: {format_pct(daily_budget.headroom)}%",
+            f"{format_pct(daily_limit.value)}% — headroom: {format_pct(daily_headroom_pct)}%",
         ),
         _format_drawdown_row(
             "Cumulative",
