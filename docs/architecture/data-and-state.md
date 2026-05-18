@@ -69,14 +69,14 @@ Fills produced by the continuous monitor between invocations. Rows accumulate (m
 
 ### 3. Brief store (per-invocation, read-heavy)
 
-Analysis briefs keyed by reference ID — built during analysis, consumed during decision, retained for audit.
+Analysis briefs keyed by producer kind — built during analysis, consumed during decision, retained for audit. Each brief carries the rendered body plus its own reference index (`CR-N` for the correlation/regime brief; analogous prefixes when sector/qualitative/adaptive briefs land).
 
 **Writers:** Pipeline (analysis writes briefs as each agent completes).
-**Readers:** Pipeline (decision layer retrieval tool fetches by reference ID).
+**Readers:** Pipeline (decision layer retrieval tool fetches by brief kind; cross-process consumers — replay harness, command-center diagnostic — fetch by `(invocation_id, brief_kind)`).
 
 **Key tables:**
-- `briefs` — invocation ID, reference prefix (SA-TECH, QR, AR, etc.), reference index, content, created timestamp
-- Retrieval: `SELECT content FROM briefs WHERE invocation_id = ? AND ref_id = ?`
+- `briefs` — `invocation_id`, `brief_kind` (e.g., `correlation_regime`), `reference_index_json` (CR-N → block_id map), `text` (rendered body), `created_at`
+- Retrieval: `SELECT text, reference_index_json FROM briefs WHERE invocation_id = ? AND brief_kind = ?`
 
 ### 4. Distillation state (rolling, persistent)
 

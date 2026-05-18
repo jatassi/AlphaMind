@@ -477,6 +477,89 @@ def _synthesize_invocation_id(slice_id: str, as_of: datetime) -> str:
     return f"replay_{slice_id}_{as_of.astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')}"
 
 
+_REPLAY_PROCESS_LIFETIME_ID = "replay_pl"
+
+
+def _seed_replay_invocation_row(session: Session, invocation_id: str) -> None:
+    """Seed the ``process_lifetimes`` + ``invocations`` rows Phase 7's brief INSERT
+    references via FK.
+
+    The harness deliberately bypasses the InvocationContext (which is the
+    normal writer of ``invocations`` rows) to keep distillation isolated.
+    Phase 7 inserts one row into ``briefs`` with an FK to
+    ``invocations.invocation_id``, so the harness must seed a placeholder
+    invocation row matching the synthesized id before the orchestrator
+    runs. Both rows are idempotent — repeated calls with the same
+    identifiers are no-ops so a determinism check (two passes against the
+    same isolated DB) does not raise an integrity error. The Core
+    ``table.insert()`` shape (rather than the typed
+    :class:`InvocationRecord` + codec path the production writer uses)
+    keeps the harness from importing ``alphamind.state.tables.*`` and
+    breaking the ``distillation-no-sqlalchemy`` import-linter contract.
+    """
+    from alphamind.persistence.models import Base
+
+    process_lifetimes = Base.metadata.tables["process_lifetimes"]
+    invocations = Base.metadata.tables["invocations"]
+    existing_pl = session.execute(
+        select(process_lifetimes.c.process_lifetime_id).where(
+            process_lifetimes.c.process_lifetime_id == _REPLAY_PROCESS_LIFETIME_ID
+        )
+    ).scalar_one_or_none()
+    if existing_pl is None:
+        session.execute(
+            process_lifetimes.insert(),
+            {
+                "process_lifetime_id": _REPLAY_PROCESS_LIFETIME_ID,
+                "process_role": "pipeline",
+                "process_start_at": _format_as_of(datetime.now(UTC)),
+                "process_pid": 0,
+                "hostname": "replay",
+                "git_sha": "0" * 40,
+                "git_branch": "replay",
+                "git_dirty": 0,
+                "python_version": "0.0.0",
+                "pip_freeze_hash": "0" * 64,
+                "pip_freeze_snapshot_path": "replay",
+                "anthropic_sdk_version": "0.0.0",
+                "claude_agent_sdk_version": "0.0.0",
+                "os_release": "replay",
+            },
+        )
+    existing_inv = session.execute(
+        select(invocations.c.invocation_id).where(invocations.c.invocation_id == invocation_id)
+    ).scalar_one_or_none()
+    if existing_inv is None:
+        session.execute(
+            invocations.insert(),
+            {
+                "invocation_id": invocation_id,
+                "process_lifetime_id": _REPLAY_PROCESS_LIFETIME_ID,
+                "start_at": _format_as_of(datetime.now(UTC)),
+                "phase1_completed_at": None,
+                "phase2_completed_at": None,
+                "trigger_type": "scheduled",
+                "trigger_source": "replay",
+                "trigger_reason": "replay-harness",
+                "git_sha_at_invocation": "0" * 40,
+                "active_profile": "medium",
+                "active_regime": "normal",
+                "active_mode": "normal",
+                "active_overlays_json": "[]",
+                "resolved_config_hash": "0" * 64,
+                "resolved_config_snapshot_path": "replay",
+                "feature_flags_snapshot_json": "{}",
+                "data_calibration_state_snapshot_path": "replay",
+                "data_source_freshness_json": "{}",
+                "fill_collection_summary_json": None,
+                "command_execution_summary_json": None,
+                "staleness_flag": None,
+                "snapshot_metadata_json": None,
+            },
+        )
+    session.commit()
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -494,6 +577,7 @@ def _run_one_invocation(
     """Drive one orchestrator call and capture its outputs."""
     invocation_id = _synthesize_invocation_id(slice_id, as_of)
     ticker_scope = _resolve_ticker_scope(session)
+    _seed_replay_invocation_row(session, invocation_id)
 
     started = time.monotonic()
     # Project the Pydantic ``DistillationConfig`` boundary type onto its
