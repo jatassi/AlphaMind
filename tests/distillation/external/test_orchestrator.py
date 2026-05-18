@@ -529,9 +529,7 @@ def test_orchestrator_persists_ticker_realized_vol(
 
     rows = (
         populated_session.execute(
-            select(TickerRealizedVolRow).where(
-                TickerRealizedVolRow.invocation_id == invocation_id
-            )
+            select(TickerRealizedVolRow).where(TickerRealizedVolRow.invocation_id == invocation_id)
         )
         .scalars()
         .all()
