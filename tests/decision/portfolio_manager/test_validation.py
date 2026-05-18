@@ -1110,7 +1110,7 @@ class TestNarrativeReferenceResolution:
         )
         result = _validate(envelope, retrieval_store=_retrieval_store())
         assert not result.is_valid
-        bare_errors = [e for e in result.errors if e.rule == "bare_prefix_citation"]
+        bare_errors = [e for e in result.errors if e.criterion == "bare_prefix_citation"]
         assert len(bare_errors) == 1
         assert "CR" in bare_errors[0].message
         assert "rationale_narrative" in bare_errors[0].field_path
@@ -1122,7 +1122,7 @@ class TestNarrativeReferenceResolution:
             rationale_narrative="Anchored on [SA-TECH-3] and pair note [CR].",
         )
         result = _validate(envelope, retrieval_store=_retrieval_store("SA-TECH-3"))
-        bare_errors = [e for e in result.errors if e.rule == "bare_prefix_citation"]
+        bare_errors = [e for e in result.errors if e.criterion == "bare_prefix_citation"]
         assert len(bare_errors) == 1
         assert "CR" in bare_errors[0].message
         unknown_errors = [e for e in result.errors if e.criterion == "unknown_reference"]
@@ -1136,7 +1136,7 @@ class TestNarrativeReferenceResolution:
             rationale_narrative="References [REC] and [BREACH] internally.",
         )
         result = _validate(envelope, retrieval_store=_retrieval_store())
-        bare_errors = [e for e in result.errors if e.rule == "bare_prefix_citation"]
+        bare_errors = [e for e in result.errors if e.criterion == "bare_prefix_citation"]
         assert bare_errors == []
 
     def test_bare_prefix_in_modification_rationale_fails(self) -> None:
@@ -1158,7 +1158,7 @@ class TestNarrativeReferenceResolution:
         )
         result = _validate(envelope, retrieval_store=_retrieval_store())
         assert not result.is_valid
-        bare_errors = [e for e in result.errors if e.rule == "bare_prefix_citation"]
+        bare_errors = [e for e in result.errors if e.criterion == "bare_prefix_citation"]
         assert len(bare_errors) == 1
         assert "modifications[0].rationale" in bare_errors[0].field_path
 

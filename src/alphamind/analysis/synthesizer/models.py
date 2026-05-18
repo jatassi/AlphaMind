@@ -182,9 +182,9 @@ def parse_reference_id(ref_id: str) -> tuple[ReferencePrefix, int] | None:
     return None
 
 
-# Bare-prefix extractor: matches ``[<UPPER/digit/hyphen body>]`` with no trailing
-# ``-<digits>`` index. Complement of the validators' ``_REF_ID_RE`` (which
-# requires the index). Used by :func:`find_bare_prefix_citations`.
+# Bare-prefix extractor: matches ``[<UPPER/digit/hyphen body>]`` with no
+# trailing ``-<digits>`` index — the inverse of a well-formed reference ID.
+# Used by :func:`find_bare_prefix_citations`.
 _BARE_PREFIX_RE = re.compile(r"\[([A-Z][A-Z0-9-]*)\]")
 
 # Set of ReferencePrefix values for bare-prefix membership lookup. Computed

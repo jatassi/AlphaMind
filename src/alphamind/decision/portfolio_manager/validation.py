@@ -448,7 +448,7 @@ def _check_narrative_references_against_store(
     for prefix in find_bare_prefix_citations(narrative):
         yield ValidationError(
             field_path=field_path,
-            rule="bare_prefix_citation",
+            criterion="bare_prefix_citation",
             message=(
                 f"bare-prefix citation [{prefix}] in {field_path} carries no index; "
                 "the retrieval store is keyed by <prefix>-<index> and cannot resolve "
