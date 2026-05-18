@@ -357,24 +357,21 @@ After one retry, the invocation aborts and the next scheduled trigger produces a
 
 ## Unit test plan
 
-The validator is a first-class deterministic surface. Tests cover each layer independently at the boundaries that matter, plus cross-layer sequencing and the corrective-retry message construction.
+Validation is a first-class deterministic surface. Tests cover each layer independently at the boundaries that matter, plus cross-layer sequencing and the corrective-retry message construction. Each agent's per-layer concerns live in `tests/<layer>/<agent>/test_validation.py` (Layer-2/3 cross-field invariants and referential resolution) and `tests/<layer>/<agent>/test_harness.py` (Layer-1 parse adaptation, Layer-4 stop-reason classification, retry orchestration); the cross-harness consistency oracle is `tests/test_llm_output_validation_contract.py`.
+
+The contract test asserts the seven harnesses follow the same cross-cutting shape: retry-message construction (each per-harness retry message routes through `_harness_core._build_retry_message`), diagnostic-record schema (`DiagState.write` writes the standard six files regardless of agent), stop-reason classification semantics (the `on_cli_result_error` arm matches the documented per-agent classification), canonical `ValidationResult` ownership (every `validation.py` imports the types from `commands/validation_results.py`), and bare-prefix discipline (the three decision-layer consumer-side validators surface `bare_prefix_citation` via `find_bare_prefix_citations`). The synthesizer's degenerate-contract row branches around the assertions that do not apply (no validator, no retry, no structured output).
 
 ### Test concerns
 
-**Layer 1 — Envelope parse.** Strict-parse boundary behavior.
+**Layer 1 — Envelope parse.** Boundary behavior at the SDK-driver-plus-parser seam.
 
-- Valid JSON object with and without leading/trailing whitespace.
-- Valid JSON object wrapped in a single `json` code fence, in a single unlabeled code fence, and with no fence.
-- Invalid JSON — truncated mid-object, truncated mid-string, missing closing brace.
-- Valid JSON preceded by prose, followed by prose, surrounded by prose.
-- Multiple concatenated JSON objects ("one" + "two").
-- Top-level array where the schema expects an object.
-- JavaScript-style comments inside the JSON.
-- Nested code fences (fence inside a string value, which the parser should accept, vs. multiple separate fences at the top level, which is a parse failure).
-- Empty response body.
-- Response containing only whitespace.
+- `structured_output` missing or not a dict — surfaced as a parse failure.
+- Pydantic field-level validation errors propagate as `ParseError` with `field_path` and `message`.
+- Empty response (no text, no `structured_output`) — synthesizer raises `EmptyResponseFailure`; formal-schema harnesses surface a parse failure.
+- Stop-reason metadata extracted from every `AssistantMessage` and the terminating `ResultMessage`.
+- SDK driver loop closes via `aclose()` from the same task to avoid GC-time race.
 
-**Layer 2 — Schema validation (formal-schema agents).** Each analyst- and strategist-schema constraint is exercised at the boundary.
+**Layer 2 — Schema validation (formal-schema agents).** Each analyst-, strategist-, and PM-schema constraint is exercised at the boundary; SDK-enforced violations are tested at the Pydantic / parser layer (`tests/decision/<agent>/test_parser.py`); cross-field invariants are tested at the validator layer (`tests/decision/<agent>/test_validation.py`).
 
 - Every required field omitted (one test per required field per schema).
 - Every enum-valued field tested with a valid value, one invalid value, and the empty string.
@@ -382,8 +379,9 @@ The validator is a first-class deterministic surface. Tests cover each layer ind
 - Every pattern-constrained field tested at the boundary (valid `REC-1`, invalid `rec-1`, invalid `REC-01`, invalid `REC-` , invalid `RECOMMENDATION-1`).
 - Array-length minimums tested at zero, one, and many (analyst `invalidation_legs` empty vs. single-element vs. multi-element; strategist `position_assessments` empty for zero-positions case).
 - Mode-conditional requirements exercised (analyst `mode: watchlist` requires `watchlist` array; `mode: normal` requires `recommendations` array; strategist `mode: defensive_posture` requires `defensive_posture_summary`).
+- Cross-field invariants (analyst: `invalidation_rationale[].leg_id` ↔ `invalidation_legs[].leg_id` pairing; strategist: `action_parameters.action` equals `recommended_action`; PM: `envelope_id` integer matches `source_recommendation_id` integer).
 
-**Layer 2 — Schema validation (informal-schema agents).** Each hand-written structural validator is covered by the equivalent boundary tests for its contract:
+**Layer 2 — Schema validation (informal-schema agents).** Each hand-written structural validator is covered by the equivalent boundary tests for its contract under `tests/analysis/<agent>/test_validation.py`:
 
 - Domain researcher validator: valid brief; missing each section header; missing any of the required per-finding fields; invalid signal type / severity / assessment enum; non-sequential indexing (1, 3 without 2); duplicate indexes (two findings both labeled `SA-TECH-2`); more than one catalyst-watch entry when catalyst-watch is bounded.
 - Qualitative researcher validator: analogous coverage for `QR-N` and `QR-CW-N`.
@@ -427,35 +425,36 @@ The synthesizer has no Layer 3 coverage — invented references in synthesizer p
 - The message directs the agent to emit a single JSON object — output-parsing expectations are restated.
 - Diagnostic record attachment: the offending output, the full error list, and the constructed message are all written to the invocation's diagnostic record regardless of retry outcome.
 
-**Determinism.** Identical inputs produce identical outputs. No clock reads, no RNG, no network access during validation. A validator run is a pure function of (raw response text, response metadata, resolution context) → (outcome, error list, classification).
+**Determinism.** Identical inputs produce identical outputs. No clock reads, no RNG, no network access during validation. Each validator (`validate_analyst_output`, `validate_strategist_output`, `validate_pm_envelope`, `validate_brief`, `validate_qualitative_brief`, `validate_adaptive_brief`) is a pure function of (parsed model, resolution context) → `ValidationResult`. The Layer-4 stop-reason classification in `invoke_sdk` is a pure function of `(stop_reason, on_cli_result_error)` and the inner failure.
 
 ### Stub boundary
 
-- **Parser:** the standard-library JSON parser is not stubbed — it is the behavior under test. Tests invoke the validator with raw text and assert on classification outcomes.
-- **Schema validator library:** the JSON Schema Draft 2020-12 library is treated as trusted third-party code. Tests assert on the validator's *integration* with the library (correct schema file loaded, errors correctly propagated), not on the library's internal behavior.
+- **Pydantic parser:** the typed models in `<agent>/models.py` are not stubbed — they are the behavior under test. Tests invoke the per-agent `parser.py` with structured-output dicts and assert on `ParseError` semantics.
+- **SDK `output_format` enforcement:** the API's schema enforcement is treated as trusted third-party behavior. Harness tests pass a stub `sdk_query_fn` that yields scripted `AssistantMessage` / `ResultMessage` sequences; no test touches the Anthropic API.
 - **Resolution context fixtures:** the synthesizer retrieval store, portfolio state, breach list, and activity log used for Layer 3 resolution are provided as test fixtures with configurable contents. A fixture builder produces a "current invocation context" with a specified set of valid reference IDs; tests construct malformed outputs that cite valid, invented, or malformed references and assert on the resolution outcomes.
-- **SDK response metadata:** stop-reason values are stubbed per test. The SDK itself is not invoked during validator unit tests.
-- **Clock:** no clock dependency.
+- **SDK response metadata:** stop-reason values are emitted by the scripted SDK stub per test. The real SDK driver loop in `_harness_core._collect_response` is exercised end-to-end against the stub.
+- **Clock:** no clock dependency in the validators. Harness wall-clock reads use `time.monotonic`; tests assert on shape rather than absolute durations.
 
 ### Preliminary unit catalog
 
-Preliminary. Expect movement as implementation begins; the boundary-class axes are more stable than individual cases.
+Boundary-class axes are more stable than individual cases; the table below maps each group onto the test module that owns it.
 
-| Group | Units |
-|---|---|
-| Envelope parse | single-object parse, code-fence stripping (json-labeled, unlabeled, none), prose-wrapped rejection, multi-object rejection, top-level-array rejection, comment rejection, whitespace tolerance, empty-response classification, stop-reason extraction |
-| Analyst schema | required-field coverage (one unit per required field), enum-value boundary (one per enum), conditional-constraint pairs (entry_window, target_type variants, mode variants), pattern-constraint boundaries (REC-N, INV-N), array-length minimums, subschema instrument discriminated-union (equity/option/strategy) |
-| Strategist schema | required-field coverage, enum-value boundary, conditional-constraint pairs (thesis_status/recommended_action, action-specific required fields, remedy_flag/remedy_rationale, mode/defensive_posture_summary), pattern-constraint boundaries (SA-N, SA-ORD-N), array-length minimums, subschema action_parameters discriminated-union (close/reduce/adjust-bracket/add) |
-| Domain researcher validator | section-header presence, per-finding required fields, signal type enum, severity enum, sequential indexing, duplicate-index rejection |
-| Qualitative researcher validator | narrative-thread structure, catalyst-watch structure, sequential indexing |
-| Adaptive researcher validator | thread structure, assessment enum, branch-conditional fields, trigger-reference format, strengthens/weakens format |
-| PM envelope validator | verdict enum, per-verdict required-field branching, per-source-provenance criterion keys, envelope-ID bijection, commands-list shape |
-| OMS command validator | command-type enum, command-type-specific required fields, composite command-ID format, engine-originated `MON.*` format (for engine envelopes extracted by this validator on behalf of the continuous monitor via the shared OMS intake) |
-| Reference-ID resolution | valid resolution (one per prefix), invented-ID rejection, malformed-format rejection, sequential-index gap detection, duplicate-index detection, foreign-key resolution (position_id, thesis_id, breach_id) |
-| Stop-reason check | success + max_tokens (no reclassification), fail + end_turn (no reclassification), fail + max_tokens (reclassify to context_overflow), fail + missing metadata (no reclassification) |
-| Cross-layer sequencing | halt-at-first-failure (one per layer pair), all-layers-pass, Layer 4 reclassification across prior-failure types |
-| Corrective retry message | framing line per failure type, single-error inclusion, contract reference, no-raw-data invariant, single-object directive, diagnostic persistence |
-| Determinism | pure-function invariant, identical-inputs-identical-outputs sanity |
+| Group | Test module | Units |
+|---|---|---|
+| Envelope parse | `tests/<layer>/<agent>/test_parser.py`, `tests/<layer>/<agent>/test_harness.py` | structured-output dict adaptation, `ParseError` propagation, empty-response classification, stop-reason extraction |
+| Analyst schema | `tests/decision/analyst/test_parser.py`, `tests/decision/analyst/test_validation.py` | required-field coverage (one unit per required field), enum-value boundary (one per enum), conditional-constraint pairs (entry_window, target_type variants, mode variants), pattern-constraint boundaries (REC-N, INV-N), array-length minimums, subschema instrument discriminated-union (equity/option/strategy), leg-id pairing |
+| Strategist schema | `tests/decision/strategist/test_parser.py`, `tests/decision/strategist/test_validation.py` | required-field coverage, enum-value boundary, conditional-constraint pairs (thesis_status/recommended_action, action-specific required fields, remedy_flag/remedy_rationale, mode/defensive_posture_summary), pattern-constraint boundaries (SA-N, SA-ORD-N), array-length minimums, subschema action_parameters discriminated-union (close/reduce/adjust-bracket/add), action_parameters↔recommended_action equality, remedy_flag↔addressed_breaches pairing |
+| Domain researcher validator | `tests/analysis/domain_researchers/test_validation.py` | section-header presence, per-finding required fields, signal type enum, severity enum, sequential indexing, duplicate-index rejection |
+| Qualitative researcher validator | `tests/analysis/qualitative_research/test_validation.py` | narrative-thread structure, catalyst-watch structure, sequential indexing |
+| Adaptive researcher validator | `tests/analysis/adaptive_research/test_validation.py` | thread structure, assessment enum, branch-conditional fields, trigger-reference format, strengthens/weakens format |
+| PM envelope validator | `tests/decision/portfolio_manager/test_validation.py` | verdict enum, per-verdict required-field branching, per-source-provenance evaluation criterion-set, envelope-ID↔source-recommendation-ID bijection, modification phase/category pairing, embedded-command sector ∈ active_sectors, halt-mode no-constructive-commands |
+| OMS command validator | `tests/commands/test_pm_envelope.py`, `tests/decision/portfolio_manager/test_validation.py` | command-type enum, command-type-specific required fields, composite command-ID format, engine-originated `MON.*` format (for engine envelopes extracted via the shared OMS intake) |
+| Reference-ID resolution | per-agent `test_validation.py` | valid resolution (one per prefix), invented-ID rejection, malformed-format rejection, sequential-index gap detection, duplicate-index detection, foreign-key resolution (position_id, thesis_id, breach_id), bare-prefix citation surfacing |
+| Stop-reason check | `tests/test_llm_output_validation_contract.py`, per-agent `test_harness.py` | success + max_tokens (no reclassification), fail + end_turn (no reclassification), fail + max_tokens (reclassify to context_overflow), fail + missing metadata (no reclassification) |
+| Cross-layer sequencing | per-agent `test_harness.py` | halt-at-first-failure (one per layer pair), all-layers-pass, Layer 4 reclassification across prior-failure types |
+| Corrective retry message | `tests/test_llm_output_validation_contract.py`, per-agent `test_harness.py` | framing line per failure type, single-error inclusion, contract reference, no-raw-data invariant, single-object directive, diagnostic persistence |
+| Determinism | per-agent `test_validation.py` | pure-function invariant, identical-inputs-identical-outputs sanity |
+| Cross-harness contract | `tests/test_llm_output_validation_contract.py` | retry-message routes through `_harness_core._build_retry_message`, diagnostic schema uniformity, canonical `ValidationResult` import, bare-prefix discipline |
 
 ---
 
@@ -487,7 +486,7 @@ Captured corrective-retry messages for representative failure modes. Tests asser
 
 - **Fresh-context vs. same-context retry.** Same-context. Structural failure is downstream of reasoning in most cases; fresh context loses the reasoning. Cost of same-context (slightly larger session) is cheaper than cost of fresh-context (lost analytical work, repeated framing mistakes).
 
-- **Validator placement.** Module inside the pipeline process at the LLM invocation seam. No separate service, no monitor adjunct (the monitor runs no LLM calls). Engine-originated envelopes bypass the LLM output validator because no LLM generates them — IDs assigned by the OMS command intake layer per [oms-command-ids.md](../oms-command-ids.md).
+- **Validator placement.** Per-agent `validation.py` modules co-located with each harness, plus a shared `src/alphamind/analysis/_harness_core.py` for Layer 4 + retry-message scaffolding + diagnostic persistence. No single module owns "the validator"; the term refers to the layered behavior the harness composes per call. Canonical wire types (`ValidationError`, `ValidationResult`) live in `src/alphamind/commands/validation_results.py` so cross-layer consumers (e.g. the execution-side rejection persistence path) reference them without importing decision-layer code. No separate validator service, no monitor adjunct (the monitor runs no LLM calls). Engine-originated envelopes bypass the LLM output validators because no LLM generates them — IDs assigned by the OMS command intake layer per [oms-command-ids.md](../oms-command-ids.md).
 
 - **Lenient vs. strict parsing.** Strict. Lenient parsing (regex-extracting JSON from prose, accepting multiple top-level objects) converges on accepting outputs the schema cannot validate. The prompt and strict parser pair to produce a stable contract.
 
