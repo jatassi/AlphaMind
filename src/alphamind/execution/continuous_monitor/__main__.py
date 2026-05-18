@@ -29,7 +29,7 @@ import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, assert_never, cast
 
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session, sessionmaker
@@ -251,17 +251,18 @@ def _build_enrichment_callable(
     """
     if mode == "live":
         return None
-    # mode == "paper" — Literal type exhaustive
-    order_lookup = SqlOrderLookup(session_factory)
-    adv_lookup = SqlAdvLookup(session_factory)
-    vol_lookup = MapVolLookup(realized_vol_map)
-    return partial(
-        attach_live_execution_estimate,
-        order_lookup=order_lookup,
-        adv_lookup=adv_lookup,
-        vol_lookup=vol_lookup,
-        config=paper_harness,
-    )
+    if mode == "paper":
+        order_lookup = SqlOrderLookup(session_factory)
+        adv_lookup = SqlAdvLookup(session_factory)
+        vol_lookup = MapVolLookup(realized_vol_map)
+        return partial(
+            attach_live_execution_estimate,
+            order_lookup=order_lookup,
+            adv_lookup=adv_lookup,
+            vol_lookup=vol_lookup,
+            config=paper_harness,
+        )
+    assert_never(mode)
 
 
 def _build_breach_response_lookup(
