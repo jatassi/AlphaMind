@@ -100,7 +100,7 @@ def test_macro_data_known_indicator_returns_complete(session: Session) -> None:
         date = (_NOW - timedelta(days=9 - i)).strftime("%Y-%m-%d")
         _add_macro_obs(
             session,
-            source="FRED",
+            source="fred",
             series_id="VIXCLS",
             observation_date=date,
             value=15.0 + i * 0.5,
@@ -122,7 +122,7 @@ def test_macro_data_series_points_have_required_fields(session: Session) -> None
         date = (_NOW - timedelta(days=4 - i)).strftime("%Y-%m-%d")
         _add_macro_obs(
             session,
-            source="FRED",
+            source="fred",
             series_id="VIXCLS",
             observation_date=date,
             value=20.0 + i,
@@ -143,9 +143,9 @@ def test_macro_data_change_1d_computed(session: Session) -> None:
     yesterday = (_NOW - timedelta(days=1)).strftime("%Y-%m-%d")
     today = _NOW.strftime("%Y-%m-%d")
     _add_macro_obs(
-        session, source="FRED", series_id="VIXCLS", observation_date=yesterday, value=20.0
+        session, source="fred", series_id="VIXCLS", observation_date=yesterday, value=20.0
     )
-    _add_macro_obs(session, source="FRED", series_id="VIXCLS", observation_date=today, value=22.0)
+    _add_macro_obs(session, source="fred", series_id="VIXCLS", observation_date=today, value=22.0)
     session.commit()
 
     fn = macro_data_factory(session)
@@ -163,7 +163,7 @@ def test_macro_data_percentile_1y_in_range(session: Session) -> None:
         date = (_NOW - timedelta(days=251 - i)).strftime("%Y-%m-%d")
         _add_macro_obs(
             session,
-            source="FRED",
+            source="fred",
             series_id="VIXCLS",
             observation_date=date,
             value=float(10 + i % 30),
@@ -273,7 +273,7 @@ def test_macro_data_deterministic_output(session: Session) -> None:
         date = (_NOW - timedelta(days=9 - i)).strftime("%Y-%m-%d")
         _add_macro_obs(
             session,
-            source="FRED",
+            source="fred",
             series_id="VIXCLS",
             observation_date=date,
             value=15.0 + i,

@@ -127,8 +127,6 @@ def _spy_tlt_regime_block(
     correlation: float | None
     regime_label: str | None
     if n_observations == 0:
-        # ALP-537: the unavailable case emits null numerics so a downstream
-        # consumer can't read a fabricated zero correlation as signal.
         correlation = None
         regime_label = None
     else:
@@ -177,9 +175,6 @@ def _gld_real_yields_block(
     correlation: float | None
     flags: list[AnomalyFlag] = []
     if n == 0:
-        # ALP-537: null numerics in the unavailable case; divergence flag is
-        # also suppressed since a fabricated zero would never trip the
-        # ``> threshold`` predicate but a null one shouldn't either.
         correlation = None
     else:
         correlation = _pearson_correlation(gld_returns[-n:], yield_deltas[-n:])
@@ -235,8 +230,6 @@ def _oil_xle_beta_block(
     drift: float | None
     flags: list[AnomalyFlag] = []
     if n_observations == 0:
-        # ALP-537: null numerics in the unavailable case; drift flag is
-        # suppressed since there's no real beta to drift from.
         long_beta = None
         short_beta = None
         drift = None
@@ -300,8 +293,6 @@ def _vix_spy_block(
     correlation: float | None
     flags: list[AnomalyFlag] = []
     if n == 0:
-        # ALP-537: null numerics in the unavailable case; divergence flag is
-        # suppressed since there's no real correlation to flip sign.
         correlation = None
     else:
         correlation = _pearson_correlation(spy_returns[-n:], vix_deltas[-n:])

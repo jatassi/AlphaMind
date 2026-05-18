@@ -33,20 +33,24 @@ __all__ = [
 # Supported indicator registry — fail-closed on unknown names
 # ---------------------------------------------------------------------------
 
-# Canonical alias map: user-facing indicator name -> (source, series_id) for MacroObservations
+# Canonical alias map: user-facing indicator name -> (source, series_id) for MacroObservations.
+# Source strings are the lowercase tokens written by the respective collectors
+# (``data_sources.fred.macro._SOURCE = "fred"``, ``data_sources.eia.energy`` writes
+# ``source="eia"``). The loader's ``source ==`` filter is case-sensitive, so a
+# case mismatch silently drops every row — the bug pattern ALP-537 fixed in q7.
 _MACRO_OBS_MAP: dict[str, tuple[str, str]] = {
-    "vix": ("FRED", "VIXCLS"),
-    "fed_funds_rate": ("FRED", "FEDFUNDS"),
-    "cpi_yoy": ("FRED", "CPIAUCSL"),
-    "unemployment_rate": ("FRED", "UNRATE"),
-    "gdp_growth": ("FRED", "A191RL1Q225SBEA"),
-    "credit_spread_hy": ("FRED", "BAMLH0A0HYM2"),
-    "credit_spread_ig": ("FRED", "BAMLC0A0CM"),
-    "tips_breakeven_5y": ("FRED", "T5YIE"),
-    "tips_breakeven_10y": ("FRED", "T10YIE"),
-    "ism_manufacturing": ("FRED", "MANEMP"),
-    "eia_crude_inventory": ("EIA", "WTTSTUS1"),
-    "nfp": ("FRED", "PAYEMS"),
+    "vix": ("fred", "VIXCLS"),
+    "fed_funds_rate": ("fred", "FEDFUNDS"),
+    "cpi_yoy": ("fred", "CPIAUCSL"),
+    "unemployment_rate": ("fred", "UNRATE"),
+    "gdp_growth": ("fred", "A191RL1Q225SBEA"),
+    "credit_spread_hy": ("fred", "BAMLH0A0HYM2"),
+    "credit_spread_ig": ("fred", "BAMLC0A0CM"),
+    "tips_breakeven_5y": ("fred", "T5YIE"),
+    "tips_breakeven_10y": ("fred", "T10YIE"),
+    "ism_manufacturing": ("fred", "MANEMP"),
+    "eia_crude_inventory": ("eia", "WTTSTUS1"),
+    "nfp": ("fred", "PAYEMS"),
 }
 
 # Treasury tenor alias map: user-facing name -> tenor string in TreasuryAuctions.tenor
