@@ -57,11 +57,26 @@ class CorrelationRegimeChangeParameters:
     (multiple-comparison-aware default in ``config/distillation.yaml``);
     ``dispersion_sigma`` gates the cross-stock dispersion z-test against
     the trailing 20-day distribution.
+
+    ALP-541 added two preconditions that suppress phantom breakdowns on
+    sparse or noise-floor pairs:
+
+    - ``correlation_min_overlap_fraction`` — each window (short, prior,
+      long) must have at least this fraction of its nominal length in
+      overlapping observations between the two tickers. Below the floor
+      the sigma-test denominator is misspecified and the math inflates;
+      pairs failing the guard are filtered before flag emission.
+    - ``correlation_noise_floor`` — the long-window correlation
+      magnitude must clear this absolute value before a sigma-test is run.
+      When ``|long_corr|`` is near zero the short-window deviation is
+      dominated by noise rather than a genuine shift in joint dynamics.
     """
 
     short_window_days: int
     long_window_days: int
     correlation_breakdown_sigma: float
+    correlation_min_overlap_fraction: float
+    correlation_noise_floor: float
     dispersion_window_days: int
     dispersion_sigma: float
     media_silence_hours: int
@@ -83,11 +98,31 @@ def _correlation_breakdown_blocks(
     long_returns: Mapping[str, Sequence[float]],
     short_returns: Mapping[str, Sequence[float]],
     correlation_breakdown_sigma: float,
+    correlation_min_overlap_fraction: float,
+    correlation_noise_floor: float,
     as_of: datetime,
     short_window_days: int,
     long_window_days: int,
 ) -> list[OutputBlock]:
-    """Emit one block per pair whose recent correlation broke from the prior baseline."""
+    """Emit one block per pair whose recent correlation broke from the prior baseline.
+
+    ALP-541 added two preconditions that filter phantom breakdowns:
+
+    - **Observation count guard** — short, prior, and long windows must each
+      carry at least ``ceil(window_days * correlation_min_overlap_fraction)``
+      overlapping observations between the two tickers. Sparse pairs (one
+      ticker brand-new in the universe, holiday-misaligned series) misspecify
+      the sigma-test denominator; the math inflates and the pair becomes a false
+      positive.
+    - **Magnitude noise-floor guard** — the long-window correlation
+      magnitude must clear ``correlation_noise_floor`` before the sigma-test
+      runs. When ``|long_corr|`` is near zero the short-window deviation
+      is dominated by noise rather than a genuine shift in joint
+      dynamics.
+
+    Pairs failing either guard are dropped before any flag is emitted, so the
+    downstream synthesizer brief never sees them.
+    """
     prior_window_days = long_window_days - short_window_days
     if prior_window_days < _FISHER_Z_MIN_SAMPLES:
         return []
@@ -95,6 +130,10 @@ def _correlation_breakdown_blocks(
         1.0 / (short_window_days - _FISHER_Z_DF_CORRECTION)
         + 1.0 / (prior_window_days - _FISHER_Z_DF_CORRECTION)
     )
+
+    short_overlap_min = math.ceil(short_window_days * correlation_min_overlap_fraction)
+    prior_overlap_min = math.ceil(prior_window_days * correlation_min_overlap_fraction)
+    long_overlap_min = math.ceil(long_window_days * correlation_min_overlap_fraction)
 
     short_matrix = _correlation_matrix(short_returns)
     prior_returns: dict[str, list[float]] = {
@@ -106,15 +145,28 @@ def _correlation_breakdown_blocks(
     blocks: list[OutputBlock] = []
     for i, row in enumerate(tickers):
         for col in tickers[i + 1 :]:
+            short_overlap = min(
+                len(short_returns.get(row, ())),
+                len(short_returns.get(col, ())),
+            )
+            prior_overlap = min(
+                len(prior_returns.get(row, [])),
+                len(prior_returns.get(col, [])),
+            )
+            long_overlap = min(
+                len(long_returns.get(row, ())),
+                len(long_returns.get(col, ())),
+            )
+            if min(short_overlap, prior_overlap) < _FISHER_Z_MIN_SAMPLES:
+                continue
             if (
-                min(
-                    len(short_returns.get(row, ())),
-                    len(short_returns.get(col, ())),
-                    len(prior_returns.get(row, [])),
-                    len(prior_returns.get(col, [])),
-                )
-                < _FISHER_Z_MIN_SAMPLES
+                short_overlap < short_overlap_min
+                or prior_overlap < prior_overlap_min
+                or long_overlap < long_overlap_min
             ):
+                continue
+            long_corr = _pearson_correlation(long_returns[row], long_returns[col])
+            if abs(long_corr) < correlation_noise_floor:
                 continue
             recent_corr = short_matrix[row][col]
             prior_corr = prior_matrix[row][col]
@@ -122,12 +174,7 @@ def _correlation_breakdown_blocks(
             if magnitude < correlation_breakdown_sigma:
                 continue
             state, reason = _calibration_for_window(
-                n_observations=min(
-                    len(short_returns.get(row, ())),
-                    len(short_returns.get(col, ())),
-                    len(long_returns.get(row, ())),
-                    len(long_returns.get(col, ())),
-                ),
+                n_observations=min(short_overlap, long_overlap),
                 required=short_window_days,
                 input_name="correlation_breakdown_observations",
             )
@@ -141,12 +188,11 @@ def _correlation_breakdown_blocks(
                     payload={
                         "pair": [row, col],
                         "short_correlation": recent_corr,
-                        "long_correlation": _pearson_correlation(
-                            long_returns[row], long_returns[col]
-                        ),
+                        "long_correlation": long_corr,
                         "deviation_sigma": magnitude,
                         "short_window_days": short_window_days,
                         "long_window_days": long_window_days,
+                        "n_overlapping_observations": long_overlap,
                     },
                     anomaly_flags=(
                         AnomalyFlag(
@@ -307,6 +353,8 @@ def compute_correlation_regime_change_pure(
         short_returns=short_returns,
         long_returns=long_returns_by_ticker,
         correlation_breakdown_sigma=params.correlation_breakdown_sigma,
+        correlation_min_overlap_fraction=params.correlation_min_overlap_fraction,
+        correlation_noise_floor=params.correlation_noise_floor,
         as_of=as_of,
         short_window_days=params.short_window_days,
         long_window_days=params.long_window_days,
