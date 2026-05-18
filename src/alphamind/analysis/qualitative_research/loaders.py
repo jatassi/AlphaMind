@@ -11,9 +11,8 @@ message:
   ``distillation_contract_history``.
 - :func:`load_calendar_events_72h` — events in [as_of, as_of + 72h) from
   ``event_calendar`` joined to ``earnings_event_details``.
-- :func:`load_active_thesis_summaries` — stub returning ``()`` until the
-  execution-layer thesis model lands (see ALP-111 § Sequencing context
-  § Position and thesis model).
+- :func:`load_active_thesis_summaries` — per-position thesis summaries for
+  every ACTIVE thesis backed by a PENDING or OPEN position.
 - :func:`load_qualitative_inputs` — aggregator assembling the
   :class:`QualitativeInputs` container.
 
@@ -36,6 +35,7 @@ Public names
 
 from __future__ import annotations
 
+import json
 import math
 import statistics
 from collections.abc import Sequence
@@ -51,9 +51,19 @@ from alphamind.persistence.models import (
     DistillationTickerBaseline,
     EarningsEventDetails,
     EventCalendar,
+    NewsArticles,
+    NewsArticleTickers,
+    OhlcvBars,
     PredictionMarketContracts,
     PredictionMarketSnapshots,
 )
+from alphamind.portfolio_state.records.positions import (
+    InstrumentType,
+    PositionStatus,
+)
+from alphamind.portfolio_state.records.theses import ThesisRecordStatus
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.theses import ThesisRow
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -72,6 +82,15 @@ _DEFAULT_LOW_LIQUIDITY_USD: float = 10_000.0
 # Minimum trailing observations for per-ticker calibration.
 _DEFAULT_SENTIMENT_MIN_OBSERVATIONS: int = 30
 
+# News-vs-price divergence window — lookback in trading days for the price
+# return that is compared against sentiment direction.
+_DEFAULT_DIVERGENCE_PRICE_LOOKBACK_DAYS: int = 5
+
+# Both sentiment direction and price return must clear this absolute magnitude
+# before a divergence is asserted. Suppresses noise from near-zero sentiment
+# or sideways tape.
+_DEFAULT_DIVERGENCE_MIN_ABS: float = 0.02
+
 
 # ---------------------------------------------------------------------------
 # Records
@@ -85,10 +104,10 @@ class SentimentAggregate:
     ``percentile_vs_self`` is in ``[0.0, 1.0]`` (unit interval, not 0-100).
     ``data_freshness`` is the timestamp of the underlying baseline row.
 
-    ``rate_of_change``, ``volume``, and ``divergence_flag`` are ``None`` while
-    the v1 stub is in place — they will be populated when the rate-of-change
-    and news-price-divergence loaders land. The renderer surfaces ``None`` as
-    ``pending`` so the LLM reads "data not available yet", not "no signal".
+    ``rate_of_change``, ``volume``, and ``divergence_flag`` may be ``None``
+    when their source data is missing (only one baseline row for a ticker, no
+    daily-bar history). The renderer surfaces ``None`` as ``pending`` so the
+    LLM reads "data not available yet", not "no signal".
     """
 
     ticker: str
@@ -159,8 +178,9 @@ class CalendarEvent:
 class ActiveThesis:
     """Summary record for one active investment thesis.
 
-    Stub until the execution-layer thesis model lands (ALP-111 § Sequencing
-    context § Position and thesis model).
+    Surfaces the per-thesis fields the qualitative researcher's bundle renders
+    in the ``ACTIVE THESIS SUMMARIES`` section. One record per ACTIVE thesis
+    backed by a PENDING or OPEN position.
     """
 
     thesis_id: str
@@ -261,13 +281,121 @@ class _EventBucket:
 # ---------------------------------------------------------------------------
 
 
-def _load_all_sentiment_baselines(
+def _latest_close_at_or_before(
+    session: Session,
+    *,
+    tickers: Sequence[str],
+    anchor: str,
+) -> dict[str, tuple[str, float]]:
+    """Return ``ticker → (period_start, adj_close)`` for each ticker's most
+    recent daily ``OhlcvBars`` row whose ``period_start`` is ``<= anchor``.
+    """
+    max_subq = (
+        select(
+            OhlcvBars.ticker,
+            func.max(OhlcvBars.period_start).label("ms"),
+        )
+        .where(
+            OhlcvBars.ticker.in_(tuple(tickers)),
+            OhlcvBars.timeframe == "1d",
+            OhlcvBars.period_start <= anchor,
+        )
+        .group_by(OhlcvBars.ticker)
+        .subquery()
+    )
+    rows = session.execute(
+        select(OhlcvBars.ticker, OhlcvBars.period_start, OhlcvBars.adj_close)
+        .join(
+            max_subq,
+            (OhlcvBars.ticker == max_subq.c.ticker) & (OhlcvBars.period_start == max_subq.c.ms),
+        )
+        .where(OhlcvBars.timeframe == "1d")
+    ).all()
+    return {row[0]: (row[1], float(row[2])) for row in rows}
+
+
+def _load_price_returns_by_ticker(
+    session: Session,
+    *,
+    tickers: Sequence[str],
+    as_of: datetime,
+    lookback_days: int,
+) -> dict[str, float]:
+    """Return ``ticker → (latest_close - prior_close) / prior_close`` over a
+    ``lookback_days`` calendar-day window ending at ``as_of``.
+
+    ``prior_close`` is the most recent daily bar at or before
+    ``as_of - lookback_days``; ``latest_close`` is the most recent at or
+    before ``as_of``. Tickers without bars on both sides of the window (or
+    where the same bar satisfies both anchors) are absent from the mapping.
+    """
+    if not tickers:
+        return {}
+    prior_anchor = (as_of - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    latest = _latest_close_at_or_before(session, tickers=tickers, anchor=_format_iso_utc(as_of))
+    prior = _latest_close_at_or_before(session, tickers=tickers, anchor=prior_anchor)
+
+    returns: dict[str, float] = {}
+    for ticker, (latest_start, latest_close) in latest.items():
+        prior_pair = prior.get(ticker)
+        if prior_pair is None:
+            continue
+        prior_start, prior_close = prior_pair
+        if latest_start == prior_start or prior_close == 0.0:
+            continue
+        returns[ticker] = (latest_close - prior_close) / prior_close
+    return returns
+
+
+def _is_divergent(directional_score: float, price_return: float, *, threshold: float) -> bool:
+    """True iff sentiment and price disagree on direction and both magnitudes
+    clear ``threshold``."""
+    if abs(directional_score) < threshold or abs(price_return) < threshold:
+        return False
+    return (directional_score > 0) != (price_return > 0)
+
+
+def _load_article_volume_by_ticker(
+    session: Session,
+    *,
+    tickers: Sequence[str],
+    window_start_str: str,
+    window_end_str: str,
+) -> dict[str, int]:
+    """Count news_article_tickers rows per ticker whose article was published
+    in ``(window_start_str, window_end_str]``.
+
+    The interval is half-open at the lower edge so the prior-baseline timestamp
+    is excluded (it already contributed to the prior period's sentiment) and
+    inclusive at the upper edge so the latest baseline's own day is counted.
+    """
+    if not tickers:
+        return {}
+    rows = session.execute(
+        select(NewsArticleTickers.ticker, func.count())
+        .join(NewsArticles, NewsArticleTickers.article_id == NewsArticles.article_id)
+        .where(
+            NewsArticleTickers.ticker.in_(tuple(tickers)),
+            NewsArticles.published_at > window_start_str,
+            NewsArticles.published_at <= window_end_str,
+        )
+        .group_by(NewsArticleTickers.ticker)
+    ).all()
+    return {row[0]: int(row[1]) for row in rows}
+
+
+def _load_recent_sentiment_baselines(
     session: Session,
     *,
     as_of_str: str,
     ticker_scope: Sequence[str] | None,
-) -> list[DistillationTickerBaseline]:
-    """Return the most-recent sentiment baseline row per ticker at or before as_of."""
+) -> dict[str, list[DistillationTickerBaseline]]:
+    """Return the two most-recent sentiment baseline rows per ticker, latest first.
+
+    The latest row drives ``SentimentAggregate``'s point-in-time fields; the
+    prior row supplies the diff for ``rate_of_change``. Tickers with no
+    baseline rows at or before ``as_of`` are absent from the mapping.
+    """
     stmt = (
         select(DistillationTickerBaseline)
         .where(
@@ -282,15 +410,12 @@ def _load_all_sentiment_baselines(
     if ticker_scope is not None:
         stmt = stmt.where(DistillationTickerBaseline.ticker.in_(tuple(ticker_scope)))
 
-    # Deduplicate to latest-as_of per ticker.
-    rows = session.execute(stmt).scalars().all()
-    seen: set[str] = set()
-    latest: list[DistillationTickerBaseline] = []
-    for row in rows:
-        if row.ticker not in seen:
-            seen.add(row.ticker)
-            latest.append(row)
-    return latest
+    buckets: dict[str, list[DistillationTickerBaseline]] = {}
+    for row in session.execute(stmt).scalars():
+        bucket = buckets.setdefault(row.ticker, [])
+        if len(bucket) < 2:
+            bucket.append(row)
+    return buckets
 
 
 def _universe_pooled_sentiment(session: Session, *, as_of_str: str) -> tuple[float, float] | None:
@@ -315,6 +440,8 @@ def load_sentiment_aggregates(
     as_of: datetime,
     ticker_scope: Sequence[str] | None = None,
     sentiment_min_observations: int = _DEFAULT_SENTIMENT_MIN_OBSERVATIONS,
+    divergence_price_lookback_days: int = _DEFAULT_DIVERGENCE_PRICE_LOOKBACK_DAYS,
+    divergence_min_abs: float = _DEFAULT_DIVERGENCE_MIN_ABS,
 ) -> tuple[SentimentAggregate, ...]:
     """Return per-ticker :class:`SentimentAggregate` records.
 
@@ -327,20 +454,56 @@ def load_sentiment_aggregates(
     universe-pooled distribution; the record still emits with
     ``data_freshness`` surfacing the bootstrap state.
 
-    When ``ticker_scope`` is ``None`` all tickers with a sentiment baseline are
-    returned.
+    ``rate_of_change`` is the diff between the latest baseline mean and the
+    prior-period mean; ``None`` when only one row exists.
+
+    ``volume`` is the count of ``news_article_tickers`` rows whose article
+    ``published_at`` falls in the rate-of-change window; ``None`` when there
+    is no prior baseline to anchor the window.
+
+    ``divergence_flag`` is ``True`` when sentiment direction disagrees with
+    the ``divergence_price_lookback_days`` trailing price return and both
+    magnitudes clear ``divergence_min_abs``; ``None`` when price history is
+    insufficient.
+
+    When ``ticker_scope`` is ``None`` all tickers with a sentiment baseline
+    are returned.
     """
     as_of_str = _format_iso_utc(as_of)
-    baselines = _load_all_sentiment_baselines(
+    baselines = _load_recent_sentiment_baselines(
         session, as_of_str=as_of_str, ticker_scope=ticker_scope
     )
     if not baselines:
         return ()
 
+    # Per-ticker article counts share a single window across all tickers:
+    # the latest baseline's as_of is identical for the whole panel because
+    # Class B refresh writes one row per ticker per refresh.
+    windowed_tickers = [t for t, recent in baselines.items() if len(recent) == 2]
+    if windowed_tickers:
+        prior_as_of = min(recent[1].as_of for recent in baselines.values() if len(recent) == 2)
+        latest_as_of = max(recent[0].as_of for recent in baselines.values() if len(recent) == 2)
+        volume_by_ticker = _load_article_volume_by_ticker(
+            session,
+            tickers=windowed_tickers,
+            window_start_str=prior_as_of,
+            window_end_str=latest_as_of,
+        )
+    else:
+        volume_by_ticker = {}
+
+    price_returns = _load_price_returns_by_ticker(
+        session,
+        tickers=list(baselines),
+        as_of=as_of,
+        lookback_days=divergence_price_lookback_days,
+    )
+
     pool: tuple[float, float] | None = None  # lazy-loaded
 
     results: list[SentimentAggregate] = []
-    for row in baselines:
+    for ticker, recent in baselines.items():
+        row = recent[0]
         if row.n_observations >= sentiment_min_observations:
             mean = float(row.mean)
             stdev = float(row.stdev)
@@ -359,18 +522,24 @@ def load_sentiment_aggregates(
         directional_score = max(-1.0, min(1.0, float(row.mean)))
         # magnitude: absolute deviation normalised by stdev (capped at 1.0).
         magnitude = min(1.0, abs(float(row.mean) - mean) / stdev) if stdev > 0 else 0.0
+        has_window = len(recent) == 2
+        rate_of_change = float(row.mean) - float(recent[1].mean) if has_window else None
+        volume = volume_by_ticker.get(ticker, 0) if has_window else None
+        price_return = price_returns.get(ticker)
+        divergence_flag = (
+            _is_divergent(directional_score, price_return, threshold=divergence_min_abs)
+            if price_return is not None
+            else None
+        )
 
         results.append(
             SentimentAggregate(
-                ticker=row.ticker,
+                ticker=ticker,
                 directional_score=directional_score,
                 magnitude=magnitude,
-                # v1 stub: these three fields require pipeline pieces that
-                # have not yet landed. None signals "data pending" to the LLM
-                # via the bundle renderer's `pending` placeholder.
-                rate_of_change=None,
-                volume=None,
-                divergence_flag=None,
+                rate_of_change=rate_of_change,
+                volume=volume,
+                divergence_flag=divergence_flag,
                 percentile_vs_self=percentile,
                 data_freshness=_parse_iso_utc(row.as_of),
             )
@@ -612,23 +781,92 @@ def load_calendar_events_72h(
 
 
 # ---------------------------------------------------------------------------
-# Active thesis summaries — stub
+# Active thesis summaries
 # ---------------------------------------------------------------------------
 
 
-def load_active_thesis_summaries(
-    session: Session,  # noqa: ARG001
-    *,
-    as_of: datetime,  # noqa: ARG001
-) -> tuple[ActiveThesis, ...]:
-    """Return active thesis summaries. Stub — returns ``()`` unconditionally.
+def _ticker_from_position_details_json(details_json: str) -> str | None:
+    """Lift the underlying ticker out of a ``positions.details_json`` blob.
 
-    ALP-111 § Sequencing context § Position and thesis model: the thesis model
-    lives in the execution layer and has not yet landed. When it does, the
-    function body is replaced with a real query against the thesis-model table;
-    nothing else in this module changes.
+    Mirrors :func:`alphamind.portfolio_state.records.positions.resolve_ticker`
+    semantics but reads the JSON directly so this loader does not pay the cost
+    of full-record rehydration (and its execution-history invariants) just to
+    resolve a ticker.
     """
-    return ()
+    payload: dict[str, object] = json.loads(details_json)
+    kind = payload.get("instrument_type")
+    if kind == InstrumentType.EQUITY.value:
+        ticker = payload.get("ticker")
+        return ticker if isinstance(ticker, str) else None
+    if kind == InstrumentType.OPTIONS.value:
+        ticker = payload.get("underlying_ticker")
+        return ticker if isinstance(ticker, str) else None
+    if kind == InstrumentType.STRATEGY.value:
+        legs = payload.get("legs") or []
+        if not isinstance(legs, list) or not legs:
+            return None
+        first_leg = legs[0]
+        if not isinstance(first_leg, dict):
+            return None
+        options = first_leg.get("options")
+        if not isinstance(options, dict):
+            return None
+        ticker = options.get("underlying_ticker")
+        return ticker if isinstance(ticker, str) else None
+    return None
+
+
+def load_active_thesis_summaries(
+    session: Session,
+    *,
+    as_of: datetime,
+) -> tuple[ActiveThesis, ...]:
+    """Return :class:`ActiveThesis` summaries for every ACTIVE thesis backed by
+    a PENDING or OPEN position generated at or before ``as_of``.
+
+    Joins ``theses`` to ``positions`` so the ticker can be lifted from the
+    position's ``details_json``. ``summary`` reads from ``ThesisRow.summary``;
+    ``key_catalyst`` reads from the ``narrative_json`` payload written by
+    :func:`alphamind.state.tables.theses_codec.record_to_rows`. Results are
+    sorted by ``thesis_id`` so renderings are deterministic.
+    """
+    as_of_str = _format_iso_utc(as_of)
+    active_position_statuses = (PositionStatus.OPEN.value, PositionStatus.PENDING.value)
+    rows = session.execute(
+        select(ThesisRow, PositionRow.details_json)
+        .join(PositionRow, ThesisRow.position_id == PositionRow.position_id)
+        .where(
+            ThesisRow.status == ThesisRecordStatus.ACTIVE.value,
+            ThesisRow.generation_timestamp <= as_of_str,
+            PositionRow.status.in_(active_position_statuses),
+        )
+        .order_by(ThesisRow.thesis_id.asc())
+    ).all()
+
+    results: list[ActiveThesis] = []
+    for thesis_row, details_json in rows:
+        ticker = _ticker_from_position_details_json(details_json)
+        if ticker is None:
+            # StrategyPositionDetails with no legs — nothing to attribute the
+            # thesis to in the qualitative researcher's per-ticker view.
+            continue
+        narrative = json.loads(thesis_row.narrative_json)
+        time_hours = (
+            round(thesis_row.time_expectation_hours)
+            if thesis_row.time_expectation_hours is not None
+            else 0
+        )
+        results.append(
+            ActiveThesis(
+                thesis_id=thesis_row.thesis_id,
+                ticker=ticker,
+                summary=thesis_row.summary,
+                key_catalyst=narrative.get("key_catalyst", ""),
+                time_expectation_hours=time_hours,
+            )
+        )
+
+    return tuple(results)
 
 
 # ---------------------------------------------------------------------------
