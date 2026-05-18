@@ -31,6 +31,7 @@ from sqlalchemy import select
 
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.venue import VenueConfig
+from alphamind.distillation.realized_vol import read_realized_vol_map
 from alphamind.execution.broker_adapter.client_factory import (
     AlpacaClientFactory,
 )
@@ -62,6 +63,7 @@ from alphamind.portfolio_state.records.positions import Direction
 from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
     MarketInputs,
+    RealizedVolEntry,
 )
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
@@ -181,14 +183,18 @@ def _build_market_inputs(
     positions: tuple[PositionSnapshot, ...],
     risk_free_rate: float,
     as_of: datetime,
+    realized_vol_map: dict[str, float],
 ) -> MarketInputs:
     """Compose ``MarketInputs`` from broker positions + macro rate.
 
     ``underlying_prices`` map is populated from each position's
-    ``current_price`` (skipping positions with ``None``). The IV provider
-    is a no-op ``FixtureIvProvider`` — equities-only Phase 1 (and tests)
-    do not consume a real surface; future stories can swap in a backed
-    options-chain provider without changing this signature.
+    ``current_price`` (skipping positions with ``None``). The IV provider's
+    ``surface`` is empty (no production options-chain producer yet); the
+    ``realized_vol`` mapping is the per-underlying trailing-30d scalar
+    produced by ALP-530's distillation hook, wrapped at this boundary
+    into ``RealizedVolEntry`` records. Underlyings without a row are
+    absent from the mapping — the consumer's fallback chain emits
+    ``IvLookupError`` for those.
     """
     # ALP-462 — ``pos.current_price`` is ``Price`` (Decimal) on the
     # PositionSnapshot boundary; cast at the legacy MarketInputs surface which
@@ -196,10 +202,14 @@ def _build_market_inputs(
     underlying_prices: dict[str, float] = {
         pos.symbol: float(pos.current_price) for pos in positions if pos.current_price is not None
     }
+    realized_vol_entries = {
+        ticker: RealizedVolEntry(underlying=ticker, trailing_30d_realized_vol=vol)
+        for ticker, vol in realized_vol_map.items()
+    }
     return MarketInputs(
         underlying_prices=underlying_prices,
         risk_free_rate=risk_free_rate,
-        iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
+        iv_provider=FixtureIvProvider(surface={}, realized_vol=realized_vol_entries),
         as_of=as_of,
     )
 
@@ -303,8 +313,21 @@ async def gather_phase1_inputs(
         risk_free_rate = _DEFAULT_RISK_FREE_RATE
         staleness_flag = True
 
+    # ALP-530 — fetch per-underlying realized-vol scalars for the open
+    # position set, restricted to those symbols so the read scans the
+    # smallest possible window. Underlyings without a row are absent from
+    # the returned dict; the Reg T wedge tolerates missing entries by
+    # routing them through the IV-fallback's terminal error path.
+    realized_vol_map = await read_realized_vol_map(
+        handle.session,
+        tickers=tuple(pos.symbol for pos in positions),
+    )
+
     market_inputs = _build_market_inputs(
-        positions=positions, risk_free_rate=risk_free_rate, as_of=as_of
+        positions=positions,
+        risk_free_rate=risk_free_rate,
+        as_of=as_of,
+        realized_vol_map=dict(realized_vol_map),
     )
 
     return Phase1Inputs(

@@ -425,6 +425,7 @@ def _default_execution_config(retry_window_seconds: int = 30) -> Any:
     """Build a default ExecutionConfig for the broker-routing tests."""
     from alphamind.config.models.execution import (
         ExecutionConfig,
+        FeeSchedule,
         GreeksRefresh,
         OrderType,
         PaperHarness,
@@ -441,6 +442,13 @@ def _default_execution_config(retry_window_seconds: int = 30) -> Any:
                 OrderType.limit: 0.05,
                 OrderType.stop: 0.08,
             },
+            fee_schedule=FeeSchedule(
+                cat_per_executed_share=0.0,
+                taf_per_share_sells=0.0,
+                sec_pct_of_notional_sells=0.0,
+                orf_per_options_contract=0.0,
+                occ_per_options_contract=0.0,
+            ),
         ),
         pl_target_margin_pct=0.0,
     )
@@ -552,6 +560,7 @@ async def test_engine_envelope_routes_close_through_dispatcher(
     OrderRecord."""
     from alphamind.config.models.execution import (
         ExecutionConfig,
+        FeeSchedule,
         GreeksRefresh,
         OrderType,
         PaperHarness,
@@ -594,6 +603,13 @@ async def test_engine_envelope_routes_close_through_dispatcher(
                 OrderType.limit: 0.05,
                 OrderType.stop: 0.08,
             },
+            fee_schedule=FeeSchedule(
+                cat_per_executed_share=0.0,
+                taf_per_share_sells=0.0,
+                sec_pct_of_notional_sells=0.0,
+                orf_per_options_contract=0.0,
+                occ_per_options_contract=0.0,
+            ),
         ),
         pl_target_margin_pct=0.0,
     )

@@ -9,4 +9,20 @@ paper_harness:
     market: 0.5
     limit: 0.25
     stop: 0.75
+  fee_schedule:
+    # CAT: FINRA Consolidated Audit Trail fee — all executed shares, both sides
+    # Source: https://www.finra.org/rules-guidance/rulebooks/finra-rules/7660A
+    cat_per_executed_share: 0.000166
+    # TAF: FINRA Trading Activity Fee — equity sells only, per share
+    # Source: https://www.finra.org/rules-guidance/rulebooks/finra-rules/7660A
+    taf_per_share_sells: 0.000145
+    # SEC Section 31 fee — equity and options sells, per dollar of notional
+    # Source: https://www.sec.gov/rules/exorders/2025/34-100996.pdf (rate for FY2025)
+    sec_pct_of_notional_sells: 0.0000080
+    # ORF: FINRA Options Regulatory Fee — all options executions, per contract
+    # Source: https://www.finra.org/rules-guidance/rulebooks/finra-rules/6980
+    orf_per_options_contract: 0.02188
+    # OCC: Options Clearing Corporation clearing fee — all options executions, per contract
+    # Source: https://www.theocc.com/Company-Information/Documents-and-Archives/Fee-Schedules
+    occ_per_options_contract: 0.02
 pl_target_margin_pct: 5

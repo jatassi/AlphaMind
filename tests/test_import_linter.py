@@ -484,14 +484,11 @@ def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
     ``*_compute.py`` cores are now enumerated by
     ``distillation-compute-no-sqlalchemy``.
 
-    Post-ALP-486 baseline:
-    - 31 direct sqlalchemy ignores (post-ALP-485 31; the q7 refactor swaps
-      ``q7._helpers`` for ``q7._loaders`` and replaces six per-sub
-      ``q7.<sub>`` entries with the same six entries on the new thin
-      orchestration shims — net zero change).
-    - 16 indirect ignores (post-ALP-485 21 minus the six retired
-      ``q7.<entry> -> persistence.models`` chains plus the single new
-      ``q7._loaders -> persistence.models`` chain — net -5).
+    Post-ALP-530 baseline (ALP-130 work tree, per-ticker realized-vol substrate):
+    - 32 direct sqlalchemy ignores (post-ALP-486 31 plus the new
+      ``realized_vol -> sqlalchemy`` IO-shell entry added by ALP-530).
+    - 17 indirect ignores (post-ALP-486 16 plus the new
+      ``realized_vol -> alphamind.persistence.models`` entry added by ALP-530).
 
     Regression guard: a future story tightening this contract by accident
     would drop entries here and silently re-introduce violations.
@@ -501,14 +498,14 @@ def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
     ignored = _split_module_list(section["ignore_imports"])
     direct = [e for e in ignored if e.endswith("-> sqlalchemy")]
     indirect = [e for e in ignored if not e.endswith("-> sqlalchemy")]
-    assert len(direct) == 31, (
-        f"direct sqlalchemy ignore_imports count drifted: expected 31, got {len(direct)}.\n"
+    assert len(direct) == 32, (
+        f"direct sqlalchemy ignore_imports count drifted: expected 32, got {len(direct)}.\n"
         f"entries:\n  " + "\n  ".join(direct)
     )
-    assert len(indirect) == 16, (
-        f"indirect ignore_imports count drifted: expected 16 "
-        f"(post-ALP-485 21 minus the six retired q7.<entry> chains plus the "
-        f"single q7._loaders -> persistence.models chain), got {len(indirect)}.\n"
+    assert len(indirect) == 17, (
+        f"indirect ignore_imports count drifted: expected 17 "
+        f"(post-ALP-486 16 plus the realized_vol -> persistence.models entry), "
+        f"got {len(indirect)}.\n"
         f"entries:\n  " + "\n  ".join(indirect)
     )
 

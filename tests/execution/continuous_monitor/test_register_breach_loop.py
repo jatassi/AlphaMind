@@ -174,6 +174,7 @@ async def test_register_breach_loop_uses_shared_trigger_ids(
             calendar_cache=_make_calendar_cache(),
             state_persistence_config=_state_persistence_config(),
             config_dir=_CONFIG_DIR,
+            realized_vol_map={},
         )
 
     # The cascade dispatcher received the *same* generator instance the daemon
@@ -202,6 +203,7 @@ async def test_register_breach_loop_registers_breach_loop_task(
         calendar_cache=_make_calendar_cache(),
         state_persistence_config=_state_persistence_config(),
         config_dir=_CONFIG_DIR,
+        realized_vol_map={},
     )
     assert "breach_loop" in supervisor.task_names()
 
@@ -243,6 +245,7 @@ async def test_register_breach_loop_wires_real_activity_log_sink(
             calendar_cache=_make_calendar_cache(),
             state_persistence_config=_state_persistence_config(),
             config_dir=_CONFIG_DIR,
+            realized_vol_map={},
         )
 
     sink = captured["kwargs"]["activity_log_sink"]
@@ -299,6 +302,7 @@ async def test_register_breach_loop_threads_trigger_ids_to_emergency_callback(
             calendar_cache=_make_calendar_cache(),
             state_persistence_config=_state_persistence_config(),
             config_dir=_CONFIG_DIR,
+            realized_vol_map={},
         )
 
     assert captured["kwargs"]["trigger_ids"] is shared
@@ -357,6 +361,7 @@ async def test_register_breach_loop_passes_progressive_tiers(
             calendar_cache=_make_calendar_cache(),
             state_persistence_config=_state_persistence_config(),
             config_dir=_CONFIG_DIR,
+            realized_vol_map={},
         )
 
     # Pre-fix this was ``()``. Post-fix the helper threads through the
@@ -399,6 +404,7 @@ async def test_register_breach_loop_wires_calendar_cache_market_hours(
             calendar_cache=_make_calendar_cache(),
             state_persistence_config=_state_persistence_config(),
             config_dir=_CONFIG_DIR,
+            realized_vol_map={},
         )
 
     market_hours = captured["kwargs"]["market_hours"]
@@ -449,6 +455,7 @@ async def test_register_breach_loop_wires_alpaca_margin_call_observer(
             calendar_cache=_make_calendar_cache(),
             state_persistence_config=_state_persistence_config(),
             config_dir=_CONFIG_DIR,
+            realized_vol_map={},
         )
 
     observer = captured["kwargs"]["margin_call_observer"]

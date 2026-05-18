@@ -26,9 +26,10 @@ import argparse
 import asyncio
 import logging
 import sys
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, assert_never, cast
 
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session, sessionmaker
@@ -38,9 +39,10 @@ from alphamind.config.guardrails_helpers import (
 )
 from alphamind.config.loaders import read_yaml_file
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
-from alphamind.config.models.execution import ExecutionConfig
+from alphamind.config.models.execution import ExecutionConfig, PaperHarness
 from alphamind.config.models.guardrails import BreachResponse, GuardrailsConfig, ProgressiveTier
 from alphamind.config.models.venue import VenueConfig
+from alphamind.distillation.realized_vol import read_realized_vol_map
 from alphamind.execution.broker_adapter import AccountStateQueries, AlpacaClientFactory
 from alphamind.execution.continuous_monitor.bracket_stops import (
     AlpacaBracketCloseSubmitter,
@@ -76,6 +78,7 @@ from alphamind.execution.continuous_monitor.emergency_trigger import (
 from alphamind.execution.continuous_monitor.emergency_trigger.margin_call_observer import (
     AccountQueriesProtocol,
 )
+from alphamind.execution.continuous_monitor.fill_stream_consumer import EnrichmentCallable
 from alphamind.execution.continuous_monitor.greeks_refresh import (
     register_greeks_refresh_task,
 )
@@ -100,6 +103,14 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
 from alphamind.execution.continuous_monitor.underlying_stream.reader import (
     SqlOpenPositionsReader,
 )
+from alphamind.execution.paper_evaluation_harness import (
+    attach_live_execution_estimate,
+)
+from alphamind.execution.paper_evaluation_harness.lookups import (
+    MapVolLookup,
+    SqlAdvLookup,
+    SqlOrderLookup,
+)
 from alphamind.execution.venue_configuration.calendar_cache import (
     TradingCalendarCache,
 )
@@ -116,7 +127,7 @@ from alphamind.risk_guardrails.breach_behavior import (
     BreachBehaviorConfig,
     load_breach_behavior_config,
 )
-from alphamind.risk_guardrails.guardrail_evaluation import FixtureIvProvider
+from alphamind.risk_guardrails.guardrail_evaluation import FixtureIvProvider, RealizedVolEntry
 from alphamind.risk_guardrails.regime_adaptation import load_config_fan
 from alphamind.scripts._common import load_distillation_config
 from alphamind.state.config import (
@@ -143,6 +154,115 @@ _GUARDRAILS_CONFIG_PATH = _CONFIG_DIR / "guardrails.yaml"
 _BREACH_BEHAVIOR_CONFIG_PATH = _CONFIG_DIR / "breach_behavior.yaml"
 _EXECUTION_CONFIG_PATH = _CONFIG_DIR / "execution.yaml"
 _MAIN_CONFIG_PATH = _CONFIG_DIR / "main.yaml"
+
+# ALP-530 — refresh cadence for the shared realized-vol map. The distillation
+# producer runs at invocation cadence (typically daily / on-schedule); the
+# monitor lives across invocations, so a 24h refresh keeps the long-lived
+# process from holding a multi-day-stale Mapping.
+_REALIZED_VOL_REFRESH_INTERVAL_SECONDS: float = 24 * 60 * 60
+
+
+async def refresh_realized_vol_map_in_place(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    shared_map: dict[str, RealizedVolEntry],
+    tickers: Sequence[str] | None,
+) -> int:
+    """Refresh ``shared_map`` from ``ticker_realized_vol`` in place.
+
+    Both the harness ``MapVolLookup`` and the breach-loop
+    ``FixtureIvProvider`` hold the same dict reference; mutating
+    ``shared_map`` in place updates both consumers without re-construction.
+
+    ``tickers`` restricts the fetch to a known underlying set (typically the
+    monitor's open-position underlyings); pass ``None`` to fetch every
+    populated ticker. Tickers absent from the latest read are removed from
+    ``shared_map`` — the consumers' fallback chain handles missing entries.
+
+    Returns the number of entries in ``shared_map`` after the refresh.
+    """
+    async with session_factory() as session:
+        latest = await read_realized_vol_map(session, tickers=tickers)
+    shared_map.clear()
+    for ticker, vol in latest.items():
+        shared_map[ticker] = RealizedVolEntry(underlying=ticker, trailing_30d_realized_vol=vol)
+    return len(shared_map)
+
+
+def _register_realized_vol_refresh_task(
+    supervisor: MonitorSupervisor,
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    shared_map: dict[str, RealizedVolEntry],
+    tickers_provider: Callable[[], Sequence[str] | None],
+    interval_seconds: float = _REALIZED_VOL_REFRESH_INTERVAL_SECONDS,
+) -> None:
+    """Register the 24h shared realized-vol map refresher (ALP-530).
+
+    The task sleeps ``interval_seconds`` between refreshes; each iteration
+    re-fetches the per-underlying scalars and mutates ``shared_map`` in
+    place so the harness and breach-loop both observe the fresh values.
+    ``tickers_provider`` is invoked per refresh so the monitor's
+    open-position set can change over the day without re-registering.
+    """
+
+    async def _refresh_task(_session: MonitorSession, _config: ContinuousMonitorConfig) -> None:
+        # Initial refresh already happened at startup; this task drives the
+        # subsequent daily cadence.
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                tickers = tickers_provider()
+                count = await refresh_realized_vol_map_in_place(
+                    session_factory=session_factory,
+                    shared_map=shared_map,
+                    tickers=tickers,
+                )
+                log.info("realized_vol map refresh complete: entries=%d", count)
+            except Exception:
+                # Per the LLM-agents-uniformly-Critical posture for monitor
+                # tasks, a refresh failure must not crash the supervisor —
+                # the stale map still satisfies the fallback chain. Log and
+                # retry next cycle.
+                log.exception("realized_vol map refresh failed")
+
+    supervisor.register_task(name="realized_vol_refresh", coro_fn=_refresh_task)
+
+
+def _build_enrichment_callable(
+    *,
+    mode: MonitorMode,
+    paper_harness: PaperHarness,
+    session_factory: async_sessionmaker[AsyncSession],
+    realized_vol_map: Mapping[str, RealizedVolEntry],
+) -> EnrichmentCallable | None:
+    """Construct the paper-mode enrichment callable, or ``None`` for live mode.
+
+    The wedge (ALP-528) attaches a ``LiveExecutionEstimate`` to each persisted
+    ``FillRecord`` so paper-mode fills carry the estimated live-execution
+    drag. Live mode bypasses the wedge entirely — the field stays NULL in
+    ``fill_records.live_execution_estimate_json`` and the broker reports
+    actual costs separately.
+
+    Today's ``realized_vol_map`` is empty (the per-underlying realized-vol
+    substrate lands with ALP-530); per parent decision H the wedge handles
+    the empty-map case gracefully by routing every fill through
+    ``live_execution_estimate=None``.
+    """
+    if mode == "live":
+        return None
+    if mode == "paper":
+        order_lookup = SqlOrderLookup(session_factory)
+        adv_lookup = SqlAdvLookup(session_factory)
+        vol_lookup = MapVolLookup(realized_vol_map)
+        return partial(
+            attach_live_execution_estimate,
+            order_lookup=order_lookup,
+            adv_lookup=adv_lookup,
+            vol_lookup=vol_lookup,
+            config=paper_harness,
+        )
+    assert_never(mode)
 
 
 def _build_breach_response_lookup(
@@ -218,10 +338,55 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     calendar_cache = TradingCalendarCache(account_state_queries)
     supervisor = MonitorSupervisor(session=session, config=config)
     underlying_cache = register_underlying_stream_task(supervisor, repository=open_positions_reader)
+    # ALP-528/530 — one shared realized-vol dict feeds both the paper-mode
+    # enrichment wedge (via MapVolLookup) and the breach-loop's
+    # FixtureIvProvider. Pre-populate at startup so consumers see real
+    # values from the first invocation rather than an empty fallback path,
+    # and register a 24h refresh task so a multi-day monitor session does
+    # not drift on stale realized vol.
+    realized_vol_map: dict[str, RealizedVolEntry] = {}
+
+    def _open_position_underlyings() -> Sequence[str] | None:
+        # ``None`` fetches every populated ticker; the open-position set is
+        # determined lazily so monitor-time position changes propagate
+        # without re-registering the refresh task. Returning ``None`` is
+        # cheap and lets the fallback chain handle the bounded result set.
+        return None
+
+    try:
+        await refresh_realized_vol_map_in_place(
+            session_factory=db_session_factory,
+            shared_map=realized_vol_map,
+            tickers=_open_position_underlyings(),
+        )
+    except Exception as exc:
+        # Startup refresh failure (bootstrap path / missing table / transient
+        # DB outage) must not block the monitor from coming up — the shared
+        # map stays empty and the IV-fallback chain handles missing entries
+        # exactly as it did pre-ALP-530. The refresh task continues to retry
+        # every 24h.
+        log.warning(
+            "realized_vol map startup refresh failed (%s); proceeding with "
+            "empty map. The 24h refresher will retry.",
+            exc,
+        )
+    _register_realized_vol_refresh_task(
+        supervisor,
+        session_factory=db_session_factory,
+        shared_map=realized_vol_map,
+        tickers_provider=_open_position_underlyings,
+    )
+    enrichment_callable = _build_enrichment_callable(
+        mode=session.mode,
+        paper_harness=execution_config.paper_harness,
+        session_factory=db_session_factory,
+        realized_vol_map=realized_vol_map,
+    )
     _register_fill_stream_consumer(
         supervisor,
         venue_config=venue_config,
         db_session_factory=db_session_factory,
+        enrichment_callable=enrichment_callable,
     )
     register_greeks_refresh_task(
         supervisor,
@@ -251,6 +416,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         calendar_cache=calendar_cache,
         state_persistence_config=state_persistence_config,
         config_dir=_CONFIG_DIR,
+        realized_vol_map=realized_vol_map,
     )
     register_options_bracket_watcher_task(
         supervisor,
@@ -276,12 +442,18 @@ def _register_fill_stream_consumer(
     *,
     venue_config: VenueConfig,
     db_session_factory: async_sessionmaker[AsyncSession],
+    enrichment_callable: EnrichmentCallable | None,
 ) -> None:
     """Register the ``fill_stream_consumer`` task (story 02c).
 
     The supervisor's task signature is ``(session, config) -> Awaitable[None]``
     — extras flow through this closure, which pre-binds the alpaca-py factories
     and the SQLAlchemy session factory.
+
+    Paper-mode wiring (ALP-528) passes a non-None ``enrichment_callable`` that
+    enriches each translated ``FillRecord`` with a ``LiveExecutionEstimate``
+    before persistence. Live mode passes ``None`` so the hot path is
+    unchanged.
     """
     from alpaca.trading.client import TradingClient
 
@@ -306,6 +478,7 @@ def _register_fill_stream_consumer(
             stream_factory=_stream_factory,
             trading_client_factory=_trading_client_factory,
             account_state_queries_factory=_queries_factory,
+            enrichment_callable=enrichment_callable,
         )
 
     supervisor.register_task(name="fill_stream_consumer", coro_fn=_fill_stream_consumer_task)
@@ -326,6 +499,7 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     calendar_cache: TradingCalendarCache,
     state_persistence_config: StatePersistenceConfig,
     config_dir: Path,
+    realized_vol_map: Mapping[str, RealizedVolEntry],
 ) -> None:
     """Register the ``breach_loop`` task (story 03b / ALP-437) with the cascade
     dispatcher (story 04a / ALP-438) on ``on_immediate_breach`` and the
@@ -384,7 +558,10 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     portfolio_state_config = load_portfolio_state_config(config_dir / "portfolio_state.yaml")
     # One IvProvider shared by the breach-loop evaluator and the cascade
     # dispatcher's re-projection so both observe identical IV values.
-    iv_provider = FixtureIvProvider(surface={}, realized_vol={})
+    # ALP-530 — the realized_vol map is the same dict reference owned by
+    # ``_run_daemon`` and refreshed every 24h; in-place mutations propagate
+    # to this FixtureIvProvider without re-construction.
+    iv_provider = FixtureIvProvider(surface={}, realized_vol=realized_vol_map)
     # ALP-510 — one assembled-snapshot provider + translator shared across
     # the breach-loop snapshot provider and the dispatcher's context provider.
     assembled_snapshot_provider = make_assembled_snapshot_provider(

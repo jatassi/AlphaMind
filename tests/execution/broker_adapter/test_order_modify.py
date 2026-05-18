@@ -62,6 +62,13 @@ def _make_execution_config() -> Any:
                     "limit": 0.05,
                     "stop": 0.08,
                 },
+                "fee_schedule": {
+                    "cat_per_executed_share": 0.0,
+                    "taf_per_share_sells": 0.0,
+                    "sec_pct_of_notional_sells": 0.0,
+                    "orf_per_options_contract": 0.0,
+                    "occ_per_options_contract": 0.0,
+                },
             },
             "pl_target_margin_pct": 0.02,
         }
