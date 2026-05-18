@@ -1038,3 +1038,42 @@ assert {member.value for member in Regime} == set(_GUARDRAIL_REGIMES), (
 assert {member.value for member in RegimeTransitionState} == set(_GUARDRAIL_TRANSITION_STATES), (
     "RegimeTransitionState and persistence._GUARDRAIL_TRANSITION_STATES must list the same states"
 )
+
+
+# ---------------------------------------------------------------------------
+# Brief store — story ALP-518
+# ---------------------------------------------------------------------------
+#
+# Per ``docs/architecture/data-and-state.md`` § Brief store. One row per
+# (invocation_id, brief_kind); ``reference_index_json`` carries the
+# ``CR-N`` → block_id map and ``text`` the rendered brief body, so a
+# cross-process consumer (replay harness, command-center diagnostic) can
+# hydrate the full brief in one read.
+
+_BRIEF_KINDS = ("correlation_regime",)
+
+
+class Brief(Base):
+    """Persistent brief store.
+
+    Row shape mirrors the design doc: ``invocation_id`` + ``brief_kind``
+    identify the brief, ``reference_index_json`` serializes the
+    ``CR-N`` → ``block_id`` map, and ``text`` carries the rendered body.
+    The hot path keeps the in-process passthrough via
+    :attr:`DistillationOutputs.correlation_regime_brief`; this table is
+    the cross-process backup.
+    """
+
+    __tablename__ = "briefs"
+
+    invocation_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("invocations.invocation_id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    brief_kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    reference_index_json: Mapped[str] = mapped_column(Text)
+    text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (_check_in("brief_kind", _BRIEF_KINDS, "ck_briefs_brief_kind"),)

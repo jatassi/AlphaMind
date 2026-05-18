@@ -24,12 +24,13 @@ spec at ``docs/implementation/02-distillation-layer/12-distillation-orchestrator
 6. Invocation-archive write — deterministic filenames under
    ``%USERPROFILE%/AlphaMind/archive/<date>/<invocation>/distillation/``
    so the archive diffs cleanly across runs.
-7. Brief-store population — TODO; no ``briefs`` table is implemented in
-   the persistence schema yet (verified against
-   :mod:`alphamind.persistence.models`). The
-   :class:`CorrelationRegimeBrief` instance still rides in
-   :class:`DistillationOutputs` so an in-process consumer can use it
-   without the persistent store.
+7. Brief-store population — INSERT one row per produced brief into the
+   ``briefs`` table per ``docs/architecture/data-and-state.md`` § Brief
+   store, so cross-process consumers (replay harness, command-center
+   diagnostic) can hydrate the brief by ``(invocation_id, brief_kind)``.
+   The :class:`CorrelationRegimeBrief` instance keeps riding in
+   :class:`DistillationOutputs` for hot-path consumers in the same
+   process.
 
 Per the LLM-agents-uniformly-Critical policy, any failure in any phase
 aborts the invocation. The orchestrator does not catch and continue.
@@ -38,6 +39,7 @@ aborts the invocation. The orchestrator does not catch and continue.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import os
@@ -113,7 +115,7 @@ from alphamind.distillation.sector_assembly import (
     assemble_sector_output,
     load_sector_roster,
 )
-from alphamind.persistence.models import MacroObservations, OhlcvBars
+from alphamind.persistence.models import Brief, MacroObservations, OhlcvBars
 
 logger = logging.getLogger(__name__)
 
@@ -786,16 +788,8 @@ def _write_invocation_archive(
 # ---------------------------------------------------------------------------
 # Phase 7 — brief-store population
 # ---------------------------------------------------------------------------
-#
-# TODO(story 12): the brief store (``briefs`` SQL table) per
-# ``docs/architecture/data-and-state.md`` § Brief store is not yet
-# implemented in :mod:`alphamind.persistence.models`. Once the schema
-# lands (separate story), this phase will INSERT one row per
-# ``CR-N`` reference from
-# :attr:`CorrelationRegimeBrief.reference_index` keyed by invocation_id.
-# In the meantime ``DistillationOutputs.correlation_regime_brief`` carries
-# the brief in-process so consumers can reference CR-N entries without
-# the persistent store.
+
+_CORRELATION_REGIME_BRIEF_KIND = "correlation_regime"
 
 
 def _populate_brief_store(
@@ -803,21 +797,28 @@ def _populate_brief_store(
     *,
     correlation_regime_brief: CorrelationRegimeBrief,
     invocation_id: str,
-) -> None:
-    """Phase 7 — populate the brief store.
+) -> int:
+    """Phase 7 — INSERT one row per produced brief into the ``briefs`` table.
 
-    No-op today: the ``briefs`` table is not in the persistence schema.
-    The brief still travels through :class:`DistillationOutputs` so an
-    in-process consumer (the synthesizer, the sector analysts) can read
-    it without the persistent store.
+    The hot-path passthrough in :class:`DistillationOutputs` is preserved
+    so in-process consumers (the synthesizer, the sector analysts) keep
+    reading the brief without a round trip; the persistent row is the
+    cross-process backup loaded by :func:`alphamind.persistence.brief_store.load_brief`.
+    Returns the number of rows inserted so the caller can report it.
     """
-    # Reserved for the brief-store INSERT once the ``briefs`` table lands
-    # (see module docstring Phase 7 TODO).
-    del session, correlation_regime_brief, invocation_id
-    logger.info(
-        "phase 7 (brief-store population) skipped: briefs table not yet implemented; "
-        "CR brief carried in DistillationOutputs"
+    session.add(
+        Brief(
+            invocation_id=invocation_id,
+            brief_kind=_CORRELATION_REGIME_BRIEF_KIND,
+            reference_index_json=json.dumps(
+                correlation_regime_brief.reference_index, sort_keys=True
+            ),
+            text=correlation_regime_brief.text,
+            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        )
     )
+    session.commit()
+    return 1
 
 
 # ---------------------------------------------------------------------------
@@ -1158,16 +1159,17 @@ async def run_external_distillation(
         time.monotonic() - phase_start,
     )
 
-    # Phase 7 — brief-store population (TODO; see module docstring).
+    # Phase 7 — brief-store population.
     phase_start = time.monotonic()
-    await asyncio.to_thread(
+    inserted_brief_rows = await asyncio.to_thread(
         _populate_brief_store,
         session,
         correlation_regime_brief=correlation_regime_brief,
         invocation_id=invocation_id,
     )
     logger.info(
-        "phase 7 (brief-store population) complete: elapsed=%.3fs",
+        "phase 7 (brief-store population) complete: rows=%d elapsed=%.3fs",
+        inserted_brief_rows,
         time.monotonic() - phase_start,
     )
     logger.info(

@@ -11,7 +11,7 @@ Coverage map per the story scope (lines 78-86):
 
 - End-to-end fixture run produces non-empty sector outputs / CR brief / regime label.
 - Invocation-archive files written to the expected paths.
-- Briefs-table population (or documented TODO if the schema isn't implemented).
+- Briefs-table population — Phase 7 INSERTs the correlation_regime brief.
 - Fault injection: per-category exception propagates without swallowing.
 - Determinism: byte-identical outputs across two runs.
 - Refresh ordering: refresh failure prevents downstream computation.
@@ -20,17 +20,21 @@ Coverage map per the story scope (lines 78-86):
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+# Pull in the state-persistence tables so ``Base.metadata.create_all`` materializes
+# the ``invocations`` and ``process_lifetimes`` rows the briefs FK targets.
+import alphamind.state.tables  # noqa: F401
 from alphamind.config.models.distillation import (
     AnomalyDetection,
     DistillationConfig,
@@ -52,12 +56,14 @@ from alphamind.distillation.output import OutputAudience, OutputBlock
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,
+    Brief,
     MacroObservations,
     OhlcvBars,
     PredictionMarketContracts,
     PredictionMarketSnapshots,
     SectorClassification,
 )
+from alphamind.state.tables.invocations import InvocationRow
 
 # ---------------------------------------------------------------------------
 # In-memory SQLite scaffolding — shared across asyncio.to_thread workers
@@ -342,6 +348,74 @@ def populated_session(session: Session) -> Session:
 # ---------------------------------------------------------------------------
 
 
+_PROCESS_LIFETIME_ID = "pl-test"
+
+
+def _seed_invocation_row(session: Session, invocation_id: str) -> None:
+    """Insert the process_lifetimes + invocations rows the briefs FK targets.
+
+    Phase 7's INSERT into ``briefs`` references ``invocations.invocation_id``,
+    so an invocation row must exist before the orchestrator runs in tests.
+    Idempotent — repeated calls with the same identifiers are no-ops, so the
+    helper is safe to invoke twice (e.g., the determinism test runs two
+    orchestrator passes against independent engines).
+    """
+    process_lifetimes = Base.metadata.tables["process_lifetimes"]
+    existing = session.execute(
+        select(process_lifetimes.c.process_lifetime_id).where(
+            process_lifetimes.c.process_lifetime_id == _PROCESS_LIFETIME_ID
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        session.execute(
+            process_lifetimes.insert(),
+            {
+                "process_lifetime_id": _PROCESS_LIFETIME_ID,
+                "process_role": "pipeline",
+                "process_start_at": "2026-04-25T00:00:00Z",
+                "process_pid": 1,
+                "hostname": "test",
+                "git_sha": "a" * 40,
+                "git_branch": "test",
+                "git_dirty": 0,
+                "python_version": "3.13.0",
+                "pip_freeze_hash": "0" * 64,
+                "pip_freeze_snapshot_path": "/tmp/pip.txt",
+                "anthropic_sdk_version": "0.0.0",
+                "claude_agent_sdk_version": "0.0.0",
+                "os_release": "test",
+            },
+        )
+    if session.get(InvocationRow, invocation_id) is None:
+        session.add(
+            InvocationRow(
+                invocation_id=invocation_id,
+                process_lifetime_id=_PROCESS_LIFETIME_ID,
+                start_at="2026-04-25T00:00:00Z",
+                phase1_completed_at=None,
+                phase2_completed_at=None,
+                trigger_type="scheduled",
+                trigger_source="test",
+                trigger_reason="seed",
+                git_sha_at_invocation="a" * 40,
+                active_profile="medium",
+                active_regime="normal",
+                active_mode="normal",
+                active_overlays_json="[]",
+                resolved_config_hash="0" * 64,
+                resolved_config_snapshot_path="/tmp/r.json",
+                feature_flags_snapshot_json="{}",
+                data_calibration_state_snapshot_path="/tmp/d.json",
+                data_source_freshness_json="{}",
+                fill_collection_summary_json=None,
+                command_execution_summary_json=None,
+                staleness_flag=None,
+                snapshot_metadata_json=None,
+            )
+        )
+    session.commit()
+
+
 def _run_orchestrator(
     session: Session,
     *,
@@ -356,6 +430,7 @@ def _run_orchestrator(
     rather than the operator's home directory; tests that exercise the
     snapshot path explicitly can override.
     """
+    _seed_invocation_row(session, invocation_id)
     config = _build_distillation_config()
     as_of = datetime(2026, 4, 25, tzinfo=UTC)
     ticker_scope = tuple(_SECTOR_TICKERS.keys())
@@ -397,21 +472,36 @@ def test_orchestrator_returns_distillation_outputs(
     assert "regime_label" in outputs.universal_regime_label
 
 
-def test_orchestrator_documents_brief_store_todo(
-    populated_session: Session, tmp_path: Path
-) -> None:
-    """Phase 7: orchestrator carries the CR brief in DistillationOutputs without
-    requiring the persistent ``briefs`` table (which is not yet implemented).
+def test_orchestrator_populates_brief_store(populated_session: Session, tmp_path: Path) -> None:
+    """Phase 7: orchestrator INSERTs a ``briefs`` row matching the in-process brief.
 
-    The story's Phase 7 contract: when the brief-store schema isn't yet
-    implemented, the orchestrator emits a documented TODO (in source) and
-    continues — the in-process consumer reads
-    :attr:`DistillationOutputs.correlation_regime_brief` directly.
+    Per story ALP-518: the persisted row is the cross-process backup
+    (replay harness, command-center diagnostic); the hot-path
+    passthrough through :class:`DistillationOutputs` is preserved so
+    in-process consumers see the same brief without a round trip.
     """
-    outputs = _run_orchestrator(populated_session, archive_root=tmp_path)
-    assert outputs.correlation_regime_brief.text  # non-empty
-    # The brief still carries its reference index for in-process consumers.
+    invocation_id = "20260425T120000Z-test"
+    outputs = _run_orchestrator(
+        populated_session, archive_root=tmp_path, invocation_id=invocation_id
+    )
+    # In-process passthrough unaffected.
+    assert outputs.correlation_regime_brief.text
     assert isinstance(outputs.correlation_regime_brief.reference_index, dict)
+
+    # Persistent row matches.
+    rows = (
+        populated_session.execute(select(Brief).where(Brief.invocation_id == invocation_id))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    [stored] = rows
+    assert stored.brief_kind == "correlation_regime"
+    assert stored.text == outputs.correlation_regime_brief.text
+    assert json.loads(stored.reference_index_json) == (
+        outputs.correlation_regime_brief.reference_index
+    )
+    assert stored.created_at  # non-empty ISO timestamp
 
 
 def test_orchestrator_diagnostic_counts_populated(
@@ -699,13 +789,15 @@ def test_orchestrator_threads_resolved_contract_scope_to_both_consumers(
     monkeypatch.setattr(orch_mod, "load_qualitative_inputs", spy_load_qualitative)
 
     as_of = datetime(2026, 4, 25, tzinfo=UTC)
+    invocation_id = "20260425T120000Z-test"
+    _seed_invocation_row(populated_session, invocation_id)
     asyncio.run(
         run_external_distillation(
             session=populated_session,
             config=config,
             ticker_scope=tuple(_SECTOR_TICKERS.keys()),
             as_of=as_of,
-            invocation_id="20260425T120000Z-test",
+            invocation_id=invocation_id,
             archive_root=tmp_path,
             provenance_root=tmp_path / "provenance",
         )
