@@ -61,9 +61,9 @@ Five principles applied uniformly across the validator's surfaces.
 
 ### The published schema is the contract
 
-Where a formal JSON Schema exists ([analyst-output-schema.md](../04-decision-layer/analyst-output-schema.md), [strategist-output-schema.md](../04-decision-layer/strategist-output-schema.md)), the validator runs against that schema directly — no second implementation in code that could drift. Adding a required field in the schema file makes outputs without that field fail validation immediately. Rules out the failure mode where a code-level validator accepts an output the schema says is invalid (or vice versa) — the drift that erodes the contract's value over time.
+Where a formal JSON Schema exists ([analyst-output-schema.md](../04-decision-layer/analyst-output-schema.md), [strategist-output-schema.md](../04-decision-layer/strategist-output-schema.md)), validation runs against that schema directly via the SDK's `output_format={"type":"json_schema",...}` mode — the published Pydantic models in each agent's `models.py` mirror the schema, the API enforces it on the wire, and there is no parallel code-level validator that could drift. Adding a required field in the schema file (and the matching model) makes outputs without that field fail validation immediately. Rules out the failure mode where a code-level validator accepts an output the schema says is invalid (or vice versa) — the drift that erodes the contract's value over time.
 
-For agents without a formal schema, the prose contract in their design docs is authoritative; the hand-written structural validator is the code-level expression of that prose. Adding a formal schema supersedes the hand-written validator — the migration direction is one-way.
+For agents without a formal schema (the synthesizer), the prose contract in the design doc is authoritative. For the analysis-layer researchers (domain, qualitative, adaptive), the published JSON Schema covers Layers 1+2's required-field shape via `output_format`; the hand-written structural validator in `validation.py` covers cross-field invariants the schema cannot see (sequential indexing, branch-conditional fields, reference resolution).
 
 ### Structural, not semantic
 
@@ -73,7 +73,7 @@ The lone exception is reference-ID resolution, which is technically semantic (do
 
 ### Fail-fast, fail-once
 
-The validator runs in a fixed order: parse → schema → referential → stop-reason. Each layer's failure halts the pipeline through the failure-handling path; the validator does not accumulate errors across layers. Keeps the corrective retry focused — if schema validation failed, the retry is about the schema; if referential integrity failed *after* schema passed, the retry is about the references. Bundling errors from multiple layers tends to produce LLM responses that fix one and break another.
+The harness runs the layers in a fixed order: parse → schema → referential → stop-reason. Each layer's failure halts the pipeline through the failure-handling path; the harness does not bundle errors across layers in the corrective-retry message. Per-agent `validation.py` modules return the full Layer-2/3 error inventory to the diagnostic record, but the harness surfaces only the first error in the retry message — bundling errors from multiple checks produces LLM responses that fix one and break another. Keeps the corrective retry focused — if schema validation failed, the retry is about the schema; if referential integrity failed *after* schema passed, the retry is about the references.
 
 Fail-once also means once an output fails at a given layer, the same output is not re-checked against the same layer during the retry. The retry produces a new output that runs through all layers fresh.
 
@@ -448,7 +448,7 @@ Boundary-class axes are more stable than individual cases; the table below maps 
 | Qualitative researcher validator | `tests/analysis/qualitative_research/test_validation.py` | narrative-thread structure, catalyst-watch structure, sequential indexing |
 | Adaptive researcher validator | `tests/analysis/adaptive_research/test_validation.py` | thread structure, assessment enum, branch-conditional fields, trigger-reference format, strengthens/weakens format |
 | PM envelope validator | `tests/decision/portfolio_manager/test_validation.py` | verdict enum, per-verdict required-field branching, per-source-provenance evaluation criterion-set, envelope-ID↔source-recommendation-ID bijection, modification phase/category pairing, embedded-command sector ∈ active_sectors, halt-mode no-constructive-commands |
-| OMS command validator | `tests/commands/test_pm_envelope.py`, `tests/decision/portfolio_manager/test_validation.py` | command-type enum, command-type-specific required fields, composite command-ID format, engine-originated `MON.*` format (for engine envelopes extracted via the shared OMS intake) |
+| OMS command validator | `tests/decision/portfolio_manager/test_validation.py`, `tests/commands/test_validation_results.py` | command-type enum, command-type-specific required fields, composite command-ID format, engine-originated `MON.*` format (for engine envelopes extracted via the shared OMS intake) |
 | Reference-ID resolution | per-agent `test_validation.py` | valid resolution (one per prefix), invented-ID rejection, malformed-format rejection, sequential-index gap detection, duplicate-index detection, foreign-key resolution (position_id, thesis_id, breach_id), bare-prefix citation surfacing |
 | Stop-reason check | `tests/test_llm_output_validation_contract.py`, per-agent `test_harness.py` | success + max_tokens (no reclassification), fail + end_turn (no reclassification), fail + max_tokens (reclassify to context_overflow), fail + missing metadata (no reclassification) |
 | Cross-layer sequencing | per-agent `test_harness.py` | halt-at-first-failure (one per layer pair), all-layers-pass, Layer 4 reclassification across prior-failure types |
