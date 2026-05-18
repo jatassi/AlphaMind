@@ -576,7 +576,7 @@ async def test_normal_mode_clean_success_returns_strategist_result(tmp_path: Pat
     assert result.output.mode == "normal"
     assert isinstance(result.tokens_used, TokensUsed)
     assert isinstance(result.validation_result, ValidationResult)
-    assert result.validation_result.overall == "PASS"
+    assert result.validation_result.is_valid
     assert result.metadata["mode"] == "normal"
     assert result.metadata["attempts"] == 1
 
@@ -843,7 +843,7 @@ class TestStrategistResultIsFrozenDataclass:
         output = StrategistOutput.model_validate(_normal_payload())
         result = StrategistResult(
             output=output,
-            validation_result=ValidationResult(overall="PASS", failures=(), warnings=()),
+            validation_result=ValidationResult(errors=(), warnings=()),
             tokens_used=_zero_tokens(),
             metadata={},
         )
@@ -855,7 +855,7 @@ class TestStrategistResultIsFrozenDataclass:
         output = StrategistOutput.model_validate(_normal_payload())
         success = HarnessSuccess(
             output=output,
-            validation_result=ValidationResult(overall="PASS", failures=(), warnings=()),
+            validation_result=ValidationResult(errors=(), warnings=()),
             tokens_used=_zero_tokens(),
             metadata={"attempts": 1},
         )
