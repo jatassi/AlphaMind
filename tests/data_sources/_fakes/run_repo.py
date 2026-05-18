@@ -59,4 +59,4 @@ class FakeRunRepo:
 
     def latest(self) -> dict[str, Any]:
         """Return the most-recently inserted row.  Raises ``StopIteration`` when empty."""
-        return next(iter(self.rows.values()))
+        return next(reversed(self.rows.values()))

@@ -132,8 +132,16 @@ class _FakeRunRepo:
             "error_summary": None,
         }
 
-    def update_success(self, run_id: str, completed_at: str, rows_written: int) -> None:
-        self.rows[run_id].update(status="success", rows_written=rows_written)
+    def update_success(
+        self,
+        run_id: str,
+        completed_at: str,
+        rows_written: int,
+        error_summary: str | None = None,
+    ) -> None:
+        self.rows[run_id].update(
+            status="success", rows_written=rows_written, error_summary=error_summary
+        )
 
     def update_failed(self, run_id: str, error_summary: str) -> None:
         self.rows[run_id].update(status="failed", error_summary=error_summary)

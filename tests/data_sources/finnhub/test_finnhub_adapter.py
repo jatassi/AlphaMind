@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-import alphamind.state.tables.invocations  # noqa: F401  # register briefs.invocation_id FK target
+import alphamind.state.tables  # noqa: F401  # register briefs.invocation_id FK target
 from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import (
     Base,
@@ -33,6 +33,17 @@ from alphamind.persistence.models import (
 from alphamind.persistence.session import make_engine, make_session_factory
 from tests.data_sources._fakes.finnhub import FakeFinnhubSDK
 from tests.data_sources._fakes.run_repo import FakeRunRepo
+
+
+class _Finnhub502Response:
+    """Minimal ``requests.Response``-shaped stub for ``FinnhubAPIException``."""
+
+    status_code = 502
+    text = "Bad Gateway"
+
+    def json(self) -> dict[str, str]:
+        return {"error": "Bad Gateway"}
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -543,6 +554,11 @@ class TestCollectNews:
 
         assert fake_repo.failed()
 
+    @pytest.fixture()
+    def no_retry_sleep(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Skip retry sleep — ``vendor_outage_extended`` would otherwise burn 65s."""
+        monkeypatch.setattr("alphamind.data_sources._common.retry.time.sleep", lambda _: None)
+
     def test_collect_news_isolates_per_ticker_502(
         self,
         engine: Engine,
@@ -551,7 +567,7 @@ class TestCollectNews:
         seeded_tickers: None,
         fake_repo: FakeRunRepo,
         tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        no_retry_sleep: None,
     ) -> None:
         """A FinnhubAPIException(502) on one ticker is isolated.
 
@@ -559,16 +575,6 @@ class TestCollectNews:
         status='success' and an ``error_summary`` naming the failed ticker.
         """
         from finnhub.exceptions import FinnhubAPIException
-
-        # Skip retry sleep — vendor_outage_extended would otherwise burn 65s.
-        monkeypatch.setattr("alphamind.data_sources._common.retry.time.sleep", lambda _: None)
-
-        class _FakeResponse:
-            status_code = 502
-            text = "Bad Gateway"
-
-            def json(self) -> dict[str, str]:
-                return {"error": "Bad Gateway"}
 
         aapl_articles = [
             {
@@ -584,7 +590,7 @@ class TestCollectNews:
 
         def handler(symbol: str, **_: Any) -> list[dict[str, Any]]:
             if symbol == "MSFT":
-                raise FinnhubAPIException(_FakeResponse())
+                raise FinnhubAPIException(_Finnhub502Response())
             return list(aapl_articles) if symbol == "AAPL" else []
 
         sdk = FakeFinnhubSDK(company_news_handler=handler)
@@ -619,22 +625,15 @@ class TestCollectNews:
         seeded_tickers: None,
         fake_repo: FakeRunRepo,
         tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        no_retry_sleep: None,
     ) -> None:
-        """A 502 on a single ticker is retried per ``vendor_outage_extended`` (4 attempts)."""
+        """A 502 on a single ticker is retried per ``vendor_outage_extended``."""
         from finnhub.exceptions import FinnhubAPIException
 
-        monkeypatch.setattr("alphamind.data_sources._common.retry.time.sleep", lambda _: None)
-
-        class _FakeResponse:
-            status_code = 502
-            text = "Bad Gateway"
-
-            def json(self) -> dict[str, str]:
-                return {"error": "Bad Gateway"}
+        from alphamind.data_sources._common.retry import _SHAPE_ATTEMPTS, RetryShape
 
         def handler(symbol: str, **_: Any) -> list[dict[str, Any]]:
-            raise FinnhubAPIException(_FakeResponse())
+            raise FinnhubAPIException(_Finnhub502Response())
 
         sdk = FakeFinnhubSDK(company_news_handler=handler)
 
@@ -650,9 +649,8 @@ class TestCollectNews:
                 _sdk=sdk,
             )
 
-        # vendor_outage_extended = 4 attempts total
         aapl_calls = [c for c in sdk.company_news_calls if c["symbol"] == "AAPL"]
-        assert len(aapl_calls) == 4
+        assert len(aapl_calls) == _SHAPE_ATTEMPTS[RetryShape.vendor_outage_extended]
 
     def test_collect_news_general_news_no_ticker_link(
         self,

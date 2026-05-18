@@ -17,7 +17,6 @@ from typing import ParamSpec, TypeVar
 
 import httpx
 import requests.exceptions
-from finnhub.exceptions import FinnhubAPIException
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -92,12 +91,14 @@ def _is_retryable(exc: BaseException) -> bool:
         return _is_transient_status(exc.response.status_code)
     if isinstance(exc, urllib.error.HTTPError):
         return _is_transient_status(exc.code)
-    # The finnhub SDK wraps non-2xx responses in FinnhubAPIException with a
-    # ``status_code`` attribute lifted from the underlying ``requests.Response``;
-    # without this branch a 502/503 from finnhub would surface as a bare
-    # ``Exception`` subclass and skip the retry loop entirely.
-    if isinstance(exc, FinnhubAPIException):
-        return _is_transient_status(exc.status_code)
+    # Duck-type vendor SDK wrappers (e.g. finnhub's ``FinnhubAPIException``)
+    # that carry the HTTP status code as a top-level ``status_code`` attribute.
+    # ``httpx.HTTPStatusError`` is already handled above (its ``status_code``
+    # is nested under ``.response``), so this branch only catches the
+    # vendor-wrapped case without re-classifying anything covered above.
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return _is_transient_status(status_code)
     if isinstance(exc, _TRANSIENT_TRANSPORT_EXCEPTIONS):
         return True
     if isinstance(exc, ValueError):

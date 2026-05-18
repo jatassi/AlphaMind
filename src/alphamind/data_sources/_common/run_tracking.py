@@ -24,7 +24,14 @@ __all__ = ["RunState", "default_session_factory", "track_run"]
 
 @dataclass
 class RunState:
-    """Mutable state object yielded by :func:`track_run`."""
+    """Mutable state object yielded by :func:`track_run`.
+
+    Collectors set ``error_summary`` to record a degraded-but-successful run
+    (e.g. partial per-target failures). When set, ``track_run`` writes the
+    summary to the ``collection_runs.error_summary`` column on a
+    ``status='success'`` row — callers querying for "clean" runs should
+    filter on ``error_summary IS NULL``, not just ``status='success'``.
+    """
 
     rows_written: int = 0
     error_summary: str | None = None
@@ -127,18 +134,7 @@ def track_run(
         raise
     else:
         completed_at = datetime.now(UTC).isoformat()
-        # Pass ``error_summary`` only when set, so repo implementations that
-        # don't accept the kwarg (e.g. inline test doubles for other collectors)
-        # remain compatible.
-        if run.error_summary is None:
-            repo.update_success(run_id, completed_at, run.rows_written)
-        else:
-            repo.update_success(
-                run_id,
-                completed_at,
-                run.rows_written,
-                error_summary=run.error_summary,
-            )
+        repo.update_success(run_id, completed_at, run.rows_written, error_summary=run.error_summary)
 
 
 def default_session_factory() -> Any:

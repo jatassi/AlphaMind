@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import Any
 
 import finnhub
+import requests.exceptions
 import yaml
+from finnhub.exceptions import FinnhubAPIException
 
 from alphamind.data_sources._common import (
     RateLimiter,
@@ -29,6 +31,12 @@ from alphamind.data_sources._common import (
 )
 from alphamind.persistence.models import Base, NewsArticles, NewsArticleTickers
 from alphamind.persistence.session import make_engine, make_session_factory
+
+# Exceptions surfaced by ``_fetch_company_news`` / ``_fetch_general_news`` after
+# ``with_retries`` exhausts ``vendor_outage_extended`` — these are exactly the
+# transient classes ``_is_retryable`` would have approved, so catching them
+# isolates the failing endpoint without masking programming bugs.
+_TRANSIENT_FETCH_ERRORS = (FinnhubAPIException, requests.exceptions.RequestException)
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +124,8 @@ def _upsert_ticker_link(sess: Any, article_id: str, ticker: str) -> None:
 # ``vendor_outage_extended`` (4 attempts, 5+15+45s = 65s budget): finnhub's
 # 01:30 / 06:30 ET cycle boundaries hit a multi-second 502 nginx window every
 # day; the prior ``important`` 1s budget exhausted inside the blip and the
-# whole cycle died. See ALP-419 for the recurring symptom.
+# whole cycle died. The same blip hits ``/news?category=general``, so both
+# endpoints use the longer schedule. See ALP-419 for the recurring symptom.
 @with_retries(RetryShape.vendor_outage_extended)
 def _fetch_company_news(
     sdk: finnhub.Client, ticker: str, from_date: str, to_date: str
@@ -124,7 +133,7 @@ def _fetch_company_news(
     return sdk.company_news(ticker, _from=from_date, to=to_date) or []
 
 
-@with_retries(RetryShape.important, _sleep=lambda _: None)
+@with_retries(RetryShape.vendor_outage_extended)
 def _fetch_general_news(sdk: finnhub.Client) -> list[dict[str, Any]]:
     return sdk.general_news("general") or []
 
@@ -139,32 +148,38 @@ def _gather_items(
 ) -> list[tuple[dict[str, Any], str | None]]:
     """Fetch company news per ticker and market-wide general news.
 
-    A persistent fetch failure on one ticker (e.g. ``vendor_outage_extended``
-    retries exhausted on a 502, a delisted symbol, a per-ticker rate-limit hit)
-    is logged at WARNING and the ticker is skipped — earlier tickers' items
-    still persist and the cycle continues. Failed tickers surface on
+    A persistent fetch failure on one target (``vendor_outage_extended``
+    retries exhausted on a 502, a delisted symbol, a per-ticker rate-limit
+    hit) is logged at WARNING and the target is skipped — earlier targets'
+    items still persist and the cycle continues. Failed targets surface on
     ``run.error_summary`` so ``collection_runs`` records the degraded outcome.
     """
     items: list[tuple[dict[str, Any], str | None]] = []
-    failed_tickers: list[str] = []
+    failed_targets: list[str] = []
     for ticker in ticker_scope:
         if rate_limiter:
             rate_limiter.acquire(_PROVIDER)
         try:
             ticker_items = _fetch_company_news(sdk, ticker, from_date, to_date)
-        except Exception:
+        except _TRANSIENT_FETCH_ERRORS:
             logger.warning("finnhub.news: skipping %s after fetch failure", ticker, exc_info=True)
-            failed_tickers.append(ticker)
+            failed_targets.append(ticker)
             continue
         for item in ticker_items:
             items.append((item, ticker))
     if rate_limiter:
         rate_limiter.acquire(_PROVIDER)
-    for item in _fetch_general_news(sdk):
-        items.append((item, None))
-    if failed_tickers:
+    try:
+        general_items = _fetch_general_news(sdk)
+    except _TRANSIENT_FETCH_ERRORS:
+        logger.warning("finnhub.news: skipping general feed after fetch failure", exc_info=True)
+        failed_targets.append("general")
+    else:
+        for item in general_items:
+            items.append((item, None))
+    if failed_targets:
         run.error_summary = (
-            f"skipped {len(failed_tickers)} tickers after fetch failure: {','.join(failed_tickers)}"
+            f"skipped {len(failed_targets)} targets after fetch failure: {','.join(failed_targets)}"
         )
     return items
 
