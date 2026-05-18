@@ -484,13 +484,23 @@ def load_sentiment_aggregates(
     if not baselines:
         return ()
 
+    # UNAVAILABLE rows skip the per-window article / price-return queries —
+    # the downstream branch emits an all-None record and never reads either
+    # mapping, so feeding their tickers into the IN-list would be dead work.
+    available_tickers = [
+        t
+        for t, r in baselines.items()
+        if CalibrationState(r[0].calibration_state) is not CalibrationState.UNAVAILABLE
+    ]
+
     # Article counts use each ticker's own rate-of-change window. In the
     # steady state Class B refresh writes one row per ticker per refresh, so
     # nearly every ticker shares the same ``(prior, latest)`` pair and this
     # collapses to one query; backfills or repair refreshes that desync the
     # panel naturally fan out into per-window queries.
     window_buckets: dict[tuple[str, str], list[str]] = {}
-    for ticker, recent in baselines.items():
+    for ticker in available_tickers:
+        recent = baselines[ticker]
         if len(recent) == 2:
             window_buckets.setdefault((recent[1].as_of, recent[0].as_of), []).append(ticker)
     volume_by_ticker: dict[str, int] = {}
@@ -506,7 +516,7 @@ def load_sentiment_aggregates(
 
     price_returns = _load_price_returns_by_ticker(
         session,
-        tickers=list(baselines),
+        tickers=available_tickers,
         as_of=as_of,
         lookback_days=divergence_price_lookback_days,
     )
@@ -516,12 +526,12 @@ def load_sentiment_aggregates(
     results: list[SentimentAggregate] = []
     for ticker, recent in baselines.items():
         row = recent[0]
-        # ALP-538: UNAVAILABLE rows (zero sentiment observations — collector
-        # down, vendor outage, benchmark ticker without headline coverage)
-        # emit an all-None record. The pool-fallback path below would
-        # otherwise broadcast bit-identical numeric placeholders to every
-        # such ticker, masking the missing-data state as "neutral signal".
-        if row.calibration_state == CalibrationState.UNAVAILABLE.value:
+        # UNAVAILABLE rows (zero sentiment observations — collector down,
+        # vendor outage, benchmark ticker without headline coverage) emit an
+        # all-None record. The pool-fallback path below would otherwise
+        # broadcast bit-identical numeric placeholders to every such ticker,
+        # masking the missing-data state as "neutral signal".
+        if CalibrationState(row.calibration_state) is CalibrationState.UNAVAILABLE:
             results.append(
                 SentimentAggregate(
                     ticker=ticker,

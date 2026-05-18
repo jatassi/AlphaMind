@@ -125,10 +125,9 @@ def _render_sentiment(inputs: QualitativeInputs) -> str:
 
     Every numeric field renders as ``pending`` when ``None`` so the LLM reads
     it as "data not available yet" rather than as a concrete null signal.
-    UNAVAILABLE tickers (ALP-538) arrive with every numeric field ``None`` —
-    the entire row therefore surfaces as ``pending`` across the board, which
-    is the operator-visible difference between "missing data" and
-    "neutral data".
+    UNAVAILABLE tickers arrive with every numeric field ``None`` — the entire
+    row therefore surfaces as ``pending`` across the board, which is the
+    operator-visible difference between "missing data" and "neutral data".
     """
     rows = sorted(inputs.sentiment_aggregates, key=lambda s: s.ticker)
     return "\n".join(
