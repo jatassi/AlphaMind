@@ -682,6 +682,305 @@ def test_synthesizer_defines_empty_response_failure() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Canonical ValidationResult ownership — six validator-bearing agents
+# ---------------------------------------------------------------------------
+
+
+_VALIDATOR_FUNCTIONS: dict[str, str] = {
+    "analyst": "validate_analyst_output",
+    "strategist": "validate_strategist_output",
+    "pm": "validate_pm_envelope",
+    "domain_researchers": "validate_brief",
+    "qualitative_research": "validate_qualitative_brief",
+    "adaptive_research": "validate_adaptive_brief",
+}
+
+
+def test_validator_return_type_is_canonical_validation_result(
+    agent: AgentSpec,
+) -> None:
+    """Each validator's return annotation resolves to the canonical
+    :class:`ValidationResult`.
+
+    ALP-520 consolidated all six validators under a single
+    :class:`alphamind.commands.validation_results.ValidationResult`. The
+    validator's return annotation is the contract — if any validator drifts
+    to a per-agent dataclass, this assertion catches the regression.
+    """
+    if not agent.has_validator:
+        pytest.skip("synthesizer has no validator")
+    validation = _validation_module_for(agent)
+    fn_name = _VALIDATOR_FUNCTIONS[agent.name]
+    fn = getattr(validation, fn_name)
+    # ``get_type_hints`` resolves forward references against the module's
+    # namespace so the assertion sees the actual class, not the string.
+    import typing
+
+    hints = typing.get_type_hints(fn)
+    assert hints["return"] is ValidationResult, (
+        f"{agent.name}: {fn_name}'s return annotation resolves to "
+        f"{hints['return']!r}, not the canonical "
+        "alphamind.commands.validation_results.ValidationResult. "
+        "ALP-520 consolidation broken."
+    )
+
+
+# Validators returning instances we can build inputs for directly. The PM
+# validator's input surface (PMEnvelope + bundle + pm_view + sector
+# resolver) is too heavy to fabricate here; the annotation-surface test
+# above + the identity check in ``test_harness_module_imports`` give the
+# PM the same coverage without re-rolling the test_harness.py fixtures.
+_LIGHT_VALIDATORS: tuple[str, ...] = (
+    "analyst",
+    "strategist",
+    "domain_researchers",
+    "qualitative_research",
+    "adaptive_research",
+)
+
+
+def _build_minimal_output_for(agent: AgentSpec) -> Any:
+    """Construct a minimal-valid output payload for *agent*'s validator.
+
+    The output is the simplest shape that passes Pydantic construction
+    and yields zero validator errors. Used to confirm the validator
+    actually returns a :class:`ValidationResult` instance at runtime.
+    """
+    from datetime import UTC, datetime
+
+    if agent.name == "analyst":
+        from alphamind.decision.analyst.models import AnalystOutput
+
+        return AnalystOutput(
+            invocation_id="inv-contract-001",  # type: ignore[arg-type]
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+            mode="normal",
+            recommendations=(),
+        )
+    if agent.name == "strategist":
+        from alphamind.decision.strategist.models import (
+            PortfolioLevelObservations,
+            StrategistOutput,
+        )
+
+        return StrategistOutput(
+            invocation_id="inv-contract-001",  # type: ignore[arg-type]
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+            mode="normal",
+            position_assessments=(),
+            pending_order_assessments=(),
+            portfolio_level_observations=PortfolioLevelObservations(
+                aggregate_thesis_health="quiet",
+                sector_balance_shifts="none",
+                thesis_dependency_warnings="none",
+                capital_allocation_observations="cash-heavy",
+            ),
+        )
+    if agent.name == "domain_researchers":
+        from alphamind.analysis._shared import Sector
+        from alphamind.analysis.domain_researchers.models import (
+            SectorBrief,
+            SignalQuality,
+        )
+
+        return SectorBrief(
+            invocation_id="inv-contract-001",
+            sector=Sector.TECH_SEMIS,
+            signal_quality=SignalQuality.HIGH,
+            signal_quality_reason=None,
+            findings=(),
+            anomalies=(),
+            thesis_candidates=(),
+        )
+    if agent.name == "qualitative_research":
+        from alphamind.analysis.qualitative_research.models import (
+            EvidenceLine,
+            NarrativeThread,
+            QualitativeBrief,
+            SentimentSnapshot,
+            SignalQuality,
+            ThreadDirection,
+            TimeHorizon,
+        )
+
+        return QualitativeBrief(
+            invocation_id="inv-contract-001",
+            signal_quality=SignalQuality.HIGH,
+            signal_quality_reason=None,
+            threads=(
+                NarrativeThread(
+                    thread_id="QR-1",
+                    summary="quiet day",
+                    relevance="market",
+                    direction=ThreadDirection.MIXED,
+                    subject="market",
+                    time_horizon=TimeHorizon.IMMEDIATE,
+                    evidence=(
+                        EvidenceLine(
+                            source_type="news", observation="obs", citation="cite"
+                        ),
+                        EvidenceLine(
+                            source_type="social", observation="obs2", citation="cite2"
+                        ),
+                    ),
+                    implication="hold",
+                ),
+            ),
+            catalyst_watches=(),
+            sentiment_snapshot=SentimentSnapshot(
+                extremes="none", divergences="none", regime="neutral"
+            ),
+        )
+    if agent.name == "adaptive_research":
+        from alphamind.analysis.adaptive_research.models import AdaptiveBrief
+
+        return AdaptiveBrief(
+            invocation_id="inv-contract-001",
+            threads_investigated_count=0,
+            anomalies_triaged_count=0,
+            anomalies_deferred=(),
+            threads=(),
+        )
+    raise AssertionError(f"no minimal-output builder for {agent.name!r}")
+
+
+def _build_validator_kwargs(agent: AgentSpec) -> dict[str, Any]:
+    """Construct the per-validator keyword inputs required to invoke it."""
+    from datetime import UTC, datetime
+
+    from alphamind.analysis.synthesizer.retrieval import RetrievalStore
+
+    store = RetrievalStore(entries={}, freshness_by_source={})
+    active_sectors = frozenset({"tech", "semis", "financials", "energy"})
+    if agent.name in {"analyst", "strategist"}:
+        return {"retrieval_store": store, "active_sectors": active_sectors}
+    if agent.name == "qualitative_research":
+        return {}
+    if agent.name == "domain_researchers":
+        return {}
+    if agent.name == "adaptive_research":
+        from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
+
+        return {
+            "sector_briefs": (),
+            "qualitative_brief": _build_minimal_output_for(
+                AgentSpec(
+                    name="qualitative_research",
+                    harness_module="alphamind.analysis.qualitative_research.harness",
+                    archive_layer="analysis",
+                    on_cli_result_error="context_overflow",
+                    has_validator=True,
+                    has_retry=True,
+                    has_structured_output=True,
+                    response_filename=None,
+                )
+            ),
+            "correlation_regime_brief": CorrelationRegimeBrief(
+                text="(no correlation context)",
+                reference_index={},
+                freshness_min=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+            ),
+        }
+    raise AssertionError(f"no validator-kwargs builder for {agent.name!r}")
+
+
+def test_validator_returns_validation_result_instance(agent: AgentSpec) -> None:
+    """Calling the validator on a minimal-valid output returns a
+    :class:`ValidationResult` instance (the runtime confirmation).
+
+    Five of the six validator-bearing harnesses have lightweight input
+    surfaces; the PM validator additionally needs a ProposalPreProcessorBundle
+    and PortfolioManagerView. PM's runtime confirmation is provided by the
+    annotation-surface test plus the identity assertion in
+    ``test_harness_module_imports`` — the validator returns a
+    ``ValidationResult`` literal in the return statement (see
+    ``alphamind.decision.portfolio_manager.validation.validate_pm_envelope``).
+    """
+    if not agent.has_validator:
+        pytest.skip("synthesizer has no validator")
+    if agent.name == "pm":
+        pytest.skip(
+            "PM validator inputs (bundle + pm_view + sector resolver) are "
+            "fabricated only inside the per-harness test fixtures; the "
+            "annotation-surface test covers the contract here"
+        )
+    validation = _validation_module_for(agent)
+    fn = getattr(validation, _VALIDATOR_FUNCTIONS[agent.name])
+    output = _build_minimal_output_for(agent)
+    kwargs = _build_validator_kwargs(agent)
+    result = fn(output, **kwargs)
+    assert isinstance(result, ValidationResult), (
+        f"{agent.name}: {_VALIDATOR_FUNCTIONS[agent.name]} returned "
+        f"{type(result)!r}, not the canonical "
+        "alphamind.commands.validation_results.ValidationResult"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bare-prefix discipline — analyst, strategist, PM only
+# ---------------------------------------------------------------------------
+
+
+def _bare_prefix_helper_for(agent: AgentSpec) -> Any:
+    """Return *agent*'s narrative-reference validator helper.
+
+    Each consumer-side validator (analyst, strategist, PM) exposes a
+    function-level helper that iterates the citations in a narrative
+    string. ALP-521 added a ``find_bare_prefix_citations`` call to every
+    such helper. The contract test runs each helper against a narrative
+    containing ``[CR]`` and asserts the bare-prefix error surfaces.
+    """
+    validation = _validation_module_for(agent)
+    if agent.name == "pm":
+        return validation._check_narrative_references_against_store
+    return validation._check_narrative_references
+
+
+def test_bare_prefix_citation_detected(agent: AgentSpec) -> None:
+    """Analyst / strategist / PM surface ``[CR]`` as a ``bare_prefix_citation`` error.
+
+    Per ALP-521, the consumer-side validators wire
+    :func:`alphamind.analysis.synthesizer.models.find_bare_prefix_citations`
+    into their narrative-reference helpers. Running the helper against a
+    narrative containing ``[CR]`` (a known ``ReferencePrefix`` value with
+    no ``-N`` index) must produce a ``bare_prefix_citation`` error.
+
+    Analyst and strategist tag the error via the ``rule`` field; the PM
+    tags via the ``criterion`` field (its evaluation-criterion-set
+    vocabulary). The assertion checks both conventions and reads the
+    correct field per validator.
+    """
+    if agent.name not in BARE_PREFIX_AGENTS:
+        pytest.skip(
+            "bare-prefix discipline applies only to consumer-side validators "
+            "(analyst, strategist, pm)"
+        )
+    from alphamind.analysis.synthesizer.retrieval import RetrievalStore
+
+    helper = _bare_prefix_helper_for(agent)
+    narrative = "The thesis is supported by [CR] and other context."
+    store = RetrievalStore(entries={}, freshness_by_source={})
+    errors = tuple(
+        helper(narrative, field_path="dummy.field", retrieval_store=store)
+    )
+    bare_prefix_errors = [
+        e for e in errors if "bare_prefix_citation" in (e.rule, e.criterion)
+    ]
+    assert bare_prefix_errors, (
+        f"{agent.name}: no bare_prefix_citation error surfaced for [CR]; "
+        f"got errors with tags: "
+        f"{[(e.rule, e.criterion) for e in errors]!r}"
+    )
+    err = bare_prefix_errors[0]
+    # PM tags via criterion; analyst/strategist via rule. Assert each
+    # validator uses its documented convention.
+    if agent.name == "pm":
+        assert err.criterion == "bare_prefix_citation"
+    else:
+        assert err.rule == "bare_prefix_citation"
+
+
 def test_no_separate_validation_failure_class(agent: AgentSpec) -> None:
     """ALP-520 unified ``ValidationFailure`` into ``ValidationError``.
 
