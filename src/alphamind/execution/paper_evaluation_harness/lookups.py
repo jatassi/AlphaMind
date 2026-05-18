@@ -111,8 +111,13 @@ def _extract_ticker(payload: dict[str, Any]) -> str | None:
 class SqlAdvLookup:
     """Production ``AdvLookup`` impl backed by ``asset_universe.avg_daily_volume_shares``.
 
-    Returns ``None`` when the ticker is missing from the universe *or* when its
-    ADV column is NULL — both cases route through the same no-estimate
+    Reads the same column ``SqlDistillationRepository.load_ticker_adv`` reads;
+    the queries diverged because the distillation repo uses a sync session
+    while the wedge runs in the async monitor's event loop. Consolidating to
+    a single read path is tracked separately (see ALP follow-up).
+
+    Returns ``None`` when the ticker is missing from the universe *or* when
+    its ADV column is NULL — both cases route through the same no-estimate
     fallback in the harness.
     """
 
