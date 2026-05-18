@@ -50,12 +50,12 @@ _DIGEST = NewsDigest(
 
 def _make_sentiment(
     ticker: str = "AAPL",
-    directional_score: float = 0.5,
-    magnitude: float = 0.6,
+    directional_score: float | None = 0.5,
+    magnitude: float | None = 0.6,
     rate_of_change: float | None = 0.1,
     volume: int | None = 100,
     divergence_flag: bool | None = False,
-    percentile_vs_self: float = 0.75,
+    percentile_vs_self: float | None = 0.75,
 ) -> SentimentAggregate:
     return SentimentAggregate(
         ticker=ticker,
@@ -575,6 +575,38 @@ def test_sentiment_renders_pending_for_none_fields() -> None:
     assert "change=pending" in bundle.bundle_text
     assert "vol=pending" in bundle.bundle_text
     assert "divergence=pending" in bundle.bundle_text
+
+
+def test_sentiment_renders_pending_for_unavailable_ticker_numeric_fields() -> None:
+    """Tickers whose sentiment baseline is UNAVAILABLE arrive with every
+    numeric field ``None`` (ALP-538). The renderer must surface ``pending``
+    for ``directional``, ``magnitude``, and ``percentile`` too — not just the
+    historically optional ``change`` / ``vol`` / ``divergence`` — so the LLM
+    cannot mistake missing data for neutral signal.
+    """
+    from alphamind.analysis.qualitative_research.input_bundle import (
+        assemble_input_bundle,
+    )
+
+    s = _make_sentiment(
+        ticker=Symbol("SPY"),
+        directional_score=None,
+        magnitude=None,
+        rate_of_change=None,
+        volume=None,
+        divergence_flag=None,
+        percentile_vs_self=None,
+    )
+    bundle = assemble_input_bundle(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        regime_label=_REGIME_LABEL,
+        digest=_DIGEST,
+        inputs=_make_inputs(sentiment=(s,)),
+    )
+    assert "directional=pending" in bundle.bundle_text
+    assert "magnitude=pending" in bundle.bundle_text
+    assert "percentile=pending" in bundle.bundle_text
 
 
 def test_sentiment_renders_concrete_values_when_present() -> None:
