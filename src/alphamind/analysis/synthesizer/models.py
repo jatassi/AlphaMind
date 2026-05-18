@@ -185,8 +185,9 @@ def parse_reference_id(ref_id: str) -> tuple[ReferencePrefix, int] | None:
 
 # Bracketed-reference extractor: matches ``[<prefix-segments>-<digits>]``
 # anywhere in narrative prose. ``parse_reference_id`` narrows further to the
-# canonical synthesizer prefix taxonomy. Used by the consumer-side validators
-# (analyst, strategist, PM) to find candidate citations in narrative fields.
+# canonical synthesizer prefix taxonomy. Distinct from the line-anchored
+# ``reference_extractor._HEADER_RE`` — that one splits a brief body into
+# sections, this one finds embedded citations inside prose.
 REF_ID_RE = re.compile(r"\[([A-Z][A-Z0-9-]*-[0-9]+)\]")
 
 # Bracketed-token extractor: matches any ``[<UPPER/digit/hyphen body>]``,
