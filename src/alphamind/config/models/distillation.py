@@ -227,9 +227,9 @@ class NarrativeLag(BaseModel):
 
     narrative_lag_correlation_shift_sigma: float = Field(ge=0)
     correlation_breakdown_sigma: float = Field(ge=0)
-    # ALP-541: data-alignment guards on the correlation breakdown sigma-test.
     correlation_min_overlap_fraction: float = Field(ge=0, le=1)
     correlation_noise_floor: float = Field(ge=0, le=1)
+    correlation_breakdown_fdr_q: float = Field(gt=0, le=1)
     narrative_lag_media_silence_hours: int = Field(ge=1)
 
     def to_domain(self) -> NarrativeLagDomainConfig:
@@ -238,6 +238,7 @@ class NarrativeLag(BaseModel):
             correlation_breakdown_sigma=self.correlation_breakdown_sigma,
             correlation_min_overlap_fraction=self.correlation_min_overlap_fraction,
             correlation_noise_floor=self.correlation_noise_floor,
+            correlation_breakdown_fdr_q=self.correlation_breakdown_fdr_q,
             narrative_lag_media_silence_hours=self.narrative_lag_media_silence_hours,
         )
 

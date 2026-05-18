@@ -58,7 +58,7 @@ lead_lag:
 narrative_lag:
   narrative_lag_correlation_shift_sigma: 1.5
   correlation_breakdown_sigma:           3.0
-  # ALP-541 data-alignment guards on the correlation breakdown σ-test.
+  # Data-alignment guards on the correlation-breakdown σ-test.
   # min_overlap_fraction: short / prior / long windows must each carry at
   #   least this fraction of their nominal length in overlapping observations
   #   between the two tickers — otherwise the σ-test denominator is
@@ -68,6 +68,12 @@ narrative_lag:
   #   looks like a "breakdown" against nothing.
   correlation_min_overlap_fraction:      0.9
   correlation_noise_floor:               0.05
+  # Benjamini-Hochberg false-discovery rate target for the pairwise σ-test.
+  # The σ-test runs N*(N-1)/2 hypotheses per invocation, so the raw σ
+  # threshold (single-test) generates phantom flags at a rate that grows
+  # with the universe size; BH bounds the expected false-discovery
+  # proportion among published flags.
+  correlation_breakdown_fdr_q:           0.05
   narrative_lag_media_silence_hours:     12
 
 persistence_windows:

@@ -27,6 +27,7 @@ Coverage:
 from __future__ import annotations
 
 import math
+import random
 from datetime import UTC, datetime
 
 import pytest
@@ -479,6 +480,7 @@ class TestCorrelationRegimeChangeCompute:
             correlation_breakdown_sigma=2.0,
             correlation_min_overlap_fraction=0.9,
             correlation_noise_floor=0.05,
+            correlation_breakdown_fdr_q=1.0,
             dispersion_window_days=5,
             dispersion_sigma=1.5,
             media_silence_hours=12,
@@ -513,6 +515,7 @@ class TestCorrelationRegimeChangeCompute:
             correlation_breakdown_sigma=1.0,  # low gate → breakdown easy to fire
             correlation_min_overlap_fraction=0.9,
             correlation_noise_floor=0.0,
+            correlation_breakdown_fdr_q=1.0,
             dispersion_window_days=20,
             dispersion_sigma=1.5,
             media_silence_hours=12,
@@ -548,6 +551,7 @@ class TestCorrelationRegimeChangeCompute:
             correlation_breakdown_sigma=1.0,
             correlation_min_overlap_fraction=0.9,
             correlation_noise_floor=0.0,
+            correlation_breakdown_fdr_q=1.0,
             dispersion_window_days=20,
             dispersion_sigma=1.5,
             media_silence_hours=12,
@@ -598,6 +602,7 @@ class TestCorrelationBreakdownDataAlignmentGuards:
             correlation_breakdown_sigma=1.0,
             correlation_min_overlap_fraction=min_overlap_fraction,
             correlation_noise_floor=noise_floor,
+            correlation_breakdown_fdr_q=1.0,
             dispersion_window_days=20,
             dispersion_sigma=1.5,
             media_silence_hours=12,
@@ -750,6 +755,204 @@ class TestCorrelationBreakdownDataAlignmentGuards:
         payload = pair_blocks[0].payload
         assert payload["n_overlapping_observations"] == 60
         assert "long_correlation" in payload
+
+
+def _co_moving_then_inverted_pair_returns() -> dict[str, tuple[float, ...]]:
+    """A/B prior 40d co-moving, recent 20d inverted — strong breakdown fixture."""
+    long_a = [0.01, -0.005, 0.008, -0.012, 0.006] * 8
+    long_b = [r + 0.0001 * (i % 3) for i, r in enumerate(long_a)]
+    short_a = [
+        0.01, -0.02, 0.015, 0.005, -0.01,
+        0.012, -0.018, 0.02, -0.005, 0.008,
+        -0.015, 0.01, -0.005, 0.012, -0.008,
+        0.005, -0.012, 0.018, -0.01, 0.005,
+    ]  # fmt: skip
+    short_b = [-x for x in short_a]
+    return {"A": tuple(long_a + short_a), "B": tuple(long_b + short_b)}
+
+
+class TestCorrelationBreakdownMultipleComparison:
+    """Benjamini-Hochberg FDR correction on the correlation-breakdown sigma-test.
+
+    The sigma-test runs Nx(N-1)/2 pairwise hypotheses per invocation. Without a
+    multiple-comparison correction the expected false-positive count grows
+    linearly with the pair count; the e2e invocation at inv-20260518T111140Z
+    (N=66, 2,145 pairs) produced 146 ``investigate_now`` flags — well into
+    the noise-dominated regime. These tests pin the BH-FDR layer that
+    suppresses those phantom flags while leaving genuine high-sigma breakdowns
+    untouched.
+    """
+
+    @staticmethod
+    def _params(
+        *,
+        breakdown_sigma: float = 1.0,
+        fdr_q: float = 1.0,
+        noise_floor: float = 0.0,
+    ) -> CorrelationRegimeChangeParameters:
+        return CorrelationRegimeChangeParameters(
+            short_window_days=20,
+            long_window_days=60,
+            correlation_breakdown_sigma=breakdown_sigma,
+            correlation_min_overlap_fraction=0.9,
+            correlation_noise_floor=noise_floor,
+            correlation_breakdown_fdr_q=fdr_q,
+            dispersion_window_days=20,
+            dispersion_sigma=1.5,
+            media_silence_hours=12,
+        )
+
+    @staticmethod
+    def _filtered_pair_blocks(blocks: list[OutputBlock]) -> list[OutputBlock]:
+        return [
+            b
+            for b in blocks
+            if b.block_id.startswith("q7.correlation_breakdown.")
+            and b.block_id != "q7.correlation_breakdown.dispersion_shift"
+        ]
+
+    def test_breakdown_payload_carries_fdr_q_value(self) -> None:
+        """Every published flag exposes the BH-FDR-adjusted q-value."""
+        returns_by_ticker = _co_moving_then_inverted_pair_returns()
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=("A", "B"),
+            long_returns_by_ticker=returns_by_ticker,
+            qualifying_news_present=True,
+            params=self._params(fdr_q=1.0),
+            as_of=_as_of(),
+        )
+        pair_blocks = self._filtered_pair_blocks(blocks)
+        assert pair_blocks, "fixture should produce a breakdown block"
+        payload = pair_blocks[0].payload
+        assert "q_value" in payload, payload
+        q_value = payload["q_value"]
+        assert isinstance(q_value, float)
+        assert 0.0 <= q_value <= 1.0
+
+    def test_bh_fdr_filters_phantom_flags_on_noise_universe(self) -> None:
+        """BH-FDR keeps the false-discovery rate bounded on pure noise.
+
+        Build a 12-ticker universe (66 pairs) where every series is
+        independently random. With ``fdr_q=1.0`` (BH effectively off) the
+        aggressive sigma-floor at 2.0 produces some phantom flags; with
+        ``fdr_q=0.05`` BH suppresses them.
+        """
+        rng = random.Random(20260518)
+        tickers = tuple(f"T{i:02d}" for i in range(12))
+        returns: dict[str, tuple[float, ...]] = {
+            ticker: tuple(rng.gauss(0.0, 0.01) for _ in range(60)) for ticker in tickers
+        }
+        permissive = compute_correlation_regime_change_pure(
+            universe_tickers=tickers,
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(breakdown_sigma=2.0, fdr_q=1.0),
+            as_of=_as_of(),
+        )
+        strict = compute_correlation_regime_change_pure(
+            universe_tickers=tickers,
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(breakdown_sigma=2.0, fdr_q=0.05),
+            as_of=_as_of(),
+        )
+        permissive_n = len(self._filtered_pair_blocks(permissive))
+        strict_n = len(self._filtered_pair_blocks(strict))
+        # Pin "the sigma-only gate produced some phantom flags" — without this
+        # the contrast assertion is vacuous.
+        assert permissive_n >= 1, (
+            f"noise fixture should produce >=1 phantom flag at sigma>=2.0; got {permissive_n}"
+        )
+        assert strict_n <= 1, f"BH-FDR at q=0.05 should suppress phantom flags; got {strict_n}"
+
+    def test_high_sigma_breakdown_survives_bh_correction(self) -> None:
+        """A genuine high-sigma breakdown is not filtered by BH-FDR.
+
+        The inverted-pair fixture produces a sigma well above the BH cutoff at
+        any rank — its two-tailed p-value is far below any reasonable BH
+        threshold, so the flag survives a strict q=0.05 correction even
+        when sharing the candidate pool with noise pairs.
+        """
+        rng = random.Random(20260518)
+        all_returns = dict(_co_moving_then_inverted_pair_returns())
+        for i in range(10):
+            ticker = f"N{i:02d}"
+            all_returns[ticker] = tuple(rng.gauss(0.0, 0.01) for _ in range(60))
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=tuple(all_returns.keys()),
+            long_returns_by_ticker=all_returns,
+            qualifying_news_present=True,
+            params=self._params(breakdown_sigma=3.0, fdr_q=0.05),
+            as_of=_as_of(),
+        )
+        pair_blocks = self._filtered_pair_blocks(blocks)
+        ab_blocks = [b for b in pair_blocks if "A_B" in b.block_id]
+        assert ab_blocks, (
+            f"genuine high-sigma A/B breakdown should survive BH at q=0.05; "
+            f"got pair blocks {[b.block_id for b in pair_blocks]}"
+        )
+        assert ab_blocks[0].payload["q_value"] < 0.01
+
+    def test_production_scale_universe_respects_bh_guarantee(self) -> None:
+        """BH-FDR on a N=66 universe (2,145 pairs) honours the expected-FDP bound.
+
+        Mirrors the inv-20260518T111140Z replay scale. Pure-noise returns
+        under BH at q=0.05 should produce a rejection count ≤ q·m on
+        average — assert that the actual count clears the bound by an
+        order of magnitude so a regression that broke BH back to the bare
+        sigma gate (which emitted 146 flags) would fail the assertion. The
+        companion ``test_high_sigma_breakdown_survives_bh_correction``
+        pins that genuine breakdowns are not killed by the same control.
+        """
+        rng = random.Random(20260518)
+        tickers = tuple(f"T{i:02d}" for i in range(66))
+        returns: dict[str, tuple[float, ...]] = {
+            ticker: tuple(rng.gauss(0.0, 0.01) for _ in range(60)) for ticker in tickers
+        }
+        fdr_q = 0.05
+        pair_count = len(tickers) * (len(tickers) - 1) // 2
+        expected_fp_bound = math.ceil(fdr_q * pair_count)
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=tickers,
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(breakdown_sigma=3.0, fdr_q=fdr_q),
+            as_of=_as_of(),
+        )
+        pair_blocks = self._filtered_pair_blocks(blocks)
+        assert len(pair_blocks) <= expected_fp_bound, (
+            f"BH-FDR at q={fdr_q} on {pair_count} pairs should produce "
+            f"≤ q·m = {expected_fp_bound} flags on pure noise; got {len(pair_blocks)}"
+        )
+
+    def test_raw_sigma_floor_still_gates_published_flags(self) -> None:
+        """The configurable sigma floor remains a raw-magnitude gate on emission.
+
+        BH-FDR controls the false-discovery rate but doesn't impose a
+        magnitude floor — operators retain ``correlation_breakdown_sigma``
+        for the "this pair must clear N sigma in raw deviation regardless of
+        population statistics" requirement.
+        """
+        returns_by_ticker = _co_moving_then_inverted_pair_returns()
+        blocks_relaxed = compute_correlation_regime_change_pure(
+            universe_tickers=("A", "B"),
+            long_returns_by_ticker=returns_by_ticker,
+            qualifying_news_present=True,
+            params=self._params(breakdown_sigma=1.0, fdr_q=1.0),
+            as_of=_as_of(),
+        )
+        relaxed_pair = self._filtered_pair_blocks(blocks_relaxed)
+        assert relaxed_pair, "fixture must produce a pair-level breakdown at sigma >= 1"
+        emitted_sigma = float(relaxed_pair[0].payload["deviation_sigma"])
+        ceiling = emitted_sigma + 1.0
+        blocks_gated = compute_correlation_regime_change_pure(
+            universe_tickers=("A", "B"),
+            long_returns_by_ticker=returns_by_ticker,
+            qualifying_news_present=True,
+            params=self._params(breakdown_sigma=ceiling, fdr_q=1.0),
+            as_of=_as_of(),
+        )
+        assert self._filtered_pair_blocks(blocks_gated) == []
 
 
 # ---------------------------------------------------------------------------

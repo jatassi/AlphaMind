@@ -116,16 +116,16 @@ class LeadLagDomainConfig:
 class NarrativeLagDomainConfig:
     """Domain-typed mirror of ``config.models.distillation.NarrativeLag``.
 
-    ALP-541 added the two data-alignment guards on the correlation breakdown
-    sigma-test: ``correlation_min_overlap_fraction`` and
-    ``correlation_noise_floor``. Both are validated at YAML parse time on
-    the Pydantic side and reach the compute path via this dataclass.
+    Field-level validators (range constraints on the overlap fraction,
+    noise floor, and FDR target) run at YAML parse time on the Pydantic
+    side and do not re-execute on the dataclass side.
     """
 
     narrative_lag_correlation_shift_sigma: float
     correlation_breakdown_sigma: float
     correlation_min_overlap_fraction: float
     correlation_noise_floor: float
+    correlation_breakdown_fdr_q: float
     narrative_lag_media_silence_hours: int
 
 

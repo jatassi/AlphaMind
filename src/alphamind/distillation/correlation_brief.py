@@ -346,6 +346,7 @@ def _decompose_correlation_breakdown_block(block: OutputBlock) -> list[_Finding]
     short_corr = payload.get("short_correlation")
     long_corr = payload.get("long_correlation")
     deviation = payload.get("deviation_sigma")
+    q_value = payload.get("q_value")
     overlap_n = payload.get("n_overlapping_observations")
     summary = (
         f"{pair_label}: short {_format_value(short_corr)} "
@@ -356,6 +357,7 @@ def _decompose_correlation_breakdown_block(block: OutputBlock) -> list[_Finding]
         f"Short correlation: {_format_value(short_corr)}",
         f"Long correlation: {_format_value(long_corr)}",
         f"Deviation sigma: {_format_value(deviation)}",
+        f"FDR q-value: {_format_value(q_value)}",
         f"Overlapping observations: {overlap_n}",
     )
     return [
