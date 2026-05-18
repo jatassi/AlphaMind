@@ -427,7 +427,7 @@ async def test_collect_response_stall_timeout_raises_stuck() -> None:
 
 @pytest.mark.asyncio
 async def test_collect_response_no_stall_timeout_after_first_message() -> None:
-    """After the first message arrives, no further stall watchdog applies."""
+    """After the first message arrives, no further stall watchdog applies by default."""
 
     async def _delayed_after_first(**_: Any) -> AsyncIterator[Any]:
         yield _make_sdk_assistant(text="hi")
@@ -443,6 +443,31 @@ async def test_collect_response_no_stall_timeout_after_first_message() -> None:
         init_stall_timeout_seconds=0.05,
     )
     assert outcome.response_text == "hi"
+
+
+@pytest.mark.asyncio
+async def test_collect_response_between_message_stall_raises_stuck() -> None:
+    """When between_message_stall_seconds is set, an inter-message hang raises _StuckSDKCall.
+
+    Reproduces the verify-run failure: SDK emits initial SystemMessage then
+    hangs silently until the outer budget expires with zero output tokens.
+    The between-message watchdog catches that case so the retry path can
+    engage with a fresh subprocess instead of burning the full 600s budget.
+    """
+
+    async def _hang_after_first(**_: Any) -> AsyncIterator[Any]:
+        yield _make_sdk_assistant(text="hi")
+        await asyncio.sleep(1.0)  # silence longer than between-message budget
+        yield _make_sdk_result()  # pragma: no cover — watchdog fires first
+
+    with pytest.raises(core._StuckSDKCall):
+        await core._collect_response(
+            _hang_after_first,
+            prompt="p",
+            options=None,
+            init_stall_timeout_seconds=None,
+            between_message_stall_seconds=0.05,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -586,6 +611,119 @@ async def test_invoke_two_consecutive_stalls_raises_timeout(tmp_path: Path) -> N
             on_cli_result_error="context_overflow",
             phase="test-phase",
         )
+
+
+@pytest.mark.asyncio
+async def test_invoke_retries_once_on_between_message_stall(tmp_path: Path) -> None:
+    """A between-message stall on attempt 1 triggers a retry, second attempt succeeds.
+
+    Same retry contract as the init-stall path, but driven by the
+    between-message watchdog. Hardens against the SDK-hang-after-first-
+    message failure observed under concurrent researcher launches on
+    Windows.
+    """
+    call_count = 0
+    success_messages = [
+        _make_sdk_assistant(text="hi"),
+        _make_sdk_result(structured_output={"ok": True}),
+    ]
+
+    async def _hang_then_succeed(**_: Any) -> AsyncIterator[Any]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield _make_sdk_assistant(text="initial")
+            await asyncio.sleep(0.5)  # hangs after first message
+            return
+        for msg in success_messages:
+            yield msg
+
+    diag = _make_diag(tmp_path)
+    outcome = await core.invoke_sdk(
+        sdk_query_fn=_hang_then_succeed,
+        prompt="p",
+        options=None,
+        diag=diag,
+        budget_seconds=5.0,
+        init_stall_timeout_seconds=None,
+        between_message_stall_seconds=0.05,
+        wall_start=0.0,
+        agent_name="x",
+        invocation_id="inv-1",
+        on_cli_result_error="context_overflow",
+        phase="test-phase",
+    )
+    assert call_count == 2
+    assert outcome.structured_output == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_invoke_applies_concurrent_launch_jitter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``concurrent_launch_jitter_seconds`` draws from ``random.uniform(0, value)`` and sleeps."""
+    uniform_calls: list[tuple[float, float]] = []
+
+    def _capture_uniform(lo: float, hi: float) -> float:
+        uniform_calls.append((lo, hi))
+        return 0.0  # don't actually wait
+
+    monkeypatch.setattr(core.random, "uniform", _capture_uniform)
+
+    async def _stub(**_: Any) -> AsyncIterator[Any]:
+        yield _make_sdk_assistant(text="hi")
+        yield _make_sdk_result(structured_output={"ok": True})
+
+    diag = _make_diag(tmp_path)
+    await core.invoke_sdk(
+        sdk_query_fn=_stub,
+        prompt="p",
+        options=None,
+        diag=diag,
+        budget_seconds=5.0,
+        init_stall_timeout_seconds=None,
+        concurrent_launch_jitter_seconds=0.5,
+        wall_start=0.0,
+        agent_name="x",
+        invocation_id="inv-1",
+        on_cli_result_error="context_overflow",
+        phase="test-phase",
+    )
+    assert uniform_calls == [(0, 0.5)]
+
+
+@pytest.mark.asyncio
+async def test_invoke_skips_jitter_when_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``concurrent_launch_jitter_seconds=0.0`` (default) skips the random draw entirely."""
+    uniform_calls: list[tuple[float, float]] = []
+
+    def _capture_uniform(lo: float, hi: float) -> float:
+        uniform_calls.append((lo, hi))
+        return 0.0
+
+    monkeypatch.setattr(core.random, "uniform", _capture_uniform)
+
+    async def _stub(**_: Any) -> AsyncIterator[Any]:
+        yield _make_sdk_assistant(text="hi")
+        yield _make_sdk_result(structured_output={"ok": True})
+
+    diag = _make_diag(tmp_path)
+    await core.invoke_sdk(
+        sdk_query_fn=_stub,
+        prompt="p",
+        options=None,
+        diag=diag,
+        budget_seconds=5.0,
+        init_stall_timeout_seconds=None,
+        wall_start=0.0,
+        agent_name="x",
+        invocation_id="inv-1",
+        on_cli_result_error="context_overflow",
+        phase="test-phase",
+    )
+    assert uniform_calls == []
 
 
 # ---------------------------------------------------------------------------

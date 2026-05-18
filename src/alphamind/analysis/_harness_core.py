@@ -39,6 +39,7 @@ from __future__ import annotations
 #                   #  per-harness names retained for API stability.
 import asyncio
 import json
+import random
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
@@ -481,6 +482,7 @@ async def _collect_response(
     prompt: str,
     options: Any,
     init_stall_timeout_seconds: float | None = None,
+    between_message_stall_seconds: float | None = None,
     tool_name_prefix: str | tuple[str, ...] | None = None,
 ) -> CollectOutcome:
     """Drive the SDK generator to completion.
@@ -503,14 +505,26 @@ async def _collect_response(
     SDK-internal pseudo-events (e.g. ``StructuredOutput``); decision
     harnesses pass a tuple to merge multiple MCP-server allowlists.
 
-    When ``init_stall_timeout_seconds`` is set, the wait for the *first* SDK
-    message is bounded by that timeout. A healthy call emits a
-    ``SystemMessage`` within a few seconds of spawn; multi-minute silence
-    with zero messages signals a stuck local CLI subprocess or backend
-    admit-rate starvation, in which case :class:`_StuckSDKCall` is raised
-    so the caller can retry. After the first message arrives the timeout
-    no longer applies — extended thinking can take minutes between
-    messages and is not a stall.
+    Two independent stall watchdogs guard the SDK driver loop:
+
+    * ``init_stall_timeout_seconds`` bounds the wait for the *first* SDK
+      message. A healthy call emits a ``SystemMessage`` within a few seconds
+      of spawn; multi-minute silence with zero messages signals a stuck
+      local CLI subprocess or backend admit-rate starvation.
+    * ``between_message_stall_seconds`` bounds the wait *between* successive
+      messages once the call is producing output. Covers the failure mode
+      where the SDK emits the initial ``SystemMessage`` then hangs for the
+      full outer budget without producing tokens (observed once on Windows
+      under 4-way concurrent researcher launches). When ``None`` the
+      between-message wait is unbounded, preserving the pre-existing
+      "long thinking is not a stall" behaviour for harnesses that prefer
+      to rely on the outer budget alone.
+
+    Either watchdog firing raises :class:`_StuckSDKCall` so the caller's
+    retry path can engage. Setting the between-message budget large enough
+    to absorb genuine thinking gaps (~3 minutes) keeps long extended-
+    thinking runs healthy while still catching the dead-loss subprocess
+    case in a fraction of the outer budget.
 
     ``session_id`` is the SDK session identifier carried on the terminating
     ``ResultMessage``; threaded back so a corrective retry can pass it via
@@ -533,7 +547,7 @@ async def _collect_response(
             message = await _next_message(async_iter, init_stall_timeout_seconds=pending_stall)
             if message is None:
                 break
-            pending_stall = None  # only the first message is watchdogged
+            pending_stall = between_message_stall_seconds
             if isinstance(message, AssistantMessage):
                 for block in message.content:
                     if isinstance(block, TextBlock):
@@ -590,6 +604,8 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
     diag: DiagWriter,
     budget_seconds: float,
     init_stall_timeout_seconds: float | None,
+    between_message_stall_seconds: float | None = None,
+    concurrent_launch_jitter_seconds: float = 0.0,
     wall_start: float,
     agent_name: str,
     invocation_id: str,
@@ -602,10 +618,21 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
 
     Behavioural toggles:
 
-    * ``init_stall_timeout_seconds=None`` disables the stall watchdog (QR,
-      AR, synthesizer, analyst, strategist, PM behaviour). When set (the
-      domain-researcher path), :class:`_StuckSDKCall` is retried once
-      before surfacing :class:`TimeoutFailure`.
+    * ``init_stall_timeout_seconds=None`` disables the first-message stall
+      watchdog (QR, AR, synthesizer, analyst, strategist, PM behaviour).
+      When set (the domain-researcher path), :class:`_StuckSDKCall` is
+      retried once before surfacing :class:`TimeoutFailure`.
+    * ``between_message_stall_seconds`` bounds the wait between successive
+      SDK messages (default ``None`` = unbounded, preserving prior
+      behaviour). Catches the failure mode where the SDK produces an
+      initial message then hangs silently until the outer budget expires.
+      A stuck between-message wait is treated identically to a stuck init
+      wait: same :class:`_StuckSDKCall` raise + retry path.
+    * ``concurrent_launch_jitter_seconds`` (default ``0.0``) introduces a
+      random delay before opening the SDK call. Used at the parallel-
+      researcher launch site to stagger concurrent subprocess spawns and
+      reduce OAuth-token / admit-rate contention. The jitter is uniform on
+      ``[0, value]``.
     * ``on_cli_result_error`` selects how a ``_CLIResultError`` (the SDK's
       ``is_error=True`` signal) is translated:
         - ``"context_overflow"`` → :class:`ContextOverflowFailure`
@@ -632,6 +659,9 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
     and re-raises the matching :class:`HarnessFailure` subclass.
     """
     from claude_agent_sdk import ClaudeSDKError, CLIConnectionError
+
+    if concurrent_launch_jitter_seconds > 0:
+        await asyncio.sleep(random.uniform(0, concurrent_launch_jitter_seconds))
 
     progress.agent_request(phase=phase, agent=agent_name, model=diag.model)
 
@@ -660,7 +690,11 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
             stop_reason=stop_reason,
         )
 
-    stall_attempts = 2 if init_stall_timeout_seconds is not None else 1
+    stall_attempts = (
+        2
+        if (init_stall_timeout_seconds is not None or between_message_stall_seconds is not None)
+        else 1
+    )
     for stall_attempt in range(1, stall_attempts + 1):
         try:
             outcome = await asyncio.wait_for(
@@ -669,6 +703,7 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
                     prompt=prompt,
                     options=options,
                     init_stall_timeout_seconds=init_stall_timeout_seconds,
+                    between_message_stall_seconds=between_message_stall_seconds,
                     tool_name_prefix=tool_name_prefix,
                 ),
                 timeout=budget_seconds,
@@ -679,8 +714,9 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
             _record_failure(None)
             _emit_response(stop_reason=None)
             raise TimeoutFailure(
-                f"SDK call stalled before producing any message on two consecutive "
-                f"attempts ({init_stall_timeout_seconds}s init timeout). Likely "
+                f"SDK call stalled on two consecutive attempts "
+                f"(init={init_stall_timeout_seconds}s, "
+                f"between={between_message_stall_seconds}s). Likely "
                 f"OAuth-token concurrency starvation or local CLI subprocess hang.",
                 agent_name=agent_name,
                 invocation_id=invocation_id,
