@@ -31,6 +31,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+import alphamind.state.tables  # noqa: F401  — register InvocationRow on Base
 from alphamind._kernel.ids import Symbol
 from alphamind.analysis.tools._envelope import ToolEnvelope, ToolQuality
 from alphamind.analysis.tools.ticker_deep_pull import (
@@ -57,6 +58,16 @@ from alphamind.persistence.session import make_engine, make_session_factory
 # ---------------------------------------------------------------------------
 
 _NOW = datetime.now(UTC)
+
+
+class _FixedClock:
+    """Returns ``_NOW`` deterministically — pins the tool's age computation so
+    a day-boundary race (module load vs. RealClock at call time) can't flip
+    staleness tests near midnight UTC.
+    """
+
+    def now(self) -> datetime:
+        return _NOW
 
 
 @pytest.fixture()
@@ -96,9 +107,16 @@ def _add_ticker(session: Session, ticker: str) -> None:
     session.flush()
 
 
-def _add_ohlcv_bars(session: Session, ticker: str, num_days: int = 21) -> None:
-    """Add ``num_days`` daily OHLCV bars, most recent day is yesterday."""
-    base = _NOW - timedelta(days=num_days)
+def _add_ohlcv_bars(
+    session: Session,
+    ticker: str,
+    num_days: int = 21,
+    *,
+    latest_age_days: int = 1,
+) -> None:
+    """Add ``num_days`` daily OHLCV bars; the most recent bar is ``latest_age_days``
+    days before ``_NOW`` (default 1 ≈ yesterday)."""
+    base = _NOW - timedelta(days=num_days + latest_age_days - 1)
     ingested = _NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
     for i in range(num_days):
         day = base + timedelta(days=i)
@@ -553,3 +571,98 @@ def test_output_schema_exposes_four_optional_category_fields() -> None:
     props = schema.get("properties", {})
     for field in ("price_volume", "short_data", "earnings", "macro_context"):
         assert field in props, f"Schema missing field: {field}"
+
+
+# ---------------------------------------------------------------------------
+# ALP-539 — staleness surfacing
+# ---------------------------------------------------------------------------
+
+
+def test_price_volume_stale_when_latest_bar_old(session: Session) -> None:
+    """Latest OHLCV bar older than the staleness threshold → quality=STALE
+    with a non-null reason that names the category and identifies the latest
+    bar's date.
+    """
+    _add_ticker(session, "CTRA")
+    _add_ohlcv_bars(session, "CTRA", num_days=21, latest_age_days=11)
+    session.commit()
+
+    fn = ticker_deep_pull_factory(session, clock=_FixedClock())
+    result = fn(TickerDeepPullInput(ticker=Symbol("CTRA"), categories=("price_volume",)))
+
+    assert result.quality == ToolQuality.STALE
+    assert result.reason is not None
+    assert "price_volume" in result.reason
+    # Last-known-good payload is preserved (the tool surfaces stale data, not None).
+    assert result.price_volume is not None
+    assert result.price_volume.last_close is not None
+
+
+def test_price_volume_complete_when_latest_bar_fresh(session: Session) -> None:
+    """Latest OHLCV bar within the threshold → quality=COMPLETE, reason=None."""
+    _populate_all(session, "AAPL")
+    fn = ticker_deep_pull_factory(session, clock=_FixedClock())
+    result = fn(TickerDeepPullInput(ticker=Symbol("AAPL"), categories=("price_volume",)))
+
+    assert result.quality == ToolQuality.COMPLETE
+    assert result.reason is None
+
+
+def test_price_volume_complete_at_threshold_boundary(session: Session) -> None:
+    """Latest bar exactly at the threshold (5 calendar days) is NOT stale.
+    Locks the `> threshold` (strict) semantics against accidental change to `>=`.
+    """
+    _add_ticker(session, "AAPL")
+    _add_ohlcv_bars(session, "AAPL", num_days=21, latest_age_days=5)
+    session.commit()
+
+    fn = ticker_deep_pull_factory(session, clock=_FixedClock())
+    result = fn(TickerDeepPullInput(ticker=Symbol("AAPL"), categories=("price_volume",)))
+
+    assert result.quality == ToolQuality.COMPLETE
+    assert result.reason is None
+
+
+def test_stale_price_volume_propagates_reason_to_envelope(session: Session) -> None:
+    """When price_volume is stale and other categories are fresh, the aggregate
+    quality degrades to STALE and the envelope reason names the stale category.
+    """
+    _add_ticker(session, "CTRA")
+    _add_ohlcv_bars(session, "CTRA", num_days=21, latest_age_days=11)
+    _add_short_data(session, "CTRA")
+    _add_earnings_event(session, "CTRA")
+    _add_macro_data(session)
+    session.commit()
+
+    fn = ticker_deep_pull_factory(session, clock=_FixedClock())
+    result = fn(
+        TickerDeepPullInput(
+            ticker=Symbol("CTRA"),
+            categories=("price_volume", "short_data", "earnings", "macro_context"),
+        )
+    )
+
+    assert result.quality == ToolQuality.STALE
+    assert result.reason is not None
+    assert "price_volume" in result.reason
+
+
+def test_partial_no_bars_does_not_emit_stale_reason(session: Session) -> None:
+    """Zero OHLCV rows → quality stays PARTIAL (not STALE), and reason is None —
+    absence is not the same as staleness.
+    """
+    _add_ticker(session, "MSFT")
+    # No OHLCV bars added; only the universe row exists.
+    session.commit()
+
+    fn = ticker_deep_pull_factory(session, clock=_FixedClock())
+    result = fn(TickerDeepPullInput(ticker=Symbol("MSFT"), categories=("price_volume",)))
+
+    assert result.quality == ToolQuality.PARTIAL
+    assert result.reason is None
+
+
+def test_output_schema_exposes_reason_field() -> None:
+    """TickerDeepPullOutput schema carries a Optional[str] reason field."""
+    schema = TickerDeepPullOutput.model_json_schema()
+    assert "reason" in schema.get("properties", {})
