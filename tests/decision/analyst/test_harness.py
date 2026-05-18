@@ -670,7 +670,6 @@ async def test_validation_warnings_only_returns_success_no_retry(
     from alphamind.decision.analyst.validation import ValidationResult, ValidationWarning
 
     warnings_only = ValidationResult(
-        is_valid=True,
         errors=(),
         warnings=(
             ValidationWarning(
