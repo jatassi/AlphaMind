@@ -48,11 +48,16 @@ __all__ = [
 _OHLCV_LOOKBACK_DAYS = 20
 _TIMEFRAME_DAILY = "1d"
 
-# Calendar-day threshold for `price_volume` staleness — caps a full weekend
-# plus three trading days (Friday close → Wednesday). When the most recent
-# OHLCV bar's `period_start` is older than this, the loader surfaces
-# `ToolQuality.STALE` so callers don't silently consume last-known-good data.
+# Calendar-day threshold for `price_volume` staleness — tolerates Friday close
+# through Wednesday inclusive (3 trading days + weekend). When the most recent
+# OHLCV bar's `period_start` is more calendar days old than this, the loader
+# surfaces `ToolQuality.STALE` so callers don't silently consume last-known-good
+# data. Comparison is on `.date()` so intra-day call time can't flip the result.
 _OHLCV_STALE_AGE_DAYS = 5
+
+# Joins per-category reasons in the aggregate envelope. Lifted to a constant so
+# downstream tests / log lines stay consistent if a second join site is added.
+_REASON_SEPARATOR = " | "
 
 # Series IDs for treasury yields (FRED)
 _FRED_2Y_SERIES = "DGS2"
@@ -262,7 +267,7 @@ def _load_price_volume(
     # callers want "how old is the data we're looking at," and the same row may be
     # re-upserted with a refreshed ingested_at while period_start stays put.
     latest_period_start = parse_iso(last.period_start)
-    age = now - latest_period_start
+    age_days = (now.date() - latest_period_start.date()).days
 
     payload = PriceVolumePayload(
         last_close=last_close,
@@ -274,10 +279,10 @@ def _load_price_volume(
         volume_vs_avg_ratio=vol_ratio,
     )
 
-    if age > timedelta(days=_OHLCV_STALE_AGE_DAYS):
+    if age_days > _OHLCV_STALE_AGE_DAYS:
         reason = (
             f"price_volume: latest bar {latest_period_start.date().isoformat()} "
-            f"is {age.days} days stale (threshold {_OHLCV_STALE_AGE_DAYS} days)"
+            f"is {age_days} days stale (threshold {_OHLCV_STALE_AGE_DAYS} days)"
         )
         return payload, latest_period_start, ToolQuality.STALE, reason
 
@@ -607,5 +612,5 @@ def _dispatch_categories(
         short_data=short_data,
         earnings=earnings,
         macro_context=macro_context,
-        reason=" | ".join(reasons) if reasons else None,
+        reason=_REASON_SEPARATOR.join(reasons) if reasons else None,
     )
