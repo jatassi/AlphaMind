@@ -11,7 +11,7 @@ The operator names a single Linear issue (e.g., `ALP-525`). Read it, implement i
 
 Register as `TaskCreate` entries up front.
 
-- **Take a feature branch off `main` before any code changes.** Branch name: the Linear `gitBranchName` from the issue. Never work on `main`.
+- **Always enter an isolated worktree before any code changes.** Use `EnterWorktree`; never edit from the primary checkout. The PR's branch name is the Linear `gitBranchName` from the issue. Never work on `main`.
 - **Implement in the main thread.** No `Agent` dispatch for the implementation. Only the post-PR `/review` is an explicit `Agent` dispatch.
 - **Drive the work with TDD** via `Skill("tdd")`: red → green → refactor. Each acceptance criterion that admits a programmatic test gets one.
 - **Run the full lint + test chain before opening the PR and again before merging:** `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports && uv run pytest -n auto`.
@@ -57,14 +57,20 @@ Pause and surface if:
   5. `Land PR and clean local git state`
   6. `Send PushNotification`
 
-### 4. Create the feature branch
+### 4. Enter a worktree on the feature branch
+
+```
+EnterWorktree({name: "<short-issue-id>"})   # e.g., "alp-525"
+```
+
+`EnterWorktree` branches from `origin/main` (the default `worktree.baseRef: fresh`), creates `.claude/worktrees/<short-issue-id>/`, and switches the session into it on branch `worktree-<short-issue-id>`. The Linear `gitBranchName` is typically too long (>64 chars) to pass directly to `EnterWorktree`, so pick a short slug for the worktree and rename to the canonical branch before pushing so the PR uses the Linear name:
 
 ```bash
-git checkout main
-git pull --ff-only
-git checkout -b <gitBranchName-from-issue>
+git branch -m <gitBranchName-from-issue>
 git push -u origin <gitBranchName-from-issue>
 ```
+
+Run every subsequent command from inside the worktree. Do not `cd` to the primary repo.
 
 **Stale `index.lock` recovery.** If a git command fails with `Unable to create '.../.git/index.lock': File exists`, run `rm -f .git/index.lock && <git-command>` on one line — the watcher re-acquires the lock within ~1s.
 
@@ -186,20 +192,22 @@ AlphaMind has no CI worth waiting on — merge as soon as the PR is open and the
 
 **Sweep stale `main`-bearing worktrees before `gh pr merge`.** `git worktree list`, look for orphans checked out to `main` (typical naming: `.claude/worktrees/<random-name>`). Confirm `git -C <path> status --short` is clean, then `git worktree remove -f -f <path>`. The double `-f` overrides the Claude agent harness's lock.
 
-Merge:
+**Merge.** From inside the worktree, `gh pr merge --delete-branch` exits non-zero after a successful remote merge: `gh` tries to switch the local branch to `main`, which is checked out in the primary worktree, and aborts with `fatal: 'main' is already used by worktree at '<primary>'`. The remote merge and remote-branch deletion both still succeed — verify directly:
 
 ```bash
 gh pr merge <PR number> --squash --delete-branch
+gh pr view <PR number> --json state    # expect "MERGED"
 ```
 
-Locally:
+**Update `main` against the primary repo, not from inside the worktree.** `git checkout main` from a worktree fails with the same "already used" error; fast-forward and prune via `-C <primary-repo-path>`:
 
 ```bash
-git checkout main
-git pull --ff-only
-git remote prune origin
-git branch | grep '^[[:space:]]*worktree-agent-' | xargs -r git branch -D
+git -C <primary-repo-path> pull --ff-only origin main
+git -C <primary-repo-path> remote prune origin
+git -C <primary-repo-path> branch | grep '^[[:space:]]*worktree-agent-' | xargs -r git -C <primary-repo-path> branch -D
 ```
+
+Leave the implementation worktree on disk; the harness will prompt to keep or remove it at session end.
 
 Update Linear:
 
