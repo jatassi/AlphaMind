@@ -250,9 +250,5 @@ def _live_adjusted_price(
     )
     per_share_drag = per_share_spread_component + per_share_impact_component
 
-    if side == "buy":
-        adjusted = fill_price + per_share_drag
-    else:
-        adjusted = fill_price - per_share_drag
-
+    adjusted = fill_price + per_share_drag if side == "buy" else fill_price - per_share_drag
     return price(adjusted)

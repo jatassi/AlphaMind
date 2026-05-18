@@ -24,7 +24,7 @@ from decimal import Decimal
 
 import pytest
 
-from alphamind._kernel.money import Money, Price, price
+from alphamind._kernel.money import price
 from alphamind.config.models.execution import FeeSchedule, OrderType, PaperHarness
 from alphamind.portfolio_state.records.positions import InstrumentType
 
@@ -255,3 +255,193 @@ def test_options_with_none_adv_returns_none(config: PaperHarness) -> None:
         config=config,
     )
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Invariants: all _usd fields non-negative; live_adjusted strictly positive.
+# Sweep buy/sell across EQUITY and OPTIONS to anchor the contract surface.
+# ---------------------------------------------------------------------------
+
+
+def test_all_estimates_have_non_negative_usd_and_positive_price(config: PaperHarness) -> None:
+    from alphamind.execution.paper_evaluation_harness import compute_live_execution_estimate
+
+    cases = [
+        (InstrumentType.EQUITY, "buy", price("200"), 1000, 50_000_000.0, 0.20),
+        (InstrumentType.EQUITY, "sell", price("200"), 1000, 50_000_000.0, 0.20),
+        (InstrumentType.OPTIONS, "buy", price("2.50"), 5, 10_000.0, 0.30),
+        (InstrumentType.OPTIONS, "sell", price("2.50"), 5, 10_000.0, 0.30),
+    ]
+    for instrument_type, side, fill_px, qty, adv, vol in cases:
+        result = compute_live_execution_estimate(
+            fill_price=fill_px,
+            fill_quantity=qty,
+            instrument_type=instrument_type,
+            side=side,  # type: ignore[arg-type]
+            order_type=OrderType.market,
+            adv_shares=adv,
+            realized_volatility=vol,
+            config=config,
+        )
+        assert result is not None
+        assert result.estimated_spread_usd >= Decimal(0), f"{instrument_type}, {side}"
+        assert result.estimated_impact_usd >= Decimal(0), f"{instrument_type}, {side}"
+        assert result.estimated_regulatory_fees_usd >= Decimal(0), f"{instrument_type}, {side}"
+        assert result.live_adjusted_fill_price > Decimal(0), f"{instrument_type}, {side}"
+
+
+# ---------------------------------------------------------------------------
+# Composition identity: live_adjusted_fill_price equals fill_price ±
+# (per_share_spread / 2 + per_share_impact). This anchors the formula and
+# confirms no extra terms slipped into the price-adjustment path. The
+# acceptance criterion's "zero drag → live == paper" guarantee is the
+# corollary as the floored spread and impact tend to zero.
+# ---------------------------------------------------------------------------
+
+
+def test_live_adjusted_price_decomposes_to_spread_plus_impact(config: PaperHarness) -> None:
+    from alphamind.execution.paper_evaluation_harness import (
+        compute_live_execution_estimate,
+        estimate_impact,
+        estimate_spread,
+    )
+
+    fill_price_decimal = Decimal(200)
+    fill_price_typed = price(fill_price_decimal)
+    fill_quantity = 1000
+
+    expected_spread = estimate_spread(
+        fill_price=fill_price_typed,
+        adv_shares=50_000_000.0,
+        realized_volatility=0.20,
+        buffer_pct=config.spread_buffer_pct,
+    )
+    expected_impact = estimate_impact(
+        fill_shares=fill_quantity,
+        adv_shares=50_000_000.0,
+        estimated_spread=expected_spread,
+        order_type=OrderType.market,
+        coefficient=config.impact_coefficients[OrderType.market],
+    )
+
+    qty_decimal = Decimal(fill_quantity)
+    per_share_drag = expected_spread / Decimal(2) + expected_impact / qty_decimal
+
+    buy = compute_live_execution_estimate(
+        fill_price=fill_price_typed,
+        fill_quantity=fill_quantity,
+        instrument_type=InstrumentType.EQUITY,
+        side="buy",
+        order_type=OrderType.market,
+        adv_shares=50_000_000.0,
+        realized_volatility=0.20,
+        config=config,
+    )
+    sell = compute_live_execution_estimate(
+        fill_price=fill_price_typed,
+        fill_quantity=fill_quantity,
+        instrument_type=InstrumentType.EQUITY,
+        side="sell",
+        order_type=OrderType.market,
+        adv_shares=50_000_000.0,
+        realized_volatility=0.20,
+        config=config,
+    )
+    assert buy is not None and sell is not None
+    assert buy.live_adjusted_fill_price == fill_price_decimal + per_share_drag
+    assert sell.live_adjusted_fill_price == fill_price_decimal - per_share_drag
+
+
+# ---------------------------------------------------------------------------
+# Saturation: with zero realized_volatility the raw spread term saturates at
+# the penny-tick floor, and with one share against extremely high ADV the
+# impact contribution rounds away — so the per-share drag is bounded by the
+# floored spread half. This is the "live_adjusted == fill_price within
+# Decimal-rounding tolerance, after the floor saturates" guarantee from the
+# acceptance criteria: drag does not exceed the documented floor.
+# ---------------------------------------------------------------------------
+
+
+def test_near_floor_inputs_keep_live_within_floor_tolerance(config: PaperHarness) -> None:
+    from alphamind.execution.paper_evaluation_harness import (
+        compute_live_execution_estimate,
+        estimate_spread,
+    )
+
+    fill_price_typed = price("200")
+    floored_spread = estimate_spread(
+        fill_price=fill_price_typed,
+        adv_shares=1e18,
+        realized_volatility=0.0,
+        buffer_pct=config.spread_buffer_pct,
+    )
+    half_floor = floored_spread / Decimal(2)
+
+    result = compute_live_execution_estimate(
+        fill_price=fill_price_typed,
+        fill_quantity=1,
+        instrument_type=InstrumentType.EQUITY,
+        side="buy",
+        order_type=OrderType.market,
+        adv_shares=1e18,
+        realized_volatility=0.0,
+        config=config,
+    )
+    assert result is not None
+    drag = result.live_adjusted_fill_price - Decimal(200)
+    # Drag is at least the half-floor (the spread per-share) and never
+    # exceeds half-floor + tiny impact attribution that the sqrt model
+    # produces for fill=1 against 1e18 ADV.
+    assert drag >= half_floor
+    assert drag < half_floor + Decimal("0.001")
+
+
+# ---------------------------------------------------------------------------
+# Package surface: compute_live_execution_estimate is re-exported.
+# ---------------------------------------------------------------------------
+
+
+def test_compute_live_execution_estimate_is_reexported() -> None:
+    import alphamind.execution.paper_evaluation_harness as pkg
+
+    assert "compute_live_execution_estimate" in pkg.__all__
+    assert callable(pkg.compute_live_execution_estimate)
+
+
+# ---------------------------------------------------------------------------
+# Purity: harness module imports must not reach DB, HTTP, or
+# module-level config loaders. Inspect the import graph statically.
+# ---------------------------------------------------------------------------
+
+
+def test_harness_module_has_no_db_or_http_or_config_loader_imports() -> None:
+    import ast
+    import pathlib
+
+    src = pathlib.Path(
+        "src/alphamind/execution/paper_evaluation_harness/harness.py"
+    ).read_text()
+    tree = ast.parse(src)
+
+    imported_names: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_names.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            imported_names.append(node.module)
+
+    forbidden_substrings = (
+        "sqlalchemy",
+        "psycopg",
+        "sqlite3",
+        "httpx",
+        "requests",
+        "aiohttp",
+        "alphamind.persistence",
+        "alphamind.config.loader",
+        "alphamind.config.main",
+    )
+    offenders = [
+        name for name in imported_names if any(bad in name for bad in forbidden_substrings)
+    ]
+    assert not offenders, f"harness.py reached DB/HTTP/config-loader imports: {offenders!r}"
