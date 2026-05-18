@@ -91,8 +91,12 @@ def build_risk_budget_consumption(
                 current_value=current,
                 limit_value=limit,
                 headroom=limit - current,
-                headroom_pct_of_limit=_headroom_pct(current, limit, inverse=spec.inverse),
-                zone=_classify_zone(current, limit, zones, inverse=spec.inverse),
+                headroom_pct_of_limit=_headroom_pct(
+                    current, limit, inverse=spec.inverse, magnitude=spec.magnitude
+                ),
+                zone=_classify_zone(
+                    current, limit, zones, inverse=spec.inverse, magnitude=spec.magnitude
+                ),
                 unit=spec.unit,
                 cumulative_invocation_impact_value=0.0,
             )
@@ -115,16 +119,21 @@ def _rule_label(rule_id: str) -> str:
     return rule_id
 
 
-def _headroom_pct(current_value: float, limit_value: float, *, inverse: bool) -> float:
+def _headroom_pct(
+    current_value: float, limit_value: float, *, inverse: bool, magnitude: bool
+) -> float:
     """Compute ``headroom_pct_of_limit`` clamped to ``[0, 100]``.
 
     For cap rules: how much of the limit remains unconsumed. For inverse
     (floor) rules: how far above the floor the current value sits, as a
-    fraction of the floor.
+    fraction of the floor. Magnitude rules (theta, vega) measure
+    consumption against ``|current_value|`` so a long-options portfolio's
+    negative theta is reported as consumed budget, not unbounded headroom.
     """
     if limit_value <= 0:
         return 0.0
-    raw = (current_value - limit_value) if inverse else (limit_value - current_value)
+    measured = abs(current_value) if magnitude else current_value
+    raw = (measured - limit_value) if inverse else (limit_value - measured)
     return max(0.0, min(100.0, raw / limit_value * 100.0))
 
 
@@ -134,6 +143,7 @@ def _classify_zone(
     zones: EscalationZones,
     *,
     inverse: bool,
+    magnitude: bool,
 ) -> RiskZone:
     """Classify the rule's risk zone from current vs. limit.
 
@@ -141,28 +151,34 @@ def _classify_zone(
     against the supplied escalation thresholds. Inverse rules mirror the
     projection engine's convention (``projection.py:_classify``): FAIL
     (→ BLOCKED) below the floor, WARNING within ``MIN_RULE_WARNING_BAND_PCT``
-    above the floor, NORMAL otherwise. ``zones`` is required; the caller's
-    subscript at :func:`build_risk_budget_consumption` raises ``KeyError``
-    upstream when a rule has no zones entry.
+    above the floor, NORMAL otherwise. Magnitude rules (theta, vega) classify
+    on ``|current_value|`` — long-options portfolios carry negative theta by
+    construction, and the magnitude flag is precisely how the registry signals
+    "sign is incidental, magnitude is the constraint" (see
+    ``projection.py:143``). ``zones`` is required; the caller's subscript at
+    :func:`build_risk_budget_consumption` raises ``KeyError`` upstream when a
+    rule has no zones entry.
 
-    Raises ``ValueError`` on ``limit_value <= 0`` or ``current_value < 0``
-    (real data corruption that the rest of the system would refuse).
+    Raises ``ValueError`` on ``limit_value <= 0``, or on negative
+    ``current_value`` for non-magnitude rules (real data corruption the rest
+    of the system would refuse).
     """
     if limit_value <= 0:
         msg = f"limit_value must be > 0; got {limit_value}"
         raise ValueError(msg)
-    if current_value < 0:
+    measured = abs(current_value) if magnitude else current_value
+    if measured < 0:
         msg = f"current_value must be >= 0; got {current_value}"
         raise ValueError(msg)
     if inverse:
         warning_floor = limit_value * (1 + MIN_RULE_WARNING_BAND_PCT / 100.0)
-        if current_value >= warning_floor:
+        if measured >= warning_floor:
             return RiskZone.NORMAL
-        if current_value >= limit_value:
+        if measured >= limit_value:
             return RiskZone.WARNING
         return RiskZone.BLOCKED
     return classify_consumption_zone(
-        consumption_pct=current_value / limit_value * 100.0,
+        consumption_pct=measured / limit_value * 100.0,
         warning=zones.warning,
         critical=zones.critical,
         hard_block=zones.hard_block,
