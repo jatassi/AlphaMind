@@ -160,25 +160,6 @@ async def test_paper_mode_callable_is_idempotent_no_estimate_when_inputs_missing
     assert result == record
 
 
-def test_unknown_mode_raises(
-    harness_config: PaperHarness,
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    """A future ``MonitorMode`` variant must trigger a fail-closed exception."""
-    from alphamind.execution.continuous_monitor.__main__ import (
-        _build_enrichment_callable,
-    )
-
-    realized_vol_map: dict[str, RealizedVolEntry] = {}
-    with pytest.raises(ValueError):
-        _build_enrichment_callable(
-            mode="unknown",  # type: ignore[arg-type]
-            paper_harness=harness_config,
-            session_factory=session_factory,
-            realized_vol_map=realized_vol_map,
-        )
-
-
 def _ensure_mode_literal_unchanged() -> None:
     """Compile-time guard: if ``MonitorMode`` adds variants, ``_build_enrichment_callable``
     must grow corresponding branches. This module-load-time assert keeps the

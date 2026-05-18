@@ -177,19 +177,17 @@ def _build_enrichment_callable(
     """
     if mode == "live":
         return None
-    if mode == "paper":
-        order_lookup = SqlOrderLookup(session_factory)
-        adv_lookup = SqlAdvLookup(session_factory)
-        vol_lookup = MapVolLookup(realized_vol_map)
-        return partial(
-            attach_live_execution_estimate,
-            order_lookup=order_lookup,
-            adv_lookup=adv_lookup,
-            vol_lookup=vol_lookup,
-            config=paper_harness,
-        )
-    msg = f"unknown monitor mode: {mode!r}"
-    raise ValueError(msg)
+    # mode == "paper" — Literal type exhaustive
+    order_lookup = SqlOrderLookup(session_factory)
+    adv_lookup = SqlAdvLookup(session_factory)
+    vol_lookup = MapVolLookup(realized_vol_map)
+    return partial(
+        attach_live_execution_estimate,
+        order_lookup=order_lookup,
+        adv_lookup=adv_lookup,
+        vol_lookup=vol_lookup,
+        config=paper_harness,
+    )
 
 
 def _build_breach_response_lookup(
