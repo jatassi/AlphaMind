@@ -25,12 +25,9 @@ from alphamind.portfolio_state.consumers.strategist import (
     StrategistPositionView,
     StrategistView,
 )
+from alphamind.portfolio_state.events.formatting import render_activity_log_row
 from alphamind.portfolio_state.records.activity_log import (
     ActivityLogEntry,
-    EmergencyInvocationRequestedDetail,
-    GreeksRefreshFailedDetail,
-    HaltActivatedDetail,
-    HaltLiftedDetail,
     PMDecisionDetail,
 )
 from alphamind.portfolio_state.records.orders import (
@@ -596,7 +593,7 @@ def _render_pending_order_row(order: OrderRecord, current_price: float) -> str:
 def _render_modification_trail(trail: tuple[ActivityLogEntry, ...]) -> str:
     lines: list[str] = ["  Modification trail (recent):"]
     for entry in trail:
-        lines.append(_render_activity_log_row(entry))
+        lines.append(render_activity_log_row(entry))
     return "\n".join(lines)
 
 
@@ -611,7 +608,7 @@ def _render_intra_invocation_changelog(entries: tuple[ActivityLogEntry, ...]) ->
         lines.append(_NONE_LINE)
         return "\n".join(lines)
     for entry in entries:
-        lines.append(_render_activity_log_row(entry))
+        lines.append(render_activity_log_row(entry))
     return "\n".join(lines)
 
 
@@ -625,18 +622,6 @@ def _render_pm_decision_log(entries: tuple[ActivityLogEntry, ...]) -> str:
     return "\n".join(lines)
 
 
-def _render_activity_log_row(entry: ActivityLogEntry) -> str:
-    ts = entry.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
-    summary = _summarize_activity_detail(entry)
-    suffix_parts: list[str] = []
-    if entry.position_id is not None:
-        suffix_parts.append(f"position={entry.position_id}")
-    if entry.order_id is not None:
-        suffix_parts.append(f"order={entry.order_id}")
-    suffix = f"  ({', '.join(suffix_parts)})" if suffix_parts else ""
-    return f"  [{ts}] {entry.event_type.value}: {summary}{suffix}"
-
-
 def _render_pm_decision_row(entry: ActivityLogEntry) -> str:
     ts = entry.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
     detail = entry.detail
@@ -646,37 +631,7 @@ def _render_pm_decision_row(entry: ActivityLogEntry) -> str:
         rationale = detail.evaluation_json.get("rationale", "") if detail.evaluation_json else ""
         rationale_part = f" — {rationale}" if rationale else ""
         return f"  [{ts}] verdict {verdict} on envelope {envelope}{rationale_part}"
-    return _render_activity_log_row(entry)
-
-
-def _summarize_activity_detail(entry: ActivityLogEntry) -> str:
-    detail = entry.detail
-    # BracketModifiedDetail: source-aware summary.
-    field_changed = getattr(detail, "field_changed", None)
-    old_value = getattr(detail, "old_value", None)
-    new_value = getattr(detail, "new_value", None)
-    rationale = getattr(detail, "rationale", None)
-    if field_changed is not None and old_value is not None and new_value is not None:
-        rationale_str = f" ({rationale})" if rationale else ""
-        return f"{field_changed}: {old_value} → {new_value}{rationale_str}"
-    # Continuous-monitor RISK_AND_GUARDRAIL details — surface the operationally
-    # meaningful fields instead of the bare class name. The four event types
-    # are emitted by the breach-evaluation loop (halt transitions), the
-    # greeks-refresh task (IV-fetch failure), and the emergency-invocation
-    # trigger evaluator (cooldown-gated emergency request).
-    if isinstance(detail, HaltActivatedDetail):
-        return (
-            f"{detail.halt_type} halt activated at "
-            f"drawdown={detail.current_drawdown_pct:.2%} "
-            f"limit={detail.limit_pct:.2%}"
-        )
-    if isinstance(detail, HaltLiftedDetail):
-        return f"{detail.halt_type} halt lifted at drawdown={detail.current_drawdown_pct:.2%}"
-    if isinstance(detail, GreeksRefreshFailedDetail):
-        return f"greeks refresh failed: {detail.occ_symbol} ({detail.failure_reason})"
-    if isinstance(detail, EmergencyInvocationRequestedDetail):
-        return f"emergency invocation requested: {detail.trigger_type} — {detail.trigger_reason}"
-    return type(detail).__name__
+    return render_activity_log_row(entry)
 
 
 # ---------------------------------------------------------------------------

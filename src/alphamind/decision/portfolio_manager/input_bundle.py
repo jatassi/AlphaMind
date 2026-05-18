@@ -25,6 +25,7 @@ from alphamind._kernel.money import Money
 from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
+from alphamind.portfolio_state.events.formatting import render_activity_log_row
 from alphamind.portfolio_state.records.activity_log import (
     ActivityLogEntry,
     PMDecisionDetail,
@@ -463,7 +464,7 @@ def _collect_key_assumptions(
 def _render_modification_trail(trail: tuple[ActivityLogEntry, ...]) -> str:
     lines: list[str] = ["  Modification trail:"]
     for entry in trail:
-        lines.append(_render_activity_log_row(entry))
+        lines.append(render_activity_log_row(entry))
     return "\n".join(lines)
 
 
@@ -478,7 +479,7 @@ def _render_activity_log_block(header: str, entries: tuple[ActivityLogEntry, ...
         lines.append(_NONE_LINE)
         return "\n".join(lines)
     for entry in entries:
-        lines.append(_render_activity_log_row(entry))
+        lines.append(render_activity_log_row(entry))
     return "\n".join(lines)
 
 
@@ -492,18 +493,6 @@ def _render_pm_decision_log_block(header: str, entries: tuple[ActivityLogEntry, 
     return "\n".join(lines)
 
 
-def _render_activity_log_row(entry: ActivityLogEntry) -> str:
-    ts = entry.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
-    summary = _summarize_activity_detail(entry)
-    suffix_parts: list[str] = []
-    if entry.position_id is not None:
-        suffix_parts.append(f"position={entry.position_id}")
-    if entry.order_id is not None:
-        suffix_parts.append(f"order={entry.order_id}")
-    suffix = f"  ({', '.join(suffix_parts)})" if suffix_parts else ""
-    return f"  [{ts}] {entry.event_type.value}: {summary}{suffix}"
-
-
 def _render_pm_decision_row(entry: ActivityLogEntry) -> str:
     ts = entry.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
     detail = entry.detail
@@ -513,19 +502,7 @@ def _render_pm_decision_row(entry: ActivityLogEntry) -> str:
         rationale = detail.evaluation_json.get("rationale", "") if detail.evaluation_json else ""
         rationale_part = f" — {rationale}" if rationale else ""
         return f"  [{ts}] verdict {verdict} on envelope {envelope}{rationale_part}"
-    return _render_activity_log_row(entry)
-
-
-def _summarize_activity_detail(entry: ActivityLogEntry) -> str:
-    detail = entry.detail
-    field_changed = getattr(detail, "field_changed", None)
-    old_value = getattr(detail, "old_value", None)
-    new_value = getattr(detail, "new_value", None)
-    rationale = getattr(detail, "rationale", None)
-    if field_changed is not None and old_value is not None and new_value is not None:
-        rationale_str = f" ({rationale})" if rationale else ""
-        return f"{field_changed}: {old_value} → {new_value}{rationale_str}"
-    return type(detail).__name__
+    return render_activity_log_row(entry)
 
 
 # ---------------------------------------------------------------------------
