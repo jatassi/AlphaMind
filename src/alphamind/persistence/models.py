@@ -1078,3 +1078,45 @@ class Brief(Base):
     created_at: Mapped[str] = mapped_column(Text)
 
     __table_args__ = (_check_in("brief_kind", _BRIEF_KINDS, "ck_briefs_brief_kind"),)
+
+
+# ---------------------------------------------------------------------------
+# Per-ticker realized-vol substrate — story ALP-530.
+#
+# Populated once per distillation invocation; consumers (Phase 1's Reg T
+# attribution wedge, the continuous monitor's greeks-refresh
+# FixtureIvProvider, and the paper-evaluation harness's MapVolLookup) read
+# the latest row per ticker via ``distillation.realized_vol.read_realized_vol_map``.
+# ---------------------------------------------------------------------------
+
+
+class TickerRealizedVolRow(Base):
+    """Per-ticker trailing realized-volatility snapshot.
+
+    Composite key ``(ticker, as_of_date)`` — at most one row per ticker per
+    trading day; same-day re-invocations upsert. ``trailing_30d_realized_vol``
+    is the annualized sample-std of log returns over the configured lookback
+    window (30 trading days at the default invocation).
+
+    The ``invocation_id`` FK ties the row to the producing distillation
+    invocation; ``computed_at`` records the wall-clock timestamp for ops
+    observability. The ``ix_ticker_realized_vol_as_of_date`` index supports
+    the "latest as_of_date per ticker" read path.
+    """
+
+    __tablename__ = "ticker_realized_vol"
+
+    ticker: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("asset_universe.ticker", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    as_of_date: Mapped[str] = mapped_column(Text, primary_key=True)
+    trailing_30d_realized_vol: Mapped[float] = mapped_column(Float)
+    invocation_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("invocations.invocation_id", ondelete="RESTRICT"),
+    )
+    computed_at: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (Index("ix_ticker_realized_vol_as_of_date", "as_of_date"),)
