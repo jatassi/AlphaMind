@@ -9,12 +9,12 @@ Two detections key off the indicator computations in this story:
   ``price_move_atr_multiple`` times ATR.
 
 Both detections emit ``investigate_now`` at the producer; the
-calibration-state cap in :mod:`alphamind.distillation._severity_cap`
-(ALP-544) is the single publishing-layer policy that downgrades severity
-based on the surrounding block's state. The producer no longer maps
-calibration state to severity — that policy lives once at the publishing
-layer so the operator's exempt-flag-names configuration applies
-uniformly across every emitting module.
+calibration-state cap in :mod:`alphamind.distillation._severity_cap` is
+the single publishing-layer policy that downgrades severity based on
+the surrounding block's state. The producer does not map calibration
+state to severity — that policy lives once at the publishing layer so
+the operator's exempt-flag-names configuration applies uniformly across
+every emitting module.
 """
 
 from __future__ import annotations

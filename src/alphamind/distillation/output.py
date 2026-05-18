@@ -62,6 +62,29 @@ through unchanged.
 """
 
 
+SEVERITY_ORDER: tuple[AnomalySeverity, ...] = (
+    "investigate_now",
+    "investigate_if_persists",
+    "note_for_context",
+)
+"""Total order over :data:`AnomalySeverity` — earlier = stronger.
+
+The single source of truth for severity ranking, consumed by both the
+aggregation layer (sort order for the per-audience anomaly summary) and
+the publishing-layer cap (comparing producer severity to the
+calibration-state ceiling).
+"""
+
+
+def severity_rank(severity: AnomalySeverity) -> int:
+    """Return the position of ``severity`` in :data:`SEVERITY_ORDER`.
+
+    Smaller index = stronger severity. The absolute integer is irrelevant
+    — the rank only ever participates in comparisons.
+    """
+    return SEVERITY_ORDER.index(severity)
+
+
 @dataclass(frozen=True)
 class AnomalyFlag:
     """A single anomaly attached to an :class:`OutputBlock`.

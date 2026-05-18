@@ -343,9 +343,9 @@ class PredictionMarket(BaseModel):
 
 
 class SeverityCaps(BaseModel):
-    """Calibration-state severity-cap exemption surface (ALP-544).
+    """Calibration-state severity-cap exemption surface.
 
-    The cap rule itself is implicit in :mod:`alphamind.distillation._severity_cap`
+    The cap rule itself lives in :mod:`alphamind.distillation._severity_cap`
     (calibrated → no cap, accumulating → investigate_if_persists,
     unavailable → note_for_context). ``exempt_flag_names`` lists anomaly
     flags whose producer-side severity is preserved regardless of the

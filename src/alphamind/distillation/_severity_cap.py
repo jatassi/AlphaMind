@@ -1,4 +1,4 @@
-"""Calibration-state severity cap for anomaly flags (ALP-544).
+"""Calibration-state severity cap for anomaly flags.
 
 A distillation module's anomaly flag is no stronger than the data it sits
 on. A producer emits its "intended" severity (typically
@@ -35,6 +35,7 @@ from alphamind.distillation.output import (
     AnomalyFlag,
     AnomalySeverity,
     OutputBlock,
+    severity_rank,
 )
 
 __all__ = [
@@ -44,19 +45,10 @@ __all__ = [
 ]
 
 
-# Severity rank — lower index = stronger severity. Used to compose
-# "the lower of (producer severity, cap ceiling)" without re-encoding the
-# total order in multiple places.
-_SEVERITY_RANK: dict[AnomalySeverity, int] = {
-    "investigate_now": 0,
-    "investigate_if_persists": 1,
-    "note_for_context": 2,
-}
-
-
 # Per-state severity ceiling. CALIBRATED has no ceiling (None); the other
 # two states pin a maximum severity that overrides any higher-rank
-# producer choice.
+# producer choice. The total order over severity literals lives next to
+# the type in :mod:`alphamind.distillation.output`.
 _CEILING_BY_STATE: dict[CalibrationState, AnomalySeverity | None] = {
     CalibrationState.CALIBRATED: None,
     CalibrationState.ACCUMULATING: "investigate_if_persists",
@@ -82,7 +74,7 @@ def cap_anomaly_severity(
     ceiling = _CEILING_BY_STATE[state]
     if ceiling is None:
         return severity
-    if _SEVERITY_RANK[severity] >= _SEVERITY_RANK[ceiling]:
+    if severity_rank(severity) >= severity_rank(ceiling):
         return severity
     return ceiling
 

@@ -178,11 +178,10 @@ class PredictionMarketDomainConfig:
 class SeverityCapsDomainConfig:
     """Domain-typed mirror of ``config.models.distillation.SeverityCaps``.
 
-    ``exempt_flag_names`` lists anomaly-flag names whose severity should
-    NOT be downgraded by the calibration-state cap (ALP-544). The cap
-    rule itself is implicit (calibrated → no cap, accumulating →
-    investigate_if_persists, unavailable → note_for_context); this field
-    surfaces the structural-signal exemption needed by AC #4.
+    ``exempt_flag_names`` lists anomaly-flag names whose severity is
+    preserved regardless of the surrounding block's calibration state.
+    The cap rule itself lives in
+    :mod:`alphamind.distillation._severity_cap`.
     """
 
     exempt_flag_names: frozenset[str]

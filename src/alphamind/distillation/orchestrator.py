@@ -1122,10 +1122,6 @@ async def run_external_distillation(
     # to populate the diagnostic counts the orchestrator returns; the
     # assemblers (Phase 5) re-derive the same partitioning from the
     # block list, so the dicts here are not threaded forward.
-    #
-    # ALP-544: ``all_blocks`` above has already been routed through
-    # :func:`cap_blocks_for_calibration` so every consumer below sees
-    # severities capped by the source block's calibration state.
     phase_start = time.monotonic()
     partitioned = partition_blocks(all_blocks)
     anomaly_summaries: list[AnomalySummary] = collect_anomalies(all_blocks)

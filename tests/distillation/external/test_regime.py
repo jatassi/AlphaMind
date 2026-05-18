@@ -835,3 +835,19 @@ class TestRegimeOutputBlock:
         )
         assert block.calibration_state is CalibrationState.ACCUMULATING
         assert block.bootstrap_reason == ("vx1_unavailable: VX1 series not in macro_observations")
+
+    def test_block_emits_no_anomaly_flags(self) -> None:
+        """The regime block never carries anomaly flags.
+
+        The orchestrator's archive writer reads ``regime_block`` directly
+        (the pre-cap local) rather than re-finding it inside the capped
+        ``all_blocks`` list. The two paths agree only as long as the
+        regime block emits no flags — pin the contract here so a future
+        regime-block change that introduces flags must come with a
+        coordinated archive-writer update.
+        """
+        block = assemble_regime_block(
+            result=_result_for_block(),
+            freshness_ts=FRESHNESS_TS,
+        )
+        assert block.anomaly_flags == ()

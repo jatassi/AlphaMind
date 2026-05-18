@@ -87,7 +87,7 @@ prediction_market:
     china_policy:    {}
     conflict:        {}
 
-# ALP-544 — calibration-state severity cap exemptions.
+# Calibration-state severity cap exemptions.
 #
 # The cap rule is implicit (src/alphamind/distillation/_severity_cap.py):
 #   calibrated   → severity unchanged
@@ -96,7 +96,9 @@ prediction_market:
 #
 # Add an anomaly-flag name here only when its severity is structural —
 # independent of history length — and should fire at full strength even
-# when the surrounding block isn't calibrated. Default is empty: every
-# flag is subject to the cap.
+# when the surrounding block isn't calibrated. We ship empty by default;
+# several known-structural signals (e.g., macro_surprise_anomaly,
+# etf_vs_single_name_divergence) are candidates but stay subject to the
+# cap until an operator review explicitly opts them out.
 severity_caps:
   exempt_flag_names: []
