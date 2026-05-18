@@ -27,11 +27,11 @@ the rejection_payload's ``rules_breached[0].rule = "schema_invariant"``.
 
 from __future__ import annotations
 
-import re
 import typing
 from collections.abc import Callable, Iterable
 
 from alphamind.analysis.synthesizer.models import (
+    REF_ID_RE,
     find_bare_prefix_citations,
     parse_reference_id,
 )
@@ -77,11 +77,6 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Module-level constants
 # ---------------------------------------------------------------------------
-
-# Bracketed-reference extractor: matches ``[<prefix-segments>-<digits>]``
-# anywhere in narrative prose. ``parse_reference_id`` narrows further to the
-# canonical synthesizer prefix taxonomy.
-_REF_ID_RE = re.compile(r"\[([A-Z][A-Z0-9-]*-[0-9]+)\]")
 
 # Canonical anti-pattern strings — the typed envelope's ``anti_patterns_identified``
 # field is constrained to this Literal alias on parse. The validator restates as
@@ -432,7 +427,7 @@ def _check_narrative_references_against_store(
     prefix can never resolve; surfacing it as a ``bare_prefix_citation``
     error lets the corrective-retry path run.
     """
-    for match in _REF_ID_RE.finditer(narrative):
+    for match in REF_ID_RE.finditer(narrative):
         ref_id = match.group(1)
         if parse_reference_id(ref_id) is None:
             continue

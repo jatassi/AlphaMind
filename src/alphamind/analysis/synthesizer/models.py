@@ -28,6 +28,7 @@ from alphamind.analysis._shared import Sector
 from alphamind.analysis.domain_researchers.models import SECTOR_PREFIX
 
 __all__ = [
+    "REF_ID_RE",
     "SOURCE_PREFIXES",
     "BriefBundle",
     "BriefSource",
@@ -181,6 +182,12 @@ def parse_reference_id(ref_id: str) -> tuple[ReferencePrefix, int] | None:
         return (prefix, index)
     return None
 
+
+# Bracketed-reference extractor: matches ``[<prefix-segments>-<digits>]``
+# anywhere in narrative prose. ``parse_reference_id`` narrows further to the
+# canonical synthesizer prefix taxonomy. Used by the consumer-side validators
+# (analyst, strategist, PM) to find candidate citations in narrative fields.
+REF_ID_RE = re.compile(r"\[([A-Z][A-Z0-9-]*-[0-9]+)\]")
 
 # Bracketed-token extractor: matches any ``[<UPPER/digit/hyphen body>]``,
 # including well-formed ``[CR-3]`` (body ``CR-3``). The bare-vs-indexed
