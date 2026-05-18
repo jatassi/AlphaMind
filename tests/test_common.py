@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+import requests.exceptions
 from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind._kernel.ids import Symbol
@@ -368,6 +369,73 @@ class TestWithRetriesCritical:
             return "ok"
 
         result = cdn_502()
+        assert result == "ok"
+        assert call_count == 2
+
+    def test_critical_retries_on_httpx_connect_error(self) -> None:
+        # httpx clients raise ConnectError on DNS / connection-refused failures
+        # (e.g. transient `getaddrinfo failed`). It's a NetworkError subclass
+        # and must retry — same blast radius as a timeout.
+        call_count = 0
+
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def dns_blip() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise httpx.ConnectError("getaddrinfo failed")
+            return "ok"
+
+        result = dns_blip()
+        assert result == "ok"
+        assert call_count == 2
+
+    def test_critical_retries_on_httpx_read_error(self) -> None:
+        # Mid-flight socket failure — also a NetworkError subclass, transient.
+        call_count = 0
+
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def socket_drop() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise httpx.ReadError("connection reset")
+            return "ok"
+
+        result = socket_drop()
+        assert result == "ok"
+        assert call_count == 2
+
+    def test_critical_retries_on_requests_connection_error(self) -> None:
+        # finnhub's SDK uses `requests` internally; DNS / connection-refused
+        # surfaces as requests.exceptions.ConnectionError and must retry.
+        call_count = 0
+
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def requests_conn_blip() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise requests.exceptions.ConnectionError("connection refused")
+            return "ok"
+
+        result = requests_conn_blip()
+        assert result == "ok"
+        assert call_count == 2
+
+    def test_critical_retries_on_requests_read_timeout(self) -> None:
+        # Mid-flight read timeout from a `requests`-backed SDK — transient.
+        call_count = 0
+
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def requests_timeout() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise requests.exceptions.ReadTimeout("read timed out")
+            return "ok"
+
+        result = requests_timeout()
         assert result == "ok"
         assert call_count == 2
 
