@@ -22,7 +22,7 @@ from typing import Any
 from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from alphamind.persistence.models import Base, RegimeAdaptationStateRow
+from alphamind.persistence.models import Base, Brief, RegimeAdaptationStateRow
 from alphamind.portfolio_state.records.positions import (
     Direction,
     InstrumentType,
@@ -85,6 +85,7 @@ _WIPE_ORDER: tuple[type[Base], ...] = (
     BracketRow,
     ThesisComponentRow,
     ThesisRow,
+    Brief,
     PositionRow,
     CashLedgerRow,
     DrawdownStateRow,

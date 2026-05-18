@@ -22,7 +22,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alphamind.persistence.models import Base
+from alphamind.persistence.models import Base, Brief
 from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
@@ -213,6 +213,15 @@ def _prepopulate_wipe_list_tables(db_path: Path) -> None:
                 last_updated_at=ts,
             )
         )
+        sess.add(
+            Brief(
+                invocation_id="inv-pre",
+                brief_kind="correlation_regime",
+                reference_index_json="{}",
+                text="pre-existing brief",
+                created_at=ts,
+            )
+        )
         sess.commit()
     sync_engine.dispose()
 
@@ -262,6 +271,7 @@ class TestWipeClearsTables:
                 ActivityLogRow,
                 BracketLegRow,
                 BracketRow,
+                Brief,
                 ThesisRow,
                 PositionRow,
                 InvocationRow,
@@ -482,6 +492,7 @@ class TestWipeOrdering:
             "activity_log",
             "bracket_legs",
             "brackets",
+            "briefs",
             "corporate_action_integration_ledger",
             "fill_records",
             "orders",
