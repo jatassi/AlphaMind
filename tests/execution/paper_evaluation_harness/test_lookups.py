@@ -150,6 +150,26 @@ async def test_sql_order_lookup_maps_sell_to_close_to_sell(
     assert attrs.order_type is HarnessOrderType.limit
 
 
+async def test_sql_order_lookup_strategy_spec_returns_none(
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    """STRATEGY instrument_spec returns None (defensive wedge — no single underlying)."""
+    from alphamind.execution.paper_evaluation_harness.lookups import SqlOrderLookup
+
+    _seed_order_with_attrs(
+        str(tmp_path / "alphamind.db"),
+        order_id="order-strategy",
+        instrument_spec_json=json.dumps({"instrument_type": InstrumentType.STRATEGY.value}),
+        direction="BUY",
+        order_type="MARKET",
+    )
+
+    lookup = SqlOrderLookup(session_factory)
+    attrs = await lookup.get_order_attributes("order-strategy")
+    assert attrs is None
+
+
 async def test_sql_order_lookup_options_uses_underlying_ticker(
     session_factory: async_sessionmaker[AsyncSession],
     tmp_path: Path,
