@@ -161,21 +161,21 @@ class TestAudienceRouting:
         _seed_macro(
             session,
             series_id="DFII10",
-            source="FRED",
+            source="fred",
             values=[1.5] * 61,
             start_day=start_day,
         )
         _seed_macro(
             session,
             series_id="DCOILWTICO",
-            source="EIA",
+            source="fred",
             values=[70.0] * 61,
             start_day=start_day,
         )
         _seed_macro(
             session,
             series_id="VIXCLS",
-            source="FRED",
+            source="fred",
             values=[15.0] * 61,
             start_day=start_day,
         )
