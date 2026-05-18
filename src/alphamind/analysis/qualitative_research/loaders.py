@@ -58,11 +58,12 @@ from alphamind.persistence.models import (
     PredictionMarketSnapshots,
 )
 from alphamind.portfolio_state.records.positions import (
-    InstrumentType,
     PositionStatus,
+    resolve_ticker,
 )
 from alphamind.portfolio_state.records.theses import ThesisRecordStatus
 from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.positions_codec import details_from_json
 from alphamind.state.tables.theses import ThesisRow
 
 # ---------------------------------------------------------------------------
@@ -82,7 +83,7 @@ _DEFAULT_LOW_LIQUIDITY_USD: float = 10_000.0
 # Minimum trailing observations for per-ticker calibration.
 _DEFAULT_SENTIMENT_MIN_OBSERVATIONS: int = 30
 
-# News-vs-price divergence window — lookback in trading days for the price
+# News-vs-price divergence window — lookback in calendar days for the price
 # return that is compared against sentiment direction.
 _DEFAULT_DIVERGENCE_PRICE_LOOKBACK_DAYS: int = 5
 
@@ -348,8 +349,9 @@ def _load_price_returns_by_ticker(
 
 
 def _is_divergent(directional_score: float, price_return: float, *, threshold: float) -> bool:
-    """True iff sentiment and price disagree on direction and both magnitudes
-    clear ``threshold``."""
+    """True iff sentiment and price disagree on direction and both
+    ``abs(directional_score)`` and ``abs(price_return)`` clear ``threshold``.
+    """
     if abs(directional_score) < threshold or abs(price_return) < threshold:
         return False
     return (directional_score > 0) != (price_return > 0)
@@ -476,21 +478,25 @@ def load_sentiment_aggregates(
     if not baselines:
         return ()
 
-    # Per-ticker article counts share a single window across all tickers:
-    # the latest baseline's as_of is identical for the whole panel because
-    # Class B refresh writes one row per ticker per refresh.
-    windowed_tickers = [t for t, recent in baselines.items() if len(recent) == 2]
-    if windowed_tickers:
-        prior_as_of = min(recent[1].as_of for recent in baselines.values() if len(recent) == 2)
-        latest_as_of = max(recent[0].as_of for recent in baselines.values() if len(recent) == 2)
-        volume_by_ticker = _load_article_volume_by_ticker(
-            session,
-            tickers=windowed_tickers,
-            window_start_str=prior_as_of,
-            window_end_str=latest_as_of,
+    # Article counts use each ticker's own rate-of-change window. In the
+    # steady state Class B refresh writes one row per ticker per refresh, so
+    # nearly every ticker shares the same ``(prior, latest)`` pair and this
+    # collapses to one query; backfills or repair refreshes that desync the
+    # panel naturally fan out into per-window queries.
+    window_buckets: dict[tuple[str, str], list[str]] = {}
+    for ticker, recent in baselines.items():
+        if len(recent) == 2:
+            window_buckets.setdefault((recent[1].as_of, recent[0].as_of), []).append(ticker)
+    volume_by_ticker: dict[str, int] = {}
+    for (prior_as_of, latest_as_of), bucket_tickers in window_buckets.items():
+        volume_by_ticker.update(
+            _load_article_volume_by_ticker(
+                session,
+                tickers=bucket_tickers,
+                window_start_str=prior_as_of,
+                window_end_str=latest_as_of,
+            )
         )
-    else:
-        volume_by_ticker = {}
 
     price_returns = _load_price_returns_by_ticker(
         session,
@@ -785,37 +791,6 @@ def load_calendar_events_72h(
 # ---------------------------------------------------------------------------
 
 
-def _ticker_from_position_details_json(details_json: str) -> str | None:
-    """Lift the underlying ticker out of a ``positions.details_json`` blob.
-
-    Mirrors :func:`alphamind.portfolio_state.records.positions.resolve_ticker`
-    semantics but reads the JSON directly so this loader does not pay the cost
-    of full-record rehydration (and its execution-history invariants) just to
-    resolve a ticker.
-    """
-    payload: dict[str, object] = json.loads(details_json)
-    kind = payload.get("instrument_type")
-    if kind == InstrumentType.EQUITY.value:
-        ticker = payload.get("ticker")
-        return ticker if isinstance(ticker, str) else None
-    if kind == InstrumentType.OPTIONS.value:
-        ticker = payload.get("underlying_ticker")
-        return ticker if isinstance(ticker, str) else None
-    if kind == InstrumentType.STRATEGY.value:
-        legs = payload.get("legs") or []
-        if not isinstance(legs, list) or not legs:
-            return None
-        first_leg = legs[0]
-        if not isinstance(first_leg, dict):
-            return None
-        options = first_leg.get("options")
-        if not isinstance(options, dict):
-            return None
-        ticker = options.get("underlying_ticker")
-        return ticker if isinstance(ticker, str) else None
-    return None
-
-
 def load_active_thesis_summaries(
     session: Session,
     *,
@@ -845,10 +820,10 @@ def load_active_thesis_summaries(
 
     results: list[ActiveThesis] = []
     for thesis_row, details_json in rows:
-        ticker = _ticker_from_position_details_json(details_json)
+        ticker = resolve_ticker(details_from_json(details_json))
         if ticker is None:
-            # StrategyPositionDetails with no legs — nothing to attribute the
-            # thesis to in the qualitative researcher's per-ticker view.
+            # Only ``StrategyPositionDetails`` with no legs can produce ``None``
+            # — nothing to attribute the thesis to in the per-ticker view.
             continue
         narrative = json.loads(thesis_row.narrative_json)
         time_hours = (
@@ -886,8 +861,8 @@ def load_qualitative_inputs(
     stale) of the four sub-loaders' freshness timestamps so the agent can
     set ``signal_quality = DEGRADED`` when any upstream is stale.
 
-    ``load_active_thesis_summaries`` returns ``()`` and carries no freshness
-    timestamp; it is excluded from the minimum calculation.
+    :class:`ActiveThesis` carries no ``data_freshness`` field, so thesis
+    records are excluded from the minimum-freshness calculation.
     """
     sentiment = load_sentiment_aggregates(session, as_of=as_of, ticker_scope=ticker_scope)
     prediction = load_prediction_market_snapshot(session, as_of=as_of)

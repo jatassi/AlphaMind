@@ -872,6 +872,72 @@ class TestLoadSentimentAggregates:
         assert len(result) == 1
         assert result[0].volume is None
 
+    def test_volume_window_boundary_inclusivity(self, session: Session) -> None:
+        """Lower edge is exclusive (prior_baseline timestamp itself excluded);
+        upper edge is inclusive (latest_baseline timestamp itself counted).
+        """
+        _add_ticker(session, "NVDA")
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=prior_iso
+        )
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.5, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        # Boundary articles: one at the lower edge (excluded), one at the upper
+        # edge (included), one strictly inside (included).
+        in_window_iso = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_news_article(
+            session, article_id="art-lower-edge", ticker="NVDA", published_at=prior_iso
+        )
+        _add_news_article(session, article_id="art-upper-edge", ticker="NVDA", published_at=_ISO)
+        _add_news_article(
+            session, article_id="art-inside", ticker="NVDA", published_at=in_window_iso
+        )
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        assert len(result) == 1
+        assert result[0].volume == 2
+
+    def test_volume_uses_per_ticker_window_when_panel_desynced(self, session: Session) -> None:
+        """Tickers with desynced refresh timestamps each get their own window."""
+        _add_ticker(session, "NVDA")
+        _add_ticker(session, "AAPL")
+        # NVDA: prior 7 days ago, latest at AS_OF.
+        nvda_prior = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.0, stdev=0.3, n_observations=100, as_of_str=nvda_prior
+        )
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.4, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        # AAPL: backfilled — prior 30 days ago, latest 1 day ago.
+        aapl_prior = (AS_OF - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        aapl_latest = (AS_OF - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_sentiment_baseline(
+            session, "AAPL", mean=0.0, stdev=0.3, n_observations=100, as_of_str=aapl_prior
+        )
+        _add_sentiment_baseline(
+            session, "AAPL", mean=0.4, stdev=0.3, n_observations=100, as_of_str=aapl_latest
+        )
+        # Article in NVDA's 7-day window only (would also fall in AAPL's 30-day
+        # window) → NVDA volume=1. The reverse: an article 20 days back falls
+        # inside AAPL's window but outside NVDA's → AAPL volume=1, NVDA=0.
+        in_nvda_window = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        only_aapl_window = (AS_OF - timedelta(days=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_news_article(
+            session, article_id="art-nvda", ticker="NVDA", published_at=in_nvda_window
+        )
+        _add_news_article(
+            session, article_id="art-aapl", ticker="AAPL", published_at=only_aapl_window
+        )
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        volume_by_ticker = {r.ticker: r.volume for r in result}
+        assert volume_by_ticker == {"NVDA": 1, "AAPL": 1}
+
     def test_divergence_flag_true_when_sentiment_positive_price_negative(
         self, session: Session
     ) -> None:
@@ -924,6 +990,22 @@ class TestLoadSentimentAggregates:
         _add_sentiment_baseline(
             session, "NVDA", mean=0.4, stdev=0.3, n_observations=100, as_of_str=_ISO
         )
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        assert len(result) == 1
+        assert result[0].divergence_flag is None
+
+    def test_divergence_flag_none_when_only_one_price_bar(self, session: Session) -> None:
+        """One daily bar satisfies both lookback anchors → can't compute a
+        return, so divergence_flag stays None."""
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.4, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        # Single bar at AS_OF — same bar will satisfy both "latest" and "prior"
+        # anchor lookups.
+        _add_daily_bar(session, "NVDA", AS_OF, adj_close=100.0)
         session.commit()
 
         result = load_sentiment_aggregates(session, as_of=AS_OF)
