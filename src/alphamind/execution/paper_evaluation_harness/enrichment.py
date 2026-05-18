@@ -79,10 +79,12 @@ class OrderLookup(Protocol):
 class AdvLookup(Protocol):
     """Async accessor for per-ticker average daily volume (shares).
 
-    Production impl wraps :meth:`DistillationRepository.load_ticker_adv`
-    (``avg_daily_volume_shares`` or ``None``). Returns ``None`` when the
-    ticker has no ADV substrate, which the harness propagates as
-    ``LiveExecutionEstimate is None``.
+    Production impl reads ``asset_universe.avg_daily_volume_shares`` (the
+    same column ``SqlDistillationRepository.load_ticker_adv`` queries; the
+    two adapters' queries diverged because the distillation repo uses a sync
+    session and this wedge runs in the async monitor — consolidation tracked
+    by ALP-533). Returns ``None`` when the ticker has no ADV substrate,
+    which the harness propagates as ``LiveExecutionEstimate is None``.
     """
 
     async def get_adv_shares(self, ticker: str) -> float | None: ...
