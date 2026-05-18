@@ -193,7 +193,7 @@ _REFERENCE_PREFIX_VALUES: frozenset[str] = frozenset(p.value for p in ReferenceP
 
 
 def find_bare_prefix_citations(text: str) -> tuple[str, ...]:
-    """Return bracketed tokens in ``text`` whose body is a known ReferencePrefix value with no index suffix.
+    """Return bracketed tokens whose body is a known ReferencePrefix value without an index.
 
     Examples: ``"see [CR] and [SA-TECH-3]"`` returns ``("CR",)`` — the
     well-formed ``SA-TECH-3`` is ignored; ``[CR]`` is a bare prefix.

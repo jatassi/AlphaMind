@@ -191,7 +191,7 @@ def test_find_bare_prefix_citations_skips_unknown_prefixes() -> None:
 
 
 def test_find_bare_prefix_citations_longest_match_subtype() -> None:
-    """``[SA-TECH]`` returns ``("SA-TECH",)`` — the canonical member, not the unknown shorter ``SA``."""
+    """``[SA-TECH]`` returns the canonical member; the unknown shorter ``SA`` is never matched."""
     assert find_bare_prefix_citations("[SA-TECH]") == ("SA-TECH",)
     # SA-TECH-ANOM is a longer canonical prefix; bare form should be detected.
     assert find_bare_prefix_citations("[SA-TECH-ANOM]") == ("SA-TECH-ANOM",)
