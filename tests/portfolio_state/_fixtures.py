@@ -109,6 +109,7 @@ def _make_config() -> PortfolioStateConfig:
         thesis_quality_aggregates_trailing_windows_days=(5, 20),
         snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
         snapshot_freshness_max_price_age_seconds=900.0,
+        snapshot_freshness_max_option_price_age_seconds=2100.0,
     )
 
 

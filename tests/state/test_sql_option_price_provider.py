@@ -22,8 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 # imported before ``state.repository.__init__`` runs, otherwise the
 # repository package triggers a partial-import chain via
 # ``activity_log_queries → state.invocation_context.config_change →
-# activity_log_queries``. Mirrors the import order used by every other
-# ``tests/state/*`` module.
+# activity_log_queries``. Other ``tests/state/*`` modules accidentally
+# avoid this because they already import an ``invocation_context`` symbol
+# (e.g. ``InvocationRecord``); we don't, so the priming is explicit.
 import alphamind.state.invocation_context  # noqa: F401
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -145,18 +146,19 @@ def _seed_contract_and_snapshot(
 # ---------------------------------------------------------------------------
 
 
-async def test_live_snapshot_returns_midpoint(
+async def test_live_snapshot_prefers_midpoint_over_last_price(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
 ) -> None:
+    """Bid/ask midpoint takes precedence over ``last_price``; the two differ here."""
     _async_engine, factory = db
     _seed_contract_and_snapshot(
         tmp_path / "alphamind.db",
         occ_symbol=_OCC_AAPL,
         snapshot_ts=_NOW - timedelta(seconds=30),
-        last_price=5.20,
-        bid=5.15,
-        ask=5.25,
+        last_price=4.50,
+        bid=5.10,
+        ask=5.30,
     )
 
     provider = SqlOptionPriceProvider(session_factory=factory, now=lambda: _NOW)
@@ -164,6 +166,7 @@ async def test_live_snapshot_returns_midpoint(
 
     assert _OCC_AAPL in result
     quote = result[_OCC_AAPL]
+    # Midpoint = (5.10 + 5.30) / 2 = 5.20 — distinct from last_price 4.50
     assert quote.price_usd == pytest.approx(5.20)
     assert quote.is_stale is False
     assert quote.source is PriceSource.INTRADAY_QUOTE
@@ -188,6 +191,27 @@ async def test_live_snapshot_falls_back_to_last_price_when_quote_missing(
     result = provider.get_quotes((_OCC_AAPL,), freshness_threshold_seconds=900.0)
 
     assert result[_OCC_AAPL].price_usd == pytest.approx(7.50)
+
+
+async def test_crossed_quote_falls_back_to_last_price(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """A crossed book (bid > ask) is treated as no-quote; last_price drives the price."""
+    _async_engine, factory = db
+    _seed_contract_and_snapshot(
+        tmp_path / "alphamind.db",
+        occ_symbol=_OCC_AAPL,
+        snapshot_ts=_NOW - timedelta(seconds=30),
+        last_price=6.00,
+        bid=5.30,
+        ask=5.10,
+    )
+
+    provider = SqlOptionPriceProvider(session_factory=factory, now=lambda: _NOW)
+    result = provider.get_quotes((_OCC_AAPL,), freshness_threshold_seconds=900.0)
+
+    assert result[_OCC_AAPL].price_usd == pytest.approx(6.00)
 
 
 # ---------------------------------------------------------------------------

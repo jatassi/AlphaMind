@@ -294,6 +294,7 @@ def _price_fields_equity(
 
 def _option_mark_price(
     *,
+    position_id: str,
     occ_symbol: str,
     option_price_map: dict[str, PriceQuote],
     entry_premium: float,
@@ -303,10 +304,30 @@ def _option_mark_price(
     Mirrors the equity path's fall-through pattern but never zeroes out — when
     no live quote is available the position is still worth the premium paid,
     and the operator wants a finite MV in the view instead of a sentinel that
-    silently drops the position out of weight / drawdown attribution.
+    silently drops the position out of weight / drawdown attribution. The
+    fallback is logged at WARNING so an operator monitoring the assembler can
+    distinguish "live MTM is driving the snapshot" from "every option fell
+    back to entry premium" — the symptom of a stalled collector.
     """
     quote = option_price_map.get(occ_symbol)
-    if quote is None or quote.is_stale:
+    if quote is None:
+        log.warning(
+            "option price snapshot missing for position %s contract %s; "
+            "falling back to entry premium %.4f",
+            position_id,
+            occ_symbol,
+            entry_premium,
+        )
+        return entry_premium
+    if quote.is_stale:
+        log.warning(
+            "option price snapshot stale for position %s contract %s "
+            "(as_of=%s); falling back to entry premium %.4f",
+            position_id,
+            occ_symbol,
+            quote.as_of_timestamp.isoformat(),
+            entry_premium,
+        )
         return entry_premium
     return quote.price_usd
 
@@ -330,6 +351,7 @@ def _price_fields_options(
     if raw_underlying.is_stale:
         return _ZERO_PRICE_FIELDS
     mv_price = _option_mark_price(
+        position_id=position.position_id,
         occ_symbol=occ_symbol_for_options(details),
         option_price_map=option_price_map,
         entry_premium=details.premium_paid_per_contract,
@@ -372,6 +394,7 @@ def _price_fields_strategy(
         leg.leg_id: dataclasses.replace(
             leg_prices[leg.leg_id],
             price_usd=_option_mark_price(
+                position_id=position.position_id,
                 occ_symbol=occ_symbol_for_options(leg.options),
                 option_price_map=option_price_map,
                 entry_premium=leg.options.premium_paid_per_contract,
@@ -415,8 +438,11 @@ def _enrich_position_first_pass(
         pf = _price_fields_equity(position, price_map)
     elif position.instrument_type == InstrumentType.OPTIONS:
         pf = _price_fields_options(position, price_map, option_price_map)
-    else:  # STRATEGY
+    elif position.instrument_type == InstrumentType.STRATEGY:
         pf = _price_fields_strategy(position, price_map, option_price_map)
+    else:
+        msg = f"unhandled instrument_type: {position.instrument_type}"
+        raise AssertionError(msg)
     bracket = brackets_by_bracket_id.get(position.bracket_id or "")
 
     unrealized_pnl_usd = compute_unrealized_pnl_usd(
@@ -481,9 +507,8 @@ def assemble_snapshot(
 
     All parameters are keyword-only. ``now`` is supplied by the caller so the
     assembler is testable without a clock fixture. ``option_price_provider``
-    supplies live option-contract mark-to-market quotes keyed by OCC symbol
-    (ALP-516); a missing or stale quote falls back to
-    ``premium_paid_per_contract``.
+    supplies live option-contract mark-to-market quotes keyed by OCC symbol;
+    a missing or stale quote falls back to ``premium_paid_per_contract``.
 
     Raises:
         RepositoryReadError / RepositoryConsistencyError: propagated without
@@ -554,16 +579,17 @@ def assemble_snapshot(
         tickers=pricing_tickers,
         freshness_threshold_seconds=config.snapshot_freshness_max_price_age_seconds,
     )
-    # Option-contract MTM (ALP-516). The OCC-symbol pull is independent of
-    # the underlying pull; equity-only portfolios resolve no OCC symbols and
-    # the provider returns ``{}``. The collector's snapshot cadence (~30 min)
-    # is materially slower than the underlying-quote stream, so the
-    # freshness threshold deliberately shares ``max_price_age_seconds`` —
-    # add a dedicated knob only when the operator needs to diverge.
+    # Option-contract MTM. The OCC-symbol pull is independent of the
+    # underlying pull; equity-only portfolios resolve no OCC symbols and the
+    # provider returns ``{}``. Freshness uses
+    # ``snapshot_freshness_max_option_price_age_seconds`` (default 2100s)
+    # rather than the underlying knob because the collector's snapshot
+    # cadence (~30 min, per ``config/collector_schedule.yaml``) is
+    # materially slower than the live underlying-quote stream.
     option_occ_symbols = _resolve_option_occ_symbols(all_positions)
     option_price_map = option_price_provider.get_quotes(
         option_occ_symbols,
-        freshness_threshold_seconds=config.snapshot_freshness_max_price_age_seconds,
+        freshness_threshold_seconds=config.snapshot_freshness_max_option_price_age_seconds,
     )
 
     # ------------------------------------------------------------------

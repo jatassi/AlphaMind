@@ -385,7 +385,7 @@ async def _load_active_risk_parameters_from_row(
 # ---------------------------------------------------------------------------
 
 
-async def _assemble_for_breach_loop_tick(
+async def _assemble_for_breach_loop_tick(  # noqa: PLR0913 — substrate-level seam; each arg threaded once from make_assembled_snapshot_provider, no natural bundling.
     *,
     session_factory: async_sessionmaker[AsyncSession],
     state_persistence_config: StatePersistenceConfig,
@@ -393,6 +393,7 @@ async def _assemble_for_breach_loop_tick(
     portfolio_state_config: PortfolioStateConfig,
     bootstrap_parameters: ActiveRiskParameterSet,
     position_sector_resolver: SectorResolver,
+    option_price_provider: SqlOptionPriceProvider,
     invocation_row: tuple[str, str, str] | None,
     as_of: datetime,
 ) -> AssembledSnapshot:
@@ -403,6 +404,12 @@ async def _assemble_for_breach_loop_tick(
     :func:`assemble_snapshot` call live here so the provider is a thin
     closure over them. Callers own the upstream ``_read_latest_invocation_row``
     so each can apply its own bootstrap policy before invoking.
+
+    ``option_price_provider`` is constructed once by
+    :func:`make_assembled_snapshot_provider` and reused across ticks — the
+    sync sessionmaker it derives is non-trivial (a fresh ``Engine`` + PRAGMA
+    listener) and the breach-loop tick runs at the cadence configured by
+    ``breach_evaluation_cadence_seconds`` (default 60 s).
     """
     invocation_id = _BOOTSTRAP_SENTINEL if invocation_row is None else invocation_row[0]
     active = await _load_active_risk_parameters_from_row(
@@ -423,7 +430,6 @@ async def _assemble_for_breach_loop_tick(
         config=state_persistence_config,
     )
     price_provider = _build_price_provider(underlying_cache, as_of=as_of)
-    option_price_provider = SqlOptionPriceProvider(session_factory=session_factory)
     return assemble_snapshot(
         repository=repository,
         price_provider=price_provider,
@@ -473,6 +479,7 @@ def make_assembled_snapshot_provider(
     )
     ticker_sector_resolver = _build_sector_resolver(resolved)
     position_sector_resolver = adapt_ticker_sector_resolver(ticker_sector_resolver)
+    option_price_provider = SqlOptionPriceProvider(session_factory=session_factory)
 
     async def _provider() -> AssembledSnapshot:
         row = await _read_latest_invocation_row(session_factory)
@@ -483,6 +490,7 @@ def make_assembled_snapshot_provider(
             portfolio_state_config=portfolio_state_config,
             bootstrap_parameters=bootstrap_parameters,
             position_sector_resolver=position_sector_resolver,
+            option_price_provider=option_price_provider,
             invocation_row=row,
             as_of=now(),
         )

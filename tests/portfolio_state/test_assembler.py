@@ -75,6 +75,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
     StrategyLeg,
     StrategyPositionDetails,
+    occ_symbol_for_options,
 )
 from alphamind.portfolio_state.records.theses import RecentThesisResolution, ThesisRecord
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
@@ -111,6 +112,7 @@ def _make_config() -> PortfolioStateConfig:
         thesis_quality_aggregates_trailing_windows_days=(5, 20),
         snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
         snapshot_freshness_max_price_age_seconds=60.0,
+        snapshot_freshness_max_option_price_age_seconds=300.0,
     )
 
 
@@ -1564,12 +1566,9 @@ def _make_open_options_position(
     )
 
 
-def _option_occ_symbol_for_test() -> str:
-    """Mirror :func:`occ_symbol_for_options` against the test geometry."""
-    expiry = _OPT_EXPIRY.strftime("%y%m%d")
-    cp = "C" if _OPT_CONTRACT_TYPE is OptionContractType.CALL else "P"
-    strike_milli = round(_OPT_STRIKE * 1000)
-    return f"O:{_OPT_UNDERLYING}{expiry}{cp}{strike_milli:08d}"
+def _occ_symbol_for_test() -> str:
+    """Resolve the OCC symbol for the single test position via the shared helper."""
+    return occ_symbol_for_options(_make_open_options_position().details)  # type: ignore[arg-type]
 
 
 def _assemble_with_option_provider(
@@ -1600,7 +1599,7 @@ def _assemble_with_option_provider(
 
 def test_option_pricing_uses_live_quote_when_fresh() -> None:
     """A fresh option snapshot drives MV; entry premium is NOT used."""
-    occ = _option_occ_symbol_for_test()
+    occ = _occ_symbol_for_test()
     live_premium = 7.50
     quote = PriceQuote(
         ticker=occ,
@@ -1618,7 +1617,7 @@ def test_option_pricing_uses_live_quote_when_fresh() -> None:
 
 def test_option_pricing_falls_back_to_entry_premium_when_stale() -> None:
     """A stale option snapshot is ignored; MV uses entry premium."""
-    occ = _option_occ_symbol_for_test()
+    occ = _occ_symbol_for_test()
     quote = PriceQuote(
         ticker=occ,
         price_usd=7.50,
@@ -1638,4 +1637,54 @@ def test_option_pricing_falls_back_to_entry_premium_when_no_snapshot() -> None:
     assembled = _assemble_with_option_provider(option_quotes={}, premium=5.0)
     view = assembled.snapshot.open_positions[0]
     expected_mv = 2.0 * LISTED_OPTION_CONTRACT_MULTIPLIER * 5.0
+    assert float(view.current_market_value_usd) == pytest.approx(expected_mv)
+
+
+def test_strategy_pricing_mixes_live_leg_with_entry_premium_leg() -> None:
+    """When one strategy leg has a live quote and the other does not, MV combines both."""
+    leg1_premium = 10.0
+    leg2_premium = 5.0
+    leg1_live = 12.5
+    pos = _make_strategy_position(premium1=leg1_premium, premium2=leg2_premium)
+    fixture = _make_fixture(
+        open_positions=(pos,),
+        cash_ledger=_make_cash_ledger(current_cash=0.0),
+    )
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider(
+        {"NVDA": _make_fresh_quote("NVDA", 520.0)},
+        _NOW,
+    )
+
+    assert isinstance(pos.details, StrategyPositionDetails)
+    leg1_occ = occ_symbol_for_options(pos.details.legs[0].options)
+    option_provider = StubOptionPriceProvider(
+        {
+            leg1_occ: PriceQuote(
+                ticker=leg1_occ,
+                price_usd=leg1_live,
+                as_of_timestamp=_NOW - timedelta(seconds=30),
+                source=PriceSource.INTRADAY_QUOTE,
+                is_stale=False,
+            ),
+        },
+        _NOW,
+    )
+
+    assembled = assemble_snapshot(
+        repository=repo,
+        price_provider=provider,
+        option_price_provider=option_provider,
+        sector_resolver=_null_sector_resolver,
+        config=_make_config(),
+        now=_NOW,
+    )
+    view = assembled.snapshot.open_positions[0]
+
+    # Leg 1 marks at the live quote, leg 2 falls back to entry premium.
+    # Each leg has contract_count=1, multiplier=100.
+    expected_mv = (
+        1.0 * LISTED_OPTION_CONTRACT_MULTIPLIER * leg1_live
+        + 1.0 * LISTED_OPTION_CONTRACT_MULTIPLIER * leg2_premium
+    )
     assert float(view.current_market_value_usd) == pytest.approx(expected_mv)

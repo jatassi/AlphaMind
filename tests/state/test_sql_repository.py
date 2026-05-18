@@ -1770,6 +1770,7 @@ async def test_assemble_snapshot_against_sql_repo_produces_populated_snapshot(
         thesis_quality_aggregates_trailing_windows_days=(5, 20),
         snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
         snapshot_freshness_max_price_age_seconds=60.0,
+        snapshot_freshness_max_option_price_age_seconds=300.0,
     )
     quote = PriceQuote(
         ticker=Symbol("AAPL"),

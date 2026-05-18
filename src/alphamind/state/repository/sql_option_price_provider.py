@@ -57,12 +57,17 @@ def _select_option_price(
     """Pick the option price from a snapshot row.
 
     Industry-standard MTM uses the bid/ask midpoint when both legs are
-    positive — quote-driven, robust to trade staleness. Falls back to
-    ``last_price`` when a quote is missing. Returns ``None`` when neither
-    candidate is usable so the caller can omit the symbol (the assembler
-    then keeps the entry-premium fallback).
+    positive and the book is not crossed (bid <= ask) — quote-driven, robust
+    to trade staleness. Falls back to ``last_price`` when a usable midpoint
+    is unavailable (zero/crossed/locked quote, or a missing leg). Returns
+    ``None`` when neither candidate is usable so the caller can omit the
+    symbol; the assembler then keeps the entry-premium fallback.
+
+    A zero bid alone is treated as no-quote (deep-OTM contracts often quote
+    bid=0); the caller fall through to ``last_price`` and only omits the
+    symbol when both candidates are absent.
     """
-    if bid is not None and ask is not None and bid > 0 and ask > 0:
+    if bid is not None and ask is not None and bid > 0 and ask > 0 and bid <= ask:
         return (bid + ask) / 2.0
     if last_price is not None and last_price > 0:
         return last_price

@@ -67,6 +67,7 @@ def _make_config(
         thesis_quality_aggregates_trailing_windows_days=(5, 20),
         snapshot_freshness_max_phase1_to_snapshot_seconds=max_phase1_to_snapshot_seconds,
         snapshot_freshness_max_price_age_seconds=max_price_age_seconds,
+        snapshot_freshness_max_option_price_age_seconds=max_price_age_seconds,
     )
 
 
