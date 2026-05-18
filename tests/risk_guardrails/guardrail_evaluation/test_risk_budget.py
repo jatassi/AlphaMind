@@ -395,6 +395,69 @@ def test_headroom_pct_inverse_rule_below_floor_clamps_to_zero() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Magnitude-rule classification tests
+# ---------------------------------------------------------------------------
+
+
+def test_magnitude_rule_accepts_negative_current_and_classifies_on_absolute_value() -> None:
+    # Long-options portfolios carry negative theta by construction. The bug
+    # this regression covers: ``_classify_zone`` used to reject any
+    # ``current_value < 0`` outright, crashing the decision pipeline before a
+    # single agent ran. Magnitude rules (``magnitude=True``) must classify on
+    # ``|current|`` instead — mirroring projection.py:143.
+    config = _config()
+    snapshot = _snapshot(portfolio_theta_pct_per_day=-0.021)
+
+    budget = build_risk_budget_consumption(snapshot, config)
+
+    entry = budget.entry_by_rule_id("portfolio_theta_pct_per_day")
+    assert entry is not None
+    # |-0.021| / 0.5 = 4.2% consumption → NORMAL (warning starts at 70%).
+    assert entry.current_value == pytest.approx(-0.021)
+    assert entry.zone == RiskZone.NORMAL
+
+
+def test_magnitude_rule_classifies_warning_on_negative_magnitude() -> None:
+    # |-0.4| / 0.5 = 80% consumption → WARNING band ([70, 85)).
+    config = _config()
+    snapshot = _snapshot(portfolio_theta_pct_per_day=-0.4)
+
+    budget = build_risk_budget_consumption(snapshot, config)
+
+    entry = budget.entry_by_rule_id("portfolio_theta_pct_per_day")
+    assert entry is not None
+    assert entry.zone == RiskZone.WARNING
+
+
+def test_magnitude_rule_headroom_pct_uses_absolute_value() -> None:
+    # vega limit is 1.0; |-0.5| / 1.0 = 50% consumption → 50% headroom.
+    # A naive signed read would have computed (1.0 - (-0.5))/1.0 = 150%
+    # (clamped to 100), masking the real consumption.
+    config = _config()
+    snapshot = _snapshot(portfolio_vega_pct_per_iv_point=-0.5)
+
+    budget = build_risk_budget_consumption(snapshot, config)
+
+    entry = budget.entry_by_rule_id("portfolio_vega_pct_per_iv_point")
+    assert entry is not None
+    assert entry.headroom_pct_of_limit == pytest.approx(50.0)
+
+
+def test_magnitude_rule_headroom_field_stays_signed() -> None:
+    # RiskBudgetEntry validates ``headroom == limit_value - current_value``
+    # with strict equality. The magnitude flag affects classification +
+    # headroom_pct, NOT the signed headroom field.
+    config = _config()
+    snapshot = _snapshot(portfolio_theta_pct_per_day=-0.1)
+
+    budget = build_risk_budget_consumption(snapshot, config)
+
+    entry = budget.entry_by_rule_id("portfolio_theta_pct_per_day")
+    assert entry is not None
+    assert entry.headroom == pytest.approx(0.5 - (-0.1))
+
+
+# ---------------------------------------------------------------------------
 # Rule-label tests
 # ---------------------------------------------------------------------------
 

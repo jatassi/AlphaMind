@@ -258,6 +258,22 @@ def _build_sdk_options(
 # multiple sibling researcher invocations race for the same OAuth token.
 _INIT_STALL_TIMEOUT_SECONDS = 60.0
 
+# Between-message stall watchdog. The SDK occasionally produces an initial
+# ``SystemMessage`` at subprocess spawn then hangs without ever streaming
+# response content — the call burns the full outer budget with zero output.
+# 180s is conservative enough to absorb genuine extended-thinking gaps while
+# catching the dead-loss subprocess case in <⅓ of the 600s budget so the
+# retry path can engage with a fresh subprocess.
+_BETWEEN_MESSAGE_STALL_SECONDS = 180.0
+
+# Launch jitter applied to each domain researcher's SDK call. The
+# orchestrator fans out three sectors under :class:`asyncio.TaskGroup`,
+# which spawns three SDK subprocesses within milliseconds of each other.
+# Random jitter on ``[0, 0.5s]`` spreads the subprocess spawns out enough
+# to reduce OAuth-token concurrency contention without measurably extending
+# wall clock.
+_LAUNCH_JITTER_SECONDS = 0.5
+
 
 async def invoke_domain_researcher(
     *,
@@ -308,6 +324,8 @@ async def invoke_domain_researcher(
             diag=diag,
             budget_seconds=float(agent_config.latency_budget_seconds),
             init_stall_timeout_seconds=_INIT_STALL_TIMEOUT_SECONDS,
+            between_message_stall_seconds=_BETWEEN_MESSAGE_STALL_SECONDS,
+            concurrent_launch_jitter_seconds=_LAUNCH_JITTER_SECONDS,
             wall_start=wall_start,
             agent_name=agent_name,
             invocation_id=invocation_id,

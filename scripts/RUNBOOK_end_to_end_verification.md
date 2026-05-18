@@ -86,6 +86,23 @@ invariant the prior per-feature verify suite collectively covered:
    `wipe_and_seed` runs over the snapshot on every invocation, so
    per-invocation state-persistence rows never leak between runs.
 
+   **Pre-flight: confirm the snapshot is at alembic head.** Schema drift
+   surfaces as a mid-pipeline `OperationalError: no such table: <X>` —
+   noisy to triage from the captured stderr tail. Cheap to rule out up
+   front:
+
+   ```bash
+   DATABASE_PATH=data/alphamind-debug-e2e.db uv run alembic current \
+       | tail -1
+   uv run alembic heads | tail -1
+   ```
+
+   If the two revisions differ, re-snapshot (`scripts/snapshot_prod_for_debug_e2e.py
+   --force`) or `alembic upgrade head` against the debug DB before
+   invoking the verify. Re-snapshot is the canonical fix because it
+   also refreshes the data layer; `upgrade head` is a faster
+   schema-only patch when you don't care about collector freshness.
+
 ## Invocation
 
 The wrapped verify harness is the standard entry point:
@@ -244,6 +261,7 @@ timings.
 |----------------------------------------------------------|--------------|------------------|
 | `FAIL: auth — missing required env var(s)`               | `.env` not sourced | Re-run with `set -a && source .env && set +a && uv run …` |
 | `FAIL: subprocess — debug-e2e subprocess exited N`       | CLI raised internally | Read `stderr` tail in the FAIL message; the orchestrator names the failing layer |
+| `FAIL: subprocess — ... OperationalError: no such table: <X>` | Debug DB behind alembic head — a migration that added `<X>` never ran on the snapshot | Compare `alembic current` (under `DATABASE_PATH=data/alphamind-debug-e2e.db`) against `alembic heads`; if they differ, re-snapshot (`scripts/snapshot_prod_for_debug_e2e.py --force`) or `alembic upgrade head` against the debug DB. See Prerequisites step 4 pre-flight |
 | `FAIL: archive_directory — archive directory missing`    | CLI never wrote the archive | The orchestrator died before `insert_invocation_record` committed — check `~/AlphaMind/logs/pipeline.log` |
 | `FAIL: archive_directory — resolved_config.json missing` | Phase 1 prep crashed | Same as above — orchestrator died before the resolved-config writer fired |
 | `FAIL: archive_directory — progress.jsonl missing`       | JSONL emitter never wired | Re-verify `DebugE2ESettings.emitter_factory` populated (story ALP-500) |

@@ -84,6 +84,12 @@ _MAX_TURNS = 25
 # must not count against the agent's tool budget.
 _TOOL_NAME_PREFIX = "mcp__alphamind_qualitative__"
 
+# Launch jitter — the qualitative researcher runs concurrently with the
+# three domain researchers (see ``pipeline/analysis.py``). The same
+# ``[0, 0.5s]`` random delay used in the domain-researcher harness
+# staggers this fourth SDK subprocess spawn against the three siblings.
+_LAUNCH_JITTER_SECONDS = 0.5
+
 
 # ---------------------------------------------------------------------------
 # HarnessSuccess
@@ -352,6 +358,7 @@ async def invoke_qualitative_researcher(  # noqa: PLR0913 — public signature i
             diag=diag,
             budget_seconds=float(agent_config.latency_budget_seconds),
             init_stall_timeout_seconds=None,
+            concurrent_launch_jitter_seconds=_LAUNCH_JITTER_SECONDS,
             wall_start=wall_start,
             agent_name=agent_name,
             invocation_id=invocation_id,
