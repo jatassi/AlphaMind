@@ -26,11 +26,11 @@ in the corrective-retry message.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
 
 from alphamind.analysis.adaptive_research.models import AdaptiveBrief, Assessment
 from alphamind.analysis.domain_researchers.models import SectorBrief
 from alphamind.analysis.qualitative_research.models import QualitativeBrief
+from alphamind.commands.validation_results import ValidationError, ValidationResult
 from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
 
 __all__ = [
@@ -38,33 +38,6 @@ __all__ = [
     "ValidationResult",
     "validate_adaptive_brief",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Public types
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class ValidationError:
-    """A single structural violation found in an :class:`AdaptiveBrief`.
-
-    Mirrors the error-record shape produced by the JSON Schema validator so the
-    harness can build corrective-retry messages from a uniform type regardless
-    of whether the underlying validator is formal-schema or hand-written.
-    """
-
-    field_path: str
-    rule: str
-    message: str
-
-
-@dataclass(frozen=True, slots=True)
-class ValidationResult:
-    """Aggregate outcome of running :func:`validate_adaptive_brief`."""
-
-    is_valid: bool
-    errors: tuple[ValidationError, ...]
 
 
 # ---------------------------------------------------------------------------
@@ -392,4 +365,4 @@ def validate_adaptive_brief(
         sector_briefs, qualitative_brief, correlation_regime_brief
     )
     errors.extend(_check_strengthens_weakens_resolve(brief, valid_ids))
-    return ValidationResult(is_valid=not errors, errors=tuple(errors))
+    return ValidationResult(errors=tuple(errors))

@@ -1100,6 +1100,68 @@ class TestNarrativeReferenceResolution:
         result = _validate(envelope, retrieval_store=_retrieval_store("SA-FIN-2"))
         assert result.is_valid
 
+    def test_bare_prefix_citation_in_rationale_fails(self) -> None:
+        # ALP-521: a bracketed token whose body matches a ReferencePrefix value
+        # but carries no -N index can never resolve in the retrieval store
+        # (which is keyed by <prefix>-<index>). Surface it as a
+        # bare_prefix_citation error to drive corrective retry.
+        envelope = _make_analyst_envelope(
+            rationale_narrative="Correlation pair noted [CR] without index.",
+        )
+        result = _validate(envelope, retrieval_store=_retrieval_store())
+        assert not result.is_valid
+        bare_errors = [e for e in result.errors if e.criterion == "bare_prefix_citation"]
+        assert len(bare_errors) == 1
+        assert "CR" in bare_errors[0].message
+        assert "rationale_narrative" in bare_errors[0].field_path
+
+    def test_bare_prefix_alongside_resolved_reference_only_flags_bare(self) -> None:
+        # ``[SA-TECH-3]`` is in the retrieval store; ``[CR]`` is bare. Only
+        # the bare prefix should produce a bare_prefix_citation error.
+        envelope = _make_analyst_envelope(
+            rationale_narrative="Anchored on [SA-TECH-3] and pair note [CR].",
+        )
+        result = _validate(envelope, retrieval_store=_retrieval_store("SA-TECH-3"))
+        bare_errors = [e for e in result.errors if e.criterion == "bare_prefix_citation"]
+        assert len(bare_errors) == 1
+        assert "CR" in bare_errors[0].message
+        unknown_errors = [e for e in result.errors if e.criterion == "unknown_reference"]
+        assert unknown_errors == []
+
+    def test_non_taxonomy_bracketed_token_is_not_bare_prefix(self) -> None:
+        # ``[REC]`` and ``[BREACH]`` live outside the ReferencePrefix taxonomy;
+        # the bare-prefix detector must not flag them. (parent issue § C:
+        # producer-side prefixes are not in scope.)
+        envelope = _make_analyst_envelope(
+            rationale_narrative="References [REC] and [BREACH] internally.",
+        )
+        result = _validate(envelope, retrieval_store=_retrieval_store())
+        bare_errors = [e for e in result.errors if e.criterion == "bare_prefix_citation"]
+        assert bare_errors == []
+
+    def test_bare_prefix_in_modification_rationale_fails(self) -> None:
+        # The PM scans both rationale_narrative and modifications[].rationale;
+        # the bare-prefix wiring should fire on both.
+        envelope = _make_analyst_envelope(
+            verdict="approve_with_modification",
+            modifications=(
+                ModificationRecord(
+                    phase="pre_submission",
+                    field_changed="position_size",
+                    original_value=4,
+                    approved_value=3,
+                    adjustment_category="risk_reduction",
+                    rationale="Trim per [CR] without specifying index.",
+                ),
+            ),
+            commands=(_open_command(),),
+        )
+        result = _validate(envelope, retrieval_store=_retrieval_store())
+        assert not result.is_valid
+        bare_errors = [e for e in result.errors if e.criterion == "bare_prefix_citation"]
+        assert len(bare_errors) == 1
+        assert "modifications[0].rationale" in bare_errors[0].field_path
+
 
 # ---------------------------------------------------------------------------
 # Layer-3 (j): source_recommendation_id ∈ pre-processor bundle

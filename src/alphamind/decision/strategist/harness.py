@@ -145,7 +145,7 @@ def _build_retry_message_for_parse_error(error: ParseError) -> str:
 
 def _build_retry_message_for_validation_failure(result: ValidationResult) -> str:
     framing = "The prior response did not meet the structural contract for the strategist output."
-    first_error = result.failures[0]
+    first_error = result.errors[0]
     error_detail = (
         f"Field: {first_error.field_path}\nRule: {first_error.rule}\nError: {first_error.message}"
     )
@@ -294,8 +294,8 @@ def _parse_and_validate(
         retrieval_store=validator.retrieval_store,
         active_sectors=validator.active_sectors,
     )
-    if validation.overall == "FAIL":
-        for vf in validation.failures:
+    if not validation.is_valid:
+        for vf in validation.errors:
             diag.errors.append(
                 {
                     "attempt": attempt,

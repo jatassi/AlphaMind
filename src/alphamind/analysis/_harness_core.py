@@ -54,6 +54,7 @@ __all__ = [
     "_PROMPT_CACHE",
     "_PROMPT_CACHE_LOCK",
     "_REPO_ROOT",
+    "CLIResultErrorMapping",
     "CollectOutcome",
     "ContextOverflowFailure",
     "DiagState",

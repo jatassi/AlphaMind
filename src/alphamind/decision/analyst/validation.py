@@ -23,11 +23,18 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
 from datetime import datetime
 
-from alphamind.analysis.synthesizer.models import parse_reference_id
+from alphamind.analysis.synthesizer.models import (
+    find_bare_prefix_citations,
+    parse_reference_id,
+)
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
+from alphamind.commands.validation_results import (
+    ValidationError,
+    ValidationResult,
+    ValidationWarning,
+)
 from alphamind.decision.analyst.models import (
     AnalystOutput,
     InstrumentEquity,
@@ -42,38 +49,6 @@ __all__ = [
     "ValidationWarning",
     "validate_analyst_output",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Public types
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class ValidationError:
-    """A single Layer-2/3 violation found in an :class:`AnalystOutput`."""
-
-    field_path: str
-    rule: str
-    message: str
-
-
-@dataclass(frozen=True, slots=True)
-class ValidationWarning:
-    """A soft Layer-2 violation that does not disqualify the output."""
-
-    field_path: str
-    rule: str
-    message: str
-
-
-@dataclass(frozen=True, slots=True)
-class ValidationResult:
-    """Aggregate outcome of running :func:`validate_analyst_output`."""
-
-    is_valid: bool
-    errors: tuple[ValidationError, ...]
-    warnings: tuple[ValidationWarning, ...]
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +315,12 @@ def _check_narrative_references(
     Skips non-canonical prefixes (e.g., ``[INV-1]``, ``[ND-M1]``) — those
     don't live in the synthesizer's reference taxonomy and don't belong in
     the retrieval store.
+
+    Also surfaces bare-prefix citations (ALP-521): bracketed tokens whose
+    body matches a known ``ReferencePrefix`` value but carries no ``-N``
+    index. The retrieval store is keyed by ``<prefix>-<index>`` so a bare
+    prefix can never resolve; surfacing it as a ``bare_prefix_citation``
+    error lets the corrective-retry path run.
     """
     for match in _REF_ID_RE.finditer(narrative):
         ref_id = match.group(1)
@@ -354,6 +335,16 @@ def _check_narrative_references(
                     "synthesizer's per-invocation retrieval store"
                 ),
             )
+    for prefix in find_bare_prefix_citations(narrative):
+        yield ValidationError(
+            field_path=field_path,
+            rule="bare_prefix_citation",
+            message=(
+                f"bare-prefix citation [{prefix}] in {field_path} carries no index; "
+                "the retrieval store is keyed by <prefix>-<index> and cannot resolve "
+                f"bare prefixes. Cite a specific brief section like [{prefix}-1]."
+            ),
+        )
 
 
 def _check_recommendation_references(
@@ -516,7 +507,6 @@ def validate_analyst_output(
                 )
             )
     return ValidationResult(
-        is_valid=not errors,
         errors=tuple(errors),
         warnings=tuple(warnings),
     )

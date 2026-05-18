@@ -113,7 +113,7 @@ def test_validation_error_shape() -> None:
 
 
 def test_validation_result_shape() -> None:
-    result = ValidationResult(is_valid=True, errors=())
+    result = ValidationResult(errors=())
     assert result.is_valid is True
     assert result.errors == ()
 

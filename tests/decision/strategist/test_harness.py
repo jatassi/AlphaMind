@@ -431,7 +431,7 @@ async def test_happy_path_returns_harness_success(
     assert isinstance(result.tokens_used, TokensUsed)
     assert result.metadata["model"] == agent_config.model.value
     assert result.metadata["attempts"] == 1
-    assert result.validation_result.overall == "PASS"
+    assert result.validation_result.is_valid
 
 
 # ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ from alphamind.analysis.synthesizer.models import (
     BriefBundle,
     BriefSource,
     ReferencePrefix,
+    find_bare_prefix_citations,
     parse_reference_id,
 )
 
@@ -150,3 +151,47 @@ def test_parse_reference_id_returns_none_on_unknown() -> None:
     assert parse_reference_id("AR-0") is None
     # Empty input.
     assert parse_reference_id("") is None
+
+
+# ---------------------------------------------------------------------------
+# find_bare_prefix_citations — ALP-521
+# ---------------------------------------------------------------------------
+
+
+def test_find_bare_prefix_citations_single_bare_prefix() -> None:
+    """A single ``[CR]`` token returns its prefix string in a 1-tuple."""
+    assert find_bare_prefix_citations("see [CR]") == ("CR",)
+
+
+def test_find_bare_prefix_citations_preserves_document_order() -> None:
+    """Multiple bare prefixes are returned in the order they appear."""
+    assert find_bare_prefix_citations("foo [CR] bar [SA-TECH] baz") == ("CR", "SA-TECH")
+
+
+def test_find_bare_prefix_citations_deduplicates_stably() -> None:
+    """Repeated bare prefixes collapse to a single entry, keeping first-occurrence order."""
+    assert find_bare_prefix_citations("[CR] and [CR]") == ("CR",)
+    # Stable dedup across distinct prefixes: order is first-occurrence.
+    assert find_bare_prefix_citations("[SA-TECH] then [CR] then [SA-TECH]") == ("SA-TECH", "CR")
+
+
+def test_find_bare_prefix_citations_skips_well_formed() -> None:
+    """A well-formed ``[CR-3]`` is not bare and must not be flagged."""
+    assert find_bare_prefix_citations("[CR-3]") == ()
+    # Mixed: only the bare one is flagged.
+    assert find_bare_prefix_citations("see [CR] and [SA-TECH-3]") == ("CR",)
+
+
+def test_find_bare_prefix_citations_skips_unknown_prefixes() -> None:
+    """Bracketed tokens not in the ReferencePrefix taxonomy are ignored."""
+    # REC, INV, FOO are not ReferencePrefix members. ``[INV-1]`` also has an
+    # index suffix, but the detector's job is bare-prefix only — and INV is
+    # not in the taxonomy regardless.
+    assert find_bare_prefix_citations("[REC] [INV-1] [FOO]") == ()
+
+
+def test_find_bare_prefix_citations_longest_match_subtype() -> None:
+    """``[SA-TECH]`` returns the canonical member; the unknown shorter ``SA`` is never matched."""
+    assert find_bare_prefix_citations("[SA-TECH]") == ("SA-TECH",)
+    # SA-TECH-ANOM is a longer canonical prefix; bare form should be detected.
+    assert find_bare_prefix_citations("[SA-TECH-ANOM]") == ("SA-TECH-ANOM",)

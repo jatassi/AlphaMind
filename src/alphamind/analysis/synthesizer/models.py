@@ -18,6 +18,7 @@ reference mechanism, and
 from __future__ import annotations
 
 import enum
+import re
 from datetime import datetime
 from typing import Any
 
@@ -31,6 +32,7 @@ __all__ = [
     "BriefBundle",
     "BriefSource",
     "ReferencePrefix",
+    "find_bare_prefix_citations",
     "parse_reference_id",
 ]
 
@@ -178,3 +180,46 @@ def parse_reference_id(ref_id: str) -> tuple[ReferencePrefix, int] | None:
             return None
         return (prefix, index)
     return None
+
+
+# Bracketed-token extractor: matches any ``[<UPPER/digit/hyphen body>]``,
+# including well-formed ``[CR-3]`` (body ``CR-3``). The bare-vs-indexed
+# distinction is enforced by the ``body in _REFERENCE_PREFIX_VALUES``
+# membership check inside :func:`find_bare_prefix_citations` — only bodies
+# that match a ``ReferencePrefix`` value verbatim (no trailing ``-<n>``)
+# survive the filter.
+_BARE_PREFIX_RE = re.compile(r"\[([A-Z][A-Z0-9-]*)\]")
+
+# Set of ReferencePrefix values for bare-prefix membership lookup. Computed
+# once at module load.
+_REFERENCE_PREFIX_VALUES: frozenset[str] = frozenset(p.value for p in ReferencePrefix)
+
+
+def find_bare_prefix_citations(text: str) -> tuple[str, ...]:
+    """Return bracketed tokens whose body is a known ReferencePrefix value without an index.
+
+    Examples: ``"see [CR] and [SA-TECH-3]"`` returns ``("CR",)`` — the
+    well-formed ``SA-TECH-3`` is ignored; ``[CR]`` is a bare prefix.
+    ``"[REC]"`` returns ``()`` — ``REC`` is not in the ReferencePrefix
+    taxonomy.
+
+    Used by the consumer-side validators (analyst, strategist, PM) to
+    surface the 2026-05-04 incident class: a syntactically-bracketed token
+    that resembles a citation but cannot resolve in the retrieval store
+    (which is always keyed by ``<prefix>-<index>``).
+
+    Matches are returned in document order with stable deduplication —
+    repeated occurrences of the same bare prefix collapse to a single
+    entry keeping first-occurrence position.
+    """
+    seen: set[str] = set()
+    bare: list[str] = []
+    for match in _BARE_PREFIX_RE.finditer(text):
+        body = match.group(1)
+        if body not in _REFERENCE_PREFIX_VALUES:
+            continue
+        if body in seen:
+            continue
+        seen.add(body)
+        bare.append(body)
+    return tuple(bare)

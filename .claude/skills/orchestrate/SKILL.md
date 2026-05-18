@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Use to drive an AlphaMind feature's implementation work tree end-to-end — fetch the parent Linear Issue, dispatch its sub-issues to subagents in dependency-respecting waves, verify each, integrate to a feature branch, then PR → e2e verification → /review → address feedback → land → update project-tracker → notify. Triggers on `/orchestrate <Feature>` and operator phrases like "orchestrate Breach behavior", "implement the Synthesizer feature", "drive Domain researchers to completion", "build out State persistence", "execute the Portfolio manager work tree", "land the X feature". Assumes the work tree has already been drafted via `/draft-user-stories` (parent Issue exists with sub-issues + dependency graph + orchestrator notes). Use this skill whenever the operator asks to implement, build, drive, execute, land, or complete an AlphaMind feature that has a drafted Linear work tree, even if they don't say "orchestrate". Do NOT use for one-off story dispatch (just call `Agent` directly), bug fixes, refactors, or features without a Linear parent Issue.
+description: Use to drive an AlphaMind feature's implementation work tree end-to-end — fetch the parent Linear Issue, dispatch its sub-issues to subagents in dependency-respecting waves, verify each, integrate to a feature branch, then PR → pre-review triage → pre-/review full-suite drift-check (no `--testmon`) → /review → address feedback → update `docs/project-tracker.md` → land → clean local git → PushNotification. Triggers on `/orchestrate <Feature>` and operator phrases like "orchestrate Breach behavior", "implement the Synthesizer feature", "drive Domain researchers to completion", "build out State persistence", "execute the Portfolio manager work tree", "land the X feature". Assumes the work tree has already been drafted via `/draft-user-stories` (parent Issue exists with sub-issues + dependency graph + orchestrator notes). Use this skill whenever the operator asks to implement, build, drive, execute, land, or complete an AlphaMind feature that has a drafted Linear work tree, even if they don't say "orchestrate". Do NOT use for one-off story dispatch (just call `Agent` directly), bug fixes, refactors, or features without a Linear parent Issue.
 ---
 
 # Orchestrate an AlphaMind feature implementation
@@ -17,9 +17,9 @@ These are project invariants that override any default behavior. Track them with
 - **Max 6 concurrent active subagents.** When a parallel wave has more than 6 eligible stories, batch into sub-waves of ≤6. Wait for a sub-wave to finish before dispatching the next.
 - **Always pass `isolation: "worktree"` and `run_in_background: true` to `Agent`.** Worktree isolation is mandatory per CLAUDE.md and prevents parallel-checkout collisions; background mode is mandatory per CLAUDE.md. You'll be notified as each completes — do not poll.
 - **Always tag the model in the `Agent` tool's `description` field** (`[Sonnet] 04a — Zone classifier`, `[Opus] 03 — Canonical types`). Visible-at-a-glance model selection is a CLAUDE.md requirement.
-- **Run the full lint + test chain after each parallelized wave merges** to the feature branch. Catches integration issues that pass per-story but fail in combination. Commands: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest -n auto`. The `-n auto` is mandatory per CLAUDE.md — never invoke `pytest` without it, including from subagents.
+- **Run the full lint + test chain after each parallelized wave merges** to the feature branch. Catches integration issues that pass per-story but fail in combination. Commands: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest --testmon -n auto`. Both `--testmon` and `-n auto` are mandatory per CLAUDE.md on every pytest invocation — per-story, dispatch prompts, mid-wave, AND wave-end. The single exception in this skill is the explicit pre-/review drift-check (completion-sequence step 4 below) which drops `--testmon` to surface any testmon-cache drift before /review runs. Never invoke `pytest` without `-n auto`, including from subagents.
 - **A story blocked mid-implementation gets `state="Blocked"` in Linear,** plus a `blockedBy` link to the blocking issue if one exists in Linear (use `save_issue(id=..., state="Blocked", blockedBy=[...])`). If the blocker isn't in Linear, surface it in the final summary instead.
-- **Do not skip the post-completion sequence.** PR → e2e verification → /review → address feedback → land → update `docs/project-tracker.md` → clean local git → PushNotification. Add these as tasks before the work begins (see below).
+- **Do not skip the post-completion sequence.** PR → pre-review triage → pre-/review full-suite drift-check (no `--testmon`) → /review → address feedback → update `docs/project-tracker.md` → land → clean local git → PushNotification. Add these as tasks before the work begins (see below).
 
 ## Pre-flight
 
@@ -61,8 +61,8 @@ Use `TaskCreate` once, up front, to register everything you must not drop. Two g
 - **One task per sub-issue** — title `<NN — Title>`, status `pending`. As you dispatch, mark `in_progress`; as you verify and merge, mark `completed`.
 - **Completion-sequence tasks** — register all eight before the work begins so they cannot be forgotten:
   1. `Open PR to main`
-  2. `Run end-to-end verification (per-feature verify script)`
-  3. `Pre-review triage of work-tree residue`
+  2. `Pre-review triage of work-tree residue`
+  3. `Pre-/review full-suite drift-check (no --testmon)`
   4. `Spawn /review subagent`
   5. `Address review feedback`
   6. `Update docs/project-tracker.md status to _done_`
@@ -105,7 +105,7 @@ For wave-1 subagents, the rebase block is a no-op because at dispatch time `orig
 
 **Push the feature branch to `origin` after each wave's wave-end gate passes**, so the next wave's worktrees can rebase onto its latest tip. Without this, wave-2+ subagents only see content from `main`, missing all prior waves' commits.
 
-**Verify before marking done.** A story is `Done` when every acceptance-criteria checkbox passes a verification step *you can describe* — typically `uv run pytest -n auto` plus a spot-check of each non-test criterion (file exists, schema validates, function exhibits the documented behavior). Do not trust the subagent's self-report alone (`feedback_subagent_must_commit`).
+**Verify before marking done.** A story is `Done` when every acceptance-criteria checkbox passes a verification step *you can describe* — typically `uv run pytest --testmon -n auto` plus a spot-check of each non-test criterion (file exists, schema validates, function exhibits the documented behavior). Do not trust the subagent's self-report alone (`feedback_subagent_must_commit`).
 
 ## Dispatching a story
 
@@ -135,11 +135,18 @@ If the story scaffolds a new module, service, or package — anything beyond ext
 
 **Commit often during implementation — do not save all the work for one final commit.** A good cadence: each red→green→refactor cycle that lands a coherent piece of behavior gets its own commit. For a multi-part story (extending a Protocol + refactoring the consumers + writing the integration test, say) commit each part separately as soon as its tests are green and its lint is clean. This protects against mid-flight termination (token-limit cutoffs, OOM, accidental kill): if you get cut off after committing wave A but before wave B, the orchestrator can recover wave A and re-dispatch just B, instead of throwing away both. It also makes review easier — small focused commits beat one mega-commit. The harness's worktree branch persists across these commits; only the final report-back step matters for the orchestrator's verbatim-git-log gate. Commit messages should be conventional-commits-style and reference the Linear ID. The story's deliverables are usually 2–6 such commits; one commit is fine for a genuinely-small story (one new function + its test).
 
-After tests are green and before your final commit, invoke the `simplify` skill (`Skill("simplify")`) to review and clean up your changes, then run `uv run ruff check .`, `uv run ruff format .`, and `uv run mypy` and address all findings from your changes only.
+After tests are green and before your final commit, run the lint chain on your changes:
 
-When done — **REQUIRED — DO NOT SKIP THE COMMIT STEP. Do NOT end your work with `simplify` findings as the final action; the commit must come AFTER simplify.**
-1. Run `uv run pytest -n auto` and confirm green.
-2. **STAGE AND COMMIT** any remaining uncommitted work. `git add` then `git commit`. If you've been committing throughout implementation (the preferred pattern), this final commit just captures whatever `simplify` + lint cleanup produced — often a one-liner like `chore: lint cleanup after simplify pass`. After committing, run `git log --oneline <feature-branch>..HEAD` and confirm your commits are listed. If `git status` shows untracked or modified files, you have NOT committed — `git add` and commit them.
+    uv run ruff check .
+    uv run ruff format .
+    uv run mypy
+    uv run lint-imports
+
+Address all findings from your changes only. **Do NOT invoke the `simplify` skill in your dispatch.** The orchestrator runs `simplify` in the main thread after each wave merges to the feature branch (with the integration view across multiple stories), and decides whether each finding should be applied inline or dispatched to a follow-up subagent based on scope. Running `simplify` in the dispatch prompt duplicates this work and produces narrower findings than the post-wave pass.
+
+When done — **REQUIRED — DO NOT SKIP THE COMMIT STEP.**
+1. Run `uv run pytest --testmon -n auto` and confirm green. (`--testmon` is mandatory per CLAUDE.md outside the documented "drop testmon" scenarios; the per-story final check is not one of them.)
+2. **STAGE AND COMMIT** any remaining uncommitted work. `git add` then `git commit`. After committing, run `git log --oneline <feature-branch>..HEAD` and confirm your commits are listed. If `git status` shows untracked or modified files, you have NOT committed — `git add` and commit them.
 3. Report back with **the verbatim output of `git log --oneline <feature-branch>..HEAD`** as the FIRST item in your report (before any prose), followed by a one-line attestation per acceptance criterion ("met by test X", "met by file Y exists", "met by manual inspection of Z"). A report without verbatim git-log output as its first item signals to the orchestrator that the commit step was skipped — the orchestrator will reject the report and re-dispatch.
 
 If you hit a blocker — schema gap, ambiguous spec, sibling-work-tree primitive missing or shaped differently than the story expected, test that won't pass without scope creep — stop and report. Do not improvise.
@@ -177,11 +184,11 @@ Send all calls in one message. Each runs in background; you'll receive a notific
 
 Each agent result includes the worktree path and branch name. Per result:
 
-0. **Verbatim-git-log gate.** Before any lint/test, scan the agent's report for the verbatim `git log --oneline <feature-branch>..HEAD` output the dispatch prompt mandates (one or more lines of the form `<short-sha> <commit-message>`). If the report ends with the `simplify` skill's findings, with prose like "All tests pass / I'm done", or with any final message that is NOT at least one such git-log line, the commit step was skipped. Verify directly: `git -C <worktree-path> log --oneline <feature-branch>..HEAD`. If zero commits are listed, the agent did not commit. Decide:
+0. **Verbatim-git-log gate.** Before any lint/test, scan the agent's report for the verbatim `git log --oneline <feature-branch>..HEAD` output the dispatch prompt mandates (one or more lines of the form `<short-sha> <commit-message>`). If the report ends with prose like "All tests pass / I'm done", or any final message that is NOT at least one such git-log line, the commit step was skipped. Verify directly: `git -C <worktree-path> log --oneline <feature-branch>..HEAD`. If zero commits are listed, the agent did not commit. Decide:
    - **Re-dispatch** when the work has substantive issues (lint failures, missing AC, unwarranted suppressions) on top of the missed commit.
    - **Commit-yourself** when the work is otherwise sound and only the commit step was skipped — assess the lint state with `uv run ruff check . && uv run mypy` against the worktree first, then `git add` + `git commit` with a descriptive message and proceed to step 1.
    Do NOT proceed to step 1 (Tests) on uncommitted state — the agent's "tests pass" claim is unverifiable, and pytest will collect different files than what would land at merge time.
-1. **Tests.** `cd` into the worktree and run `uv run pytest -n auto`. First run pays a one-time `uv sync` cost for the fresh `.venv` — that's fine. **DO NOT pipe to `tail` to truncate output** — the pipe's exit code is `tail`'s (always 0), masking pytest failures. Use `uv run pytest -n auto; echo "exit=$?"` and read the test summary line for `X passed, Y failed`. If the suite has a known transient pre-existing failure you want to ignore, scope to the relevant path instead of piping. The same applies to subagent dispatch prompts — explicitly forbid `| tail` there too; otherwise a subagent's "all tests pass" report can hide a real failure that surfaces only later when a downstream wave runs an unfiltered suite.
+1. **Tests.** `cd` into the worktree and run `uv run pytest --testmon -n auto`. First run pays a one-time `uv sync` cost for the fresh `.venv` — that's fine. `--testmon` is mandatory here per CLAUDE.md; drop it only if the story changed `conftest.py`/fixtures/collection hooks or non-Python files tests depend on. **DO NOT pipe to `tail` to truncate output** — the pipe's exit code is `tail`'s (always 0), masking pytest failures. Use `uv run pytest --testmon -n auto; echo "exit=$?"` and read the test summary line for `X passed, Y failed`. If the suite has a known transient pre-existing failure you want to ignore, scope to the relevant path instead of piping. The same applies to subagent dispatch prompts — explicitly forbid `| tail` there too; otherwise a subagent's "all tests pass" report can hide a real failure that surfaces only later when a downstream wave runs an unfiltered suite.
 2. **Lint.** `uv run ruff check .` and `uv run mypy` against the worktree. Clean for the changed files.
 3. **Linter suppressions.** Grep the diff for `# noqa`, `# type: ignore`, `per-file-ignores`, `ignore` keys in `pyproject.toml`. For each suppression, **first cross-check the matching sibling-feature module** (e.g., for `synthesizer/harness.py`, check `qualitative_research/harness.py` and `adaptive_research/harness.py`; for a domain-researcher story, check the other two domain-researcher modules). If the sibling carries the same suppression with the same rationale, the suppression is warranted by precedent — accept and note. This avoids re-litigating established codebase patterns. The grep is `grep -n 'noqa: <RULE>\|<symbol-name>' src/<sibling-paths>/<file>.py`. If no sibling precedent exists, then assess on its own merits (per `feedback_lint_suppression_triage`):
    - **Trivial-fix unwarranted ones yourself** — directly in the worktree before merging.
@@ -197,9 +204,14 @@ Each agent result includes the worktree path and branch name. Per result:
 
 After all stories in a wave have been verified and merged (or blocked), and *before* dispatching the next wave:
 
-- Run the full chain on the feature branch: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest -n auto`. Catches integration issues that pass per-story but fail combined.
+- Run the full chain on the feature branch: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest --testmon -n auto`. Catches integration issues that pass per-story but fail combined. Use `--testmon -n auto` (the CLAUDE.md default); a single non-testmon drift-check runs once before /review (completion-sequence step 4) — that is the explicit moment to surface any testmon-cache drift, not the wave-end.
 - **Push the feature branch to `origin`** (`git push origin <feature-branch>`) so the next wave's worktrees can rebase onto its latest tip. Skipping this means wave-N+1 subagents will only see content reachable from `main`, missing every story merged in waves 1..N.
 - **Regenerate fixture artifacts ONCE per wave, not per-story.** When 3+ parallel stories in the same wave each modify a generated artifact (typical: `tests/fixtures/replay_harness/fixture_store/*/raw_inputs.sqlite` after migrations land — every story regenerates from `python tests/fixtures/replay_harness/generate_fixtures.py`), each per-story merge produces a binary-file conflict. Resolve trivially with `git checkout --theirs <path>` during cherry-pick (the regenerated content is wrong-for-the-final-state anyway), then run the regen script ONCE after all parallel stories merge and commit the result as a `test(<feature>): regenerate fixtures after wave-N <thing>` follow-up commit. Avoids N-1 useless conflict-resolution cycles.
+- **Run `simplify` in the main thread** (`Skill("simplify")`) on the post-wave state — unless the wave is docs-only (no `*.py` or other code-bearing files changed). The orchestrator owns the integration view across the wave's stories; `simplify` surfaces redundancies, dead branches, and over-complication that per-story subagents cannot see (one story's helper duplicating another's; a wave's worth of validators all repeating the same boilerplate that could centralize). Subagent dispatch prompts no longer invoke `simplify` — the post-wave main-thread pass is the single point of consolidation. Skip the pass on docs-only waves (`docs/`, `*.md`) since the skill's lenses (reuse/quality/efficiency) target code, not prose; record the skip explicitly ("Wave-N is docs-only; simplify skipped") and proceed. **Bias toward accepting findings.** Reject only with explicit reason ("this duplication is across feature boundaries and consolidating would couple them", "this branch isn't dead — it handles the documented edge case at line X"). For accepted findings, decide based on scope:
+   - **In-line** when the fix is a contained tweak (drop unused import, collapse a redundant conditional, rename one local variable, delete one dead branch) — apply directly on the feature branch and commit with a descriptive message like `refactor(<area>): apply simplify findings — <one-line summary>`.
+   - **Dispatch to a follow-up subagent** when the fix spans multiple files, touches an algorithmic seam, or requires test rewrites. Dispatch an Opus subagent in an isolated worktree off the feature branch with the consolidated finding list; verify and merge as in the standard wave loop. Use this path when in-line application would push the orchestrator's edit volume past ~3 files or 50 lines.
+   - **Defer with a Linear ticket** when the fix touches a sibling work tree's contract or requires design judgment the orchestrator doesn't have. Open a follow-up issue with the finding's rationale; note the deferral in the run summary.
+   When the simplify pass produces no findings, record that explicitly ("Wave-N simplify: no findings") and proceed.
 - If clean, proceed to the next survey.
 - If the global run fails, the failure is in the integration boundary between this wave's stories. Diagnose; fix directly if trivial; re-dispatch the relevant story if not. Do not advance to the next wave until the global run is clean.
 - **If the global run flakes — passes some runs, fails others on the same code — do not defer it as a finding. Bisect.** The flake exists because some test in this wave (or in the work tree's accumulated additions to the suite) mutates global state that another test depends on; xdist surfaces it intermittently because workload distribution to workers shifts run-to-run. Procedure: confirm by running `for i in 1 2 3 4 5; do uv run pytest -n auto 2>&1 | tail -1; done`; if mixed pass/fail, narrow with `--ignore=<test-dir>` to drop test groups until the flake stops, then narrow within the offending dir to a single file; read the offending file for `sys.modules` mutation, `logging.config.fileConfig` calls (default `disable_existing_loggers=True` is a classic trap), `os.environ` writes, shared filesystem-state mutations, `caplog` interactions, or fixture-leak across tests. The fix usually lands in production code (e.g., pass `disable_existing_loggers=False` to the offending `fileConfig` call), not in the test that surfaces the flake. CLAUDE.md is strict that test-order dependence is a real bug; a flake from your work tree counts as a wave-gate failure even if a previous run passed.
@@ -219,7 +231,7 @@ Skip delegation only when overhead exceeds the work:
 - `git -C <worktree-path> log --oneline <feature-branch>..HEAD` — if a commit is listed, the agent finished and the cutoff was during reporting; verify normally.
 - `git -C <worktree-path> status --short` — list untracked + modified files. If a coherent set of files exists (production module + tests + any required doc/config edits matching the story's scope), the work is likely complete-but-uncommitted.
 - `wc -l <files>` to gauge volume; spot-read the largest 1–2 files for shape coherence (does the script have an entry point? does the test file have the expected test cases?).
-- `cd <worktree-path> && uv run ruff check <changed-paths> && uv run mypy <changed-paths> && uv run pytest <test-path> -n auto` — if lint + tests pass against the new files, the work is sound; copy the files into the main repo, commit directly with a descriptive `feat(<feature>): <story summary> (ALP-<N>)` message, and proceed as if the dispatch had returned cleanly.
+- `cd <worktree-path> && uv run ruff check <changed-paths> && uv run mypy <changed-paths> && uv run pytest <test-path> --testmon -n auto` — if lint + tests pass against the new files, the work is sound; copy the files into the main repo, commit directly with a descriptive `feat(<feature>): <story summary> (ALP-<N>)` message, and proceed as if the dispatch had returned cleanly.
 - If the staged work is partial (missing a test, an obvious untouched file the story called out, lint failures, or any sign the agent stopped mid-implementation rather than mid-reporting), re-dispatch with a fresh worktree.
 
 The bar for direct-commit recovery: you can describe each file's purpose in one sentence and the test/lint chain is green. Otherwise re-dispatch.
@@ -254,26 +266,7 @@ The explicit `--head <feature-branch> --base main` is required: without it, gh r
 
 Capture the PR URL.
 
-### 2. Run end-to-end verification
-
-The work tree's final story produced (or updated) the per-feature verify script and runbook, plus an insertion into `scripts/RUNBOOK_end_to_end_verification.md`. From that story's body, identify the verify-script path (typically `scripts/verify_<feature>.py`) and run it from the feature-branch checkout:
-
-```bash
-uv run python scripts/verify_<feature>.py
-```
-
-Confirm the output matches the pass/fail shape documented in `scripts/RUNBOOK_<feature>.md`. Read the runbook's failure-mode triage table before reacting to any red signal — most failures have known causes documented there.
-
-**On failure**, classify and act in-session where possible:
-
-- **Straightforward fixes** — apply directly on the feature branch, commit with a descriptive message, push to the PR, and re-run the verify script. Repeat until green. Examples: missing import, stale fixture, config-key typo, runbook command that drifted from the actual script flag, output-shape mismatch from a recent rename, an env-var the script expects but the runbook didn't document. The wave-end gate covered unit-test regressions; this step covers what only e2e exercises.
-- **Fixes requiring operator input** — surface to the operator with the verify-script output and your recommended next step, then pause. Examples: an algorithmic bug uncovered by e2e but masked by unit tests, schema drift between this work tree's expected inputs and a sibling's actually-produced shape, vendor API behavior the spec didn't anticipate, a missing API key, a failure that points to a design-doc ambiguity.
-
-The bar for "straightforward": the fix is contained to one or two files in this work tree, has no behavioral implication beyond the work tree's existing scope, and you can describe both the bug and the fix in two sentences. Anything that rewrites an algorithm, expands scope, or touches a sibling work tree's contract is operator-input territory.
-
-Do not advance to the /review step on a failing or unrun verification — the verification establishes that what the PR ships actually runs end-to-end, and a /review on broken code wastes the reviewer's cycles on issues a re-run would have caught.
-
-### 3. Pre-review triage of subagent-reported deferrals
+### 2. Pre-review triage of subagent-reported deferrals
 
 Throughout the run, implementing subagents will report items they deferred or scope-shrunk — narrowed implementations, unresolved follow-ups, design questions they didn't have authority to answer, work they explicitly handed back to the orchestrator. Track these as you go (a scratch list in your head or in TaskCreate notes is fine; the per-story task notifications also preserve them). Before /review, walk the consolidated list and reason about each one with a bias toward addressing now.
 
@@ -295,7 +288,29 @@ Anything else, fix now.
 
 **Dispatch.** When the triage produces a non-empty "address now" list, dispatch a single Opus subagent on a fresh worktree with the consolidated list. The subagent can group fixes into one or a small handful of well-scoped commits. After the dispatch returns, verify and cherry-pick onto the feature branch, then run the wave-end gate (full lint + test) to confirm the additions don't regress.
 
-When the triage list is empty, record that explicitly ("Pre-review triage: no addressable deferrals") and proceed to /review.
+When the triage list is empty, record that explicitly ("Pre-review triage: no addressable deferrals") and proceed to the drift-check.
+
+### 3. Full-suite drift-check (no `--testmon`)
+
+Run the full test suite with `--testmon` dropped, exactly once, on the feature branch before /review runs:
+
+```bash
+uv run pytest -n auto
+```
+
+This is the single point in the orchestration where `--testmon` is omitted — wave-end gates use `--testmon` to keep iteration fast, but testmon's cache-based skipping can mask drift introduced by intermediate cherry-picks, conftest/fixture edits, or non-Python file changes that testmon doesn't track. The drift-check forces every test to actually execute against the integration tip so /review (and the eventual PR merge) starts from a fully-verified state.
+
+Pair the pytest run with a final lint sanity:
+
+```bash
+uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports
+```
+
+On failure, the cause is almost always a testmon false-skip from one of the wave-end gates. Diagnose:
+- If the failing test is in a path touched by an earlier wave: the testmon cache from that wave skipped it because the dependency graph didn't capture the relevant edit (typical: a conftest/fixture/YAML/JSON change). Fix the test or the production code; commit as `fix(<feature>): address pre-/review drift in <area>`; re-run the drift-check until clean.
+- If the failing test is unrelated to any wave's changes: a pre-existing transient may have surfaced. Re-run; if persistent, scope-out by examining the failure mode (often a port-binding or filesystem-race issue that xdist can surface intermittently). Do not advance to /review on a failing drift-check.
+
+When clean, proceed to /review.
 
 ### 4. Spawn /review subagent
 
@@ -426,7 +441,7 @@ Surface blockers immediately, do not work around them:
 - **Do not skip hooks** (`--no-verify`, `--no-gpg-sign`). If a hook fails, fix the underlying issue.
 - **Do not dispatch a subagent without `isolation: "worktree"`** — parallel work on the feature branch checkout corrupts state.
 - **Do not dispatch a subagent without `run_in_background: true`** — CLAUDE.md mandates async dispatch; foreground subagents block parallelism.
-- **Do not declare a story `Done` without `uv run pytest -n auto` green, lint clean, and a spot-check of every acceptance criterion.**
+- **Do not declare a story `Done` without `uv run pytest --testmon -n auto` green, lint clean, and a spot-check of every acceptance criterion.**
 - **Do not modify a sub-issue's description in Linear** — only the `state` and `blockedBy` fields. Description ownership lives with `/draft-user-stories`.
 - **Do not pick up a story whose `blockedBy` stories are not all `Done`.**
 - **Do not exceed 6 concurrent active subagents.** Sub-wave instead.
@@ -438,7 +453,8 @@ Surface blockers immediately, do not work around them:
 - **Dispatching all stories at once "to save time".** Wave structure exists because dependencies are real. Out-of-order dispatch produces stories that depend on absent code and waste subagent cycles.
 - **Dispatching multiple stories that share a target file in the same wave.** When two or more stories all create or edit the same file (e.g., three sub-stories each adding a test case to one shared file), parallel worktrees produce independent versions of the file and the cherry-picks conflict at integration time. Either sequence them across waves, merge them into one story, or — if the parent Issue's notes say "story A creates the file; siblings ADD to it" — dispatch story A first, wait for merge + push, then dispatch the siblings.
 - **Running `pytest` without `-n auto`** anywhere — your verification, the subagent's verification, the wave gate. CLAUDE.md is strict; serial pytest runs hide xdist-only failures.
-- **Trusting subagent self-reports.** They sometimes report "done" with uncommitted changes (`feedback_subagent_must_commit`). Always verify with `git log <feature-branch>..<subagent-branch>` and `git status` in the worktree. Per-story tests cover per-story acceptance criteria, but they often don't exercise the production-call path end-to-end. The /review can surface integration gaps the wave gates miss — e.g., a Phase 1 transaction commit and a repository snapshot-read each working in isolation, but the production caller unable to string them together because a sentinel field (`phase1_completed_at`) is never set on the production write path; the e2e verify script masks the gap by manually pre-stamping it. **A verify script that fakes a missing wire is a yellow flag the orchestrator should catch on integration** — when reviewing the e2e verify story's diff, scan for synthetic timestamp/state stamps that production code should but doesn't write. If found, mark them as a pre-merge follow-up.
+- **Running `pytest` without `--testmon`** anywhere in this skill except the single explicit drift-check step (completion-sequence step 4, before /review). CLAUDE.md mandates `--testmon` on every pytest invocation; this skill's per-story checks, dispatch prompts, mid-wave checks, AND wave-end gates all use `--testmon -n auto`. The pre-/review drift-check is the one place this skill drops `--testmon` — and only there. When you write a verbatim pytest command into a dispatch prompt, default to `uv run pytest --testmon -n auto`.
+- **Trusting subagent self-reports.** They sometimes report "done" with uncommitted changes (`feedback_subagent_must_commit`). Always verify with `git log <feature-branch>..<subagent-branch>` and `git status` in the worktree. Per-story tests cover per-story acceptance criteria, but they often don't exercise the production-call path end-to-end. The /review can surface integration gaps the wave gates miss — e.g., a Phase 1 transaction commit and a repository snapshot-read each working in isolation, but the production caller unable to string them together because a sentinel field (`phase1_completed_at`) is never set on the production write path. When a story's tests rely on synthetic timestamps or state stamps that production code should but doesn't write, treat them as a yellow flag — scan for such constructs during verification and mark them as a pre-merge follow-up.
 - **Skipping the wave-end global lint+test gate.** Per-story verification doesn't catch integration issues. The global gate is cheap; skipping it costs more later.
 - **Restating the parent Issue's orchestrator notes here.** This skill provides defaults; the parent Issue provides feature-specific overrides. Read both; apply them additively.
 - **Marking the post-completion tasks `completed` early.** Mark each only after the action observably succeeded (PR open and visible, /review subagent returned, etc.).
