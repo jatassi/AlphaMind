@@ -1,16 +1,14 @@
-"""Round-trip verification tests for the analyst system prompt (ALP-292).
+"""Round-trip verification tests for the analyst system prompt.
 
 Mirrors the shape of ``tests/analysis/synthesizer/test_synthesizer_prompt.py``.
 
-Acceptance criteria exercised here:
+Pinned invariants:
 
-* AC2: The prompt's ``<example_output>`` populates every required field in
-  the schema's ``recommendation`` $def (smoke-check that future schema drift
-  forces a prompt update).
-* AC3: The file exists and pins the prompt-vs-schema invariant; passes under
-  ``uv run pytest -n auto``.
-
-The prompt begins with ``<role>`` per the existing envelope convention.
+* ALP-292 AC2/AC3: ``<example_output>`` covers every required schema field,
+  and the prompt begins with the ``<role>`` envelope marker.
+* ALP-547: ``<inputs>`` labels the inline brief section as a preview/preface,
+  and the ``retrieve_brief`` tool_policy requires retrieval before bailing on
+  high-magnitude / load-bearing references.
 """
 
 from __future__ import annotations
@@ -54,6 +52,12 @@ def _read_prompt() -> str:
 
 def _read_schema_md() -> str:
     return _SCHEMA_PATH.read_text(encoding="utf-8")
+
+
+def _extract_section(prompt: str, tag: str) -> str | None:
+    """Return the content between ``<tag>`` and ``</tag>``, or None."""
+    m = re.search(rf"<{tag}>(.*?)</{tag}>", prompt, re.DOTALL)
+    return m.group(1) if m else None
 
 
 # ---------------------------------------------------------------------------
@@ -158,4 +162,64 @@ def test_schema_required_list_matches_test_fixture() -> None:
         f"  Fixture required: {fixture_required}\n"
         f"Update _RECOMMENDATION_REQUIRED in this file to match the schema, "
         f"then confirm the prompt's <example_output> covers all fields."
+    )
+
+
+def _retrieve_brief_policy_block() -> str:
+    """Return the retrieve_brief sub-block within ``<tool_policy>``.
+
+    The tool_policy block also holds `validate_guardrail` bullets; isolating
+    the `retrieve_brief` slice prevents substring assertions from accidentally
+    matching policy for a different tool.
+    """
+    policy = _extract_section(_read_prompt(), "tool_policy")
+    assert policy is not None, "prompts/decision/analyst.md is missing a <tool_policy> block."
+    start = policy.index("`retrieve_brief")
+    rest = policy[start:]
+    next_tool = re.search(r"\n\n`[A-Za-z_]", rest[1:])
+    end = next_tool.start() + 1 if next_tool is not None else len(rest)
+    return rest[:end]
+
+
+def test_inputs_block_labels_brief_section_as_preview() -> None:
+    """ALP-547 root cause #1: the prompt's ``<inputs>`` block must label the
+    inline brief section as a preview/preface so the analyst doesn't treat
+    the synthesizer's framing sentence as the full brief.
+    """
+    inputs = _extract_section(_read_prompt(), "inputs")
+    assert inputs is not None, "prompts/decision/analyst.md is missing an <inputs> block."
+    inputs_lower = inputs.lower()
+    assert "preview" in inputs_lower or "preface" in inputs_lower, (
+        "prompts/decision/analyst.md <inputs> must label the inline brief "
+        "section as a preview/preface. Without this the analyst treats the "
+        "synthesizer's framing sentence as the brief itself and bails on "
+        "'incomplete brief' (see ALP-547)."
+    )
+
+
+def test_retrieve_brief_policy_requires_retrieval_before_bailing_on_high_magnitude_refs() -> None:
+    """ALP-547 root cause #2: the retrieve_brief tool_policy must require at
+    least one retrieval before emitting empty recommendations when the
+    preview cites a high-magnitude / load-bearing reference.
+    """
+    policy = _retrieve_brief_policy_block().lower()
+    sigma_terms = ("sigma", chr(0x03C3))
+    assert any(t in policy for t in sigma_terms), (
+        f"retrieve_brief tool_policy must name a sigma-magnitude threshold "
+        f"for the required-retrieval-before-bailing rule (ALP-547). "
+        f"Expected one of: {sigma_terms}."
+    )
+    assert "load-bearing" in policy, (
+        "retrieve_brief tool_policy must reference 'load-bearing' framing for "
+        "the required-retrieval rule (ALP-547)."
+    )
+    bail_terms = (
+        "empty recommendations",
+        '"recommendations": []',
+        "no thesis",
+        "before bailing",
+    )
+    assert any(term in policy for term in bail_terms), (
+        f"retrieve_brief tool_policy must address the empty-recommendations "
+        f"bailout that ALP-547 fixes. Expected one of: {bail_terms}."
     )

@@ -251,14 +251,14 @@ def test_normal_mode_bundle_starts_with_envelope_and_ends_with_brief() -> None:
 
 
 def test_normal_mode_section_ordering() -> None:
-    """Header marker comes first, AVAILABLE TOOLS in the middle, SYNTHESIZER BRIEF last."""
+    """Header marker comes first, AVAILABLE TOOLS in the middle, SYNTHESIZER BRIEF PREVIEW last."""
     out = assemble_input_bundle_normal(
         **_normal_kwargs(),  # type: ignore[arg-type]
         sector_label_display=_MICRO_SECTOR_LABELS,
     )
     envelope_idx = out.index("=== GUARDRAIL STATE")
     tools_idx = out.index("=== AVAILABLE TOOLS ===")
-    brief_idx = out.index("=== SYNTHESIZER BRIEF ===")
+    brief_idx = out.index("=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) ===")
     assert envelope_idx < tools_idx < brief_idx
 
 
@@ -420,7 +420,7 @@ def test_halt_mode_bundle_notes_watchlist_in_tool_section() -> None:
         sector_label_display=_MICRO_SECTOR_LABELS,
     )
     tools_idx = out.index("=== AVAILABLE TOOLS ===")
-    brief_idx = out.index("=== SYNTHESIZER BRIEF ===")
+    brief_idx = out.index("=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) ===")
     tool_section = out[tools_idx:brief_idx]
     assert "watchlist" in tool_section.lower()
     assert "validate_guardrail" in tool_section
@@ -441,7 +441,7 @@ def test_halt_mode_section_ordering() -> None:
     )
     envelope_idx = out.index("=== GUARDRAIL STATE")
     tools_idx = out.index("=== AVAILABLE TOOLS ===")
-    brief_idx = out.index("=== SYNTHESIZER BRIEF ===")
+    brief_idx = out.index("=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) ===")
     assert envelope_idx < tools_idx < brief_idx
 
 

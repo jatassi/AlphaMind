@@ -30,6 +30,13 @@ from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 __all__ = ["assemble_input_bundle_halt", "assemble_input_bundle_normal"]
 
 
+# ---------------------------------------------------------------------------
+# Section-header constants
+# ---------------------------------------------------------------------------
+
+_BRIEF_HEADER = "=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) ==="
+
+
 def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_analyst_header's signature
     *,
     analyst_view: AnalystView,
@@ -63,7 +70,7 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_analyst_he
         sector_label_display=sector_label_display,
     )
     tool_reminder = _render_tool_reminder(tool_names, halt_mode=False)
-    return f"{header}\n\n{tool_reminder}\n\n=== SYNTHESIZER BRIEF ===\n{synthesizer_brief_text}"
+    return f"{header}\n\n{tool_reminder}\n\n{_BRIEF_HEADER}\n{synthesizer_brief_text}"
 
 
 def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_analyst_header_halt_mode's signature
@@ -103,7 +110,7 @@ def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_analyst_head
         sector_label_display=sector_label_display,
     )
     tool_reminder = _render_tool_reminder(tool_names, halt_mode=True)
-    return f"{header}\n\n{tool_reminder}\n\n=== SYNTHESIZER BRIEF ===\n{synthesizer_brief_text}"
+    return f"{header}\n\n{tool_reminder}\n\n{_BRIEF_HEADER}\n{synthesizer_brief_text}"
 
 
 # ---------------------------------------------------------------------------
