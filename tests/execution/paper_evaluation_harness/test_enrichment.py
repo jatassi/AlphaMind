@@ -14,18 +14,16 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
 
 import pytest
 
 from alphamind._kernel.money import money, price
 from alphamind.config.models.execution import FeeSchedule, OrderType, PaperHarness
+from alphamind.execution.paper_evaluation_harness import OrderAttributes
 from alphamind.portfolio_state.records.orders import OrderStatus
 from alphamind.portfolio_state.records.positions import InstrumentType
 from alphamind.state.records import FillProcessingStatus, FillRecord
-
 
 # ---------------------------------------------------------------------------
 # Config / record fixtures
@@ -92,21 +90,11 @@ def _equity_fill_record(
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class _OrderAttrs:
-    """Shape the OrderLookup Protocol returns; must match production contract."""
-
-    order_type: OrderType
-    side: Literal["buy", "sell"]
-    instrument_type: InstrumentType
-    ticker_or_underlying: str
-
-
 class _FakeOrderLookup:
-    def __init__(self, table: Mapping[str, _OrderAttrs]) -> None:
+    def __init__(self, table: Mapping[str, OrderAttributes]) -> None:
         self._table = dict(table)
 
-    async def get_order_attributes(self, order_id: str) -> _OrderAttrs | None:
+    async def get_order_attributes(self, order_id: str) -> OrderAttributes | None:
         return self._table.get(order_id)
 
 
@@ -140,7 +128,7 @@ async def test_equity_buy_populates_estimate_with_higher_live_price(
     record = _equity_fill_record(order_id="order-1", fill_price_value="200", fill_quantity=1000.0)
     order_lookup = _FakeOrderLookup(
         {
-            "order-1": _OrderAttrs(
+            "order-1": OrderAttributes(
                 order_type=OrderType.market,
                 side="buy",
                 instrument_type=InstrumentType.EQUITY,
@@ -175,10 +163,12 @@ async def test_equity_buy_populates_estimate_with_higher_live_price(
 async def test_equity_sell_yields_lower_live_price(harness_config: PaperHarness) -> None:
     from alphamind.execution.paper_evaluation_harness import attach_live_execution_estimate
 
-    record = _equity_fill_record(order_id="order-sell", fill_price_value="200", fill_quantity=1000.0)
+    record = _equity_fill_record(
+        order_id="order-sell", fill_price_value="200", fill_quantity=1000.0
+    )
     order_lookup = _FakeOrderLookup(
         {
-            "order-sell": _OrderAttrs(
+            "order-sell": OrderAttributes(
                 order_type=OrderType.market,
                 side="sell",
                 instrument_type=InstrumentType.EQUITY,
@@ -212,7 +202,7 @@ async def test_adv_none_returns_record_unchanged(harness_config: PaperHarness) -
     record = _equity_fill_record(order_id="order-1")
     order_lookup = _FakeOrderLookup(
         {
-            "order-1": _OrderAttrs(
+            "order-1": OrderAttributes(
                 order_type=OrderType.market,
                 side="buy",
                 instrument_type=InstrumentType.EQUITY,
@@ -245,7 +235,7 @@ async def test_vol_none_returns_record_unchanged(harness_config: PaperHarness) -
     record = _equity_fill_record(order_id="order-1")
     order_lookup = _FakeOrderLookup(
         {
-            "order-1": _OrderAttrs(
+            "order-1": OrderAttributes(
                 order_type=OrderType.market,
                 side="buy",
                 instrument_type=InstrumentType.EQUITY,
@@ -309,12 +299,10 @@ async def test_options_buy_populates_estimate_with_options_fees(
 ) -> None:
     from alphamind.execution.paper_evaluation_harness import attach_live_execution_estimate
 
-    record = _equity_fill_record(
-        order_id="order-opt", fill_price_value="5.00", fill_quantity=10.0
-    )
+    record = _equity_fill_record(order_id="order-opt", fill_price_value="5.00", fill_quantity=10.0)
     order_lookup = _FakeOrderLookup(
         {
-            "order-opt": _OrderAttrs(
+            "order-opt": OrderAttributes(
                 order_type=OrderType.market,
                 side="buy",
                 instrument_type=InstrumentType.OPTIONS,
@@ -358,12 +346,10 @@ async def test_options_volume_none_returns_record_unchanged(
 ) -> None:
     from alphamind.execution.paper_evaluation_harness import attach_live_execution_estimate
 
-    record = _equity_fill_record(
-        order_id="order-opt", fill_price_value="5.00", fill_quantity=10.0
-    )
+    record = _equity_fill_record(order_id="order-opt", fill_price_value="5.00", fill_quantity=10.0)
     order_lookup = _FakeOrderLookup(
         {
-            "order-opt": _OrderAttrs(
+            "order-opt": OrderAttributes(
                 order_type=OrderType.market,
                 side="buy",
                 instrument_type=InstrumentType.OPTIONS,

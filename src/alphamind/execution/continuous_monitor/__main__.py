@@ -27,6 +27,7 @@ import asyncio
 import logging
 import sys
 from collections.abc import Iterable, Mapping, Sequence
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -38,7 +39,7 @@ from alphamind.config.guardrails_helpers import (
 )
 from alphamind.config.loaders import read_yaml_file
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
-from alphamind.config.models.execution import ExecutionConfig
+from alphamind.config.models.execution import ExecutionConfig, PaperHarness
 from alphamind.config.models.guardrails import BreachResponse, GuardrailsConfig, ProgressiveTier
 from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.broker_adapter import AccountStateQueries, AlpacaClientFactory
@@ -76,6 +77,7 @@ from alphamind.execution.continuous_monitor.emergency_trigger import (
 from alphamind.execution.continuous_monitor.emergency_trigger.margin_call_observer import (
     AccountQueriesProtocol,
 )
+from alphamind.execution.continuous_monitor.fill_stream_consumer import EnrichmentCallable
 from alphamind.execution.continuous_monitor.greeks_refresh import (
     register_greeks_refresh_task,
 )
@@ -100,6 +102,14 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
 from alphamind.execution.continuous_monitor.underlying_stream.reader import (
     SqlOpenPositionsReader,
 )
+from alphamind.execution.paper_evaluation_harness import (
+    attach_live_execution_estimate,
+)
+from alphamind.execution.paper_evaluation_harness.lookups import (
+    MapVolLookup,
+    SqlAdvLookup,
+    SqlOrderLookup,
+)
 from alphamind.execution.venue_configuration.calendar_cache import (
     TradingCalendarCache,
 )
@@ -116,7 +126,7 @@ from alphamind.risk_guardrails.breach_behavior import (
     BreachBehaviorConfig,
     load_breach_behavior_config,
 )
-from alphamind.risk_guardrails.guardrail_evaluation import FixtureIvProvider
+from alphamind.risk_guardrails.guardrail_evaluation import FixtureIvProvider, RealizedVolEntry
 from alphamind.risk_guardrails.regime_adaptation import load_config_fan
 from alphamind.scripts._common import load_distillation_config
 from alphamind.state.config import (
@@ -143,6 +153,43 @@ _GUARDRAILS_CONFIG_PATH = _CONFIG_DIR / "guardrails.yaml"
 _BREACH_BEHAVIOR_CONFIG_PATH = _CONFIG_DIR / "breach_behavior.yaml"
 _EXECUTION_CONFIG_PATH = _CONFIG_DIR / "execution.yaml"
 _MAIN_CONFIG_PATH = _CONFIG_DIR / "main.yaml"
+
+
+def _build_enrichment_callable(
+    *,
+    mode: MonitorMode,
+    paper_harness: PaperHarness,
+    session_factory: async_sessionmaker[AsyncSession],
+    realized_vol_map: Mapping[str, RealizedVolEntry],
+) -> EnrichmentCallable | None:
+    """Construct the paper-mode enrichment callable, or ``None`` for live mode.
+
+    The wedge (ALP-528) attaches a ``LiveExecutionEstimate`` to each persisted
+    ``FillRecord`` so paper-mode fills carry the estimated live-execution
+    drag. Live mode bypasses the wedge entirely — the field stays NULL in
+    ``fill_records.live_execution_estimate_json`` and the broker reports
+    actual costs separately.
+
+    Today's ``realized_vol_map`` is empty (the per-underlying realized-vol
+    substrate lands with ALP-530); per parent decision H the wedge handles
+    the empty-map case gracefully by routing every fill through
+    ``live_execution_estimate=None``.
+    """
+    if mode == "live":
+        return None
+    if mode == "paper":
+        order_lookup = SqlOrderLookup(session_factory)
+        adv_lookup = SqlAdvLookup(session_factory)
+        vol_lookup = MapVolLookup(realized_vol_map)
+        return partial(
+            attach_live_execution_estimate,
+            order_lookup=order_lookup,
+            adv_lookup=adv_lookup,
+            vol_lookup=vol_lookup,
+            config=paper_harness,
+        )
+    msg = f"unknown monitor mode: {mode!r}"
+    raise ValueError(msg)
 
 
 def _build_breach_response_lookup(
@@ -218,10 +265,21 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     calendar_cache = TradingCalendarCache(account_state_queries)
     supervisor = MonitorSupervisor(session=session, config=config)
     underlying_cache = register_underlying_stream_task(supervisor, repository=open_positions_reader)
+    # ALP-528 — paper-mode wedge: realized_vol_map is shared with the
+    # breach-loop's FixtureIvProvider (constructed inside _register_breach_loop).
+    # Both consume the same empty Mapping today; ALP-530 will populate it.
+    realized_vol_map: Mapping[str, RealizedVolEntry] = {}
+    enrichment_callable = _build_enrichment_callable(
+        mode=session.mode,
+        paper_harness=execution_config.paper_harness,
+        session_factory=db_session_factory,
+        realized_vol_map=realized_vol_map,
+    )
     _register_fill_stream_consumer(
         supervisor,
         venue_config=venue_config,
         db_session_factory=db_session_factory,
+        enrichment_callable=enrichment_callable,
     )
     register_greeks_refresh_task(
         supervisor,
@@ -276,12 +334,18 @@ def _register_fill_stream_consumer(
     *,
     venue_config: VenueConfig,
     db_session_factory: async_sessionmaker[AsyncSession],
+    enrichment_callable: EnrichmentCallable | None,
 ) -> None:
     """Register the ``fill_stream_consumer`` task (story 02c).
 
     The supervisor's task signature is ``(session, config) -> Awaitable[None]``
     — extras flow through this closure, which pre-binds the alpaca-py factories
     and the SQLAlchemy session factory.
+
+    Paper-mode wiring (ALP-528) passes a non-None ``enrichment_callable`` that
+    enriches each translated ``FillRecord`` with a ``LiveExecutionEstimate``
+    before persistence. Live mode passes ``None`` so the hot path is
+    unchanged.
     """
     from alpaca.trading.client import TradingClient
 
@@ -306,6 +370,7 @@ def _register_fill_stream_consumer(
             stream_factory=_stream_factory,
             trading_client_factory=_trading_client_factory,
             account_state_queries_factory=_queries_factory,
+            enrichment_callable=enrichment_callable,
         )
 
     supervisor.register_task(name="fill_stream_consumer", coro_fn=_fill_stream_consumer_task)
