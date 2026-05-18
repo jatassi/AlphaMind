@@ -102,6 +102,7 @@ from alphamind.distillation.qualitative._loaders import (
 from alphamind.distillation.qualitative.assemble import (
     assemble_qualitative_blocks_from_inputs,
 )
+from alphamind.distillation.realized_vol import persist_per_ticker_realized_vol
 from alphamind.distillation.regime import (
     RegimeClassificationThresholds,
     RegimeRefreshResult,
@@ -369,6 +370,36 @@ def _compute_q1_blocks_from_inputs(
     serializable / immutable arguments — no Session, no ORM.
     """
     return assemble_q1_blocks_from_inputs(q1_inputs, config=config)
+
+
+def _persist_realized_vol_from_q1_inputs(
+    session: Session,
+    *,
+    q1_inputs: Q1Inputs,
+    invocation_id: str,
+    as_of: datetime,
+) -> int:
+    """ALP-530 — write per-ticker realized-vol rows from already-loaded Q1 bars.
+
+    Q1's IO shell already loads ~300 trailing daily bars per universe
+    ticker via ``repository.load_daily_bars`` (see
+    ``q1/_loaders._BAR_LOAD_LOOKBACK_DAYS``). The realized-vol persister
+    consumes the last 30 trading days from those same bar tuples, so the
+    additional read pressure is zero — the per-ticker close-price load
+    that Q1 already performs covers this story's input requirement.
+    """
+    closes_by_ticker: dict[str, tuple[float, ...]] = {
+        ticker: tuple(bar.adj_close for bar in bars)
+        for ticker, bars in q1_inputs.bars_by_ticker.items()
+    }
+    return persist_per_ticker_realized_vol(
+        session,
+        invocation_id=invocation_id,
+        tickers=q1_inputs.ticker_scope,
+        closes_by_ticker=closes_by_ticker,
+        as_of_date=as_of.date(),
+        computed_at=as_of,
+    )
 
 
 def _compute_legacy_phase2_blocks(
@@ -843,6 +874,7 @@ async def _run_phase_2(
     ticker_scope: Sequence[str],
     contract_scope: Sequence[str],
     as_of: datetime,
+    invocation_id: str,
 ) -> list[OutputBlock]:
     """Phase 2 — per-category indicator computations.
 
@@ -883,6 +915,19 @@ async def _run_phase_2(
         ticker_scope=ticker_scope,
         as_of=as_of,
     )
+    # ALP-530 — populate the per-ticker realized-vol substrate from the
+    # per-ticker close-price series Q1 already loaded. Synchronous under
+    # the shared Session so downstream consumers (Phase 1 attribution,
+    # continuous-monitor refresh) see the rows from this invocation
+    # onward.
+    rows_persisted = await asyncio.to_thread(
+        _persist_realized_vol_from_q1_inputs,
+        session,
+        q1_inputs=q1_inputs,
+        invocation_id=invocation_id,
+        as_of=as_of,
+    )
+    logger.info("phase 2 (per-ticker realized vol) complete: rows=%d", rows_persisted)
     q3_inputs = await asyncio.to_thread(
         _load_q3_inputs_via_session,
         session,
@@ -1049,6 +1094,7 @@ async def run_external_distillation(
         ticker_scope=ticker_scope,
         contract_scope=contract_scope,
         as_of=as_of,
+        invocation_id=invocation_id,
     )
 
     # Phase 3 — regime classification.

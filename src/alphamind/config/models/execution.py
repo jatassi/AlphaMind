@@ -24,11 +24,30 @@ class GreeksRefresh(BaseModel):
     move_trigger_pct: float = Field(gt=0)
 
 
+class FeeSchedule(BaseModel):
+    """Regulatory fee rates for paper-harness fill-cost estimation.
+
+    All rates are >= 0. A rate of 0.0 is valid (e.g., a fee waived or not
+    applicable to AlphaMind's instruments). Update when Alpaca publishes
+    fee-schedule changes; cite the source URL in execution.yaml alongside
+    each rate.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    cat_per_executed_share: float = Field(ge=0)
+    taf_per_share_sells: float = Field(ge=0)
+    sec_pct_of_notional_sells: float = Field(ge=0)
+    orf_per_options_contract: float = Field(ge=0)
+    occ_per_options_contract: float = Field(ge=0)
+
+
 class PaperHarness(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     spread_buffer_pct: float = Field(ge=0)
     impact_coefficients: dict[OrderType, float]
+    fee_schedule: FeeSchedule
 
     @field_validator("impact_coefficients")
     @classmethod

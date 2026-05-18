@@ -158,10 +158,10 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     """
     resolved = _fixture_resolved()
     digest = compute_snapshot_hash(serialize_resolved_config(resolved))
-    # Pin updated 2026-05-17 after ALP-508 retired the two cascade-dispatch
-    # placeholder knobs from ``continuous_monitor.yaml``; the fixture's
-    # canonical bytes shifted by exactly those two field deletions.
-    expected = "04bb38eb15ea76eda7827da8db88bd597cdee963b528772f2be187d1b5a2c1bb"
+    # Pin updated 2026-05-18 after ALP-524 added fee_schedule schema entries
+    # and ALP-530 (per-ticker realized-vol, ALP-130 work tree) extended the
+    # config model; the fixture's canonical bytes shifted by those additions.
+    expected = "84d27f5c39b2a0471b07ccd5d842be7f931e1cb6923737d1177d9427fdd4c21b"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

@@ -14,6 +14,7 @@ run-forever :func:`run_fill_stream_consumer` task.
 
 from alphamind.execution.continuous_monitor.fill_stream_consumer.task import (
     AccountStateQueriesFactory,
+    EnrichmentCallable,
     TradingClientFactory,
     TradingStreamFactory,
     run_fill_stream_consumer,
@@ -24,6 +25,7 @@ from alphamind.execution.continuous_monitor.fill_stream_consumer.translation imp
 
 __all__ = [
     "AccountStateQueriesFactory",
+    "EnrichmentCallable",
     "TradingClientFactory",
     "TradingStreamFactory",
     "fill_report_to_fill_record",
