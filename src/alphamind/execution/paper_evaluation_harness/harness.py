@@ -96,39 +96,18 @@ def compute_live_execution_estimate(
     if adv_shares is None or realized_volatility is None:
         return None
 
-    if instrument_type is InstrumentType.EQUITY:
-        return _equity_estimate(
-            fill_price=fill_price,
-            fill_quantity=fill_quantity,
-            side=side,
-            order_type=order_type,
-            adv_shares=adv_shares,
-            realized_volatility=realized_volatility,
-            config=config,
-        )
-
-    # instrument_type is InstrumentType.OPTIONS (enum is exhausted).
-    return _options_estimate(
-        fill_price=fill_price,
-        fill_quantity=fill_quantity,
-        side=side,
-        order_type=order_type,
-        adv_shares=adv_shares,
-        realized_volatility=realized_volatility,
-        config=config,
+    # InstrumentType.EQUITY: per-share attribution uses the fill quantity directly.
+    # InstrumentType.OPTIONS: standard-contract multiplier (100 shares/contract)
+    # attributes the per-fill impact dollars across the underlying-share
+    # equivalent for the price adjustment. (per ``broker-adapter.md`` § Options
+    # contract multiplier).
+    qty_decimal = Decimal(str(fill_quantity))
+    impact_attribution_quantity = (
+        qty_decimal
+        if instrument_type is InstrumentType.EQUITY
+        else qty_decimal * _SHARES_PER_OPTIONS_CONTRACT
     )
 
-
-def _equity_estimate(
-    *,
-    fill_price: Price,
-    fill_quantity: float,
-    side: Literal["buy", "sell"],
-    order_type: OrderType,
-    adv_shares: float,
-    realized_volatility: float,
-    config: PaperHarness,
-) -> LiveExecutionEstimate:
     estimated_spread = estimate_spread(
         fill_price=fill_price,
         adv_shares=adv_shares,
@@ -143,14 +122,13 @@ def _equity_estimate(
         coefficient=config.impact_coefficients[order_type],
     )
     estimated_regulatory_fees = compute_regulatory_fees(
-        instrument_type=InstrumentType.EQUITY,
+        instrument_type=instrument_type,
         side=side,
         fill_quantity=fill_quantity,
         fill_price=fill_price,
         schedule=config.fee_schedule,
     )
 
-    qty_decimal = Decimal(str(fill_quantity))
     # Per-fill dollar cost of crossing the spread: per-share spread * shares
     # crosses only half on average (order crosses one side of the touch).
     spread_usd = money(estimated_spread * qty_decimal * _HALF)
@@ -159,61 +137,7 @@ def _equity_estimate(
         fill_price=fill_price,
         per_share_spread=estimated_spread,
         per_fill_impact=estimated_impact,
-        fill_quantity=qty_decimal,
-        side=side,
-    )
-
-    return LiveExecutionEstimate(
-        estimated_spread_usd=spread_usd,
-        estimated_impact_usd=estimated_impact,
-        estimated_regulatory_fees_usd=estimated_regulatory_fees,
-        live_adjusted_fill_price=live_adjusted_fill_price,
-    )
-
-
-def _options_estimate(
-    *,
-    fill_price: Price,
-    fill_quantity: float,
-    side: Literal["buy", "sell"],
-    order_type: OrderType,
-    adv_shares: float,
-    realized_volatility: float,
-    config: PaperHarness,
-) -> LiveExecutionEstimate:
-    estimated_spread = estimate_spread(
-        fill_price=fill_price,
-        adv_shares=adv_shares,
-        realized_volatility=realized_volatility,
-        buffer_pct=config.spread_buffer_pct,
-    )
-    estimated_impact = estimate_impact(
-        fill_shares=fill_quantity,
-        adv_shares=adv_shares,
-        estimated_spread=estimated_spread,
-        order_type=order_type,
-        coefficient=config.impact_coefficients[order_type],
-    )
-    estimated_regulatory_fees = compute_regulatory_fees(
-        instrument_type=InstrumentType.OPTIONS,
-        side=side,
-        fill_quantity=fill_quantity,
-        fill_price=fill_price,
-        schedule=config.fee_schedule,
-    )
-
-    qty_decimal = Decimal(str(fill_quantity))
-    spread_usd = money(estimated_spread * qty_decimal * _HALF)
-
-    # Options: standard-contract multiplier (100 shares/contract) governs
-    # the per-underlying-share attribution of the per-fill impact dollars
-    # when converting them into the per-share price adjustment.
-    underlying_share_equivalent = qty_decimal * _SHARES_PER_OPTIONS_CONTRACT
-    live_adjusted_fill_price = _live_adjusted_price(
-        fill_price=fill_price,
-        per_share_spread=estimated_spread,
-        per_fill_impact=estimated_impact,
-        fill_quantity=underlying_share_equivalent,
+        fill_quantity=impact_attribution_quantity,
         side=side,
     )
 
