@@ -1050,7 +1050,8 @@ assert {member.value for member in RegimeTransitionState} == set(_GUARDRAIL_TRAN
 # cross-process consumer (replay harness, command-center diagnostic) can
 # hydrate the full brief in one read.
 
-_BRIEF_KINDS = ("correlation_regime",)
+CORRELATION_REGIME_BRIEF_KIND = "correlation_regime"
+_BRIEF_KINDS = (CORRELATION_REGIME_BRIEF_KIND,)
 
 
 class Brief(Base):

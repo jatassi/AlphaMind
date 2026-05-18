@@ -64,6 +64,7 @@ from alphamind.distillation.aggregation import (
     partition_blocks,
 )
 from alphamind.distillation.baselines import (
+    _refresh_transaction,
     refresh_contract_history,
     refresh_event_history,
     refresh_pair_lag,
@@ -115,7 +116,12 @@ from alphamind.distillation.sector_assembly import (
     assemble_sector_output,
     load_sector_roster,
 )
-from alphamind.persistence.models import Brief, MacroObservations, OhlcvBars
+from alphamind.persistence.models import (
+    CORRELATION_REGIME_BRIEF_KIND,
+    Brief,
+    MacroObservations,
+    OhlcvBars,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -789,8 +795,6 @@ def _write_invocation_archive(
 # Phase 7 — brief-store population
 # ---------------------------------------------------------------------------
 
-_CORRELATION_REGIME_BRIEF_KIND = "correlation_regime"
-
 
 def _populate_brief_store(
     session: Session,
@@ -798,26 +802,28 @@ def _populate_brief_store(
     correlation_regime_brief: CorrelationRegimeBrief,
     invocation_id: str,
 ) -> int:
-    """Phase 7 — INSERT one row per produced brief into the ``briefs`` table.
+    """Phase 7 — INSERT the correlation-regime brief row into the ``briefs`` table.
 
     The hot-path passthrough in :class:`DistillationOutputs` is preserved
     so in-process consumers (the synthesizer, the sector analysts) keep
     reading the brief without a round trip; the persistent row is the
     cross-process backup loaded by :func:`alphamind.persistence.brief_store.load_brief`.
-    Returns the number of rows inserted so the caller can report it.
+    Returns the number of rows inserted so the caller can report it; the
+    multi-brief extension (sector / qualitative / adaptive) accumulates
+    here when those producers land.
     """
-    session.add(
-        Brief(
-            invocation_id=invocation_id,
-            brief_kind=_CORRELATION_REGIME_BRIEF_KIND,
-            reference_index_json=json.dumps(
-                correlation_regime_brief.reference_index, sort_keys=True
-            ),
-            text=correlation_regime_brief.text,
-            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    with _refresh_transaction(session):
+        session.add(
+            Brief(
+                invocation_id=invocation_id,
+                brief_kind=CORRELATION_REGIME_BRIEF_KIND,
+                reference_index_json=json.dumps(
+                    correlation_regime_brief.reference_index, sort_keys=True
+                ),
+                text=correlation_regime_brief.text,
+                created_at=_format_as_of(datetime.now(UTC)),
+            )
         )
-    )
-    session.commit()
     return 1
 
 

@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 
 import alphamind.state.tables  # noqa: F401  — registers invocations table for FK target
 from alphamind.persistence.brief_store import StoredBrief, load_brief
-from alphamind.persistence.models import Base, Brief
+from alphamind.persistence.models import CORRELATION_REGIME_BRIEF_KIND, Base, Brief
 from alphamind.state.tables.invocations import InvocationRow
 
 _INVOCATION_ID = "20260517T220000Z-test"
@@ -94,9 +94,10 @@ def _seed_process_and_invocation(session: Session) -> None:
 
 def test_load_brief_returns_none_when_absent(session: Session) -> None:
     """No row → ``None``; the helper does not raise."""
-    assert (
-        load_brief(session, invocation_id=_INVOCATION_ID, brief_kind="correlation_regime") is None
+    loaded = load_brief(
+        session, invocation_id=_INVOCATION_ID, brief_kind=CORRELATION_REGIME_BRIEF_KIND
     )
+    assert loaded is None
 
 
 def test_load_brief_roundtrips_inserted_row(session: Session) -> None:
@@ -105,7 +106,7 @@ def test_load_brief_roundtrips_inserted_row(session: Session) -> None:
     session.add(
         Brief(
             invocation_id=_INVOCATION_ID,
-            brief_kind="correlation_regime",
+            brief_kind=CORRELATION_REGIME_BRIEF_KIND,
             reference_index_json=json.dumps(reference_index, sort_keys=True),
             text="CORRELATION & REGIME BRIEF\n...",
             created_at="2026-05-17T22:30:00Z",
@@ -113,11 +114,13 @@ def test_load_brief_roundtrips_inserted_row(session: Session) -> None:
     )
     session.commit()
 
-    loaded = load_brief(session, invocation_id=_INVOCATION_ID, brief_kind="correlation_regime")
+    loaded = load_brief(
+        session, invocation_id=_INVOCATION_ID, brief_kind=CORRELATION_REGIME_BRIEF_KIND
+    )
 
     assert loaded == StoredBrief(
         invocation_id=_INVOCATION_ID,
-        brief_kind="correlation_regime",
+        brief_kind=CORRELATION_REGIME_BRIEF_KIND,
         text="CORRELATION & REGIME BRIEF\n...",
         reference_index=reference_index,
         created_at="2026-05-17T22:30:00Z",
@@ -129,7 +132,7 @@ def test_load_brief_keys_by_kind(session: Session) -> None:
     session.add(
         Brief(
             invocation_id=_INVOCATION_ID,
-            brief_kind="correlation_regime",
+            brief_kind=CORRELATION_REGIME_BRIEF_KIND,
             reference_index_json="{}",
             text="body",
             created_at="2026-05-17T22:30:00Z",

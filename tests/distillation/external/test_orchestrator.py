@@ -54,6 +54,7 @@ from alphamind.distillation.orchestrator import (
 )
 from alphamind.distillation.output import OutputAudience, OutputBlock
 from alphamind.persistence.models import (
+    CORRELATION_REGIME_BRIEF_KIND,
     AssetUniverse,
     Base,
     Brief,
@@ -496,7 +497,7 @@ def test_orchestrator_populates_brief_store(populated_session: Session, tmp_path
     )
     assert len(rows) == 1
     [stored] = rows
-    assert stored.brief_kind == "correlation_regime"
+    assert stored.brief_kind == CORRELATION_REGIME_BRIEF_KIND
     assert stored.text == outputs.correlation_regime_brief.text
     assert json.loads(stored.reference_index_json) == (
         outputs.correlation_regime_brief.reference_index

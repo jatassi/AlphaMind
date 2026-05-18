@@ -489,14 +489,14 @@ def _seed_replay_invocation_row(session: Session, invocation_id: str) -> None:
     Phase 7 inserts one row into ``briefs`` with an FK to
     ``invocations.invocation_id``, so the harness must seed a placeholder
     invocation row matching the synthesized id before the orchestrator
-    runs. The process-lifetime seed is idempotent across invocations in
-    one harness run; the invocation row is per-call.
+    runs. Both rows are idempotent — repeated calls with the same
+    identifiers are no-ops so a determinism check (two passes against the
+    same isolated DB) does not raise an integrity error. The Core
+    ``table.insert()`` shape (rather than the typed
+    :class:`InvocationRecord` + codec path the production writer uses)
+    keeps the harness from importing ``alphamind.state.tables.*`` and
+    breaking the ``distillation-no-sqlalchemy`` import-linter contract.
     """
-    # The replay harness leaves the state tables unreferenced by SQLAlchemy
-    # ORM models within this module, so writes use the Core table objects
-    # held in Base.metadata. This avoids pulling the full state.tables
-    # import surface into the harness module (it adds no runtime value
-    # beyond the FK target).
     from alphamind.persistence.models import Base
 
     process_lifetimes = Base.metadata.tables["process_lifetimes"]
@@ -526,33 +526,37 @@ def _seed_replay_invocation_row(session: Session, invocation_id: str) -> None:
                 "os_release": "replay",
             },
         )
-    session.execute(
-        invocations.insert(),
-        {
-            "invocation_id": invocation_id,
-            "process_lifetime_id": _REPLAY_PROCESS_LIFETIME_ID,
-            "start_at": _format_as_of(datetime.now(UTC)),
-            "phase1_completed_at": None,
-            "phase2_completed_at": None,
-            "trigger_type": "scheduled",
-            "trigger_source": "replay",
-            "trigger_reason": "replay-harness",
-            "git_sha_at_invocation": "0" * 40,
-            "active_profile": "medium",
-            "active_regime": "normal",
-            "active_mode": "normal",
-            "active_overlays_json": "[]",
-            "resolved_config_hash": "0" * 64,
-            "resolved_config_snapshot_path": "replay",
-            "feature_flags_snapshot_json": "{}",
-            "data_calibration_state_snapshot_path": "replay",
-            "data_source_freshness_json": "{}",
-            "fill_collection_summary_json": None,
-            "command_execution_summary_json": None,
-            "staleness_flag": None,
-            "snapshot_metadata_json": None,
-        },
-    )
+    existing_inv = session.execute(
+        select(invocations.c.invocation_id).where(invocations.c.invocation_id == invocation_id)
+    ).scalar_one_or_none()
+    if existing_inv is None:
+        session.execute(
+            invocations.insert(),
+            {
+                "invocation_id": invocation_id,
+                "process_lifetime_id": _REPLAY_PROCESS_LIFETIME_ID,
+                "start_at": _format_as_of(datetime.now(UTC)),
+                "phase1_completed_at": None,
+                "phase2_completed_at": None,
+                "trigger_type": "scheduled",
+                "trigger_source": "replay",
+                "trigger_reason": "replay-harness",
+                "git_sha_at_invocation": "0" * 40,
+                "active_profile": "medium",
+                "active_regime": "normal",
+                "active_mode": "normal",
+                "active_overlays_json": "[]",
+                "resolved_config_hash": "0" * 64,
+                "resolved_config_snapshot_path": "replay",
+                "feature_flags_snapshot_json": "{}",
+                "data_calibration_state_snapshot_path": "replay",
+                "data_source_freshness_json": "{}",
+                "fill_collection_summary_json": None,
+                "command_execution_summary_json": None,
+                "staleness_flag": None,
+                "snapshot_metadata_json": None,
+            },
+        )
     session.commit()
 
 
