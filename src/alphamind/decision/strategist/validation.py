@@ -26,10 +26,10 @@ gate.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 
 from alphamind.analysis.synthesizer.models import (
+    REF_ID_RE,
     find_bare_prefix_citations,
     parse_reference_id,
 )
@@ -52,16 +52,6 @@ __all__ = [
     "ValidationWarning",
     "validate_strategist_output",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Module-level constants
-# ---------------------------------------------------------------------------
-
-# Bracketed-reference extractor: matches ``[<prefix-segments>-<digits>]``
-# anywhere in narrative prose. ``parse_reference_id`` narrows further to the
-# canonical synthesizer prefix taxonomy.
-_REF_ID_RE = re.compile(r"\[([A-Z][A-Z0-9-]*-[0-9]+)\]")
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +272,7 @@ def _check_narrative_references(
     """
     if narrative is None:
         return
-    for match in _REF_ID_RE.finditer(narrative):
+    for match in REF_ID_RE.finditer(narrative):
         ref_id = match.group(1)
         if parse_reference_id(ref_id) is None:
             continue

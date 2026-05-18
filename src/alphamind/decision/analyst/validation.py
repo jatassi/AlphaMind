@@ -21,11 +21,11 @@ Errors disqualify the output (``is_valid=False``); warnings do not.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 from datetime import datetime
 
 from alphamind.analysis.synthesizer.models import (
+    REF_ID_RE,
     find_bare_prefix_citations,
     parse_reference_id,
 )
@@ -64,13 +64,6 @@ DEFAULT_CONVICTION_BANDS: dict[int, tuple[float, float]] = {
     4: (2.0, 4.0),
     5: (3.0, 5.0),
 }
-
-# Bracketed-reference extractor: matches ``[<prefix-segments>-<digits>]``
-# anywhere in narrative prose. ``parse_reference_id`` narrows further to the
-# canonical synthesizer prefix taxonomy. Distinct from the line-anchored
-# ``synthesizer.reference_extractor._HEADER_RE`` — that one splits a brief
-# body into sections; this one finds embedded citations inside prose.
-_REF_ID_RE = re.compile(r"\[([A-Z][A-Z0-9-]*-[0-9]+)\]")
 
 # Substring the guardrail validation tool uses to flag a recommendation that
 # tripped the active profile's feature-flag gate (e.g., options on a profile
@@ -322,7 +315,7 @@ def _check_narrative_references(
     prefix can never resolve; surfacing it as a ``bare_prefix_citation``
     error lets the corrective-retry path run.
     """
-    for match in _REF_ID_RE.finditer(narrative):
+    for match in REF_ID_RE.finditer(narrative):
         ref_id = match.group(1)
         if parse_reference_id(ref_id) is None:
             continue
