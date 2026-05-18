@@ -44,8 +44,7 @@ _FISHER_Z_DF_CORRECTION: int = 3
 # evaluates to ~4.95, which keeps real signal well-separated from the cap.
 _ATANH_CLIP: float = 0.9999
 
-# Standard-normal CDF mapping uses ``erfc(|z| / sqrt(2))``; precompute so the
-# bare ``sqrt(2.0)`` literal doesn't trip the magic-number audit.
+# Denominator in the standard-normal tail probability ``erfc(|z| / sqrt(2))``.
 _SQRT_TWO: float = math.sqrt(2.0)
 
 
@@ -57,13 +56,14 @@ class CorrelationRegimeChangeParameters:
     out of :class:`DistillationDomainConfig` into a single immutable record
     so the pure compute keeps a tight signature.
 
-    ``correlation_breakdown_sigma`` gates the Fisher-z breakdown test
-    (multiple-comparison-aware default in ``config/distillation.yaml``);
-    ``dispersion_sigma`` gates the cross-stock dispersion z-test against
-    the trailing 20-day distribution.
+    ``correlation_breakdown_sigma`` is the operator-set raw-magnitude floor
+    on the Fisher-z breakdown test; the multiple-comparison correction is
+    handled by ``correlation_breakdown_fdr_q``. ``dispersion_sigma`` gates
+    the cross-stock dispersion z-test against the trailing 20-day
+    distribution.
 
-    ALP-541 added two preconditions that suppress phantom breakdowns on
-    sparse or noise-floor pairs:
+    Two preconditions suppress phantom breakdowns on sparse or noise-floor
+    pairs:
 
     - ``correlation_min_overlap_fraction`` — each window (short, prior,
       long) must have at least this fraction of its nominal length in
@@ -75,17 +75,15 @@ class CorrelationRegimeChangeParameters:
       When ``|long_corr|`` is near zero the short-window deviation is
       dominated by noise rather than a genuine shift in joint dynamics.
 
-    ALP-542 added the Benjamini-Hochberg FDR correction at the publish
-    layer: a pair-wise sigma-test runs N*(N-1)/2 hypotheses per invocation,
-    so the bare sigma threshold (which is single-test) produces a phantom
-    flag count that grows with the universe size.
-
-    - ``correlation_breakdown_fdr_q`` — Benjamini-Hochberg false-discovery
-      rate target. The sigma for each guard-surviving pair is mapped to a
-      two-tailed p-value and BH is applied across the candidate pool; only
-      pairs whose BH-adjusted q-value clears the target are published.
-      The raw sigma floor still applies as an emit gate so operator-set
-      magnitude requirements survive.
+    ``correlation_breakdown_fdr_q`` is the Benjamini-Hochberg false-discovery
+    rate target. The pair-wise sigma-test runs N*(N-1)/2 hypotheses per
+    invocation, so the bare sigma threshold (single-test) produces a phantom
+    flag count that grows with the universe size. The sigma for each
+    guard-surviving pair is mapped to a two-tailed p-value and BH is
+    applied across the candidate pool; only pairs whose BH-adjusted
+    q-value clears the target are published. The raw sigma floor still
+    applies as an emit gate so operator-set magnitude requirements
+    survive.
     """
 
     short_window_days: int
@@ -134,9 +132,6 @@ def _benjamini_hochberg_q_values(p_values: Sequence[float]) -> tuple[float, ...]
         return ()
     indexed = sorted(enumerate(p_values), key=lambda item: item[1])
     adjusted = [p * m / (rank + 1) for rank, (_, p) in enumerate(indexed)]
-    # Enforce monotonicity by walking from the largest rank backwards —
-    # ``reversed(range(len-1))`` iterates indices ``len-2 .. 0`` without a
-    # bare ``-2`` literal in the slice arithmetic.
     for i in reversed(range(len(adjusted) - 1)):
         adjusted[i] = min(adjusted[i], adjusted[i + 1])
     q_values = [0.0] * m
@@ -175,14 +170,10 @@ def _correlation_breakdown_blocks(
     Suppresses the two phantom-breakdown patterns documented on
     :class:`CorrelationRegimeChangeParameters`: sparse-overlap pairs whose
     sigma-test denominator is misspecified, and near-zero-baseline pairs
-    where the short-window deviation is dominated by noise rather than a
-    genuine shift in joint dynamics.
-
-    ALP-542 layers Benjamini-Hochberg FDR control on top of the raw sigma
-    floor: every guard-surviving pair gets a two-tailed p-value, BH is
-    applied across the candidate pool at ``correlation_breakdown_fdr_q``,
-    and a pair is published only when its BH-adjusted q-value clears the
-    target *and* its raw deviation sigma clears ``correlation_breakdown_sigma``.
+    where the short-window deviation is dominated by noise. A pair is
+    published only when its BH-adjusted q-value clears
+    ``correlation_breakdown_fdr_q`` *and* its raw deviation sigma clears
+    ``correlation_breakdown_sigma``.
     """
     short_window_days = params.short_window_days
     long_window_days = params.long_window_days

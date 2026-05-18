@@ -242,6 +242,7 @@ def test_anomaly_summary_appears_at_end_scoped_to_cr_audience() -> None:
             "short_correlation": 0.20,
             "long_correlation": 0.85,
             "deviation_sigma": 3.5,
+            "q_value": 0.01,
             "short_window_days": 5,
             "long_window_days": 60,
         },

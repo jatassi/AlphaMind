@@ -227,10 +227,8 @@ class NarrativeLag(BaseModel):
 
     narrative_lag_correlation_shift_sigma: float = Field(ge=0)
     correlation_breakdown_sigma: float = Field(ge=0)
-    # ALP-541: data-alignment guards on the correlation breakdown sigma-test.
     correlation_min_overlap_fraction: float = Field(ge=0, le=1)
     correlation_noise_floor: float = Field(ge=0, le=1)
-    # ALP-542: Benjamini-Hochberg FDR target for the multi-pair sigma-test.
     correlation_breakdown_fdr_q: float = Field(gt=0, le=1)
     narrative_lag_media_silence_hours: int = Field(ge=1)
 
