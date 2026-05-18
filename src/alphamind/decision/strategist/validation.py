@@ -29,7 +29,10 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from alphamind.analysis.synthesizer.models import parse_reference_id
+from alphamind.analysis.synthesizer.models import (
+    find_bare_prefix_citations,
+    parse_reference_id,
+)
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.commands.validation_results import (
     ValidationError,
@@ -274,6 +277,12 @@ def _check_narrative_references(
     breach IDs like ``[BREACH-1]``) live outside the synthesizer's reference
     taxonomy; ``parse_reference_id`` returns ``None`` for them and the
     validator skips rather than treating them as unknown references.
+
+    Also surfaces bare-prefix citations (ALP-521): bracketed tokens whose
+    body matches a known ``ReferencePrefix`` value but carries no ``-N``
+    index. The retrieval store is keyed by ``<prefix>-<index>`` so a bare
+    prefix can never resolve; surfacing it as a ``bare_prefix_citation``
+    error lets the corrective-retry path run.
     """
     if narrative is None:
         return
@@ -290,6 +299,16 @@ def _check_narrative_references(
                     "in the synthesizer's per-invocation retrieval store"
                 ),
             )
+    for prefix in find_bare_prefix_citations(narrative):
+        yield ValidationFailure(
+            field_path=field_path,
+            rule="bare_prefix_citation",
+            message=(
+                f"bare-prefix citation [{prefix}] in {field_path} carries no index; "
+                "the retrieval store is keyed by <prefix>-<index> and cannot resolve "
+                f"bare prefixes. Cite a specific brief section like [{prefix}-1]."
+            ),
+        )
 
 
 # Position-assessment narrative fields whose ``[XX-N]`` citations Layer-3

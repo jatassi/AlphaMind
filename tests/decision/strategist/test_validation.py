@@ -783,6 +783,59 @@ class TestLayer3PositionAssessmentReferences:
         assert any("QR-CW-99" in f.message for f in unknown_failures)
         assert any("remedy_rationale" in f.field_path for f in unknown_failures)
 
+    def test_bare_prefix_citation_in_status_rationale_is_failure(self) -> None:
+        # ALP-521: a bracketed token whose body matches a ReferencePrefix
+        # value but carries no -N index can never resolve in the retrieval
+        # store; surface it as a bare_prefix_citation error.
+        assessment = _make_position_assessment(
+            status_rationale="Correlation pair noted [CR] without index.",
+        )
+        output = _make_output(position_assessments=(assessment,))
+        result = validate_strategist_output(
+            output,
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+        )
+        assert not result.is_valid
+        bare_failures = [f for f in result.errors if f.rule == "bare_prefix_citation"]
+        assert len(bare_failures) == 1
+        assert "CR" in bare_failures[0].message
+        assert "status_rationale" in bare_failures[0].field_path
+
+    def test_bare_prefix_alongside_resolved_reference_only_flags_bare(self) -> None:
+        # A well-formed ``[SA-TECH-2]`` (in store) coexists with a bare ``[CR]``.
+        # Only the bare prefix should produce a bare_prefix_citation error.
+        assessment = _make_position_assessment(
+            status_rationale="See [SA-TECH-2] and pair note [CR].",
+        )
+        output = _make_output(position_assessments=(assessment,))
+        result = validate_strategist_output(
+            output,
+            retrieval_store=_retrieval_store("SA-TECH-2"),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+        )
+        bare_failures = [f for f in result.errors if f.rule == "bare_prefix_citation"]
+        assert len(bare_failures) == 1
+        assert "CR" in bare_failures[0].message
+        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
+        assert unknown_failures == []
+
+    def test_non_taxonomy_bracketed_token_is_not_bare_prefix(self) -> None:
+        # ``[BREACH-1]`` and ``[SA-1]`` live outside the ReferencePrefix
+        # taxonomy; the bare-prefix detector must not flag them. (parent
+        # issue § C: producer-side prefixes are not in scope.)
+        assessment = _make_position_assessment(
+            status_rationale="Referenced [BREACH-1] and [SA-1] internally.",
+        )
+        output = _make_output(position_assessments=(assessment,))
+        result = validate_strategist_output(
+            output,
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+        )
+        bare_failures = [f for f in result.errors if f.rule == "bare_prefix_citation"]
+        assert bare_failures == []
+
     def test_unknown_reference_in_cross_position_observations_is_failure(self) -> None:
         assessment = _make_position_assessment(
             cross_position_observations="Cited [SA-ENERGY-99] across positions.",
