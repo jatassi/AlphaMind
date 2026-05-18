@@ -13,6 +13,9 @@ NOT summed here: it is the per-fill price-level signal, not a drag accumulator.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
+from alphamind._kernel.ids import PositionId
 from alphamind._kernel.money import DECIMAL_ZERO, Money, signed_money
 from alphamind.state.records import FillRecord
 
@@ -35,4 +38,19 @@ def compute_position_live_drag(fills: tuple[FillRecord, ...]) -> Money:
             + estimate.estimated_impact_usd
             + estimate.estimated_regulatory_fees_usd
         )
+    return signed_money(total)
+
+
+def compute_portfolio_live_drag(
+    fills_by_position: Mapping[PositionId, tuple[FillRecord, ...]],
+) -> Money:
+    """Sum ``compute_position_live_drag`` across every position in the mapping.
+
+    The returned :class:`Money` is suitable as the "live-adjusted P/L delta"
+    that downstream consumers subtract from raw realized P/L. Returns
+    ``signed_money("0")`` for an empty mapping.
+    """
+    total = DECIMAL_ZERO
+    for fills in fills_by_position.values():
+        total += compute_position_live_drag(fills)
     return signed_money(total)

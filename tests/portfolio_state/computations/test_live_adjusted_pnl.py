@@ -94,3 +94,9 @@ def test_compute_position_live_drag_all_none_returns_zero() -> None:
         _fill_record(fill_id=f"fill-{i}", live_execution_estimate=None) for i in range(3)
     )
     assert compute_position_live_drag(fills) == money("0")
+
+
+def test_compute_portfolio_live_drag_empty_mapping_returns_zero() -> None:
+    from alphamind.portfolio_state.computations import compute_portfolio_live_drag
+
+    assert compute_portfolio_live_drag({}) == money("0")

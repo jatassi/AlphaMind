@@ -7,9 +7,11 @@ Each submodule contains pure functions over typed records (no I/O). The
 from __future__ import annotations
 
 from alphamind.portfolio_state.computations.live_adjusted_pnl import (
+    compute_portfolio_live_drag,
     compute_position_live_drag,
 )
 
 __all__ = [
+    "compute_portfolio_live_drag",
     "compute_position_live_drag",
 ]
