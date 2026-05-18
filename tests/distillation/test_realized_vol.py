@@ -9,8 +9,116 @@ modules (``tests/scheduler/test_phase1_inputs.py`` and
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
+from datetime import UTC, date, datetime
 
-from alphamind.distillation.realized_vol import compute_trailing_realized_vol
+import pytest
+from sqlalchemy import select
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
+
+import alphamind.state.tables  # noqa: F401  — register InvocationRow on Base
+from alphamind.distillation.realized_vol import (
+    compute_trailing_realized_vol,
+    persist_per_ticker_realized_vol,
+)
+from alphamind.persistence.models import (
+    AssetUniverse,
+    Base,
+    TickerRealizedVolRow,
+)
+from alphamind.persistence.session import make_engine, make_session_factory
+from alphamind.state.tables.invocations import InvocationRow
+from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
+
+
+@pytest.fixture()
+def engine() -> Iterator[Engine]:
+    eng = make_engine(":memory:")
+    Base.metadata.create_all(eng)
+    yield eng
+    eng.dispose()
+
+
+@pytest.fixture()
+def session(engine: Engine) -> Iterator[Session]:
+    factory = make_session_factory(engine)
+    with factory() as sess:
+        yield sess
+
+
+def _seed_ticker(session: Session, ticker: str) -> None:
+    session.add(
+        AssetUniverse(
+            asset_id=f"asset-{ticker.lower()}",
+            ticker=ticker,
+            full_name=f"{ticker} Holdings",
+            asset_class="equity",
+            asset_role="universe",
+            exchange="NASDAQ",
+            is_active=1,
+            added_date="2020-01-01",
+            last_updated="2026-05-18T00:00:00Z",
+        )
+    )
+
+
+_PROCESS_LIFETIME_ID = "proc-test"
+
+
+def _seed_process_lifetime(session: Session) -> None:
+    session.add(
+        ProcessLifetimeRow(
+            process_lifetime_id=_PROCESS_LIFETIME_ID,
+            process_role="pipeline",
+            process_start_at="2026-05-18T00:00:00Z",
+            process_pid=1,
+            hostname="test-host",
+            git_sha="0" * 40,
+            git_branch="main",
+            git_dirty=0,
+            python_version="3.13.13",
+            pip_freeze_hash="0" * 64,
+            pip_freeze_snapshot_path="snapshot/path",
+            anthropic_sdk_version="0.0.0",
+            claude_agent_sdk_version="0.0.0",
+            os_release="darwin",
+        )
+    )
+
+
+def _seed_invocation(session: Session, invocation_id: str) -> None:
+    session.add(
+        InvocationRow(
+            invocation_id=invocation_id,
+            process_lifetime_id=_PROCESS_LIFETIME_ID,
+            start_at="2026-05-18T00:00:00Z",
+            phase1_completed_at=None,
+            phase2_completed_at=None,
+            trigger_type="manual",
+            trigger_source="test",
+            trigger_reason="test-fixture",
+            git_sha_at_invocation="0" * 40,
+            active_profile="default",
+            active_regime="normal",
+            active_mode="normal",
+            active_overlays_json="[]",
+            resolved_config_hash="0" * 64,
+            resolved_config_snapshot_path="snapshot/path",
+            feature_flags_snapshot_json="{}",
+            data_calibration_state_snapshot_path="snapshot/path",
+            data_source_freshness_json="{}",
+            fill_collection_summary_json=None,
+            command_execution_summary_json=None,
+            staleness_flag=0,
+            snapshot_metadata_json=None,
+        )
+    )
+
+
+def _trending_closes(n: int, *, start: float = 100.0, jitter: float = 0.5) -> tuple[float, ...]:
+    """Synthetic close series with non-zero variance for compute tests."""
+    return tuple(start + jitter * (-1.0) ** i + i * 0.1 for i in range(n))
 
 
 def test_compute_returns_nonnegative_float_for_sufficient_data() -> None:
@@ -50,3 +158,111 @@ def test_compute_is_monotone_in_input_volatility() -> None:
     assert low is not None
     assert high is not None
     assert high > low
+
+
+# ---------------------------------------------------------------------------
+# Persister tests
+# ---------------------------------------------------------------------------
+
+
+def test_persist_writes_one_row_per_ticker(session: Session) -> None:
+    """Each ticker with sufficient closes yields one row in ``ticker_realized_vol``."""
+    _seed_ticker(session, "AAPL")
+    _seed_ticker(session, "MSFT")
+    _seed_process_lifetime(session)
+    session.flush()
+    _seed_invocation(session, "inv-1")
+    session.commit()
+
+    closes_aapl = _trending_closes(40)
+    closes_msft = _trending_closes(40, start=400.0)
+
+    written = persist_per_ticker_realized_vol(
+        session,
+        invocation_id="inv-1",
+        tickers=("AAPL", "MSFT"),
+        closes_by_ticker={"AAPL": closes_aapl, "MSFT": closes_msft},
+        as_of_date=date(2026, 5, 18),
+        computed_at=datetime(2026, 5, 18, 12, 0, tzinfo=UTC),
+    )
+    session.commit()
+
+    rows = session.execute(select(TickerRealizedVolRow)).scalars().all()
+    assert written == 2
+    assert {r.ticker for r in rows} == {"AAPL", "MSFT"}
+    for row in rows:
+        assert row.as_of_date == "2026-05-18"
+        assert row.invocation_id == "inv-1"
+        assert row.trailing_30d_realized_vol > 0.0
+        assert row.computed_at == "2026-05-18T12:00:00Z"
+
+
+def test_persist_skips_tickers_with_insufficient_closes(session: Session) -> None:
+    """Tickers whose close history is too short are silently skipped — no row,
+    no exception."""
+    _seed_ticker(session, "AAPL")
+    _seed_ticker(session, "TOOSHORT")
+    _seed_process_lifetime(session)
+    session.flush()
+    _seed_invocation(session, "inv-1")
+    session.commit()
+
+    written = persist_per_ticker_realized_vol(
+        session,
+        invocation_id="inv-1",
+        tickers=("AAPL", "TOOSHORT"),
+        closes_by_ticker={
+            "AAPL": _trending_closes(40),
+            "TOOSHORT": (100.0, 101.0),
+        },
+        as_of_date=date(2026, 5, 18),
+        computed_at=datetime(2026, 5, 18, 12, 0, tzinfo=UTC),
+    )
+    session.commit()
+
+    rows = session.execute(select(TickerRealizedVolRow)).scalars().all()
+    assert written == 1
+    assert {r.ticker for r in rows} == {"AAPL"}
+
+
+def test_persist_upserts_same_day_reinvocation(session: Session) -> None:
+    """A second invocation on the same day overwrites the prior row — same PK,
+    new vol / invocation_id / computed_at."""
+    _seed_ticker(session, "AAPL")
+    _seed_process_lifetime(session)
+    session.flush()
+    _seed_invocation(session, "inv-1")
+    _seed_invocation(session, "inv-2")
+    session.commit()
+
+    closes_a = _trending_closes(40)
+    closes_b = _trending_closes(40, jitter=2.0)  # higher variance
+
+    persist_per_ticker_realized_vol(
+        session,
+        invocation_id="inv-1",
+        tickers=("AAPL",),
+        closes_by_ticker={"AAPL": closes_a},
+        as_of_date=date(2026, 5, 18),
+        computed_at=datetime(2026, 5, 18, 9, 0, tzinfo=UTC),
+    )
+    session.commit()
+    first = session.execute(select(TickerRealizedVolRow)).scalar_one()
+    first_vol = first.trailing_30d_realized_vol
+
+    persist_per_ticker_realized_vol(
+        session,
+        invocation_id="inv-2",
+        tickers=("AAPL",),
+        closes_by_ticker={"AAPL": closes_b},
+        as_of_date=date(2026, 5, 18),
+        computed_at=datetime(2026, 5, 18, 15, 0, tzinfo=UTC),
+    )
+    session.commit()
+
+    rows = session.execute(select(TickerRealizedVolRow)).scalars().all()
+    assert len(rows) == 1
+    upserted = rows[0]
+    assert upserted.invocation_id == "inv-2"
+    assert upserted.computed_at == "2026-05-18T15:00:00Z"
+    assert upserted.trailing_30d_realized_vol != first_vol

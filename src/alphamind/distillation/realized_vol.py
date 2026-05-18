@@ -33,10 +33,28 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections.abc import Iterable, Mapping
+from datetime import UTC, date, datetime
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from alphamind.distillation.q7._helpers_compute import _log_returns_from_closes
+from alphamind.persistence.models import TickerRealizedVolRow
 
-__all__ = ["compute_trailing_realized_vol"]
+__all__ = [
+    "compute_trailing_realized_vol",
+    "persist_per_ticker_realized_vol",
+]
+
+
+def _format_iso_utc(dt: datetime) -> str:
+    """Render a tz-aware datetime as ISO-8601 UTC with a ``Z`` suffix.
+
+    Mirrors ``q7._helpers._format_iso_utc`` to keep the timestamp encoding
+    consistent across the distillation layer.
+    """
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # Default minimum number of log-return observations for a valid estimate.
@@ -74,3 +92,84 @@ def compute_trailing_realized_vol(
     if len(log_returns) < min_returns:
         return None
     return float(statistics.stdev(log_returns) * math.sqrt(annualization_factor))
+
+
+# ---------------------------------------------------------------------------
+# Per-invocation persister
+# ---------------------------------------------------------------------------
+
+
+# Default number of trailing trading-day closes the persister consumes. 30
+# matches the ``RealizedVolEntry.trailing_30d_realized_vol`` field name; the
+# caller may override for backfill / experimentation paths.
+_DEFAULT_LOOKBACK_DAYS: int = 30
+
+
+def persist_per_ticker_realized_vol(
+    session: Session,
+    *,
+    invocation_id: str,
+    tickers: Iterable[str],
+    closes_by_ticker: Mapping[str, tuple[float, ...]],
+    as_of_date: date,
+    lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
+    computed_at: datetime | None = None,
+) -> int:
+    """Persist one realized-vol row per ticker into ``ticker_realized_vol``.
+
+    Iterates ``tickers``; for each, reads the trailing ``lookback_days``
+    closes from ``closes_by_ticker[ticker]`` and calls
+    :func:`compute_trailing_realized_vol`. Tickers absent from the closes
+    map or with insufficient history (``None`` from the compute) are
+    silently skipped — the read path falls back to whatever rows are
+    present.
+
+    Same-day re-invocations upsert on the composite PK
+    ``(ticker, as_of_date)``: an existing row's ``trailing_30d_realized_vol``,
+    ``invocation_id``, and ``computed_at`` are overwritten in place.
+
+    All writes join the caller's session/transaction — surrounding
+    ``InvocationContext`` commits on clean exit. Sync to match the
+    distillation orchestrator's sync ``Session`` (the orchestrator runs
+    under ``asyncio.to_thread``).
+
+    Returns the count of rows written or updated.
+    """
+    if computed_at is None:
+        computed_at = datetime.now(UTC)
+    computed_at_iso = _format_iso_utc(computed_at)
+    as_of_iso = as_of_date.isoformat()
+
+    written = 0
+    for ticker in tickers:
+        closes = closes_by_ticker.get(ticker)
+        if closes is None:
+            continue
+        trimmed = closes[-lookback_days:] if len(closes) > lookback_days else closes
+        vol = compute_trailing_realized_vol(trimmed)
+        if vol is None:
+            continue
+
+        existing = session.execute(
+            select(TickerRealizedVolRow).where(
+                TickerRealizedVolRow.ticker == ticker,
+                TickerRealizedVolRow.as_of_date == as_of_iso,
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            session.add(
+                TickerRealizedVolRow(
+                    ticker=ticker,
+                    as_of_date=as_of_iso,
+                    trailing_30d_realized_vol=vol,
+                    invocation_id=invocation_id,
+                    computed_at=computed_at_iso,
+                )
+            )
+        else:
+            existing.trailing_30d_realized_vol = vol
+            existing.invocation_id = invocation_id
+            existing.computed_at = computed_at_iso
+        written += 1
+
+    return written

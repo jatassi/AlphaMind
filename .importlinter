@@ -151,6 +151,16 @@ ignore_imports =
     # ``distillation-compute-no-sqlalchemy`` below; the per-classifier
     # loaders consume the Protocol only and so carry no sqlalchemy edge.
     alphamind.distillation.qualitative_derived -> sqlalchemy
+    # ALP-530 (per-ticker realized-vol substrate). ``realized_vol`` keeps a
+    # mixed shape: the pure ``compute_trailing_realized_vol`` is ORM-free
+    # and pinned under ``distillation-compute-no-sqlalchemy`` below; the
+    # IO-shell ``persist_per_ticker_realized_vol`` + ``read_realized_vol_map``
+    # legitimately carry sqlalchemy (UPSERT into ``ticker_realized_vol``
+    # plus the consumer-side latest-per-ticker read). The same punch-list
+    # #9 split that retires the q*/loaders entries above will retire this
+    # one — at that point the IO shell moves to ``realized_vol_loaders.py``
+    # and the read function becomes Protocol-typed.
+    alphamind.distillation.realized_vol -> sqlalchemy
     # Indirect via persistence.models (also retired by punch-list #9: once
     # the distillation modules consume a loaders/repository protocol
     # instead of importing ORM declarative classes directly, the indirect
@@ -197,6 +207,11 @@ ignore_imports =
     # via the divergence-event write helper. The pure compute cores have no
     # such edges.
     alphamind.distillation.q7._loaders -> alphamind.persistence.models
+    # ALP-530 IO shell — ``realized_vol.persist_per_ticker_realized_vol`` and
+    # ``realized_vol.read_realized_vol_map`` import ``TickerRealizedVolRow``
+    # for the upsert + read paths. Retires under the same punch-list #9
+    # split alongside the q*/loaders entries above.
+    alphamind.distillation.realized_vol -> alphamind.persistence.models
 
 # Forbidden contract (ALP-467 pilot): pure-compute cores split out by the
 # distillation compute/load boundary pilot must never import sqlalchemy.
