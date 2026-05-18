@@ -16,8 +16,8 @@ from __future__ import annotations
 import dataclasses
 import json
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
-from typing import Any
+from datetime import UTC, date, datetime
+from typing import Any, Literal
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -57,6 +57,7 @@ from alphamind.portfolio_state.records.positions import (
     OptionsPositionDetails,
     PositionRecord,
     StrategyPositionDetails,
+    resolve_ticker,
 )
 from alphamind.risk_guardrails.guardrail_evaluation import Status
 from alphamind.risk_guardrails.state_delivery.validation_tool import (
@@ -71,14 +72,7 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import (
 )
 
 PositionLookup = Callable[[str], PositionRecord | None]
-"""Resolves a ``position_id`` to its persisted record (or ``None`` if missing).
-
-Built once per ``submit_envelope`` invocation from the
-:class:`alphamind.portfolio_state.consumers.portfolio_manager.PortfolioManagerView`
-projection captured at envelope receipt and threaded into
-:func:`_command_to_validation_request` so AddCommand can project its real
-exposure delta against the existing position's instrument.
-"""
+"""Resolves a ``position_id`` to its persisted record (or ``None`` if missing)."""
 
 _ENVELOPE_ADAPTER: TypeAdapter[PMEnvelope] = TypeAdapter(PMEnvelope)
 
@@ -425,16 +419,23 @@ def _open_instrument_kwargs(
     instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
 ) -> dict[str, Any]:
     """Build the kwargs for :class:`ValidationInstrument` from an OPEN
-    command's instrument variant."""
+    command's instrument variant.
+
+    Position-level direction is :class:`Direction.LONG` for STRATEGY by
+    convention (matches Phase 2's
+    :func:`~alphamind.execution.write_paths.phase2.open._direction_from_instrument`);
+    per-leg directions ride on the :class:`ValidationStrategyLeg` tuples.
+    """
+    if isinstance(instrument, StrategyInstrument):
+        direction = Direction.LONG
+    else:
+        direction = _OMS_TO_VALIDATION_DIRECTION[instrument.direction]
     kwargs: dict[str, Any] = {
         "ticker": _instrument_ticker_key(instrument),
         "asset_type": _OMS_TO_VALIDATION_ASSET[instrument.asset_type],
-        "direction": _OMS_TO_VALIDATION_DIRECTION[
-            instrument.direction if not isinstance(instrument, StrategyInstrument) else "long"
-        ],
+        "direction": direction,
     }
     if isinstance(instrument, OptionInstrument):
-        # ALP-462 — Price → float at the ValidationInstrument surface.
         kwargs["strike"] = float(instrument.strike)
         kwargs["expiration"] = datetime.fromisoformat(instrument.expiration).replace(tzinfo=UTC)
         kwargs["contract_type"] = instrument.contract_type
@@ -476,30 +477,36 @@ def _build_constructive_request_from_add(
 
 def _add_instrument_kwargs(position: PositionRecord) -> dict[str, Any]:
     """Build the kwargs for :class:`ValidationInstrument` from a persisted
-    :class:`PositionRecord` (the AddCommand resolution path)."""
+    :class:`PositionRecord` (the AddCommand resolution path).
+
+    Position-level direction is :class:`Direction.LONG` for STRATEGY by
+    persistence convention (see
+    :func:`~alphamind.execution.write_paths.phase2.open._direction_from_instrument`);
+    per-leg directions ride on the leg tuples.
+    """
     details = position.details
-    kwargs: dict[str, Any] = {"direction": position.direction}
+    ticker = resolve_ticker(details)
+    if ticker is None:
+        msg = (
+            f"AddCommand resolved position {position.position_id!r} with no "
+            "underlying ticker (empty strategy legs?)"
+        )
+        raise ValueError(msg)
+    kwargs: dict[str, Any] = {
+        "ticker": ticker,
+        "direction": position.direction,
+    }
     if isinstance(details, EquityPositionDetails):
-        kwargs["ticker"] = details.ticker
         kwargs["asset_type"] = InstrumentType.EQUITY
         return kwargs
     if isinstance(details, OptionsPositionDetails):
-        kwargs["ticker"] = details.underlying_ticker
         kwargs["asset_type"] = InstrumentType.OPTIONS
         kwargs["strike"] = details.strike_price
-        kwargs["expiration"] = datetime.combine(
-            details.expiration_date, datetime.min.time(), tzinfo=UTC
-        )
-        kwargs["contract_type"] = (
-            "call" if details.contract_type is OptionContractType.CALL else "put"
-        )
+        kwargs["expiration"] = _date_to_utc_datetime(details.expiration_date)
+        kwargs["contract_type"] = _OPTION_CONTRACT_TYPE_TO_VALIDATION_STR[details.contract_type]
         return kwargs
     if isinstance(details, StrategyPositionDetails):
-        # Strategy position direction is LONG by persistence convention
-        # (see :func:`_direction_from_instrument`); per-leg directions ride on
-        # the leg tuples.
         kwargs["direction"] = Direction.LONG
-        kwargs["ticker"] = details.legs[0].options.underlying_ticker
         kwargs["asset_type"] = InstrumentType.STRATEGY
         kwargs["legs"] = _strategy_legs_from_persisted(details)
         return kwargs
@@ -513,26 +520,39 @@ def _strategy_legs_from_persisted(
     """Project persisted strategy legs to :class:`ValidationStrategyLeg` tuples.
 
     Mirrors :func:`_strategy_legs_for_validation` but reads from the persisted
-    record shape rather than the wire-format ``StrategyInstrument``.
+    record shape rather than the wire-format ``StrategyInstrument``. Raises
+    :class:`ValueError` on a persisted leg with no direction recorded or a
+    non-positive ``contract_count`` — the validator cannot project an exposure
+    delta from either shape, so silent fallback would hide bad persisted data.
     """
     legs: list[ValidationStrategyLeg] = []
     for leg in details.legs:
-        leg_direction = leg.direction
-        if leg_direction is None:
+        if leg.direction is None:
             msg = f"persisted strategy leg {leg.leg_id!r} has no direction set"
             raise ValueError(msg)
         opt = leg.options
+        if opt.contract_count <= 0:
+            msg = (
+                f"persisted strategy leg {leg.leg_id!r} has non-positive "
+                f"contract_count={opt.contract_count}"
+            )
+            raise ValueError(msg)
         legs.append(
             ValidationStrategyLeg(
-                direction=leg_direction,
+                direction=leg.direction,
                 asset_type=InstrumentType.OPTIONS,
                 strike=opt.strike_price,
-                expiration=datetime.combine(opt.expiration_date, datetime.min.time(), tzinfo=UTC),
-                contract_type=("call" if opt.contract_type is OptionContractType.CALL else "put"),
-                quantity=int(opt.contract_count) or 1,
+                expiration=_date_to_utc_datetime(opt.expiration_date),
+                contract_type=_OPTION_CONTRACT_TYPE_TO_VALIDATION_STR[opt.contract_type],
+                quantity=int(opt.contract_count),
             )
         )
     return tuple(legs)
+
+
+def _date_to_utc_datetime(d: date) -> datetime:
+    """Lift a calendar :class:`date` to a UTC-tz-aware :class:`datetime`."""
+    return datetime.combine(d, datetime.min.time(), tzinfo=UTC)
 
 
 _OMS_TO_VALIDATION_ASSET: Mapping[str, InstrumentType] = {
@@ -544,6 +564,11 @@ _OMS_TO_VALIDATION_ASSET: Mapping[str, InstrumentType] = {
 _OMS_TO_VALIDATION_DIRECTION: Mapping[str, Direction] = {
     "long": Direction.LONG,
     "short": Direction.SHORT,
+}
+
+_OPTION_CONTRACT_TYPE_TO_VALIDATION_STR: Mapping[OptionContractType, Literal["call", "put"]] = {
+    OptionContractType.CALL: "call",
+    OptionContractType.PUT: "put",
 }
 
 
@@ -561,7 +586,8 @@ def _build_acknowledgment(
     mints from the matching ``command_id`` — so the LLM sees the identifiers
     that will land on the persisted rows. For ADD the ``position_id`` is
     already supplied by the command; the ``order_id`` mirrors the
-    ``ORD-ADD-ADJ-{position_id}-{suffix}`` shape Phase 2's add path uses.
+    ``ORD-ADD-{position_id}-{suffix}`` shape Phase 2's add path uses for the
+    primary entry order (see :func:`alphamind.execution.write_paths.phase2.add._add_order_id`).
     Broker routing (story 03e / ALP-390), when wired, swaps the ``order_id``
     for the broker's real ``alpaca_order_id`` via
     :func:`alphamind.decision.portfolio_manager.submit_envelope.dispatch._with_real_order_id`.
@@ -599,7 +625,7 @@ def _build_acknowledgment(
     # AddCommand
     return Acknowledgment(
         position_id=command.position_id,
-        order_id=OrderId(f"ORD-ADD-ADJ-{command.position_id}-{suffix}"),
+        order_id=OrderId(f"ORD-ADD-{command.position_id}-{suffix}"),
         validation_metadata=metadata,
     )
 
@@ -643,19 +669,24 @@ def _build_rejection_payload(*, result: ValidationResult) -> RejectionPayload:
 __all__ = [
     "_OMS_TO_VALIDATION_ASSET",
     "_OMS_TO_VALIDATION_DIRECTION",
+    "_OPTION_CONTRACT_TYPE_TO_VALIDATION_STR",
     "PositionLookup",
+    "_add_instrument_kwargs",
     "_build_acknowledgment",
     "_build_constructive_request_from_add",
     "_build_constructive_request_from_open",
     "_build_envelope_level_rejection",
     "_build_rejection_payload",
     "_command_to_validation_request",
+    "_date_to_utc_datetime",
     "_format_first_error",
     "_instrument_ticker_key",
+    "_open_instrument_kwargs",
     "_process_commands",
     "_process_one_command",
     "_safe_derive_pm_command_id",
     "_serialize_response",
     "_strategy_legs_for_validation",
+    "_strategy_legs_from_persisted",
     "_validate_envelope_payload",
 ]

@@ -1666,6 +1666,184 @@ def test_add_command_raises_when_position_lookup_returns_none() -> None:
         )
 
 
+def test_add_command_projects_options_position_into_validation_request() -> None:
+    """ADD against an :class:`OptionsPositionDetails` position projects
+    strike / expiration / contract_type onto the
+    :class:`ValidationInstrument`."""
+    from datetime import date
+
+    from alphamind.decision.portfolio_manager.submit_envelope.process import (
+        _command_to_validation_request,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        Direction as PSDirection,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        InstrumentType,
+        OptionContractType,
+        OptionGreeks,
+        OptionsPositionDetails,
+    )
+
+    add_position_id = "POS-NVDA-OPT-001"
+    record = _bypass_init_PositionRecord(
+        position_id=add_position_id,
+        direction=PSDirection.LONG,
+        details=OptionsPositionDetails(
+            underlying_ticker="NVDA",  # type: ignore[arg-type]
+            strike_price=800.0,
+            expiration_date=date(2026, 6, 19),
+            contract_type=OptionContractType.CALL,
+            contract_count=10.0,
+            contract_multiplier=100.0,
+            premium_paid_per_contract=12.5,
+            greeks=OptionGreeks(delta=0.4, gamma=0.01, theta=-0.05, vega=0.2),
+        ),
+    )
+    lookup = {add_position_id: record}.get
+
+    request = _command_to_validation_request(
+        _add_command(position_id=add_position_id), position_lookup=lookup
+    )
+    assert request.instrument.asset_type is InstrumentType.OPTIONS
+    assert request.instrument.ticker == "NVDA"
+    assert request.instrument.strike == 800.0
+    assert request.instrument.contract_type == "call"
+    assert request.instrument.expiration is not None
+    assert request.instrument.expiration.tzinfo is not None
+
+
+def test_add_command_projects_strategy_position_with_per_leg_directions() -> None:
+    """ADD against a :class:`StrategyPositionDetails` position projects each
+    persisted leg's direction onto the :class:`ValidationStrategyLeg` tuple
+    and overrides position-level direction to :class:`Direction.LONG`."""
+    from datetime import date
+
+    from alphamind.decision.portfolio_manager.submit_envelope.process import (
+        _command_to_validation_request,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        Direction as PSDirection,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        InstrumentType,
+        OptionContractType,
+        OptionGreeks,
+        OptionsPositionDetails,
+        StrategyPositionDetails,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        StrategyLeg as PSStrategyLeg,
+    )
+
+    def _leg(leg_id: str, direction: PSDirection, strike: float) -> PSStrategyLeg:
+        return PSStrategyLeg(
+            leg_id=leg_id,
+            direction=direction,
+            options=OptionsPositionDetails(
+                underlying_ticker="NVDA",  # type: ignore[arg-type]
+                strike_price=strike,
+                expiration_date=date(2026, 6, 19),
+                contract_type=OptionContractType.CALL,
+                contract_count=1.0,
+                contract_multiplier=100.0,
+                premium_paid_per_contract=10.0,
+                greeks=OptionGreeks(delta=0.4, gamma=0.01, theta=-0.05, vega=0.2),
+            ),
+        )
+
+    add_position_id = "POS-NVDA-STRAT-001"
+    record = _bypass_init_PositionRecord(
+        position_id=add_position_id,
+        # Position-level direction on a strategy is a persistence artifact; the
+        # add path overrides to LONG regardless.
+        direction=PSDirection.SHORT,
+        details=StrategyPositionDetails(
+            strategy_type_label="vertical_spread",
+            legs=(
+                _leg("L1", PSDirection.LONG, 800.0),
+                _leg("L2", PSDirection.SHORT, 810.0),
+            ),
+            net_premium_usd=1.0,
+            max_profit_usd=10.0,
+            max_loss_usd=10.0,
+            breakeven_levels=(805.0,),
+            strategy_greeks=OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0),
+        ),
+    )
+    lookup = {add_position_id: record}.get
+
+    request = _command_to_validation_request(
+        _add_command(position_id=add_position_id), position_lookup=lookup
+    )
+    assert request.instrument.asset_type is InstrumentType.STRATEGY
+    assert request.instrument.direction is PSDirection.LONG
+    assert request.instrument.legs is not None
+    assert tuple(leg.direction for leg in request.instrument.legs) == (
+        PSDirection.LONG,
+        PSDirection.SHORT,
+    )
+
+
+def test_add_command_raises_on_strategy_leg_without_direction() -> None:
+    """A persisted strategy leg with no direction recorded surfaces as a
+    :class:`ValueError` — better than silently dropping the leg or assuming
+    a default."""
+    from datetime import date
+
+    from alphamind.decision.portfolio_manager.submit_envelope.process import (
+        _command_to_validation_request,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        Direction as PSDirection,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        OptionContractType,
+        OptionGreeks,
+        OptionsPositionDetails,
+        StrategyPositionDetails,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        StrategyLeg as PSStrategyLeg,
+    )
+
+    add_position_id = "POS-NVDA-STRAT-BAD"
+    record = _bypass_init_PositionRecord(
+        position_id=add_position_id,
+        direction=PSDirection.LONG,
+        details=StrategyPositionDetails(
+            strategy_type_label="vertical_spread",
+            legs=(
+                PSStrategyLeg(
+                    leg_id="L1",
+                    direction=None,
+                    options=OptionsPositionDetails(
+                        underlying_ticker="NVDA",  # type: ignore[arg-type]
+                        strike_price=800.0,
+                        expiration_date=date(2026, 6, 19),
+                        contract_type=OptionContractType.CALL,
+                        contract_count=1.0,
+                        contract_multiplier=100.0,
+                        premium_paid_per_contract=10.0,
+                        greeks=OptionGreeks(delta=0.4, gamma=0.01, theta=-0.05, vega=0.2),
+                    ),
+                ),
+            ),
+            net_premium_usd=1.0,
+            max_profit_usd=10.0,
+            max_loss_usd=10.0,
+            breakeven_levels=(800.0,),
+            strategy_greeks=OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0),
+        ),
+    )
+    lookup = {add_position_id: record}.get
+
+    with pytest.raises(ValueError, match="L1"):
+        _command_to_validation_request(
+            _add_command(position_id=add_position_id), position_lookup=lookup
+        )
+
+
 # ---------------------------------------------------------------------------
 # ALP-514 — Strategy direction projection consumes per-leg directions
 # ---------------------------------------------------------------------------

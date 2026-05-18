@@ -175,10 +175,7 @@ def _position_ticker(position: PositionRecord) -> str:
 
 
 def _id_suffix(command_id: str) -> str:
-    """Stable 32-hex suffix from the command id — delegates to the canonical
-    OMS helper so the submit_envelope wrapper's acknowledgment surfaces the
-    same suffix Phase 2 persists.
-    """
+    """Stable 32-hex suffix from *command_id*."""
     return synthesize_id_suffix(command_id)
 
 

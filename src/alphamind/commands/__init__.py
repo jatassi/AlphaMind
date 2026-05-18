@@ -18,7 +18,8 @@ The package hosts:
   ``docs/design/04-decision-layer/pm-envelope-schema.md``.
 * Per-command submission-result shapes
   (:mod:`~alphamind.commands.submission_results`) — the wire contract
-  ``submit_envelope`` returns, identical for stub and real-engine paths.
+  ``submit_envelope`` returns, uniform across PM-originated and
+  engine-originated submission paths.
 * Submission-log entry types
   (:mod:`~alphamind.commands.submission_log`) — what the submit_envelope
   wrapper records per call for downstream Phase 2 writeback.
