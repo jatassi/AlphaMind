@@ -15,7 +15,7 @@ vocabulary; ``criterion`` supports the PM evaluation-criterion-set vocabulary.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from alphamind._kernel.ids import EnvelopeId
 
@@ -63,10 +63,10 @@ class ValidationResult:
     """
 
     errors: tuple[ValidationError, ...]
-    warnings: tuple[ValidationWarning, ...] = field(default_factory=tuple)
+    warnings: tuple[ValidationWarning, ...] = ()
     envelope_id: EnvelopeId | None = None
 
     @property
     def is_valid(self) -> bool:
         """``True`` iff ``errors`` is empty. Warnings never disqualify."""
-        return len(self.errors) == 0
+        return not self.errors

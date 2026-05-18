@@ -31,7 +31,11 @@ from collections.abc import Iterable
 
 from alphamind.analysis.synthesizer.models import parse_reference_id
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
-from alphamind.commands.validation_results import ValidationError, ValidationResult, ValidationWarning
+from alphamind.commands.validation_results import (
+    ValidationError,
+    ValidationResult,
+    ValidationWarning,
+)
 from alphamind.decision.strategist.models import (
     PendingOrderAssessment,
     PortfolioLevelObservations,
