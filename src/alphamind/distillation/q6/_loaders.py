@@ -289,7 +289,8 @@ def _try_yield_curve_result(
 
     Essentials are the five DGS series at ``as_of`` and the DGS2/DGS10 readings
     five calendar days earlier. When any essential is missing the loader
-    surfaces the gap via the bootstrap path rather than fabricating a label.
+    surfaces the gap via an ``unavailable`` stub block rather than fabricating
+    a label.
     """
     end_date = as_of.strftime("%Y-%m-%d")
     latest: dict[str, float] = {}
@@ -381,7 +382,7 @@ def _try_dollar_result(
     The classifier accepts empty SPY returns and yields the residual
     ``trade_flow_driven`` label per :func:`pearson_correlation`'s zero-
     variance branch. Empty DXY history, however, leaves no signal at all
-    so the loader surfaces the gap via the bootstrap path.
+    so the loader surfaces the gap via an ``unavailable`` stub block.
     """
     end_date = as_of.strftime("%Y-%m-%d")
     range_start_date = (as_of - timedelta(days=window_days)).strftime("%Y-%m-%d")
@@ -661,7 +662,7 @@ def load_q6_inputs(
 
     1. FRED reads + per-classifier pure-compute for yield-curve, inflation,
        and dollar attribution (each may return ``None`` if essentials are
-       missing — the assembler emits a bootstrap stub in their place).
+       missing — the assembler emits an ``unavailable`` stub in their place).
     2. Funding-stress composite refresh, including the
        :func:`refresh_composite_state` write and the per-component
        ``alert_active`` override.

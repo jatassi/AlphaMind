@@ -14,7 +14,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 
-from alphamind.distillation._calibration_core import CalibrationState
+from alphamind.distillation._calibration_core import CalibrationState, decide_calibration_state
 
 # ---------------------------------------------------------------------------
 # Block-id namespace
@@ -119,26 +119,17 @@ def _calibration_for_window(
 ) -> tuple[CalibrationState, str | None]:
     """Decide ``(state, bootstrap_reason)`` for a per-window correlation block.
 
-    A correlation matrix's calibration is gated on having at least
-    ``required`` daily returns inside the window. Per ALP-540:
-
-    - ``n_observations == 0`` → :attr:`CalibrationState.UNAVAILABLE`
-      (collector failure — no data points at all).
-    - ``0 < n_observations < required`` → :attr:`CalibrationState.ACCUMULATING`
-      (collector healthy, just need more time; matrix still computed for
-      visibility so domain researchers can weight the percentile read).
+    Delegates the three-state decision to :func:`decide_calibration_state`
+    (ALP-540 vocabulary) and synthesizes the operator-readable reason
+    string. The matrix is still computed below the threshold for visibility
+    so domain researchers can weight the percentile read.
     """
-    if n_observations >= required:
-        return CalibrationState.CALIBRATED, None
-    if n_observations == 0:
-        return (
-            CalibrationState.UNAVAILABLE,
-            f"{input_name}: 0 observations",
-        )
-    return (
-        CalibrationState.ACCUMULATING,
-        f"{input_name}: {n_observations} < {required}",
-    )
+    state = decide_calibration_state(observed_n=n_observations, required_n=required)
+    if state is CalibrationState.CALIBRATED:
+        return state, None
+    if state is CalibrationState.UNAVAILABLE:
+        return state, f"{input_name}: 0 observations"
+    return state, f"{input_name}: {n_observations} < {required}"
 
 
 def _zscore(value: float, distribution: Sequence[float]) -> float:

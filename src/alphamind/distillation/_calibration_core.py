@@ -46,7 +46,7 @@ class CalibratedValue:
 
 
 def decide_calibration_state(*, observed_n: int, required_n: int) -> CalibrationState:
-    """Map ``(observed_n, required_n)`` to the three-state vocabulary (ALP-540).
+    """Map ``(observed_n, required_n)`` to the three-state calibration vocabulary.
 
     - ``observed_n >= required_n`` → :attr:`CalibrationState.CALIBRATED`.
     - ``0 < observed_n < required_n`` → :attr:`CalibrationState.ACCUMULATING`
@@ -72,7 +72,7 @@ def tag_with_fallback(
 ) -> CalibratedValue:
     """Decide the calibration state and wrap the result.
 
-    Four branches (ALP-540):
+    Four branches:
 
     - ``observed_n >= required_n`` — ``computed_value`` carried with
       :attr:`CalibrationState.CALIBRATED`; the fallback is not invoked.

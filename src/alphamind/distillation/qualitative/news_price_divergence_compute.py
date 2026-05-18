@@ -16,8 +16,9 @@ Semantics mirror the legacy implementation exactly:
   :data:`NON_NEUTRAL_DOMINANCE_THRESHOLD` of non-neutral articles.
 - Cross-reference with the signed hourly price change over the same window.
 - Emit a ``priced_in`` / ``hidden_problem`` flag when news and price diverge.
-- Per-block calibration: block is tagged ``bootstrap`` when the thinnest
-  audience-ticker evidence is below ``min_articles``.
+- Per-block calibration: block is tagged ``accumulating`` when the thinnest
+  audience-ticker evidence is below ``min_articles`` but non-zero, and
+  ``unavailable`` when no audience ticker carries any evidence.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from alphamind.distillation._calibration_core import CalibrationState
+from alphamind.distillation._calibration_core import CalibrationState, decide_calibration_state
 from alphamind.distillation._repository import NewsLabelCountsRow
 from alphamind.distillation.output import AnomalyFlag, OutputAudience, OutputBlock
 
@@ -151,8 +152,9 @@ def compute_news_price_divergence_blocks(
     one diverging ticker, with ``payload["per_ticker"]`` keyed by ticker
     sorted ascending. Block-level calibration is the worst (thinnest)
     ticker evidence in the audience — one thin ticker drags the whole
-    block to ``bootstrap`` so downstream consumers see the caveat without
-    having to inspect every per-ticker entry.
+    block to ``accumulating`` (or ``unavailable`` when evidence is zero)
+    so downstream consumers see the caveat without having to inspect every
+    per-ticker entry.
     """
     per_audience: dict[OutputAudience, dict[str, dict[str, Any]]] = defaultdict(dict)
     per_audience_magnitudes: dict[OutputAudience, list[tuple[str, float]]] = defaultdict(list)
@@ -231,23 +233,11 @@ def _flag_tuple(magnitudes: Sequence[tuple[str, float]]) -> tuple[AnomalyFlag, .
 def _block_calibration(
     *, worst_evidence: int, min_articles: int
 ) -> tuple[CalibrationState, str | None]:
-    """Compute the block-level calibration tag and (when non-calibrated) the reason.
-
-    Per ALP-540: zero articles → :attr:`CalibrationState.UNAVAILABLE`
-    (collector failure); some articles but below ``min_articles`` →
-    :attr:`CalibrationState.ACCUMULATING`.
-    """
-    if worst_evidence >= min_articles:
-        return CalibrationState.CALIBRATED, None
-    if worst_evidence == 0:
-        return (
-            CalibrationState.UNAVAILABLE,
-            f"news_price_divergence_min_articles: 0 < {min_articles} (0 observations)",
-        )
-    return (
-        CalibrationState.ACCUMULATING,
-        f"news_price_divergence_min_articles: {worst_evidence} < {min_articles}",
-    )
+    """Compute the block-level calibration tag and (when non-calibrated) the reason."""
+    state = decide_calibration_state(observed_n=worst_evidence, required_n=min_articles)
+    if state is CalibrationState.CALIBRATED:
+        return state, None
+    return state, f"news_price_divergence_min_articles: {worst_evidence} < {min_articles}"
 
 
 __all__ = [

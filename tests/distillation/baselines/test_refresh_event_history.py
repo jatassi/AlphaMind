@@ -169,6 +169,40 @@ class TestRefreshEventHistoryDetection:
 
 
 # ---------------------------------------------------------------------------
+# Unavailable path — no events detected at all
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshEventHistoryUnavailablePath:
+    def test_zero_events_emits_unavailable(self, session: Session) -> None:
+        """Per ALP-540: ``n_events == 0`` → :attr:`CalibrationState.UNAVAILABLE`.
+
+        Distinguished from the ``n_events > 0, n_resolved < min_events`` path
+        (which emits ACCUMULATING). With no bars in the detection window the
+        ticker scope returns zero detected events.
+        """
+        _add_ticker(session, "AAPL")
+        # No bars — detection window has nothing to fire on.
+        session.commit()
+
+        result = refresh_event_history(
+            session,
+            event_kind="gap",
+            ticker_scope=("AAPL",),
+            as_of="2026-04-25T00:00:00Z",
+            min_events=GAP_FILL_MIN_EVENTS,
+            detection_atr_multiple=GAP_DETECT_MIN_ATR_MULTIPLE,
+            outcome_resolution_days=EVENT_OUTCOME_RESOLUTION_DAYS,
+            detection_window_days=EVENT_DETECTION_WINDOW_DAYS,
+        )
+
+        cv = result["AAPL"]
+        assert cv.state is CalibrationState.UNAVAILABLE
+        assert cv.value["n_events"] == 0
+        assert cv.value["n_resolved"] == 0
+
+
+# ---------------------------------------------------------------------------
 # Outcome resolution — pending row from a prior refresh resolves on rerun
 # ---------------------------------------------------------------------------
 

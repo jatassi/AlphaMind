@@ -54,11 +54,10 @@ _TABLES_WITH_CHECK: tuple[tuple[str, str], ...] = (
 )
 
 
-def _rename_check(*, table: str, constraint: str, old_sql: str, new_sql: str) -> None:
+def _replace_check(*, table: str, constraint: str, new_sql: str) -> None:
     with op.batch_alter_table(table) as batch_op:
         batch_op.drop_constraint(constraint, type_="check")
         batch_op.create_check_constraint(constraint, new_sql)
-    _ = old_sql  # intentionally unused — recorded for symmetry with downgrade
 
 
 def upgrade() -> None:
@@ -71,23 +70,13 @@ def upgrade() -> None:
             )
         )
     for table, constraint in _TABLES_WITH_CHECK:
-        _rename_check(
-            table=table,
-            constraint=constraint,
-            old_sql=_OLD_CHECK_SQL,
-            new_sql=_NEW_CHECK_SQL,
-        )
+        _replace_check(table=table, constraint=constraint, new_sql=_NEW_CHECK_SQL)
 
 
 def downgrade() -> None:
     """Revert: accumulating → bootstrap and reinstate the old CHECK constraints."""
     for table, constraint in _TABLES_WITH_CHECK:
-        _rename_check(
-            table=table,
-            constraint=constraint,
-            old_sql=_NEW_CHECK_SQL,
-            new_sql=_OLD_CHECK_SQL,
-        )
+        _replace_check(table=table, constraint=constraint, new_sql=_OLD_CHECK_SQL)
     for table, _ in _TABLES_WITH_CHECK:
         op.execute(
             sa.text(

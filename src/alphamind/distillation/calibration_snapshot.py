@@ -4,8 +4,8 @@ Reduces every :class:`OutputBlock` carried by a :class:`DistillationOutputs`
 into the per-invocation JSON file documented in
 ``docs/design/02-distillation-layer/threshold-calibration.md``
 § Calibration-state snapshot file. The file is the deterministic-analytics-spine
-input the feedback loop reads to condition outcome analysis on whether
-bootstrap fallback was active during the invocation; the command center's
+input the feedback loop reads to condition outcome analysis on whether a
+non-calibrated fallback was active during the invocation; the command center's
 calibration-mix panel renders the same file
 (``docs/design/command-center.md`` § E. Risk and guardrails).
 
@@ -168,7 +168,7 @@ def write_calibration_state_snapshot(
     (the union of sector blocks, correlation/regime brief blocks, and the
     universal regime block — the orchestrator places them all on the
     dataclass for this exact reduction). Aggregates per-state, per-
-    audience, and per-block-kind counts; populates the bootstrap- and
+    audience, and per-block-kind counts; populates the accumulating- and
     unavailable-reason maps for non-calibrated blocks; and writes the
     deterministic JSON document to
     ``<base_path>/invocations/<invocation_id>/data_calibration_state.json``.
@@ -227,11 +227,12 @@ def _operator_summary_payload(outputs: DistillationOutputs, invocation_id: str) 
     delta for accumulating series.
     """
     counts = _aggregate_by_state(outputs.all_blocks)
+    sorted_blocks = sorted(outputs.all_blocks, key=lambda b: b.block_id)
 
     def _per_block(state: CalibrationState) -> list[dict[str, str]]:
         return [
             {"module": block.block_id, "reason": block.bootstrap_reason or ""}
-            for block in sorted(outputs.all_blocks, key=lambda b: b.block_id)
+            for block in sorted_blocks
             if block.calibration_state is state
         ]
 

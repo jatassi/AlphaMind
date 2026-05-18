@@ -853,8 +853,18 @@ def _print_summary(results: list[CheckResult]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# DATA HEALTH block (ALP-540)
+# DATA HEALTH block
 # ---------------------------------------------------------------------------
+
+
+_OPERATOR_SNAPSHOT_SCHEMA_VERSION = "1"
+"""Schema version of the operator-facing data-health snapshot we render.
+
+Must match
+:data:`alphamind.distillation.calibration_snapshot.OPERATOR_SUMMARY_SCHEMA_VERSION`.
+The renderer refuses to interpret any other version so an internal V2
+snapshot accidentally landing at this path doesn't render as silent zeros.
+"""
 
 
 def format_data_health_block(snapshot: dict[str, Any]) -> str:
@@ -866,14 +876,22 @@ def format_data_health_block(snapshot: dict[str, Any]) -> str:
     ``unavailable`` list elevates collector failures to the operator's
     attention; the ``accumulating`` list reports series still warming up.
 
-    Schema-tolerant: a missing or empty snapshot renders a "(no calibration
-    snapshot)" line rather than raising — the verify harness prints the
-    block at end-of-run regardless of upstream success.
+    Tolerates two failure modes:
+
+    - Missing / empty snapshot (distillation didn't run, JSON read failed,
+      bootstrap-seed ``{}``) → a single ``"(no calibration snapshot)"`` line.
+    - Wrong schema version (internal V2 snapshot landed at the operator
+      path) → a single ``"(unrecognized snapshot schema_version=…)"`` line
+      so the operator notices instead of seeing silent zeros.
     """
     lines: list[str] = ["=== DATA HEALTH ==="]
-    summary = snapshot.get("summary") if isinstance(snapshot, dict) else None
+    summary = snapshot.get("summary")
     if not isinstance(summary, dict):
         lines.append("  (no calibration snapshot — distillation may not have run)")
+        return "\n".join(lines)
+    version = snapshot.get("schema_version")
+    if version != _OPERATOR_SNAPSHOT_SCHEMA_VERSION:
+        lines.append(f"  (unrecognized snapshot schema_version={version!r})")
         return "\n".join(lines)
 
     calibrated = int(summary.get("calibrated", 0))
@@ -883,24 +901,15 @@ def format_data_health_block(snapshot: dict[str, Any]) -> str:
         f"  calibrated={calibrated}  accumulating={accumulating}  unavailable={unavailable}"
     )
 
-    unavailable_entries = snapshot.get("unavailable") or []
-    if isinstance(unavailable_entries, list) and unavailable_entries:
+    for state_label, header, entries in (
+        ("UNAVAILABLE", "operator action required", snapshot.get("unavailable") or []),
+        ("ACCUMULATING", "collector healthy, wait", snapshot.get("accumulating") or []),
+    ):
+        if not entries:
+            continue
         lines.append("")
-        lines.append(f"  UNAVAILABLE ({len(unavailable_entries)}) — operator action required:")
-        for entry in unavailable_entries:
-            if not isinstance(entry, dict):
-                continue
-            module = str(entry.get("module", "?"))
-            reason = str(entry.get("reason", ""))
-            lines.append(f"    - {module}: {reason}")
-
-    accumulating_entries = snapshot.get("accumulating") or []
-    if isinstance(accumulating_entries, list) and accumulating_entries:
-        lines.append("")
-        lines.append(f"  ACCUMULATING ({len(accumulating_entries)}) — collector healthy, wait:")
-        for entry in accumulating_entries:
-            if not isinstance(entry, dict):
-                continue
+        lines.append(f"  {state_label} ({len(entries)}) — {header}:")
+        for entry in entries:
             module = str(entry.get("module", "?"))
             reason = str(entry.get("reason", ""))
             lines.append(f"    - {module}: {reason}")

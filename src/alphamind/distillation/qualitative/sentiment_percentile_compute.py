@@ -74,9 +74,13 @@ class SentimentPercentileInputs:
     - ``baseline_by_ticker`` — most recent sentiment baseline row at-or-before
       ``as_of`` per ticker, or ``None`` when absent.
     - ``universe_pooled_sentiment`` — universe-pooled ``(mean, stdev)`` used
-      as the bootstrap fallback when a ticker baseline is below the
-      ``sentiment_min_observations`` threshold; ``None`` when the pool itself
-      is empty (caller then treats the ticker as ``UNAVAILABLE``).
+      as the cross-sectional fallback when a ticker baseline has some
+      observations but fewer than ``sentiment_min_observations``; ``None``
+      when the pool itself is empty (caller then treats the ticker as
+      ``UNAVAILABLE``). When a ticker has zero observations the fallback
+      is not consulted — per ALP-540 the ticker is treated as
+      ``UNAVAILABLE`` (operator action required) and omitted from the
+      per-ticker payload.
     """
 
     ticker_scope: tuple[str, ...]
@@ -100,8 +104,9 @@ def _percentile_from_normal(*, value: float, mean: float, stdev: float) -> float
     re-pulling raw observations on every distillation pass.
 
     ``stdev <= 0`` collapses to a degenerate distribution; return 50.0
-    (median, no information) rather than raise — the caller's bootstrap
-    fallback handles the data-too-thin case via ``min_observations``.
+    (median, no information) rather than raise — the caller's
+    cross-sectional fallback handles the data-too-thin case via
+    ``min_observations``.
     """
     if stdev <= 0:
         return 50.0
@@ -124,13 +129,14 @@ def compute_sentiment_percentile_blocks(
     """Emit ``qual.sentiment_percentile`` blocks per sector audience.
 
     For each ticker with a current reading, compute the per-ticker percentile
-    against the trailing sentiment baseline; bootstrap-fall back via
+    against the trailing sentiment baseline; fall back via
     :func:`tag_with_fallback` to the universe-pooled distribution when the
-    baseline is below ``sentiment_min_observations``. Tickers with neither
-    a current reading nor a fallback are omitted.
+    baseline is sub-threshold but non-zero. Tickers whose baseline has zero
+    observations (or whose fallback is unavailable) are omitted from the
+    payload per the ALP-540 vocabulary.
 
     Returns one block per sector audience containing all calibrated and
-    bootstrapped per-ticker readings with ``payload["per_ticker"]`` keyed
+    accumulating per-ticker readings with ``payload["per_ticker"]`` keyed
     by ticker sorted ascending.
     """
     per_audience: dict[OutputAudience, dict[str, dict[str, Any]]] = defaultdict(dict)
@@ -211,25 +217,23 @@ def _block_calibration(
     :attr:`CalibrationState.ACCUMULATING` when at least one ticker is
     non-calibrated.
     """
-    unavailable_tickers = sorted(
-        ticker
-        for ticker, entry in ticker_payloads.items()
-        if entry["calibration_state"] == CalibrationState.UNAVAILABLE.value
-    )
-    accumulating_tickers = sorted(
-        ticker
-        for ticker, entry in ticker_payloads.items()
-        if entry["calibration_state"] == CalibrationState.ACCUMULATING.value
-    )
-    if unavailable_tickers:
+    unavailable: list[str] = []
+    accumulating: list[str] = []
+    for ticker, entry in ticker_payloads.items():
+        state = CalibrationState(entry["calibration_state"])
+        if state is CalibrationState.UNAVAILABLE:
+            unavailable.append(ticker)
+        elif state is CalibrationState.ACCUMULATING:
+            accumulating.append(ticker)
+    if unavailable:
         return (
             CalibrationState.UNAVAILABLE,
-            "sentiment baseline unavailable for: " + ", ".join(unavailable_tickers),
+            "sentiment baseline unavailable for: " + ", ".join(sorted(unavailable)),
         )
-    if accumulating_tickers:
+    if accumulating:
         return (
             CalibrationState.ACCUMULATING,
-            "sentiment_min_observations not met for: " + ", ".join(accumulating_tickers),
+            "sentiment_min_observations not met for: " + ", ".join(sorted(accumulating)),
         )
     return CalibrationState.CALIBRATED, None
 

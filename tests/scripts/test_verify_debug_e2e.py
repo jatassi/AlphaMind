@@ -1057,3 +1057,70 @@ def test_drive_debug_e2e_subprocess_captures_stdout_and_stderr(
     assert output is not None
     assert output.stdout == '{"invocation_id": "iid"}'
     assert output.stderr == "some captured stderr text\n"
+
+
+# ---------------------------------------------------------------------------
+# format_data_health_block
+# ---------------------------------------------------------------------------
+
+
+def test_format_data_health_missing_snapshot(verify_module: ModuleType) -> None:
+    """An empty / unreadable snapshot renders the no-snapshot fallback line."""
+    rendered = verify_module.format_data_health_block({})
+    assert "=== DATA HEALTH ===" in rendered
+    assert "no calibration snapshot" in rendered
+
+
+def test_format_data_health_wrong_schema_version(verify_module: ModuleType) -> None:
+    """A V2-internal snapshot at the operator path triggers the version warning."""
+    internal_payload = {
+        "schema_version": "2",
+        "summary": {"total_blocks": 3, "by_state": {"calibrated": 1, "accumulating": 2}},
+        "accumulating_reasons": {"q1.foo": "bar"},
+    }
+    rendered = verify_module.format_data_health_block(internal_payload)
+    assert "unrecognized snapshot schema_version='2'" in rendered
+
+
+def test_format_data_health_empty_lists(verify_module: ModuleType) -> None:
+    """A fully-calibrated invocation renders only the counts line."""
+    payload = {
+        "schema_version": "1",
+        "summary": {"calibrated": 4, "accumulating": 0, "unavailable": 0},
+        "unavailable": [],
+        "accumulating": [],
+    }
+    rendered = verify_module.format_data_health_block(payload)
+    assert "calibrated=4  accumulating=0  unavailable=0" in rendered
+    assert "UNAVAILABLE" not in rendered
+    assert "ACCUMULATING" not in rendered
+
+
+def test_format_data_health_populated_lists(verify_module: ModuleType) -> None:
+    """Unavailable and accumulating sections list each module with its reason."""
+    payload = {
+        "schema_version": "1",
+        "summary": {"calibrated": 1, "accumulating": 1, "unavailable": 2},
+        "unavailable": [
+            {
+                "module": "q6.dollar_attribution",
+                "reason": "DTWEXBGS history unavailable",
+            },
+            {
+                "module": "q7.intermarket_regime.gld_real_yields",
+                "reason": "0 < 60 (0 observations)",
+            },
+        ],
+        "accumulating": [
+            {
+                "module": "q6.funding_stress",
+                "reason": "funding_stress_min_observations: 11 < 60",
+            },
+        ],
+    }
+    rendered = verify_module.format_data_health_block(payload)
+    assert "UNAVAILABLE (2) — operator action required:" in rendered
+    assert "q6.dollar_attribution: DTWEXBGS history unavailable" in rendered
+    assert "q7.intermarket_regime.gld_real_yields: 0 < 60 (0 observations)" in rendered
+    assert "ACCUMULATING (1) — collector healthy, wait:" in rendered
+    assert "q6.funding_stress: funding_stress_min_observations: 11 < 60" in rendered

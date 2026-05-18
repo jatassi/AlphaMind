@@ -724,8 +724,8 @@ def _compute_realized_vols(session: Session, *, as_of: datetime) -> tuple[float,
 
 def _build_regime_snapshot(
     session: Session, *, as_of: datetime
-) -> tuple[RegimeSnapshot, str | None]:
-    """Build a :class:`RegimeSnapshot` plus an optional bootstrap reason.
+) -> tuple[RegimeSnapshot, CalibrationState, str | None]:
+    """Build a :class:`RegimeSnapshot` plus the calibration state + reason.
 
     Reads VIX (``VIXCLS``) and SPY daily closes directly. The VX1 / VVIX
     series remain conservative placeholders when missing — per story 09's
@@ -734,17 +734,17 @@ def _build_regime_snapshot(
     are available; absent SPY data, both windows fall back to ``0.0`` and
     the downstream input-bundle integrity check surfaces the gap.
 
-    Returns ``(snapshot, None)`` when VIX is observed and
-    ``(snapshot, "regime: VIXCLS observation missing")`` when it is not.
-    Carrying the bootstrap reason out alongside the snapshot avoids
-    encoding the bootstrap signal as a magic ``vix == 0.0`` sentinel —
-    a real VIX print of exactly zero would otherwise mis-tag.
+    Returns ``(snapshot, CALIBRATED, None)`` when VIX is observed. When VIX
+    is missing entirely, returns ``(placeholder_snapshot, UNAVAILABLE,
+    reason)``: zero VIX observations is a collector failure per ALP-540
+    (operator action required), not a "give it time" case. Carrying the
+    state out alongside the snapshot avoids encoding the signal as a
+    magic ``vix == 0.0`` sentinel — a real VIX print of exactly zero
+    would otherwise mis-tag.
     """
     vix = _latest_macro_value(session, "VIXCLS")
     realized_vol_5d, realized_vol_20d = _compute_realized_vols(session, as_of=as_of)
     if vix is None:
-        # No VIX series available — emit a placeholder snapshot tagged as
-        # bootstrap so the regime block surfaces with the right state.
         snapshot = RegimeSnapshot(
             vix_level=0.0,
             vx1_minus_vix=0.0,
@@ -754,7 +754,11 @@ def _build_regime_snapshot(
             vix_trailing_20d_mean=None,
             prior_term_structure_backwardation=False,
         )
-        return snapshot, "regime: VIXCLS observation missing"
+        return (
+            snapshot,
+            CalibrationState.UNAVAILABLE,
+            "regime: VIXCLS observation missing",
+        )
     snapshot = RegimeSnapshot(
         vix_level=vix,
         vx1_minus_vix=0.0,
@@ -764,7 +768,7 @@ def _build_regime_snapshot(
         vix_trailing_20d_mean=None,
         prior_term_structure_backwardation=False,
     )
-    return snapshot, None
+    return snapshot, CalibrationState.CALIBRATED, None
 
 
 def _refresh_regime(
@@ -775,12 +779,7 @@ def _refresh_regime(
 ) -> tuple[RegimeRefreshResult, OutputBlock]:
     """Phase 3 — refresh the regime row and assemble the universal block."""
     classification, transition = _build_regime_thresholds(config)
-    snapshot, bootstrap_reason = _build_regime_snapshot(session, as_of=as_of)
-    calibration_state = (
-        CalibrationState.ACCUMULATING
-        if bootstrap_reason is not None
-        else CalibrationState.CALIBRATED
-    )
+    snapshot, calibration_state, bootstrap_reason = _build_regime_snapshot(session, as_of=as_of)
     result = refresh_regime_state(
         session,
         as_of=_format_as_of(as_of),

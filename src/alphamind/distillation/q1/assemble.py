@@ -1008,11 +1008,13 @@ def _block_state_from_baselines(
             )
             return CalibrationState.UNAVAILABLE, ticker_reason
         if ticker_state is CalibrationState.ACCUMULATING and state is CalibrationState.CALIBRATED:
+            # baseline is guaranteed non-None here: a None baseline maps to
+            # UNAVAILABLE in _baseline_calibration_state and short-circuits
+            # via the branch above.
+            assert baseline is not None
             state = CalibrationState.ACCUMULATING
             reason = (
                 f"baseline_days: {baseline.n_observations} < {baseline.window_days} for {ticker}"
-                if baseline is not None
-                else f"baseline missing for {ticker}"
             )
     return state, reason
 
