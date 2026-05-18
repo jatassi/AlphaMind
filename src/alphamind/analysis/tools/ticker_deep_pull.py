@@ -48,6 +48,12 @@ __all__ = [
 _OHLCV_LOOKBACK_DAYS = 20
 _TIMEFRAME_DAILY = "1d"
 
+# Calendar-day threshold for `price_volume` staleness — caps a full weekend
+# plus three trading days (Friday close → Wednesday). When the most recent
+# OHLCV bar's `period_start` is older than this, the loader surfaces
+# `ToolQuality.STALE` so callers don't silently consume last-known-good data.
+_OHLCV_STALE_AGE_DAYS = 5
+
 # Series IDs for treasury yields (FRED)
 _FRED_2Y_SERIES = "DGS2"
 _FRED_10Y_SERIES = "DGS10"
@@ -166,6 +172,10 @@ class TickerDeepPullOutput(ToolEnvelope, frozen=True):
     category, OR when the category was requested but data was unavailable for the ticker.
     The aggregate ``quality`` reflects the worst per-category result; aggregate
     ``data_freshness`` is the minimum freshness across populated categories.
+
+    ``reason`` is non-None only when the aggregate quality is below COMPLETE and
+    at least one category contributed an explanation (e.g. ``price_volume``
+    staleness). Joins per-category reasons with " | " when multiple contribute.
     """
 
     ticker: str
@@ -173,6 +183,7 @@ class TickerDeepPullOutput(ToolEnvelope, frozen=True):
     short_data: ShortDataPayload | None
     earnings: EarningsPayload | None
     macro_context: MacroContextPayload | None
+    reason: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -201,8 +212,8 @@ def _pct_change(earlier: float, later: float) -> float | None:
 
 
 def _load_price_volume(
-    session: Session, ticker: str
-) -> tuple[PriceVolumePayload | None, datetime | None, ToolQuality]:
+    session: Session, ticker: str, now: datetime
+) -> tuple[PriceVolumePayload | None, datetime | None, ToolQuality, str | None]:
     rows = session.execute(
         select(
             OhlcvBars.period_start,
@@ -228,6 +239,7 @@ def _load_price_volume(
             ),
             None,
             ToolQuality.PARTIAL,
+            None,
         )
 
     # rows are ordered newest-first
@@ -246,8 +258,11 @@ def _load_price_volume(
     avg_vol = int(sum(volumes[-_OHLCV_LOOKBACK_DAYS:]) / len(volumes[-_OHLCV_LOOKBACK_DAYS:]))
     vol_ratio = last_volume / avg_vol if avg_vol > 0 else None
 
-    freshness_raw = max((r.ingested_at for r in rows), default=None)
-    freshness = parse_iso(freshness_raw) if freshness_raw else None
+    # Surface the underlying data date as freshness (not row-ingested_at): downstream
+    # callers want "how old is the data we're looking at," and the same row may be
+    # re-upserted with a refreshed ingested_at while period_start stays put.
+    latest_period_start = parse_iso(last.period_start)
+    age = now - latest_period_start
 
     payload = PriceVolumePayload(
         last_close=last_close,
@@ -258,12 +273,20 @@ def _load_price_volume(
         avg_volume_20d=avg_vol,
         volume_vs_avg_ratio=vol_ratio,
     )
-    return payload, freshness, ToolQuality.COMPLETE
+
+    if age > timedelta(days=_OHLCV_STALE_AGE_DAYS):
+        reason = (
+            f"price_volume: latest bar {latest_period_start.date().isoformat()} "
+            f"is {age.days} days stale (threshold {_OHLCV_STALE_AGE_DAYS} days)"
+        )
+        return payload, latest_period_start, ToolQuality.STALE, reason
+
+    return payload, latest_period_start, ToolQuality.COMPLETE, None
 
 
 def _load_short_data(
     session: Session, ticker: str, now: datetime
-) -> tuple[ShortDataPayload | None, datetime | None, ToolQuality]:
+) -> tuple[ShortDataPayload | None, datetime | None, ToolQuality, str | None]:
     recent_si = session.execute(
         select(
             ShortInterestSnapshot.settlement_date,
@@ -297,6 +320,7 @@ def _load_short_data(
             ),
             None,
             ToolQuality.PARTIAL,
+            None,
         )
 
     # short_interest_pct: current_short_shares as % of avg_daily_volume_shares
@@ -342,7 +366,7 @@ def _load_short_data(
         days_to_cover=days_to_cover,
         short_interest_change_30d_pct=change_30d,
     )
-    return payload, freshness, ToolQuality.COMPLETE
+    return payload, freshness, ToolQuality.COMPLETE, None
 
 
 def _revision_direction(
@@ -361,7 +385,7 @@ def _revision_direction(
 
 def _load_earnings(
     session: Session, ticker: str, now: datetime
-) -> tuple[EarningsPayload | None, datetime | None, ToolQuality]:
+) -> tuple[EarningsPayload | None, datetime | None, ToolQuality, str | None]:
     details_row = session.execute(
         select(
             EarningsEventDetails.reported_at,
@@ -388,6 +412,7 @@ def _load_earnings(
             ),
             None,
             ToolQuality.PARTIAL,
+            None,
         )
 
     reported_dt = parse_iso(details_row.reported_at)
@@ -421,12 +446,12 @@ def _load_earnings(
         revisions_30d_count=len(revision_rows),
         revision_direction=direction,
     )
-    return payload, None, ToolQuality.COMPLETE
+    return payload, None, ToolQuality.COMPLETE, None
 
 
 def _load_macro_context(
     session: Session, ticker: str
-) -> tuple[MacroContextPayload | None, datetime | None, ToolQuality]:
+) -> tuple[MacroContextPayload | None, datetime | None, ToolQuality, str | None]:
     def _latest_value(series_id: str) -> tuple[float | None, str | None]:
         row = session.execute(
             select(MacroObservations.value, MacroObservations.ingested_at)
@@ -468,7 +493,7 @@ def _load_macro_context(
     )
 
     quality = ToolQuality.COMPLETE if (y2 is not None or y10 is not None) else ToolQuality.PARTIAL
-    return payload, freshness, quality
+    return payload, freshness, quality, None
 
 
 def _ticker_sector(session: Session, ticker: str) -> str | None:
@@ -555,21 +580,24 @@ def _dispatch_categories(
     macro_context: MacroContextPayload | None = None
     qualities: list[ToolQuality] = []
     freshnesses: list[datetime] = []
+    reasons: list[str] = []
 
     for category in categories:
         if category == TickerDeepPullCategory.PRICE_VOLUME:
-            price_volume, freshness, quality = _load_price_volume(session, ticker)
+            price_volume, freshness, quality, reason = _load_price_volume(session, ticker, now)
         elif category == TickerDeepPullCategory.SHORT_DATA:
-            short_data, freshness, quality = _load_short_data(session, ticker, now)
+            short_data, freshness, quality, reason = _load_short_data(session, ticker, now)
         elif category == TickerDeepPullCategory.EARNINGS:
-            earnings, freshness, quality = _load_earnings(session, ticker, now)
+            earnings, freshness, quality, reason = _load_earnings(session, ticker, now)
         elif category == TickerDeepPullCategory.MACRO_CONTEXT:
-            macro_context, freshness, quality = _load_macro_context(session, ticker)
+            macro_context, freshness, quality, reason = _load_macro_context(session, ticker)
         else:
             continue
         qualities.append(quality)
         if freshness is not None:
             freshnesses.append(freshness)
+        if reason is not None:
+            reasons.append(reason)
 
     return TickerDeepPullOutput(
         ticker=ticker,
@@ -579,4 +607,5 @@ def _dispatch_categories(
         short_data=short_data,
         earnings=earnings,
         macro_context=macro_context,
+        reason=" | ".join(reasons) if reasons else None,
     )
