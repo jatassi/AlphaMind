@@ -347,6 +347,196 @@ def test_retry_message_shape_parse_error(agent: AgentSpec) -> None:
     assert "re-emit" in lowered or "json" in lowered
 
 
+# ---------------------------------------------------------------------------
+# Diagnostic-record schema — all 7 agents
+# ---------------------------------------------------------------------------
+
+
+# Canonical filenames every harness writes on the success path. The
+# response file is conditional on ``response_filename`` (synthesizer uses
+# ``response.md``; the other six use ``response_initial.md``).
+_REQUIRED_DIAG_FILENAMES = ("prompt.md", "user_message.md", "errors.json", "metadata.json")
+
+# Minimal metadata fields the diagnostic record must always carry. The
+# strategist's _DiagState writes a richer dict (invocation_id, mode,
+# agent_config_snapshot, total_tokens, attempts) but every harness writes
+# at minimum the five fields below.
+_REQUIRED_METADATA_FIELDS = (
+    "model",
+    "tokens_used",
+    "wall_clock_seconds",
+    "stop_reason",
+    "success",
+)
+
+
+class _FakeSubmitEnvelopeState:
+    """Minimal duck-type for the PM ``_DiagState``'s ``get_submit_envelope_state``.
+
+    The PM's diagnostic writer reads ``submission_log`` and
+    ``failed_submission_log`` from the returned object. An empty tuple on
+    both attributes mirrors the post-loop state when the PM made zero
+    ``submit_envelope`` calls — the success-path shape the harness emits
+    on a no-op invocation.
+    """
+
+    submission_log: tuple[Any, ...] = ()
+    failed_submission_log: tuple[Any, ...] = ()
+
+
+def _build_diag(agent: AgentSpec, archive_root: Path) -> Any:
+    """Construct a per-agent diagnostic-state instance ready for ``.write()``.
+
+    Each instance carries the same baseline payload (``agent_name``,
+    ``invocation_id``, ``prompt_text``, ``user_message``, ``model``,
+    ``archive_root``) plus the per-harness extras (``response_filename``
+    and ``archive_layer`` for the canonical ``DiagState``;
+    ``agent_config_snapshot`` for the strategist; the submit-envelope
+    accessor for the PM). The returned instance has its ``response_initial``
+    populated so the response-file invariant has content to check.
+    """
+    agent_name = agent.name if agent.name != "pm" else "portfolio_manager"
+    common: dict[str, Any] = {
+        "agent_name": agent_name,
+        "invocation_id": "INV-contract-001",
+        "prompt_text": "<system prompt text>",
+        "user_message": "<user message text>",
+        "model": "claude-sonnet-4-6",
+        "archive_root": archive_root,
+    }
+    if agent.name == "strategist":
+        diag_cls = _harness(agent)._DiagState
+        return diag_cls(
+            **common,
+            agent_config_snapshot={"model": "claude-sonnet-4-6"},
+        )
+    if agent.name == "pm":
+        diag_cls = _harness(agent)._DiagState
+        return diag_cls(
+            **common,
+            get_submit_envelope_state=lambda: _FakeSubmitEnvelopeState(),
+        )
+    # Analysis-layer agents (and the analyst, whose diag is the shared
+    # ``DiagState``) all consume the canonical core.
+    return DiagState(
+        **common,
+        response_filename=agent.response_filename,
+        archive_layer=agent.archive_layer,
+    )
+
+
+def test_diag_record_writes_canonical_filenames(
+    agent: AgentSpec, tmp_path: Path
+) -> None:
+    """Diagnostic record materializes the canonical filename set.
+
+    Every harness's ``DiagState.write`` (or per-harness ``_DiagState.write``)
+    produces ``prompt.md``, ``user_message.md``, the response file
+    (``response.md`` for synthesizer, ``response_initial.md`` for the rest),
+    ``errors.json``, and ``metadata.json``. Archive layer is
+    ``analysis/`` or ``decision/`` per the parametrization table.
+    """
+    archive_root = tmp_path / "archive"
+    diag = _build_diag(agent, archive_root)
+    diag.response_initial = "<rendered response body>"
+    diag.write(success=True, wall_clock_seconds=1.5, stop_reason="end_turn")
+
+    agent_name = agent.name if agent.name != "pm" else "portfolio_manager"
+    diag_dir = (
+        archive_root
+        / "invocations"
+        / "INV-contract-001"
+        / agent.archive_layer
+        / agent_name
+    )
+    assert diag_dir.is_dir(), f"diagnostic directory not created at {diag_dir!r}"
+    for filename in _REQUIRED_DIAG_FILENAMES:
+        assert (diag_dir / filename).is_file(), (
+            f"{agent.name}: diagnostic record missing {filename!r}"
+        )
+    # Response file: synthesizer single ``response.md``; the other six use
+    # the canonical ``response_initial.md`` (the optional response_retry.md
+    # is present only when a retry occurred — not asserted here).
+    response_filename = (
+        agent.response_filename if agent.response_filename else "response_initial.md"
+    )
+    assert (diag_dir / response_filename).is_file(), (
+        f"{agent.name}: response file {response_filename!r} not written"
+    )
+
+
+def test_diag_record_metadata_carries_required_fields(
+    agent: AgentSpec, tmp_path: Path
+) -> None:
+    """metadata.json carries at minimum model / tokens_used / wall_clock_seconds /
+    stop_reason / success.
+
+    The strategist writes a richer record (with invocation_id /
+    agent_config_snapshot / total_tokens / attempts); the PM writes
+    retry_count alongside. Every harness carries the five fields above —
+    the contract surface the runners and the verify script consume.
+    """
+    archive_root = tmp_path / "archive"
+    diag = _build_diag(agent, archive_root)
+    diag.response_initial = "<rendered response body>"
+    diag.write(success=True, wall_clock_seconds=2.5, stop_reason="end_turn")
+
+    agent_name = agent.name if agent.name != "pm" else "portfolio_manager"
+    metadata_path = (
+        archive_root
+        / "invocations"
+        / "INV-contract-001"
+        / agent.archive_layer
+        / agent_name
+        / "metadata.json"
+    )
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    for field_name in _REQUIRED_METADATA_FIELDS:
+        assert field_name in metadata, (
+            f"{agent.name}: metadata.json missing required field {field_name!r}"
+        )
+    # Echo the success / stop_reason / wall_clock values written.
+    assert metadata["success"] is True
+    assert metadata["stop_reason"] == "end_turn"
+    assert metadata["wall_clock_seconds"] == 2.5
+
+
+def test_diag_record_writes_on_failure_path(
+    agent: AgentSpec, tmp_path: Path
+) -> None:
+    """The diagnostic record is flushed even on the failure path.
+
+    Every harness's ``invoke_sdk`` catches its terminal failure-path
+    exceptions and calls ``diag.write(success=False, ...)`` before re-raising.
+    Verify the writer honours ``success=False`` by inspecting the on-disk
+    metadata — the file must exist and carry ``success=False``.
+    """
+    archive_root = tmp_path / "archive"
+    diag = _build_diag(agent, archive_root)
+    diag.response_initial = "<partial response>"
+    diag.errors.append({"stage": "parse", "attempt": 1, "message": "synthetic"})
+    diag.write(success=False, wall_clock_seconds=0.7, stop_reason="max_tokens")
+
+    agent_name = agent.name if agent.name != "pm" else "portfolio_manager"
+    metadata_path = (
+        archive_root
+        / "invocations"
+        / "INV-contract-001"
+        / agent.archive_layer
+        / agent_name
+        / "metadata.json"
+    )
+    assert metadata_path.is_file()
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["success"] is False
+    # errors.json reflects the captured error trail.
+    errors_path = metadata_path.with_name("errors.json")
+    errors_payload = json.loads(errors_path.read_text(encoding="utf-8"))
+    assert errors_payload == [
+        {"stage": "parse", "attempt": 1, "message": "synthetic"}
+    ]
+
+
 def test_no_separate_validation_failure_class(agent: AgentSpec) -> None:
     """ALP-520 unified ``ValidationFailure`` into ``ValidationError``.
 
