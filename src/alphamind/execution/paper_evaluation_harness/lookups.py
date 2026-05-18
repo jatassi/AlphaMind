@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Final, Literal
+from typing import Any, Final, Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -78,7 +78,8 @@ class SqlOrderLookup:
             ).scalar_one_or_none()
         if row is None:
             return None
-        ticker_or_underlying = _extract_ticker(row.instrument_spec_json)
+        payload = json.loads(row.instrument_spec_json)
+        ticker_or_underlying = _extract_ticker(payload)
         if ticker_or_underlying is None:
             # STRATEGY parent orders (no single underlying) — the translator
             # filters STRATEGY parent fills upstream so this branch is unreachable
@@ -88,18 +89,17 @@ class SqlOrderLookup:
         return OrderAttributes(
             order_type=_ORDER_TYPE_TO_HARNESS[OrderType(row.order_type)],
             side=_DIRECTION_TO_SIDE[OrderDirection(row.direction)],
-            instrument_type=InstrumentType(json.loads(row.instrument_spec_json)["instrument_type"]),
+            instrument_type=InstrumentType(payload["instrument_type"]),
             ticker_or_underlying=ticker_or_underlying,
         )
 
 
-def _extract_ticker(instrument_spec_json: str) -> str | None:
+def _extract_ticker(payload: dict[str, Any]) -> str | None:
     """Return the ticker (equity) / underlying (options) from an instrument spec.
 
     Returns ``None`` for STRATEGY specs, which have no single underlying and
     are filtered by the translator before reaching the wedge.
     """
-    payload = json.loads(instrument_spec_json)
     kind = payload["instrument_type"]
     if kind == InstrumentType.EQUITY.value:
         return str(payload["ticker"])
