@@ -21,6 +21,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+import alphamind.state.tables.invocations  # noqa: F401  # register briefs.invocation_id FK target
 from alphamind._kernel.ids import Symbol
 from alphamind.persistence.models import (
     Base,
@@ -541,6 +542,117 @@ class TestCollectNews:
             )
 
         assert fake_repo.failed()
+
+    def test_collect_news_isolates_per_ticker_502(
+        self,
+        engine: Engine,
+        session_factory: sessionmaker[Session],
+        session: Session,
+        seeded_tickers: None,
+        fake_repo: FakeRunRepo,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A FinnhubAPIException(502) on one ticker is isolated.
+
+        Other tickers' articles still persist; the run completes with
+        status='success' and an ``error_summary`` naming the failed ticker.
+        """
+        from finnhub.exceptions import FinnhubAPIException
+
+        # Skip retry sleep — vendor_outage_extended would otherwise burn 65s.
+        monkeypatch.setattr("alphamind.data_sources._common.retry.time.sleep", lambda _: None)
+
+        class _FakeResponse:
+            status_code = 502
+            text = "Bad Gateway"
+
+            def json(self) -> dict[str, str]:
+                return {"error": "Bad Gateway"}
+
+        aapl_articles = [
+            {
+                "id": 0,
+                "headline": "AAPL up",
+                "summary": "Body",
+                "url": "https://example.com/aapl",
+                "datetime": 1745625600,
+                "source": "Reuters",
+                "related": "AAPL",
+            }
+        ]
+
+        def handler(symbol: str, **_: Any) -> list[dict[str, Any]]:
+            if symbol == "MSFT":
+                raise FinnhubAPIException(_FakeResponse())
+            return list(aapl_articles) if symbol == "AAPL" else []
+
+        sdk = FakeFinnhubSDK(company_news_handler=handler)
+
+        from alphamind.data_sources.finnhub.news import collect_news
+
+        with patch.dict(os.environ, {"ALPHAMIND_NEWS_DIR": str(tmp_path)}):
+            collect_news(
+                ticker_scope=["AAPL", "MSFT"],
+                since=datetime(2026, 4, 25, tzinfo=UTC),
+                _engine=engine,
+                _session_factory=session_factory,
+                _repo=fake_repo,
+                _sdk=sdk,
+            )
+
+        # AAPL's article still persisted.
+        rows = session.query(NewsArticles).all()
+        assert len(rows) == 1
+        assert rows[0].headline_text == "AAPL up"
+
+        # Run is success, with error_summary naming MSFT.
+        assert fake_repo.succeeded()
+        row = fake_repo.latest()
+        assert row["error_summary"] is not None
+        assert "MSFT" in row["error_summary"]
+
+    def test_collect_news_retries_failing_ticker_per_vendor_outage_extended(
+        self,
+        engine: Engine,
+        session_factory: sessionmaker[Session],
+        seeded_tickers: None,
+        fake_repo: FakeRunRepo,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A 502 on a single ticker is retried per ``vendor_outage_extended`` (4 attempts)."""
+        from finnhub.exceptions import FinnhubAPIException
+
+        monkeypatch.setattr("alphamind.data_sources._common.retry.time.sleep", lambda _: None)
+
+        class _FakeResponse:
+            status_code = 502
+            text = "Bad Gateway"
+
+            def json(self) -> dict[str, str]:
+                return {"error": "Bad Gateway"}
+
+        def handler(symbol: str, **_: Any) -> list[dict[str, Any]]:
+            raise FinnhubAPIException(_FakeResponse())
+
+        sdk = FakeFinnhubSDK(company_news_handler=handler)
+
+        from alphamind.data_sources.finnhub.news import collect_news
+
+        with patch.dict(os.environ, {"ALPHAMIND_NEWS_DIR": str(tmp_path)}):
+            collect_news(
+                ticker_scope=["AAPL"],
+                since=datetime(2026, 4, 25, tzinfo=UTC),
+                _engine=engine,
+                _session_factory=session_factory,
+                _repo=fake_repo,
+                _sdk=sdk,
+            )
+
+        # vendor_outage_extended = 4 attempts total
+        aapl_calls = [c for c in sdk.company_news_calls if c["symbol"] == "AAPL"]
+        assert len(aapl_calls) == 4
 
     def test_collect_news_general_news_no_ticker_link(
         self,

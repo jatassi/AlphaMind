@@ -9,6 +9,7 @@ Collects company-specific news (/company-news) and market-wide general news
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -20,6 +21,7 @@ import yaml
 from alphamind.data_sources._common import (
     RateLimiter,
     RetryShape,
+    RunState,
     active_universe_tickers,
     resume_since,
     track_run,
@@ -27,6 +29,8 @@ from alphamind.data_sources._common import (
 )
 from alphamind.persistence.models import Base, NewsArticles, NewsArticleTickers
 from alphamind.persistence.session import make_engine, make_session_factory
+
+logger = logging.getLogger(__name__)
 
 _PROVIDER = "finnhub"
 _DEFAULT_LOOKBACK_HOURS = 24
@@ -109,7 +113,11 @@ def _upsert_ticker_link(sess: Any, article_id: str, ticker: str) -> None:
         sess.add(NewsArticleTickers(article_id=article_id, ticker=ticker, is_primary=1))
 
 
-@with_retries(RetryShape.important, _sleep=lambda _: None)
+# ``vendor_outage_extended`` (4 attempts, 5+15+45s = 65s budget): finnhub's
+# 01:30 / 06:30 ET cycle boundaries hit a multi-second 502 nginx window every
+# day; the prior ``important`` 1s budget exhausted inside the blip and the
+# whole cycle died. See ALP-419 for the recurring symptom.
+@with_retries(RetryShape.vendor_outage_extended)
 def _fetch_company_news(
     sdk: finnhub.Client, ticker: str, from_date: str, to_date: str
 ) -> list[dict[str, Any]]:
@@ -127,18 +135,37 @@ def _gather_items(
     from_date: str,
     to_date: str,
     rate_limiter: RateLimiter | None,
+    run: RunState,
 ) -> list[tuple[dict[str, Any], str | None]]:
-    """Fetch company news per ticker and market-wide general news."""
+    """Fetch company news per ticker and market-wide general news.
+
+    A persistent fetch failure on one ticker (e.g. ``vendor_outage_extended``
+    retries exhausted on a 502, a delisted symbol, a per-ticker rate-limit hit)
+    is logged at WARNING and the ticker is skipped — earlier tickers' items
+    still persist and the cycle continues. Failed tickers surface on
+    ``run.error_summary`` so ``collection_runs`` records the degraded outcome.
+    """
     items: list[tuple[dict[str, Any], str | None]] = []
+    failed_tickers: list[str] = []
     for ticker in ticker_scope:
         if rate_limiter:
             rate_limiter.acquire(_PROVIDER)
-        for item in _fetch_company_news(sdk, ticker, from_date, to_date):
+        try:
+            ticker_items = _fetch_company_news(sdk, ticker, from_date, to_date)
+        except Exception:
+            logger.warning("finnhub.news: skipping %s after fetch failure", ticker, exc_info=True)
+            failed_tickers.append(ticker)
+            continue
+        for item in ticker_items:
             items.append((item, ticker))
     if rate_limiter:
         rate_limiter.acquire(_PROVIDER)
     for item in _fetch_general_news(sdk):
         items.append((item, None))
+    if failed_tickers:
+        run.error_summary = (
+            f"skipped {len(failed_tickers)} tickers after fetch failure: {','.join(failed_tickers)}"
+        )
     return items
 
 
@@ -221,5 +248,5 @@ def collect_news(
     to_date = now.strftime("%Y-%m-%d")
 
     with track_run("finnhub.news", _repo=_repo) as run:
-        items = _gather_items(sdk, ticker_scope, from_date, to_date, _rate_limiter)
+        items = _gather_items(sdk, ticker_scope, from_date, to_date, _rate_limiter, run)
         run.rows_written = _write_items(items, sf, outlets)

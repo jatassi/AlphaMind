@@ -27,6 +27,7 @@ class RunState:
     """Mutable state object yielded by :func:`track_run`."""
 
     rows_written: int = 0
+    error_summary: str | None = None
 
 
 class _DefaultRepo:
@@ -57,13 +58,20 @@ class _DefaultRepo:
             )
             sess.commit()
 
-    def update_success(self, run_id: str, completed_at: str, rows_written: int) -> None:
+    def update_success(
+        self,
+        run_id: str,
+        completed_at: str,
+        rows_written: int,
+        error_summary: str | None = None,
+    ) -> None:
         with self._Session() as sess:
             row = sess.get(self._model, run_id)
             if row is not None:
                 row.status = "success"
                 row.completed_at = completed_at
                 row.rows_written = rows_written
+                row.error_summary = error_summary
                 sess.commit()
 
     def update_failed(self, run_id: str, error_summary: str) -> None:
@@ -119,7 +127,18 @@ def track_run(
         raise
     else:
         completed_at = datetime.now(UTC).isoformat()
-        repo.update_success(run_id, completed_at, run.rows_written)
+        # Pass ``error_summary`` only when set, so repo implementations that
+        # don't accept the kwarg (e.g. inline test doubles for other collectors)
+        # remain compatible.
+        if run.error_summary is None:
+            repo.update_success(run_id, completed_at, run.rows_written)
+        else:
+            repo.update_success(
+                run_id,
+                completed_at,
+                run.rows_written,
+                error_summary=run.error_summary,
+            )
 
 
 def default_session_factory() -> Any:
