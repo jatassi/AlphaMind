@@ -181,6 +181,23 @@ def test_post_init_rejects_negative_volume_when_set() -> None:
         )
 
 
+def test_post_init_accepts_all_none_numeric_fields_for_unavailable_data() -> None:
+    """ALP-538: UNAVAILABLE sentiment baselines emit records where every
+    numeric field is ``None`` so downstream agents distinguish "no data"
+    from "neutral data". The dataclass must accept that shape.
+    """
+    SentimentAggregate(
+        ticker="SPY",
+        directional_score=None,
+        magnitude=None,
+        rate_of_change=None,
+        volume=None,
+        divergence_flag=None,
+        percentile_vs_self=None,
+        data_freshness=datetime.now(UTC),
+    )
+
+
 def test_post_init_rejects_bad_sector_anomaly_id() -> None:
     """``SectorAnomalyRecord.__post_init__`` enforces the prefix pattern."""
     with pytest.raises(ValueError, match="anomaly_id"):

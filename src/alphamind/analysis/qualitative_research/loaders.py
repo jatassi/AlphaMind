@@ -45,6 +45,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.calibration import CalibrationState
 from alphamind.analysis._shared import Sector
 from alphamind.persistence.models import (
     DistillationContractHistory,
@@ -105,29 +106,34 @@ class SentimentAggregate:
     ``percentile_vs_self`` is in ``[0.0, 1.0]`` (unit interval, not 0-100).
     ``data_freshness`` is the timestamp of the underlying baseline row.
 
-    ``rate_of_change``, ``volume``, and ``divergence_flag`` may be ``None``
-    when their source data is missing (only one baseline row for a ticker, no
-    daily-bar history). The renderer surfaces ``None`` as ``pending`` so the
-    LLM reads "data not available yet", not "no signal".
+    Every numeric field may be ``None``: tickers whose latest baseline row is
+    :attr:`CalibrationState.UNAVAILABLE` (zero observations — collector down,
+    vendor outage, or genuinely no headlines yet) emit an all-``None`` record
+    rather than pool-fallback numbers that look like neutral signal (ALP-538).
+    ``rate_of_change``, ``volume``, and ``divergence_flag`` also fall back to
+    ``None`` for calibrated tickers when their own per-window source data is
+    missing (single baseline row, no daily-bar history). The renderer surfaces
+    ``None`` as ``pending`` so the LLM reads "data not available yet", not
+    "no signal".
     """
 
     ticker: str
-    directional_score: float
-    magnitude: float
+    directional_score: float | None
+    magnitude: float | None
     rate_of_change: float | None
     volume: int | None
     divergence_flag: bool | None
-    percentile_vs_self: float
+    percentile_vs_self: float | None
     data_freshness: datetime
 
     def __post_init__(self) -> None:
-        if not -1.0 <= self.directional_score <= 1.0:
+        if self.directional_score is not None and not -1.0 <= self.directional_score <= 1.0:
             raise ValueError(f"directional_score must be in [-1.0, 1.0]: {self.directional_score}")
-        if not 0.0 <= self.magnitude <= 1.0:
+        if self.magnitude is not None and not 0.0 <= self.magnitude <= 1.0:
             raise ValueError(f"magnitude must be in [0.0, 1.0]: {self.magnitude}")
         if self.volume is not None and self.volume < 0:
             raise ValueError(f"volume must be >= 0 when set: {self.volume}")
-        if not 0.0 <= self.percentile_vs_self <= 1.0:
+        if self.percentile_vs_self is not None and not 0.0 <= self.percentile_vs_self <= 1.0:
             raise ValueError(f"percentile_vs_self must be in [0.0, 1.0]: {self.percentile_vs_self}")
 
 
@@ -510,6 +516,25 @@ def load_sentiment_aggregates(
     results: list[SentimentAggregate] = []
     for ticker, recent in baselines.items():
         row = recent[0]
+        # ALP-538: UNAVAILABLE rows (zero sentiment observations — collector
+        # down, vendor outage, benchmark ticker without headline coverage)
+        # emit an all-None record. The pool-fallback path below would
+        # otherwise broadcast bit-identical numeric placeholders to every
+        # such ticker, masking the missing-data state as "neutral signal".
+        if row.calibration_state == CalibrationState.UNAVAILABLE.value:
+            results.append(
+                SentimentAggregate(
+                    ticker=ticker,
+                    directional_score=None,
+                    magnitude=None,
+                    rate_of_change=None,
+                    volume=None,
+                    divergence_flag=None,
+                    percentile_vs_self=None,
+                    data_freshness=_parse_iso_utc(row.as_of),
+                )
+            )
+            continue
         if row.n_observations >= sentiment_min_observations:
             mean = float(row.mean)
             stdev = float(row.stdev)

@@ -123,17 +123,20 @@ def _render_regime(regime_label: dict[str, Any]) -> str:
 def _render_sentiment(inputs: QualitativeInputs) -> str:
     """Render per-ticker sentiment aggregates sorted alphabetically by ticker.
 
-    ``rate_of_change``, ``volume``, and ``divergence_flag`` render as
-    ``pending`` when ``None`` so the LLM reads them as "data not available
-    yet" rather than as concrete null signals.
+    Every numeric field renders as ``pending`` when ``None`` so the LLM reads
+    it as "data not available yet" rather than as a concrete null signal.
+    UNAVAILABLE tickers (ALP-538) arrive with every numeric field ``None`` —
+    the entire row therefore surfaces as ``pending`` across the board, which
+    is the operator-visible difference between "missing data" and
+    "neutral data".
     """
     rows = sorted(inputs.sentiment_aggregates, key=lambda s: s.ticker)
     return "\n".join(
-        f"{s.ticker}: directional={s.directional_score},"
-        f" magnitude={s.magnitude},"
+        f"{s.ticker}: directional={_render_optional(s.directional_score)},"
+        f" magnitude={_render_optional(s.magnitude)},"
         f" change={_render_optional(s.rate_of_change)},"
         f" vol={_render_optional(s.volume)},"
-        f" percentile={s.percentile_vs_self},"
+        f" percentile={_render_optional(s.percentile_vs_self)},"
         f" divergence={_render_optional(s.divergence_flag)}"
         for s in rows
     )

@@ -699,6 +699,7 @@ class TestLoadSentimentAggregates:
         assert len(result) == 1
         agg = result[0]
         assert agg.ticker == "NVDA"
+        assert agg.percentile_vs_self is not None
         assert 0.0 <= agg.percentile_vs_self <= 1.0
 
     def test_percentile_vs_self_in_unit_range(self, session: Session) -> None:
@@ -715,7 +716,9 @@ class TestLoadSentimentAggregates:
 
         result = load_sentiment_aggregates(session, as_of=AS_OF)
         assert len(result) == 1
-        assert 0.0 <= result[0].percentile_vs_self <= 1.0
+        pct = result[0].percentile_vs_self
+        assert pct is not None
+        assert 0.0 <= pct <= 1.0
 
     def test_ticker_scope_filters_results(self, session: Session) -> None:
         _add_ticker(session, "NVDA")
@@ -777,7 +780,9 @@ class TestLoadSentimentAggregates:
 
         result = load_sentiment_aggregates(session, as_of=AS_OF, ticker_scope=["THIN"])
         assert len(result) == 1
-        assert 0.0 <= result[0].percentile_vs_self <= 1.0
+        pct = result[0].percentile_vs_self
+        assert pct is not None
+        assert 0.0 <= pct <= 1.0
 
     def test_record_fields_present(self, session: Session) -> None:
         _add_ticker(session, "JPM", sector="financials")
@@ -795,6 +800,7 @@ class TestLoadSentimentAggregates:
         assert agg.rate_of_change is None or isinstance(agg.rate_of_change, float)
         assert agg.volume is None or isinstance(agg.volume, int)
         assert agg.divergence_flag is None or isinstance(agg.divergence_flag, bool)
+        assert agg.percentile_vs_self is not None
         assert 0.0 <= agg.percentile_vs_self <= 1.0
         assert isinstance(agg.data_freshness, datetime)
 
@@ -1011,6 +1017,131 @@ class TestLoadSentimentAggregates:
         result = load_sentiment_aggregates(session, as_of=AS_OF)
         assert len(result) == 1
         assert result[0].divergence_flag is None
+
+    def test_unavailable_baseline_emits_all_none_numeric_fields(self, session: Session) -> None:
+        """Tickers with ``calibration_state='unavailable'`` (zero observations)
+        produce a record with every numeric field ``None`` — not a pool-fallback
+        computation that downstream agents read as "neutral signal" (ALP-538).
+        """
+        # Calibrated peer so the universe pool is non-empty — proves the
+        # unavailable branch skips the pool fallback even when it could compute.
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session,
+            "NVDA",
+            mean=0.4,
+            stdev=0.2,
+            n_observations=200,
+            as_of_str=_ISO,
+            calibration_state="calibrated",
+        )
+        _add_ticker(session, "SPY", sector="benchmark")
+        _add_sentiment_baseline(
+            session,
+            "SPY",
+            mean=0.0,
+            stdev=0.0,
+            n_observations=0,
+            as_of_str=_ISO,
+            calibration_state="unavailable",
+        )
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF, ticker_scope=["SPY"])
+        assert len(result) == 1
+        agg = result[0]
+        assert agg.ticker == "SPY"
+        assert agg.directional_score is None
+        assert agg.magnitude is None
+        assert agg.percentile_vs_self is None
+        assert agg.rate_of_change is None
+        assert agg.volume is None
+        assert agg.divergence_flag is None
+
+    def test_two_unavailable_tickers_do_not_share_placeholder_values(
+        self, session: Session
+    ) -> None:
+        """Distinct unavailable tickers must NOT produce bit-identical numeric
+        tuples (ALP-538): both records carry ``None`` across every numeric
+        field rather than the pool-derived ``(0.0, 0.784..., 0.216...)`` that
+        previously surfaced as a shared placeholder.
+        """
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session,
+            "NVDA",
+            mean=0.4,
+            stdev=0.2,
+            n_observations=200,
+            as_of_str=_ISO,
+            calibration_state="calibrated",
+        )
+        _add_ticker(session, "GLD", sector="benchmark")
+        _add_sentiment_baseline(
+            session,
+            "GLD",
+            mean=0.0,
+            stdev=0.0,
+            n_observations=0,
+            as_of_str=_ISO,
+            calibration_state="unavailable",
+        )
+        _add_ticker(session, "XYZ", sector="tech")
+        _add_sentiment_baseline(
+            session,
+            "XYZ",
+            mean=0.0,
+            stdev=0.0,
+            n_observations=0,
+            as_of_str=_ISO,
+            calibration_state="unavailable",
+        )
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF, ticker_scope=["GLD", "XYZ"])
+        by_ticker = {agg.ticker: agg for agg in result}
+        assert set(by_ticker) == {"GLD", "XYZ"}
+        for agg in by_ticker.values():
+            assert agg.directional_score is None
+            assert agg.magnitude is None
+            assert agg.percentile_vs_self is None
+        # Records differ only in ticker / data_freshness — no shared numeric
+        # placeholders that downstream agents could mistake for real signal.
+
+    def test_accumulating_ticker_still_uses_pool_fallback(self, session: Session) -> None:
+        """ACCUMULATING tickers (0 < n_obs < min) keep the universe-pool fallback;
+        only UNAVAILABLE (n_obs == 0) emits null sentinels. The pool fallback is
+        a degraded-but-informative signal — operator action isn't required
+        because time alone resolves the state.
+        """
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session,
+            "NVDA",
+            mean=0.4,
+            stdev=0.2,
+            n_observations=200,
+            as_of_str=_ISO,
+            calibration_state="calibrated",
+        )
+        _add_ticker(session, "THIN", sector="tech")
+        _add_sentiment_baseline(
+            session,
+            "THIN",
+            mean=0.3,
+            stdev=0.2,
+            n_observations=5,
+            as_of_str=_ISO,
+            calibration_state="accumulating",
+        )
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF, ticker_scope=["THIN"])
+        assert len(result) == 1
+        agg = result[0]
+        assert agg.directional_score is not None
+        assert agg.magnitude is not None
+        assert agg.percentile_vs_self is not None
 
 
 # ---------------------------------------------------------------------------
