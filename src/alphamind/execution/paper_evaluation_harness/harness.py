@@ -114,7 +114,7 @@ def compute_live_execution_estimate(
         realized_volatility=realized_volatility,
         buffer_pct=config.spread_buffer_pct,
     )
-    estimated_impact = estimate_impact(
+    estimated_impact_per_share = estimate_impact(
         fill_shares=fill_quantity,
         adv_shares=adv_shares,
         estimated_spread=estimated_spread,
@@ -133,17 +133,19 @@ def compute_live_execution_estimate(
     # crosses only half on average (order crosses one side of the touch).
     spread_usd = money(estimated_spread * qty_decimal * _HALF)
 
+    # Per-fill total impact dollars (per-share impact * attribution quantity).
+    impact_usd = money(estimated_impact_per_share * impact_attribution_quantity)
+
     live_adjusted_fill_price = _live_adjusted_price(
         fill_price=fill_price,
         per_share_spread=estimated_spread,
-        per_fill_impact=estimated_impact,
-        fill_quantity=impact_attribution_quantity,
+        per_share_impact=estimated_impact_per_share,
         side=side,
     )
 
     return LiveExecutionEstimate(
         estimated_spread_usd=spread_usd,
-        estimated_impact_usd=estimated_impact,
+        estimated_impact_usd=impact_usd,
         estimated_regulatory_fees_usd=estimated_regulatory_fees,
         live_adjusted_fill_price=live_adjusted_fill_price,
     )
@@ -153,26 +155,20 @@ def _live_adjusted_price(
     *,
     fill_price: Price,
     per_share_spread: Money,
-    per_fill_impact: Money,
-    fill_quantity: Decimal,
+    per_share_impact: Money,
     side: Literal["buy", "sell"],
 ) -> Price:
     """Apply spread + impact to the paper fill price with the buy/sell sign.
 
     Per-share components:
 
-    * ``spread_per_share / 2`` — the order crosses one side of the touch.
-    * ``per_fill_impact / fill_quantity`` — impact dollars are per-fill, so we
-      attribute back to per-share for the price adjustment.
+    * ``per_share_spread / 2`` — the order crosses one side of the touch.
+    * ``per_share_impact`` — already a per-share dollar value.
 
     Buys add (paid more live); sells subtract (received less live). With zero
     drag both sides reduce to ``fill_price``.
     """
-    per_share_spread_component = per_share_spread * _HALF
-    per_share_impact_component = (
-        per_fill_impact / fill_quantity if fill_quantity > 0 else Decimal(0)
-    )
-    per_share_drag = per_share_spread_component + per_share_impact_component
+    per_share_drag = per_share_spread * _HALF + per_share_impact
 
     adjusted = fill_price + per_share_drag if side == "buy" else fill_price - per_share_drag
     return price(adjusted)

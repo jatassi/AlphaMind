@@ -322,8 +322,7 @@ def test_live_adjusted_price_decomposes_to_spread_plus_impact(config: PaperHarne
         coefficient=config.impact_coefficients[OrderType.market],
     )
 
-    qty_decimal = Decimal(fill_quantity)
-    per_share_drag = expected_spread / Decimal(2) + expected_impact / qty_decimal
+    per_share_drag = expected_spread / Decimal(2) + expected_impact
 
     buy = compute_live_execution_estimate(
         fill_price=fill_price_typed,
