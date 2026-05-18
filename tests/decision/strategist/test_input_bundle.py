@@ -45,6 +45,8 @@ from alphamind.portfolio_state.records.activity_log import (
     ActivityLogEntry,
     BracketModificationSource,
     BracketModifiedDetail,
+    DistillationConfigChange,
+    DistillationConfigChangeDetail,
     EmergencyInvocationRequestedDetail,
     EventGroup,
     EventSource,
@@ -55,6 +57,7 @@ from alphamind.portfolio_state.records.activity_log import (
     PMDecisionDetail,
     PMVerdict,
     PositionExitMethod,
+    ReconciliationAlertDetail,
 )
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
@@ -1067,6 +1070,73 @@ def test_emergency_invocation_requested_summary_surfaces_trigger() -> None:
     )
     assert "emergency invocation requested: regime_jump — NORMAL → CRISIS" in out
     assert "EmergencyInvocationRequestedDetail" not in out
+
+
+def test_reconciliation_alert_summary_surfaces_sources_and_delta() -> None:
+    """``RECONCILIATION_ALERT`` entries surface domain, field, local↔alpaca, and delta."""
+    entry = ActivityLogEntry(
+        entry_id="ALE-REC-1",
+        invocation_id=_INVOCATION_ID,
+        timestamp=_TIMESTAMP,
+        event_type=EventType.RECONCILIATION_ALERT,
+        event_group=EventGroup.RECONCILIATION,
+        position_id="debug-pos-07",
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.CORPORATE_ACTION_PROCESSOR,
+        detail=ReconciliationAlertDetail(
+            domain="position",
+            field_name="share_count",
+            local_value=100.0,
+            alpaca_value=99.5,
+            delta_description="MSFT: local share_count=100.0 vs Alpaca qty=99.5",
+        ),
+    )
+    view = _make_strategist_view(intra_invocation_changelog=(entry,))
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(strategist_view=view),
+        sector_label_display=_SECTOR_LABELS,
+    )
+    assert "ReconciliationAlertDetail" not in out
+    assert "position share_count mismatch" in out
+    assert "local=100.0 vs alpaca=99.5" in out
+    assert "MSFT: local share_count=100.0 vs Alpaca qty=99.5" in out
+    assert "position=debug-pos-07" in out
+
+
+def test_distillation_config_change_summary_surfaces_key_old_new() -> None:
+    """``DISTILLATION_CONFIG_CHANGE`` entries surface the key_path and old/new values."""
+    detail = DistillationConfigChangeDetail(
+        prior_hash="b" * 64,
+        new_hash="a" * 64,
+        changes=(
+            DistillationConfigChange(
+                key_path="anomaly_detection.volume_anomaly_sigma",
+                old_value=2.0,
+                new_value=2.5,
+            ),
+        ),
+        git_sha="abc1234",
+    )
+    entry = ActivityLogEntry(
+        entry_id="ALE-CFG-1",
+        invocation_id=_INVOCATION_ID,
+        timestamp=_TIMESTAMP,
+        event_type=EventType.DISTILLATION_CONFIG_CHANGE,
+        event_group=EventGroup.CONFIGURATION,
+        position_id=None,
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.CONFIG_RELOAD,
+        detail=detail,
+    )
+    view = _make_strategist_view(intra_invocation_changelog=(entry,))
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(strategist_view=view),
+        sector_label_display=_SECTOR_LABELS,
+    )
+    assert "DistillationConfigChangeDetail" not in out
+    assert "anomaly_detection.volume_anomaly_sigma: 2.0 → 2.5" in out
 
 
 def test_pm_decision_log_section_present() -> None:

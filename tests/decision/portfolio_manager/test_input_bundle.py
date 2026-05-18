@@ -53,11 +53,14 @@ from alphamind.portfolio_state.records.activity_log import (
     ActivityLogEntry,
     BracketModificationSource,
     BracketModifiedDetail,
+    DistillationConfigChange,
+    DistillationConfigChangeDetail,
     EventGroup,
     EventSource,
     EventType,
     PMDecisionDetail,
     PMVerdict,
+    ReconciliationAlertDetail,
 )
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
@@ -858,6 +861,67 @@ def test_activity_log_blocks_match_view_entries() -> None:
     assert "PM raised target on momentum" in out
     assert "ENV-1" in out
     assert "approve" in out.lower()
+
+
+def test_reconciliation_alert_entry_surfaces_sources_and_delta() -> None:
+    """``RECONCILIATION_ALERT`` entries render structured detail, not the class name."""
+    entry = ActivityLogEntry(
+        entry_id="ALE-REC-1",
+        invocation_id=_INVOCATION_ID,
+        timestamp=_ENTRY_TIMESTAMP,
+        event_type=EventType.RECONCILIATION_ALERT,
+        event_group=EventGroup.RECONCILIATION,
+        position_id="debug-pos-07",
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.CORPORATE_ACTION_PROCESSOR,
+        detail=ReconciliationAlertDetail(
+            domain="position",
+            field_name="share_count",
+            local_value=100.0,
+            alpaca_value=99.5,
+            delta_description="MSFT: local share_count=100.0 vs Alpaca qty=99.5",
+        ),
+    )
+    view = _make_pm_view(intra_invocation_changelog=(entry,))
+    out = assemble_input_bundle_normal(**{**_normal_kwargs(), "pm_view": view})
+    assert "ReconciliationAlertDetail" not in out
+    assert "position share_count mismatch" in out
+    assert "local=100.0 vs alpaca=99.5" in out
+    assert "MSFT: local share_count=100.0 vs Alpaca qty=99.5" in out
+    assert "position=debug-pos-07" in out
+
+
+def test_distillation_config_change_entry_surfaces_key_old_new() -> None:
+    """``DISTILLATION_CONFIG_CHANGE`` entries render the key_path and old/new values."""
+    detail = DistillationConfigChangeDetail(
+        prior_hash="b" * 64,
+        new_hash="a" * 64,
+        changes=(
+            DistillationConfigChange(
+                key_path="anomaly_detection.volume_anomaly_sigma",
+                old_value=2.0,
+                new_value=2.5,
+            ),
+        ),
+        git_sha="abc1234",
+    )
+    entry = ActivityLogEntry(
+        entry_id="ALE-CFG-1",
+        invocation_id=_INVOCATION_ID,
+        timestamp=_ENTRY_TIMESTAMP,
+        event_type=EventType.DISTILLATION_CONFIG_CHANGE,
+        event_group=EventGroup.CONFIGURATION,
+        position_id=None,
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.CONFIG_RELOAD,
+        detail=detail,
+    )
+    view = _make_pm_view(intra_invocation_changelog=(entry,))
+    out = assemble_input_bundle_normal(**{**_normal_kwargs(), "pm_view": view})
+    assert "DistillationConfigChangeDetail" not in out
+    assert "anomaly_detection.volume_anomaly_sigma: 2.0 → 2.5" in out
 
 
 def test_position_modification_trail_inline() -> None:
