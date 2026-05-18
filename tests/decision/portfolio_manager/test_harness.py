@@ -1242,7 +1242,8 @@ async def test_submission_log_threads_from_engine_stub_state_cell(
                 status="accepted",
                 command_id="inv-log-001.ENV-REC-1.0.0",
                 acknowledgment=Acknowledgment(
-                    position_id=PositionId("POS-NVDA-stub"), order_id=OrderId("ORD-NVDA-stub")
+                    position_id=PositionId("POS-NVDA-abc123"),
+                    order_id=OrderId("ORD-NVDA-entry-abc123"),
                 ),
             ),
         ),

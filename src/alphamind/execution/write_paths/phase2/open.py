@@ -121,7 +121,7 @@ async def _writeback_open(
     * thesis summary + components ← ``command.thesis``
     * capital reservation amount ← ``command.position_size.dollar_value``
 
-    When ``submitted_alpaca_order_id`` is supplied (engine-stub coordinated
+    When ``submitted_alpaca_order_id`` is supplied (broker-routing coordinated
     swap, story 03e / ALP-390), the persisted entry order carries the broker's
     real Alpaca order id; protective leg orders keep the synthetic
     ``alp-{order_id}`` placeholder until ``trade_updates`` ack each child leg.

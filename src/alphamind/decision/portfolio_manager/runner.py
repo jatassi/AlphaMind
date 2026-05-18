@@ -4,8 +4,8 @@ Composes :func:`build_initial_validation_state` (shared MCP wrapper, analyst
 story 04), :func:`build_initial_submit_envelope_state` (PM story 06c), the
 input-bundle assembler (PM story 04), and the harness (PM story 07) into a
 single :func:`run_portfolio_manager` entry point. Returns the parsed
-:class:`PMCompletionRecord` sentinel bundled with the engine-stub's submission
-log and invocation metadata as :class:`PMResult`.
+:class:`PMCompletionRecord` sentinel bundled with the submit_envelope wrapper's
+submission log and invocation metadata as :class:`PMResult`.
 
 The runner is ``async`` because the harness is ``async``. Per the parent
 issue's "fail-closed propagation" invariant, any harness failure aborts the
@@ -124,7 +124,7 @@ PM_TOOL_NAMES: tuple[str, ...] = (
 @dataclass(frozen=True, slots=True)
 class PMResult:
     """Runner return type — the parsed PM completion sentinel plus invocation
-    metadata and the engine-stub's per-envelope submission log.
+    metadata and the submit_envelope wrapper's per-envelope submission log.
 
     Mirrors :class:`HarnessSuccess` lifted to the runner's public surface so
     downstream callers do not depend on the harness's internal type. Per

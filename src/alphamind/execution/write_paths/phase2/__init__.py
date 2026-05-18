@@ -1,6 +1,6 @@
 """Phase 2 command-execution write path (story 08 / ALP-366).
 
-Public entry points the engine-stub ``submit_envelope`` MCP wrapper invokes
+Public entry points the ``submit_envelope`` MCP wrapper invokes
 once an :class:`InvocationHandle` is supplied:
 
 * :func:`persist_envelope_outcome` — accepted envelope: per-command writebacks
@@ -87,7 +87,7 @@ async def persist_envelope_outcome(
 ) -> None:
     """Persist per-command writebacks + one ``pm_decision`` for an accepted envelope.
 
-    When ``dispatch_results`` is supplied (engine-stub coordinated swap,
+    When ``dispatch_results`` is supplied (broker-routing coordinated swap,
     story 03e / ALP-390), each accepted command's writeback consumes the
     matching :class:`BrokerDispatchResult` so the persisted entry / close /
     add / adjust order carries Alpaca's real ``alpaca_order_id`` rather than
@@ -213,7 +213,7 @@ async def persist_engine_envelope_outcome(
     position_selection_rationale, rule_breached) and ``EventSource.BRACKET_MANAGER``
     as the activity-log source per ``oms-commands.md § Command origins``.
 
-    When ``submitted_alpaca_order_id`` is supplied (engine-stub coordinated
+    When ``submitted_alpaca_order_id`` is supplied (broker-routing coordinated
     swap, story 03e / ALP-390), the persisted close order carries the broker's
     real Alpaca order id rather than the synthetic ``alp-{order_id}`` placeholder.
 

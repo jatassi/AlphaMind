@@ -34,6 +34,7 @@ from alphamind.decision.portfolio_manager.submit_envelope.persist import (
     _persist_envelope_rejection_via_phase2,
 )
 from alphamind.decision.portfolio_manager.submit_envelope.process import (
+    PositionLookup,
     _build_envelope_level_rejection,
     _format_first_error,
     _process_commands,
@@ -124,10 +125,10 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     signature (story 08 ALP-330) but are already wired into
     ``state.validation_state`` by ``build_initial_submit_envelope_state``.
     They are accepted here so the runner passes one canonical bundle of
-    library plumbing through both surfaces uniformly; the engine-stub does
-    not consult them directly.
+    library plumbing through both surfaces uniformly; the submit_envelope
+    wrapper does not consult them directly.
 
-    When ``invocation_handle`` is supplied, the engine-stub additionally
+    When ``invocation_handle`` is supplied, the wrapper additionally
     writes through every accepted envelope to SQL via the Phase 2 write
     path (ALP-366) and persists Layer-1 parse failures as
     ``envelope_parse_failed`` activity log entries. Composition pipelines
@@ -135,7 +136,7 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     ``InvocationContext``.
 
     When ``client`` + ``queries`` + ``execution_config`` are supplied
-    (engine-stub coordinated swap, story 03e / ALP-390), each accepted
+    (broker-routing coordinated swap, story 03e / ALP-390), each accepted
     command additionally routes through a broker-dispatch callable before
     persistence; the persisted entry / close / add / adjust order carries
     Alpaca's real ``alpaca_order_id`` and the acknowledgment surfaces it.
@@ -144,7 +145,7 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
 
     The ``broker_dispatch`` parameter is the composition-root-injected
     :class:`alphamind.commands.protocols.BrokerDispatch` implementation
-    (ALP-458). When ``None``, the engine-stub lazy-imports the concrete
+    (ALP-458). When ``None``, the wrapper lazy-imports the concrete
     :func:`alphamind.execution.oms.broker_dispatch.dispatch_command_to_broker`
     for backwards compatibility with callers that haven't switched to the
     Protocol-based wiring yet.
@@ -194,7 +195,7 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     return {_SERVER_NAME: server}, allowed, get_current_state
 
 
-async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator threads every per-invocation parameter once.
+async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads every per-invocation parameter once.
     args: dict[str, Any],
     *,
     state: SubmitEnvelopeState,
@@ -223,10 +224,10 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
     ``persist_envelope_outcome`` and every Layer-1 parse failure additionally
     writes one ``envelope_parse_failed`` activity log entry. When the handle
     is ``None`` (legacy fixture-only path), only the in-memory state-cell
-    surfaces are mutated — preserves the engine-stub's pre-ALP-366 behavior.
+    surfaces are mutated — preserves the wrapper's pre-ALP-366 behavior.
 
     When ``client`` + ``queries`` + ``execution_config`` are supplied
-    (engine-stub coordinated swap, story 03e / ALP-390), each command that
+    (broker-routing coordinated swap, story 03e / ALP-390), each command that
     passes Layer-1/2/3 validation routes through
     :func:`dispatch_command_to_broker` before Phase 2 writeback.
     """
@@ -291,10 +292,11 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
         envelope,
         state=state,
         sector_resolver=sector_resolver,
+        position_lookup=_build_position_lookup(pm_view),
     )
 
     # Step 4: optionally route accepted commands through the broker adapter
-    # (engine-stub coordinated swap, story 03e / ALP-390). Returns per-command
+    # (broker-routing coordinated swap, story 03e / ALP-390). Returns per-command
     # dispatch outcomes alongside (possibly mutated) submission results — a
     # validated-but-broker-rejected command flips from accepted → rejected, and
     # its dispatch entry carries a gateway-failure marker the writeback step
@@ -354,10 +356,29 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
     return response, state
 
 
+def _build_position_lookup(pm_view: PortfolioManagerView) -> PositionLookup:
+    """Build a ``position_id`` → :class:`PositionRecord` lookup from the
+    PM view's typed positions tuple.
+
+    Resolves both OPEN and PENDING positions — the PM view already filters
+    positions to the same scope the LLM sees, so ADDs against positions
+    outside that view surface as :class:`ValueError` rather than silently
+    using a placeholder. ``pm_view.positions`` contains
+    :class:`StrategistPositionView` records; each wraps a
+    :class:`PositionView` via ``.position`` whose ``.record`` is the
+    :class:`PositionRecord` the validator consumes.
+    """
+    positions_by_id = {
+        view.position.position_id: view.position.record for view in pm_view.positions
+    }
+    return positions_by_id.get
+
+
 __all__ = [
     "_SERVER_NAME",
     "_SUBMIT_ENVELOPE_INPUT_SCHEMA",
     "_TOOL_NAME",
+    "_build_position_lookup",
     "_handle_submit_envelope",
     "build_submit_envelope_mcp_server",
 ]

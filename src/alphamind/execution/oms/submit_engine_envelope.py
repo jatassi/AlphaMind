@@ -24,7 +24,7 @@ Validation layering:
    twice within a session is a structural error per
    ``oms-command-ids.md § What happens if a duplicate command ID arrives``.
 
-Broker routing is wired via the engine-stub coordinated swap (story 03e /
+Broker routing is wired via the broker-routing coordinated swap (story 03e /
 ALP-390): when ``client`` + ``queries`` + ``execution_config`` are supplied
 the protective CLOSE submits through
 :mod:`alphamind.execution.oms.broker_dispatch` first and the persisted order
@@ -147,12 +147,12 @@ async def submit_engine_envelope(
     captured cell with the returned state. Rejections / failures return the
     input state unchanged.
 
-    When ``client`` + ``queries`` + ``execution_config`` are supplied (engine-stub
-    coordinated swap, story 03e / ALP-390), the embedded CLOSE additionally
-    routes through :func:`dispatch_command_to_broker` before persistence; the
-    persisted order carries Alpaca's real ``alpaca_order_id`` and the
-    acknowledgment surfaces it. When the broker context is omitted (legacy
-    fixture-only path), the synthetic acknowledgment behavior is preserved.
+    When ``client`` + ``queries`` + ``execution_config`` are supplied
+    (broker-routing coordinated swap, story 03e / ALP-390), the embedded CLOSE
+    additionally routes through :func:`dispatch_command_to_broker` before
+    persistence; the persisted order carries Alpaca's real ``alpaca_order_id``
+    and the acknowledgment surfaces it. When the broker context is omitted
+    (legacy fixture-only path), the synthetic acknowledgment behavior is preserved.
 
     Raises :class:`ValueError` for command-ID inconsistencies, monitor-session
     mismatches, or duplicate ``(monitor_session_id, trigger_id)`` submissions
@@ -246,10 +246,10 @@ async def submit_engine_envelope(
             state,
         )
 
-    # Optionally route through the broker adapter before persistence (engine-stub
-    # coordinated swap — story 03e / ALP-390). When the runner supplies a
-    # ``TradingClient`` + ``AccountStateQueries`` + ``ExecutionConfig``, the
-    # CLOSE submits to Alpaca first; the persisted order carries the broker's
+    # Optionally route through the broker adapter before persistence
+    # (broker-routing coordinated swap — story 03e / ALP-390). When the runner
+    # supplies a ``TradingClient`` + ``AccountStateQueries`` + ``ExecutionConfig``,
+    # the CLOSE submits to Alpaca first; the persisted order carries the broker's
     # real ``alpaca_order_id``. Otherwise (legacy fixture-only path), the
     # synthetic acknowledgment behavior is preserved.
     submitted_alpaca_order_id: AlpacaOrderId | None = None
@@ -275,7 +275,7 @@ async def submit_engine_envelope(
         submitted_alpaca_order_id = dispatch_outcome
         # The Acknowledgment.order_id surfaces the broker's real id when present;
         # ``submitted_ack_order_id`` is OrderId-typed so we cast the AlpacaOrderId
-        # at the engine-stub boundary.
+        # at the submission boundary.
         submitted_ack_order_id = OrderId(dispatch_outcome)
 
     # Persist the protective CLOSE via the Phase 2 writeback machinery.

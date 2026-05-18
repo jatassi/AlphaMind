@@ -1,6 +1,6 @@
-"""Submission-log entry types — the per-call records the engine-stub keeps.
+"""Submission-log entry types — the per-call records the submit_envelope wrapper keeps.
 
-The PM-side engine-stub
+The PM-side submit_envelope wrapper
 (:mod:`alphamind.decision.portfolio_manager.submit_envelope`) appends one
 :class:`SubmissionLogEntry` per ``submit_envelope`` call that parsed cleanly
 to a :class:`PMEnvelope`, and one :class:`FailedSubmissionEntry` per call

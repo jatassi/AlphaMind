@@ -138,6 +138,15 @@ def _bypass_init_PositionRecord(**kwargs: object) -> PositionRecord:  # noqa: N8
     return obj
 
 
+def _bypass_init_PositionView(**kwargs: object) -> Any:  # noqa: N802
+    from alphamind.portfolio_state.views.positions import PositionView
+
+    obj = object.__new__(PositionView)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
+
+
 def _zones() -> EscalationZones:
     return EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
 
@@ -567,10 +576,17 @@ def _make_pm_view(positions: tuple[Any, ...] = ()) -> PortfolioManagerView:
     )
 
 
-def _position_view(position_id: str) -> Any:
+def _position_view(position_id: str, *, record: PositionRecord | None = None) -> Any:
+    """Build a sparse :class:`StrategistPositionView` referencing *position_id*.
 
+    Tests that only need the view to participate in position-id lookups can
+    leave *record* implicit; callers that need the lookup to resolve to a
+    typed :class:`PositionRecord` (e.g., AddCommand projections) pass one in.
+    """
+    inner_record = record or _bypass_init_PositionRecord(position_id=position_id)
+    inner_view = _bypass_init_PositionView(record=inner_record)
     return _bypass_init_StrategistPositionView(
-        position=_bypass_init_PositionRecord(position_id=position_id),
+        position=inner_view,
         thesis=None,
         bracket=None,
         pending_orders=(),
@@ -1548,3 +1564,188 @@ def test_failed_submission_entry_is_frozen() -> None:
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         entry.command_id = "new"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# ALP-514 — Real position_id / order_id on OPEN acknowledgments
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_open_acknowledgment_carries_deterministic_position_and_order_ids() -> None:
+    """OpenCommand acknowledgments carry deterministic ``POS-{ticker}-{suffix}``
+    / ``ORD-{ticker}-entry-{suffix}`` identifiers matching Phase 2's scheme,
+    not the legacy ``-stub`` placeholders."""
+    from alphamind.execution.oms.command_ids import (
+        derive_pm_command_id,
+        synthesize_id_suffix,
+    )
+
+    envelope = _make_analyst_envelope()
+    get_state, server, _ = _build_state_and_server(envelope_for_routing=envelope)
+
+    text, is_error = await _invoke_mcp_tool(
+        server, "submit_envelope", envelope.model_dump(mode="json")
+    )
+    assert not is_error, text
+
+    payload = json.loads(text)
+    ack = payload["submission_results"][0]["acknowledgment"]
+    state = get_state()
+
+    expected_command_id = derive_pm_command_id(
+        invocation_id=state.invocation_id,
+        envelope_id="ENV-REC-1",
+        command_ordinal=0,
+        attempt_seq=0,
+    )
+    expected_suffix = synthesize_id_suffix(expected_command_id)
+    ticker = "NVDA"
+
+    assert ack["position_id"] == f"POS-{ticker}-{expected_suffix}"
+    assert ack["order_id"] == f"ORD-{ticker}-entry-{expected_suffix}"
+    assert "stub" not in ack["position_id"]
+    assert "stub" not in ack["order_id"]
+
+
+# ---------------------------------------------------------------------------
+# ALP-514 — Real ValidationRequest for AddCommand (no __PLACEHOLDER__)
+# ---------------------------------------------------------------------------
+
+
+def test_add_command_builds_real_validation_request_from_position_lookup() -> None:
+    """``_command_to_validation_request`` resolves AddCommand's ``position_id``
+    through *position_lookup* and projects the underlying's instrument into a
+    real :class:`ValidationRequest` — no ``__PLACEHOLDER__`` ticker."""
+    from alphamind.decision.portfolio_manager.submit_envelope.process import (
+        _command_to_validation_request,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        Direction as PSDirection,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        EquityPositionDetails,
+    )
+    from alphamind.risk_guardrails.state_delivery.validation_tool import (
+        ValidationAction,
+    )
+
+    add_position_id = "POS-NVDA-001"
+    record = _bypass_init_PositionRecord(
+        position_id=add_position_id,
+        direction=PSDirection.LONG,
+        details=EquityPositionDetails(
+            ticker="NVDA",  # type: ignore[arg-type]
+            share_count=100.0,
+            average_cost_basis_per_share=750.0,
+        ),
+    )
+    lookup = {add_position_id: record}.get
+
+    request = _command_to_validation_request(
+        _add_command(position_id=add_position_id), position_lookup=lookup
+    )
+    assert request.action is ValidationAction.ADD
+    assert request.instrument.ticker == "NVDA"
+    assert "PLACEHOLDER" not in request.instrument.ticker
+    assert request.size.quantity > 0
+
+
+def test_add_command_raises_when_position_lookup_returns_none() -> None:
+    """An AddCommand whose ``position_id`` doesn't resolve in the lookup
+    surfaces as a :class:`ValueError` naming the missing id — better than
+    silently using a placeholder."""
+    from alphamind.decision.portfolio_manager.submit_envelope.process import (
+        _command_to_validation_request,
+    )
+
+    with pytest.raises(ValueError, match="POS-NVDA-MISSING"):
+        _command_to_validation_request(
+            _add_command(position_id="POS-NVDA-MISSING"),
+            position_lookup=lambda _id: None,
+        )
+
+
+# ---------------------------------------------------------------------------
+# ALP-514 — Strategy direction projection consumes per-leg directions
+# ---------------------------------------------------------------------------
+
+
+def test_strategy_open_validation_request_carries_per_leg_directions() -> None:
+    """OPEN of a StrategyInstrument projects each leg's direction into the
+    :class:`ValidationStrategyLeg` tuple — the position-level direction stays
+    LONG by convention (matches Phase 2's persistence)."""
+    from alphamind.commands.command_models import StrategyInstrument as OMSStrategyInstrument
+    from alphamind.commands.command_models import StrategyLeg as OMSStrategyLeg
+    from alphamind.decision.portfolio_manager.submit_envelope.process import (
+        _build_constructive_request_from_open,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        Direction as PSDirection,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        InstrumentType,
+    )
+
+    strategy = OMSStrategyInstrument(
+        asset_type="strategy",
+        strategy_type="vertical_spread",
+        underlying="NVDA",
+        legs=(
+            OMSStrategyLeg(
+                strike=price(800.0),
+                expiration="2026-06-19T00:00:00+00:00",
+                contract_type="call",
+                direction="long",
+                quantity_ratio=1,
+            ),
+            OMSStrategyLeg(
+                strike=price(810.0),
+                expiration="2026-06-19T00:00:00+00:00",
+                contract_type="call",
+                direction="short",
+                quantity_ratio=1,
+            ),
+        ),
+    )
+    command = OpenCommand(
+        command_type="open",
+        instrument=strategy,
+        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        position_size=PositionSize(quantity=1.0, dollar_value=money(1_000.0), premium_at_risk=None),
+        target=Target(target_type="absolute_price", price=price(830.0), order_type="limit"),
+        invalidation_legs=(
+            PriceLeg(
+                type="price",
+                is_hard=True,
+                condition=PriceCondition(
+                    underlying_trigger="NVDA",
+                    comparator="<=",
+                    trigger_price=price(750.0),
+                ),
+                order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+            ),
+        ),
+        thesis=Thesis(
+            summary="Spread.",
+            components=(
+                OMSThesisComponent(
+                    component_type="entry_rationale",
+                    linked_leg="entry",
+                    instrument_reference="NVDA",
+                    narrative="Bullish.",
+                    key_assumptions=("Trend intact.",),
+                ),
+            ),
+        ),
+    )
+    request = _build_constructive_request_from_open(command)
+    assert request.instrument.asset_type is InstrumentType.STRATEGY
+    # Position-level direction is LONG by convention (matches Phase 2's
+    # _direction_from_instrument).
+    assert request.instrument.direction is PSDirection.LONG
+    assert request.instrument.legs is not None
+    assert len(request.instrument.legs) == 2
+    # Per-leg directions are preserved from the wire-format StrategyInstrument.
+    assert request.instrument.legs[0].direction is PSDirection.LONG
+    assert request.instrument.legs[1].direction is PSDirection.SHORT

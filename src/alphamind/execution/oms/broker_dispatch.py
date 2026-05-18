@@ -102,7 +102,7 @@ class BrokerDispatchResult:
     """Unified result type the OMS persists onto an :class:`OrderRecord`.
 
     Carries the broker's real ``alpaca_order_id`` plus the underlying typed
-    submission payload so callers (the engine-stub coordinated swap, story 03e)
+    submission payload so callers (the broker-routing coordinated swap, story 03e)
     can persist the real broker id and surface the typed ack on the activity
     log.
 
@@ -156,7 +156,7 @@ async def dispatch_command_to_broker(  # noqa: PLR0913 — caller threads every 
     canonical command) and order-record context for ADJUST / CANCEL.
 
     The ``queries`` parameter is part of the runner-facing signature so the
-    caller (engine-stub coordinated swap, story 03e) supplies one canonical
+    caller (broker-routing coordinated swap, story 03e) supplies one canonical
     ``AccountStateQueries`` bundle per invocation; the dispatcher does not
     consult it directly at this story.
     """
