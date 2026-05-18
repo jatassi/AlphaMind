@@ -91,6 +91,14 @@ def _is_retryable(exc: BaseException) -> bool:
         return _is_transient_status(exc.response.status_code)
     if isinstance(exc, urllib.error.HTTPError):
         return _is_transient_status(exc.code)
+    # Duck-type vendor SDK wrappers (e.g. finnhub's ``FinnhubAPIException``)
+    # that carry the HTTP status code as a top-level ``status_code`` attribute.
+    # ``httpx.HTTPStatusError`` is already handled above (its ``status_code``
+    # is nested under ``.response``), so this branch only catches the
+    # vendor-wrapped case without re-classifying anything covered above.
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return _is_transient_status(status_code)
     if isinstance(exc, _TRANSIENT_TRANSPORT_EXCEPTIONS):
         return True
     if isinstance(exc, ValueError):
@@ -133,7 +141,7 @@ _SHAPE_BACKOFF_MULTIPLIER: dict[RetryShape, float] = {
 def with_retries(
     shape: RetryShape,
     *,
-    _sleep: Callable[[float], None] = time.sleep,
+    _sleep: Callable[[float], None] | None = None,
 ) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """Wrap a callable with per-tier retry behaviour.
 
@@ -143,7 +151,10 @@ def with_retries(
         Retry tier — ``critical``, ``important``, ``optional``, or
         ``vendor_outage_extended``.
     _sleep:
-        Injectable sleep function (use ``lambda s: None`` in tests).
+        Injectable sleep function (use ``lambda s: None`` in tests). When
+        ``None``, the wrapper looks up ``time.sleep`` at call time so tests
+        can ``monkeypatch.setattr("...retry.time.sleep", ...)`` without
+        re-decorating already-wrapped functions.
     """
     max_attempts = _SHAPE_ATTEMPTS[shape]
     initial_delay = _SHAPE_INITIAL_DELAY[shape]
@@ -151,6 +162,7 @@ def with_retries(
 
     def decorator(fn: Callable[P, R]) -> Callable[P, R]:
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+            sleep_fn = _sleep if _sleep is not None else time.sleep
             delay = initial_delay
             last_exc: BaseException | None = None
             for attempt in range(max_attempts):
@@ -168,7 +180,7 @@ def with_retries(
                         raise
                     last_exc = exc
                     if attempt < max_attempts - 1:
-                        _sleep(delay)
+                        sleep_fn(delay)
                         delay *= multiplier
             assert last_exc is not None
             raise last_exc

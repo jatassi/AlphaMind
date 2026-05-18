@@ -56,13 +56,20 @@ def mock_repo(engine: Engine) -> Any:
                 )
                 sess.commit()
 
-        def update_success(self, run_id: str, completed_at: str, rows_written: int) -> None:
+        def update_success(
+            self,
+            run_id: str,
+            completed_at: str,
+            rows_written: int,
+            error_summary: str | None = None,
+        ) -> None:
             with _sf() as sess:
                 row = sess.get(CollectionRuns, run_id)
                 if row:
                     row.status = "success"
                     row.completed_at = completed_at
                     row.rows_written = rows_written
+                    row.error_summary = error_summary
                     sess.commit()
 
         def update_failed(self, run_id: str, error_summary: str) -> None:

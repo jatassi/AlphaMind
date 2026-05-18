@@ -214,13 +214,20 @@ def _make_repo(engine: Any) -> Any:
                 )
                 sess.commit()
 
-        def update_success(self, run_id: str, completed_at: str, rows_written: int) -> None:
+        def update_success(
+            self,
+            run_id: str,
+            completed_at: str,
+            rows_written: int,
+            error_summary: str | None = None,
+        ) -> None:
             with Session(engine) as sess:
                 row = sess.get(self._model, run_id)
                 if row is not None:
                     row.status = "success"
                     row.completed_at = completed_at
                     row.rows_written = rows_written
+                    row.error_summary = error_summary
                     sess.commit()
 
         def update_failed(self, run_id: str, error_summary: str) -> None:
