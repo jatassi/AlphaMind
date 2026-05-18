@@ -798,6 +798,63 @@ class TestLayer3Referential:
         )
         assert result.is_valid is True
 
+    def test_bare_prefix_citation_in_narrative_is_error(self) -> None:
+        # ALP-521: a bracketed token whose body matches a ReferencePrefix value
+        # but carries no -N index can never resolve in the retrieval store
+        # (which is keyed by <prefix>-<index>). The 2026-05-04 E2E run emitted
+        # four bare [CR] correlation-pair tokens that the consumer-side regex
+        # silently dropped — surface them as bare_prefix_citation errors.
+        rec = _make_recommendation(
+            thesis_narrative="Correlation pair noted [CR] without index.",
+        )
+        output = _make_output(recommendations=(rec,))
+        result = validate_analyst_output(
+            output,
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+        )
+        assert result.is_valid is False
+        bare_errors = [e for e in result.errors if e.rule == "bare_prefix_citation"]
+        assert len(bare_errors) == 1
+        assert "CR" in bare_errors[0].message
+        assert "thesis_narrative" in bare_errors[0].field_path
+
+    def test_bare_prefix_alongside_resolved_reference_only_flags_bare(self) -> None:
+        # A well-formed ``[SA-TECH-2]`` (in store) coexists with a bare ``[CR]``.
+        # Only the bare prefix should produce a bare_prefix_citation error.
+        rec = _make_recommendation(
+            thesis_narrative="See [SA-TECH-2] and pair note [CR].",
+        )
+        output = _make_output(recommendations=(rec,))
+        result = validate_analyst_output(
+            output,
+            retrieval_store=_retrieval_store("SA-TECH-2"),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+        )
+        bare_errors = [e for e in result.errors if e.rule == "bare_prefix_citation"]
+        assert len(bare_errors) == 1
+        assert "CR" in bare_errors[0].message
+        # The well-formed reference must not surface as unknown.
+        unknown_errors = [e for e in result.errors if e.rule == "unknown_reference"]
+        assert unknown_errors == []
+
+    def test_non_taxonomy_bracketed_token_is_not_bare_prefix(self) -> None:
+        # ``[REC]`` is the analyst's own producer-side prefix and lives outside
+        # the synthesizer's ReferencePrefix taxonomy; the bare-prefix detector
+        # must not flag it. (parent issue § C: producer-side prefixes are not
+        # in scope for bare-prefix detection.)
+        rec = _make_recommendation(
+            thesis_narrative="Reference [REC] from this output.",
+        )
+        output = _make_output(recommendations=(rec,))
+        result = validate_analyst_output(
+            output,
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+        )
+        bare_errors = [e for e in result.errors if e.rule == "bare_prefix_citation"]
+        assert bare_errors == []
+
     def test_non_canonical_prefix_skipped(self) -> None:
         """[INV-1] is the leg-ID prefix, not a synthesizer ReferencePrefix.
 
