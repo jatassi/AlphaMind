@@ -383,7 +383,7 @@ def _make_strategist_result(
 
     return StrategistResult(
         output=_make_strategist_output(mode=mode),
-        validation_result=ValidationResult(overall="PASS", failures=(), warnings=()),
+        validation_result=ValidationResult(errors=(), warnings=()),
         tokens_used=_tokens(),
         metadata={"attempts": 1},
     )
