@@ -169,3 +169,102 @@ def _ensure_mode_literal_unchanged() -> None:
     # and test_live_mode_returns_none; this guard documents the intent.
     _: MonitorMode = "paper"
     _ = "live"
+
+
+async def test_refresh_realized_vol_map_in_place_updates_shared_dict(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """ALP-530 — the monitor refresher reads
+    ``ticker_realized_vol`` and updates the shared mapping in place. Both
+    the harness ``MapVolLookup`` and the breach-loop ``FixtureIvProvider``
+    receive the same dict reference, so an in-place refresh propagates to
+    both consumers without reconstruction.
+    """
+    from alphamind.execution.continuous_monitor.__main__ import (
+        refresh_realized_vol_map_in_place,
+    )
+    from alphamind.persistence.models import AssetUniverse, TickerRealizedVolRow
+    from alphamind.state.tables.invocations import InvocationRow
+    from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
+
+    # Seed the FK chain: process_lifetimes -> invocations -> ticker_realized_vol.
+    async with session_factory() as setup:
+        setup.add(
+            AssetUniverse(
+                asset_id="asset-aapl",
+                ticker="AAPL",
+                full_name="Apple Inc.",
+                asset_class="equity",
+                asset_role="universe",
+                exchange="NASDAQ",
+                is_active=1,
+                added_date="2020-01-01",
+                last_updated="2026-05-18T00:00:00Z",
+            )
+        )
+        setup.add(
+            ProcessLifetimeRow(
+                process_lifetime_id="proc-test",
+                process_role="pipeline",
+                process_start_at="2026-05-18T00:00:00Z",
+                process_pid=1,
+                hostname="test-host",
+                git_sha="0" * 40,
+                git_branch="main",
+                git_dirty=0,
+                python_version="3.13.13",
+                pip_freeze_hash="0" * 64,
+                pip_freeze_snapshot_path="snap",
+                anthropic_sdk_version="0.0.0",
+                claude_agent_sdk_version="0.0.0",
+                os_release="darwin",
+            )
+        )
+        await setup.flush()
+        setup.add(
+            InvocationRow(
+                invocation_id="seed-inv",
+                process_lifetime_id="proc-test",
+                start_at="2026-05-18T00:00:00Z",
+                phase1_completed_at=None,
+                phase2_completed_at=None,
+                trigger_type="manual",
+                trigger_source="test",
+                trigger_reason="seed",
+                git_sha_at_invocation="0" * 40,
+                active_profile="default",
+                active_regime="normal",
+                active_mode="normal",
+                active_overlays_json="[]",
+                resolved_config_hash="0" * 64,
+                resolved_config_snapshot_path="snap",
+                feature_flags_snapshot_json="{}",
+                data_calibration_state_snapshot_path="snap",
+                data_source_freshness_json="{}",
+                fill_collection_summary_json=None,
+                command_execution_summary_json=None,
+                staleness_flag=0,
+                snapshot_metadata_json=None,
+            )
+        )
+        await setup.flush()
+        setup.add(
+            TickerRealizedVolRow(
+                ticker="AAPL",
+                as_of_date="2026-05-18",
+                trailing_30d_realized_vol=0.27,
+                invocation_id="seed-inv",
+                computed_at="2026-05-18T00:00:00Z",
+            )
+        )
+        await setup.commit()
+
+    shared_map: dict[str, RealizedVolEntry] = {}
+    await refresh_realized_vol_map_in_place(
+        session_factory=session_factory,
+        shared_map=shared_map,
+        tickers=("AAPL",),
+    )
+
+    assert "AAPL" in shared_map
+    assert shared_map["AAPL"].trailing_30d_realized_vol == pytest.approx(0.27)
