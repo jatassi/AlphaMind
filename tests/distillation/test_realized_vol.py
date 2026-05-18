@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterator
 from datetime import UTC, date, datetime
+from typing import Any
 
 import pytest
 from sqlalchemy import select
@@ -21,6 +22,7 @@ import alphamind.state.tables  # noqa: F401  — register InvocationRow on Base
 from alphamind.distillation.realized_vol import (
     compute_trailing_realized_vol,
     persist_per_ticker_realized_vol,
+    read_realized_vol_map,
 )
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -266,3 +268,156 @@ def test_persist_upserts_same_day_reinvocation(session: Session) -> None:
     assert upserted.invocation_id == "inv-2"
     assert upserted.computed_at == "2026-05-18T15:00:00Z"
     assert upserted.trailing_30d_realized_vol != first_vol
+
+
+# ---------------------------------------------------------------------------
+# Read function tests (async — the consumer-side path uses AsyncSession)
+# ---------------------------------------------------------------------------
+
+
+def _seed_realized_vol_row(
+    session: Session,
+    *,
+    ticker: str,
+    as_of_date: str,
+    vol: float,
+    invocation_id: str,
+) -> None:
+    session.add(
+        TickerRealizedVolRow(
+            ticker=ticker,
+            as_of_date=as_of_date,
+            trailing_30d_realized_vol=vol,
+            invocation_id=invocation_id,
+            computed_at="2026-05-18T12:00:00Z",
+        )
+    )
+
+
+async def test_read_returns_latest_row_per_ticker(tmp_path: Any) -> None:
+    """Default behavior (no ``as_of_date`` filter) returns each ticker's
+    most recent row keyed by the underlying ticker."""
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from alphamind.persistence.session import (
+        make_async_engine,
+        make_async_session_factory,
+    )
+
+    db_path = tmp_path / "realized_vol.db"
+    sync_eng = make_engine(str(db_path))
+    Base.metadata.create_all(sync_eng)
+    sync_eng.dispose()
+
+    # Seed via a sync session for setup convenience.
+    sync_factory = make_session_factory(make_engine(str(db_path)))
+    with sync_factory() as sync_sess:
+        _seed_ticker(sync_sess, "AAPL")
+        _seed_ticker(sync_sess, "MSFT")
+        _seed_process_lifetime(sync_sess)
+        sync_sess.flush()
+        _seed_invocation(sync_sess, "inv-1")
+        sync_sess.commit()
+        _seed_realized_vol_row(
+            sync_sess, ticker="AAPL", as_of_date="2026-05-17", vol=0.18, invocation_id="inv-1"
+        )
+        _seed_realized_vol_row(
+            sync_sess, ticker="AAPL", as_of_date="2026-05-18", vol=0.22, invocation_id="inv-1"
+        )
+        _seed_realized_vol_row(
+            sync_sess, ticker="MSFT", as_of_date="2026-05-18", vol=0.31, invocation_id="inv-1"
+        )
+        sync_sess.commit()
+
+    async_eng = make_async_engine(str(db_path))
+    factory: async_sessionmaker[AsyncSession] = make_async_session_factory(async_eng)
+    try:
+        async with factory() as async_sess:
+            result = await read_realized_vol_map(async_sess)
+    finally:
+        await async_eng.dispose()
+
+    assert result == {"AAPL": pytest.approx(0.22), "MSFT": pytest.approx(0.31)}
+
+
+async def test_read_filters_by_ticker(tmp_path: Any) -> None:
+    """When ``tickers=...`` is provided, only those tickers' rows appear."""
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from alphamind.persistence.session import (
+        make_async_engine,
+        make_async_session_factory,
+    )
+
+    db_path = tmp_path / "realized_vol.db"
+    sync_eng = make_engine(str(db_path))
+    Base.metadata.create_all(sync_eng)
+    sync_eng.dispose()
+
+    sync_factory = make_session_factory(make_engine(str(db_path)))
+    with sync_factory() as sync_sess:
+        _seed_ticker(sync_sess, "AAPL")
+        _seed_ticker(sync_sess, "MSFT")
+        _seed_ticker(sync_sess, "GOOG")
+        _seed_process_lifetime(sync_sess)
+        sync_sess.flush()
+        _seed_invocation(sync_sess, "inv-1")
+        sync_sess.commit()
+        for tkr, v in (("AAPL", 0.20), ("MSFT", 0.30), ("GOOG", 0.40)):
+            _seed_realized_vol_row(
+                sync_sess, ticker=tkr, as_of_date="2026-05-18", vol=v, invocation_id="inv-1"
+            )
+        sync_sess.commit()
+
+    async_eng = make_async_engine(str(db_path))
+    factory: async_sessionmaker[AsyncSession] = make_async_session_factory(async_eng)
+    try:
+        async with factory() as async_sess:
+            result = await read_realized_vol_map(async_sess, tickers=("AAPL",))
+    finally:
+        await async_eng.dispose()
+
+    assert result == {"AAPL": pytest.approx(0.20)}
+
+
+async def test_read_filters_by_as_of_date(tmp_path: Any) -> None:
+    """When ``as_of_date=...`` is provided, only rows pinned to that date are
+    returned (and the result is empty when no rows match)."""
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from alphamind.persistence.session import (
+        make_async_engine,
+        make_async_session_factory,
+    )
+
+    db_path = tmp_path / "realized_vol.db"
+    sync_eng = make_engine(str(db_path))
+    Base.metadata.create_all(sync_eng)
+    sync_eng.dispose()
+
+    sync_factory = make_session_factory(make_engine(str(db_path)))
+    with sync_factory() as sync_sess:
+        _seed_ticker(sync_sess, "AAPL")
+        _seed_process_lifetime(sync_sess)
+        sync_sess.flush()
+        _seed_invocation(sync_sess, "inv-1")
+        sync_sess.commit()
+        _seed_realized_vol_row(
+            sync_sess, ticker="AAPL", as_of_date="2026-05-17", vol=0.18, invocation_id="inv-1"
+        )
+        _seed_realized_vol_row(
+            sync_sess, ticker="AAPL", as_of_date="2026-05-18", vol=0.22, invocation_id="inv-1"
+        )
+        sync_sess.commit()
+
+    async_eng = make_async_engine(str(db_path))
+    factory: async_sessionmaker[AsyncSession] = make_async_session_factory(async_eng)
+    try:
+        async with factory() as async_sess:
+            hit = await read_realized_vol_map(async_sess, as_of_date=date(2026, 5, 17))
+            miss = await read_realized_vol_map(async_sess, as_of_date=date(2020, 1, 1))
+    finally:
+        await async_eng.dispose()
+
+    assert hit == {"AAPL": pytest.approx(0.18)}
+    assert miss == {}

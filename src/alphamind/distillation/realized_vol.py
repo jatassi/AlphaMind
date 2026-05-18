@@ -36,7 +36,8 @@ import statistics
 from collections.abc import Iterable, Mapping
 from datetime import UTC, date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.q7._helpers_compute import _log_returns_from_closes
@@ -45,6 +46,7 @@ from alphamind.persistence.models import TickerRealizedVolRow
 __all__ = [
     "compute_trailing_realized_vol",
     "persist_per_ticker_realized_vol",
+    "read_realized_vol_map",
 ]
 
 
@@ -173,3 +175,69 @@ def persist_per_ticker_realized_vol(
         written += 1
 
     return written
+
+
+# ---------------------------------------------------------------------------
+# Consumer-side read
+# ---------------------------------------------------------------------------
+
+
+async def read_realized_vol_map(
+    session: AsyncSession,
+    *,
+    tickers: Iterable[str] | None = None,
+    as_of_date: date | None = None,
+) -> dict[str, float]:
+    """Read the per-ticker trailing-30d realized-vol map.
+
+    Returns ``dict[str, float]`` keyed on ticker. When ``as_of_date`` is
+    ``None`` (the production default), the latest row per ticker is
+    returned (joined against a per-ticker ``MAX(as_of_date)`` subquery).
+    When supplied, only rows pinned to that ``as_of_date`` are returned;
+    an absent date yields the empty dict.
+
+    When ``tickers`` is ``None`` every ticker present in the table is
+    included; otherwise the result is filtered to the requested set.
+
+    The float values are the persisted ``trailing_30d_realized_vol``
+    scalars. Wiring sites that consume ``RealizedVolEntry``-shaped
+    mappings convert at the boundary — this module is forbidden from
+    importing the consumer-side dataclass to preserve the one-way
+    dependency arrow (the wiring sites in ``risk_guardrails`` /
+    ``execution`` / ``scheduler`` consume this module, never the
+    reverse).
+    """
+    ticker_filter: tuple[str, ...] | None = None if tickers is None else tuple(tickers)
+    if ticker_filter is not None and not ticker_filter:
+        # Explicit empty filter — nothing to fetch.
+        return {}
+
+    if as_of_date is None:
+        # Latest-per-ticker subquery: join on the per-ticker MAX(as_of_date).
+        latest_subq = (
+            select(
+                TickerRealizedVolRow.ticker.label("ticker"),
+                func.max(TickerRealizedVolRow.as_of_date).label("latest"),
+            )
+            .group_by(TickerRealizedVolRow.ticker)
+            .subquery()
+        )
+        stmt = select(
+            TickerRealizedVolRow.ticker,
+            TickerRealizedVolRow.trailing_30d_realized_vol,
+        ).join(
+            latest_subq,
+            (TickerRealizedVolRow.ticker == latest_subq.c.ticker)
+            & (TickerRealizedVolRow.as_of_date == latest_subq.c.latest),
+        )
+    else:
+        stmt = select(
+            TickerRealizedVolRow.ticker,
+            TickerRealizedVolRow.trailing_30d_realized_vol,
+        ).where(TickerRealizedVolRow.as_of_date == as_of_date.isoformat())
+
+    if ticker_filter is not None:
+        stmt = stmt.where(TickerRealizedVolRow.ticker.in_(ticker_filter))
+
+    rows = (await session.execute(stmt)).all()
+    return {str(ticker): float(vol) for ticker, vol in rows}
