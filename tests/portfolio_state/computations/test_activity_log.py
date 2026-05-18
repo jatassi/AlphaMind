@@ -851,6 +851,8 @@ def _build_distillation_config(**overrides: object) -> DistillationConfig:
         narrative_lag=NarrativeLag(
             narrative_lag_correlation_shift_sigma=2.0,
             correlation_breakdown_sigma=2.0,
+            correlation_min_overlap_fraction=0.9,
+            correlation_noise_floor=0.05,
             narrative_lag_media_silence_hours=24,
         ),
         persistence_windows=PersistenceWindows(

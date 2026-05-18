@@ -144,6 +144,9 @@ class TestCorrelationBreakdown:
     ) -> None:
         # Prior 40-day window: A and B move together (cor ~ +1).
         # Recent 20-day window: B inverts (cor ~ -1) → big Fisher-z shift.
+        # The inversion drags long_corr to ~0 across the 60-day window;
+        # noise_floor=0 keeps the ALP-541 guard from filtering the synthetic
+        # fixture so the breakdown-detection math is the unit under test.
         as_of = datetime(2026, 4, 30, tzinfo=UTC)
         start_day = as_of - timedelta(days=60)
         long_returns_a = [0.01, -0.005, 0.008, -0.012, 0.006] * 8
@@ -175,6 +178,8 @@ class TestCorrelationBreakdown:
                 short_window_days=20,
                 long_window_days=60,
                 correlation_breakdown_sigma=1.5,
+                correlation_min_overlap_fraction=0.9,
+                correlation_noise_floor=0.0,
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
@@ -216,6 +221,8 @@ class TestCorrelationBreakdown:
                 short_window_days=20,
                 long_window_days=60,
                 correlation_breakdown_sigma=1.5,
+                correlation_min_overlap_fraction=0.9,
+                correlation_noise_floor=0.05,
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
@@ -278,6 +285,8 @@ class TestDispersionShift:
                 short_window_days=20,
                 long_window_days=60,
                 correlation_breakdown_sigma=1.5,
+                correlation_min_overlap_fraction=0.9,
+                correlation_noise_floor=0.05,
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
@@ -304,6 +313,7 @@ class TestNarrativeLagFlag:
     ) -> None:
         # Build a correlation breakdown (same fixture as TestCorrelationBreakdown).
         # Don't add any qualifying news articles → narrative_lag_flag fires.
+        # noise_floor=0 because the inversion fixture has near-zero long_corr.
         as_of = datetime(2026, 4, 30, tzinfo=UTC)
         start_day = as_of - timedelta(days=60)
         long_returns_a = [0.01, -0.005, 0.008, -0.012, 0.006] * 8
@@ -335,6 +345,8 @@ class TestNarrativeLagFlag:
                 short_window_days=20,
                 long_window_days=60,
                 correlation_breakdown_sigma=1.5,
+                correlation_min_overlap_fraction=0.9,
+                correlation_noise_floor=0.0,
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
@@ -394,6 +406,8 @@ class TestNarrativeLagFlag:
                 short_window_days=20,
                 long_window_days=60,
                 correlation_breakdown_sigma=1.5,
+                correlation_min_overlap_fraction=0.9,
+                correlation_noise_floor=0.0,
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
@@ -454,6 +468,8 @@ class TestNarrativeLagFlag:
                 short_window_days=20,
                 long_window_days=60,
                 correlation_breakdown_sigma=1.5,
+                correlation_min_overlap_fraction=0.9,
+                correlation_noise_floor=0.0,
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,

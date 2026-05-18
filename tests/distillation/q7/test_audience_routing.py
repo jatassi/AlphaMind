@@ -294,6 +294,8 @@ class TestAudienceRouting:
                 short_window_days=20,
                 long_window_days=60,
                 correlation_breakdown_sigma=1.5,
+                correlation_min_overlap_fraction=0.9,
+                correlation_noise_floor=0.05,
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,

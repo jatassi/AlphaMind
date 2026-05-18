@@ -58,6 +58,16 @@ lead_lag:
 narrative_lag:
   narrative_lag_correlation_shift_sigma: 1.5
   correlation_breakdown_sigma:           3.0
+  # ALP-541 data-alignment guards on the correlation breakdown σ-test.
+  # min_overlap_fraction: short / prior / long windows must each carry at
+  #   least this fraction of their nominal length in overlapping observations
+  #   between the two tickers — otherwise the σ-test denominator is
+  #   misspecified and the magnitude inflates against a near-empty baseline.
+  # noise_floor: minimum |long_corr| before the σ-test runs — when the
+  #   long-window baseline is essentially zero, a small short-window drift
+  #   looks like a "breakdown" against nothing.
+  correlation_min_overlap_fraction:      0.9
+  correlation_noise_floor:               0.05
   narrative_lag_media_silence_hours:     12
 
 persistence_windows:
