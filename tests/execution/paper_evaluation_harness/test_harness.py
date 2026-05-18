@@ -83,3 +83,68 @@ def test_equity_buy_returns_estimate_with_higher_live_price(config: PaperHarness
     assert isinstance(result.estimated_regulatory_fees_usd, Decimal)
     assert isinstance(result.live_adjusted_fill_price, Decimal)
     assert result.live_adjusted_fill_price > fill_price
+
+
+# ---------------------------------------------------------------------------
+# Sign convention: EQUITY sell → live_adjusted < fill_price (received less live)
+# ---------------------------------------------------------------------------
+
+
+def test_equity_sell_returns_lower_live_price(config: PaperHarness) -> None:
+    from alphamind.execution.paper_evaluation_harness import compute_live_execution_estimate
+
+    fill_price = price("200")
+    result = compute_live_execution_estimate(
+        fill_price=fill_price,
+        fill_quantity=1000,
+        instrument_type=InstrumentType.EQUITY,
+        side="sell",
+        order_type=OrderType.market,
+        adv_shares=50_000_000.0,
+        realized_volatility=0.20,
+        config=config,
+    )
+    assert result is not None
+    assert result.live_adjusted_fill_price < fill_price
+
+
+# ---------------------------------------------------------------------------
+# None-on-missing-data: EQUITY adv_shares=None → None
+# ---------------------------------------------------------------------------
+
+
+def test_equity_with_none_adv_returns_none(config: PaperHarness) -> None:
+    from alphamind.execution.paper_evaluation_harness import compute_live_execution_estimate
+
+    result = compute_live_execution_estimate(
+        fill_price=price("200"),
+        fill_quantity=1000,
+        instrument_type=InstrumentType.EQUITY,
+        side="buy",
+        order_type=OrderType.market,
+        adv_shares=None,
+        realized_volatility=0.20,
+        config=config,
+    )
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# None-on-missing-data: EQUITY realized_volatility=None → None
+# ---------------------------------------------------------------------------
+
+
+def test_equity_with_none_volatility_returns_none(config: PaperHarness) -> None:
+    from alphamind.execution.paper_evaluation_harness import compute_live_execution_estimate
+
+    result = compute_live_execution_estimate(
+        fill_price=price("200"),
+        fill_quantity=1000,
+        instrument_type=InstrumentType.EQUITY,
+        side="buy",
+        order_type=OrderType.market,
+        adv_shares=50_000_000.0,
+        realized_volatility=None,
+        config=config,
+    )
+    assert result is None
