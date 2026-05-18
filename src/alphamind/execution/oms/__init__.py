@@ -20,7 +20,7 @@ ALP-390) dispatches a canonical :class:`alphamind.commands.command_models
 concrete implementation of the :class:`alphamind.commands.protocols
 .BrokerDispatch` Protocol injected at the composition root.
 
-The engine-stub ``submit_envelope`` MCP wrapper moved out of this package
+The ``submit_envelope`` MCP wrapper moved out of this package
 to :mod:`alphamind.decision.portfolio_manager.submit_envelope` by ALP-458;
 the transitional ``__getattr__`` lazy-loader that previously bridged it
 back through this ``__init__`` is gone.

@@ -18,8 +18,8 @@ Structurally mirrors :mod:`alphamind.decision.strategist.harness`; the
 differences are confined to: (1) two additional MCP-server factories merged
 into ``mcp_servers`` / ``allowed_tools``, (2) the parser is the sentinel-only
 one, (3) no Layer-3 validator is invoked from the harness path, (4) a
-``submission_log.json`` diagnostic-archive file capturing the engine-stub's
-submission log, (5) a ``HarnessSuccess`` shape that carries the submission
+``submission_log.json`` diagnostic-archive file capturing the submit_envelope
+wrapper's submission log, (5) a ``HarnessSuccess`` shape that carries the submission
 log tuple alongside the standard fields, (6) a ``_MAX_TURNS`` cap of 40
 (versus 25 elsewhere) since the PM emits one ``submit_envelope`` tool call
 per envelope plus zero-or-more validation/retrieval calls per envelope.
@@ -128,8 +128,8 @@ class HarnessSuccess:
     Per story 07 § 2, the success record carries the parsed
     :class:`PMCompletionRecord` sentinel, the retry count, the cumulative
     :class:`TokensUsed`, the tool-call count, the wall-clock seconds, the
-    SDK-reported stop reason, and the engine-stub's per-envelope submission
-    log captured from :class:`SubmitEnvelopeState`'s mutable cell.
+    SDK-reported stop reason, and the submit_envelope wrapper's per-envelope
+    submission log captured from :class:`SubmitEnvelopeState`'s mutable cell.
     """
 
     output: PMCompletionRecord
@@ -234,8 +234,9 @@ class _DiagState:
         — mirrors the strategist pattern with the agent segment switched to
         ``portfolio_manager``. The PM-only ``submission_log.json`` and
         ``failed_submission_log.json`` are written alongside the standard six
-        files; they capture the engine-stub's ``state.submission_log`` (calls
-        whose payload parsed to a :class:`PMEnvelope`) and
+        files; they capture the submit_envelope wrapper's
+        ``state.submission_log`` (calls whose payload parsed to a
+        :class:`PMEnvelope`) and
         ``state.failed_submission_log`` (Layer-1 Pydantic parse failures)
         respectively after the SDK loop completes so the verify script
         (story 09) can inspect every envelope the PM attempted.
@@ -367,8 +368,8 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
 
     ``broker_dispatch`` is the composition-root-injected
     :class:`alphamind.commands.protocols.BrokerDispatch` implementation
-    (ALP-458) — forwarded into the engine-stub assembler so the engine-stub
-    can route accepted commands through the broker without importing the
+    (ALP-458) — forwarded into the submit_envelope wrapper so it can
+    route accepted commands through the broker without importing the
     concrete dispatcher.
     """
     validation_servers, validation_tools = build_validate_guardrail_mcp_server(
@@ -628,7 +629,7 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
         when advancing :class:`ProjectedDelta` for accepted commands.
     library_config, library_market:
         Forwarded to the submit_envelope wrapper for runner-signature
-        parity; the engine-stub does not consult them directly.
+        parity; the wrapper does not consult them directly.
     archive_root:
         Root path for the invocation archive. Pass ``None`` to skip
         diagnostic writes.

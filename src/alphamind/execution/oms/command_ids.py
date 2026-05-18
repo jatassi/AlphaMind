@@ -5,7 +5,7 @@ specified in :doc:`docs/design/oms-command-ids.md`. Two derivation functions
 (PM-originated / engine-originated), a helper that counts post-rejection
 modifications on a :class:`PMEnvelope`, and inverse parsers.
 
-The module is the canonical home for this logic. The engine-stub
+The module is the canonical home for this logic. The submit_envelope wrapper
 (:mod:`alphamind.decision.portfolio_manager.submit_envelope`) calls
 :func:`derive_pm_command_id`; the continuous-monitor work tree consumes
 :func:`derive_engine_command_id` when emitting envelopes.
@@ -18,6 +18,7 @@ kernel downward to read the modification list for ``attempt_seq``.
 from __future__ import annotations
 
 import re
+import uuid
 from dataclasses import dataclass
 
 from alphamind._kernel.ids import EnvelopeId, InvocationId
@@ -33,6 +34,7 @@ __all__ = [
     "is_pm_originated",
     "parse_engine_command_id",
     "parse_pm_command_id",
+    "synthesize_id_suffix",
 ]
 
 
@@ -96,7 +98,7 @@ def derive_pm_command_id(
 
     Pattern: ``inv-{invocation_id}.{envelope_id}.{command_ordinal}.{attempt_seq}``.
     Prefixes ``inv-`` only if ``invocation_id`` does not already start with it
-    (mirrors the gate in the existing engine-stub helper).
+    (mirrors the gate in the submit_envelope helper).
 
     Raises :class:`ValueError` for negative ``command_ordinal`` / ``attempt_seq``
     or an ``envelope_id`` that does not match
@@ -212,3 +214,19 @@ def is_engine_originated(command_id: str) -> bool:
     Does not raise — returns ``False`` for any malformed input.
     """
     return _ENGINE_COMMAND_ID_PATTERN.match(command_id) is not None
+
+
+# ---------------------------------------------------------------------------
+# Position / order id suffix synthesis
+# ---------------------------------------------------------------------------
+
+
+def synthesize_id_suffix(command_id: str) -> str:
+    """Return the stable 32-hex suffix the OMS appends to position / order ids
+    minted from *command_id*.
+
+    Both the submit_envelope wrapper's acknowledgment and the Phase 2 writeback
+    layer derive their position / order identifiers from the same suffix so the
+    LLM sees identifiers that match what landed on the persisted rows.
+    """
+    return uuid.uuid5(uuid.NAMESPACE_OID, command_id).hex

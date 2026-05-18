@@ -66,7 +66,7 @@ async def _emit_command_abandoned_via_phase2(
 ) -> None:
     """Dispatch to :func:`persist_command_abandoned`.
 
-    Used by the engine-stub coordinated swap (story 03e / ALP-390) when a
+    Used by the broker-routing coordinated swap (story 03e / ALP-390) when a
     broker dispatch returns ``GatewaySubmissionFailed`` — the command's
     writeback is skipped and the audit trail surfaces the failure.
     """

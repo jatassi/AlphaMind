@@ -16,7 +16,7 @@ underlying``); the broker submission is always SIMPLE.
 Permanent rejections defined in ``broker-adapter.md § Options-specific
 rejections`` (``options_level_not_approved``, ``contract_expired``,
 ``underlying_halted``, ``asset_not_tradable``) are surfaced to the caller as
-:class:`PermanentRejectionError`. The OMS engine-stub coordinated swap
+:class:`PermanentRejectionError`. The OMS broker-routing coordinated swap
 (story 03e) translates these into synchronous OMS rejections.
 """
 
@@ -74,7 +74,7 @@ class OptionsSubmission:
 class PermanentRejectionError(Exception):
     """A submission was rejected by Alpaca for a non-retriable reason.
 
-    Carries the typed :class:`PermanentRejection` so the caller (engine-stub
+    Carries the typed :class:`PermanentRejection` so the caller (broker-routing
     coordinated swap, story 03e) can translate it into a synchronous OMS
     rejection per ``broker-adapter.md § Order submission``.
     """
@@ -166,8 +166,9 @@ async def submit_options_add(
 
     The canonical ADD command does not carry an ``Instrument`` — only a
     ``position_id`` plus the additional sizing and entry order. The caller
-    (engine-stub, story 03e) threads the position's instrument and direction
-    from portfolio state. Always SIMPLE class with ``time_in_force=DAY``.
+    (submit_envelope wrapper, story 03e) threads the position's instrument
+    and direction from portfolio state. Always SIMPLE class with
+    ``time_in_force=DAY``.
     """
     occ_symbol = _occ_from_instrument(instrument)
     side = OrderSide.BUY if direction == "long" else OrderSide.SELL

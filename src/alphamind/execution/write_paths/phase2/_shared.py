@@ -36,6 +36,7 @@ from alphamind.commands.command_models import (
     OptionInstrument,
     StrategyInstrument,
 )
+from alphamind.execution.oms.command_ids import synthesize_id_suffix
 from alphamind.portfolio_state.events.activity_log import (
     EVENT_TYPE_TO_GROUP,
     ActivityLogEntry,
@@ -174,8 +175,8 @@ def _position_ticker(position: PositionRecord) -> str:
 
 
 def _id_suffix(command_id: str) -> str:
-    """Stable 32-hex suffix from the command id (uuid5 of NAMESPACE_OID)."""
-    return uuid.uuid5(uuid.NAMESPACE_OID, command_id).hex
+    """Stable 32-hex suffix from *command_id*."""
+    return synthesize_id_suffix(command_id)
 
 
 def _build_pending_order(  # noqa: PLR0913 — captures every NOT-NULL OrderRecord field once.
@@ -197,7 +198,7 @@ def _build_pending_order(  # noqa: PLR0913 — captures every NOT-NULL OrderReco
 ) -> OrderRecord:
     """Build a fresh PENDING :class:`OrderRecord`.
 
-    ``alpaca_order_id_override`` (engine-stub coordinated swap, story 03e /
+    ``alpaca_order_id_override`` (broker-routing coordinated swap, story 03e /
     ALP-390) wires the broker's real id; otherwise falls back to the synthetic
     ``alp-{order_id}`` placeholder.
     """

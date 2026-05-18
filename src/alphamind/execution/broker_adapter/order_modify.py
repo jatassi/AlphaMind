@@ -238,7 +238,8 @@ async def submit_replace(
 
     On transient-error retry exhaustion, returns ``GatewaySubmissionFailed``.
     On permanent rejection (4xx), re-raises as ``PermanentRejection`` so the
-    caller (engine-stub 03e) translates to a synchronous OMS rejection.
+    caller (submit_envelope wrapper, story 03e) translates to a synchronous
+    OMS rejection.
     """
     _validate_fields(fields, target_asset_class, target_order_class)
     replace_request = _build_replace_request(fields)

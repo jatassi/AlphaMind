@@ -1,10 +1,4 @@
-"""Engine-stub ``submit_envelope`` MCP wrapper package — ALP-464 decomposition of ALP-328.
-
-This package is **transitional**. It is the engine-stub the PM tool-use loop
-calls during decision-layer invocations until the real OMS submission engine
-lands in `ALP-120 <https://linear.app/alphamind-jatassi/issue/ALP-120>`_ and
-the persistence layer in `ALP-119 <https://linear.app/alphamind-jatassi/issue/ALP-119>`_.
-When those work trees ship, this package is replaced in a coordinated edit.
+"""``submit_envelope`` MCP wrapper package — the PM-originated envelope path.
 
 The wrapper accepts one PM envelope per tool call. It coerces the input dict
 to :class:`PMEnvelope` (Layer-1 schema), runs :func:`validate_pm_envelope`

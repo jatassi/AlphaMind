@@ -5,9 +5,9 @@ Revises: f7a9d3c2e5b1
 Create Date: 2026-05-08 00:00:00.000000
 
 Story 08 / ALP-366 adds the ``ENVELOPE_PARSE_FAILED`` event type to capture
-Layer-1 (Pydantic) parse failures from the engine-stub ``submit_envelope``
-MCP wrapper. The activity-log CHECK constraint must accept the new value so
-the Phase 2 write path can persist it alongside the existing event vocabulary.
+Layer-1 (Pydantic) parse failures from the ``submit_envelope`` MCP wrapper.
+The activity-log CHECK constraint must accept the new value so the Phase 2
+write path can persist it alongside the existing event vocabulary.
 
 SQLite does not support direct CHECK-constraint alteration, so the upgrade
 recreates the constraint via :func:`op.batch_alter_table`. The downgrade

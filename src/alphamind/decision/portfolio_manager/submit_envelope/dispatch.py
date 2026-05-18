@@ -217,7 +217,7 @@ async def _dispatcher_context_for(
         return {}
     if invocation_handle is None:
         msg = (
-            f"engine-stub broker-routing for {command.command_type!r} commands "
+            f"submit_envelope broker-routing for {command.command_type!r} commands "
             "requires invocation_handle to resolve portfolio state from the "
             "persisted position record."
         )

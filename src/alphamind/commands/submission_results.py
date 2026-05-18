@@ -3,13 +3,13 @@
 Per ``docs/design/04-decision-layer/submit-envelope-tool-schema.md``, every
 ``submit_envelope`` call produces one :class:`SubmissionResult` per embedded
 OMS command — either accepted with an :class:`Acknowledgment` or rejected
-with a :class:`RejectionPayload`. The shapes are identical for the engine-
-stub and the future real-engine path so the PM's feedback-handling code
-treats stub and real-engine results uniformly.
+with a :class:`RejectionPayload`. The shapes are uniform across both
+PM-originated and engine-originated submission paths so the PM's feedback-
+handling code treats every result the same way.
 
 The types are wire-format-only and carry no first-party dependencies
 outside the kernel — they sit in :mod:`alphamind.commands` so both
-decision-side producers (the engine-stub MCP wrapper at
+decision-side producers (the submit_envelope MCP wrapper at
 :mod:`alphamind.decision.portfolio_manager.submit_envelope`) and
 execution-side consumers (:mod:`alphamind.execution.state_persistence
 .write_paths.phase2`, :mod:`alphamind.execution.oms.submit_engine_envelope`)
@@ -106,8 +106,7 @@ class Acknowledgment(BaseModel):
     Per ``submit-envelope-tool-schema.md`` § acknowledgment, the populated
     fields vary by command type — OPEN / ADD carry ``validation_metadata``;
     CANCEL carries ``released_capital_usd``. Rather than encode a discriminated
-    union for the engine-stub, we model the union flat and leave inapplicable
-    fields ``None``.
+    union, we model the union flat and leave inapplicable fields ``None``.
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
