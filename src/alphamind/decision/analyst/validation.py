@@ -23,11 +23,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
 from datetime import datetime
 
 from alphamind.analysis.synthesizer.models import parse_reference_id
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
+from alphamind.commands.validation_results import ValidationError, ValidationResult, ValidationWarning
 from alphamind.decision.analyst.models import (
     AnalystOutput,
     InstrumentEquity,
@@ -42,38 +42,6 @@ __all__ = [
     "ValidationWarning",
     "validate_analyst_output",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Public types
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class ValidationError:
-    """A single Layer-2/3 violation found in an :class:`AnalystOutput`."""
-
-    field_path: str
-    rule: str
-    message: str
-
-
-@dataclass(frozen=True, slots=True)
-class ValidationWarning:
-    """A soft Layer-2 violation that does not disqualify the output."""
-
-    field_path: str
-    rule: str
-    message: str
-
-
-@dataclass(frozen=True, slots=True)
-class ValidationResult:
-    """Aggregate outcome of running :func:`validate_analyst_output`."""
-
-    is_valid: bool
-    errors: tuple[ValidationError, ...]
-    warnings: tuple[ValidationWarning, ...]
 
 
 # ---------------------------------------------------------------------------
@@ -516,7 +484,6 @@ def validate_analyst_output(
                 )
             )
     return ValidationResult(
-        is_valid=not errors,
         errors=tuple(errors),
         warnings=tuple(warnings),
     )

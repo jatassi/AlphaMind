@@ -1046,7 +1046,8 @@ class TestValidationTypesAreFrozenDataclasses:
             warn.rule = "mutated"  # type: ignore[misc]
 
     def test_validation_result_is_frozen_dataclass(self) -> None:
-        result = ValidationResult(is_valid=True, errors=(), warnings=())
+        result = ValidationResult(errors=(), warnings=())
         assert dataclasses.is_dataclass(ValidationResult)
+        assert result.is_valid is True
         with pytest.raises(dataclasses.FrozenInstanceError):
-            result.is_valid = False  # type: ignore[misc]
+            result.errors = (ValidationError(field_path="x", rule="r", message="m"),)  # type: ignore[misc]
