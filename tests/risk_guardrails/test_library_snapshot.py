@@ -1639,7 +1639,7 @@ def test_cancel_contribution_releases_reserved_capital_end_to_end() -> None:
         sector="tech",
         direction=LibDirection.LONG,
         asset_type=AssetType.EQUITY,
-        notional_usd=0.0,
+        notional_usd=money(0),
         quantity=50.0,
         option_legs=None,
         action=Action.CANCEL,

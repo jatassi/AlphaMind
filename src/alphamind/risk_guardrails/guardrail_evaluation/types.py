@@ -28,6 +28,7 @@ from typing import Protocol
 # this module for backward compatibility; new code should import from
 # ``alphamind._kernel.regime``. The redundant ``as`` form marks the name
 # as an explicit re-export for mypy.
+from alphamind._kernel.money import Money
 from alphamind._kernel.regime import RiskZone as RiskZone
 
 # ---------------------------------------------------------------------------
@@ -168,7 +169,7 @@ class ProposedDelta:
     sector: str
     direction: Direction
     asset_type: AssetType
-    notional_usd: float
+    notional_usd: Money
     quantity: float
     option_legs: tuple[OptionLeg, ...] | None
     action: Action

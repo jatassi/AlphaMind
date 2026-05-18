@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from alphamind._kernel.ids import PositionId, Symbol
+from alphamind._kernel.money import money
 from alphamind.risk_guardrails.guardrail_evaluation import (
     Action,
     AssetType,
@@ -124,7 +125,7 @@ def _build_proposed_delta() -> ProposedDelta:
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,
-        notional_usd=10_000.0,
+        notional_usd=money(10_000.0),
         quantity=50.0,
         option_legs=None,
         action=Action.OPEN,

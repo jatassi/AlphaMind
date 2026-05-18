@@ -58,7 +58,7 @@ def _cash_change_usd(proposal: ProposedDelta, state: PortfolioStateSnapshot) -> 
     if proposal.action in (Action.OPEN, Action.ADD):
         if proposal.direction is Direction.SHORT and proposal.asset_type is AssetType.EQUITY:
             return 0.0
-        return -proposal.notional_usd
+        return -float(proposal.notional_usd)
     if proposal.action is Action.CLOSE:
         existing = existing_position(proposal, state)
         if existing is None:
@@ -91,7 +91,7 @@ def _pending_order_capital_contribute(
     proposals reserve nothing.
     """
     if proposal.action is Action.OPEN and proposal.reserves_capital:
-        return proposal.notional_usd / state.portfolio_value_usd * 100.0
+        return float(proposal.notional_usd) / state.portfolio_value_usd * 100.0
     if proposal.action is Action.CANCEL:
         existing = existing_position(proposal, state)
         if existing is None:

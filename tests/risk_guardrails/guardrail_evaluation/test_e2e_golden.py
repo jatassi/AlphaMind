@@ -23,6 +23,7 @@ import pytest
 import yaml
 
 from alphamind._kernel.ids import PositionId, Symbol
+from alphamind._kernel.money import money
 from alphamind.config.loaders import (
     load_modes,
     load_overlays,
@@ -280,7 +281,7 @@ def _equity_proposal(
         sector=sector,
         direction=direction,
         asset_type=AssetType.EQUITY,
-        notional_usd=notional_usd,
+        notional_usd=money(notional_usd),
         quantity=notional_usd / spot,
         option_legs=None,
         action=action,
@@ -408,7 +409,7 @@ def test_medium_options_proposal_pass() -> None:
         sector="semis",
         direction=Direction.LONG,
         asset_type=AssetType.OPTION,
-        notional_usd=1_000.0,
+        notional_usd=money(1_000.0),
         quantity=5,
         option_legs=(
             OptionLeg(
@@ -501,7 +502,7 @@ def test_medium_options_proposal_fail_on_vega_under_elevated() -> None:
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.STRATEGY,
-        notional_usd=2_000.0,
+        notional_usd=money(2_000.0),
         quantity=4,
         option_legs=(
             OptionLeg(
@@ -704,7 +705,7 @@ def test_strategy_long_call_spread_aggregates_correctly() -> None:
         sector="semis",
         direction=Direction.LONG,
         asset_type=AssetType.STRATEGY,
-        notional_usd=2_000.0,
+        notional_usd=money(2_000.0),
         quantity=3,
         option_legs=(
             OptionLeg(
@@ -732,7 +733,7 @@ def test_strategy_long_call_spread_aggregates_correctly() -> None:
         sector="semis",
         direction=Direction.LONG,
         asset_type=AssetType.OPTION,
-        notional_usd=2_000.0,
+        notional_usd=money(2_000.0),
         quantity=3,
         option_legs=(
             OptionLeg(

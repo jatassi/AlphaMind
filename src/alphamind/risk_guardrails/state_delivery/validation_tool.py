@@ -26,6 +26,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, SkipValidation, model_validator
 
+from alphamind._kernel.money import Money, money
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.records.positions import Direction, InstrumentType
@@ -495,7 +496,7 @@ def _request_to_library_proposal(
     )
 
 
-def _library_notional_usd(instrument: ValidationInstrument, size: ValidationSize) -> float:
+def _library_notional_usd(instrument: ValidationInstrument, size: ValidationSize) -> Money:
     """Compute the library ``notional_usd`` for a proposal.
 
     Equity: ``size.dollar_value``. Options/strategy: ``size.premium_at_risk_usd``
@@ -503,11 +504,15 @@ def _library_notional_usd(instrument: ValidationInstrument, size: ValidationSize
     ``rules/capital.py`` consumes options ``notional_usd`` as premium-at-risk
     for cash accounting; piping the spec's ``premium_at_risk_usd`` keeps the
     semantics aligned across the layers.
+
+    ``ValidationSize`` carries floats at this caller's boundary (the agent
+    request shape); the result is wrapped in :class:`Money` so the library's
+    ``ProposedDelta`` ingests a Decimal-typed value (ALP-519).
     """
     is_option_like = instrument.asset_type in (InstrumentType.OPTIONS, InstrumentType.STRATEGY)
     if is_option_like and size.premium_at_risk_usd is not None:
-        return size.premium_at_risk_usd
-    return size.dollar_value
+        return money(size.premium_at_risk_usd)
+    return money(size.dollar_value)
 
 
 def _resolve_borrow_cost(

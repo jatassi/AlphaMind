@@ -10,6 +10,7 @@ No resolver callbacks, no clock reads, no I/O.
 
 from __future__ import annotations
 
+from alphamind._kernel.money import Money, money
 from alphamind.decision.analyst.models import (
     InstrumentEquity,
     InstrumentOption,
@@ -196,22 +197,17 @@ def _action_from_recommended_action(recommended_action: str) -> Action:
     return _ACTION_MAP[recommended_action]
 
 
-def _notional_for_recommendation(recommendation: Recommendation) -> float:
+def _notional_for_recommendation(recommendation: Recommendation) -> Money:
     """Resolve notional_usd from recommendation position_size.
 
     For options/strategy: use premium_at_risk when set, else dollar_value.
     For equity: use dollar_value.
-
-    ALP-462 — ``position_size.dollar_value`` / ``premium_at_risk`` are
-    :class:`Money` (Decimal-backed) on the analyst boundary. Cast to ``float``
-    here at the proposal-pre-processor boundary; ``ProposedDelta.notional_usd``
-    is still float (a deferred migration outside the ALP-462 file list).
     """
     asset_type = recommendation.instrument.asset_type
     ps = recommendation.position_size
     if asset_type in ("option", "strategy") and ps.premium_at_risk is not None:
-        return float(ps.premium_at_risk)
-    return float(ps.dollar_value)
+        return ps.premium_at_risk
+    return ps.dollar_value
 
 
 def _build_option_legs_from_recommendation(
@@ -290,24 +286,29 @@ def _resolve_close_quantity_and_notional(
     close_params: CloseParameters,
     *,
     existing: ExistingPosition,
-) -> tuple[float, float]:
+) -> tuple[Money, float]:
     """Resolve (notional_usd, quantity) for a close action.
 
     ``quantity="all"`` → full existing position size.
     Numeric quantity → partial close; notional pro-rated from existing.
+
+    ``existing.notional_usd`` is float (the snapshot ingest boundary); the
+    library's float arithmetic is preserved and the result is wrapped in
+    :class:`Money` so the downstream ``ProposedDelta`` carries the Decimal
+    type.
     """
     if close_params.quantity == "all":
-        return existing.notional_usd, existing.quantity
+        return money(existing.notional_usd), existing.quantity
     qty = float(close_params.quantity)
     notional = qty / existing.quantity * existing.notional_usd if existing.quantity > 0 else 0.0
-    return notional, qty
+    return money(notional), qty
 
 
 def _notional_and_quantity_for_assessment(
     assessment: PositionAssessment,
     *,
     existing: ExistingPosition,
-) -> tuple[float, float]:
+) -> tuple[Money, float]:
     """Return (notional_usd, quantity) for the assessment action."""
     params = assessment.action_parameters
 
@@ -317,10 +318,10 @@ def _notional_and_quantity_for_assessment(
     if isinstance(params, ReduceParameters):
         qty = float(params.quantity)
         notional = qty / existing.quantity * existing.notional_usd if existing.quantity > 0 else 0.0
-        return notional, qty
+        return money(notional), qty
 
     if isinstance(params, AddParameters):
-        return float(params.additional_dollar_value), float(params.additional_quantity)
+        return params.additional_dollar_value, float(params.additional_quantity)
 
     # AdjustBracketParameters — no exposure change.
-    return 0.0, 0.0
+    return money(0), 0.0

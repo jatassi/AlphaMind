@@ -24,6 +24,7 @@ import pytest
 import yaml
 
 from alphamind._kernel.ids import Symbol
+from alphamind._kernel.money import money
 from alphamind.config.loaders import (
     load_modes,
     load_overlays,
@@ -309,7 +310,7 @@ def _proposed_delta(
         sector="tech",
         direction=direction,
         asset_type=asset_type,
-        notional_usd=1000.0,
+        notional_usd=money(1000.0),
         quantity=10.0,
         option_legs=option_legs,
         action=action,

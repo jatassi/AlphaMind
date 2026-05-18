@@ -12,6 +12,7 @@ from types import MappingProxyType
 import pytest
 
 from alphamind._kernel.ids import Symbol
+from alphamind._kernel.money import money
 from alphamind.risk_guardrails.guardrail_evaluation import (
     Action,
     AssetType,
@@ -146,7 +147,7 @@ def _equity_proposal(
         sector=sector,
         direction=direction,
         asset_type=AssetType.EQUITY,
-        notional_usd=notional_usd,
+        notional_usd=money(notional_usd),
         quantity=notional_usd / 100.0,
         option_legs=None,
         action=Action.OPEN,
@@ -436,7 +437,7 @@ def test_proposed_delta_has_daily_borrow_cost_usd_default_none() -> None:
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,
-        notional_usd=1_000.0,
+        notional_usd=money(1_000.0),
         quantity=10.0,
         option_legs=None,
         action=Action.OPEN,
@@ -452,7 +453,7 @@ def test_proposed_delta_has_reserves_capital_default_false() -> None:
         sector="tech",
         direction=Direction.LONG,
         asset_type=AssetType.EQUITY,
-        notional_usd=1_000.0,
+        notional_usd=money(1_000.0),
         quantity=10.0,
         option_legs=None,
         action=Action.OPEN,

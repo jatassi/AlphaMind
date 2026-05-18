@@ -15,6 +15,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from alphamind._kernel.ids import Symbol
+from alphamind._kernel.money import money
 from alphamind.risk_guardrails.guardrail_evaluation import (
     Action,
     AssetType,
@@ -124,7 +125,7 @@ def _equity(
         sector="Technology",
         direction=direction,
         asset_type=AssetType.EQUITY,
-        notional_usd=notional_usd,
+        notional_usd=money(notional_usd),
         quantity=notional_usd / _SPOT,
         option_legs=None,
         action=action,
@@ -145,7 +146,7 @@ def _single_call(
         sector="Technology",
         direction=direction,
         asset_type=AssetType.OPTION,
-        notional_usd=1_000.0,
+        notional_usd=money(1_000.0),
         quantity=quantity,
         option_legs=(
             OptionLeg(
@@ -297,7 +298,7 @@ def _long_call_spread() -> ProposedDelta:
         sector="Technology",
         direction=Direction.LONG,
         asset_type=AssetType.STRATEGY,
-        notional_usd=500.0,
+        notional_usd=money(500.0),
         quantity=1.0,
         option_legs=(
             OptionLeg(
@@ -369,7 +370,7 @@ def test_atm_straddle_has_near_zero_delta_with_long_vol_greek_signs() -> None:
         sector="Technology",
         direction=Direction.LONG,
         asset_type=AssetType.STRATEGY,
-        notional_usd=600.0,
+        notional_usd=money(600.0),
         quantity=1.0,
         option_legs=(
             OptionLeg(
@@ -529,7 +530,7 @@ def test_iv_source_falls_back_when_any_leg_falls_back() -> None:
         sector="Technology",
         direction=Direction.LONG,
         asset_type=AssetType.STRATEGY,
-        notional_usd=200.0,
+        notional_usd=money(200.0),
         quantity=1.0,
         option_legs=(
             OptionLeg(

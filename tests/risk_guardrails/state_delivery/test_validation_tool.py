@@ -1296,3 +1296,69 @@ def test_real_library_composition_smoke() -> None:
     by_rule = {p.rule: p for p in result.per_rule}
     assert "net_long_pct" in by_rule
     assert result.delta_adjusted_exposure == pytest.approx(5_000.0)
+
+
+# ---------------------------------------------------------------------------
+# _library_notional_usd boundary cast (ALP-519)
+# ---------------------------------------------------------------------------
+
+
+def test_library_notional_usd_equity_uses_dollar_value_as_money() -> None:
+    """Equity instruments thread ``size.dollar_value`` through ``money(...)``."""
+    from decimal import Decimal
+
+    from alphamind.risk_guardrails.state_delivery.validation_tool import _library_notional_usd
+
+    instrument = ValidationInstrument(
+        ticker="AAPL", asset_type=InstrumentType.EQUITY, direction=Direction.LONG
+    )
+    size = ValidationSize(quantity=50, dollar_value=5_000.0, premium_at_risk_usd=None)
+
+    result = _library_notional_usd(instrument, size)
+
+    assert isinstance(result, Decimal)
+    assert result == Decimal("5000.0")
+
+
+def test_library_notional_usd_option_with_premium_uses_premium_at_risk() -> None:
+    """Option instruments with ``premium_at_risk_usd`` set use the premium, not dollar_value."""
+    from decimal import Decimal
+
+    from alphamind.risk_guardrails.state_delivery.validation_tool import _library_notional_usd
+
+    instrument = ValidationInstrument(
+        ticker="AAPL",
+        asset_type=InstrumentType.OPTIONS,
+        direction=Direction.LONG,
+        strike=150.0,
+        expiration=_EXPIRATION_DT,
+        contract_type="call",
+    )
+    size = ValidationSize(quantity=5, dollar_value=2_000.0, premium_at_risk_usd=750.0)
+
+    result = _library_notional_usd(instrument, size)
+
+    assert isinstance(result, Decimal)
+    assert result == Decimal("750.0")
+
+
+def test_library_notional_usd_option_without_premium_falls_back_to_dollar_value() -> None:
+    """Option instruments without ``premium_at_risk_usd`` fall back to ``dollar_value``."""
+    from decimal import Decimal
+
+    from alphamind.risk_guardrails.state_delivery.validation_tool import _library_notional_usd
+
+    instrument = ValidationInstrument(
+        ticker="AAPL",
+        asset_type=InstrumentType.OPTIONS,
+        direction=Direction.LONG,
+        strike=150.0,
+        expiration=_EXPIRATION_DT,
+        contract_type="call",
+    )
+    size = ValidationSize(quantity=5, dollar_value=2_000.0, premium_at_risk_usd=None)
+
+    result = _library_notional_usd(instrument, size)
+
+    assert isinstance(result, Decimal)
+    assert result == Decimal("2000.0")

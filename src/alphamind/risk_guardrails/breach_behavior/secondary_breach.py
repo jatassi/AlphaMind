@@ -22,6 +22,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from alphamind._kernel.money import Money, money
 from alphamind.risk_guardrails.breach_behavior.config import BreachBehaviorConfig
 from alphamind.risk_guardrails.breach_behavior.hard_rejection import (
     LibraryOutputProtocol,
@@ -274,7 +275,7 @@ def _build_close_delta(
         id=f"{id_prefix}.{proposed_close.position_id}",
         existing_position_id=proposed_close.position_id,
         underlying=proposed_close.ticker,
-        notional_usd=proposed_close.close_size_usd,
+        notional_usd=money(proposed_close.close_size_usd),
         quantity=proposed_close.close_size_usd,
         action="CLOSE",
         direction=proposed_close.direction.upper(),
@@ -289,7 +290,7 @@ class _CloseDelta:
     id: str
     existing_position_id: str
     underlying: str
-    notional_usd: float
+    notional_usd: Money
     quantity: float
     action: str
     direction: str
