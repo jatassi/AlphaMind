@@ -374,7 +374,7 @@ In scope, all under `<src path>`. Tests at `<test path>`.
 
 * [ ] `<function>` returns `<value>` when given `<input>`.
 * [ ] `<type>` is exposed from `<module>.types` and is importable.
-* [ ] `tests/<path>/test_<name>.py` exists and passes under `uv run pytest -n auto`.
+* [ ] `tests/<path>/test_<name>.py` exists and passes under `uv run pytest --testmon -n auto`.
 * [ ] [...]
 
 ## Verification

@@ -108,10 +108,12 @@ uv run ruff check .
 uv run ruff format .
 uv run mypy
 uv run lint-imports
-uv run pytest -n auto
+uv run pytest --testmon -n auto
 ```
 
-**Do not pipe `pytest` to `tail`** — the pipe's exit code is `tail`'s (always 0), masking failures. Use `uv run pytest -n auto; echo "exit=$?"` and read the summary line.
+`--testmon` is mandatory per CLAUDE.md; drop it only for the explicit pre-PR / pre-merge full-suite runs below, or when the change touches `conftest.py` / fixtures / collection hooks or non-Python files tests depend on.
+
+**Do not pipe `pytest` to `tail`** — the pipe's exit code is `tail`'s (always 0), masking failures. Use `uv run pytest --testmon -n auto; echo "exit=$?"` and read the summary line.
 
 **For audit / docs-only issues** where the deliverable is prose making factual claims about counts, structures, or edge classifications, verify each claim against the source after writing. The lint chain validates that the file still parses, not that the prose is correct — a false count or miscategorized edge will sail through ruff/mypy/lint-imports/pytest and survive into the PR. Walk every entity the prose enumerates (each `ignore_imports` line against its source-file site, each LOC count against `wc -l`, each "TYPE_CHECKING only" claim against the actual `if TYPE_CHECKING:` block).
 
@@ -227,7 +229,7 @@ PushNotification({
 ## Boundaries
 
 - Do not push to remote branches other than the feature branch until the PR merges.
-- Do not declare the issue `Done` without `uv run pytest -n auto` green, lint chain clean, every acceptance criterion verified, PR merged.
+- Do not declare the issue `Done` without `uv run pytest --testmon -n auto` green (or `uv run pytest -n auto` without `--testmon` for the pre-PR / pre-merge final-verification runs), lint chain clean, every acceptance criterion verified, PR merged.
 - Do not modify the issue's description — only `state` and `blockedBy`.
 - Verify each completion-sequence task `completed` before reporting done.
 

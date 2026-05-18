@@ -17,7 +17,7 @@ Alert the user before disabling the linter or any rule in any form — including
 
 ## Testing
 
-Default: run the test suite incrementally with pytest-testmon + xdist:
+**Always run pytest with `--testmon` and `-n auto`** unless one of the explicit exceptions below applies. This is mandatory for every pytest invocation — your own, subagent dispatches, worktree verification, the orchestrator's per-story checks, the implement-issue intermediate runs. The canonical invocation:
 
 ```bash
 uv run pytest --testmon -n auto
@@ -25,14 +25,14 @@ uv run pytest --testmon -n auto
 
 `--testmon` skips tests whose Python dependencies haven't changed since the last run (cache in `.testmondata`, gitignored). `-n auto` allocates one worker per CPU core. When verifying a narrow slice, scope to the relevant path: `uv run pytest tests/config/ --testmon -n auto`.
 
-**Drop `--testmon` and run the full suite when:**
+**Drop `--testmon` and run the full suite ONLY when one of these specific scenarios applies:**
 - Changing `conftest.py`, fixtures, or other test-collection hooks — testmon doesn't track collection-time graph changes
 - Changing non-Python files tests depend on (YAML configs, JSON fixtures, SQL, schema files) — testmon only tracks Python imports
-- Before claiming a feature done or opening a PR — final verification must exercise everything
+- Before claiming a feature done or opening a PR — final verification must exercise everything (this is the pre-PR / pre-merge gate, not intermediate per-story or per-wave checks)
 - After pulling main or rebasing — the local cache reflects your prior state, not the merged state
 - If you suspect the cache is stale or are seeing implausible skips — delete `.testmondata` and retry
 
-Never invoke `pytest` without `-n auto` — including from subagents and worktree verification. If a test passes serially but fails under xdist, the cause is test-order dependence (typically `sys.modules` mutation or shared filesystem state). Fix the test — do not fall back to serial.
+Outside these documented exceptions, **never invoke `pytest` without both `--testmon` and `-n auto`** — including from subagents and worktree verification. When writing a verbatim pytest command into a dispatch prompt, skill file, story acceptance criterion, or PR test plan, include `--testmon -n auto` by default and only omit `--testmon` when the invocation is the explicit pre-PR / pre-merge final-verification run. If a test passes serially but fails under xdist, the cause is test-order dependence (typically `sys.modules` mutation or shared filesystem state). Fix the test — do not fall back to serial.
 
 ## Spawning Subagents
 
