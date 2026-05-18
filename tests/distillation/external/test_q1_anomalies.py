@@ -1,15 +1,17 @@
 """Tests for the Q1 price/volume anomaly detections — story 08a.
 
 Covers boundary semantics for ``volume_anomaly`` (sigma threshold) and
-``price_move_anomaly`` (ATR-multiple threshold), and the bootstrap
-severity downgrade.
+``price_move_anomaly`` (ATR-multiple threshold). Severity downgrade
+under non-calibrated state lives at the publishing-layer cap
+(:mod:`alphamind.distillation._severity_cap`, tested in
+``test_severity_cap.py``); the producer here uniformly emits
+``investigate_now`` per ALP-544.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.q1.anomalies import (
     detect_price_move_anomaly,
     detect_volume_anomaly,
@@ -29,7 +31,6 @@ class TestDetectVolumeAnomaly:
             baseline_mean=baseline_mean,
             baseline_stdev=baseline_stdev,
             sigma_threshold=threshold_sigma,
-            calibration_state=CalibrationState.CALIBRATED,
         )
         assert flag is not None
         assert flag.name == "volume_anomaly"
@@ -47,25 +48,28 @@ class TestDetectVolumeAnomaly:
             baseline_mean=baseline_mean,
             baseline_stdev=baseline_stdev,
             sigma_threshold=threshold_sigma,
-            calibration_state=CalibrationState.CALIBRATED,
         )
         assert flag is None
 
-    def test_severity_downgrades_under_bootstrap(self) -> None:
-        """A bootstrap-tagged baseline downgrades severity to investigate_if_persists."""
+    def test_producer_emits_investigate_now_uniformly(self) -> None:
+        """ALP-544 — producer no longer caps severity by calibration state.
+
+        The producer emits ``investigate_now`` for every fired threshold;
+        the publishing-layer cap (tested separately) downgrades based on
+        the surrounding block's calibration state.
+        """
         baseline_mean = 1_000_000.0
         baseline_stdev = 100_000.0
         threshold_sigma = 2.5
-        today_volume = baseline_mean + 3.0 * baseline_stdev  # well above the threshold
+        today_volume = baseline_mean + 3.0 * baseline_stdev  # well above threshold
         flag = detect_volume_anomaly(
             today_volume=today_volume,
             baseline_mean=baseline_mean,
             baseline_stdev=baseline_stdev,
             sigma_threshold=threshold_sigma,
-            calibration_state=CalibrationState.ACCUMULATING,
         )
         assert flag is not None
-        assert flag.severity == "investigate_if_persists"
+        assert flag.severity == "investigate_now"
 
     def test_zero_baseline_stdev_does_not_fire(self) -> None:
         """Degenerate baseline cannot produce an anomaly — silent."""
@@ -74,7 +78,6 @@ class TestDetectVolumeAnomaly:
             baseline_mean=1_000_000.0,
             baseline_stdev=0.0,
             sigma_threshold=2.5,
-            calibration_state=CalibrationState.CALIBRATED,
         )
         assert flag is None
 
@@ -88,7 +91,6 @@ class TestDetectPriceMoveAnomaly:
             price_move=price_move,
             atr=atr,
             atr_multiple_threshold=atr_threshold,
-            calibration_state=CalibrationState.CALIBRATED,
         )
         assert flag is not None
         assert flag.name == "price_move_anomaly"
@@ -103,7 +105,6 @@ class TestDetectPriceMoveAnomaly:
             price_move=price_move,
             atr=atr,
             atr_multiple_threshold=atr_threshold,
-            calibration_state=CalibrationState.CALIBRATED,
         )
         assert flag is None
 
@@ -116,12 +117,12 @@ class TestDetectPriceMoveAnomaly:
             price_move=price_move,
             atr=atr,
             atr_multiple_threshold=atr_threshold,
-            calibration_state=CalibrationState.CALIBRATED,
         )
         assert flag is not None
         assert flag.magnitude == pytest.approx(atr_threshold)
 
-    def test_severity_downgrades_under_bootstrap(self) -> None:
+    def test_producer_emits_investigate_now_uniformly(self) -> None:
+        """ALP-544 — producer no longer caps severity by calibration state."""
         atr = 2.0
         atr_threshold = 1.5
         price_move = 2.0 * atr
@@ -129,10 +130,9 @@ class TestDetectPriceMoveAnomaly:
             price_move=price_move,
             atr=atr,
             atr_multiple_threshold=atr_threshold,
-            calibration_state=CalibrationState.ACCUMULATING,
         )
         assert flag is not None
-        assert flag.severity == "investigate_if_persists"
+        assert flag.severity == "investigate_now"
 
     def test_zero_atr_does_not_fire(self) -> None:
         """Non-positive ATR collapses the threshold — silent."""
@@ -140,6 +140,5 @@ class TestDetectPriceMoveAnomaly:
             price_move=10.0,
             atr=0.0,
             atr_multiple_threshold=1.5,
-            calibration_state=CalibrationState.CALIBRATED,
         )
         assert flag is None

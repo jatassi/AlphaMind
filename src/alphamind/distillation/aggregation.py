@@ -39,37 +39,25 @@ from datetime import datetime
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import (
     PERCENTAGE_FLOAT_FORMAT,
+    SEVERITY_ORDER,
     AnomalyFlag,
     AnomalySeverity,
     OutputAudience,
     OutputBlock,
     format_blocks_for_audience,
+    severity_rank,
 )
 
 # ---------------------------------------------------------------------------
-# Severity ordering
+# Severity ordering — re-exported from output.py
 # ---------------------------------------------------------------------------
 #
-# The severity order pins the presentation order required by
-# ``docs/design/02-distillation-layer/external.md`` § Output format
-# ("grouped for easy scanning"): items most likely to drive action sit at
-# the top. Sort keys derive from the tuple position so the file carries
-# no numeric rank literals — earlier in the tuple sorts earlier.
-
-_SEVERITY_ORDER: tuple[AnomalySeverity, ...] = (
-    "investigate_now",
-    "investigate_if_persists",
-    "note_for_context",
-)
-
-
-def _severity_rank(severity: AnomalySeverity) -> int:
-    """Return the position of ``severity`` in :data:`_SEVERITY_ORDER`.
-
-    Smaller index sorts earlier; the rank only ever participates in
-    sort keys, so the absolute integer is irrelevant.
-    """
-    return _SEVERITY_ORDER.index(severity)
+# The severity total order lives in :mod:`alphamind.distillation.output`
+# alongside the :data:`AnomalySeverity` literal type. The aggregation
+# layer's per-audience sort and the publishing-layer cap
+# (:mod:`alphamind.distillation._severity_cap`) consume the same order;
+# centralizing it next to the type prevents the two consumers from
+# drifting.
 
 
 def partition_blocks(
@@ -163,7 +151,7 @@ def _anomaly_sort_key(summary: AnomalySummary) -> tuple[int, float, str]:
     direction within ``sorted``'s ascending default.
     """
     return (
-        _severity_rank(summary.flag.severity),
+        severity_rank(summary.flag.severity),
         -summary.flag.magnitude,
         summary.source_block_id,
     )
@@ -192,7 +180,7 @@ def format_anomaly_summary(summaries: Iterable[AnomalySummary]) -> str:
 
     The output is byte-identical for the same input so the invocation
     archive diffs cleanly. Severity sections appear in the order
-    pinned by :data:`_SEVERITY_ORDER`; empty sections are omitted.
+    pinned by :data:`SEVERITY_ORDER`; empty sections are omitted.
     Within a section, summaries follow :func:`_anomaly_sort_key`
     (magnitude descending, then ``source_block_id`` ascending). The
     zero-flag case renders as a single line so the empty summary doesn't
@@ -202,13 +190,13 @@ def format_anomaly_summary(summaries: Iterable[AnomalySummary]) -> str:
     if not materialized:
         return "=== ANOMALY FLAGS (0) ===\n"
     by_severity: dict[AnomalySeverity, list[AnomalySummary]] = {
-        severity: [] for severity in _SEVERITY_ORDER
+        severity: [] for severity in SEVERITY_ORDER
     }
     for summary in materialized:
         by_severity[summary.flag.severity].append(summary)
 
     lines: list[str] = [f"=== ANOMALY FLAGS ({len(materialized)}) ==="]
-    for severity in _SEVERITY_ORDER:
+    for severity in SEVERITY_ORDER:
         bucket = sorted(by_severity[severity], key=_anomaly_sort_key)
         if not bucket:
             continue
