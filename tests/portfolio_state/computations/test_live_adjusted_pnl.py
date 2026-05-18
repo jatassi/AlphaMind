@@ -84,3 +84,13 @@ def test_compute_position_live_drag_skips_none_estimates() -> None:
     )
     # None fill contributes 0; two non-None fills × 3.50 = 7.00.
     assert compute_position_live_drag(fills) == money("7.00")
+
+
+def test_compute_position_live_drag_all_none_returns_zero() -> None:
+    """Fills from live mode or pre-harness paper-mode carry None estimates."""
+    from alphamind.portfolio_state.computations import compute_position_live_drag
+
+    fills = tuple(
+        _fill_record(fill_id=f"fill-{i}", live_execution_estimate=None) for i in range(3)
+    )
+    assert compute_position_live_drag(fills) == money("0")
