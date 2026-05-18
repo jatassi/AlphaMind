@@ -30,6 +30,10 @@ from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 __all__ = ["assemble_input_bundle_halt", "assemble_input_bundle_normal"]
 
 
+# ---------------------------------------------------------------------------
+# Section-header constants
+# ---------------------------------------------------------------------------
+
 _BRIEF_HEADER = "=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) ==="
 
 
