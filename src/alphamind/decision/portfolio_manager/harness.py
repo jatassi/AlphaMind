@@ -47,6 +47,7 @@ from alphamind.analysis._harness_core import (
     SDKFailure,
     TimeoutFailure,
     _add_tokens,
+    _build_retry_message,
     _load_prompt,
     _render_raw_response,
     invoke_sdk,
@@ -154,23 +155,15 @@ _SECTION_DIRECTIVE = (
 _CONTRACT_REF = "See docs/design/04-decision-layer/pm-envelope-schema.md."
 
 
-def _build_retry_message(framing: str, error_detail: str) -> str:
-    """Construct a corrective-retry message.
-
-    Per llm-output-validation.md § Corrective-retry message construction:
-    - Explicit framing line naming which contract failed
-    - First error only (caller extracts it)
-    - Contract reference
-    - Directive
-    - Does NOT contain: full error list, analytical guidance, raw input data
-    """
-    return "\n\n".join([framing, error_detail, _CONTRACT_REF, _SECTION_DIRECTIVE])
-
-
 def _build_retry_message_for_parse_error(error: ParseError) -> str:
-    framing = "The prior response did not meet the parse contract for the PM completion sentinel."
-    error_detail = f"Field: {error.field_path}\nError: {error.message}"
-    return _build_retry_message(framing, error_detail)
+    return _build_retry_message(
+        framing=(
+            "The prior response did not meet the parse contract for the PM completion sentinel."
+        ),
+        error_detail=f"Field: {error.field_path}\nError: {error.message}",
+        contract_ref=_CONTRACT_REF,
+        directive=_SECTION_DIRECTIVE,
+    )
 
 
 _RETRY_PROMPT_DELIMITER = "\n\n--- Retry diagnostic ---\n\n"
