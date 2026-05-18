@@ -537,6 +537,151 @@ def test_diag_record_writes_on_failure_path(
     ]
 
 
+# ---------------------------------------------------------------------------
+# Stop-reason classification — per-call invoke_sdk(on_cli_result_error=...)
+# ---------------------------------------------------------------------------
+
+
+def _invoke_sdk_call_kwargs(agent: AgentSpec) -> tuple[dict[str, Any], ...]:
+    """Return the keyword-argument literals passed to every ``invoke_sdk`` call
+    in *agent*'s harness module.
+
+    Walks the harness module's AST, finds every call whose function name is
+    ``invoke_sdk`` (the local reference imported from
+    :mod:`alphamind.analysis._harness_core`), and extracts the call's
+    keyword arguments whose values are Python literals (strings, ints,
+    ``None``, etc). Returns one dict per call site.
+
+    Source inspection is the right surface here: each harness has a single
+    call site whose ``on_cli_result_error`` literal is the contract — drift
+    in the source is drift in the contract. Going through a runtime stub
+    would require fabricating the full MCP wiring (four servers for PM)
+    and per-invocation snapshots just to reach the call site; the source
+    check is direct.
+    """
+    import ast
+
+    mod = _harness(agent)
+    source = Path(mod.__file__).read_text(encoding="utf-8")  # type: ignore[arg-type]
+    tree = ast.parse(source)
+    calls: list[dict[str, Any]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        # Local-name call: ``invoke_sdk(...)`` (every harness imports
+        # ``invoke_sdk`` directly into its module namespace; no attribute
+        # access form exists in the as-built source).
+        if not (isinstance(func, ast.Name) and func.id == "invoke_sdk"):
+            continue
+        kwargs: dict[str, Any] = {}
+        for kw in node.keywords:
+            if kw.arg is None:
+                continue
+            try:
+                kwargs[kw.arg] = ast.literal_eval(kw.value)
+            except (ValueError, SyntaxError):
+                # Non-literal — record the unparsed source so the test can
+                # at least surface that the kwarg is present.
+                kwargs[kw.arg] = ast.unparse(kw.value)
+        calls.append(kwargs)
+    return tuple(calls)
+
+
+def test_invoke_sdk_on_cli_result_error_arm(agent: AgentSpec) -> None:
+    """Every ``invoke_sdk`` call in the harness pins ``on_cli_result_error``
+    to the agent's expected arm.
+
+    Analysis-layer harnesses (DR / QR / AR) pass
+    ``on_cli_result_error="context_overflow"`` — a ``_CLIResultError`` from
+    the SDK surfaces as a :class:`ContextOverflowFailure`. Decision-layer
+    harnesses (analyst / strategist / PM) and the synthesizer pass
+    ``on_cli_result_error="sdk_failure"`` — a ``_CLIResultError`` surfaces
+    as :class:`SDKFailure` (the synthesizer's empty-response classification
+    is a separate code path on the success branch).
+
+    Verified statically against the harness source rather than via a
+    runtime stub: the harness's call site is the contract surface, and
+    each harness's MCP wiring + per-invocation snapshot precondition makes
+    the runtime fabrication path heavy without adding new coverage.
+    """
+    calls = _invoke_sdk_call_kwargs(agent)
+    assert calls, f"{agent.name}: no invoke_sdk call sites found in harness source"
+    for kwargs in calls:
+        assert "on_cli_result_error" in kwargs, (
+            f"{agent.name}: invoke_sdk call missing on_cli_result_error kwarg "
+            f"(kwargs: {sorted(kwargs)!r})"
+        )
+        assert kwargs["on_cli_result_error"] == agent.on_cli_result_error, (
+            f"{agent.name}: invoke_sdk was called with "
+            f"on_cli_result_error={kwargs['on_cli_result_error']!r} but the "
+            f"contract requires {agent.on_cli_result_error!r}"
+        )
+
+
+def test_invoke_sdk_init_stall_timeout_arm(agent: AgentSpec) -> None:
+    """Only the domain-researcher harness sets ``init_stall_timeout_seconds``;
+    the other six pass ``None``.
+
+    Per ``invoke_sdk``'s docstring, the stall-retry path is exercised only
+    when ``init_stall_timeout_seconds`` is a float. The domain-researcher
+    harness is the only one that runs parallel sibling invocations against
+    a single OAuth token and so guards against admit-rate starvation.
+    """
+    calls = _invoke_sdk_call_kwargs(agent)
+    for kwargs in calls:
+        if agent.name == "domain_researchers":
+            assert kwargs.get("init_stall_timeout_seconds") not in (None, "None"), (
+                f"{agent.name}: invoke_sdk call must set init_stall_timeout_seconds "
+                "to a positive float; the DR path is the one that guards against "
+                "OAuth-token admit-rate starvation"
+            )
+        else:
+            assert kwargs.get("init_stall_timeout_seconds") in (None, "None"), (
+                f"{agent.name}: invoke_sdk call must pass "
+                "init_stall_timeout_seconds=None; only the domain-researcher "
+                "harness sets the stall watchdog"
+            )
+
+
+def test_invoke_sdk_exists_in_harness_core(agent: AgentSpec) -> None:
+    """Sanity: every harness module imports ``invoke_sdk`` from the shared core.
+
+    Locks in the ALP-466 consolidation — no harness re-implements the SDK
+    driver loop locally. If a harness ever inlines the loop again, this
+    assertion fails and surfaces the regression.
+    """
+    mod = _harness(agent)
+    assert getattr(mod, "invoke_sdk", None) is invoke_sdk, (
+        f"{agent.name}: harness module's invoke_sdk reference does not "
+        "resolve to alphamind.analysis._harness_core.invoke_sdk; the "
+        "shared-core consolidation is broken"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Synthesizer's distinct empty-response classification
+# ---------------------------------------------------------------------------
+
+
+def test_synthesizer_defines_empty_response_failure() -> None:
+    """The synthesizer's harness defines an :class:`EmptyResponseFailure`.
+
+    The synthesizer has no retry path; instead, an SDK response with empty
+    text + ``end_turn`` raises :class:`EmptyResponseFailure` (paired with
+    ``max_tokens`` it raises :class:`ContextOverflowFailure`). This is the
+    synthesizer-specific arm of the stop-reason classification table.
+    """
+    mod = importlib.import_module("alphamind.analysis.synthesizer.harness")
+    from alphamind.analysis._harness_core import HarnessFailure
+
+    cls = mod.EmptyResponseFailure
+    assert issubclass(cls, HarnessFailure), (
+        "EmptyResponseFailure must inherit from HarnessFailure so the "
+        "runner's terminal-failure handling treats it uniformly"
+    )
+
+
 def test_no_separate_validation_failure_class(agent: AgentSpec) -> None:
     """ALP-520 unified ``ValidationFailure`` into ``ValidationError``.
 
