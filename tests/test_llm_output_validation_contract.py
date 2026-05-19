@@ -438,15 +438,17 @@ def test_invoke_sdk_on_cli_result_error_arm(agent: AgentSpec) -> None:
 
 
 def test_invoke_sdk_init_stall_timeout_arm(agent: AgentSpec) -> None:
-    """Only the domain-researcher harness sets ``init_stall_timeout_seconds``
-    (it's the one that races sibling invocations against a single OAuth
-    token); the other six pass ``None``."""
-    for kwargs in _invoke_sdk_call_kwargs(agent):
+    """Every harness arms the init-stall watchdog as defense against
+    silent CLI-spawn failures (the between-message watchdog was removed
+    in #89 to stop false-firing on Sonnet's extended-thinking gaps; the
+    outer ``latency_budget`` bounds the call once streaming begins)."""
+    calls = _invoke_sdk_call_kwargs(agent)
+    assert calls, f"{agent.name}: no invoke_sdk call sites found"
+    for kwargs in calls:
         value = kwargs.get("init_stall_timeout_seconds")
-        if agent.name == "domain_researchers":
-            assert value not in (None, "None"), f"{agent.name}: must set init_stall_timeout_seconds"
-        else:
-            assert value in (None, "None"), f"{agent.name}: init_stall_timeout_seconds must be None"
+        assert value not in (None, "None"), (
+            f"{agent.name}: invoke_sdk must arm init_stall_timeout_seconds"
+        )
 
 
 # ---------------------------------------------------------------------------
