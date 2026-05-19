@@ -42,6 +42,21 @@ from sqlalchemy.orm import Session, sessionmaker
 _PERCENT_VAR_PATTERN = re.compile(r"%([A-Za-z_][A-Za-z0-9_]*)%")
 
 
+def _substitute_percent_var(match: re.Match[str]) -> str:
+    """Expand ``%VAR%`` against the environment, with ``%USERPROFILE%`` falling
+    back to :func:`Path.home` on POSIX — matches the convention used in every
+    other module (collector / scheduler / logging) and avoids writing a
+    literal-named SQLite file in cwd when run on macOS / Linux.
+    """
+    name = match.group(1)
+    value = os.environ.get(name)
+    if value is not None:
+        return value
+    if name == "USERPROFILE":
+        return str(Path.home())
+    return match.group(0)
+
+
 def _resolve_path(path: str | None) -> str:
     """Resolve the database path using the documented priority chain."""
     if path is not None:
@@ -61,9 +76,18 @@ def _resolve_path(path: str | None) -> str:
                 # ``os.path.expandvars`` only honors ``%VAR%`` on Windows; we
                 # substitute manually so a YAML value like ``%USERPROFILE%/...``
                 # expands identically on POSIX (test parity, replay harness).
-                return _PERCENT_VAR_PATTERN.sub(
-                    lambda m: os.environ.get(m.group(1), m.group(0)), db_path
-                )
+                # Any ``%VAR%`` still present after substitution raises so we
+                # don't silently write a literal-named junk file in cwd.
+                expanded = _PERCENT_VAR_PATTERN.sub(_substitute_percent_var, db_path)
+                unresolved = _PERCENT_VAR_PATTERN.findall(expanded)
+                if unresolved:
+                    raise RuntimeError(
+                        f"main.yaml paths.database resolved to {expanded!r} with "
+                        f"unexpanded variables {unresolved!r}; set the "
+                        f"corresponding environment variable or pass an explicit "
+                        f"path / DATABASE_PATH override."
+                    )
+                return expanded
     except (yaml.YAMLError, OSError, ImportError):
         # Schema bugs in ``main.yaml`` (or yaml unavailable) shouldn't masquerade
         # as "DB not configured" — but we still fall through to the RuntimeError
