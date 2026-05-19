@@ -110,15 +110,19 @@ class SentimentAggregate:
     ``percentile_vs_self`` is in ``[0.0, 1.0]`` (unit interval, not 0-100).
     ``data_freshness`` is the timestamp of the underlying baseline row.
 
-    Every numeric field may be ``None``: tickers whose latest baseline row is
-    :attr:`CalibrationState.UNAVAILABLE` (zero observations — collector down,
-    vendor outage, or genuinely no headlines yet) emit an all-``None`` record
-    rather than pool-fallback numbers that look like neutral signal (ALP-538).
-    ``rate_of_change``, ``volume``, and ``divergence_flag`` also fall back to
-    ``None`` for calibrated tickers when their own per-window source data is
-    missing (single baseline row, no daily-bar history). The renderer surfaces
-    ``None`` as ``pending`` so the LLM reads "data not available yet", not
-    "no signal".
+    ``calibration_state`` mirrors the baseline row's state from the ALP-540
+    vocabulary and is the single source of truth for the renderer when
+    choosing between the per-ticker ``unavailable`` line and a numeric row
+    (ALP-569). Every numeric field may be ``None``: ``UNAVAILABLE`` tickers
+    (zero observations — collector down, vendor outage, or genuinely no
+    headlines yet) emit an all-``None`` record rather than pool-fallback
+    numbers that look like neutral signal (ALP-538); ``rate_of_change``,
+    ``volume``, and ``divergence_flag`` also fall back to ``None`` for
+    calibrated tickers when their own per-window source data is missing
+    (single baseline row, no daily-bar history). The renderer surfaces
+    ``UNAVAILABLE`` as ``{ticker}: unavailable`` and per-field ``None`` as
+    inline ``null``, keeping per-ticker and per-field missing-data states
+    visually distinct.
     """
 
     ticker: str
@@ -129,6 +133,7 @@ class SentimentAggregate:
     divergence_flag: bool | None
     percentile_vs_self: float | None
     data_freshness: datetime
+    calibration_state: CalibrationState
 
     def __post_init__(self) -> None:
         if self.directional_score is not None and not -1.0 <= self.directional_score <= 1.0:
@@ -543,7 +548,8 @@ def load_sentiment_aggregates(
         # all-None record. The pool-fallback path below would otherwise
         # broadcast bit-identical numeric placeholders to every such ticker,
         # masking the missing-data state as "neutral signal".
-        if CalibrationState(row.calibration_state) is CalibrationState.UNAVAILABLE:
+        calibration_state = CalibrationState(row.calibration_state)
+        if calibration_state is CalibrationState.UNAVAILABLE:
             results.append(
                 SentimentAggregate(
                     ticker=ticker,
@@ -554,6 +560,7 @@ def load_sentiment_aggregates(
                     divergence_flag=None,
                     percentile_vs_self=None,
                     data_freshness=_parse_iso_utc(row.as_of),
+                    calibration_state=calibration_state,
                 )
             )
             continue
@@ -595,6 +602,7 @@ def load_sentiment_aggregates(
                 divergence_flag=divergence_flag,
                 percentile_vs_self=percentile,
                 data_freshness=_parse_iso_utc(row.as_of),
+                calibration_state=calibration_state,
             )
         )
 
