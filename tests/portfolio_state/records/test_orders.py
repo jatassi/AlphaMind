@@ -1277,7 +1277,7 @@ class TestBracketLegPLAnchor:
 
 
 # ---------------------------------------------------------------------------
-# Buy/sell-side mapping (ALP-533)
+# Buy/sell-side mapping
 # ---------------------------------------------------------------------------
 
 
@@ -1299,8 +1299,11 @@ class TestDirectionToSide:
     def test_sell_directions_map_to_sell(self, direction: OrderDirection) -> None:
         assert direction_to_side(direction) == "sell"
 
-    def test_partition_covers_all_variants(self) -> None:
-        """Every OrderDirection variant must map to exactly one side — if a new
-        variant is added without updating the partition, this test fails."""
+    def test_every_variant_is_mapped(self) -> None:
+        """Iterating ``OrderDirection`` through ``direction_to_side`` must
+        succeed for every variant — an unmapped variant raises ``KeyError``
+        on the missing dict key, which is the partition's exhaustiveness
+        check. The set-equality assertion catches the secondary failure mode
+        where a future variant is added to the mapping with a third side."""
         sides = {direction_to_side(d) for d in OrderDirection}
         assert sides == {"buy", "sell"}

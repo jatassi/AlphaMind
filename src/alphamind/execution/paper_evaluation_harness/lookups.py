@@ -105,12 +105,6 @@ def _extract_ticker(payload: dict[str, Any]) -> str | None:
 class SqlAdvLookup:
     """Production ``AdvLookup`` impl backed by ``asset_universe.avg_daily_volume_shares``.
 
-    Consumes :func:`adv_shares_select` and :func:`coerce_adv_shares` from
-    ``alphamind.persistence.asset_universe_queries`` — the same primitives
-    :meth:`SqlDistillationRepository.load_ticker_adv` consumes (ALP-533).
-    The session-shape difference (async here, sync there) is the only
-    asymmetry that remains.
-
     Returns ``None`` when the ticker is missing from the universe *or* when
     its ADV column is NULL — both cases route through the same no-estimate
     fallback in the harness.

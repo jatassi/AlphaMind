@@ -45,9 +45,14 @@ class OrderDirection(StrEnum):
     SELL_TO_CLOSE = "SELL_TO_CLOSE"
 
 
-_BUY_DIRECTIONS: frozenset[OrderDirection] = frozenset(
-    {OrderDirection.BUY, OrderDirection.BUY_TO_OPEN, OrderDirection.BUY_TO_CLOSE}
-)
+_DIRECTION_TO_SIDE: dict[OrderDirection, Literal["buy", "sell"]] = {
+    OrderDirection.BUY: "buy",
+    OrderDirection.BUY_TO_OPEN: "buy",
+    OrderDirection.BUY_TO_CLOSE: "buy",
+    OrderDirection.SELL: "sell",
+    OrderDirection.SELL_TO_OPEN: "sell",
+    OrderDirection.SELL_TO_CLOSE: "sell",
+}
 
 
 def direction_to_side(direction: OrderDirection) -> Literal["buy", "sell"]:
@@ -56,9 +61,11 @@ def direction_to_side(direction: OrderDirection) -> Literal["buy", "sell"]:
     Consumed by execution-side cash-movement (debit on buy, credit on sell)
     and the paper-evaluation harness wedge (live-adjusted-price sign + fee
     dispatch). The open/close discriminator is intentionally dropped — both
-    halves of the partition share the same downstream treatment.
+    halves of the partition share the same downstream treatment. A new
+    ``OrderDirection`` variant must be added to the mapping or this raises
+    ``KeyError``.
     """
-    return "buy" if direction in _BUY_DIRECTIONS else "sell"
+    return _DIRECTION_TO_SIDE[direction]
 
 
 class OrderClass(StrEnum):

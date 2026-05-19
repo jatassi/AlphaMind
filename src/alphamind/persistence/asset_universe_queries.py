@@ -1,16 +1,8 @@
-"""Shared ``asset_universe`` query primitives (ALP-533).
+"""Shared ``asset_universe`` query primitives.
 
-Consolidates the SELECT statement and ``int | None → float | None`` coercion
-previously duplicated between the distillation repository's sync ADV reader
-(:meth:`alphamind.distillation._repository_sql.SqlDistillationRepository.load_ticker_adv`)
-and the paper-evaluation-harness wedge's async ADV adapter
-(:class:`alphamind.execution.paper_evaluation_harness.lookups.SqlAdvLookup`).
-
-The helpers are session-shape-agnostic — each adapter executes the returned
-``Select`` against its own ``Session`` / ``AsyncSession`` and applies the
-shared coercion to the raw column value. The wedge collapses missing-ticker
-and NULL-ADV to ``None``; the distillation reader wraps the same column in a
-typed ``TickerADVRow`` row that preserves the presence distinction.
+Session-shape-agnostic: each caller executes the returned ``Select`` against
+its own ``Session`` / ``AsyncSession`` and applies :func:`coerce_adv_shares`
+to the raw column value.
 """
 
 from __future__ import annotations

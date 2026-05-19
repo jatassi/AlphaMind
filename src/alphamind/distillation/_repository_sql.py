@@ -287,11 +287,6 @@ class SqlDistillationRepository(DistillationRepository):
         return {ct: (today_by_contract.get(ct), prior_by_contract.get(ct)) for ct in all_contracts}
 
     def load_ticker_adv(self, *, ticker: str) -> TickerADVRow | None:
-        # Shared SELECT + coercion lives in
-        # ``alphamind.persistence.asset_universe_queries`` (ALP-533) so the
-        # async wedge adapter consumes the same primitive. ``row is None``
-        # means the ticker is absent from ``asset_universe``; a present row
-        # with ``row[0] is None`` means the ADV column itself is NULL.
         row = self._session.execute(adv_shares_select(ticker)).one_or_none()
         if row is None:
             return None
