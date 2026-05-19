@@ -387,6 +387,72 @@ def test_regime_skip_emergency_renders_in_regime_section() -> None:
     assert "Emergency-skip" in brief.text or "emergency-skip" in brief.text
 
 
+def _dispersion_shift_block(
+    *,
+    today_dispersion: float = 0.0125,
+    mean_trailing_dispersion: float = 0.0050,
+    stdev_trailing_dispersion: float = 0.0015,
+    zscore: float = 5.0,
+    dispersion_window_days: int = 20,
+) -> OutputBlock:
+    """Build a story-08c dispersion_shift block with the documented payload schema."""
+    return OutputBlock(
+        block_id="q7.correlation_breakdown.dispersion_shift",
+        audience=frozenset({OutputAudience.CORRELATION_REGIME_BRIEF}),
+        freshness_ts=datetime(2026, 4, 27, 14, 0, tzinfo=UTC),
+        calibration_state=CalibrationState.CALIBRATED,
+        bootstrap_reason=None,
+        payload={
+            "today_dispersion": today_dispersion,
+            "mean_trailing_dispersion": mean_trailing_dispersion,
+            "stdev_trailing_dispersion": stdev_trailing_dispersion,
+            "zscore": zscore,
+            "dispersion_window_days": dispersion_window_days,
+        },
+        anomaly_flags=(),
+        regime_context=None,
+    )
+
+
+def test_dispersion_shift_block_does_not_render_as_correlation_pair() -> None:
+    """``q7.correlation_breakdown.dispersion_shift`` must not be rendered by the pair formatter.
+
+    The pair formatter reads ``short_correlation`` / ``long_correlation`` /
+    ``deviation_sigma`` — keys the dispersion_shift payload does not carry.
+    Misrouting produces ``[CR-N] dispersion_shift: short None vs. long None
+    (deviation None sigma)`` with all-None detail lines (the symptom in
+    ALP-546). Verify the brief renders the dispersion_shift payload's actual
+    fields instead.
+    """
+    regime_block = _regime_block()
+    dispersion_block = _dispersion_shift_block(
+        today_dispersion=0.025,
+        mean_trailing_dispersion=0.010,
+        stdev_trailing_dispersion=0.003,
+        zscore=5.0,
+        dispersion_window_days=20,
+    )
+
+    brief = assemble_correlation_brief(
+        blocks=[regime_block, dispersion_block], invocation_id="inv-dispersion"
+    )
+
+    assert "short None" not in brief.text
+    assert "long None" not in brief.text
+    assert "deviation None sigma" not in brief.text
+    assert "Short correlation: None" not in brief.text
+    assert "Long correlation: None" not in brief.text
+    assert "Deviation sigma: None" not in brief.text
+    # The dispersion_shift block contributes its own CR-N entry with payload
+    # values rendered explicitly. Reference index resolves the CR-N back to
+    # the source block_id.
+    assert "dispersion shift" in brief.text
+    assert "Today dispersion: 0.025" in brief.text
+    assert "Trailing mean dispersion: 0.01" in brief.text
+    assert "Z-score: 5" in brief.text
+    assert "q7.correlation_breakdown.dispersion_shift" in brief.reference_index.values()
+
+
 def test_byte_identical_across_repeated_calls() -> None:
     """Same inputs produce byte-identical output — invocation archive diffs cleanly."""
     regime_block = _regime_block()
