@@ -55,10 +55,11 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -696,6 +697,45 @@ def _assemble_phase1_snapshot(
     return assembled, repository
 
 
+# ``last_invocation_time`` fallback when no prior ``invocations`` row exists
+# (first-ever invocation or pristine debug-e2e DB). Matches the
+# domain-researchers' 24h headline lookback in ``analysis/domain_researchers/
+# runner.py`` so the qualitative researcher's cross-sector digest covers the
+# same corpus the sector bundles do.
+_LAST_INVOCATION_FALLBACK = timedelta(hours=24)
+
+
+def _resolve_last_invocation_time(
+    session: Session,
+    *,
+    current_invocation_id: str,
+    now: datetime,
+) -> datetime:
+    """Return the most recent prior invocation's ``start_at``, or a 24h fallback.
+
+    The qualitative researcher's news-digest window covers
+    ``[last_invocation_time, as_of]`` per
+    ``docs/design/03-analysis-layer/qualitative-research.md`` § News digest.
+    Picking the prior invocation's ``start_at`` matches the "since the last
+    invocation" semantic; the fallback prevents a zero-width window on the
+    very first invocation when no prior row exists (ALP-535).
+    """
+    stmt = (
+        select(InvocationRow.start_at)
+        .where(InvocationRow.invocation_id != current_invocation_id)
+        .order_by(InvocationRow.start_at.desc())
+        .limit(1)
+    )
+    raw = session.execute(stmt).scalar_one_or_none()
+    if raw is None:
+        return now - _LAST_INVOCATION_FALLBACK
+    text = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
 async def _run_analysis(
     *,
     invocation_id: str,
@@ -721,11 +761,16 @@ async def _run_analysis(
     resolved = pipeline_config.resolved
     ticker_scope = ticker_scope_from_assets(resolved)
     with sync_session_factory() as session:
+        last_invocation_time = _resolve_last_invocation_time(
+            session,
+            current_invocation_id=invocation_id,
+            now=now,
+        )
         return await run_analysis_pipeline(
             session=session,
             invocation_id=invocation_id,
             as_of=now,
-            last_invocation_time=now,
+            last_invocation_time=last_invocation_time,
             distillation_config=load_distillation_config(config_dir / "distillation.yaml"),
             ticker_scope=ticker_scope,
             universe=frozenset(ticker_scope),

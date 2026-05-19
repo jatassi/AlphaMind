@@ -1329,3 +1329,145 @@ class TestRunInvocationDebugE2EWiring:
         # is stable; ``None`` is the canonical "use the Alpaca default" value.
         assert gather_kw.get("account_queries_factory") is None
         assert gather_kw.get("ca_queries_factory") is None
+
+
+class TestRunInvocationLastInvocationTimeResolution:
+    """The analysis pipeline receives a real ``last_invocation_time`` (ALP-535).
+
+    Pre-ALP-535 the orchestrator passed ``last_invocation_time=now`` to
+    :func:`run_analysis_pipeline`, producing a zero-width news-digest window
+    ``(now, now)`` that selected zero headlines even when storage was
+    populated. The qualitative researcher then tagged news as unavailable.
+
+    Fix derives ``last_invocation_time`` from the prior invocation's
+    ``start_at`` (or ``now - 24h`` when no prior exists) so the digest covers
+    the same headline corpus the domain researchers see.
+    """
+
+    async def test_falls_back_to_now_minus_24h_when_no_prior_invocation(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """First invocation: ``last_invocation_time`` is ``now - 24h``, not ``now``."""
+        from datetime import timedelta
+
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        last_invocation_time = captured["analysis"]["last_invocation_time"]
+        assert last_invocation_time == _NOW - timedelta(hours=24)
+
+    async def test_resolves_prior_invocation_start_at_when_prior_exists(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        db_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A prior ``invocations`` row supplies ``last_invocation_time`` to the pipeline."""
+        from datetime import timedelta
+
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        prior_start_at = _NOW - timedelta(hours=3)
+        async with async_factory() as setup_session:
+            setup_session.add(
+                InvocationRow(
+                    invocation_id="inv-prior-0001",
+                    process_lifetime_id="proc-orch-1",
+                    start_at=prior_start_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    phase1_completed_at=prior_start_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    phase2_completed_at=prior_start_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    trigger_type="manual",
+                    trigger_source="cli",
+                    trigger_reason="prior",
+                    git_sha_at_invocation="b" * 40,
+                    active_profile="medium",
+                    active_regime="normal",
+                    active_mode="normal",
+                    active_overlays_json="[]",
+                    resolved_config_hash="c" * 64,
+                    resolved_config_snapshot_path="/tmp/resolved.json",
+                    feature_flags_snapshot_json="{}",
+                    data_calibration_state_snapshot_path="/tmp/calib.json",
+                    data_source_freshness_json="{}",
+                )
+            )
+            await setup_session.commit()
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+                db_path=db_path,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        last_invocation_time = captured["analysis"]["last_invocation_time"]
+        assert last_invocation_time == prior_start_at
+
+    async def test_excludes_current_invocation_when_resolving_prior(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        db_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The current invocation's own ``start_at`` is excluded from the prior lookup."""
+        from datetime import timedelta
+
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+                db_path=db_path,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        # No prior row existed before run_invocation; the current row's
+        # ``start_at`` is ``_NOW``. If the resolver picked it up, the window
+        # would collapse to ``(now, now)`` again — the exact bug ALP-535
+        # fixed. Assert the fallback path ran instead.
+        last_invocation_time = captured["analysis"]["last_invocation_time"]
+        assert last_invocation_time == _NOW - timedelta(hours=24)
+        assert last_invocation_time != _NOW
