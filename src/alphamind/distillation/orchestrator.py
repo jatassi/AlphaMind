@@ -81,6 +81,7 @@ from alphamind.distillation.correlation_brief import (
     CorrelationRegimeBrief,
     assemble_correlation_brief,
 )
+from alphamind.distillation.normalization import percentile_rank
 from alphamind.distillation.output import (
     OutputAudience,
     OutputBlock,
@@ -629,12 +630,27 @@ def _latest_macro_value(session: Session, series_id: str) -> float | None:
     return float(value) if value is not None else None
 
 
-# Conservative VVIX-percentile midpoint used when the underlying VVIX
-# series is unavailable. The 50th-percentile placeholder is the
-# information-neutral choice — it positions the regime block in the
-# middle of the VVIX-band classifier without skewing toward either
-# tail.
-_VVIX_PERCENTILE_PLACEHOLDER: float = 50.0
+# VVIX percentile rank reads from the VVIX time-series stored under this
+# ``macro_observations.series_id``. CBOE publishes VVIX directly; the
+# collector that will ingest it has not yet been built (no VVIX entries
+# in the FRED series list, no vendor adapter in ``data_sources/``). The
+# percentile calculator therefore returns ``UNAVAILABLE`` today, but the
+# function is shaped to start returning ``CALIBRATED`` values as soon as
+# observations land — no further plumbing change required.
+_VVIX_SERIES_ID: str = "VVIX"
+
+# Calendar-day lookback for the trailing-history reference window the
+# percentile ranks against. 365 calendar days ≈ 252 trading days — the
+# "trailing one-year history" the ``RegimeSnapshot.vvix_percentile``
+# docstring promises.
+_VVIX_PERCENTILE_LOOKBACK_DAYS: int = 365
+
+# Minimum number of VVIX observations required to publish a percentile
+# rank. Below this the trailing distribution is too sparse to rank
+# against reliably; the calculator returns ``ACCUMULATING``. Chosen as
+# ~3 trading months — large enough to span a typical vol cycle without
+# requiring the full year before any signal is emitted.
+_VVIX_PERCENTILE_MIN_OBSERVATIONS: int = 60
 
 
 # Realized-vol computation pinned to SPY daily log returns annualized via
@@ -723,33 +739,113 @@ def _compute_realized_vols(session: Session, *, as_of: datetime) -> tuple[float,
     return _realized_vols_from_log_returns(_spy_log_returns(closes))
 
 
+def _load_vvix_history(session: Session, *, as_of: datetime) -> list[float]:
+    """Return VVIX observations within the trailing-history window.
+
+    Reads :data:`_VVIX_SERIES_ID` from ``macro_observations`` ordered by
+    ``observation_date`` ascending. The window is :data:`_VVIX_PERCENTILE_LOOKBACK_DAYS`
+    calendar days ending at ``as_of`` — the percentile rank ranks the
+    most-recent observation against the prior window.
+    """
+    # macro_observations.observation_date is stored as ``YYYY-MM-DD``, so
+    # the range bounds must be date-only — comparing against an ISO
+    # datetime would lex-sort the day-of-as_of row outside the window
+    # (``"2026-05-19" < "2026-05-19T17:00:00Z"``).
+    range_end = as_of.strftime("%Y-%m-%d")
+    range_start = (as_of - timedelta(days=_VVIX_PERCENTILE_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+    stmt = (
+        select(MacroObservations.value)
+        .where(
+            MacroObservations.series_id == _VVIX_SERIES_ID,
+            MacroObservations.observation_date >= range_start,
+            MacroObservations.observation_date <= range_end,
+        )
+        .order_by(MacroObservations.observation_date)
+    )
+    # ``MacroObservations.value`` is nullable — vendor gaps land as NULL
+    # rather than as missing rows. Skip them so they don't sink the
+    # percentile computation.
+    return [float(v) for v in session.execute(stmt).scalars().all() if v is not None]
+
+
+def _compute_vvix_percentile(
+    session: Session, *, as_of: datetime
+) -> tuple[float | None, CalibrationState, str | None]:
+    """Return ``(percentile, calibration_state, reason)`` for VVIX.
+
+    Three outcomes per the ALP-540 vocabulary:
+
+    - ``(percentile, CALIBRATED, None)`` when the trailing window holds
+      ≥ :data:`_VVIX_PERCENTILE_MIN_OBSERVATIONS`; the most-recent
+      observation is ranked against the full window.
+    - ``(None, ACCUMULATING, reason)`` when the window holds at least one
+      observation but fewer than the minimum, or every observation is
+      identical (zero-variance distribution — percentile is undefined
+      per :func:`~alphamind.distillation.normalization.percentile_rank`).
+    - ``(None, UNAVAILABLE, reason)`` when the window holds zero
+      observations — collector failure or series-not-yet-implemented;
+      operator action required.
+
+    Per ALP-571: never returns ``50.0`` (or any other fabricated value)
+    as a default. Downstream rendering treats ``None`` as explicit
+    missing-data signal.
+    """
+    history = _load_vvix_history(session, as_of=as_of)
+    observations = len(history)
+    if observations == 0:
+        return None, CalibrationState.UNAVAILABLE, "regime: VVIX series unavailable"
+    if observations < _VVIX_PERCENTILE_MIN_OBSERVATIONS:
+        reason = (
+            f"regime: VVIX percentile accumulating "
+            f"({observations} obs < {_VVIX_PERCENTILE_MIN_OBSERVATIONS} required)"
+        )
+        return None, CalibrationState.ACCUMULATING, reason
+    rank = percentile_rank(history, history[-1])
+    if rank is None:
+        return (
+            None,
+            CalibrationState.ACCUMULATING,
+            "regime: VVIX percentile undefined (zero-variance trailing window)",
+        )
+    return rank, CalibrationState.CALIBRATED, None
+
+
 def _build_regime_snapshot(
     session: Session, *, as_of: datetime
 ) -> tuple[RegimeSnapshot, CalibrationState, str | None]:
     """Build a :class:`RegimeSnapshot` plus the calibration state + reason.
 
-    Reads VIX (``VIXCLS``) and SPY daily closes directly. The VX1 / VVIX
-    series remain conservative placeholders when missing — per story 09's
-    dispatch instruction the regime block emits rather than blocking the
-    orchestrator. Realized vol is computed from SPY log returns when closes
-    are available; absent SPY data, both windows fall back to ``0.0`` and
-    the downstream input-bundle integrity check surfaces the gap.
+    Reads VIX (``VIXCLS``), VVIX, and SPY daily closes directly. The VX1
+    series remains a conservative placeholder when missing — per story
+    09's dispatch instruction the regime block emits rather than
+    blocking the orchestrator. Realized vol is computed from SPY log
+    returns when closes are available; absent SPY data, both windows
+    fall back to ``0.0`` and the downstream input-bundle integrity check
+    surfaces the gap.
 
-    Returns ``(snapshot, CALIBRATED, None)`` when VIX is observed. When VIX
-    is missing entirely, returns ``(placeholder_snapshot, UNAVAILABLE,
-    reason)``: zero VIX observations is a collector failure per ALP-540
-    (operator action required), not a "give it time" case. Carrying the
-    state out alongside the snapshot avoids encoding the signal as a
-    magic ``vix == 0.0`` sentinel — a real VIX print of exactly zero
-    would otherwise mis-tag.
+    Calibration-state precedence (worst wins):
+
+    - VIX missing → ``UNAVAILABLE`` with VIX reason. Zero VIX
+      observations is a collector failure per ALP-540 (operator action
+      required), not a "give it time" case.
+    - VIX present, VVIX state non-CALIBRATED → propagate the VVIX state
+      and reason. The regime block is still emitted with partial inputs;
+      the calibration tag surfaces the degradation through the
+      operator-facing data-health summary (ALP-571).
+    - Both present → ``CALIBRATED``.
+
+    Carrying the state out alongside the snapshot avoids encoding the
+    signal as a magic numeric sentinel — a real VIX print of exactly
+    zero would otherwise mis-tag.
     """
     vix = _latest_macro_value(session, "VIXCLS")
     realized_vol_5d, realized_vol_20d = _compute_realized_vols(session, as_of=as_of)
+    vvix_percentile, vvix_state, vvix_reason = _compute_vvix_percentile(session, as_of=as_of)
     if vix is None:
         snapshot = RegimeSnapshot(
             vix_level=0.0,
             vx1_minus_vix=0.0,
-            vvix_percentile=_VVIX_PERCENTILE_PLACEHOLDER,
+            vvix_percentile=vvix_percentile,
             realized_vol_5d=realized_vol_5d,
             realized_vol_20d=realized_vol_20d,
             vix_trailing_20d_mean=None,
@@ -763,12 +859,14 @@ def _build_regime_snapshot(
     snapshot = RegimeSnapshot(
         vix_level=vix,
         vx1_minus_vix=0.0,
-        vvix_percentile=_VVIX_PERCENTILE_PLACEHOLDER,
+        vvix_percentile=vvix_percentile,
         realized_vol_5d=realized_vol_5d,
         realized_vol_20d=realized_vol_20d,
         vix_trailing_20d_mean=None,
         prior_term_structure_backwardation=False,
     )
+    if vvix_state is not CalibrationState.CALIBRATED:
+        return snapshot, vvix_state, vvix_reason
     return snapshot, CalibrationState.CALIBRATED, None
 
 

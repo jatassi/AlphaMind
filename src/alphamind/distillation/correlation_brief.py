@@ -30,6 +30,7 @@ from alphamind.distillation.aggregation import (
     format_anomaly_summary,
     group_anomalies_by_audience,
 )
+from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import (
     GENERAL_FLOAT_FORMAT,
     OutputAudience,
@@ -192,6 +193,11 @@ def _decompose_regime_block(block: OutputBlock) -> list[_Finding]:
     held = payload.get("invocations_held", "")
     skip = payload.get("regime_skip_emergency", False)
 
+    # Render "unavailable" explicitly so downstream agents don't read
+    # ``str(None)`` as a live percentile (ALP-571).
+    vvix_value = payload.get("vvix_percentile")
+    vvix_text = "unavailable" if vvix_value is None else _format_value(vvix_value)
+
     summary = f"{label} ({transition}, indicator agreement {agreement}/4)"
     detail: list[str] = [
         f"Prior label: {prior_text}",
@@ -200,10 +206,12 @@ def _decompose_regime_block(block: OutputBlock) -> list[_Finding]:
             "Underlying: "
             f"VIX {_format_value(payload.get('vix_level', ''))}, "
             f"term-structure basis {_format_value(payload.get('term_structure_basis', ''))}, "
-            f"VVIX percentile {_format_value(payload.get('vvix_percentile', ''))}, "
+            f"VVIX percentile {vvix_text}, "
             f"realized vol {_format_value(payload.get('realized_vol_5d', ''))}"
         ),
     ]
+    if block.calibration_state is not CalibrationState.CALIBRATED and block.bootstrap_reason:
+        detail.append(f"Signal quality: {block.calibration_state.value} ({block.bootstrap_reason})")
     if skip:
         detail.append("Emergency-skip flag active")
 
