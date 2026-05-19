@@ -1317,7 +1317,7 @@ class TestLoadPredictionMarketSnapshot:
 class TestPredictionMarketStalenessFilters:
     """Past-dated questions are excluded; low-signal contracts are flagged."""
 
-    AS_OF_LATE = datetime(2026, 5, 18, 11, 11, 40, tzinfo=UTC)
+    _AS_OF_LATE = datetime(2026, 5, 18, 11, 11, 40, tzinfo=UTC)
     _ISO_LATE = "2026-05-17T00:00:00Z"
 
     def test_past_dated_question_excluded(self, session: Session) -> None:
@@ -1339,7 +1339,7 @@ class TestPredictionMarketStalenessFilters:
             delta_pp_since_prior=0.0,
         )
         session.commit()
-        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        result = load_prediction_market_snapshot(session, as_of=self._AS_OF_LATE)
         assert result == ()
 
     def test_past_dated_explicit_year_excluded(self, session: Session) -> None:
@@ -1361,7 +1361,7 @@ class TestPredictionMarketStalenessFilters:
             delta_pp_since_prior=0.0,
         )
         session.commit()
-        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        result = load_prediction_market_snapshot(session, as_of=self._AS_OF_LATE)
         assert result == ()
 
     def test_past_dated_explicit_old_year_excluded(self, session: Session) -> None:
@@ -1383,7 +1383,7 @@ class TestPredictionMarketStalenessFilters:
             delta_pp_since_prior=5.0,
         )
         session.commit()
-        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        result = load_prediction_market_snapshot(session, as_of=self._AS_OF_LATE)
         assert result == ()
 
     def test_future_dated_question_kept(self, session: Session) -> None:
@@ -1405,7 +1405,7 @@ class TestPredictionMarketStalenessFilters:
             delta_pp_since_prior=2.0,
         )
         session.commit()
-        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        result = load_prediction_market_snapshot(session, as_of=self._AS_OF_LATE)
         assert len(result) == 1
         assert result[0].contract_id == "c-future"
 
@@ -1428,9 +1428,65 @@ class TestPredictionMarketStalenessFilters:
             delta_pp_since_prior=1.5,
         )
         session.commit()
-        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        result = load_prediction_market_snapshot(session, as_of=self._AS_OF_LATE)
         assert len(result) == 1
         assert result[0].contract_id == "c-no-date"
+
+    def test_month_year_only_not_matched_as_past(self, session: Session) -> None:
+        """A bare ``Month YYYY`` reference (no day) must NOT match the date
+        pattern — regression for the bug where ``(?P<day>\\d{1,2})`` greedily
+        captured the first two digits of the year and flagged forward-looking
+        contracts (e.g. ``January 2027`` was read as ``January 20``)."""
+        _add_contract(
+            session,
+            "c-future-year",
+            description="Will the S&P close higher in January 2027?",
+            resolution_date="2027-12-31T00:00:00Z",
+        )
+        _add_snapshot(
+            session,
+            "c-future-year",
+            self._ISO_LATE,
+            yes_probability=0.55,
+            volume_24h_usd=200_000.0,
+        )
+        _add_contract_history(
+            session,
+            "c-future-year",
+            self._ISO_LATE,
+            yes_probability=0.55,
+            delta_pp_since_prior=1.0,
+        )
+        session.commit()
+        result = load_prediction_market_snapshot(session, as_of=self._AS_OF_LATE)
+        assert len(result) == 1
+        assert result[0].contract_id == "c-future-year"
+
+    def test_implicit_year_anchored_to_resolution_date(self, session: Session) -> None:
+        """``by January 5`` on a contract resolving in 2027 must read the year
+        as 2027 (within the contract's lifetime), not 2026 — regression for the
+        pessimistic year-inference bug that flagged forward-looking
+        questions as past-dated."""
+        _add_contract(
+            session,
+            "c-jan-5",
+            description="Will the company report Q1 earnings by January 5?",
+            resolution_date="2027-03-31T00:00:00Z",
+        )
+        _add_snapshot(
+            session, "c-jan-5", self._ISO_LATE, yes_probability=0.4, volume_24h_usd=150_000.0
+        )
+        _add_contract_history(
+            session,
+            "c-jan-5",
+            self._ISO_LATE,
+            yes_probability=0.4,
+            delta_pp_since_prior=2.0,
+        )
+        session.commit()
+        result = load_prediction_market_snapshot(session, as_of=self._AS_OF_LATE)
+        assert len(result) == 1
+        assert result[0].contract_id == "c-jan-5"
 
     def test_excluded_count_logged(
         self, session: Session, caplog: pytest.LogCaptureFixture
@@ -1470,7 +1526,7 @@ class TestPredictionMarketStalenessFilters:
         with caplog.at_level(
             logging.INFO, logger="alphamind.analysis.qualitative_research.loaders"
         ):
-            result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+            result = load_prediction_market_snapshot(session, as_of=self._AS_OF_LATE)
 
         assert len(result) == 1
         assert result[0].contract_id == "c-keep"
@@ -1495,7 +1551,7 @@ class TestPredictionMarketStalenessFilters:
             session, "c-stale", ts2, yes_probability=0.0005, delta_pp_since_prior=0.0
         )
         session.commit()
-        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        result = load_prediction_market_snapshot(session, as_of=self._AS_OF_LATE)
         assert len(result) == 1
         assert result[0].is_stale_low_signal is True
 
@@ -1522,7 +1578,7 @@ class TestPredictionMarketStalenessFilters:
             delta_pp_since_prior=0.0,
         )
         session.commit()
-        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        result = load_prediction_market_snapshot(session, as_of=self._AS_OF_LATE)
         assert len(result) == 1
         assert result[0].is_stale_low_signal is False
 
@@ -1553,7 +1609,7 @@ class TestPredictionMarketStalenessFilters:
             delta_pp_since_prior=10.0,
         )
         session.commit()
-        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        result = load_prediction_market_snapshot(session, as_of=self._AS_OF_LATE)
         assert len(result) == 1
         assert result[0].is_stale_low_signal is False
 
