@@ -162,6 +162,38 @@ _MAIN_CONFIG_PATH = _CONFIG_DIR / "main.yaml"
 _REALIZED_VOL_REFRESH_INTERVAL_SECONDS: float = 24 * 60 * 60
 
 
+class _EmptyMapAlertOnce:
+    """One-shot guard for the empty-realized-vol-map ERROR alert (ALP-534 item 3).
+
+    The startup + 24h refreshes both catch ``Exception`` and log WARNING — a
+    transient DB outage or pre-substrate deployment must not crash the
+    supervisor. But a successful refresh that leaves ``shared_map`` empty is
+    operationally indistinguishable from a fresh-DB / never-ran-the-producer
+    state, and the supervisor would happily run forever with the IV-fallback
+    chain silently masking the gap.
+
+    The guard emits a single ERROR log on the first successful refresh that
+    leaves the map empty so the operator notices that the substrate landed
+    but the producer hasn't run yet. The guard is permanently disarmed after
+    the first ``observe`` call (whatever the count), so a populated first
+    refresh disables the alert and repeated empty refreshes do not spam.
+    """
+
+    def __init__(self) -> None:
+        self._armed = True
+
+    def observe(self, *, count: int) -> None:
+        if not self._armed:
+            return
+        self._armed = False
+        if count == 0:
+            log.error(
+                "realized_vol map is empty after successful refresh; the "
+                "substrate landed but the producer has not run yet. "
+                "Subsequent empty-map refreshes will not re-emit this alert."
+            )
+
+
 async def refresh_realized_vol_map_in_place(
     *,
     session_factory: async_sessionmaker[AsyncSession],
@@ -195,6 +227,7 @@ def _register_realized_vol_refresh_task(
     session_factory: async_sessionmaker[AsyncSession],
     shared_map: dict[str, RealizedVolEntry],
     tickers_provider: Callable[[], Sequence[str] | None],
+    empty_map_alert: _EmptyMapAlertOnce,
     interval_seconds: float = _REALIZED_VOL_REFRESH_INTERVAL_SECONDS,
 ) -> None:
     """Register the 24h shared realized-vol map refresher (ALP-530).
@@ -204,6 +237,11 @@ def _register_realized_vol_refresh_task(
     place so the harness and breach-loop both observe the fresh values.
     ``tickers_provider`` is invoked per refresh so the monitor's
     open-position set can change over the day without re-registering.
+
+    ``empty_map_alert`` is shared with the startup refresh in ``_run_daemon``;
+    whichever refresh succeeds first (typically startup, but the periodic
+    path handles the case where startup raised) fires the one-shot ERROR
+    log if the map is still empty. See :class:`_EmptyMapAlertOnce`.
     """
 
     async def _refresh_task(_session: MonitorSession, _config: ContinuousMonitorConfig) -> None:
@@ -219,6 +257,7 @@ def _register_realized_vol_refresh_task(
                     tickers=tickers,
                 )
                 log.info("realized_vol map refresh complete: entries=%d", count)
+                empty_map_alert.observe(count=count)
             except Exception:
                 # Per the LLM-agents-uniformly-Critical posture for monitor
                 # tasks, a refresh failure must not crash the supervisor —
@@ -353,8 +392,13 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         # cheap and lets the fallback chain handle the bounded result set.
         return None
 
+    # ALP-534 (item 3) — one shared guard arms across the startup refresh and
+    # the 24h periodic refresher. Whichever path completes the first
+    # successful refresh fires the ERROR log if the map is empty; subsequent
+    # empty refreshes do not re-emit.
+    empty_map_alert = _EmptyMapAlertOnce()
     try:
-        await refresh_realized_vol_map_in_place(
+        count = await refresh_realized_vol_map_in_place(
             session_factory=db_session_factory,
             shared_map=realized_vol_map,
             tickers=_open_position_underlyings(),
@@ -364,17 +408,22 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         # DB outage) must not block the monitor from coming up — the shared
         # map stays empty and the IV-fallback chain handles missing entries
         # exactly as it did pre-ALP-530. The refresh task continues to retry
-        # every 24h.
+        # every 24h. ``empty_map_alert`` stays armed so the next successful
+        # refresh — likely the periodic task — fires the alert if the map is
+        # still empty.
         log.warning(
             "realized_vol map startup refresh failed (%s); proceeding with "
             "empty map. The 24h refresher will retry.",
             exc,
         )
+    else:
+        empty_map_alert.observe(count=count)
     _register_realized_vol_refresh_task(
         supervisor,
         session_factory=db_session_factory,
         shared_map=realized_vol_map,
         tickers_provider=_open_position_underlyings,
+        empty_map_alert=empty_map_alert,
     )
     enrichment_callable = _build_enrichment_callable(
         mode=session.mode,
