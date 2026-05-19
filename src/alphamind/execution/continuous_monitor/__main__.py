@@ -163,20 +163,15 @@ _REALIZED_VOL_REFRESH_INTERVAL_SECONDS: float = 24 * 60 * 60
 
 
 class _EmptyMapAlertOnce:
-    """One-shot guard for the empty-realized-vol-map ERROR alert (ALP-534 item 3).
+    """One-shot guard for the empty-realized-vol-map ERROR alert.
 
-    The startup + 24h refreshes both catch ``Exception`` and log WARNING — a
-    transient DB outage or pre-substrate deployment must not crash the
-    supervisor. But a successful refresh that leaves ``shared_map`` empty is
-    operationally indistinguishable from a fresh-DB / never-ran-the-producer
-    state, and the supervisor would happily run forever with the IV-fallback
-    chain silently masking the gap.
-
-    The guard emits a single ERROR log on the first successful refresh that
-    leaves the map empty so the operator notices that the substrate landed
-    but the producer hasn't run yet. The guard is permanently disarmed after
-    the first ``observe`` call (whatever the count), so a populated first
-    refresh disables the alert and repeated empty refreshes do not spam.
+    A successful refresh that leaves ``shared_map`` empty is operationally
+    indistinguishable from a fresh-DB / never-ran-the-producer state — the
+    monitor would happily run forever with the IV-fallback chain silently
+    masking the gap. The guard emits a single ERROR log on the first
+    successful refresh that leaves the map empty, then permanently disarms
+    so repeated empty refreshes do not spam and a populated first refresh
+    disables the alert entirely (the bootstrap window has closed).
     """
 
     def __init__(self) -> None:
@@ -188,9 +183,8 @@ class _EmptyMapAlertOnce:
         self._armed = False
         if count == 0:
             log.error(
-                "realized_vol map is empty after successful refresh; the "
-                "substrate landed but the producer has not run yet. "
-                "Subsequent empty-map refreshes will not re-emit this alert."
+                "realized_vol map is empty after successful refresh; "
+                "the substrate landed but the producer has not run yet."
             )
 
 
@@ -238,10 +232,8 @@ def _register_realized_vol_refresh_task(
     ``tickers_provider`` is invoked per refresh so the monitor's
     open-position set can change over the day without re-registering.
 
-    ``empty_map_alert`` is shared with the startup refresh in ``_run_daemon``;
-    whichever refresh succeeds first (typically startup, but the periodic
-    path handles the case where startup raised) fires the one-shot ERROR
-    log if the map is still empty. See :class:`_EmptyMapAlertOnce`.
+    ``empty_map_alert`` is shared with the startup refresh so whichever
+    refresh succeeds first fires the one-shot ERROR log if the map is empty.
     """
 
     async def _refresh_task(_session: MonitorSession, _config: ContinuousMonitorConfig) -> None:
@@ -392,10 +384,6 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         # cheap and lets the fallback chain handle the bounded result set.
         return None
 
-    # ALP-534 (item 3) — one shared guard arms across the startup refresh and
-    # the 24h periodic refresher. Whichever path completes the first
-    # successful refresh fires the ERROR log if the map is empty; subsequent
-    # empty refreshes do not re-emit.
     empty_map_alert = _EmptyMapAlertOnce()
     try:
         count = await refresh_realized_vol_map_in_place(
@@ -408,9 +396,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         # DB outage) must not block the monitor from coming up — the shared
         # map stays empty and the IV-fallback chain handles missing entries
         # exactly as it did pre-ALP-530. The refresh task continues to retry
-        # every 24h. ``empty_map_alert`` stays armed so the next successful
-        # refresh — likely the periodic task — fires the alert if the map is
-        # still empty.
+        # every 24h.
         log.warning(
             "realized_vol map startup refresh failed (%s); proceeding with "
             "empty map. The 24h refresher will retry.",

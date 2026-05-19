@@ -270,22 +270,7 @@ async def test_refresh_realized_vol_map_in_place_updates_shared_dict(
     assert shared_map["AAPL"].trailing_30d_realized_vol == pytest.approx(0.27)
 
 
-# ---------------------------------------------------------------------------
-# _EmptyMapAlertOnce — ALP-534 (item 3)
-# ---------------------------------------------------------------------------
-
-
 class TestEmptyMapAlertOnce:
-    """Guard around the empty-realized-vol-map ERROR alert.
-
-    ALP-534 (item 3) — a successful refresh that leaves the shared map empty
-    is operationally indistinguishable from a fresh DB. The guard emits one
-    ERROR log on that condition so the operator notices the substrate landed
-    but the producer hasn't run yet. The guard is permanently disarmed after
-    the first ``observe`` call so repeated empty refreshes don't spam, and a
-    populated first refresh disarms it without firing.
-    """
-
     def test_fires_once_when_first_refresh_returns_empty(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:

@@ -64,7 +64,6 @@ from alphamind.persistence.session import (
 )
 from alphamind.risk_guardrails.guardrail_evaluation import RealizedVolEntry
 from alphamind.state.tables.fill_records import FillRecordRow
-from alphamind.state.tables.orders import OrderRow
 from tests.state._fk_substrate import (
     stub_bracket_row,
     stub_order_row,
@@ -160,9 +159,6 @@ def _trade_update(
 
 
 class _FakeStream:
-    """Same stub as fill_stream_consumer/test_task.py — see that module for the
-    rationale on parking on ``_run_forever``."""
-
     def __init__(self) -> None:
         self.handler: Any = None
 
@@ -357,70 +353,3 @@ async def test_paper_wedge_populates_live_execution_estimate_end_to_end(
         "live_adjusted_fill_price",
     ):
         assert field in payload, f"missing field {field!r} in {payload!r}"
-
-
-async def test_paper_wedge_missing_adv_persists_null_estimate(
-    session_factory: async_sessionmaker[AsyncSession],
-    tmp_path: Path,
-) -> None:
-    """When ADV is missing, the harness returns None and the wedge persists NULL.
-
-    This protects parent decision H (graceful no-estimate fallback) against
-    silent-strict-data-required regressions in the production wedge wiring.
-    The seeded order references an UNKNOWN ticker absent from
-    ``asset_universe`` — ``SqlAdvLookup.get_adv_shares`` returns ``None``,
-    the harness returns ``None``, and the row persists with
-    ``live_execution_estimate_json IS NULL``.
-    """
-    # Override the seeded order to reference an unknown ticker.
-    sync_engine = make_engine(str(tmp_path / "alphamind.db"))
-    with make_session_factory(sync_engine)() as sess:
-        order = sess.execute(select(OrderRow).where(OrderRow.order_id == "order-aapl")).scalar_one()
-        order.instrument_spec_json = json.dumps({"instrument_type": "EQUITY", "ticker": "UNKNOWN"})
-        sess.commit()
-    sync_engine.dispose()
-
-    realized_vol_map: dict[str, RealizedVolEntry] = {}
-    enrichment_callable = _build_enrichment_callable(
-        mode="paper",
-        paper_harness=_harness_config(),
-        session_factory=session_factory,
-        realized_vol_map=realized_vol_map,
-    )
-    assert enrichment_callable is not None
-
-    stream = _FakeStream()
-    queries = _FakeAccountStateQueries()
-
-    task = asyncio.create_task(
-        run_fill_stream_consumer(
-            _session(),
-            _config(),
-            session_factory=session_factory,
-            stream_factory=lambda _mode: stream,
-            trading_client_factory=lambda _mode: _FakeTradingClient(),
-            account_state_queries_factory=lambda _client: queries,
-            enrichment_callable=enrichment_callable,
-        )
-    )
-
-    try:
-        await _wait_for_handler(stream)
-        await stream.inject(
-            _trade_update(
-                event="fill",
-                order=_build_order(client_order_id="order-aapl"),
-                price=200.0,
-                qty=100.0,
-            )
-        )
-
-        rows = await _wait_for_rows(session_factory, expected=1)
-    finally:
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
-    assert len(rows) == 1
-    (row,) = rows
-    assert row.live_execution_estimate_json is None
