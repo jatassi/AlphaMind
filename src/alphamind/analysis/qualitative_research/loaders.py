@@ -36,11 +36,13 @@ Public names
 from __future__ import annotations
 
 import json
+import logging
 import math
+import re
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -66,6 +68,8 @@ from alphamind.portfolio_state.records.theses import ThesisRecordStatus
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import details_from_json
 from alphamind.state.tables.theses import ThesisRow
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -148,6 +152,13 @@ class PredictionMarketSnapshot:
     row at or before ``as_of``. The "since prior" naming is precise: the
     underlying snapshot history is irregular, so the prior row could be any
     timestamp ago.
+
+    ``is_stale_low_signal`` flags contracts that are both low-liquidity AND
+    have never moved (every ``delta_pp_since_prior`` in trailing history is
+    zero) — the polymarket pattern of a contract whose referenced event has
+    effectively resolved but the formal close hasn't been called (ALP-536).
+    The renderer sorts these to the bottom and tags them as likely-resolved
+    so downstream agents can ignore them.
     """
 
     contract_id: str
@@ -161,6 +172,7 @@ class PredictionMarketSnapshot:
     expiration: str | None
     is_low_liquidity: bool
     meets_threshold_flag: bool
+    is_stale_low_signal: bool
     data_freshness: datetime
 
 
@@ -594,6 +606,87 @@ def load_sentiment_aggregates(
 # ---------------------------------------------------------------------------
 
 
+_MONTH_NUMBER_BY_NAME: dict[str, int] = {
+    "jan": 1, "january": 1,
+    "feb": 2, "february": 2,
+    "mar": 3, "march": 3,
+    "apr": 4, "april": 4,
+    "may": 5,
+    "jun": 6, "june": 6,
+    "jul": 7, "july": 7,
+    "aug": 8, "august": 8,
+    "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10,
+    "nov": 11, "november": 11,
+    "dec": 12, "december": 12,
+}  # fmt: skip
+
+_QUESTION_DATE_PATTERN = re.compile(
+    # ``(?!\d)`` after the day suffix prevents the day group from greedily
+    # capturing the first two digits of a four-digit year (e.g. ``January
+    # 2027`` must NOT match as ``January 20`` with year inferred).
+    r"\b(?P<month>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|"
+    r"jun(?:e)?|jul(?:y)?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|"
+    r"nov(?:ember)?|dec(?:ember)?)\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?(?!\d)"
+    r"(?:[,\s]+(?P<year>\d{4}))?",
+    re.IGNORECASE,
+)
+
+
+def _parse_resolution_date(raw: str | None) -> date | None:
+    """Parse the ``resolution_date`` text column to a ``date`` (or ``None``)."""
+    if not raw:
+        return None
+    try:
+        return _parse_iso_utc(raw).date()
+    except ValueError:
+        return None
+
+
+def _question_references_past_date(
+    description: str,
+    as_of: datetime,
+    *,
+    resolution_date: date | None,
+) -> bool:
+    """True iff the question text references a date before ``as_of`` *within the
+    contract's lifetime*.
+
+    The polymarket vendor leaves questions like "Iran closes its airspace by May
+    6?" listed at their last-traded probability long after May 6 — the contract
+    only formally resolves later, but the LLM should treat it as stale (ALP-536).
+    Matches month names with optional day suffix (``May 6``, ``May 6th``,
+    ``May 3, 2026``).
+
+    When the year is implicit, it is anchored to the most recent occurrence on
+    or before ``resolution_date`` (so ``"May 6"`` on a contract resolving
+    ``2026-05-31`` is read as ``2026-05-06``, not ``2027-05-06``). Without a
+    resolution_date, the year falls back to ``as_of.year``.
+    """
+    as_of_date = as_of.date()
+    for match in _QUESTION_DATE_PATTERN.finditer(description):
+        month = _MONTH_NUMBER_BY_NAME[match.group("month").lower()]
+        try:
+            day = int(match.group("day"))
+            year_raw = match.group("year")
+            if year_raw is not None:
+                referenced = date(int(year_raw), month, day)
+            elif resolution_date is not None:
+                # Anchor to the most recent occurrence at or before resolution.
+                year = resolution_date.year
+                if date(year, month, day) > resolution_date:
+                    year -= 1
+                referenced = date(year, month, day)
+            else:
+                referenced = date(as_of_date.year, month, day)
+        except ValueError:
+            # Invalid day (e.g. "February 31") — skip silently.
+            continue
+        if referenced < as_of_date:
+            return True
+    return False
+
+
 def load_prediction_market_snapshot(
     session: Session,
     *,
@@ -706,20 +799,46 @@ def load_prediction_market_snapshot(
         r[0]: (float(r[1]) if r[1] is not None else None) for r in snap_rows
     }
 
+    # Contracts with at least one non-zero ``delta_pp_since_prior`` row in
+    # trailing history — anything outside this set has been flat across every
+    # recorded snapshot at or before ``as_of``.
+    contracts_with_movement: set[str] = {
+        row[0]
+        for row in session.execute(
+            select(DistillationContractHistory.contract_id)
+            .where(
+                DistillationContractHistory.contract_id.in_(contract_ids),
+                DistillationContractHistory.snapshot_ts <= as_of_str,
+                DistillationContractHistory.delta_pp_since_prior != 0,
+            )
+            .distinct()
+        )
+    }
+
     results: list[PredictionMarketSnapshot] = []
+    excluded_past_dated = 0
+    as_of_date = as_of.date()
 
     for contract_id in contract_ids:
+        platform, description, category, resolution_date_raw = meta_by_id.get(
+            contract_id, ("", "", "", None)
+        )
+        resolution_date_val = _parse_resolution_date(resolution_date_raw)
+        if _question_references_past_date(description, as_of, resolution_date=resolution_date_val):
+            excluded_past_dated += 1
+            continue
+
         history_rows = history_by_id[contract_id]
         latest_yes, delta_since_last, snapshot_ts_str = history_rows[0]
         # Subtract the second-latest history row's yes_probability — the gap
         # between the two rows is irregular (anywhere from minutes to days).
         delta_since_prior = latest_yes - history_rows[1][0] if len(history_rows) == 2 else 0.0
 
-        platform, description, category, resolution_date = meta_by_id.get(
-            contract_id, ("", "", "", None)
-        )
         volume_24h = volume_by_id.get(contract_id)
         low_liquidity = (volume_24h is None) or (volume_24h <= low_liquidity_volume_min_usd)
+        # Effectively-resolved heuristic: low liquidity AND zero delta across
+        # every trailing-history snapshot recorded for this contract.
+        is_stale_low_signal = low_liquidity and contract_id not in contracts_with_movement
 
         results.append(
             PredictionMarketSnapshot(
@@ -731,11 +850,20 @@ def load_prediction_market_snapshot(
                 delta_since_last_invocation_pp=delta_since_last,
                 delta_since_prior_pp=delta_since_prior,
                 volume_24h_usd=volume_24h,
-                expiration=resolution_date,
+                expiration=resolution_date_raw,
                 is_low_liquidity=low_liquidity,
                 meets_threshold_flag=abs(delta_since_last) >= delta_pp_threshold,
+                is_stale_low_signal=is_stale_low_signal,
                 data_freshness=_parse_iso_utc(snapshot_ts_str),
             )
+        )
+
+    if excluded_past_dated > 0:
+        log.info(
+            "load_prediction_market_snapshot: excluded %d contract(s) whose "
+            "question references a date before as_of=%s",
+            excluded_past_dated,
+            as_of_date.isoformat(),
         )
 
     return tuple(results)
