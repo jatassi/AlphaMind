@@ -183,7 +183,7 @@ def load_sector_qualitative_input(
     roster_set = frozenset(_load_roster(session, sector))
     relevant_tags = _SECTOR_TAGS[sector]
 
-    headlines = _select_headlines(
+    headlines, in_window_count = _select_headlines(
         session,
         as_of=as_of,
         lookback_window_hours=lookback_window_hours,
@@ -193,9 +193,13 @@ def load_sector_qualitative_input(
     )
     events = _select_events(session, sector=sector, as_of=as_of)
     freshness = _data_freshness(session, as_of=as_of, lookback_window_hours=lookback_window_hours)
+    # Fire the freshness diagnostic only when the window itself is empty.
+    # An empty ``headlines`` with ``in_window_count > 0`` is sector-filter
+    # noise, not a collector or data-layer signal — don't surface a reason
+    # line for that case (would mislead the LLM into a vendor-outage read).
     headlines_empty_diagnosis = (
         diagnose_empty_news(session, window_start=as_of - timedelta(hours=lookback_window_hours))
-        if not headlines
+        if in_window_count == 0
         else None
     )
 
@@ -267,8 +271,14 @@ def _select_headlines(
     roster: frozenset[str],
     relevant_tags: frozenset[HeadlineType],
     max_headlines: int,
-) -> tuple[HeadlineEntry, ...]:
-    """Select, score, rank, and truncate the per-sector headlines."""
+) -> tuple[tuple[HeadlineEntry, ...], int]:
+    """Select, score, rank, and truncate the per-sector headlines.
+
+    Returns ``(headlines, in_window_count)`` so the loader can distinguish
+    "no headlines because the window is empty" from "no headlines because
+    the per-sector filter rejected everything" — only the former warrants
+    a freshness diagnostic on the input bundle (ALP-567).
+    """
     window_start = as_of - timedelta(hours=lookback_window_hours)
     window_start_iso = _format_iso(window_start)
     as_of_iso = _format_iso(as_of)
@@ -292,7 +302,7 @@ def _select_headlines(
     ).all()
 
     if not article_rows:
-        return ()
+        return ((), 0)
 
     # One round-trip for tickers; loader keeps only roster matches.
     article_ids = [row.article_id for row in article_rows]
@@ -339,7 +349,7 @@ def _select_headlines(
 
     # Sort: composite descending, then published_at descending as tiebreaker.
     scored.sort(key=lambda item: (-item[0], -item[1].timestamp()))
-    return tuple(entry for _, _, entry in scored[:max_headlines])
+    return tuple(entry for _, _, entry in scored[:max_headlines]), len(article_rows)
 
 
 def _composite_score(

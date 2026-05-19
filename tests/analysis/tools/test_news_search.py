@@ -243,6 +243,7 @@ def test_news_search_no_matching_articles_collector_inactive(session: Session) -
 def test_news_search_no_matching_articles_no_data(session: Session) -> None:
     """No matching rows but collector is current within window →
     UNAVAILABLE with ``no_data`` reason (the search is honestly empty)."""
+    recent = datetime.now(UTC) - timedelta(hours=1)
     _add_ticker(session, "MSFT")
     _add_ticker(session, "AAPL")
     # Recently-ingested row exists, but doesn't match the queried ticker.
@@ -250,8 +251,8 @@ def test_news_search_no_matching_articles_no_data(session: Session) -> None:
         session,
         article_id="other-ticker",
         headline="AAPL note",
-        published_at=_RECENT,
-        ingested_at=_RECENT,
+        published_at=recent,
+        ingested_at=recent,
         tickers=("AAPL",),
     )
     session.commit()
@@ -279,13 +280,14 @@ def test_news_search_no_matching_articles_no_rows_in_db(session: Session) -> Non
 
 def test_news_search_complete_result_has_no_reason(session: Session) -> None:
     """A successful search omits the reason field (quality=COMPLETE)."""
+    recent = datetime.now(UTC) - timedelta(hours=1)
     _add_ticker(session, "AAPL")
     _add_article(
         session,
         article_id="ok",
         headline="AAPL news",
-        published_at=_RECENT,
-        ingested_at=_RECENT,
+        published_at=recent,
+        ingested_at=recent,
         tickers=("AAPL",),
     )
     session.commit()

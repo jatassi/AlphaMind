@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+import alphamind.state.tables  # noqa: F401 — register ``invocations`` on Base.metadata
 from alphamind.analysis.news_freshness import (
     NewsEmptyDiagnosis,
     NewsEmptyReason,
@@ -23,11 +24,6 @@ from alphamind.analysis.news_freshness import (
 )
 from alphamind.persistence.models import Base, NewsArticles
 from alphamind.persistence.session import make_engine, make_session_factory
-from alphamind.state.tables.invocations import InvocationRow
-
-# Imported for the side-effect of registering ``invocations`` on ``Base.metadata`` —
-# ``briefs.invocation_id`` FK resolves only when this module has been loaded.
-del InvocationRow
 
 AS_OF = datetime(2026, 5, 19, 3, 6, 54, tzinfo=UTC)
 WINDOW_START = AS_OF - timedelta(hours=24)

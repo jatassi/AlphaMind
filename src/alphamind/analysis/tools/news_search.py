@@ -14,9 +14,9 @@ import json
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -62,8 +62,8 @@ class NewsSearchInput(BaseModel, frozen=True):
 
     query: str = ""
     tickers: tuple[str, ...] = ()
-    lookback_hours: int = 24
-    max_results: int = 20
+    lookback_hours: int = Field(default=24, ge=1)
+    max_results: int = Field(default=20, ge=1)
 
 
 class NewsSearchArticle(BaseModel, frozen=True):
@@ -80,21 +80,24 @@ class NewsSearchArticle(BaseModel, frozen=True):
     body_excerpt: str | None
 
 
+NewsSearchReason = Literal["invalid_input", "vendor_api_error", "no_data"]
+
+
 class NewsSearchOutput(ToolEnvelope, frozen=True):
     """Tool output.
 
-    ``reason`` disambiguates the three structurally distinct unavailable
-    states for the LLM caller (ALP-567): ``"invalid_input"`` when the input
-    payload had no query and no tickers, ``"vendor_api_error"`` when the
-    collector has not ingested news rows within the requested lookback
-    window (an outage, off-hours pause, or auth failure on the upstream
-    vendor side), and ``"no_data"`` when the collector is current but the
+    ``reason`` disambiguates the three unavailable states for the LLM caller
+    (ALP-567): ``"invalid_input"`` when the payload had no query and no
+    tickers, ``"vendor_api_error"`` when the collector has not ingested any
+    news within the lookback window (collapses the diagnostic's
+    ``NO_ROWS_IN_DB`` and ``COLLECTOR_INACTIVE`` causes into one operator-
+    visible code), and ``"no_data"`` when the collector is current but the
     specific query/ticker filter has no matching rows. ``None`` when the
     search returned at least one article (``quality == COMPLETE``).
     """
 
     articles: tuple[NewsSearchArticle, ...]
-    reason: str | None = None
+    reason: NewsSearchReason | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +147,7 @@ def _read_body_excerpt(body_path: str | None) -> str | None:
         return None
 
 
-_REASON_BY_EMPTY_DIAGNOSIS: dict[NewsEmptyReason, str] = {
+_REASON_BY_EMPTY_DIAGNOSIS: dict[NewsEmptyReason, NewsSearchReason] = {
     NewsEmptyReason.NO_ROWS_IN_DB: "vendor_api_error",
     NewsEmptyReason.COLLECTOR_INACTIVE: "vendor_api_error",
     NewsEmptyReason.NO_HEADLINES_IN_WINDOW: "no_data",

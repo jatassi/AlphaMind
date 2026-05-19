@@ -18,6 +18,7 @@ from alphamind.analysis.domain_researchers.qualitative_input import (
     HeadlineEntry,
     SectorQualitativeInput,
 )
+from alphamind.analysis.news_freshness import NewsEmptyDiagnosis, NewsEmptyReason
 from alphamind.data_sources._common import HeadlineType
 
 # ---------------------------------------------------------------------------
@@ -230,8 +231,6 @@ def test_non_empty_headlines_no_placeholder() -> None:
 
 def test_empty_headlines_reason_line_for_no_rows_in_db() -> None:
     """Empty headlines + ``NO_ROWS_IN_DB`` diagnosis → reason line names cause."""
-    from alphamind.analysis.news_freshness import NewsEmptyDiagnosis, NewsEmptyReason
-
     qualitative = SectorQualitativeInput(
         sector=Sector.TECH_SEMIS,
         as_of=_AS_OF,
@@ -249,8 +248,6 @@ def test_empty_headlines_reason_line_for_no_rows_in_db() -> None:
 
 def test_empty_headlines_reason_line_for_collector_inactive() -> None:
     """Empty headlines + ``COLLECTOR_INACTIVE`` diagnosis → reason line names latest."""
-    from alphamind.analysis.news_freshness import NewsEmptyDiagnosis, NewsEmptyReason
-
     latest = datetime(2026, 5, 17, 23, 0, 0, tzinfo=UTC)
     qualitative = SectorQualitativeInput(
         sector=Sector.TECH_SEMIS,
@@ -270,8 +267,6 @@ def test_empty_headlines_reason_line_for_collector_inactive() -> None:
 
 def test_empty_headlines_reason_line_for_no_headlines_in_window() -> None:
     """Empty headlines + ``NO_HEADLINES_IN_WINDOW`` diagnosis → reason line names cause."""
-    from alphamind.analysis.news_freshness import NewsEmptyDiagnosis, NewsEmptyReason
-
     latest = datetime(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
     qualitative = SectorQualitativeInput(
         sector=Sector.TECH_SEMIS,

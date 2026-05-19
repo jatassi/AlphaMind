@@ -6,31 +6,31 @@ each domain researcher's per-sector input bundle all read from
 LLM agents downstream cannot distinguish three structurally different causes
 unless the harness tells them which one applies:
 
-1. ``NO_ROWS_IN_DB`` — the ``news_articles`` table is empty. Bootstrap state,
-   or the database has been reset and no collector ingestion has landed yet.
+1. ``NO_ROWS_IN_DB`` — the ``news_articles`` table is empty (bootstrap state
+   or post-reset, no collector ingestion has landed).
 2. ``COLLECTOR_INACTIVE`` — rows exist, but the most recent ingestion finished
    before the caller's window opened. The collector is paused (off-hours
-   schedule) or failing (vendor API outage, authentication error). The
-   ``news_search`` tool surfaces this as the vendor-API-error error code per
-   ALP-567's acceptance criteria.
+   schedule) or failing (vendor API outage, authentication error).
 3. ``NO_HEADLINES_IN_WINDOW`` — the collector is current (latest ingestion is
-   inside the window) but no headlines landed within the queried sub-range.
-   The window is legitimately empty.
+   inside the window) but no headlines landed in the queried sub-range; the
+   window is legitimately empty.
 
-Callers invoke :func:`diagnose_empty_news` only when their own window query
-returned no rows; the diagnostic adds one ``MAX(ingested_at)`` round-trip and
-classifies in constant time.
+Consumers translate the classification into their own surface (a header
+reason line, a tool-envelope reason code, etc.). Call :func:`diagnose_empty_news`
+only when the caller's own window query returned no rows; the diagnostic
+adds one ``MAX(ingested_at)`` round-trip and classifies in constant time.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import StrEnum
 from typing import NamedTuple
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from alphamind.analysis.tools._envelope import format_iso, parse_iso
 from alphamind.persistence.models import NewsArticles
 
 __all__ = [
@@ -50,7 +50,13 @@ class NewsEmptyReason(StrEnum):
 
 
 class NewsEmptyDiagnosis(NamedTuple):
-    """Reason classification plus the latest ``ingested_at`` used to derive it."""
+    """Reason classification plus the latest ``ingested_at`` used to derive it.
+
+    Invariant maintained by :func:`diagnose_empty_news`: ``latest_ingested_at``
+    is ``None`` iff ``reason`` is ``NO_ROWS_IN_DB``. External callers that
+    construct ``NewsEmptyDiagnosis`` directly must honor the same invariant
+    or :func:`render_empty_reason_text` raises.
+    """
 
     reason: NewsEmptyReason
     latest_ingested_at: datetime | None
@@ -71,7 +77,7 @@ def diagnose_empty_news(
     raw = session.execute(select(func.max(NewsArticles.ingested_at))).scalar()
     if raw is None:
         return NewsEmptyDiagnosis(reason=NewsEmptyReason.NO_ROWS_IN_DB, latest_ingested_at=None)
-    latest = _parse_iso(raw)
+    latest = parse_iso(raw)
     if latest < window_start:
         return NewsEmptyDiagnosis(
             reason=NewsEmptyReason.COLLECTOR_INACTIVE, latest_ingested_at=latest
@@ -89,8 +95,12 @@ def render_empty_reason_text(diagnosis: NewsEmptyDiagnosis) -> str:
             "landed against this database (bootstrap state or post-reset)."
         )
     latest = diagnosis.latest_ingested_at
-    assert latest is not None  # invariant: only NO_ROWS_IN_DB has None
-    latest_iso = latest.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if latest is None:
+        raise ValueError(
+            f"NewsEmptyDiagnosis with reason={diagnosis.reason.value} "
+            "requires latest_ingested_at; got None"
+        )
+    latest_iso = format_iso(latest)
     if diagnosis.reason is NewsEmptyReason.COLLECTOR_INACTIVE:
         return (
             f"collector inactive — latest ingestion {latest_iso} precedes "
@@ -100,9 +110,3 @@ def render_empty_reason_text(diagnosis: NewsEmptyDiagnosis) -> str:
     return (
         f"collector current (latest ingestion {latest_iso}) but no headlines landed in this window."
     )
-
-
-def _parse_iso(text: str) -> datetime:
-    raw = text.replace("Z", "+00:00") if text.endswith("Z") else text
-    parsed = datetime.fromisoformat(raw)
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
