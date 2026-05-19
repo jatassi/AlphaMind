@@ -39,6 +39,7 @@ from alphamind.portfolio_state.records.orders import (
     PriceTrigger,
     StrategyInstrumentSpec,
     TimeTrigger,
+    direction_to_side,
 )
 from alphamind.portfolio_state.records.positions import InstrumentType, OptionContractType
 
@@ -1273,3 +1274,36 @@ class TestBracketLegPLAnchor:
         assert leg.pl_anchor is not None
         assert leg.pl_anchor.spec_type == "target"
         assert leg.pl_anchor.pct == 0.80
+
+
+# ---------------------------------------------------------------------------
+# Buy/sell-side mapping
+# ---------------------------------------------------------------------------
+
+
+class TestDirectionToSide:
+    """Buy-vs-sell partition of OrderDirection consumed by phase1 cash-movement
+    and the paper-evaluation harness side dispatch."""
+
+    @pytest.mark.parametrize(
+        "direction",
+        [OrderDirection.BUY, OrderDirection.BUY_TO_OPEN, OrderDirection.BUY_TO_CLOSE],
+    )
+    def test_buy_directions_map_to_buy(self, direction: OrderDirection) -> None:
+        assert direction_to_side(direction) == "buy"
+
+    @pytest.mark.parametrize(
+        "direction",
+        [OrderDirection.SELL, OrderDirection.SELL_TO_OPEN, OrderDirection.SELL_TO_CLOSE],
+    )
+    def test_sell_directions_map_to_sell(self, direction: OrderDirection) -> None:
+        assert direction_to_side(direction) == "sell"
+
+    def test_every_variant_is_mapped(self) -> None:
+        """Iterating ``OrderDirection`` through ``direction_to_side`` must
+        succeed for every variant — an unmapped variant raises ``KeyError``
+        on the missing dict key, which is the partition's exhaustiveness
+        check. The set-equality assertion catches the secondary failure mode
+        where a future variant is added to the mapping with a third side."""
+        sides = {direction_to_side(d) for d in OrderDirection}
+        assert sides == {"buy", "sell"}

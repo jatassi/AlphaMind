@@ -63,9 +63,9 @@ from alphamind.portfolio_state.records.orders import (
     BracketStatus,
     OptionsInstrumentSpec,
     OrderClass,
-    OrderDirection,
     OrderRecord,
     OrderStatus,
+    direction_to_side,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -117,12 +117,6 @@ from alphamind.state.tables.positions_codec import (
     row_to_record as position_row_to_record,
 )
 from alphamind.state.tables.theses import ThesisRow
-
-# Buy-side directions debit cash (purchase consideration); sell-side credit
-# cash (sale proceeds).
-_BUY_DIRECTIONS = frozenset(
-    {OrderDirection.BUY, OrderDirection.BUY_TO_OPEN, OrderDirection.BUY_TO_CLOSE}
-)
 
 # Tolerance for "remaining quantity zero" comparisons after float arithmetic.
 _QTY_EPSILON = 1e-9
@@ -419,7 +413,7 @@ async def _integrate_one_fill(
     await _persist_order_update(handle, updated_order)
 
     position_row, position = await _read_position_for_order(handle, order)
-    direction_is_buy = order.direction in _BUY_DIRECTIONS
+    direction_is_buy = direction_to_side(order.direction) == "buy"
 
     if isinstance(position.details, StrategyPositionDetails):
         updated_position, incomplete_legs = await _apply_strategy_fill_to_position(
@@ -946,7 +940,7 @@ async def _apply_strategy_open_fill(
     leg: StrategyLeg,
 ) -> tuple[PositionRecord, tuple[str, ...]]:
     """Apply a fill against an OPEN strategy: ADD (same-side) or CLOSE (opposite-side)."""
-    is_buy_side = updated_order.direction in _BUY_DIRECTIONS
+    is_buy_side = direction_to_side(updated_order.direction) == "buy"
     leg_direction_is_long = leg.direction != Direction.SHORT
     is_opening_for_leg = is_buy_side == leg_direction_is_long
     if is_opening_for_leg:
@@ -1352,7 +1346,7 @@ async def _apply_cash_movement(
     """
     consideration = _fill_consideration_usd(order, fill)
     fees = max(Decimal(str(fill.fees_usd)), Decimal(0))
-    is_buy = order.direction in _BUY_DIRECTIONS
+    is_buy = direction_to_side(order.direction) == "buy"
     delta = -(consideration + fees) if is_buy else (consideration - fees)
     cash_row = await _read_cash_row_or_raise(handle)
     cash_row.current_cash_usd = cash_row.current_cash_usd + delta

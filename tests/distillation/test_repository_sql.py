@@ -348,3 +348,62 @@ class TestLoadOptionsSnapshotPairsForUnderlying:
         assert b_today is not None and b_prior is None
         c_today, c_prior = pairs["META240619P00100000"]
         assert c_today is None and c_prior is not None
+
+
+class TestLoadTickerAdv:
+    """Sync-session counterpart to ``SqlAdvLookup`` integration tests in
+    ``tests/execution/paper_evaluation_harness/test_lookups.py``. Both
+    adapters route through ``adv_shares_select`` + ``coerce_adv_shares``;
+    the difference in return shape (``TickerADVRow`` vs ``float | None``)
+    is the only thing distinguishing them."""
+
+    def test_present_ticker_returns_row_with_adv(self, session: Session) -> None:
+        session.add(
+            AssetUniverse(
+                asset_id="asset-aapl",
+                ticker="AAPL",
+                full_name="Apple",
+                asset_class="equity",
+                asset_role="universe",
+                exchange="NASDAQ",
+                avg_daily_volume_shares=50_000_000,
+                is_active=1,
+                added_date="2020-01-01",
+                last_updated="2026-04-26T00:00:00Z",
+            )
+        )
+        session.commit()
+        repo = SqlDistillationRepository(session)
+        row = repo.load_ticker_adv(ticker="AAPL")
+        assert row is not None
+        assert row.ticker == "AAPL"
+        assert row.avg_daily_volume_shares == 50_000_000.0
+
+    def test_null_adv_preserves_ticker_presence(self, session: Session) -> None:
+        """Present row with NULL ADV → ``TickerADVRow(ticker, None)`` —
+        distinct from the missing-ticker case below. q3 put-flow-intent
+        consumes this distinction."""
+        session.add(
+            AssetUniverse(
+                asset_id="asset-nullvol",
+                ticker="NULLVOL",
+                full_name="No-ADV Co",
+                asset_class="equity",
+                asset_role="universe",
+                exchange="NASDAQ",
+                avg_daily_volume_shares=None,
+                is_active=1,
+                added_date="2020-01-01",
+                last_updated="2026-04-26T00:00:00Z",
+            )
+        )
+        session.commit()
+        repo = SqlDistillationRepository(session)
+        row = repo.load_ticker_adv(ticker="NULLVOL")
+        assert row is not None
+        assert row.ticker == "NULLVOL"
+        assert row.avg_daily_volume_shares is None
+
+    def test_missing_ticker_returns_none(self, session: Session) -> None:
+        repo = SqlDistillationRepository(session)
+        assert repo.load_ticker_adv(ticker="UNKNOWN") is None

@@ -34,6 +34,7 @@ from alphamind.portfolio_state.records.orders import (
     PriceParameters,
     PriceTrigger,
     TimeTrigger,
+    direction_to_side,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -111,5 +112,6 @@ __all__ = [
     "ThesisStatus",
     "TimeTrigger",
     "UnsettledProceedsEntry",
+    "direction_to_side",
     "resolve_ticker",
 ]
