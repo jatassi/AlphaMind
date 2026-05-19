@@ -55,10 +55,11 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -696,6 +697,51 @@ def _assemble_phase1_snapshot(
     return assembled, repository
 
 
+_LAST_INVOCATION_FALLBACK = timedelta(hours=24)
+
+
+def _resolve_last_invocation_time(
+    session: Session,
+    *,
+    current_invocation_id: str,
+    now: datetime,
+) -> datetime:
+    """Return the most recent successful prior invocation's ``start_at``.
+
+    The qualitative researcher's news-digest window covers
+    ``[last_invocation_time, as_of]`` per
+    ``docs/design/03-analysis-layer/qualitative-research.md`` § News digest.
+    The filter ``phase2_completed_at IS NOT NULL`` mirrors
+    :func:`alphamind.scheduler.runtime._resolve_active_regime`: an aborted
+    prior invocation's ``start_at`` would otherwise truncate the next
+    invocation's digest window, hiding headlines published between the last
+    successful invocation and the abort.
+
+    Falls back to ``now - 24h`` when no successful prior row exists (first
+    invocation, pristine debug-e2e DB). The 24h horizon matches the domain
+    researchers' fixed ``lookback_window_hours`` in
+    ``analysis/domain_researchers/runner.py`` so the cross-sector digest
+    covers the same corpus the sector bundles do (ALP-535).
+    """
+    stmt = (
+        select(InvocationRow.start_at)
+        .where(
+            InvocationRow.invocation_id != current_invocation_id,
+            InvocationRow.phase2_completed_at.is_not(None),
+        )
+        .order_by(InvocationRow.start_at.desc())
+        .limit(1)
+    )
+    raw = session.execute(stmt).scalar_one_or_none()
+    if raw is None:
+        return now - _LAST_INVOCATION_FALLBACK
+    text = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
 async def _run_analysis(
     *,
     invocation_id: str,
@@ -721,11 +767,16 @@ async def _run_analysis(
     resolved = pipeline_config.resolved
     ticker_scope = ticker_scope_from_assets(resolved)
     with sync_session_factory() as session:
+        last_invocation_time = _resolve_last_invocation_time(
+            session,
+            current_invocation_id=invocation_id,
+            now=now,
+        )
         return await run_analysis_pipeline(
             session=session,
             invocation_id=invocation_id,
             as_of=now,
-            last_invocation_time=now,
+            last_invocation_time=last_invocation_time,
             distillation_config=load_distillation_config(config_dir / "distillation.yaml"),
             ticker_scope=ticker_scope,
             universe=frozenset(ticker_scope),

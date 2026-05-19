@@ -81,6 +81,7 @@ def _make_prediction_market(
     expiration: str | None = "2024-03-20",
     is_low_liquidity: bool = False,
     meets_threshold_flag: bool = False,
+    is_stale_low_signal: bool = False,
 ) -> PredictionMarketSnapshot:
     return PredictionMarketSnapshot(
         contract_id=contract_id,
@@ -94,6 +95,7 @@ def _make_prediction_market(
         expiration=expiration,
         is_low_liquidity=is_low_liquidity,
         meets_threshold_flag=meets_threshold_flag,
+        is_stale_low_signal=is_stale_low_signal,
         data_freshness=_AS_OF,
     )
 
@@ -657,6 +659,32 @@ def test_prediction_market_renders_delta_since_prior_label() -> None:
     )
     assert "Δ_since_prior=4.2pp" in bundle.bundle_text
     assert "Δ_24h" not in bundle.bundle_text
+
+
+def test_prediction_market_stale_low_signal_sorted_last_with_flag() -> None:
+    """ALP-536: stale-low-signal rows sort to the bottom and carry the
+    ``[STALE — LIKELY RESOLVED]`` flag — they reflect contracts whose
+    referenced event has effectively resolved but the formal close hasn't
+    been called by the vendor.
+    """
+    from alphamind.analysis.qualitative_research.input_bundle import (
+        assemble_input_bundle,
+    )
+
+    pm_stale_alpha = _make_prediction_market(contract_id="PM-AAA", is_stale_low_signal=True)
+    pm_active_zulu = _make_prediction_market(contract_id="PM-ZZZ", is_stale_low_signal=False)
+    bundle = assemble_input_bundle(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        regime_label=_REGIME_LABEL,
+        digest=_DIGEST,
+        inputs=_make_inputs(prediction_markets=(pm_stale_alpha, pm_active_zulu)),
+    )
+    # Active row sorts before stale even though its id sorts later.
+    pos_active = bundle.bundle_text.index("PM-ZZZ")
+    pos_stale = bundle.bundle_text.index("PM-AAA")
+    assert pos_active < pos_stale
+    assert "[STALE — LIKELY RESOLVED]" in bundle.bundle_text
 
 
 def test_input_bundle_is_frozen() -> None:

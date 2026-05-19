@@ -154,6 +154,7 @@ def _prediction_market(contract_id: str = "0x01") -> PredictionMarketSnapshot:
         expiration="2026-06-01",
         is_low_liquidity=False,
         meets_threshold_flag=False,
+        is_stale_low_signal=False,
         data_freshness=AS_OF,
     )
 
