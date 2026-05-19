@@ -781,17 +781,13 @@ class TestLoadSentimentAggregates:
         assert "AAPL" in tickers
 
     def test_accumulating_ticker_emits_null_sentinel(self, session: Session) -> None:
-        """Below-threshold (``accumulating``) tickers emit an all-None record.
-
-        Before ALP-568 the loader broadcast a universe-pooled prior here, but
-        bit-identical numeric placeholders across every bootstrap ticker
-        masquerade as "modestly weak sentiment" downstream rather than
-        "data not yet available". The null sentinel matches the existing
-        UNAVAILABLE branch so the LLM reads both as ``pending``.
+        """Below-threshold (``accumulating``) tickers emit an all-None record
+        (ALP-568) — matches the UNAVAILABLE branch so a shared fallback
+        distribution cannot masquerade as "modestly weak sentiment".
         """
-        # Calibrated peer so the universe pool would be non-empty — proves
-        # the accumulating branch skips the pool fallback even when it
-        # could compute.
+        # Calibrated peer so a hypothetical universe pool would be non-empty
+        # — confirms the accumulating branch refuses the fallback even when
+        # one could be computed.
         _add_ticker(session, "NVDA")
         _add_sentiment_baseline(
             session,
@@ -846,11 +842,10 @@ class TestLoadSentimentAggregates:
         assert isinstance(agg.data_freshness, datetime)
 
     def test_rate_of_change_is_latest_minus_prior_mean(self, session: Session) -> None:
-        """``rate_of_change`` = latest sentiment-baseline mean minus the prior row's mean.
-
-        Requires at least one article in the inter-baseline window — without
-        inflow the rate-of-change collapses to ``None`` (ALP-568) to avoid
-        propagating mechanical-zero noise as real signal.
+        """``rate_of_change`` = latest sentiment-baseline mean minus the prior
+        row's mean, gated on at least one article in the inter-baseline window
+        (zero inflow collapses to ``None`` per ALP-568 to avoid propagating
+        mechanical-zero noise as real signal).
         """
         _add_ticker(session, "NVDA")
         prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -929,11 +924,11 @@ class TestLoadSentimentAggregates:
     def test_rate_of_change_and_volume_none_when_window_volume_is_zero(
         self, session: Session
     ) -> None:
-        """ALP-568 AC 2: two baselines exist but no articles flowed through the
-        inter-baseline window → both ``rate_of_change`` and ``volume`` carry
-        ``None`` rather than mechanical zeros. Distinguishes an empty upstream
-        from a quiet news cycle: downstream agents read ``pending`` instead of
-        a genuine ``0.0`` change.
+        """Two baselines but zero articles in the inter-baseline window →
+        both ``rate_of_change`` and ``volume`` carry ``None`` rather than
+        mechanical zeros (ALP-568). Empty-upstream stays distinct from a
+        live-but-zero-change cycle; downstream reads ``pending``, not a
+        real ``0.0``.
         """
         _add_ticker(session, "NVDA")
         prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1183,12 +1178,11 @@ class TestLoadSentimentAggregates:
     def test_two_accumulating_tickers_do_not_share_placeholder_values(
         self, session: Session
     ) -> None:
-        """Distinct accumulating tickers must NOT produce bit-identical numeric
-        tuples (ALP-568): the pre-fix pool-fallback path emitted
-        ``magnitude=0.7843835113206449, percentile=0.21640755526283445``
-        across every bootstrap ticker, which downstream agents read as a
-        shared "modestly weak sentiment" placeholder. Both records now carry
-        ``None`` across every numeric field, matching the UNAVAILABLE branch.
+        """Distinct accumulating tickers must not emit bit-identical numeric
+        placeholders (ALP-568) — both records now carry ``None`` across every
+        numeric field, so the pool-fallback regression that broadcast
+        ``magnitude=0.7843835113206449`` to every bootstrap ticker cannot
+        recur.
         """
         _add_ticker(session, "NVDA")
         _add_sentiment_baseline(
@@ -1225,15 +1219,26 @@ class TestLoadSentimentAggregates:
         result = load_sentiment_aggregates(session, as_of=AS_OF, ticker_scope=["SPY", "QQQ"])
         by_ticker = {agg.ticker: agg for agg in result}
         assert set(by_ticker) == {"SPY", "QQQ"}
-        for agg in by_ticker.values():
-            assert agg.directional_score is None
-            assert agg.magnitude is None
-            assert agg.percentile_vs_self is None
+        # Each numeric field is None for both — and any future regression
+        # that re-introduces a shared numeric placeholder would surface as
+        # `spy_numerics == qqq_numerics` with non-None contents.
+        spy_numerics = (
+            by_ticker["SPY"].directional_score,
+            by_ticker["SPY"].magnitude,
+            by_ticker["SPY"].percentile_vs_self,
+        )
+        qqq_numerics = (
+            by_ticker["QQQ"].directional_score,
+            by_ticker["QQQ"].magnitude,
+            by_ticker["QQQ"].percentile_vs_self,
+        )
+        assert spy_numerics == (None, None, None)
+        assert qqq_numerics == (None, None, None)
 
     def test_etf_row_distinct_from_single_name_row(self, session: Session) -> None:
-        """Per ALP-568 AC 4: an ETF without per-ticker sentiment ingestion
-        (accumulating with sparse coverage) emits null sentinel while a
-        single-name with sufficient coverage emits real values.
+        """ETFs/benchmarks without per-ticker sentiment ingestion (accumulating
+        coverage) emit null sentinel while calibrated single-names emit real
+        numeric fields (ALP-568).
         """
         _add_ticker(session, "NVDA")
         _add_sentiment_baseline(

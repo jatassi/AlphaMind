@@ -60,8 +60,11 @@ logger = logging.getLogger(__name__)
 SENTIMENT_CALIBRATED_BASELINE_WARN_THRESHOLD: int = 5
 """Distinct calibrated sentiment baselines above which an empty
 ``sentiment_aggregates`` tuple looks like an assembler bug rather than a
-bootstrap window. Five is the smallest pool that ``load_sentiment_aggregates``
-can use as a stable fallback distribution without single-row dominance.
+bootstrap window. Below five calibrated tickers the absence is consistent
+with early-bootstrap coverage; at or above five, ``sentiment_aggregates``
+should not be empty since ``load_sentiment_aggregates`` emits a row for
+every baseline (ALP-568: ACCUMULATING and UNAVAILABLE rows surface as
+all-``None`` sentinels rather than being dropped).
 """
 
 
