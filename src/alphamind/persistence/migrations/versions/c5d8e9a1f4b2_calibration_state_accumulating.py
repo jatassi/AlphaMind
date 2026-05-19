@@ -18,9 +18,11 @@ Per-table changes:
 - ``distillation_contract_history`` — same.
 - ``distillation_composite_state`` — same.
 
-The UPDATE precedes the CHECK recreation so existing rows pass the new
-constraint at validation time. SQLite recreates CHECK constraints via
-``batch_alter_table`` — the column itself is unchanged.
+SQLite enforces CHECK at row-write time, so the OLD constraint must be
+dropped before the UPDATE writes ``'accumulating'`` — and symmetrically on
+downgrade the NEW constraint must be dropped before the reverse UPDATE writes
+``'bootstrap'``. The CHECK is replaced via ``batch_alter_table`` (table
+rebuild); the column itself is unchanged.
 
 This migration is data-preserving: every historical ``bootstrap`` row is
 re-labelled ``accumulating`` because the prior decision rule only emitted
@@ -54,14 +56,20 @@ _TABLES_WITH_CHECK: tuple[tuple[str, str], ...] = (
 )
 
 
-def _replace_check(*, table: str, constraint: str, new_sql: str) -> None:
+def _drop_check(*, table: str, constraint: str) -> None:
     with op.batch_alter_table(table) as batch_op:
         batch_op.drop_constraint(constraint, type_="check")
-        batch_op.create_check_constraint(constraint, new_sql)
+
+
+def _create_check(*, table: str, constraint: str, sql: str) -> None:
+    with op.batch_alter_table(table) as batch_op:
+        batch_op.create_check_constraint(constraint, sql)
 
 
 def upgrade() -> None:
     """Re-label bootstrap → accumulating and update the CHECK constraints."""
+    for table, constraint in _TABLES_WITH_CHECK:
+        _drop_check(table=table, constraint=constraint)
     for table, _ in _TABLES_WITH_CHECK:
         op.execute(
             sa.text(
@@ -70,13 +78,13 @@ def upgrade() -> None:
             )
         )
     for table, constraint in _TABLES_WITH_CHECK:
-        _replace_check(table=table, constraint=constraint, new_sql=_NEW_CHECK_SQL)
+        _create_check(table=table, constraint=constraint, sql=_NEW_CHECK_SQL)
 
 
 def downgrade() -> None:
     """Revert: accumulating → bootstrap and reinstate the old CHECK constraints."""
     for table, constraint in _TABLES_WITH_CHECK:
-        _replace_check(table=table, constraint=constraint, new_sql=_OLD_CHECK_SQL)
+        _drop_check(table=table, constraint=constraint)
     for table, _ in _TABLES_WITH_CHECK:
         op.execute(
             sa.text(
@@ -84,3 +92,5 @@ def downgrade() -> None:
                 "WHERE calibration_state = 'accumulating'"
             )
         )
+    for table, constraint in _TABLES_WITH_CHECK:
+        _create_check(table=table, constraint=constraint, sql=_OLD_CHECK_SQL)
