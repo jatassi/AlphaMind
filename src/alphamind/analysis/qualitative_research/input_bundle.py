@@ -19,8 +19,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from alphamind._kernel.calibration import CalibrationState
 from alphamind.analysis.qualitative_research.loaders import (
     QualitativeInputs,
+    SentimentAggregate,
 )
 from alphamind.analysis.qualitative_research.news_digest import NewsDigest
 
@@ -123,27 +125,34 @@ def _render_regime(regime_label: dict[str, Any]) -> str:
 def _render_sentiment(inputs: QualitativeInputs) -> str:
     """Render per-ticker sentiment aggregates sorted alphabetically by ticker.
 
-    Every numeric field renders as ``pending`` when ``None`` so the LLM reads
-    it as "data not available yet" rather than as a concrete null signal.
-    UNAVAILABLE tickers arrive with every numeric field ``None`` — the entire
-    row therefore surfaces as ``pending`` across the board, which is the
-    operator-visible difference between "missing data" and "neutral data".
+    Non-calibrated rows (``UNAVAILABLE`` or ``ACCUMULATING``) surface as a
+    compact ``{ticker}: {state}`` line so per-ticker missing data stays
+    distinguishable from per-field ``null`` fallbacks inside otherwise-numeric
+    rows. Both non-calibrated states emit all-``None`` numeric fields per
+    ALP-568 / ALP-538; the collapsed line preserves the operator-visible
+    difference between "collector dead" and "still accumulating".
     """
     rows = sorted(inputs.sentiment_aggregates, key=lambda s: s.ticker)
-    return "\n".join(
+    return "\n".join(_render_sentiment_row(s) for s in rows)
+
+
+def _render_sentiment_row(s: SentimentAggregate) -> str:
+    """Render one sentiment row, dispatching on ``calibration_state``."""
+    if s.calibration_state is not CalibrationState.CALIBRATED:
+        return f"{s.ticker}: {s.calibration_state.value}"
+    return (
         f"{s.ticker}: directional={_render_optional(s.directional_score)},"
         f" magnitude={_render_optional(s.magnitude)},"
         f" change={_render_optional(s.rate_of_change)},"
         f" vol={_render_optional(s.volume)},"
         f" percentile={_render_optional(s.percentile_vs_self)},"
         f" divergence={_render_optional(s.divergence_flag)}"
-        for s in rows
     )
 
 
 def _render_optional(value: object) -> str:
-    """Render ``None`` as ``pending``; otherwise stringify the value."""
-    return "pending" if value is None else str(value)
+    """Render ``None`` as ``null``; otherwise stringify the value."""
+    return "null" if value is None else str(value)
 
 
 def _render_prediction_markets(inputs: QualitativeInputs) -> str:

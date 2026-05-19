@@ -106,18 +106,27 @@ class SentimentAggregate:
     ``percentile_vs_self`` is in ``[0.0, 1.0]`` (unit interval, not 0-100).
     ``data_freshness`` is the timestamp of the underlying baseline row.
 
-    Every numeric field may be ``None``. Only baseline rows tagged
-    :attr:`CalibrationState.CALIBRATED` emit per-ticker numeric fields;
-    ``ACCUMULATING`` and ``UNAVAILABLE`` baselines emit an all-``None``
-    record so a shared fallback distribution cannot masquerade as
-    "modestly weak sentiment" downstream. ``rate_of_change`` and ``volume``
-    additionally fall back to ``None`` when no articles flowed through the
-    inter-baseline window (single baseline row, or two baselines with zero
-    articles between them) — the change/vol math is mechanical without
-    inflow, and a mechanical ``0`` is indistinguishable downstream from a
-    quiet-but-healthy news cycle. ``divergence_flag`` falls back to ``None``
-    when price history is insufficient. The renderer surfaces ``None`` as
-    ``pending`` so the LLM reads "data not available yet", not "no signal".
+    ``calibration_state`` mirrors the baseline row's state from the ALP-540
+    vocabulary and is the renderer's single source of truth when choosing
+    between a per-ticker collapsed line and a numeric row.
+
+    Only baseline rows tagged :attr:`CalibrationState.CALIBRATED` emit
+    per-ticker numeric fields; ``ACCUMULATING`` and ``UNAVAILABLE`` baselines
+    emit an all-``None`` record so a shared fallback distribution cannot
+    masquerade as "modestly weak sentiment" downstream. The renderer
+    collapses both non-calibrated states to ``{ticker}: {state}`` so the
+    operator-visible difference between "collector dead" and "still
+    accumulating observations" stays distinct.
+
+    ``rate_of_change`` and ``volume`` additionally fall back to ``None``
+    when no articles flowed through the inter-baseline window (single
+    baseline row, or two baselines with zero articles between them) — the
+    change/vol math is mechanical without inflow, and a mechanical ``0``
+    is indistinguishable downstream from a quiet-but-healthy news cycle.
+    ``divergence_flag`` falls back to ``None`` when price history is
+    insufficient. The renderer surfaces these per-field ``None`` values
+    inline as ``null``, keeping per-ticker and per-field missing-data
+    states visually distinct.
     """
 
     ticker: str
@@ -128,6 +137,7 @@ class SentimentAggregate:
     divergence_flag: bool | None
     percentile_vs_self: float | None
     data_freshness: datetime
+    calibration_state: CalibrationState
 
     def __post_init__(self) -> None:
         if self.directional_score is not None and not -1.0 <= self.directional_score <= 1.0:
@@ -530,7 +540,8 @@ def load_sentiment_aggregates(
         # per-ticker numerics; ACCUMULATING and UNAVAILABLE both emit
         # all-None so a shared fallback distribution cannot masquerade as
         # "modestly weak sentiment".
-        if CalibrationState(row.calibration_state) is not CalibrationState.CALIBRATED:
+        calibration_state = CalibrationState(row.calibration_state)
+        if calibration_state is not CalibrationState.CALIBRATED:
             results.append(
                 SentimentAggregate(
                     ticker=ticker,
@@ -541,6 +552,7 @@ def load_sentiment_aggregates(
                     divergence_flag=None,
                     percentile_vs_self=None,
                     data_freshness=_parse_iso_utc(row.as_of),
+                    calibration_state=calibration_state,
                 )
             )
             continue
@@ -584,6 +596,7 @@ def load_sentiment_aggregates(
                 divergence_flag=divergence_flag,
                 percentile_vs_self=percentile,
                 data_freshness=_parse_iso_utc(row.as_of),
+                calibration_state=calibration_state,
             )
         )
 

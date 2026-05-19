@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.calibration import CalibrationState
 from alphamind._kernel.ids import Symbol, ThesisId
 from alphamind.analysis._shared import Sector
 from alphamind.analysis.qualitative_research.loaders import (
@@ -56,6 +57,7 @@ def _make_sentiment(
     volume: int | None = 100,
     divergence_flag: bool | None = False,
     percentile_vs_self: float | None = 0.75,
+    calibration_state: CalibrationState = CalibrationState.CALIBRATED,
 ) -> SentimentAggregate:
     return SentimentAggregate(
         ticker=ticker,
@@ -66,6 +68,7 @@ def _make_sentiment(
         divergence_flag=divergence_flag,
         percentile_vs_self=percentile_vs_self,
         data_freshness=_AS_OF,
+        calibration_state=calibration_state,
     )
 
 
@@ -552,10 +555,10 @@ def test_prediction_market_low_liquidity_appended() -> None:
     assert "[LOW LIQUIDITY]" in bundle.bundle_text
 
 
-def test_sentiment_renders_pending_for_none_fields() -> None:
-    """When optional fields are None (source data missing), the renderer prints
-    ``pending`` so the LLM reads them as "data not available yet" rather than
-    "no signal".
+def test_sentiment_renders_null_for_per_field_none_fields() -> None:
+    """Per-field ``None`` (e.g., divergence_flag with too-thin price history)
+    renders inline as ``null`` — the explicit missing-data sentinel — so the
+    LLM cannot mistake it for "no signal" / "neutral signal" (ALP-569).
     """
     from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
@@ -574,17 +577,20 @@ def test_sentiment_renders_pending_for_none_fields() -> None:
         digest=_DIGEST,
         inputs=_make_inputs(sentiment=(s,)),
     )
-    assert "change=pending" in bundle.bundle_text
-    assert "vol=pending" in bundle.bundle_text
-    assert "divergence=pending" in bundle.bundle_text
+    assert "change=null" in bundle.bundle_text
+    assert "vol=null" in bundle.bundle_text
+    assert "divergence=null" in bundle.bundle_text
+    # Ambiguous "pending" string must not leak through (ALP-569).
+    assert "pending" not in bundle.bundle_text
 
 
-def test_sentiment_renders_pending_for_unavailable_ticker_numeric_fields() -> None:
-    """Tickers whose sentiment baseline is UNAVAILABLE arrive with every
-    numeric field ``None`` (ALP-538). The renderer must surface ``pending``
-    for ``directional``, ``magnitude``, and ``percentile`` too — not just the
-    historically optional ``change`` / ``vol`` / ``divergence`` — so the LLM
-    cannot mistake missing data for neutral signal.
+def test_sentiment_renders_unavailable_marker_for_per_ticker_unavailable_baseline() -> None:
+    """Tickers whose sentiment baseline is ``UNAVAILABLE`` arrive with every
+    nullable field ``None`` (mirroring ``load_sentiment_aggregates``'s
+    unavailable branch). The renderer must surface a compact
+    ``{ticker}: unavailable`` row using the ALP-540 calibration vocabulary
+    so the per-ticker missing-data state is visually distinct from per-field
+    ``null`` and cannot be misread as a six-way neutral signal (ALP-569).
     """
     from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
@@ -598,6 +604,7 @@ def test_sentiment_renders_pending_for_unavailable_ticker_numeric_fields() -> No
         volume=None,
         divergence_flag=None,
         percentile_vs_self=None,
+        calibration_state=CalibrationState.UNAVAILABLE,
     )
     bundle = assemble_input_bundle(
         invocation_id=_INVOCATION_ID,
@@ -606,9 +613,68 @@ def test_sentiment_renders_pending_for_unavailable_ticker_numeric_fields() -> No
         digest=_DIGEST,
         inputs=_make_inputs(sentiment=(s,)),
     )
-    assert "directional=pending" in bundle.bundle_text
-    assert "magnitude=pending" in bundle.bundle_text
-    assert "percentile=pending" in bundle.bundle_text
+    assert "SPY: unavailable" in bundle.bundle_text
+    # Per-ticker unavailable must not expand into per-field placeholders.
+    assert "directional=" not in bundle.bundle_text
+    assert "magnitude=" not in bundle.bundle_text
+    assert "percentile=" not in bundle.bundle_text
+    # Ambiguous "pending" string must not leak through (ALP-569).
+    assert "pending" not in bundle.bundle_text
+
+
+def test_sentiment_per_ticker_unavailable_distinguishable_from_per_field_null() -> None:
+    """ALP-569 acceptance: per-field ``null`` and per-ticker ``unavailable``
+    have visually distinguishable representations in the rendered output.
+
+    Models the production case from inv-20260519T030654Z-60f10023: SLB / XYZ
+    (all-None UNAVAILABLE baseline) versus CTRA (calibrated baseline whose
+    divergence calc bailed for insufficient price history). The renderer
+    must NOT collapse both states into the same string.
+    """
+    from alphamind.analysis.qualitative_research.input_bundle import (
+        assemble_input_bundle,
+    )
+
+    slb = _make_sentiment(
+        ticker=Symbol("SLB"),
+        directional_score=None,
+        magnitude=None,
+        rate_of_change=None,
+        volume=None,
+        divergence_flag=None,
+        percentile_vs_self=None,
+        calibration_state=CalibrationState.UNAVAILABLE,
+    )
+    ctra = _make_sentiment(
+        ticker=Symbol("CTRA"),
+        directional_score=0.078,
+        magnitude=0.564,
+        rate_of_change=0.0,
+        volume=0,
+        divergence_flag=None,
+        percentile_vs_self=0.286,
+    )
+    bundle = assemble_input_bundle(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        regime_label=_REGIME_LABEL,
+        digest=_DIGEST,
+        inputs=_make_inputs(sentiment=(slb, ctra)),
+    )
+    lines = bundle.sentiment_text.splitlines()
+    slb_line = next((line for line in lines if line.startswith("SLB:")), None)
+    ctra_line = next((line for line in lines if line.startswith("CTRA:")), None)
+    assert slb_line is not None, f"SLB row missing from rendered bundle: {lines!r}"
+    assert ctra_line is not None, f"CTRA row missing from rendered bundle: {lines!r}"
+    # Per-ticker unavailable: compact, no per-field placeholders.
+    assert slb_line == "SLB: unavailable"
+    # Per-field null: inline within the otherwise-numeric row.
+    assert "divergence=null" in ctra_line
+    assert "directional=0.078" in ctra_line
+    assert "percentile=0.286" in ctra_line
+    # Distinguishability — the two patterns share no overlapping marker.
+    assert "unavailable" not in ctra_line
+    assert "null" not in slb_line
 
 
 def test_sentiment_renders_concrete_values_when_present() -> None:

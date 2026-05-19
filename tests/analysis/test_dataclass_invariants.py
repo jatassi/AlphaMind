@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.calibration import CalibrationState
 from alphamind._kernel.clock import Clock, RealClock
 from alphamind.analysis._shared import Sector, TokensUsed
 from alphamind.analysis.adaptive_research.harness import (
@@ -153,6 +154,7 @@ def test_post_init_rejects_out_of_range_directional_score() -> None:
             divergence_flag=None,
             percentile_vs_self=0.5,
             data_freshness=datetime.now(UTC),
+            calibration_state=CalibrationState.CALIBRATED,
         )
 
 
@@ -167,6 +169,7 @@ def test_post_init_rejects_negative_volume_when_set() -> None:
         divergence_flag=None,
         percentile_vs_self=0.0,
         data_freshness=datetime.now(UTC),
+        calibration_state=CalibrationState.CALIBRATED,
     )
     with pytest.raises(ValueError, match="volume"):
         SentimentAggregate(
@@ -178,6 +181,7 @@ def test_post_init_rejects_negative_volume_when_set() -> None:
             divergence_flag=None,
             percentile_vs_self=0.0,
             data_freshness=datetime.now(UTC),
+            calibration_state=CalibrationState.CALIBRATED,
         )
 
 
@@ -195,6 +199,7 @@ def test_post_init_accepts_all_none_numeric_fields_for_unavailable_data() -> Non
         divergence_flag=None,
         percentile_vs_self=None,
         data_freshness=datetime.now(UTC),
+        calibration_state=CalibrationState.UNAVAILABLE,
     )
 
 
