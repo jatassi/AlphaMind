@@ -663,11 +663,7 @@ def refresh_regime_state(
                 regime_label=label.value,
                 vix_level=float(snapshot.vix_level),
                 term_structure_basis=float(snapshot.vx1_minus_vix),
-                vvix_percentile=(
-                    float(snapshot.vvix_percentile)
-                    if snapshot.vvix_percentile is not None
-                    else None
-                ),
+                vvix_percentile=snapshot.vvix_percentile,
                 realized_vol=float(snapshot.realized_vol_5d),
                 indicator_agreement_count=int(agreement),
                 invocations_held=int(invocations_held),
@@ -752,15 +748,9 @@ def assemble_regime_block(
         "regime_skip_emergency": result.regime_skip_emergency,
         "vix_level": float(result.snapshot.vix_level),
         "term_structure_basis": float(result.snapshot.vx1_minus_vix),
-        # Propagate ``None`` when the VVIX series is unavailable so
-        # downstream consumers (correlation/regime brief, analyst inputs)
-        # see explicit missing-data signal instead of a default that
-        # masquerades as a live mid-percentile reading (ALP-571).
-        "vvix_percentile": (
-            float(result.snapshot.vvix_percentile)
-            if result.snapshot.vvix_percentile is not None
-            else None
-        ),
+        # ``None`` signals VVIX unavailable; never substitute a numeric
+        # default (ALP-571).
+        "vvix_percentile": result.snapshot.vvix_percentile,
         "realized_vol_5d": float(result.snapshot.realized_vol_5d),
         "realized_vol_20d": float(result.snapshot.realized_vol_20d),
     }

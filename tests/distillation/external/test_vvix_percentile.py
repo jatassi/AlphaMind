@@ -22,7 +22,6 @@ from alphamind.distillation.orchestrator import (
     _VVIX_SERIES_ID,
     _build_regime_snapshot,
     _compute_vvix_percentile,
-    _percentile_rank,
 )
 from alphamind.persistence.models import Base, MacroObservations
 from alphamind.persistence.session import make_engine, make_session_factory
@@ -60,29 +59,6 @@ def _seed_vvix_history(session: Session, values: list[float], *, end_date: datet
             )
         )
     session.commit()
-
-
-# ---------------------------------------------------------------------------
-# _percentile_rank — pure helper
-# ---------------------------------------------------------------------------
-
-
-def test_percentile_rank_at_top_of_history_returns_100() -> None:
-    assert _percentile_rank([10.0, 20.0, 30.0], 30.0) == pytest.approx(100.0)
-
-
-def test_percentile_rank_at_bottom_of_history_returns_low() -> None:
-    # value <= one observation (itself), so 1/3 -> 33.33...
-    assert _percentile_rank([10.0, 20.0, 30.0], 10.0) == pytest.approx(100.0 / 3.0)
-
-
-def test_percentile_rank_above_history_returns_100() -> None:
-    assert _percentile_rank([10.0, 20.0, 30.0], 999.0) == pytest.approx(100.0)
-
-
-def test_percentile_rank_ties_are_counted_at_or_below() -> None:
-    # 30.0 in [10, 20, 30, 30] -> 4/4 = 100.
-    assert _percentile_rank([10.0, 20.0, 30.0, 30.0], 30.0) == pytest.approx(100.0)
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +102,26 @@ def test_compute_vvix_percentile_returns_calibrated_at_or_above_min_observations
     assert reason is None
     # The most-recent value (highest in the monotonic series) ranks at the top.
     assert value == pytest.approx(100.0)
+
+
+def test_compute_vvix_percentile_zero_variance_window_returns_accumulating(
+    session: Session,
+) -> None:
+    """All observations identical — percentile is undefined.
+
+    ``percentile_rank`` returns ``None`` for zero-variance distributions
+    (every value identical → rank is tautological). Surface that as
+    ``ACCUMULATING`` with a distinct reason rather than fabricating a
+    percentile or eliding the gap.
+    """
+    flat_history = [80.0] * _VVIX_PERCENTILE_MIN_OBSERVATIONS
+    _seed_vvix_history(session, flat_history, end_date=AS_OF)
+
+    value, state, reason = _compute_vvix_percentile(session, as_of=AS_OF)
+    assert value is None
+    assert state is CalibrationState.ACCUMULATING
+    assert reason is not None
+    assert "zero-variance" in reason
 
 
 def test_compute_vvix_percentile_never_returns_50_as_default(session: Session) -> None:

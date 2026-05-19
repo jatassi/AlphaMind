@@ -81,6 +81,7 @@ from alphamind.distillation.correlation_brief import (
     CorrelationRegimeBrief,
     assemble_correlation_brief,
 )
+from alphamind.distillation.normalization import percentile_rank
 from alphamind.distillation.output import (
     OutputAudience,
     OutputBlock,
@@ -638,10 +639,10 @@ def _latest_macro_value(session: Session, series_id: str) -> float | None:
 # observations land — no further plumbing change required.
 _VVIX_SERIES_ID: str = "VVIX"
 
-# Trading-day lookback for the trailing-history reference window the
-# percentile ranks against. One year (~252 trading days) per
-# ``regime.py`` docstring (``vvix_percentile`` — "trailing one-year
-# history").
+# Calendar-day lookback for the trailing-history reference window the
+# percentile ranks against. 365 calendar days ≈ 252 trading days — the
+# "trailing one-year history" the ``RegimeSnapshot.vvix_percentile``
+# docstring promises.
 _VVIX_PERCENTILE_LOOKBACK_DAYS: int = 365
 
 # Minimum number of VVIX observations required to publish a percentile
@@ -746,8 +747,12 @@ def _load_vvix_history(session: Session, *, as_of: datetime) -> list[float]:
     calendar days ending at ``as_of`` — the percentile rank ranks the
     most-recent observation against the prior window.
     """
-    range_end = _format_as_of(as_of)
-    range_start = _format_as_of(as_of - timedelta(days=_VVIX_PERCENTILE_LOOKBACK_DAYS))
+    # macro_observations.observation_date is stored as ``YYYY-MM-DD``, so
+    # the range bounds must be date-only — comparing against an ISO
+    # datetime would lex-sort the day-of-as_of row outside the window
+    # (``"2026-05-19" < "2026-05-19T17:00:00Z"``).
+    range_end = as_of.strftime("%Y-%m-%d")
+    range_start = (as_of - timedelta(days=_VVIX_PERCENTILE_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
     stmt = (
         select(MacroObservations.value)
         .where(
@@ -757,19 +762,10 @@ def _load_vvix_history(session: Session, *, as_of: datetime) -> list[float]:
         )
         .order_by(MacroObservations.observation_date)
     )
+    # ``MacroObservations.value`` is nullable — vendor gaps land as NULL
+    # rather than as missing rows. Skip them so they don't sink the
+    # percentile computation.
     return [float(v) for v in session.execute(stmt).scalars().all() if v is not None]
-
-
-def _percentile_rank(history: Sequence[float], value: float) -> float:
-    """Percentile rank of ``value`` against ``history`` on a 0..100 scale.
-
-    Uses the standard "≤ count divided by N" definition, the same form
-    the regime classifier compares against ``vvix_high_percentile`` /
-    ``vvix_low_percentile``. Ties contribute to the count so identical
-    histories produce the same percentile.
-    """
-    at_or_below = sum(1 for prior in history if prior <= value)
-    return 100.0 * at_or_below / len(history)
 
 
 def _compute_vvix_percentile(
@@ -783,8 +779,9 @@ def _compute_vvix_percentile(
       ≥ :data:`_VVIX_PERCENTILE_MIN_OBSERVATIONS`; the most-recent
       observation is ranked against the full window.
     - ``(None, ACCUMULATING, reason)`` when the window holds at least one
-      observation but fewer than the minimum — the collector is healthy,
-      time alone resolves the state.
+      observation but fewer than the minimum, or every observation is
+      identical (zero-variance distribution — percentile is undefined
+      per :func:`~alphamind.distillation.normalization.percentile_rank`).
     - ``(None, UNAVAILABLE, reason)`` when the window holds zero
       observations — collector failure or series-not-yet-implemented;
       operator action required.
@@ -803,7 +800,14 @@ def _compute_vvix_percentile(
             f"({observations} obs < {_VVIX_PERCENTILE_MIN_OBSERVATIONS} required)"
         )
         return None, CalibrationState.ACCUMULATING, reason
-    return _percentile_rank(history, history[-1]), CalibrationState.CALIBRATED, None
+    rank = percentile_rank(history, history[-1])
+    if rank is None:
+        return (
+            None,
+            CalibrationState.ACCUMULATING,
+            "regime: VVIX percentile undefined (zero-variance trailing window)",
+        )
+    return rank, CalibrationState.CALIBRATED, None
 
 
 def _build_regime_snapshot(

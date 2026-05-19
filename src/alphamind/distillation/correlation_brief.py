@@ -193,10 +193,8 @@ def _decompose_regime_block(block: OutputBlock) -> list[_Finding]:
     held = payload.get("invocations_held", "")
     skip = payload.get("regime_skip_emergency", False)
 
-    # Per ALP-571: render an explicit "unavailable" string when VVIX is
-    # missing rather than letting ``_format_value(None)`` substitute
-    # "None" — downstream agents would otherwise read the prior 50.0
-    # default as a live median-vol percentile.
+    # Render "unavailable" explicitly so downstream agents don't read
+    # ``str(None)`` as a live percentile (ALP-571).
     vvix_value = payload.get("vvix_percentile")
     vvix_text = "unavailable" if vvix_value is None else _format_value(vvix_value)
 
