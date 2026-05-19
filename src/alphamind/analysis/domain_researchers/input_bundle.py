@@ -22,6 +22,7 @@ from alphamind.analysis.domain_researchers.qualitative_input import (
     HeadlineEntry,
     SectorQualitativeInput,
 )
+from alphamind.analysis.news_freshness import render_empty_reason_text
 
 __all__ = [
     "InputBundle",
@@ -139,6 +140,8 @@ def _render_qualitative(qi: SectorQualitativeInput) -> str:
             lines.append(_render_headline(i, headline))
     else:
         lines.append("(no qualifying headlines in window)")
+        if qi.headlines_empty_diagnosis is not None:
+            lines.append(f"Reason: {render_empty_reason_text(qi.headlines_empty_diagnosis)}")
 
     lines.append("")
     lines.append("### SCHEDULED EVENTS (next 72h)")

@@ -21,6 +21,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.clock import Clock, RealClock
+from alphamind.analysis.news_freshness import NewsEmptyReason, diagnose_empty_news
 from alphamind.analysis.tools._envelope import ToolEnvelope, ToolQuality, format_iso, parse_iso
 from alphamind.persistence.models import NewsArticles, NewsArticleTickers
 
@@ -80,7 +81,20 @@ class NewsSearchArticle(BaseModel, frozen=True):
 
 
 class NewsSearchOutput(ToolEnvelope, frozen=True):
+    """Tool output.
+
+    ``reason`` disambiguates the three structurally distinct unavailable
+    states for the LLM caller (ALP-567): ``"invalid_input"`` when the input
+    payload had no query and no tickers, ``"vendor_api_error"`` when the
+    collector has not ingested news rows within the requested lookback
+    window (an outage, off-hours pause, or auth failure on the upstream
+    vendor side), and ``"no_data"`` when the collector is current but the
+    specific query/ticker filter has no matching rows. ``None`` when the
+    search returned at least one article (``quality == COMPLETE``).
+    """
+
     articles: tuple[NewsSearchArticle, ...]
+    reason: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -130,14 +144,27 @@ def _read_body_excerpt(body_path: str | None) -> str | None:
         return None
 
 
+_REASON_BY_EMPTY_DIAGNOSIS: dict[NewsEmptyReason, str] = {
+    NewsEmptyReason.NO_ROWS_IN_DB: "vendor_api_error",
+    NewsEmptyReason.COLLECTOR_INACTIVE: "vendor_api_error",
+    NewsEmptyReason.NO_HEADLINES_IN_WINDOW: "no_data",
+}
+
+
 def _search_news(session: Session, inp: NewsSearchInput, clock: Clock) -> NewsSearchOutput:
     now = clock.now()
 
     if not inp.query and not inp.tickers:
-        return NewsSearchOutput(articles=(), data_freshness=now, quality=ToolQuality.UNAVAILABLE)
+        return NewsSearchOutput(
+            articles=(),
+            data_freshness=now,
+            quality=ToolQuality.UNAVAILABLE,
+            reason="invalid_input",
+        )
 
     as_of = now
-    window_start_iso = format_iso(as_of - timedelta(hours=inp.lookback_hours))
+    window_start = as_of - timedelta(hours=inp.lookback_hours)
+    window_start_iso = format_iso(window_start)
     as_of_iso = format_iso(as_of)
 
     # Push both filters into SQL: a JOIN/IN against ``news_article_tickers``
@@ -181,7 +208,13 @@ def _search_news(session: Session, inp: NewsSearchInput, clock: Clock) -> NewsSe
     article_rows = session.execute(article_stmt).all()
 
     if not article_rows:
-        return NewsSearchOutput(articles=(), data_freshness=as_of, quality=ToolQuality.UNAVAILABLE)
+        diagnosis = diagnose_empty_news(session, window_start=window_start)
+        return NewsSearchOutput(
+            articles=(),
+            data_freshness=as_of,
+            quality=ToolQuality.UNAVAILABLE,
+            reason=_REASON_BY_EMPTY_DIAGNOSIS[diagnosis.reason],
+        )
 
     article_ids = [row.article_id for row in article_rows]
     ticker_rows = session.execute(
@@ -232,8 +265,20 @@ def _search_news(session: Session, inp: NewsSearchInput, clock: Clock) -> NewsSe
     ).scalar()
     freshness = parse_iso(freshness_row) if freshness_row else as_of
 
-    quality = ToolQuality.COMPLETE if articles else ToolQuality.UNAVAILABLE
-    return NewsSearchOutput(articles=articles, data_freshness=freshness, quality=quality)
+    if not articles:
+        # Reachable only when max_results clamps the result set to zero — every
+        # matched row already produced a scored article above.
+        return NewsSearchOutput(
+            articles=(),
+            data_freshness=freshness,
+            quality=ToolQuality.UNAVAILABLE,
+            reason="no_data",
+        )
+    return NewsSearchOutput(
+        articles=articles,
+        data_freshness=freshness,
+        quality=ToolQuality.COMPLETE,
+    )
 
 
 def news_search_factory(

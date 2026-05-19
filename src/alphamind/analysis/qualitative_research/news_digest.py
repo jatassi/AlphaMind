@@ -30,6 +30,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from alphamind.analysis._shared import Sector
+from alphamind.analysis.news_freshness import (
+    NewsEmptyDiagnosis,
+    diagnose_empty_news,
+    render_empty_reason_text,
+)
 from alphamind.data_sources._common import HeadlineType, decode_topic_tags
 from alphamind.persistence.models import (
     EarningsEventDetails,
@@ -324,12 +329,18 @@ def render_news_digest(
         earnings_rows=earnings_rows,
     )
 
+    empty_diagnosis = (
+        diagnose_empty_news(session, window_start=last_invocation_time)
+        if total_collected == 0
+        else None
+    )
     header = _render_header(
         invocation_id=invocation_id,
         as_of=as_of,
         last_invocation_time=last_invocation_time,
         total_collected=total_collected,
         total_shown=len(entries),
+        empty_diagnosis=empty_diagnosis,
     )
     digest_text = header + "".join(sections)
 
@@ -741,12 +752,16 @@ def _render_header(
     last_invocation_time: datetime,
     total_collected: int,
     total_shown: int,
+    empty_diagnosis: NewsEmptyDiagnosis | None,
 ) -> str:
-    return (
+    base = (
         f"=== NEWS DIGEST (invocation {invocation_id}, "
         f"covering {_format_iso_utc(last_invocation_time)} → {_format_iso_utc(as_of)}) ===\n"
         f"Headlines: {total_collected} collected, {total_shown} shown below\n"
     )
+    if empty_diagnosis is None:
+        return base
+    return f"{base}Reason: {render_empty_reason_text(empty_diagnosis)}\n"
 
 
 __all__ = [

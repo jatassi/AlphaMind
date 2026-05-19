@@ -22,6 +22,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from alphamind.analysis._shared import _SECTOR_AUDIENCE_MAP, Sector
+from alphamind.analysis.news_freshness import (
+    NewsEmptyDiagnosis,
+    diagnose_empty_news,
+)
 from alphamind.data_sources._common import HeadlineType
 from alphamind.distillation.sector_assembly import (
     DOMAIN_RESEARCHER_BY_AUDIENCE,
@@ -131,7 +135,13 @@ class EventEntry:
 
 @dataclass(frozen=True, slots=True)
 class SectorQualitativeInput:
-    """The full qualitative slice a domain researcher consumes for one invocation."""
+    """The full qualitative slice a domain researcher consumes for one invocation.
+
+    ``headlines_empty_diagnosis`` is populated only when ``headlines`` is
+    empty; otherwise ``None``. The classification (ALP-567) tells the
+    input-bundle renderer why the slice is empty so the LLM agent reads a
+    specific cause instead of reasoning from absence.
+    """
 
     sector: Sector
     as_of: datetime
@@ -139,6 +149,7 @@ class SectorQualitativeInput:
     headlines: tuple[HeadlineEntry, ...]
     events: tuple[EventEntry, ...]
     data_freshness: datetime
+    headlines_empty_diagnosis: NewsEmptyDiagnosis | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +193,11 @@ def load_sector_qualitative_input(
     )
     events = _select_events(session, sector=sector, as_of=as_of)
     freshness = _data_freshness(session, as_of=as_of, lookback_window_hours=lookback_window_hours)
+    headlines_empty_diagnosis = (
+        diagnose_empty_news(session, window_start=as_of - timedelta(hours=lookback_window_hours))
+        if not headlines
+        else None
+    )
 
     return SectorQualitativeInput(
         sector=sector,
@@ -190,6 +206,7 @@ def load_sector_qualitative_input(
         headlines=headlines,
         events=events,
         data_freshness=freshness,
+        headlines_empty_diagnosis=headlines_empty_diagnosis,
     )
 
 
