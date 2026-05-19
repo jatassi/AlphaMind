@@ -333,19 +333,25 @@ class TestSectionCAssemblerCorrectness:
             assert abs(pos.position_weight_pct - expected) < 1e-6
 
     def test_gross_exposure_formula(self) -> None:
+        # ALP-579 — directional exposure aggregates OPEN + PENDING (matches
+        # ``get_positions_summary`` / consumer-view semantics + the total
+        # value denominator that already counts both).
+        live_positions = (
+            *self._snapshot.open_positions,
+            *self._snapshot.pending_positions,
+        )
         long_delta = sum(
             float(p.delta_adjusted_exposure_usd)
-            for p in self._snapshot.open_positions
+            for p in live_positions
             if p.delta_adjusted_exposure_usd > 0
         )
         short_delta = sum(
             abs(float(p.delta_adjusted_exposure_usd))
-            for p in self._snapshot.open_positions
+            for p in live_positions
             if p.delta_adjusted_exposure_usd < 0
         )
         total_value = (
-            sum(abs(float(p.current_market_value_usd)) for p in self._snapshot.open_positions)
-            + sum(abs(float(p.current_market_value_usd)) for p in self._snapshot.pending_positions)
+            sum(abs(float(p.current_market_value_usd)) for p in live_positions)
             + self._snapshot.cash_ledger.current_cash_usd
         )
         if total_value > 0:

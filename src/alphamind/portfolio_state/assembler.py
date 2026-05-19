@@ -734,14 +734,23 @@ def assemble_snapshot(
 
     # ------------------------------------------------------------------
     # Step 13 — Compute sector and directional exposure
+    #
+    # Aggregate over OPEN + PENDING positions (ALP-579). Both lifecycle
+    # states are "live": they appear in ``get_positions_summary`` and in
+    # every consumer view (analyst / strategist / PM / synthesizer), and
+    # ``compute_total_portfolio_value_usd`` already sums both. Excluding
+    # PENDING from the exposure aggregates produced a silent contradiction
+    # where ``get_positions_summary`` showed eight positions while
+    # ``get_exposure_snapshot`` returned "No exposure".
     # ------------------------------------------------------------------
+    live_positions = (*final_open, *final_pending)
     sector_exposure = compute_sector_exposure(
-        open_positions=tuple(final_open),
+        positions=live_positions,
         resolver=sector_resolver,
         total_portfolio_value_usd=total_portfolio_value,
     )
     directional_exposure = compute_directional_exposure(
-        open_positions=tuple(final_open),
+        positions=live_positions,
         total_portfolio_value_usd=total_portfolio_value,
     )
 

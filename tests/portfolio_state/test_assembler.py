@@ -239,6 +239,7 @@ def _make_open_equity_position(
     share_count: float = 100.0,
     cost_per_share: float = 500.0,
     direction: Direction = Direction.LONG,
+    status: PositionStatus = PositionStatus.OPEN,
 ) -> PositionRecord:
     equity = EquityPositionDetails(
         ticker=Symbol(ticker),
@@ -255,15 +256,16 @@ def _make_open_equity_position(
         slippage=signed_money(0.01),
         fees=money(1.0),
     )
+    execution_history = () if status == PositionStatus.PENDING else (fill,)
     return PositionRecord(
         position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
-        status=PositionStatus.OPEN,
+        status=status,
         direction=direction,
         entry_timestamp=_ENTRY_AT,
         details=equity,
-        execution_history=(fill,),
+        execution_history=execution_history,
         realized_pnl_to_date_usd=None,
         corporate_action_adjustment_needed=False,
         parent_position_id=None,
@@ -682,6 +684,220 @@ def test_single_equity_position_enrichment() -> None:
     # Directional exposure: net long
     assert snapshot.directional_exposure.total_long_delta_adjusted_usd == pytest.approx(52_000.0)
     assert snapshot.directional_exposure.total_short_delta_adjusted_usd == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# ALP-579: Pending positions contribute to sector / directional exposure
+# ---------------------------------------------------------------------------
+
+
+def test_alp579_three_tool_consistency_with_pending_positions() -> None:
+    """End-to-end: snapshot reader, library snapshot, and risk-budget projection
+    all reflect PENDING positions consistently.
+
+    Walks the same paths the three contradictory tools traversed in
+    invocation ``inv-20260519T030654Z-60f10023``:
+
+    * ``SnapshotBackedSynthesizerReader.get_positions_summary`` (worked) →
+      ``get_exposure_snapshot`` (returned "No exposure" pre-fix).
+    * ``to_library_snapshot`` → ``LibrarySnapshot.sector_exposure_pct`` /
+      ``net_long_pct`` / ``gross_pct`` — the shape ``validate_guardrail``
+      reads from and the headroom calculator projects rules against.
+    * ``build_risk_budget_consumption`` against that library snapshot —
+      the source of the ``Sector headroom`` / ``Directional headroom``
+      blocks in the analyst / strategist / PM input bundles.
+    """
+    from types import MappingProxyType
+
+    from alphamind.portfolio_state.consumers.synthesizer import (
+        SnapshotBackedSynthesizerReader,
+        adapt_ticker_sector_resolver,
+    )
+    from alphamind.risk_guardrails.guardrail_evaluation import (
+        EscalationZones,
+        FeatureFlagsView,
+        LibraryConfig,
+        build_risk_budget_consumption,
+    )
+    from alphamind.risk_guardrails.library_snapshot import to_library_snapshot
+
+    sector_by_ticker = {"NVDA": "tech", "AMD": "tech", "JPM": "financials"}
+
+    def ticker_sector(ticker: str) -> str:
+        return sector_by_ticker.get(ticker, "unclassified")
+
+    def position_sector(pos: PositionRecord) -> str | None:
+        if isinstance(pos.details, EquityPositionDetails):
+            return sector_by_ticker.get(pos.details.ticker)
+        return None
+
+    pending_positions = (
+        _make_open_equity_position(
+            "PND-NVDA", "NVDA", 10.0, 500.0, Direction.LONG, PositionStatus.PENDING
+        ),
+        _make_open_equity_position(
+            "PND-JPM", "JPM", 20.0, 150.0, Direction.LONG, PositionStatus.PENDING
+        ),
+    )
+
+    fixture = _make_fixture(
+        pending_positions=pending_positions,
+        cash_ledger=_make_cash_ledger(current_cash=20_000.0),
+        active_risk_parameters=_make_active_risk_parameters_with_entry(
+            "position_max_size_pct", 10.0
+        ),
+    )
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider(
+        {
+            "NVDA": _make_fresh_quote("NVDA", 520.0),
+            "JPM": _make_fresh_quote("JPM", 160.0),
+        },
+        _NOW,
+    )
+
+    assembled = _run(
+        assemble_snapshot(
+            repository=repo,
+            price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
+            sector_resolver=position_sector,
+            config=_make_config(),
+            now=_NOW,
+        )
+    )
+    snapshot = assembled.snapshot
+
+    # Tool 1: SnapshotBackedSynthesizerReader — get_positions_summary returns
+    # both positions, get_exposure_snapshot returns matching non-empty exposure.
+    reader = SnapshotBackedSynthesizerReader(snapshot, adapt_ticker_sector_resolver(ticker_sector))
+    positions = reader.get_positions_summary()
+    exposure = reader.get_exposure_snapshot()
+    assert len(positions) == 2
+    assert {p.ticker for p in positions} == {"NVDA", "JPM"}
+    assert exposure.sector_exposure_pct != {}
+    assert exposure.gross_exposure_pct > 0.0
+    assert exposure.net_directional_pct > 0.0
+
+    # Tool 2: library snapshot — sector_exposure_pct / net_long_pct / gross_pct
+    # are populated (the validation tool and the headroom calculator both read
+    # this shape).
+    library_snapshot = to_library_snapshot(snapshot, sector_resolver=ticker_sector)
+    assert library_snapshot.sector_exposure_pct["tech"] > 0.0
+    assert library_snapshot.sector_exposure_pct["financials"] > 0.0
+    assert library_snapshot.net_long_pct > 0.0
+    assert library_snapshot.gross_pct > 0.0
+
+    # Tool 3: build_risk_budget_consumption — sector_concentration_* and
+    # net_long_pct / gross_exposure_pct rules carry non-zero current values
+    # (the analyst / strategist / PM headroom blocks read from these).
+    library_config = LibraryConfig(
+        effective_limits=MappingProxyType(
+            {
+                "position_max_size_pct": 10.0,
+                "sector_concentration_pct": 25.0,
+                "net_long_pct": 60.0,
+                "gross_exposure_pct": 120.0,
+                "min_cash_reserve_pct": 10.0,
+                "pending_order_capital_pct": 20.0,
+            }
+        ),
+        escalation_zones=MappingProxyType(
+            {
+                "position_max_size_pct": EscalationZones(70.0, 85.0, 95.0),
+                "sector_concentration_pct": EscalationZones(70.0, 85.0, 95.0),
+                "net_long_pct": EscalationZones(70.0, 85.0, 95.0),
+                "gross_exposure_pct": EscalationZones(70.0, 85.0, 95.0),
+                "min_cash_reserve_pct": EscalationZones(70.0, 85.0, 95.0),
+                "pending_order_capital_pct": EscalationZones(70.0, 85.0, 95.0),
+            }
+        ),
+        feature_flags=FeatureFlagsView(options_enabled=False, short_selling_enabled=False),
+        active_sectors=("tech", "financials"),
+        active_regime="normal",
+        active_profile="medium",
+        conservative_buffer_pct=10.0,
+    )
+    risk_budget = build_risk_budget_consumption(library_snapshot, library_config)
+    entries_by_id = {e.rule_id: e for e in risk_budget.entries}
+    assert entries_by_id["sector_concentration_tech"].current_value > 0.0
+    assert entries_by_id["sector_concentration_financials"].current_value > 0.0
+    assert entries_by_id["net_long_pct"].current_value > 0.0
+    assert entries_by_id["gross_exposure_pct"].current_value > 0.0
+
+
+def test_pending_positions_contribute_to_exposure() -> None:
+    """Pending positions appear in ``get_positions_summary`` and contribute
+    delta-adjusted exposure to ``sector_exposure`` + ``directional_exposure``.
+
+    Regression test for ALP-579: prior assembler aggregated exposure over
+    ``final_open`` only, so a snapshot built entirely from PENDING positions
+    showed every aggregate as zero while per-position views and portfolio
+    value reflected the holdings — silent contradiction between
+    ``get_positions_summary`` (positions present) and ``get_exposure_snapshot``
+    (No exposure).
+    """
+    pending_long = _make_open_equity_position(
+        "PND-LONG",
+        "NVDA",
+        share_count=10.0,
+        cost_per_share=500.0,
+        direction=Direction.LONG,
+        status=PositionStatus.PENDING,
+    )
+    pending_short = _make_open_equity_position(
+        "PND-SHORT",
+        "AMD",
+        share_count=5.0,
+        cost_per_share=100.0,
+        direction=Direction.SHORT,
+        status=PositionStatus.PENDING,
+    )
+    fixture = _make_fixture(
+        pending_positions=(pending_long, pending_short),
+        cash_ledger=_make_cash_ledger(current_cash=0.0),
+    )
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider(
+        {
+            "NVDA": _make_fresh_quote("NVDA", 520.0),
+            "AMD": _make_fresh_quote("AMD", 110.0),
+        },
+        _NOW,
+    )
+
+    def sector_resolver(pos: PositionRecord) -> str | None:
+        if isinstance(pos.details, EquityPositionDetails):
+            return {"NVDA": "TECH", "AMD": "TECH"}.get(pos.details.ticker)
+        return None
+
+    assembled = _run(
+        assemble_snapshot(
+            repository=repo,
+            price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
+            sector_resolver=sector_resolver,
+            config=_make_config(),
+            now=_NOW,
+        )
+    )
+    snapshot = assembled.snapshot
+
+    assert snapshot.open_positions == ()
+    assert len(snapshot.pending_positions) == 2
+
+    # Sector exposure: TECH long $5,200 (10 * 520), short $550 (5 * 110)
+    assert len(snapshot.sector_exposure) == 1
+    tech = snapshot.sector_exposure[0]
+    assert tech.sector == "TECH"
+    assert tech.long_delta_adjusted_usd == pytest.approx(5_200.0)
+    assert tech.short_delta_adjusted_usd == pytest.approx(550.0)
+
+    # Directional exposure: $5,200 long, $550 short, $5,750 gross
+    directional = snapshot.directional_exposure
+    assert directional.total_long_delta_adjusted_usd == pytest.approx(5_200.0)
+    assert directional.total_short_delta_adjusted_usd == pytest.approx(550.0)
+    assert directional.gross_pct_of_portfolio == pytest.approx(100.0)
 
 
 # ---------------------------------------------------------------------------
