@@ -117,8 +117,9 @@ class SentimentAggregate:
     ``rate_of_change``, ``volume``, and ``divergence_flag`` also fall back to
     ``None`` for calibrated tickers when their own per-window source data is
     missing (single baseline row, no daily-bar history). The renderer surfaces
-    ``None`` as ``pending`` so the LLM reads "data not available yet", not
-    "no signal".
+    the all-None case as ``{ticker}: unavailable`` (ALP-540 calibration
+    vocabulary) and per-field ``None`` as inline ``null``, keeping per-ticker
+    and per-field missing-data states visually distinct (ALP-569).
     """
 
     ticker: str
