@@ -697,11 +697,6 @@ def _assemble_phase1_snapshot(
     return assembled, repository
 
 
-# ``last_invocation_time`` fallback when no prior ``invocations`` row exists
-# (first-ever invocation or pristine debug-e2e DB). Matches the
-# domain-researchers' 24h headline lookback in ``analysis/domain_researchers/
-# runner.py`` so the qualitative researcher's cross-sector digest covers the
-# same corpus the sector bundles do.
 _LAST_INVOCATION_FALLBACK = timedelta(hours=24)
 
 
@@ -711,18 +706,29 @@ def _resolve_last_invocation_time(
     current_invocation_id: str,
     now: datetime,
 ) -> datetime:
-    """Return the most recent prior invocation's ``start_at``, or a 24h fallback.
+    """Return the most recent successful prior invocation's ``start_at``.
 
     The qualitative researcher's news-digest window covers
     ``[last_invocation_time, as_of]`` per
     ``docs/design/03-analysis-layer/qualitative-research.md`` § News digest.
-    Picking the prior invocation's ``start_at`` matches the "since the last
-    invocation" semantic; the fallback prevents a zero-width window on the
-    very first invocation when no prior row exists (ALP-535).
+    The filter ``phase2_completed_at IS NOT NULL`` mirrors
+    :func:`alphamind.scheduler.runtime._resolve_active_regime`: an aborted
+    prior invocation's ``start_at`` would otherwise truncate the next
+    invocation's digest window, hiding headlines published between the last
+    successful invocation and the abort.
+
+    Falls back to ``now - 24h`` when no successful prior row exists (first
+    invocation, pristine debug-e2e DB). The 24h horizon matches the domain
+    researchers' fixed ``lookback_window_hours`` in
+    ``analysis/domain_researchers/runner.py`` so the cross-sector digest
+    covers the same corpus the sector bundles do (ALP-535).
     """
     stmt = (
         select(InvocationRow.start_at)
-        .where(InvocationRow.invocation_id != current_invocation_id)
+        .where(
+            InvocationRow.invocation_id != current_invocation_id,
+            InvocationRow.phase2_completed_at.is_not(None),
+        )
         .order_by(InvocationRow.start_at.desc())
         .limit(1)
     )
