@@ -241,6 +241,59 @@ class TestRefreshCompositeStateMarketLiquidity:
 
 
 # ---------------------------------------------------------------------------
+# Zero-variance trailing history → null percentile_60d (ALP-545)
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshCompositeStateZeroVarianceHistory:
+    def test_zero_variance_history_yields_null_percentile_and_silent_alert(
+        self,
+        session: Session,
+    ) -> None:
+        """When every prior composite row carries the same value the rank is undefined.
+
+        Per ALP-545 the publish layer must surface ``None`` rather than a
+        spurious 100 / 0 — otherwise an all-zero bootstrap distribution
+        masquerades as a top-of-distribution reading. ``alert_active``
+        cannot fire against an undefined percentile.
+        """
+        _seed_composite_history(
+            session,
+            composite_kind="funding_stress",
+            n=COMPOSITE_BASELINE_DAYS,
+            base_value=0.0,
+            increment=0.0,  # every prior row's composite_value = 0.0
+        )
+        session.commit()
+
+        result = refresh_composite_state(
+            session,
+            composite_kind="funding_stress",
+            components={
+                "sofr_ois_spread": 0.0,
+                "repo_treasury_spread": 0.0,
+                "term_repo_premium": 0.0,
+                "mmf_flow": 0.0,
+            },
+            as_of="2026-04-25T00:00:00Z",
+            min_observations=COMPOSITE_MIN_OBSERVATIONS,
+            alert_percentile=COMPOSITE_PERCENTILE_ALERT_FUNDING,
+            alert_direction="upper",
+        )
+
+        assert result.value["percentile_60d"] is None
+        assert result.value["alert_active"] is False
+
+        row = session.execute(
+            select(DistillationCompositeState).where(
+                DistillationCompositeState.as_of == "2026-04-25T00:00:00Z",
+            )
+        ).scalar_one()
+        assert row.percentile_60d is None
+        assert row.alert_active == 0
+
+
+# ---------------------------------------------------------------------------
 # Fault injection
 # ---------------------------------------------------------------------------
 

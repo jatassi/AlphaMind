@@ -522,6 +522,7 @@ class TestMarketLiquidityComposite:
         )
 
         assert result.alert_active is True
+        assert result.percentile_60d is not None
         assert result.percentile_60d <= MARKET_LIQUIDITY_ALERT_PERCENTILE
 
     def test_alert_suppressed_when_above_10th_percentile(self, session: Session) -> None:
@@ -547,6 +548,7 @@ class TestMarketLiquidityComposite:
         )
 
         assert result.alert_active is False
+        assert result.percentile_60d is not None
         assert result.percentile_60d > MARKET_LIQUIDITY_ALERT_PERCENTILE
 
 
@@ -571,9 +573,11 @@ class TestMacroSurpriseAnomaly:
     """
 
     def test_anomaly_fires_when_surprise_in_top_10_percent(self) -> None:
-        # Trailing surprises cluster near zero with stdev ~0.1.
+        # Trailing surprises cluster near zero with stdev ~0.04. Magnitudes
+        # vary so the absolute distribution has variance — a uniform abs
+        # distribution would collapse the rank to None.
         # Current surprise of 1.0 is far above the 90th |surprise| percentile.
-        trailing = [0.05 * ((-1) ** i) for i in range(100)]  # ±0.05 alternating
+        trailing = [(0.04 + 0.0005 * i) * ((-1) ** i) for i in range(100)]
         result = detect_macro_surprise_anomaly(
             actual=2.5,
             consensus=1.5,  # surprise = +1.0

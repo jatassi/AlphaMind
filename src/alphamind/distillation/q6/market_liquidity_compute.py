@@ -25,11 +25,16 @@ MARKET_LIQUIDITY_COMPOSITE_KIND = "market_liquidity"
 
 @dataclass(frozen=True, slots=True)
 class MarketLiquidityResult:
-    """Output of the market-liquidity composite refresh."""
+    """Output of the market-liquidity composite refresh.
+
+    ``percentile_60d`` is ``None`` when the trailing composite distribution
+    is empty or zero-variance; the assembler preserves the ``None`` so the
+    published payload reads as ``null``.
+    """
 
     composite_value: float
     components: Mapping[str, float]
-    percentile_60d: float
+    percentile_60d: float | None
     alert_active: bool
     state: CalibrationState
     bootstrap_reason: str | None

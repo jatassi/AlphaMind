@@ -161,7 +161,9 @@ def _build_market_liquidity_block(
     freshness_ts: datetime,
 ) -> OutputBlock:
     flags: tuple[AnomalyFlag, ...] = ()
-    if result.alert_active:
+    # alert_active is False whenever percentile_60d is None; the explicit
+    # guard narrows the type for the magnitude cast below.
+    if result.alert_active and result.percentile_60d is not None:
         flags = (
             AnomalyFlag(
                 name="market_liquidity_alert",

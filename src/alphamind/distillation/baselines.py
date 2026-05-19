@@ -43,6 +43,7 @@ from alphamind.distillation.calibration import (
     CalibrationState,
     decide_calibration_state,
 )
+from alphamind.distillation.normalization import percentile_rank
 from alphamind.persistence.models import (
     DistillationCompositeState,
     DistillationContractHistory,
@@ -1347,24 +1348,19 @@ def _select_composite_history(
     return [float(v) for v in session.execute(stmt).scalars().all()]
 
 
-def _percentile_rank(history: Sequence[float], value: float) -> float:
-    """Return the percentile of ``value`` against ``history`` in 0..100.
-
-    Uses the "<= value" convention: percentile = (count <= value) / n * 100.
-    Returns 0.0 against an empty history.
-    """
-    if not history:
-        return 0.0
-    le = sum(1 for x in history if x <= value)
-    return float(le) / float(len(history)) * 100.0
-
-
 def _alert_active(
     *,
-    percentile: float,
+    percentile: float | None,
     alert_percentile: float,
     direction: AlertDirection,
 ) -> bool:
+    """Derive the alert flag from a percentile + direction.
+
+    An undefined percentile (``None`` — empty or zero-variance trailing
+    distribution) yields ``False``: no signal to alert against.
+    """
+    if percentile is None:
+        return False
     if direction == "upper":
         return percentile >= alert_percentile
     return percentile <= alert_percentile
@@ -1377,7 +1373,7 @@ def _upsert_composite_state(
     as_of: str,
     composite_value: float,
     component_breakdown_json: str,
-    percentile_60d: float,
+    percentile_60d: float | None,
     alert_active: int,
     state: CalibrationState,
 ) -> None:
@@ -1432,7 +1428,7 @@ def refresh_composite_state(
     with _refresh_transaction(session):
         composite_value = float(sum(components.values()))
         history = _select_composite_history(session, composite_kind=composite_kind, as_of=as_of)
-        percentile_60d = _percentile_rank(history, composite_value)
+        percentile_60d = percentile_rank(history, composite_value)
         alert = _alert_active(
             percentile=percentile_60d,
             alert_percentile=alert_percentile,

@@ -21,6 +21,7 @@ from alphamind.distillation.normalization import (
     extended_hours_confidence_weight,
     macro_surprise,
     macro_surprise_zscore,
+    percentile_rank,
     to_et,
 )
 
@@ -407,3 +408,27 @@ def test_macro_surprise_zscore_rejects_zero_variance_trailing_window() -> None:
     """Zero-variance trailing window: z-score is undefined; raise rather than divide by zero."""
     with pytest.raises(ValueError, match="variance"):
         macro_surprise_zscore(surprise=1.0, trailing_surprises=[0.5, 0.5, 0.5])
+
+
+# ---------------------------------------------------------------------------
+# percentile_rank: <=-convention rank with zero-variance / empty sentinel
+# ---------------------------------------------------------------------------
+
+
+def test_percentile_rank_ranks_value_against_distribution() -> None:
+    """Percentile = (count history <= value) / n * 100 on a non-degenerate distribution."""
+    assert percentile_rank([1.0, 2.0, 3.0, 4.0, 5.0], 3.0) == 60.0
+    assert percentile_rank([1.0, 2.0, 3.0, 4.0, 5.0], 5.0) == 100.0
+    assert percentile_rank([1.0, 2.0, 3.0, 4.0, 5.0], 0.0) == 0.0
+
+
+def test_percentile_rank_empty_history_returns_none() -> None:
+    """Empty history: no signal; sentinel None rather than a fabricated 0 / 100."""
+    assert percentile_rank([], 5.0) is None
+
+
+def test_percentile_rank_zero_variance_history_returns_none() -> None:
+    """All-identical history (zero variance): rank is undefined; sentinel None."""
+    assert percentile_rank([0.0, 0.0, 0.0, 0.0], 0.0) is None
+    assert percentile_rank([0.0, 0.0, 0.0, 0.0], 5.0) is None
+    assert percentile_rank([0.5, 0.5, 0.5], 0.5) is None

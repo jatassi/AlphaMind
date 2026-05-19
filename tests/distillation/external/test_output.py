@@ -146,6 +146,25 @@ def test_format_block_omits_anomaly_trailer_when_no_flags() -> None:
     assert "Anomaly flags" not in rendered
 
 
+def test_format_block_renders_none_payload_value_as_null_sentinel() -> None:
+    """A payload field of Python ``None`` renders as the ``null`` sentinel.
+
+    Keeps the operator-readable block from conflating "no signal" with the
+    Python repr ``None``.
+    """
+    block = _make_block(
+        payload={
+            "component_percentiles": {
+                "mmf_flow": None,
+                "sofr_ois_spread": 100.0,
+            },
+        },
+    )
+    rendered = format_block(block)
+    assert "mmf_flow: null" in rendered
+    assert "sofr_ois_spread: 100" in rendered
+
+
 def test_format_per_ticker_renders_compact_one_line_per_ticker() -> None:
     """The per_ticker key collapses to one row per ticker for ALP-272 compactness."""
     block = _make_block(

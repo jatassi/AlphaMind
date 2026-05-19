@@ -58,6 +58,7 @@ from alphamind.persistence.models import (
     AssetUniverse,
     Base,
     Brief,
+    DistillationCompositeState,
     MacroObservations,
     OhlcvBars,
     PredictionMarketContracts,
@@ -336,6 +337,34 @@ def _seed_macro_observations(session: Session, *, end: datetime, days: int) -> N
     session.commit()
 
 
+def _seed_market_liquidity_prior_history(session: Session, *, end: datetime) -> None:
+    """Seed 10 prior market-liquidity composite_state rows with non-zero variance.
+
+    The current invocation's composite_value is dominated by VIXCLS (~17,
+    with the other two proxies defaulting to 0 since the fixture doesn't
+    seed STLFSI4 or BAMLC0A0CM); seeded values 38..110 put the current
+    value below the seeded 10th percentile so the lower-direction alert
+    fires against a real rank rather than the no-signal sentinel. Ten rows
+    keep the block in :attr:`CalibrationState.ACCUMULATING`
+    (``min_observations`` is 60 in the test config).
+    """
+    for offset in range(10, 0, -1):
+        ts = end - timedelta(days=offset + 1)
+        session.add(
+            DistillationCompositeState(
+                composite_kind="market_liquidity",
+                as_of=ts.strftime("%Y-%m-%dT00:00:00Z"),
+                composite_value=30.0 + offset * 8.0,
+                component_breakdown_json="{}",
+                percentile_60d=50.0,
+                alert_active=0,
+                calibration_state="accumulating",
+                ingested_at=ts.strftime("%Y-%m-%dT00:00:00Z"),
+            )
+        )
+    session.commit()
+
+
 @pytest.fixture()
 def populated_session(session: Session) -> Session:
     """A session seeded with three sectors, a few weeks of bars, and macro series."""
@@ -345,6 +374,7 @@ def populated_session(session: Session) -> Session:
     for ticker in _SECTOR_TICKERS:
         _seed_ohlcv_for_ticker(session, ticker=ticker, days=days, end=end)
     _seed_macro_observations(session, end=end, days=days)
+    _seed_market_liquidity_prior_history(session, end=end)
     return session
 
 

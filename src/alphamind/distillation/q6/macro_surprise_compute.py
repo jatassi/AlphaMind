@@ -15,20 +15,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from alphamind.distillation.normalization import macro_surprise_zscore
+from alphamind.distillation.normalization import macro_surprise_zscore, percentile_rank
 from alphamind.distillation.output import AnomalyFlag
-
-
-def _absolute_percentile_rank(history: Sequence[float], value: float) -> float:
-    """Percentile of ``|value|`` against the |history| distribution in 0..100.
-
-    Empty history returns 0.0; the caller decides whether that's signal.
-    """
-    if not history:
-        return 0.0
-    abs_history = [abs(x) for x in history]
-    le = sum(1 for x in abs_history if x <= abs(value))
-    return float(le) / float(len(abs_history)) * 100.0
 
 
 def detect_macro_surprise_anomaly(
@@ -59,22 +47,16 @@ def detect_macro_surprise_anomaly(
     (:func:`assemble_q6_blocks` keys block_ids by indicator). This keeps
     the detector pure with respect to the surprise math.
 
-    Returns ``None`` when the surprise is below the threshold or the
-    trailing distribution is too short to compute a z-score.
+    Returns ``None`` when the surprise is below the threshold or when the
+    absolute trailing distribution provides no calibrated signal (empty or
+    zero-variance — :func:`percentile_rank` returns ``None``).
     """
     surprise = actual - consensus
-    if not trailing_surprises:
+    abs_history = [abs(x) for x in trailing_surprises]
+    rank = percentile_rank(abs_history, abs(surprise))
+    if rank is None or rank < alert_percentile:
         return None
-    rank = _absolute_percentile_rank(trailing_surprises, surprise)
-    if rank < alert_percentile:
-        return None
-    try:
-        z_score = macro_surprise_zscore(surprise, trailing_surprises)
-    except ValueError:
-        # Zero-variance trailing distribution → cannot z-score; the
-        # anomaly is real but unscalable. Surface as a flag carrying the
-        # raw surprise magnitude in absolute units.
-        z_score = surprise
+    z_score = macro_surprise_zscore(surprise, trailing_surprises)
     return AnomalyFlag(
         name="macro_surprise_anomaly",
         magnitude=float(z_score),
