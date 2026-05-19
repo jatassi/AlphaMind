@@ -563,10 +563,11 @@ def refresh_market_liquidity_composite(
         alert_percentile=alert_percentile,
         alert_direction="lower",
     )
+    raw_percentile = persistence_result.value["percentile_60d"]
     return MarketLiquidityResult(
         composite_value=float(persistence_result.value["composite_value"]),
         components=dict(components),
-        percentile_60d=float(persistence_result.value["percentile_60d"]),
+        percentile_60d=None if raw_percentile is None else float(raw_percentile),
         alert_active=bool(persistence_result.value["alert_active"]),
         state=persistence_result.state,
         bootstrap_reason=persistence_result.bootstrap_reason,

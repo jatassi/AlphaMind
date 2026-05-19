@@ -22,6 +22,7 @@ from alphamind.distillation._calibration_core import (
     CalibrationState,
     decide_calibration_state,
 )
+from alphamind.distillation.normalization import percentile_rank
 
 ATM_IV_BASELINE_KIND = "atm_iv"
 """Baseline kind tag for the ATM-IV trailing baseline rows."""
@@ -57,18 +58,6 @@ class AtmIvBaselineResult:
     upsert: AtmIvBaselineUpsertPayload | None
 
 
-def _percentile_rank(values: Sequence[float], target: float) -> float:
-    """Percentile of ``target`` against ``values`` using the ``<= target`` convention.
-
-    Mirrors :func:`alphamind.distillation.baselines._percentile_rank` so the
-    IV-rank read is consistent with the composite-state IV-rank read.
-    """
-    if not values:
-        return 0.0
-    le = sum(1 for x in values if x <= target)
-    return float(le) / float(len(values)) * 100.0
-
-
 def compute_atm_iv_baseline(
     history: Sequence[float],
     *,
@@ -95,7 +84,7 @@ def compute_atm_iv_baseline(
     mean = statistics.fmean(history)
     stdev = statistics.pstdev(history) if n > 1 else 0.0
     latest = history[-1]
-    percentile = _percentile_rank(history, latest)
+    percentile = percentile_rank(history, latest)
     state = decide_calibration_state(observed_n=n, required_n=min_observations)
     reason = (
         None

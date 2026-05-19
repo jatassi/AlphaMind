@@ -185,8 +185,21 @@ _PAYLOAD_INDENT = "  "
 _PER_TICKER_KEY = "per_ticker"
 
 
+_NULL_SENTINEL = "null"
+"""Operator-visible spelling for a payload field whose value is explicitly absent.
+
+ALP-545: a percentile produced against an empty or zero-variance trailing
+distribution is ``None`` in the payload; render as ``null`` so the operator
+reads "no signal" rather than the Python repr ``None``. YAML-compatible so
+downstream tooling that parses block text continues to recognize the
+sentinel.
+"""
+
+
 def _format_value(value: Any) -> str:
     """Render a leaf payload value, applying the float-precision rule for floats."""
+    if value is None:
+        return _NULL_SENTINEL
     if isinstance(value, float):
         return format(value, GENERAL_FLOAT_FORMAT)
     return str(value)
@@ -199,6 +212,8 @@ def _format_inline_value(value: Any) -> str:
     stays on one line. Floats follow :data:`GENERAL_FLOAT_FORMAT`; nested
     mappings recurse via the same inline rule.
     """
+    if value is None:
+        return _NULL_SENTINEL
     if isinstance(value, float):
         return format(value, GENERAL_FLOAT_FORMAT)
     if isinstance(value, Mapping):

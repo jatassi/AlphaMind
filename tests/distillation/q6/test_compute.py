@@ -253,9 +253,14 @@ def test_component_percentile_value_at_top_reports_100() -> None:
     assert component_percentile(10.0, [1.0, 2.0, 3.0, 4.0, 5.0]) == 100.0
 
 
-def test_component_percentile_empty_history_returns_zero() -> None:
-    """No prior history means percentile is undefined; report 0.0."""
-    assert component_percentile(5.0, []) == 0.0
+def test_component_percentile_empty_history_returns_none() -> None:
+    """No prior history means percentile is undefined; surface None rather than 0 / 100."""
+    assert component_percentile(5.0, []) is None
+
+
+def test_component_percentile_zero_variance_history_returns_none() -> None:
+    """All-zero (or otherwise zero-variance) history can't rank a value — None per ALP-545."""
+    assert component_percentile(0.0, [0.0, 0.0, 0.0]) is None
 
 
 def test_compute_funding_stress_alert_fires_when_three_above() -> None:
@@ -295,16 +300,62 @@ def test_compute_funding_stress_alert_fires_when_three_above() -> None:
 def test_compute_funding_stress_alert_silent_below_min_count() -> None:
     """Fewer than ``component_alert_count`` above-threshold → silent."""
     components = {"a": 1.0, "b": 0.0, "c": 0.0, "d": 0.0}
-    prior_history: list[dict[str, float]] = [{"a": 0.0, "b": 1.0, "c": 1.0, "d": 1.0}]
+    # Trailing series have variance so percentile_rank doesn't collapse to None.
+    prior_history: list[dict[str, float]] = [
+        {"a": 0.0, "b": 0.5, "c": 0.5, "d": 0.5},
+        {"a": 0.5, "b": 1.5, "c": 1.5, "d": 1.5},
+    ]
     _, components_above, alert_active = compute_funding_stress_alert(
         components=components,
         prior_history=prior_history,
         component_alert_count=2,
         component_alert_percentile=90.0,
     )
-    # Only ``a`` is at 100; b/c/d at 50%.
+    # ``a`` sits at 100 against [0, 0.5]; b/c/d sit at 0 against [0.5, 1.5].
     assert components_above == 1
     assert alert_active is False
+
+
+def test_compute_funding_stress_alert_skips_zero_variance_component() -> None:
+    """ALP-545: a component whose trailing series is all-zeros yields None percentile.
+
+    A None percentile cannot count toward ``components_above`` — historically
+    such a component pinned at the bootstrap default (0) was incorrectly
+    pushed to 100 by the ``<=`` convention and would fire the aggregate alert
+    against a degenerate distribution.
+    """
+    components = {
+        "sofr_ois_spread": 1.0,
+        "repo_treasury_spread": 1.0,
+        "term_repo_premium": 1.0,
+        "mmf_flow": 0.0,
+    }
+    # mmf_flow's trailing series is uniformly zero — the bootstrap-period pattern.
+    prior_history: list[dict[str, float]] = [
+        {
+            "sofr_ois_spread": 0.0,
+            "repo_treasury_spread": 0.0,
+            "term_repo_premium": 0.0,
+            "mmf_flow": 0.0,
+        },
+        {
+            "sofr_ois_spread": 0.5,
+            "repo_treasury_spread": 0.5,
+            "term_repo_premium": 0.5,
+            "mmf_flow": 0.0,
+        },
+    ]
+    percentiles, components_above, alert_active = compute_funding_stress_alert(
+        components=components,
+        prior_history=prior_history,
+        component_alert_count=3,
+        component_alert_percentile=90.0,
+    )
+    assert percentiles["mmf_flow"] is None
+    # sofr/repo/term at 100 (top of varying history); mmf None — three real signals fire.
+    assert percentiles["sofr_ois_spread"] == 100.0
+    assert components_above == 3
+    assert alert_active is True
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +385,19 @@ def test_macro_surprise_anomaly_silent_below_alert_percentile() -> None:
         alert_percentile=90.0,
     )
     assert flag is None
+
+
+def test_macro_surprise_anomaly_zero_variance_trailing_returns_none() -> None:
+    """ALP-545: an all-identical trailing distribution can't rank — no anomaly fires."""
+    assert (
+        detect_macro_surprise_anomaly(
+            actual=5.0,
+            consensus=0.0,
+            trailing_surprises=[0.0, 0.0, 0.0, 0.0],
+            alert_percentile=90.0,
+        )
+        is None
+    )
 
 
 def test_macro_surprise_anomaly_empty_history_returns_none() -> None:

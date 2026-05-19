@@ -161,7 +161,10 @@ def _build_market_liquidity_block(
     freshness_ts: datetime,
 ) -> OutputBlock:
     flags: tuple[AnomalyFlag, ...] = ()
-    if result.alert_active:
+    # alert_active can only fire on a defined percentile (per ALP-545's
+    # _alert_active null branch); the explicit None guard pins the
+    # invariant for the type checker.
+    if result.alert_active and result.percentile_60d is not None:
         flags = (
             AnomalyFlag(
                 name="market_liquidity_alert",

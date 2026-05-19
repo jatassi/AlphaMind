@@ -299,6 +299,30 @@ def macro_surprise(actual: float, consensus: float) -> float:
     return actual - consensus
 
 
+def percentile_rank(history: Sequence[float], value: float) -> float | None:
+    """Percentile of ``value`` against ``history`` (``<=`` convention) in 0..100.
+
+    Returns ``None`` when the rank is undefined:
+
+    - ``history`` is empty.
+    - ``history`` has zero variance (every observation identical) — the rank
+      reduces to a tautology, not a position. Returning a sentinel rather
+      than 100 prevents the ALP-545 pattern where a bootstrap-period
+      component reads at 0 against an all-zero trailing series and reports
+      a spurious 100th percentile.
+
+    Callers decide how to surface the ``None`` — typically by propagating
+    it into their published payload (rather than substituting 0 / 100).
+    """
+    if not history:
+        return None
+    first = history[0]
+    if all(x == first for x in history):
+        return None
+    le = sum(1 for x in history if x <= value)
+    return float(le) / float(len(history)) * 100.0
+
+
 def macro_surprise_zscore(
     surprise: float,
     trailing_surprises: Sequence[float],
@@ -337,5 +361,6 @@ __all__ = [
     "extended_hours_confidence_weight",
     "macro_surprise",
     "macro_surprise_zscore",
+    "percentile_rank",
     "to_et",
 ]
