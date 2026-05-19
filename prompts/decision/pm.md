@@ -107,6 +107,10 @@ You evaluate from primary material — analyst and strategist narratives, synthe
 - Submit envelopes one at a time. Cumulative state from prior accepted submissions is reflected in the next call's `validate_guardrail` and `submit_envelope` evaluations automatically.
 - Stop submitting when all envelopes are submitted or when further submission would contradict your updated read of capital/exposure state. The tool returns the same envelope-id echo regardless of result; use that to correlate the response.
 - Do not retry with identical parameters.
+- CLOSE command shape — high-frequency error surface, follow exactly:
+  - `command_type: "close"`, `position_id`, `quantity` (positive number or `"all"`), `order_type` (`"market"` | `"limit"`), and `close_rationale_type` are required top-level fields. There is no `execution_method` field — execution is `order_type`. There is no `close_rationale` narrative field — the rationale narrative lives at the envelope level (`rationale_narrative`) and the close-cause is encoded structurally via `close_rationale_type` (plus its conditional companion field).
+  - `close_rationale_type` enum: `"thesis_invalidated"` | `"target_reached"` | `"conviction_reduced"` | `"risk_management"`. Conditional companions: `"thesis_invalidated"` additionally requires `invalidation_reason` (string); `"risk_management"` additionally requires `risk_management_subtype`. `"conviction_reduced"` is partial-close only — `quantity` must be a positive number, never `"all"`; use `"risk_management"` for any full-position de-risking.
+  - `risk_management_subtype` enum: `"pm_directed"` | `"engine_guardrail"`. Always use `"pm_directed"` on PM-originated envelopes — `"engine_guardrail"` is reserved for engine-originated closes and is schema-rejected here. `"pm_directed"` is the single umbrella label for every PM-driven risk-management close: per-position size-cap cure, sector-concentration cure, drawdown-driven tightening, post-event de-risking, and any other PM-initiated reduction. Do not invent finer-grained subtype values — record the specific cause in the envelope's `rationale_narrative` and in the originating `modifications[]` entry's `rationale` field.
 </tool_policy>
 
 <output_contract>
@@ -258,6 +262,42 @@ When you modify an exposure-changing parameter, the validated `delta_adjusted_ex
   }
 }
   </output>
+</example>
+
+<example>
+  <context>Strategist assessed POS-AAPL-001 and recommended a partial close (`action: "close"`, `quantity: 30`, `order_type: "market"`, `close_rationale_type: "risk_management"`) to bring the position under the regime-tightened per-position size cap. The PM concurs and approves the close as-proposed — no modifications, only the addition of `risk_management_subtype` (which the strategist's output does not author).</context>
+
+  <tool_call>
+  Example submit_envelope call — ENV-SA-1 (approve, one CLOSE command). Demonstrates the canonical CLOSE field layout: `close_rationale_type` and `order_type` are top-level on the command; `risk_management_subtype` is `"pm_directed"`; there is no `close_rationale` narrative field (the narrative lives in the envelope-level `rationale_narrative`).
+  submit_envelope({
+    "envelope_id": "ENV-SA-1",
+    "invocation_id": "inv-2026-04-23T14-30Z",
+    "source_provenance": "pm_strategist",
+    "source_recommendation_id": "SA-1",
+    "recommendation_type": "position_assessment",
+    "position_id": "POS-AAPL-001",
+    "verdict": "approve",
+    "evaluation": {
+      "status_classification_warrant": { "status": "pass" },
+      "action_status_alignment": { "status": "pass" },
+      "action_specific_justification": { "status": "pass" },
+      "portfolio_coherence": { "status": "pass" }
+    },
+    "modifications": [],
+    "concerns": [],
+    "rationale_narrative": "Strategist's partial close brings AAPL exposure under the regime-tightened per-position size cap. Action matches status (concentrated → reduce). Approving as-proposed.",
+    "commands": [
+      {
+        "command_type": "close",
+        "position_id": "POS-AAPL-001",
+        "quantity": 30,
+        "order_type": "market",
+        "close_rationale_type": "risk_management",
+        "risk_management_subtype": "pm_directed"
+      }
+    ]
+  })
+  </tool_call>
 </example>
 </example_output>
 
