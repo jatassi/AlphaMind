@@ -268,3 +268,67 @@ async def test_refresh_realized_vol_map_in_place_updates_shared_dict(
 
     assert "AAPL" in shared_map
     assert shared_map["AAPL"].trailing_30d_realized_vol == pytest.approx(0.27)
+
+
+class TestEmptyMapAlertOnce:
+    def test_fires_once_when_first_refresh_returns_empty(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from alphamind.execution.continuous_monitor.__main__ import (
+            _EmptyMapAlertOnce,
+        )
+
+        guard = _EmptyMapAlertOnce()
+        with caplog.at_level("ERROR", logger="alphamind.execution.continuous_monitor"):
+            guard.observe(count=0)
+
+        records = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert len(records) == 1, f"expected one ERROR, got {len(records)}"
+        assert "realized_vol map is empty" in records[0].message
+
+    def test_does_not_re_fire_after_first_empty_observation(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from alphamind.execution.continuous_monitor.__main__ import (
+            _EmptyMapAlertOnce,
+        )
+
+        guard = _EmptyMapAlertOnce()
+        with caplog.at_level("ERROR", logger="alphamind.execution.continuous_monitor"):
+            guard.observe(count=0)
+            guard.observe(count=0)
+            guard.observe(count=0)
+
+        records = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert len(records) == 1
+
+    def test_does_not_fire_when_first_refresh_is_populated(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from alphamind.execution.continuous_monitor.__main__ import (
+            _EmptyMapAlertOnce,
+        )
+
+        guard = _EmptyMapAlertOnce()
+        with caplog.at_level("ERROR", logger="alphamind.execution.continuous_monitor"):
+            guard.observe(count=5)
+
+        records = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert records == []
+
+    def test_disarms_after_populated_first_refresh(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A populated first refresh disarms the guard — later empty refreshes
+        don't trigger the bootstrap alert. The alert is scoped to the
+        substrate-just-landed case, not arbitrary later regressions.
+        """
+        from alphamind.execution.continuous_monitor.__main__ import (
+            _EmptyMapAlertOnce,
+        )
+
+        guard = _EmptyMapAlertOnce()
+        with caplog.at_level("ERROR", logger="alphamind.execution.continuous_monitor"):
+            guard.observe(count=5)
+            guard.observe(count=0)
+
+        records = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert records == []
