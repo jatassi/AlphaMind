@@ -47,6 +47,12 @@ _ATANH_CLIP: float = 0.9999
 # Denominator in the standard-normal tail probability ``erfc(|z| / sqrt(2))``.
 _SQRT_TWO: float = math.sqrt(2.0)
 
+# Authoritative block_id for the cross-stock dispersion-shift sub-block.
+# Exposed for the brief assembler's routing dispatch — both producer and
+# consumer must agree on the literal, so the constant is the single source
+# of truth (ALP-546).
+DISPERSION_SHIFT_BLOCK_ID = f"{_BLOCK_NAMESPACE}.correlation_breakdown.dispersion_shift"
+
 
 @dataclass(frozen=True)
 class CorrelationRegimeChangeParameters:
@@ -347,7 +353,7 @@ def _dispersion_shift_block(
         input_name="dispersion_window_observations",
     )
     return OutputBlock(
-        block_id=f"{_BLOCK_NAMESPACE}.correlation_breakdown.dispersion_shift",
+        block_id=DISPERSION_SHIFT_BLOCK_ID,
         audience=frozenset({OutputAudience.CORRELATION_REGIME_BRIEF}),
         freshness_ts=as_of,
         calibration_state=state,
@@ -454,6 +460,7 @@ def compute_correlation_regime_change_pure(
 
 
 __all__ = [
+    "DISPERSION_SHIFT_BLOCK_ID",
     "CorrelationRegimeChangeParameters",
     "compute_correlation_regime_change_pure",
 ]

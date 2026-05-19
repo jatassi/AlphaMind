@@ -36,6 +36,9 @@ from alphamind.distillation.output import (
     OutputBlock,
     format_blocks_for_audience,
 )
+from alphamind.distillation.q7.correlation_regime_change_compute import (
+    DISPERSION_SHIFT_BLOCK_ID,
+)
 from alphamind.distillation.regime import REGIME_BLOCK_ID
 
 # ---------------------------------------------------------------------------
@@ -51,13 +54,6 @@ _CROSS_SECTOR_ROTATION_PREFIX = "q7.cross_sector_rotation"
 _INTERMARKET_REGIME_PREFIX = "q7.intermarket_regime."
 _LEAD_LAG_PREFIX = "q7.lead_lag."
 _CORRELATION_BREAKDOWN_PREFIX = "q7.correlation_breakdown."
-# The dispersion_shift block shares the correlation_breakdown namespace but
-# carries a distinct payload schema (cross-stock dispersion z-test, not a
-# correlation pair); it routes through the same category but a dedicated
-# decomposer — without the branch, the pair decomposer's
-# ``payload.get("short_correlation")`` reads return None for every detail
-# field (ALP-546).
-_DISPERSION_SHIFT_BLOCK_ID = f"{_CORRELATION_BREAKDOWN_PREFIX}dispersion_shift"
 _NARRATIVE_LAG_PREFIX = "q7.narrative_lag"
 
 
@@ -344,7 +340,7 @@ def _decompose_lead_lag_block(block: OutputBlock) -> list[_Finding]:
 
 
 def _decompose_dispersion_shift_block(block: OutputBlock) -> list[_Finding]:
-    """One finding for the dispersion_shift block (cross-stock dispersion z-test)."""
+    """One finding for the dispersion_shift block."""
     payload = block.payload
     today = payload.get("today_dispersion")
     mean_trailing = payload.get("mean_trailing_dispersion")
@@ -381,7 +377,7 @@ def _decompose_correlation_breakdown_block(block: OutputBlock) -> list[_Finding]
     carries a distinct payload schema — dispatch to its dedicated decomposer
     rather than treating the block as a correlation pair (ALP-546).
     """
-    if block.block_id == _DISPERSION_SHIFT_BLOCK_ID:
+    if block.block_id == DISPERSION_SHIFT_BLOCK_ID:
         return _decompose_dispersion_shift_block(block)
     payload = block.payload
     # The pair label is encoded into the block_id by the producer

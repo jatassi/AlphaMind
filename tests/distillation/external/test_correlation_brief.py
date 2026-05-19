@@ -10,9 +10,13 @@ from alphamind.distillation.correlation_brief import (
     assemble_correlation_brief,
 )
 from alphamind.distillation.output import (
+    GENERAL_FLOAT_FORMAT,
     AnomalyFlag,
     OutputAudience,
     OutputBlock,
+)
+from alphamind.distillation.q7.correlation_regime_change_compute import (
+    DISPERSION_SHIFT_BLOCK_ID,
 )
 from alphamind.distillation.regime import REGIME_BLOCK_ID
 
@@ -397,7 +401,7 @@ def _dispersion_shift_block(
 ) -> OutputBlock:
     """Build a story-08c dispersion_shift block with the documented payload schema."""
     return OutputBlock(
-        block_id="q7.correlation_breakdown.dispersion_shift",
+        block_id=DISPERSION_SHIFT_BLOCK_ID,
         audience=frozenset({OutputAudience.CORRELATION_REGIME_BRIEF}),
         freshness_ts=datetime(2026, 4, 27, 14, 0, tzinfo=UTC),
         calibration_state=CalibrationState.CALIBRATED,
@@ -437,20 +441,27 @@ def test_dispersion_shift_block_does_not_render_as_correlation_pair() -> None:
         blocks=[regime_block, dispersion_block], invocation_id="inv-dispersion"
     )
 
-    assert "short None" not in brief.text
-    assert "long None" not in brief.text
-    assert "deviation None sigma" not in brief.text
-    assert "Short correlation: None" not in brief.text
-    assert "Long correlation: None" not in brief.text
-    assert "Deviation sigma: None" not in brief.text
-    # The dispersion_shift block contributes its own CR-N entry with payload
-    # values rendered explicitly. Reference index resolves the CR-N back to
-    # the source block_id.
+    # Structural guard against the misroute-symptom class: the
+    # CORRELATION REGIME CHANGE section must not contain the literal
+    # ``None`` (the rendered form of an absent payload key).
+    cr_section_start = brief.text.find("=== CORRELATION REGIME CHANGE ===")
+    cr_section_end = brief.text.find("===", cr_section_start + 1)
+    if cr_section_end == -1:
+        cr_section_end = len(brief.text)
+    cr_section = brief.text[cr_section_start:cr_section_end]
+    assert "None" not in cr_section, cr_section
+    # Positive: the dispersion_shift block contributes its own CR-N entry
+    # with the actual payload values rendered. Float strings go through
+    # GENERAL_FLOAT_FORMAT so the assertion tracks the format constant
+    # rather than a hardcoded literal.
+    today_str = format(0.025, GENERAL_FLOAT_FORMAT)
+    mean_str = format(0.010, GENERAL_FLOAT_FORMAT)
+    zscore_str = format(5.0, GENERAL_FLOAT_FORMAT)
     assert "dispersion shift" in brief.text
-    assert "Today dispersion: 0.025" in brief.text
-    assert "Trailing mean dispersion: 0.01" in brief.text
-    assert "Z-score: 5" in brief.text
-    assert "q7.correlation_breakdown.dispersion_shift" in brief.reference_index.values()
+    assert f"Today dispersion: {today_str}" in brief.text
+    assert f"Trailing mean dispersion: {mean_str}" in brief.text
+    assert f"Z-score: {zscore_str}" in brief.text
+    assert DISPERSION_SHIFT_BLOCK_ID in brief.reference_index.values()
 
 
 def test_byte_identical_across_repeated_calls() -> None:
