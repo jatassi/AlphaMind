@@ -39,7 +39,6 @@ import json
 import logging
 import math
 import re
-import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -85,9 +84,6 @@ _DEFAULT_DELTA_THRESHOLD_PP: float = 10.0
 # Low-liquidity volume cutoff in USD — below this 24h volume is low liquidity.
 _DEFAULT_LOW_LIQUIDITY_USD: float = 10_000.0
 
-# Minimum trailing observations for per-ticker calibration.
-_DEFAULT_SENTIMENT_MIN_OBSERVATIONS: int = 30
-
 # News-vs-price divergence window — lookback in calendar days for the price
 # return that is compared against sentiment direction.
 _DEFAULT_DIVERGENCE_PRICE_LOOKBACK_DAYS: int = 5
@@ -111,18 +107,26 @@ class SentimentAggregate:
     ``data_freshness`` is the timestamp of the underlying baseline row.
 
     ``calibration_state`` mirrors the baseline row's state from the ALP-540
-    vocabulary and is the single source of truth for the renderer when
-    choosing between the per-ticker ``unavailable`` line and a numeric row
-    (ALP-569). Every numeric field may be ``None``: ``UNAVAILABLE`` tickers
-    (zero observations — collector down, vendor outage, or genuinely no
-    headlines yet) emit an all-``None`` record rather than pool-fallback
-    numbers that look like neutral signal (ALP-538); ``rate_of_change``,
-    ``volume``, and ``divergence_flag`` also fall back to ``None`` for
-    calibrated tickers when their own per-window source data is missing
-    (single baseline row, no daily-bar history). The renderer surfaces
-    ``UNAVAILABLE`` as ``{ticker}: unavailable`` and per-field ``None`` as
-    inline ``null``, keeping per-ticker and per-field missing-data states
-    visually distinct.
+    vocabulary and is the renderer's single source of truth when choosing
+    between a per-ticker collapsed line and a numeric row.
+
+    Only baseline rows tagged :attr:`CalibrationState.CALIBRATED` emit
+    per-ticker numeric fields; ``ACCUMULATING`` and ``UNAVAILABLE`` baselines
+    emit an all-``None`` record so a shared fallback distribution cannot
+    masquerade as "modestly weak sentiment" downstream. The renderer
+    collapses both non-calibrated states to ``{ticker}: {state}`` so the
+    operator-visible difference between "collector dead" and "still
+    accumulating observations" stays distinct.
+
+    ``rate_of_change`` and ``volume`` additionally fall back to ``None``
+    when no articles flowed through the inter-baseline window (single
+    baseline row, or two baselines with zero articles between them) — the
+    change/vol math is mechanical without inflow, and a mechanical ``0``
+    is indistinguishable downstream from a quiet-but-healthy news cycle.
+    ``divergence_flag`` falls back to ``None`` when price history is
+    insufficient. The renderer surfaces these per-field ``None`` values
+    inline as ``null``, keeping per-ticker and per-field missing-data
+    states visually distinct.
     """
 
     ticker: str
@@ -443,28 +447,11 @@ def _load_recent_sentiment_baselines(
     return buckets
 
 
-def _universe_pooled_sentiment(session: Session, *, as_of_str: str) -> tuple[float, float] | None:
-    """Return universe-pooled ``(mean, stdev)`` from calibrated baselines."""
-    rows = session.execute(
-        select(DistillationTickerBaseline.mean, DistillationTickerBaseline.stdev).where(
-            DistillationTickerBaseline.baseline_kind == "sentiment",
-            DistillationTickerBaseline.as_of <= as_of_str,
-            DistillationTickerBaseline.calibration_state == "calibrated",
-        )
-    ).all()
-    if not rows:
-        return None
-    means = [float(r[0]) for r in rows]
-    stdevs = [float(r[1]) for r in rows]
-    return statistics.fmean(means), statistics.fmean(stdevs)
-
-
 def load_sentiment_aggregates(
     session: Session,
     *,
     as_of: datetime,
     ticker_scope: Sequence[str] | None = None,
-    sentiment_min_observations: int = _DEFAULT_SENTIMENT_MIN_OBSERVATIONS,
     divergence_price_lookback_days: int = _DEFAULT_DIVERGENCE_PRICE_LOOKBACK_DAYS,
     divergence_min_abs: float = _DEFAULT_DIVERGENCE_MIN_ABS,
 ) -> tuple[SentimentAggregate, ...]:
@@ -473,18 +460,25 @@ def load_sentiment_aggregates(
     Reads the latest ``distillation_ticker_baseline`` rows for
     ``baseline_kind = 'sentiment'`` at or before ``as_of``.
 
-    ``percentile_vs_self`` is computed via the Normal-CDF approximation using
-    the stored ``(mean, stdev)`` from the rolling calibration-state snapshot.
-    Tickers below ``sentiment_min_observations`` fall back to the
-    universe-pooled distribution; the record still emits with
-    ``data_freshness`` surfacing the bootstrap state.
+    Only ``CalibrationState.CALIBRATED`` baselines emit numeric fields;
+    ``ACCUMULATING`` and ``UNAVAILABLE`` rows emit an all-``None`` record so
+    a shared fallback distribution cannot broadcast bit-identical
+    magnitude/percentile placeholders across every bootstrap ticker.
+
+    For calibrated tickers, ``percentile_vs_self`` is computed via the
+    Normal-CDF approximation using the stored ``(mean, stdev)`` from the
+    rolling calibration-state snapshot.
 
     ``rate_of_change`` is the diff between the latest baseline mean and the
-    prior-period mean; ``None`` when only one row exists.
+    prior-period mean; ``None`` when only one row exists OR when no articles
+    flowed through the inter-baseline window (zero inflow leaves the mean
+    diff as mechanical noise from window-edge eviction, not new signal).
 
     ``volume`` is the count of ``news_article_tickers`` rows whose article
-    ``published_at`` falls in the rate-of-change window; ``None`` when there
-    is no prior baseline to anchor the window.
+    ``published_at`` falls in the rate-of-change window; ``None`` when no
+    prior baseline anchors the window OR when the window count is zero.
+    Collapsing both cases to ``None`` means a mechanical-zero empty upstream
+    is not indistinguishable downstream from a quiet news cycle.
 
     ``divergence_flag`` is ``True`` when sentiment direction disagrees with
     the ``divergence_price_lookback_days`` trailing price return and both
@@ -501,13 +495,14 @@ def load_sentiment_aggregates(
     if not baselines:
         return ()
 
-    # UNAVAILABLE rows skip the per-window article / price-return queries —
-    # the downstream branch emits an all-None record and never reads either
-    # mapping, so feeding their tickers into the IN-list would be dead work.
-    available_tickers = [
+    # Only CALIBRATED tickers exercise the per-window article / price-return
+    # queries — non-calibrated rows take the all-None branch and never read
+    # either mapping, so feeding their tickers into the IN-list would be dead
+    # work.
+    calibrated_tickers = [
         t
         for t, r in baselines.items()
-        if CalibrationState(r[0].calibration_state) is not CalibrationState.UNAVAILABLE
+        if CalibrationState(r[0].calibration_state) is CalibrationState.CALIBRATED
     ]
 
     # Article counts use each ticker's own rate-of-change window. In the
@@ -516,7 +511,7 @@ def load_sentiment_aggregates(
     # collapses to one query; backfills or repair refreshes that desync the
     # panel naturally fan out into per-window queries.
     window_buckets: dict[tuple[str, str], list[str]] = {}
-    for ticker in available_tickers:
+    for ticker in calibrated_tickers:
         recent = baselines[ticker]
         if len(recent) == 2:
             window_buckets.setdefault((recent[1].as_of, recent[0].as_of), []).append(ticker)
@@ -533,23 +528,20 @@ def load_sentiment_aggregates(
 
     price_returns = _load_price_returns_by_ticker(
         session,
-        tickers=available_tickers,
+        tickers=calibrated_tickers,
         as_of=as_of,
         lookback_days=divergence_price_lookback_days,
     )
 
-    pool: tuple[float, float] | None = None  # lazy-loaded
-
     results: list[SentimentAggregate] = []
     for ticker, recent in baselines.items():
         row = recent[0]
-        # UNAVAILABLE rows (zero sentiment observations — collector down,
-        # vendor outage, benchmark ticker without headline coverage) emit an
-        # all-None record. The pool-fallback path below would otherwise
-        # broadcast bit-identical numeric placeholders to every such ticker,
-        # masking the missing-data state as "neutral signal".
+        # Only CALIBRATED baselines have enough observations to emit
+        # per-ticker numerics; ACCUMULATING and UNAVAILABLE both emit
+        # all-None so a shared fallback distribution cannot masquerade as
+        # "modestly weak sentiment".
         calibration_state = CalibrationState(row.calibration_state)
-        if calibration_state is CalibrationState.UNAVAILABLE:
+        if calibration_state is not CalibrationState.CALIBRATED:
             results.append(
                 SentimentAggregate(
                     ticker=ticker,
@@ -564,16 +556,8 @@ def load_sentiment_aggregates(
                 )
             )
             continue
-        if row.n_observations >= sentiment_min_observations:
-            mean = float(row.mean)
-            stdev = float(row.stdev)
-        else:
-            if pool is None:
-                pool = _universe_pooled_sentiment(session, as_of_str=as_of_str)
-            if pool is None:
-                # Pool also empty (pre-bootstrap): skip this ticker.
-                continue
-            mean, stdev = pool
+        mean = float(row.mean)
+        stdev = float(row.stdev)
 
         percentile = _percentile_from_normal(value=float(row.mean), mean=mean, stdev=stdev)
 
@@ -583,8 +567,18 @@ def load_sentiment_aggregates(
         # magnitude: absolute deviation normalised by stdev (capped at 1.0).
         magnitude = min(1.0, abs(float(row.mean) - mean) / stdev) if stdev > 0 else 0.0
         has_window = len(recent) == 2
-        rate_of_change = float(row.mean) - float(recent[1].mean) if has_window else None
-        volume = volume_by_ticker.get(ticker, 0) if has_window else None
+        # Zero inflow leaves the mean diff as window-edge-eviction noise
+        # and the article count as a mechanical zero — emit None for both
+        # so neither is indistinguishable from a quiet but healthy cycle.
+        window_volume = volume_by_ticker.get(ticker, 0) if has_window else None
+        rate_of_change: float | None
+        volume: int | None
+        if window_volume:
+            rate_of_change = float(row.mean) - float(recent[1].mean)
+            volume = window_volume
+        else:
+            rate_of_change = None
+            volume = None
         price_return = price_returns.get(ticker)
         divergence_flag = (
             _is_divergent(directional_score, price_return, threshold=divergence_min_abs)

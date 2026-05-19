@@ -125,9 +125,12 @@ def _render_regime(regime_label: dict[str, Any]) -> str:
 def _render_sentiment(inputs: QualitativeInputs) -> str:
     """Render per-ticker sentiment aggregates sorted alphabetically by ticker.
 
-    ``UNAVAILABLE`` rows surface as a compact ``{ticker}: unavailable`` line
-    so per-ticker missing data stays distinguishable from per-field ``null``
-    fallbacks inside otherwise-numeric rows.
+    Non-calibrated rows (``UNAVAILABLE`` or ``ACCUMULATING``) surface as a
+    compact ``{ticker}: {state}`` line so per-ticker missing data stays
+    distinguishable from per-field ``null`` fallbacks inside otherwise-numeric
+    rows. Both non-calibrated states emit all-``None`` numeric fields per
+    ALP-568 / ALP-538; the collapsed line preserves the operator-visible
+    difference between "collector dead" and "still accumulating".
     """
     rows = sorted(inputs.sentiment_aggregates, key=lambda s: s.ticker)
     return "\n".join(_render_sentiment_row(s) for s in rows)
@@ -135,8 +138,8 @@ def _render_sentiment(inputs: QualitativeInputs) -> str:
 
 def _render_sentiment_row(s: SentimentAggregate) -> str:
     """Render one sentiment row, dispatching on ``calibration_state``."""
-    if s.calibration_state is CalibrationState.UNAVAILABLE:
-        return f"{s.ticker}: {CalibrationState.UNAVAILABLE.value}"
+    if s.calibration_state is not CalibrationState.CALIBRATED:
+        return f"{s.ticker}: {s.calibration_state.value}"
     return (
         f"{s.ticker}: directional={_render_optional(s.directional_score)},"
         f" magnitude={_render_optional(s.magnitude)},"
