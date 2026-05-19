@@ -47,10 +47,9 @@ def detect_macro_surprise_anomaly(
     (:func:`assemble_q6_blocks` keys block_ids by indicator). This keeps
     the detector pure with respect to the surprise math.
 
-    Returns ``None`` when the surprise is below the threshold, the trailing
-    distribution is empty, or the trailing distribution is zero-variance
-    (per ALP-545 — :func:`percentile_rank` returns ``None`` in that case
-    and there is no calibrated signal to alert against).
+    Returns ``None`` when the surprise is below the threshold or when the
+    absolute trailing distribution provides no calibrated signal (empty or
+    zero-variance — :func:`percentile_rank` returns ``None``).
     """
     surprise = actual - consensus
     abs_history = [abs(x) for x in trailing_surprises]

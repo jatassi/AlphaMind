@@ -28,8 +28,8 @@ class MarketLiquidityResult:
     """Output of the market-liquidity composite refresh.
 
     ``percentile_60d`` is ``None`` when the trailing composite distribution
-    is empty or zero-variance (per ALP-545); the assembler preserves the
-    ``None`` so the published payload reads as ``null``.
+    is empty or zero-variance; the assembler preserves the ``None`` so the
+    published payload reads as ``null``.
     """
 
     composite_value: float

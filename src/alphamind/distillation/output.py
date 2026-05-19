@@ -188,11 +188,9 @@ _PER_TICKER_KEY = "per_ticker"
 _NULL_SENTINEL = "null"
 """Operator-visible spelling for a payload field whose value is explicitly absent.
 
-ALP-545: a percentile produced against an empty or zero-variance trailing
-distribution is ``None`` in the payload; render as ``null`` so the operator
-reads "no signal" rather than the Python repr ``None``. YAML-compatible so
-downstream tooling that parses block text continues to recognize the
-sentinel.
+A payload value of ``None`` renders as ``null`` rather than the Python repr
+``None`` — YAML-compatible so downstream tooling that parses block text
+continues to recognize the sentinel.
 """
 
 

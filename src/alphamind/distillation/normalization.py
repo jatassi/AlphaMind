@@ -306,17 +306,18 @@ def percentile_rank(history: Sequence[float], value: float) -> float | None:
 
     - ``history`` is empty.
     - ``history`` has zero variance (every observation identical) — the rank
-      reduces to a tautology, not a position. Returning a sentinel rather
-      than 100 prevents the ALP-545 pattern where a bootstrap-period
-      component reads at 0 against an all-zero trailing series and reports
-      a spurious 100th percentile.
+      reduces to a tautology, not a position.
 
-    Callers decide how to surface the ``None`` — typically by propagating
-    it into their published payload (rather than substituting 0 / 100).
+    Callers propagate the ``None`` into their published payload rather than
+    substituting a fabricated 0 / 100.
     """
     if not history:
         return None
     first = history[0]
+    # Exact equality (not math.isclose) is intentional: the gate matches the
+    # bootstrap-period pattern where every prior row carries the literal
+    # missing-data sentinel 0.0. A near-zero-variance real distribution still
+    # produces a meaningful rank.
     if all(x == first for x in history):
         return None
     le = sum(1 for x in history if x <= value)

@@ -147,12 +147,10 @@ def test_format_block_omits_anomaly_trailer_when_no_flags() -> None:
 
 
 def test_format_block_renders_none_payload_value_as_null_sentinel() -> None:
-    """ALP-545: percentile fields that are explicitly absent render as ``null``.
+    """A payload field of Python ``None`` renders as the ``null`` sentinel.
 
-    The funding-stress publish layer surfaces zero-variance / empty-history
-    percentiles as Python ``None``; the renderer maps that to the ``null``
-    sentinel so the operator-readable block doesn't conflate "no signal"
-    with the Python repr ``None``.
+    Keeps the operator-readable block from conflating "no signal" with the
+    Python repr ``None``.
     """
     block = _make_block(
         payload={

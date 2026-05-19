@@ -46,9 +46,9 @@ def downgrade() -> None:
 
     Any rows the new publish layer wrote with ``percentile_60d IS NULL``
     are first set to ``0.0`` so the constraint reinstates cleanly. The
-    downgrade is lossy with respect to the original semantic — ``0.0``
-    aliases "no signal" to "bottom of distribution" — but matches the
-    pre-ALP-545 storage convention.
+    downgrade is lossy with respect to the new semantic — ``0.0`` aliases
+    "no signal" to "bottom of distribution" — but matches the original
+    NOT NULL storage convention.
     """
     op.execute(
         sa.text(

@@ -573,10 +573,10 @@ class TestMacroSurpriseAnomaly:
     """
 
     def test_anomaly_fires_when_surprise_in_top_10_percent(self) -> None:
-        # Trailing surprises cluster near zero with stdev ~0.04.
+        # Trailing surprises cluster near zero with stdev ~0.04. Magnitudes
+        # vary so the absolute distribution has variance — a uniform abs
+        # distribution would collapse the rank to None.
         # Current surprise of 1.0 is far above the 90th |surprise| percentile.
-        # Magnitudes vary across the window — a uniform absolute distribution
-        # would collapse to a zero-variance rank (None) per ALP-545.
         trailing = [(0.04 + 0.0005 * i) * ((-1) ** i) for i in range(100)]
         result = detect_macro_surprise_anomaly(
             actual=2.5,

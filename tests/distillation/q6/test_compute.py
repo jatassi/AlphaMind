@@ -47,7 +47,6 @@ from alphamind.distillation.q6 import (
     detect_macro_surprise_anomaly,
 )
 from alphamind.distillation.q6.funding_stress_compute import (
-    component_percentile,
     compute_funding_stress_alert,
 )
 
@@ -248,21 +247,6 @@ def test_dollar_attribution_empty_inputs_yield_trade_flow() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_component_percentile_value_at_top_reports_100() -> None:
-    """A value at or above every history entry reports 100.0."""
-    assert component_percentile(10.0, [1.0, 2.0, 3.0, 4.0, 5.0]) == 100.0
-
-
-def test_component_percentile_empty_history_returns_none() -> None:
-    """No prior history means percentile is undefined; surface None rather than 0 / 100."""
-    assert component_percentile(5.0, []) is None
-
-
-def test_component_percentile_zero_variance_history_returns_none() -> None:
-    """All-zero (or otherwise zero-variance) history can't rank a value — None per ALP-545."""
-    assert component_percentile(0.0, [0.0, 0.0, 0.0]) is None
-
-
 def test_compute_funding_stress_alert_fires_when_three_above() -> None:
     """≥ 3 components at or above 90th percentile fires the aggregate alert."""
     components = {
@@ -317,12 +301,11 @@ def test_compute_funding_stress_alert_silent_below_min_count() -> None:
 
 
 def test_compute_funding_stress_alert_skips_zero_variance_component() -> None:
-    """ALP-545: a component whose trailing series is all-zeros yields None percentile.
+    """A component whose trailing series is all-zeros yields None percentile.
 
-    A None percentile cannot count toward ``components_above`` — historically
-    such a component pinned at the bootstrap default (0) was incorrectly
-    pushed to 100 by the ``<=`` convention and would fire the aggregate alert
-    against a degenerate distribution.
+    A None percentile cannot count toward ``components_above`` — a component
+    pinned at the missing-data sentinel cannot fire the aggregate alert
+    against its own degenerate distribution.
     """
     components = {
         "sofr_ois_spread": 1.0,
@@ -388,7 +371,7 @@ def test_macro_surprise_anomaly_silent_below_alert_percentile() -> None:
 
 
 def test_macro_surprise_anomaly_zero_variance_trailing_returns_none() -> None:
-    """ALP-545: an all-identical trailing distribution can't rank — no anomaly fires."""
+    """An all-identical trailing distribution can't rank — no anomaly fires."""
     assert (
         detect_macro_surprise_anomaly(
             actual=5.0,

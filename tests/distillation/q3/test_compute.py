@@ -187,7 +187,7 @@ def test_atm_iv_baseline_unavailable_with_empty_history() -> None:
 
 
 def test_atm_iv_baseline_zero_variance_history_yields_null_iv_rank_percentile() -> None:
-    """ALP-545: a flat history can't rank the latest IV — surface ``None`` percentile."""
+    """A flat history can't rank the latest IV — surface ``None`` percentile."""
     history = [0.20] * 60  # identical observations across the window
     result = compute_atm_iv_baseline(history, window_days=252, min_observations=60)
     assert result.rank.state is CalibrationState.CALIBRATED

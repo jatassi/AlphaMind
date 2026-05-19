@@ -1356,8 +1356,8 @@ def _alert_active(
 ) -> bool:
     """Derive the alert flag from a percentile + direction.
 
-    An undefined percentile (``None`` per ALP-545 — empty or zero-variance
-    trailing distribution) yields ``False``: no signal to alert against.
+    An undefined percentile (``None`` — empty or zero-variance trailing
+    distribution) yields ``False``: no signal to alert against.
     """
     if percentile is None:
         return False

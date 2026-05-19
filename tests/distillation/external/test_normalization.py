@@ -428,12 +428,7 @@ def test_percentile_rank_empty_history_returns_none() -> None:
 
 
 def test_percentile_rank_zero_variance_history_returns_none() -> None:
-    """All-identical history (zero variance): rank is undefined; sentinel None.
-
-    This is the ALP-545 root cause: a bootstrap-period component with every
-    observation at 0 used to report 100 by the `<=` convention. None makes the
-    "no signal" explicit so callers don't conflate it with "top of the distribution".
-    """
+    """All-identical history (zero variance): rank is undefined; sentinel None."""
     assert percentile_rank([0.0, 0.0, 0.0, 0.0], 0.0) is None
     assert percentile_rank([0.0, 0.0, 0.0, 0.0], 5.0) is None
     assert percentile_rank([0.5, 0.5, 0.5], 0.5) is None

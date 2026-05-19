@@ -927,10 +927,9 @@ class DistillationCompositeState(Base):
     as_of: Mapped[str] = mapped_column(Text, primary_key=True)
     composite_value: Mapped[float] = mapped_column(Float)
     component_breakdown_json: Mapped[str] = mapped_column(Text)
-    # Nullable per ALP-545: a zero-variance or empty trailing distribution
-    # cannot produce a meaningful rank, so the publish layer emits ``None``
-    # rather than a fabricated 0 / 100. Migrated to nullable in
-    # ``05a4f2c8d691_composite_percentile_nullable``.
+    # Nullable: a zero-variance or empty trailing distribution cannot
+    # produce a meaningful rank, so the publish layer emits ``None``
+    # rather than a fabricated 0 / 100.
     percentile_60d: Mapped[float | None] = mapped_column(Float, nullable=True)
     alert_active: Mapped[int] = mapped_column(Integer)
     calibration_state: Mapped[str] = mapped_column(Text)

@@ -339,18 +339,13 @@ def _seed_macro_observations(session: Session, *, end: datetime, days: int) -> N
 def _seed_market_liquidity_prior_history(session: Session, *, end: datetime) -> None:
     """Seed 10 prior market-liquidity composite_state rows with non-zero variance.
 
-    Required so the orchestrator's market-liquidity refresh ranks against a
-    real trailing distribution. The current invocation's composite_value is
-    dominated by VIXCLS (~17, with the other two proxies defaulting to 0
-    since the fixture doesn't seed STLFSI4 or BAMLC0A0CM); seeding 10 prior
-    rows above that with varied values puts the current value below the
-    seeded 10th percentile so the lower-direction alert fires against a real
-    rank rather than the post-ALP-545 ``None`` no-signal sentinel.
-
-    Ten rows keep the block in :attr:`CalibrationState.ACCUMULATING`
-    (``min_observations`` is 60 in the test config), which is what the
-    severity-cap test ``test_orchestrator_caps_severity_in_non_calibrated_blocks``
-    needs in order to exercise the cap.
+    The current invocation's composite_value is dominated by VIXCLS (~17,
+    with the other two proxies defaulting to 0 since the fixture doesn't
+    seed STLFSI4 or BAMLC0A0CM); seeded values 38..110 put the current
+    value below the seeded 10th percentile so the lower-direction alert
+    fires against a real rank rather than the no-signal sentinel. Ten rows
+    keep the block in :attr:`CalibrationState.ACCUMULATING`
+    (``min_observations`` is 60 in the test config).
     """
     for offset in range(10, 0, -1):
         ts = end - timedelta(days=offset + 1)
