@@ -57,11 +57,6 @@ def compute_sector_exposure(
 ) -> tuple[SectorExposureEntry, ...]:
     """Compute per-sector long/short delta-adjusted exposure rollup.
 
-    ``positions`` are the live position views (OPEN + PENDING) the
-    assembler aggregates — see ALP-579: excluding PENDING from this rollup
-    produced a contradiction with ``get_positions_summary``, which walks
-    both lifecycle states.
-
     Positions where resolver returns None are aggregated under "UNCLASSIFIED".
     Bucket assignment uses Direction (LONG -> long, SHORT -> abs into short).
     Returns entries sorted by sector label ascending.
@@ -112,11 +107,6 @@ def compute_directional_exposure(
     total_portfolio_value_usd: float,
 ) -> DirectionalExposure:
     """Compute portfolio-level directional and gross exposure.
-
-    ``positions`` are the live position views (OPEN + PENDING) the
-    assembler aggregates — see ALP-579: excluding PENDING from this rollup
-    produced a contradiction with ``get_positions_summary``, which walks
-    both lifecycle states.
 
     Bucket assignment uses sign of delta_adjusted_exposure_usd (not Direction).
     Positive values go into the long bucket; negative values (absolute) into short.

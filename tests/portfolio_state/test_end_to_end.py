@@ -333,9 +333,6 @@ class TestSectionCAssemblerCorrectness:
             assert abs(pos.position_weight_pct - expected) < 1e-6
 
     def test_gross_exposure_formula(self) -> None:
-        # ALP-579 — directional exposure aggregates OPEN + PENDING (matches
-        # ``get_positions_summary`` / consumer-view semantics + the total
-        # value denominator that already counts both).
         live_positions = (
             *self._snapshot.open_positions,
             *self._snapshot.pending_positions,
