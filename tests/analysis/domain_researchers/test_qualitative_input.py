@@ -491,7 +491,7 @@ class TestEventSelection:
         assert result.events[0].consensus is None
 
     def test_metadata_less_other_events_filtered(self, session: Session) -> None:
-        """ALP-551: drop type=other events with no ticker and no consensus."""
+        """type=other events without a ticker are dropped; type=other with a ticker survives."""
         as_of = datetime(2026, 4, 30, 12, tzinfo=UTC)
         _add_ticker(session, "AAPL", Sector.TECH_SEMIS)
         _add_event(
@@ -514,9 +514,8 @@ class TestEventSelection:
         session.commit()
 
         result = load_sector_qualitative_input(session, Sector.TECH_SEMIS, as_of)
-        event_ids = {e.event_id for e in result.events}
-        assert "ev-noise" not in event_ids
-        assert "ev-other-ticker" in event_ids
+        assert len(result.events) == 1
+        assert result.events[0].event_id == "ev-other-ticker"
 
 
 # ---------------------------------------------------------------------------

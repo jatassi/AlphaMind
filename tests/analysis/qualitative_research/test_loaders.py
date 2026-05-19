@@ -673,7 +673,7 @@ class TestLoadCalendarEvents72h:
         assert Sector.FINANCIALS in e.sectors
 
     def test_metadata_less_other_events_filtered(self, session: Session) -> None:
-        """ALP-551: drop type=other events with no ticker and no consensus."""
+        """type=other events without a ticker are dropped; type=other with a ticker survives."""
         _add_ticker(session, "AAPL")
         event_time = AS_OF + timedelta(hours=12)
         _add_event(
@@ -696,9 +696,8 @@ class TestLoadCalendarEvents72h:
         session.commit()
 
         result = load_calendar_events_72h(session, as_of=AS_OF)
-        event_ids = {e.event_id for e in result}
-        assert "evt-noise" not in event_ids
-        assert "evt-other-with-ticker" in event_ids
+        assert len(result) == 1
+        assert result[0].event_id == "evt-other-with-ticker"
 
 
 # ---------------------------------------------------------------------------
