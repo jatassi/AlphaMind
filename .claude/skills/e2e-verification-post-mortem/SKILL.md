@@ -282,7 +282,7 @@ E2E invocation: `<path-to-invocation-dir>`
 
 ## Verification
 
-<how to confirm the fix lands in a follow-up e2e run — specific commands, expected diffs, sqlite queries>
+<how to confirm the fix lands — unit tests, integration tests, direct code paths, sqlite queries, manual inspection of artifacts. NEVER reference running e2e verification, debug-e2e, or re-running the e2e harness as a verification step — the e2e harness is the surfacing tool, not the validation gate, and implementers should not block on its cadence.>
 
 ## Notes
 
@@ -341,3 +341,4 @@ If the audit surfaced items NOT in the original adversarial-question scope (ofte
 - **Don't add `blockedBy` for stylistic preferences**. If the dependent issue has a local-fallback option, `relatedTo` is the right level. Hard blockers slow work; reserve them for genuine prerequisites.
 - **Don't file all issues then wire dependencies as an afterthought**. File category-by-category, then do a single comprehensive parallelization pass at the end. The keystone is easier to spot with the full filed set in view.
 - **Don't paraphrase the per-layer adversarial questions**. Operators use the same phrasing in handoffs; switching loses signal.
+- **Don't reference running e2e verification in any filed issue's Verification section**. The e2e harness is the surfacing tool, not the validation gate — implementers should not block on e2e cadence to confirm fixes. Use unit tests, integration tests, direct code-path inspection, sqlite queries against the production DB, or manual artifact inspection instead. This applies to phrases like "Re-run debug-e2e", "Re-run the e2e harness", "Verify in the next e2e invocation", or anything that would have the implementer wait for the next e2e run to confirm their work.
