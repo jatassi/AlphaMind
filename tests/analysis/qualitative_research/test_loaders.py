@@ -780,9 +780,18 @@ class TestLoadSentimentAggregates:
         assert "NVDA" in tickers
         assert "AAPL" in tickers
 
-    def test_bootstrap_ticker_returns_record_from_pool(self, session: Session) -> None:
-        """Below-threshold ticker still returns a record using universe-pooled fallback."""
-        # Add a calibrated ticker so the pool is non-empty.
+    def test_accumulating_ticker_emits_null_sentinel(self, session: Session) -> None:
+        """Below-threshold (``accumulating``) tickers emit an all-None record.
+
+        Before ALP-568 the loader broadcast a universe-pooled prior here, but
+        bit-identical numeric placeholders across every bootstrap ticker
+        masquerade as "modestly weak sentiment" downstream rather than
+        "data not yet available". The null sentinel matches the existing
+        UNAVAILABLE branch so the LLM reads both as ``pending``.
+        """
+        # Calibrated peer so the universe pool would be non-empty — proves
+        # the accumulating branch skips the pool fallback even when it
+        # could compute.
         _add_ticker(session, "NVDA")
         _add_sentiment_baseline(
             session,
@@ -793,14 +802,13 @@ class TestLoadSentimentAggregates:
             as_of_str=_ISO,
             calibration_state="calibrated",
         )
-        # Add a bootstrap ticker.
         _add_ticker(session, "THIN", sector="tech")
         _add_sentiment_baseline(
             session,
             "THIN",
             mean=0.3,
             stdev=0.2,
-            n_observations=5,  # Very few observations
+            n_observations=5,
             as_of_str=_ISO,
             calibration_state="accumulating",
         )
@@ -808,9 +816,14 @@ class TestLoadSentimentAggregates:
 
         result = load_sentiment_aggregates(session, as_of=AS_OF, ticker_scope=["THIN"])
         assert len(result) == 1
-        pct = result[0].percentile_vs_self
-        assert pct is not None
-        assert 0.0 <= pct <= 1.0
+        agg = result[0]
+        assert agg.ticker == "THIN"
+        assert agg.directional_score is None
+        assert agg.magnitude is None
+        assert agg.percentile_vs_self is None
+        assert agg.rate_of_change is None
+        assert agg.volume is None
+        assert agg.divergence_flag is None
 
     def test_record_fields_present(self, session: Session) -> None:
         _add_ticker(session, "JPM", sector="financials")
@@ -833,15 +846,22 @@ class TestLoadSentimentAggregates:
         assert isinstance(agg.data_freshness, datetime)
 
     def test_rate_of_change_is_latest_minus_prior_mean(self, session: Session) -> None:
-        """``rate_of_change`` = latest sentiment-baseline mean minus the prior row's mean."""
+        """``rate_of_change`` = latest sentiment-baseline mean minus the prior row's mean.
+
+        Requires at least one article in the inter-baseline window — without
+        inflow the rate-of-change collapses to ``None`` (ALP-568) to avoid
+        propagating mechanical-zero noise as real signal.
+        """
         _add_ticker(session, "NVDA")
         prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        in_window_iso = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
         _add_sentiment_baseline(
             session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=prior_iso
         )
         _add_sentiment_baseline(
             session, "NVDA", mean=0.5, stdev=0.3, n_observations=100, as_of_str=_ISO
         )
+        _add_news_article(session, article_id="art-1", ticker="NVDA", published_at=in_window_iso)
         session.commit()
 
         result = load_sentiment_aggregates(session, as_of=AS_OF)
@@ -904,6 +924,30 @@ class TestLoadSentimentAggregates:
 
         result = load_sentiment_aggregates(session, as_of=AS_OF)
         assert len(result) == 1
+        assert result[0].volume is None
+
+    def test_rate_of_change_and_volume_none_when_window_volume_is_zero(
+        self, session: Session
+    ) -> None:
+        """ALP-568 AC 2: two baselines exist but no articles flowed through the
+        inter-baseline window → both ``rate_of_change`` and ``volume`` carry
+        ``None`` rather than mechanical zeros. Distinguishes an empty upstream
+        from a quiet news cycle: downstream agents read ``pending`` instead of
+        a genuine ``0.0`` change.
+        """
+        _add_ticker(session, "NVDA")
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=prior_iso
+        )
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        assert len(result) == 1
+        assert result[0].rate_of_change is None
         assert result[0].volume is None
 
     def test_volume_window_boundary_inclusivity(self, session: Session) -> None:
@@ -1136,11 +1180,15 @@ class TestLoadSentimentAggregates:
         # Records differ only in ticker / data_freshness — no shared numeric
         # placeholders that downstream agents could mistake for real signal.
 
-    def test_accumulating_ticker_still_uses_pool_fallback(self, session: Session) -> None:
-        """ACCUMULATING tickers (0 < n_obs < min) keep the universe-pool fallback;
-        only UNAVAILABLE (n_obs == 0) emits null sentinels. The pool fallback is
-        a degraded-but-informative signal — operator action isn't required
-        because time alone resolves the state.
+    def test_two_accumulating_tickers_do_not_share_placeholder_values(
+        self, session: Session
+    ) -> None:
+        """Distinct accumulating tickers must NOT produce bit-identical numeric
+        tuples (ALP-568): the pre-fix pool-fallback path emitted
+        ``magnitude=0.7843835113206449, percentile=0.21640755526283445``
+        across every bootstrap ticker, which downstream agents read as a
+        shared "modestly weak sentiment" placeholder. Both records now carry
+        ``None`` across every numeric field, matching the UNAVAILABLE branch.
         """
         _add_ticker(session, "NVDA")
         _add_sentiment_baseline(
@@ -1152,24 +1200,70 @@ class TestLoadSentimentAggregates:
             as_of_str=_ISO,
             calibration_state="calibrated",
         )
-        _add_ticker(session, "THIN", sector="tech")
+        _add_ticker(session, "SPY", sector="benchmark")
         _add_sentiment_baseline(
             session,
-            "THIN",
-            mean=0.3,
-            stdev=0.2,
-            n_observations=5,
+            "SPY",
+            mean=0.0,
+            stdev=0.1,
+            n_observations=3,
+            as_of_str=_ISO,
+            calibration_state="accumulating",
+        )
+        _add_ticker(session, "QQQ", sector="benchmark")
+        _add_sentiment_baseline(
+            session,
+            "QQQ",
+            mean=0.0,
+            stdev=0.1,
+            n_observations=4,
             as_of_str=_ISO,
             calibration_state="accumulating",
         )
         session.commit()
 
-        result = load_sentiment_aggregates(session, as_of=AS_OF, ticker_scope=["THIN"])
-        assert len(result) == 1
-        agg = result[0]
-        assert agg.directional_score is not None
-        assert agg.magnitude is not None
-        assert agg.percentile_vs_self is not None
+        result = load_sentiment_aggregates(session, as_of=AS_OF, ticker_scope=["SPY", "QQQ"])
+        by_ticker = {agg.ticker: agg for agg in result}
+        assert set(by_ticker) == {"SPY", "QQQ"}
+        for agg in by_ticker.values():
+            assert agg.directional_score is None
+            assert agg.magnitude is None
+            assert agg.percentile_vs_self is None
+
+    def test_etf_row_distinct_from_single_name_row(self, session: Session) -> None:
+        """Per ALP-568 AC 4: an ETF without per-ticker sentiment ingestion
+        (accumulating with sparse coverage) emits null sentinel while a
+        single-name with sufficient coverage emits real values.
+        """
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session,
+            "NVDA",
+            mean=0.4,
+            stdev=0.2,
+            n_observations=200,
+            as_of_str=_ISO,
+            calibration_state="calibrated",
+        )
+        _add_ticker(session, "SPY", sector="benchmark")
+        _add_sentiment_baseline(
+            session,
+            "SPY",
+            mean=0.0,
+            stdev=0.1,
+            n_observations=2,
+            as_of_str=_ISO,
+            calibration_state="accumulating",
+        )
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF, ticker_scope=["NVDA", "SPY"])
+        by_ticker = {agg.ticker: agg for agg in result}
+        assert set(by_ticker) == {"NVDA", "SPY"}
+        assert by_ticker["NVDA"].magnitude is not None
+        assert by_ticker["NVDA"].percentile_vs_self is not None
+        assert by_ticker["SPY"].magnitude is None
+        assert by_ticker["SPY"].percentile_vs_self is None
 
 
 # ---------------------------------------------------------------------------
