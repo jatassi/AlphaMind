@@ -116,6 +116,7 @@ def _build_test_pydantic_config() -> DistillationConfig:
             correlation_min_overlap_fraction=0.9,
             correlation_noise_floor=0.05,
             correlation_breakdown_fdr_q=0.05,
+            correlation_locus_pair_count_threshold=3,
             narrative_lag_media_silence_hours=24,
         ),
         persistence_windows=PersistenceWindows(
@@ -254,6 +255,7 @@ def test_to_domain_mirrors_narrative_lag_fields() -> None:
     assert dom.correlation_min_overlap_fraction == pyd.correlation_min_overlap_fraction
     assert dom.correlation_noise_floor == pyd.correlation_noise_floor
     assert dom.correlation_breakdown_fdr_q == pyd.correlation_breakdown_fdr_q
+    assert dom.correlation_locus_pair_count_threshold == pyd.correlation_locus_pair_count_threshold
     assert dom.narrative_lag_media_silence_hours == pyd.narrative_lag_media_silence_hours
 
 

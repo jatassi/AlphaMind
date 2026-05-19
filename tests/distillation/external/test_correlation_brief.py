@@ -387,6 +387,102 @@ def test_regime_skip_emergency_renders_in_regime_section() -> None:
     assert "Emergency-skip" in brief.text or "emergency-skip" in brief.text
 
 
+def _locus_block(
+    *,
+    locus_ticker: str,
+    pair_count: int = 4,
+    max_sigma: float = 5.83,
+    partners: tuple[str, ...] = ("A", "B", "C", "D"),
+    partners_by_sector: dict[str, list[str]] | None = None,
+    cross_sector_spread: str | None = None,
+) -> OutputBlock:
+    """Build a ``q7.correlation_locus.<ticker>`` block for the brief tests."""
+    payload: dict[str, object] = {
+        "locus_ticker": locus_ticker,
+        "pair_count": pair_count,
+        "max_deviation_sigma": max_sigma,
+        "partner_tickers": list(partners),
+        "supporting_pairs": tuple(f"q7.correlation_breakdown.{locus_ticker}_{p}" for p in partners),
+        "partners_by_sector": partners_by_sector,
+        "cross_sector_spread": cross_sector_spread,
+    }
+    return OutputBlock(
+        block_id=f"q7.correlation_locus.{locus_ticker}",
+        audience=frozenset({OutputAudience.CORRELATION_REGIME_BRIEF}),
+        freshness_ts=datetime(2026, 4, 27, 14, 0, tzinfo=UTC),
+        calibration_state=CalibrationState.CALIBRATED,
+        bootstrap_reason=None,
+        payload=payload,
+        anomaly_flags=(
+            AnomalyFlag(
+                name=f"correlation_locus_flag:{locus_ticker}",
+                magnitude=max_sigma,
+                severity="investigate_now",
+            ),
+        ),
+        regime_context=None,
+    )
+
+
+def test_locus_block_renders_in_locus_flags_section_above_breakdown_section() -> None:
+    """ALP-543 — locus blocks land under ``=== LOCUS FLAGS ===`` ahead of per-pair section."""
+    regime_block = _regime_block()
+    locus = _locus_block(
+        locus_ticker="META",
+        pair_count=4,
+        max_sigma=5.83,
+        partners=("AAPL", "GOOG", "AMZN", "MSFT"),
+        partners_by_sector={"tech": ["AAPL", "AMZN", "GOOG", "MSFT"]},
+        cross_sector_spread="tech-only",
+    )
+    pair = OutputBlock(
+        block_id="q7.correlation_breakdown.X_Y",
+        audience=frozenset({OutputAudience.CORRELATION_REGIME_BRIEF}),
+        freshness_ts=datetime(2026, 4, 27, 14, 0, tzinfo=UTC),
+        calibration_state=CalibrationState.CALIBRATED,
+        bootstrap_reason=None,
+        payload={
+            "pair": ["X", "Y"],
+            "short_correlation": -0.5,
+            "long_correlation": 0.8,
+            "deviation_sigma": 4.2,
+            "q_value": 0.02,
+            "short_window_days": 20,
+            "long_window_days": 60,
+            "n_overlapping_observations": 60,
+        },
+        anomaly_flags=(),
+        regime_context=None,
+    )
+
+    brief = assemble_correlation_brief(
+        blocks=[regime_block, locus, pair], invocation_id="inv-locus"
+    )
+
+    text = brief.text
+    locus_idx = text.find("=== LOCUS FLAGS ===")
+    breakdown_idx = text.find("=== CORRELATION REGIME CHANGE ===")
+    assert locus_idx > 0, text
+    assert breakdown_idx > locus_idx, "locus section must render before per-pair section"
+    assert "META" in text
+    assert "Pair count: 4" in text
+    assert "AAPL" in text
+    assert "Cross-sector spread: tech-only" in text
+
+
+def test_locus_reference_index_maps_to_locus_block_id() -> None:
+    """Each locus CR-N entry resolves to its ``q7.correlation_locus.<ticker>`` block."""
+    regime_block = _regime_block()
+    locus = _locus_block(locus_ticker="META", partners=("A", "B", "C"))
+
+    brief = assemble_correlation_brief(blocks=[regime_block, locus], invocation_id="inv-locus-ref")
+
+    locus_refs = [
+        cr for cr, value in brief.reference_index.items() if value == "q7.correlation_locus.META"
+    ]
+    assert locus_refs, brief.reference_index
+
+
 def test_byte_identical_across_repeated_calls() -> None:
     """Same inputs produce byte-identical output — invocation archive diffs cleanly."""
     regime_block = _regime_block()

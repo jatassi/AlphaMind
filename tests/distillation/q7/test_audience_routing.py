@@ -300,6 +300,7 @@ class TestAudienceRouting:
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
+                correlation_locus_pair_count_threshold=999,
             ),
         )
         # Some blocks may emit even with flat fixtures; assertion is about

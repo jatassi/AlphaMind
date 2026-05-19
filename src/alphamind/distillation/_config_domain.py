@@ -126,6 +126,7 @@ class NarrativeLagDomainConfig:
     correlation_min_overlap_fraction: float
     correlation_noise_floor: float
     correlation_breakdown_fdr_q: float
+    correlation_locus_pair_count_threshold: int
     narrative_lag_media_silence_hours: int
 
 

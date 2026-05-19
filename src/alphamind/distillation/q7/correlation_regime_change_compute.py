@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -84,6 +85,18 @@ class CorrelationRegimeChangeParameters:
     q-value clears the target are published. The raw sigma floor still
     applies as an emit gate so operator-set magnitude requirements
     survive.
+
+    ``correlation_locus_pair_count_threshold`` aggregates published
+    per-pair breakdowns into per-ticker locus flags. Pair-wise
+    correlations are not independent when a single ticker's return path
+    shifts — one shock to META can flip its correlation with N partners
+    in lock-step, producing N independent-looking flags that all express
+    one underlying signal. After BH-FDR + sigma-gate filtering, ticker
+    occurrence counts are taken across the surviving pairs; any ticker
+    appearing in at least the configured pair count is emitted as a
+    single ``q7.correlation_locus.<ticker>`` block and its contributing
+    per-pair blocks are suppressed from the output stream. Pairs not
+    involving any locus ticker continue to publish as per-pair flags.
     """
 
     short_window_days: int
@@ -95,6 +108,7 @@ class CorrelationRegimeChangeParameters:
     dispersion_window_days: int
     dispersion_sigma: float
     media_silence_hours: int
+    correlation_locus_pair_count_threshold: int
 
 
 def _fisher_z(correlation: float) -> float:
@@ -158,14 +172,28 @@ class _BreakdownCandidate:
     short_overlap: int
 
 
-def _correlation_breakdown_blocks(
+@dataclass(frozen=True, slots=True)
+class _PublishedPair:
+    """A guard- and BH-surviving pair that cleared the publish gate.
+
+    Held in this intermediate form so the locus-aggregation pass can
+    operate on the published set before the per-pair :class:`OutputBlock`
+    objects are constructed — the locus pass needs to suppress some of
+    the pairs entirely, so building blocks for them first would waste
+    work and tangle the call sites.
+    """
+
+    candidate: _BreakdownCandidate
+    q_value: float
+
+
+def _published_pairs(
     *,
     long_returns: Mapping[str, Sequence[float]],
     short_returns: Mapping[str, Sequence[float]],
     params: CorrelationRegimeChangeParameters,
-    as_of: datetime,
-) -> list[OutputBlock]:
-    """Emit one block per pair whose recent correlation broke from the prior baseline.
+) -> list[_PublishedPair]:
+    """Return the pairs that survive guards + BH-FDR + sigma-gate filtering.
 
     Suppresses the two phantom-breakdown patterns documented on
     :class:`CorrelationRegimeChangeParameters`: sparse-overlap pairs whose
@@ -240,46 +268,180 @@ def _correlation_breakdown_blocks(
     p_values = tuple(_two_tailed_p_value(c.magnitude) for c in candidates)
     q_values = _benjamini_hochberg_q_values(p_values)
 
-    blocks: list[OutputBlock] = []
+    published: list[_PublishedPair] = []
     for candidate, q_value in zip(candidates, q_values, strict=True):
         if q_value > params.correlation_breakdown_fdr_q:
             continue
         if candidate.magnitude < params.correlation_breakdown_sigma:
             continue
-        state, reason = _calibration_for_window(
-            n_observations=min(candidate.short_overlap, candidate.long_overlap),
-            required=short_window_days,
-            input_name="correlation_breakdown_observations",
-        )
-        blocks.append(
-            OutputBlock(
-                block_id=(
-                    f"{_BLOCK_NAMESPACE}.correlation_breakdown.{candidate.row}_{candidate.col}"
-                ),
-                audience=frozenset({OutputAudience.CORRELATION_REGIME_BRIEF}),
-                freshness_ts=as_of,
-                calibration_state=state,
-                bootstrap_reason=reason,
-                payload={
-                    "pair": [candidate.row, candidate.col],
-                    "short_correlation": candidate.short_corr,
-                    "long_correlation": candidate.long_corr,
-                    "deviation_sigma": candidate.magnitude,
-                    "q_value": q_value,
-                    "short_window_days": short_window_days,
-                    "long_window_days": long_window_days,
-                    "n_overlapping_observations": candidate.long_overlap,
-                },
-                anomaly_flags=(
-                    AnomalyFlag(
-                        name=f"correlation_breakdown_flag:{candidate.row}:{candidate.col}",
-                        magnitude=candidate.magnitude,
-                        severity="investigate_now",
-                    ),
-                ),
-                regime_context=None,
+        published.append(_PublishedPair(candidate=candidate, q_value=q_value))
+    return published
+
+
+def _pair_block_id(candidate: _BreakdownCandidate) -> str:
+    return f"{_BLOCK_NAMESPACE}.correlation_breakdown.{candidate.row}_{candidate.col}"
+
+
+def _build_pair_block(
+    pair: _PublishedPair,
+    *,
+    params: CorrelationRegimeChangeParameters,
+    as_of: datetime,
+) -> OutputBlock:
+    """Construct the :class:`OutputBlock` for a published per-pair breakdown."""
+    candidate = pair.candidate
+    state, reason = _calibration_for_window(
+        n_observations=min(candidate.short_overlap, candidate.long_overlap),
+        required=params.short_window_days,
+        input_name="correlation_breakdown_observations",
+    )
+    return OutputBlock(
+        block_id=_pair_block_id(candidate),
+        audience=frozenset({OutputAudience.CORRELATION_REGIME_BRIEF}),
+        freshness_ts=as_of,
+        calibration_state=state,
+        bootstrap_reason=reason,
+        payload={
+            "pair": [candidate.row, candidate.col],
+            "short_correlation": candidate.short_corr,
+            "long_correlation": candidate.long_corr,
+            "deviation_sigma": candidate.magnitude,
+            "q_value": pair.q_value,
+            "short_window_days": params.short_window_days,
+            "long_window_days": params.long_window_days,
+            "n_overlapping_observations": candidate.long_overlap,
+        },
+        anomaly_flags=(
+            AnomalyFlag(
+                name=f"correlation_breakdown_flag:{candidate.row}:{candidate.col}",
+                magnitude=candidate.magnitude,
+                severity="investigate_now",
+            ),
+        ),
+        regime_context=None,
+    )
+
+
+def _locus_block(
+    *,
+    locus_ticker: str,
+    contributing: Sequence[_PublishedPair],
+    sector_by_ticker: Mapping[str, str] | None,
+    as_of: datetime,
+) -> OutputBlock:
+    """Build a single locus block summarising one ticker's contributing pairs."""
+    partners = sorted(
+        {
+            pair.candidate.col if pair.candidate.row == locus_ticker else pair.candidate.row
+            for pair in contributing
+        }
+    )
+    max_sigma = max(pair.candidate.magnitude for pair in contributing)
+    supporting_pair_ids = tuple(sorted(_pair_block_id(pair.candidate) for pair in contributing))
+    payload: dict[str, object] = {
+        "locus_ticker": locus_ticker,
+        "pair_count": len(contributing),
+        "max_deviation_sigma": max_sigma,
+        "partner_tickers": partners,
+        "supporting_pairs": supporting_pair_ids,
+        "partners_by_sector": None,
+        "cross_sector_spread": None,
+    }
+    if sector_by_ticker is not None:
+        partners_by_sector: dict[str, list[str]] = {}
+        for partner in partners:
+            sector = sector_by_ticker.get(partner, "unknown")
+            partners_by_sector.setdefault(sector, []).append(partner)
+        # Sort the per-sector lists for byte-identical brief output.
+        for sector_list in partners_by_sector.values():
+            sector_list.sort()
+        payload["partners_by_sector"] = partners_by_sector
+        n_sectors = len(partners_by_sector)
+        if n_sectors == 1:
+            (only_sector,) = partners_by_sector.keys()
+            payload["cross_sector_spread"] = f"{only_sector}-only"
+        else:
+            payload["cross_sector_spread"] = f"{n_sectors} sectors"
+    return OutputBlock(
+        block_id=f"{_BLOCK_NAMESPACE}.correlation_locus.{locus_ticker}",
+        audience=frozenset({OutputAudience.CORRELATION_REGIME_BRIEF}),
+        freshness_ts=as_of,
+        calibration_state=CalibrationState.CALIBRATED,
+        bootstrap_reason=None,
+        payload=payload,
+        anomaly_flags=(
+            AnomalyFlag(
+                name=f"correlation_locus_flag:{locus_ticker}",
+                magnitude=max_sigma,
+                severity="investigate_now",
+            ),
+        ),
+        regime_context=None,
+    )
+
+
+def _correlation_breakdown_blocks(
+    *,
+    long_returns: Mapping[str, Sequence[float]],
+    short_returns: Mapping[str, Sequence[float]],
+    params: CorrelationRegimeChangeParameters,
+    sector_by_ticker: Mapping[str, str] | None,
+    as_of: datetime,
+) -> list[OutputBlock]:
+    """Emit per-pair breakdown blocks plus per-ticker locus rollups.
+
+    Two-stage publish path:
+
+    1. Run guards + BH-FDR + sigma-gate to identify the published pairs.
+    2. Count published-pair occurrences per ticker. Tickers appearing in
+       at least ``correlation_locus_pair_count_threshold`` published pairs
+       are rolled up into one ``q7.correlation_locus.<ticker>`` block,
+       and the contributing per-pair blocks are suppressed from the
+       output stream so the synthesizer sees one signal per locus instead
+       of N independent-looking flags. Pairs not involving any locus
+       ticker continue to publish individually.
+    """
+    published = _published_pairs(
+        long_returns=long_returns,
+        short_returns=short_returns,
+        params=params,
+    )
+    if not published:
+        return []
+
+    occurrences: Counter[str] = Counter()
+    for pair in published:
+        occurrences[pair.candidate.row] += 1
+        occurrences[pair.candidate.col] += 1
+    locus_tickers: frozenset[str] = frozenset(
+        ticker
+        for ticker, count in occurrences.items()
+        if count >= params.correlation_locus_pair_count_threshold
+    )
+
+    blocks: list[OutputBlock] = []
+    if locus_tickers:
+        contributing_by_locus: dict[str, list[_PublishedPair]] = {
+            ticker: [] for ticker in locus_tickers
+        }
+        for pair in published:
+            for ticker in (pair.candidate.row, pair.candidate.col):
+                if ticker in locus_tickers:
+                    contributing_by_locus[ticker].append(pair)
+        for locus_ticker in sorted(locus_tickers):
+            blocks.append(
+                _locus_block(
+                    locus_ticker=locus_ticker,
+                    contributing=contributing_by_locus[locus_ticker],
+                    sector_by_ticker=sector_by_ticker,
+                    as_of=as_of,
+                )
             )
-        )
+
+    for pair in published:
+        if pair.candidate.row in locus_tickers or pair.candidate.col in locus_tickers:
+            continue
+        blocks.append(_build_pair_block(pair, params=params, as_of=as_of))
     return blocks
 
 
@@ -411,6 +573,7 @@ def compute_correlation_regime_change_pure(
     qualifying_news_present: bool,
     params: CorrelationRegimeChangeParameters,
     as_of: datetime,
+    sector_by_ticker: Mapping[str, str] | None = None,
 ) -> list[OutputBlock]:
     """Pure compute of correlation-breakdown / dispersion / narrative-lag blocks.
 
@@ -420,6 +583,11 @@ def compute_correlation_regime_change_pure(
     The narrative-lag flag relies on the loader-resolved
     ``qualifying_news_present`` flag — the loader does the
     ``news_articles`` scan and threads the result through here.
+
+    ``sector_by_ticker`` is consumed only by the locus-aggregation pass.
+    When provided, each locus block's payload groups its partner tickers
+    by sector and surfaces a ``cross_sector_spread`` summary; when
+    :data:`None`, the locus payload carries the flat partner list only.
     """
     short_returns: dict[str, list[float]] = {
         ticker: list(returns)[-params.short_window_days :]
@@ -429,6 +597,7 @@ def compute_correlation_regime_change_pure(
         short_returns=short_returns,
         long_returns=long_returns_by_ticker,
         params=params,
+        sector_by_ticker=sector_by_ticker,
         as_of=as_of,
     )
     dispersion_block = _dispersion_shift_block(

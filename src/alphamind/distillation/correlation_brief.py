@@ -51,6 +51,7 @@ _CROSS_SECTOR_ROTATION_PREFIX = "q7.cross_sector_rotation"
 _INTERMARKET_REGIME_PREFIX = "q7.intermarket_regime."
 _LEAD_LAG_PREFIX = "q7.lead_lag."
 _CORRELATION_BREAKDOWN_PREFIX = "q7.correlation_breakdown."
+_CORRELATION_LOCUS_PREFIX = "q7.correlation_locus."
 _NARRATIVE_LAG_PREFIX = "q7.narrative_lag"
 
 
@@ -74,6 +75,7 @@ class _Category(StrEnum):
     CROSS_SECTOR_ROTATION = "CROSS-SECTOR ROTATION"
     INTERMARKET = "INTERMARKET REGIME SIGNALS"
     LEAD_LAG = "LEAD-LAG"
+    CORRELATION_LOCUS = "LOCUS FLAGS"
     CORRELATION_REGIME_CHANGE = "CORRELATION REGIME CHANGE"
     NARRATIVE_LAG = "NARRATIVE LAG"
 
@@ -84,6 +86,11 @@ _CATEGORY_ORDER: tuple[_Category, ...] = (
     _Category.CROSS_SECTOR_ROTATION,
     _Category.INTERMARKET,
     _Category.LEAD_LAG,
+    # Locus flags render BEFORE the per-pair section so the synthesizer
+    # sees the rolled-up "ticker X is the dislocation locus" finding
+    # ahead of any residual non-locus pair flags — the residuals are
+    # noisier context, not the headline signal.
+    _Category.CORRELATION_LOCUS,
     _Category.CORRELATION_REGIME_CHANGE,
     _Category.NARRATIVE_LAG,
 )
@@ -139,6 +146,7 @@ _CATEGORY_ROUTES: tuple[tuple[str, str, _Category], ...] = (
     ("prefix", _INTRA_SECTOR_CORRELATION_PREFIX, _Category.INTRA_SECTOR_CORRELATION),
     ("prefix", _INTERMARKET_REGIME_PREFIX, _Category.INTERMARKET),
     ("prefix", _LEAD_LAG_PREFIX, _Category.LEAD_LAG),
+    ("prefix", _CORRELATION_LOCUS_PREFIX, _Category.CORRELATION_LOCUS),
     ("prefix", _CORRELATION_BREAKDOWN_PREFIX, _Category.CORRELATION_REGIME_CHANGE),
 )
 
@@ -371,6 +379,52 @@ def _decompose_correlation_breakdown_block(block: OutputBlock) -> list[_Finding]
     ]
 
 
+def _decompose_correlation_locus_block(block: OutputBlock) -> list[_Finding]:
+    """One CR-N entry per locus block (ALP-543).
+
+    Renders the rolled-up "ticker X is the dislocation locus" finding the
+    locus-aggregation pass emits when a single ticker appears in the
+    configured number of pair-wise breakdowns. The summary names the
+    locus ticker and pair count; the detail lines surface max sigma,
+    partner tickers, and (when sector context is available) the
+    per-sector grouping plus cross-sector spread.
+    """
+    payload = block.payload
+    locus_ticker = payload.get("locus_ticker", "")
+    pair_count = payload.get("pair_count", "")
+    max_sigma = payload.get("max_deviation_sigma")
+    partners = payload.get("partner_tickers") or ()
+    partners_by_sector = payload.get("partners_by_sector")
+    cross_sector_spread = payload.get("cross_sector_spread")
+
+    summary = (
+        f"{locus_ticker}: locus of {pair_count} pair-wise breakdowns "
+        f"(max deviation {_format_value(max_sigma)} sigma)"
+    )
+    detail: list[str] = [
+        f"Locus ticker: {locus_ticker}",
+        f"Pair count: {pair_count}",
+        f"Max deviation sigma: {_format_value(max_sigma)}",
+        f"Partner tickers: {', '.join(partners) if partners else ''}",
+    ]
+    if isinstance(partners_by_sector, Mapping):
+        for sector in sorted(partners_by_sector):
+            sector_partners = partners_by_sector[sector]
+            detail.append(f"Sector {sector}: {', '.join(sector_partners)}")
+    if cross_sector_spread:
+        detail.append(f"Cross-sector spread: {cross_sector_spread}")
+
+    return [
+        _Finding(
+            category=_Category.CORRELATION_LOCUS,
+            source_block_id=block.block_id,
+            natural_key=None,
+            summary=summary,
+            detail_lines=tuple(detail),
+        )
+    ]
+
+
 def _decompose_narrative_lag_block(block: OutputBlock) -> list[_Finding]:
     """The narrative-lag block contributes one CR-N entry to its own section."""
     payload = block.payload
@@ -404,6 +458,7 @@ _DECOMPOSERS: dict[_Category, Callable[[OutputBlock], list[_Finding]]] = {
     _Category.CROSS_SECTOR_ROTATION: _decompose_cross_sector_rotation_block,
     _Category.INTERMARKET: _decompose_intermarket_block,
     _Category.LEAD_LAG: _decompose_lead_lag_block,
+    _Category.CORRELATION_LOCUS: _decompose_correlation_locus_block,
     _Category.CORRELATION_REGIME_CHANGE: _decompose_correlation_breakdown_block,
     _Category.NARRATIVE_LAG: _decompose_narrative_lag_block,
 }
