@@ -407,6 +407,7 @@ def _select_events(session: Session, *, sector: Sector, as_of: datetime) -> tupl
             ),
         )
         for event_id, bucket in grouped.items()
+        if not (bucket.event_type == "other" and not bucket.tickers)
     ]
     entries.sort(key=lambda e: e.event_time)
     return tuple(entries)

@@ -490,6 +490,34 @@ class TestEventSelection:
         assert len(result.events) == 1
         assert result.events[0].consensus is None
 
+    def test_metadata_less_other_events_filtered(self, session: Session) -> None:
+        """ALP-551: drop type=other events with no ticker and no consensus."""
+        as_of = datetime(2026, 4, 30, 12, tzinfo=UTC)
+        _add_ticker(session, "AAPL", Sector.TECH_SEMIS)
+        _add_event(
+            session,
+            event_id="ev-noise",
+            event_type="other",
+            description="Aperture AC",
+            scheduled_at=as_of + timedelta(hours=24),
+            sectors=None,
+        )
+        _add_event(
+            session,
+            event_id="ev-other-ticker",
+            event_type="other",
+            description="AAPL analyst day",
+            scheduled_at=as_of + timedelta(hours=24),
+            sectors="tech_semis",
+            ticker=Symbol("AAPL"),
+        )
+        session.commit()
+
+        result = load_sector_qualitative_input(session, Sector.TECH_SEMIS, as_of)
+        event_ids = {e.event_id for e in result.events}
+        assert "ev-noise" not in event_ids
+        assert "ev-other-ticker" in event_ids
+
 
 # ---------------------------------------------------------------------------
 # data_freshness
