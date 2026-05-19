@@ -672,6 +672,33 @@ class TestLoadCalendarEvents72h:
         assert Sector.TECH_SEMIS in e.sectors
         assert Sector.FINANCIALS in e.sectors
 
+    def test_metadata_less_other_events_filtered(self, session: Session) -> None:
+        """type=other events without a ticker are dropped; type=other with a ticker survives."""
+        _add_ticker(session, "AAPL")
+        event_time = AS_OF + timedelta(hours=12)
+        _add_event(
+            session,
+            "evt-noise",
+            event_type="other",
+            description="Aperture AC",
+            scheduled_at=event_time,
+            sectors=None,
+            ticker=None,
+        )
+        _add_event(
+            session,
+            "evt-other-with-ticker",
+            event_type="other",
+            description="AAPL analyst day",
+            scheduled_at=event_time,
+            ticker=Symbol("AAPL"),
+        )
+        session.commit()
+
+        result = load_calendar_events_72h(session, as_of=AS_OF)
+        assert len(result) == 1
+        assert result[0].event_id == "evt-other-with-ticker"
+
 
 # ---------------------------------------------------------------------------
 # 4. load_sentiment_aggregates

@@ -816,6 +816,7 @@ def load_calendar_events_72h(
             consensus=consensus_map.get(eid) if bucket.event_type == "earnings" else None,
         )
         for eid, bucket in grouped.items()
+        if not (bucket.event_type == "other" and not bucket.tickers)
     ]
     entries.sort(key=lambda e: e.event_time)
     return tuple(entries)
