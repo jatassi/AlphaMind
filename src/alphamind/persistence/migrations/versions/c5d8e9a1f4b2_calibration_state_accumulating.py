@@ -5,18 +5,11 @@ Revises: b3e6f8a2c4d7
 Create Date: 2026-05-18 16:30:00.000000
 
 Renames the ``bootstrap`` calibration-state value to ``accumulating`` across
-the four distillation tables, per ALP-540. The vocabulary split distinguishes
-"collector healthy, just need more time" (``accumulating``) from "zero
-observations / collector failure" (``unavailable``), eliminating the
-operator-confusing collapsed-state ``bootstrap``.
-
-Per-table changes:
-
-- ``distillation_ticker_baseline`` — UPDATE bootstrap → accumulating;
-  recreate CHECK to accept the new vocabulary.
-- ``distillation_pair_lag`` — same.
-- ``distillation_contract_history`` — same.
-- ``distillation_composite_state`` — same.
+the four distillation tables enumerated in ``_TABLES_WITH_CHECK`` below, per
+ALP-540. The vocabulary split distinguishes "collector healthy, just need
+more time" (``accumulating``) from "zero observations / collector failure"
+(``unavailable``), eliminating the operator-confusing collapsed-state
+``bootstrap``.
 
 SQLite enforces CHECK at row-write time, so the OLD constraint must be
 dropped before the UPDATE writes ``'accumulating'`` — and symmetrically on
@@ -68,6 +61,10 @@ def _create_check(*, table: str, constraint: str, sql: str) -> None:
 
 def upgrade() -> None:
     """Re-label bootstrap → accumulating and update the CHECK constraints."""
+    # Three phases, ordered to satisfy SQLite's row-write-time CHECK enforcement:
+    # (1) drop OLD CHECK on every table, (2) UPDATE values, (3) create NEW CHECK.
+    # Collapsing into a single per-table block would force the UPDATE inside
+    # batch_alter_table, where op.execute targets the shadow table — no-op.
     for table, constraint in _TABLES_WITH_CHECK:
         _drop_check(table=table, constraint=constraint)
     for table, _ in _TABLES_WITH_CHECK:
@@ -83,6 +80,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Revert: accumulating → bootstrap and reinstate the old CHECK constraints."""
+    # Mirror of upgrade(): drop NEW CHECK → UPDATE values → create OLD CHECK.
     for table, constraint in _TABLES_WITH_CHECK:
         _drop_check(table=table, constraint=constraint)
     for table, _ in _TABLES_WITH_CHECK:

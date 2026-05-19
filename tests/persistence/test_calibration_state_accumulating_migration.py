@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from argparse import Namespace
 from pathlib import Path
+from typing import Literal
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from alphamind.persistence.session import make_engine
 
@@ -30,8 +33,8 @@ def _alembic_config(db_path: Path) -> Config:
     )
 
 
-def _seed_fk_parents(db_path: Path) -> None:
-    """Seed the FK targets the four distillation tables reference."""
+def _seed(db_path: Path, *, state: Literal["bootstrap", "accumulating"]) -> None:
+    """Seed FK parents and one row per affected table with ``calibration_state=state``."""
     eng = make_engine(str(db_path))
     try:
         with eng.begin() as conn:
@@ -57,15 +60,6 @@ def _seed_fk_parents(db_path: Path) -> None:
                     "'2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
                 )
             )
-    finally:
-        eng.dispose()
-
-
-def _seed_bootstrap_rows(db_path: Path) -> None:
-    """Insert one row with calibration_state='bootstrap' in each affected table."""
-    eng = make_engine(str(db_path))
-    try:
-        with eng.begin() as conn:
             conn.execute(
                 text(
                     "INSERT INTO distillation_ticker_baseline "
@@ -73,7 +67,7 @@ def _seed_bootstrap_rows(db_path: Path) -> None:
                     "window_days, calibration_state, ingested_at) "
                     "VALUES "
                     "('AAPL', 'volume', '2026-04-25T00:00:00Z', 1.0, 0.1, 5, 30, "
-                    "'bootstrap', '2026-04-25T00:00:00Z')"
+                    f"'{state}', '2026-04-25T00:00:00Z')"
                 )
             )
             conn.execute(
@@ -83,7 +77,7 @@ def _seed_bootstrap_rows(db_path: Path) -> None:
                     "n_pair_events, last_overdue_flag, calibration_state, ingested_at) "
                     "VALUES "
                     "('AAPL', 'MSFT', '2026-04-25T00:00:00Z', 1.5, 3, 0, "
-                    "'bootstrap', '2026-04-25T00:00:00Z')"
+                    f"'{state}', '2026-04-25T00:00:00Z')"
                 )
             )
             conn.execute(
@@ -93,7 +87,7 @@ def _seed_bootstrap_rows(db_path: Path) -> None:
                     "liquidity_usd, calibration_state, ingested_at) "
                     "VALUES "
                     "('CT-1', '2026-04-25T00:00:00Z', 0.42, 0.0, 1000.0, "
-                    "'bootstrap', '2026-04-25T00:00:00Z')"
+                    f"'{state}', '2026-04-25T00:00:00Z')"
                 )
             )
             conn.execute(
@@ -103,7 +97,7 @@ def _seed_bootstrap_rows(db_path: Path) -> None:
                     "percentile_60d, alert_active, calibration_state, ingested_at) "
                     "VALUES "
                     "('funding_stress', '2026-04-25T00:00:00Z', 0.0, '{}', 0.5, 0, "
-                    "'bootstrap', '2026-04-25T00:00:00Z')"
+                    f"'{state}', '2026-04-25T00:00:00Z')"
                 )
             )
     finally:
@@ -123,6 +117,30 @@ def _read_calibration_states(db_path: Path) -> dict[str, str]:
         eng.dispose()
 
 
+def _attempt_insert_state(db_path: Path, *, state: str) -> None:
+    """Attempt to insert a composite_state row with the given calibration_state.
+
+    Surfaces ``IntegrityError`` to the caller when the active CHECK forbids the
+    value — used to prove the new/old CHECK is actually installed after a
+    migration step, not merely that existing rows happen to hold the right value.
+    """
+    eng = make_engine(str(db_path))
+    try:
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO distillation_composite_state "
+                    "(composite_kind, as_of, composite_value, component_breakdown_json, "
+                    "percentile_60d, alert_active, calibration_state, ingested_at) "
+                    "VALUES "
+                    "('market_liquidity', '2026-05-01T00:00:00Z', 0.0, '{}', 0.5, 0, "
+                    f"'{state}', '2026-05-01T00:00:00Z')"
+                )
+            )
+    finally:
+        eng.dispose()
+
+
 class TestCalibrationStateAccumulatingMigration:
     def test_upgrade_rewrites_bootstrap_to_accumulating_in_all_affected_tables(
         self, tmp_path: Path
@@ -136,9 +154,7 @@ class TestCalibrationStateAccumulatingMigration:
         db_path = tmp_path / "alembic.db"
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, _PARENT_REVISION)
-
-        _seed_fk_parents(db_path)
-        _seed_bootstrap_rows(db_path)
+        _seed(db_path, state="bootstrap")
 
         command.upgrade(cfg, _REVISION)
 
@@ -147,6 +163,10 @@ class TestCalibrationStateAccumulatingMigration:
             assert states[table] == "accumulating", (
                 f"{table}: expected 'accumulating', got {states[table]!r}"
             )
+
+        # New CHECK is actually installed: legacy 'bootstrap' must now be rejected.
+        with pytest.raises(IntegrityError):
+            _attempt_insert_state(db_path, state="bootstrap")
 
     def test_downgrade_rewrites_accumulating_to_bootstrap_in_all_affected_tables(
         self, tmp_path: Path
@@ -160,55 +180,7 @@ class TestCalibrationStateAccumulatingMigration:
         db_path = tmp_path / "alembic.db"
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, _REVISION)
-
-        _seed_fk_parents(db_path)
-        eng = make_engine(str(db_path))
-        try:
-            with eng.begin() as conn:
-                conn.execute(
-                    text(
-                        "INSERT INTO distillation_ticker_baseline "
-                        "(ticker, baseline_kind, as_of, mean, stdev, n_observations, "
-                        "window_days, calibration_state, ingested_at) "
-                        "VALUES "
-                        "('AAPL', 'volume', '2026-04-25T00:00:00Z', 1.0, 0.1, 5, 30, "
-                        "'accumulating', '2026-04-25T00:00:00Z')"
-                    )
-                )
-                conn.execute(
-                    text(
-                        "INSERT INTO distillation_pair_lag "
-                        "(lead_ticker, lag_ticker, as_of, lead_lag_days_estimate, "
-                        "n_pair_events, last_overdue_flag, calibration_state, ingested_at) "
-                        "VALUES "
-                        "('AAPL', 'MSFT', '2026-04-25T00:00:00Z', 1.5, 3, 0, "
-                        "'accumulating', '2026-04-25T00:00:00Z')"
-                    )
-                )
-                conn.execute(
-                    text(
-                        "INSERT INTO distillation_contract_history "
-                        "(contract_id, snapshot_ts, yes_probability, "
-                        "delta_pp_since_prior, liquidity_usd, calibration_state, "
-                        "ingested_at) "
-                        "VALUES "
-                        "('CT-1', '2026-04-25T00:00:00Z', 0.42, 0.0, 1000.0, "
-                        "'accumulating', '2026-04-25T00:00:00Z')"
-                    )
-                )
-                conn.execute(
-                    text(
-                        "INSERT INTO distillation_composite_state "
-                        "(composite_kind, as_of, composite_value, "
-                        "component_breakdown_json, percentile_60d, alert_active, "
-                        "calibration_state, ingested_at) "
-                        "VALUES "
-                        "('funding_stress', '2026-04-25T00:00:00Z', 0.0, '{}', 0.5, 0, "
-                        "'accumulating', '2026-04-25T00:00:00Z')"
-                    )
-                )
-        finally:
-            eng.dispose()
+        _seed(db_path, state="accumulating")
 
         command.downgrade(cfg, _PARENT_REVISION)
 
@@ -217,3 +189,7 @@ class TestCalibrationStateAccumulatingMigration:
             assert states[table] == "bootstrap", (
                 f"{table}: expected 'bootstrap', got {states[table]!r}"
             )
+
+        # Old CHECK is actually reinstated: 'accumulating' must now be rejected.
+        with pytest.raises(IntegrityError):
+            _attempt_insert_state(db_path, state="accumulating")
