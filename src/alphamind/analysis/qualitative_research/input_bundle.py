@@ -147,8 +147,14 @@ def _render_optional(value: object) -> str:
 
 
 def _render_prediction_markets(inputs: QualitativeInputs) -> str:
-    """Render prediction-market snapshot rows sorted by contract_id."""
-    rows = sorted(inputs.prediction_markets, key=lambda p: p.contract_id)
+    """Render prediction-market snapshot rows.
+
+    Active rows sort alphabetically by contract_id first; stale-low-signal
+    rows (likely-resolved-but-not-yet-closed; ALP-536) sort to the bottom,
+    alphabetical within that group, and carry a ``[STALE — LIKELY RESOLVED]``
+    flag so downstream agents read them as deprioritized.
+    """
+    rows = sorted(inputs.prediction_markets, key=lambda p: (p.is_stale_low_signal, p.contract_id))
     lines = []
     for p in rows:
         vol_str = f"${p.volume_24h_usd}" if p.volume_24h_usd is not None else "$0"
@@ -164,6 +170,8 @@ def _render_prediction_markets(inputs: QualitativeInputs) -> str:
             line += " [FLAGGED]"
         if p.is_low_liquidity:
             line += " [LOW LIQUIDITY]"
+        if p.is_stale_low_signal:
+            line += " [STALE — LIKELY RESOLVED]"
         lines.append(line)
     return "\n".join(lines)
 

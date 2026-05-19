@@ -7,6 +7,7 @@ tests exercise real query paths rather than mocked internals.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
@@ -1300,11 +1301,261 @@ class TestLoadPredictionMarketSnapshot:
         # Per-row deltas should match the seeded latest-vs-prior gap (0.70 - 0.60).
         for snap in result:
             assert snap.delta_since_prior_pp == pytest.approx(0.10)
-        # N+1 elimination: the documented design is a single window-function
-        # query batching the latest-two history rows for all contracts.
-        assert history_query_count <= 1, (
-            f"expected single batched history query, got {history_query_count}"
+        # N+1 elimination: the latest-two-rows lookup is a window-function
+        # query and the full-history nonzero-delta count (ALP-536) is a
+        # single GROUP BY — both batched across contracts, not per-row.
+        assert history_query_count <= 2, (
+            f"expected at most two batched history queries, got {history_query_count}"
         )
+
+
+# ---------------------------------------------------------------------------
+# 5b. load_prediction_market_snapshot — staleness filters (ALP-536)
+# ---------------------------------------------------------------------------
+
+
+class TestPredictionMarketStalenessFilters:
+    """Past-dated questions are excluded; low-signal contracts are flagged."""
+
+    AS_OF_LATE = datetime(2026, 5, 18, 11, 11, 40, tzinfo=UTC)
+    _ISO_LATE = "2026-05-17T00:00:00Z"
+
+    def test_past_dated_question_excluded(self, session: Session) -> None:
+        """Question references "May 6" — 12 days before 2026-05-18 → excluded."""
+        _add_contract(
+            session,
+            "c-iran",
+            description="Iran closes its airspace by May 6?",
+            resolution_date="2026-05-31T00:00:00Z",
+        )
+        _add_snapshot(
+            session, "c-iran", self._ISO_LATE, yes_probability=0.0005, volume_24h_usd=100.0
+        )
+        _add_contract_history(
+            session,
+            "c-iran",
+            self._ISO_LATE,
+            yes_probability=0.0005,
+            delta_pp_since_prior=0.0,
+        )
+        session.commit()
+        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        assert result == ()
+
+    def test_past_dated_explicit_year_excluded(self, session: Session) -> None:
+        """``May 3, 2026`` is 15 days before 2026-05-18 → excluded."""
+        _add_contract(
+            session,
+            "c-trump",
+            description="Will Donald Trump visit China on May 3, 2026?",
+            resolution_date="2026-05-31T00:00:00Z",
+        )
+        _add_snapshot(
+            session, "c-trump", self._ISO_LATE, yes_probability=0.0005, volume_24h_usd=100.0
+        )
+        _add_contract_history(
+            session,
+            "c-trump",
+            self._ISO_LATE,
+            yes_probability=0.0005,
+            delta_pp_since_prior=0.0,
+        )
+        session.commit()
+        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        assert result == ()
+
+    def test_past_dated_explicit_old_year_excluded(self, session: Session) -> None:
+        """A past year explicitly stated is excluded regardless of month."""
+        _add_contract(
+            session,
+            "c-old",
+            description="Will Bitcoin reach $100k by December 31, 2024?",
+            resolution_date="2026-12-31T00:00:00Z",
+        )
+        _add_snapshot(
+            session, "c-old", self._ISO_LATE, yes_probability=0.5, volume_24h_usd=200_000.0
+        )
+        _add_contract_history(
+            session,
+            "c-old",
+            self._ISO_LATE,
+            yes_probability=0.5,
+            delta_pp_since_prior=5.0,
+        )
+        session.commit()
+        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        assert result == ()
+
+    def test_future_dated_question_kept(self, session: Session) -> None:
+        """``December 15`` (inferred year 2026) is after 2026-05-18 → kept."""
+        _add_contract(
+            session,
+            "c-future",
+            description="Will the FOMC cut rates by December 15?",
+            resolution_date="2026-12-31T00:00:00Z",
+        )
+        _add_snapshot(
+            session, "c-future", self._ISO_LATE, yes_probability=0.6, volume_24h_usd=200_000.0
+        )
+        _add_contract_history(
+            session,
+            "c-future",
+            self._ISO_LATE,
+            yes_probability=0.6,
+            delta_pp_since_prior=2.0,
+        )
+        session.commit()
+        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        assert len(result) == 1
+        assert result[0].contract_id == "c-future"
+
+    def test_question_with_no_date_kept(self, session: Session) -> None:
+        """No date pattern at all → cannot be classified past-dated."""
+        _add_contract(
+            session,
+            "c-no-date",
+            description="Will the Fed cut rates this cycle?",
+            resolution_date="2026-06-30T00:00:00Z",
+        )
+        _add_snapshot(
+            session, "c-no-date", self._ISO_LATE, yes_probability=0.4, volume_24h_usd=200_000.0
+        )
+        _add_contract_history(
+            session,
+            "c-no-date",
+            self._ISO_LATE,
+            yes_probability=0.4,
+            delta_pp_since_prior=1.5,
+        )
+        session.commit()
+        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        assert len(result) == 1
+        assert result[0].contract_id == "c-no-date"
+
+    def test_excluded_count_logged(
+        self, session: Session, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The loader logs the count of past-dated contracts excluded."""
+        _add_contract(
+            session,
+            "c-past-1",
+            description="Event by May 1?",
+            resolution_date="2026-12-31T00:00:00Z",
+        )
+        _add_contract(
+            session,
+            "c-past-2",
+            description="Event by May 2?",
+            resolution_date="2026-12-31T00:00:00Z",
+        )
+        _add_contract(
+            session,
+            "c-keep",
+            description="Event by December 31?",
+            resolution_date="2026-12-31T00:00:00Z",
+        )
+        for cid in ("c-past-1", "c-past-2", "c-keep"):
+            _add_snapshot(
+                session, cid, self._ISO_LATE, yes_probability=0.5, volume_24h_usd=100_000.0
+            )
+            _add_contract_history(
+                session,
+                cid,
+                self._ISO_LATE,
+                yes_probability=0.5,
+                delta_pp_since_prior=1.0,
+            )
+        session.commit()
+
+        with caplog.at_level(
+            logging.INFO, logger="alphamind.analysis.qualitative_research.loaders"
+        ):
+            result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+
+        assert len(result) == 1
+        assert result[0].contract_id == "c-keep"
+        assert any("excluded 2" in rec.getMessage() for rec in caplog.records)
+
+    def test_low_volume_zero_delta_history_flagged_stale(self, session: Session) -> None:
+        """Low volume + every recorded delta = 0 → ``is_stale_low_signal`` is True."""
+        _add_contract(
+            session,
+            "c-stale",
+            description="Will neutron stars dance?",
+            resolution_date="2026-12-31T00:00:00Z",
+        )
+        ts1 = "2026-05-15T00:00:00Z"
+        ts2 = "2026-05-17T00:00:00Z"
+        _add_snapshot(session, "c-stale", ts1, yes_probability=0.0005, volume_24h_usd=10.0)
+        _add_snapshot(session, "c-stale", ts2, yes_probability=0.0005, volume_24h_usd=10.0)
+        _add_contract_history(
+            session, "c-stale", ts1, yes_probability=0.0005, delta_pp_since_prior=0.0
+        )
+        _add_contract_history(
+            session, "c-stale", ts2, yes_probability=0.0005, delta_pp_since_prior=0.0
+        )
+        session.commit()
+        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        assert len(result) == 1
+        assert result[0].is_stale_low_signal is True
+
+    def test_high_volume_zero_delta_not_flagged_stale(self, session: Session) -> None:
+        """A high-volume contract with flat history is not stale-low-signal."""
+        _add_contract(
+            session,
+            "c-active-flat",
+            description="Will the S&P close above 5000 by Q4?",
+            resolution_date="2026-12-31T00:00:00Z",
+        )
+        _add_snapshot(
+            session,
+            "c-active-flat",
+            self._ISO_LATE,
+            yes_probability=0.7,
+            volume_24h_usd=500_000.0,
+        )
+        _add_contract_history(
+            session,
+            "c-active-flat",
+            self._ISO_LATE,
+            yes_probability=0.7,
+            delta_pp_since_prior=0.0,
+        )
+        session.commit()
+        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        assert len(result) == 1
+        assert result[0].is_stale_low_signal is False
+
+    def test_low_volume_any_nonzero_delta_not_flagged_stale(self, session: Session) -> None:
+        """A low-volume contract with at least one non-zero delta is not stale."""
+        _add_contract(
+            session,
+            "c-low-vol-active",
+            description="Long-tail wildcard outcome?",
+            resolution_date="2026-12-31T00:00:00Z",
+        )
+        ts1 = "2026-05-15T00:00:00Z"
+        ts2 = "2026-05-17T00:00:00Z"
+        _add_snapshot(session, "c-low-vol-active", ts1, yes_probability=0.1, volume_24h_usd=100.0)
+        _add_snapshot(session, "c-low-vol-active", ts2, yes_probability=0.2, volume_24h_usd=100.0)
+        _add_contract_history(
+            session,
+            "c-low-vol-active",
+            ts1,
+            yes_probability=0.1,
+            delta_pp_since_prior=0.0,
+        )
+        _add_contract_history(
+            session,
+            "c-low-vol-active",
+            ts2,
+            yes_probability=0.2,
+            delta_pp_since_prior=10.0,
+        )
+        session.commit()
+        result = load_prediction_market_snapshot(session, as_of=self.AS_OF_LATE)
+        assert len(result) == 1
+        assert result[0].is_stale_low_signal is False
 
 
 # ---------------------------------------------------------------------------
