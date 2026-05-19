@@ -891,7 +891,10 @@ class DistillationRegimeState(Base):
     regime_label: Mapped[str] = mapped_column(Text)
     vix_level: Mapped[float] = mapped_column(Float)
     term_structure_basis: Mapped[float] = mapped_column(Float)
-    vvix_percentile: Mapped[float] = mapped_column(Float)
+    # Nullable per ALP-571: previously a non-null 50.0 fallback masked the
+    # unavailable VVIX series; the column now stores ``NULL`` when the
+    # percentile cannot be computed.
+    vvix_percentile: Mapped[float | None] = mapped_column(Float, nullable=True)
     realized_vol: Mapped[float] = mapped_column(Float)
     indicator_agreement_count: Mapped[int] = mapped_column(Integer)
     invocations_held: Mapped[int] = mapped_column(Integer)

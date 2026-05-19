@@ -391,6 +391,48 @@ def test_regime_skip_emergency_renders_in_regime_section() -> None:
     assert "Emergency-skip" in brief.text or "emergency-skip" in brief.text
 
 
+def test_regime_section_renders_unavailable_when_vvix_percentile_is_null() -> None:
+    """Per ALP-571: null vvix_percentile renders as 'unavailable', never '50'.
+
+    Pre-fix the regime block stamped 50.0 unconditionally; the brief rendered
+    'VVIX percentile 50' and downstream agents treated it as a live
+    median-vol reading. The fix propagates ``None`` through the payload and
+    the brief surfaces the explicit missing-data signal plus the calibration
+    reason.
+    """
+    regime_block = OutputBlock(
+        block_id=REGIME_BLOCK_ID,
+        audience=frozenset({OutputAudience.UNIVERSAL_BROADCAST}),
+        freshness_ts=datetime(2026, 4, 27, 14, 30, tzinfo=UTC),
+        calibration_state=CalibrationState.UNAVAILABLE,
+        bootstrap_reason="regime: VVIX series unavailable",
+        payload={
+            "regime_label": "vol_expansion",
+            "transition_state": "stable",
+            "prior_label": None,
+            "invocations_held": 1,
+            "indicator_agreement_count": 3,
+            "regime_skip_emergency": False,
+            "vix_level": 17.26,
+            "term_structure_basis": 0.0,
+            "vvix_percentile": None,
+            "realized_vol_5d": 0.12,
+            "realized_vol_20d": 0.10,
+        },
+        anomaly_flags=(),
+        regime_context=None,
+    )
+
+    brief = assemble_correlation_brief(blocks=[regime_block], invocation_id="inv-null-vvix")
+
+    assert "VVIX percentile unavailable" in brief.text
+    assert "VVIX percentile 50" not in brief.text
+    # Signal-quality annotation surfaces the calibration tag so the
+    # synthesizer sees why the field is missing rather than guessing.
+    assert "Signal quality: unavailable" in brief.text
+    assert "VVIX series unavailable" in brief.text
+
+
 def _locus_block(
     *,
     locus_ticker: str,

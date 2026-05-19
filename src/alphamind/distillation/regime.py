@@ -126,8 +126,11 @@ class RegimeSnapshot:
     - ``vx1_minus_vix`` — front-month VIX future minus VIX spot. Positive
       values mean contango; negative values mean backwardation.
     - ``vvix_percentile`` — VVIX percentile rank (0..100) against trailing
-      one-year history. Caller computes the rank against
-      ``macro_observations``.
+      one-year history, or ``None`` when the VVIX series is unavailable
+      or has insufficient observations to rank against. Per ALP-571 the
+      caller must propagate ``None`` rather than substituting a default
+      (e.g. ``50.0``) the downstream cannot distinguish from a live
+      median-vol reading.
     - ``realized_vol_5d`` / ``realized_vol_20d`` — trailing 5-day and
       20-day realized volatility. The 5d-vs-20d comparison is the
       "realized vol direction" indicator: 5d < 20d means declining; 5d >
@@ -139,7 +142,7 @@ class RegimeSnapshot:
 
     vix_level: float
     vx1_minus_vix: float
-    vvix_percentile: float
+    vvix_percentile: float | None
     realized_vol_5d: float
     realized_vol_20d: float
     vix_trailing_20d_mean: float | None = None
@@ -284,10 +287,19 @@ def classify_regime(
     - Fallback when no rule fires definitively: classify by the
       underlying VIX band alone — see
       :func:`_fallback_label_from_vix_band`.
+
+    When ``snapshot.vvix_percentile`` is ``None`` (VVIX series
+    unavailable), the rules that condition on it
+    (``low_vol_compression``, ``crisis_spike``) cannot fire — we have no
+    VVIX evidence to satisfy them. The VVIX-independent rules
+    (``vol_expansion``, ``vol_normalization``) and the VIX-band fallback
+    still produce a label, so the regime block remains usable on partial
+    inputs.
     """
     if (
         snapshot.vix_level <= thresholds.low_vol_vix_max
         and snapshot.vx1_minus_vix > 0.0
+        and snapshot.vvix_percentile is not None
         and snapshot.vvix_percentile <= thresholds.vvix_low_percentile
         and snapshot.realized_vol_5d < snapshot.realized_vol_20d
     ):
@@ -295,6 +307,7 @@ def classify_regime(
     if (
         snapshot.vix_level >= thresholds.crisis_vix_min
         and snapshot.vx1_minus_vix <= thresholds.term_structure_backwardation_threshold
+        and snapshot.vvix_percentile is not None
         and snapshot.vvix_percentile >= thresholds.vvix_high_percentile
     ):
         return RegimeLabel.CRISIS_SPIKE
@@ -378,8 +391,13 @@ def compute_indicator_agreement_count(
     in_low_vol_band = snapshot.vix_level <= thresholds.low_vol_vix_max
     in_mid_band = not in_low_vol_band and snapshot.vix_level <= thresholds.elevated_vix_max
     in_crisis_band = snapshot.vix_level > thresholds.elevated_vix_max
-    in_indeterminate_vvix_band = (
-        thresholds.vvix_low_percentile < snapshot.vvix_percentile < thresholds.vvix_high_percentile
+    vvix = snapshot.vvix_percentile
+    # A ``None`` VVIX (series unavailable) cannot agree with any label —
+    # we lack the evidence. The other three indicators still vote.
+    vvix_below_low = vvix is not None and vvix <= thresholds.vvix_low_percentile
+    vvix_above_high = vvix is not None and vvix >= thresholds.vvix_high_percentile
+    vvix_in_indeterminate_band = vvix is not None and (
+        thresholds.vvix_low_percentile < vvix < thresholds.vvix_high_percentile
     )
     backwardation_threshold = thresholds.term_structure_backwardation_threshold
 
@@ -389,28 +407,28 @@ def compute_indicator_agreement_count(
         votes = (
             in_low_vol_band,
             snapshot.vx1_minus_vix > backwardation_threshold,
-            snapshot.vvix_percentile <= thresholds.vvix_low_percentile,
+            vvix_below_low,
             realized_declining,
         )
     elif label is RegimeLabel.CRISIS_SPIKE:
         votes = (
             in_crisis_band,
             snapshot.vx1_minus_vix <= backwardation_threshold,
-            snapshot.vvix_percentile >= thresholds.vvix_high_percentile,
+            vvix_above_high,
             realized_rising,
         )
     elif label is RegimeLabel.VOL_EXPANSION:
         votes = (
             in_mid_band,
             snapshot.vx1_minus_vix >= backwardation_threshold,
-            in_indeterminate_vvix_band,
+            vvix_in_indeterminate_band,
             realized_rising,
         )
     else:  # vol_normalization
         votes = (
             in_mid_band,
             snapshot.vx1_minus_vix > backwardation_threshold,
-            in_indeterminate_vvix_band,
+            vvix_in_indeterminate_band,
             realized_declining,
         )
     return sum(votes)
@@ -645,7 +663,11 @@ def refresh_regime_state(
                 regime_label=label.value,
                 vix_level=float(snapshot.vix_level),
                 term_structure_basis=float(snapshot.vx1_minus_vix),
-                vvix_percentile=float(snapshot.vvix_percentile),
+                vvix_percentile=(
+                    float(snapshot.vvix_percentile)
+                    if snapshot.vvix_percentile is not None
+                    else None
+                ),
                 realized_vol=float(snapshot.realized_vol_5d),
                 indicator_agreement_count=int(agreement),
                 invocations_held=int(invocations_held),
@@ -730,7 +752,15 @@ def assemble_regime_block(
         "regime_skip_emergency": result.regime_skip_emergency,
         "vix_level": float(result.snapshot.vix_level),
         "term_structure_basis": float(result.snapshot.vx1_minus_vix),
-        "vvix_percentile": float(result.snapshot.vvix_percentile),
+        # Propagate ``None`` when the VVIX series is unavailable so
+        # downstream consumers (correlation/regime brief, analyst inputs)
+        # see explicit missing-data signal instead of a default that
+        # masquerades as a live mid-percentile reading (ALP-571).
+        "vvix_percentile": (
+            float(result.snapshot.vvix_percentile)
+            if result.snapshot.vvix_percentile is not None
+            else None
+        ),
         "realized_vol_5d": float(result.snapshot.realized_vol_5d),
         "realized_vol_20d": float(result.snapshot.realized_vol_20d),
     }

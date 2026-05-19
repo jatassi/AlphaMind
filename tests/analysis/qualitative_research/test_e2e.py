@@ -105,7 +105,11 @@ def _load_recent_regime_label(session: Session) -> tuple[dict[str, Any], str]:
         "indicator_agreement_count": row.indicator_agreement_count,
         "vix_level": float(row.vix_level),
         "term_structure_basis": float(row.term_structure_basis),
-        "vvix_percentile": float(row.vvix_percentile),
+        # Nullable per ALP-571: the column stores ``NULL`` when the VVIX
+        # series is unavailable / accumulating.
+        "vvix_percentile": (
+            float(row.vvix_percentile) if row.vvix_percentile is not None else None
+        ),
         "realized_vol_5d": float(row.realized_vol),
     }
     return payload, "db"

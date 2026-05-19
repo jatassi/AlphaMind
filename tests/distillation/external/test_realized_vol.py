@@ -17,6 +17,8 @@ from sqlalchemy.orm import Session
 
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.orchestrator import (
+    _VVIX_PERCENTILE_MIN_OBSERVATIONS,
+    _VVIX_SERIES_ID,
     _build_regime_snapshot,
     _compute_realized_vols,
     _realized_vols_from_log_returns,
@@ -105,6 +107,28 @@ def _seed_spy_closes(session: Session, closes: list[float], *, end_date: datetim
             _add_spy_bar(session, period_start=cursor, close=rev[placed])
             placed += 1
         cursor -= timedelta(days=1)
+    session.flush()
+
+
+def _seed_calibrated_vvix(session: Session, *, end_date: datetime) -> None:
+    """Seed enough VVIX observations to put the regime block in CALIBRATED state.
+
+    Tests that exercise rule-firing logic want a known regime calibration tag
+    so an unrelated VVIX-missing degradation doesn't taint the assertion.
+    """
+    values = [80.0 + i for i in range(_VVIX_PERCENTILE_MIN_OBSERVATIONS)]
+    for offset, value in enumerate(reversed(values)):
+        observation_day = end_date - timedelta(days=offset)
+        session.add(
+            MacroObservations(
+                source="cboe",
+                series_id=_VVIX_SERIES_ID,
+                observation_date=observation_day.strftime("%Y-%m-%d"),
+                revision_number=0,
+                value=value,
+                ingested_at=observation_day.strftime("%Y-%m-%dT00:00:00Z"),
+            )
+        )
     session.flush()
 
 
@@ -226,7 +250,7 @@ def test_compute_realized_vols_ignores_non_daily_timeframes(session: Session) ->
 def test_build_regime_snapshot_uses_real_realized_vols_when_spy_available(
     session: Session,
 ) -> None:
-    # Seed VIX + SPY closes.
+    # Seed VIX + VVIX + SPY closes.
     session.add(
         MacroObservations(
             source="fred",
@@ -237,6 +261,7 @@ def test_build_regime_snapshot_uses_real_realized_vols_when_spy_available(
             ingested_at="2026-05-15T20:00:00Z",
         )
     )
+    _seed_calibrated_vvix(session, end_date=AS_OF)
     closes = [700.0 + 5.0 * (i % 2) for i in range(25)]
     _seed_spy_closes(session, closes, end_date=AS_OF)
     session.commit()
@@ -250,9 +275,10 @@ def test_build_regime_snapshot_uses_real_realized_vols_when_spy_available(
 
 
 def test_build_regime_snapshot_falls_back_when_spy_absent(session: Session) -> None:
-    # VIX is present but no SPY bars exist — fall back to 0.0/0.0 (the
-    # ALP-492 Gap 1 WARN trips on this state, surfacing the data-pipeline
-    # gap to operators).
+    # VIX is present (and VVIX seeded so the block stays CALIBRATED on the
+    # VVIX side) but no SPY bars exist — realized vols fall back to 0.0/0.0
+    # and the ALP-492 Gap 1 WARN trips on the bundle, surfacing the
+    # data-pipeline gap to operators.
     session.add(
         MacroObservations(
             source="fred",
@@ -263,10 +289,11 @@ def test_build_regime_snapshot_falls_back_when_spy_absent(session: Session) -> N
             ingested_at="2026-05-15T20:00:00Z",
         )
     )
+    _seed_calibrated_vvix(session, end_date=AS_OF)
     session.commit()
 
     snapshot, calibration_state, bootstrap_reason = _build_regime_snapshot(session, as_of=AS_OF)
-    assert calibration_state is CalibrationState.CALIBRATED  # VIX present
+    assert calibration_state is CalibrationState.CALIBRATED  # VIX + VVIX present
     assert bootstrap_reason is None
     assert snapshot.realized_vol_5d == 0.0
     assert snapshot.realized_vol_20d == 0.0
