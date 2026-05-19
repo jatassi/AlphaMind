@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.calibration import CalibrationState
 from alphamind._kernel.ids import Symbol, ThesisId
 from alphamind.analysis._shared import Sector
 from alphamind.analysis.qualitative_research.loaders import (
@@ -56,6 +57,7 @@ def _make_sentiment(
     volume: int | None = 100,
     divergence_flag: bool | None = False,
     percentile_vs_self: float | None = 0.75,
+    calibration_state: CalibrationState = CalibrationState.CALIBRATED,
 ) -> SentimentAggregate:
     return SentimentAggregate(
         ticker=ticker,
@@ -66,6 +68,7 @@ def _make_sentiment(
         divergence_flag=divergence_flag,
         percentile_vs_self=percentile_vs_self,
         data_freshness=_AS_OF,
+        calibration_state=calibration_state,
     )
 
 
@@ -582,12 +585,12 @@ def test_sentiment_renders_null_for_per_field_none_fields() -> None:
 
 
 def test_sentiment_renders_unavailable_marker_for_per_ticker_unavailable_baseline() -> None:
-    """Tickers whose sentiment baseline is UNAVAILABLE arrive with every
-    nullable field ``None`` (loaders.py:546-558). The renderer must surface
-    a compact ``{ticker}: unavailable`` row using the ALP-540 calibration
-    vocabulary so the per-ticker missing-data state is visually distinct
-    from per-field ``null`` and cannot be misread as a six-way neutral
-    signal (ALP-569).
+    """Tickers whose sentiment baseline is ``UNAVAILABLE`` arrive with every
+    nullable field ``None`` (mirroring ``load_sentiment_aggregates``'s
+    unavailable branch). The renderer must surface a compact
+    ``{ticker}: unavailable`` row using the ALP-540 calibration vocabulary
+    so the per-ticker missing-data state is visually distinct from per-field
+    ``null`` and cannot be misread as a six-way neutral signal (ALP-569).
     """
     from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
@@ -601,6 +604,7 @@ def test_sentiment_renders_unavailable_marker_for_per_ticker_unavailable_baselin
         volume=None,
         divergence_flag=None,
         percentile_vs_self=None,
+        calibration_state=CalibrationState.UNAVAILABLE,
     )
     bundle = assemble_input_bundle(
         invocation_id=_INVOCATION_ID,
@@ -639,6 +643,7 @@ def test_sentiment_per_ticker_unavailable_distinguishable_from_per_field_null() 
         volume=None,
         divergence_flag=None,
         percentile_vs_self=None,
+        calibration_state=CalibrationState.UNAVAILABLE,
     )
     ctra = _make_sentiment(
         ticker=Symbol("CTRA"),
@@ -657,8 +662,10 @@ def test_sentiment_per_ticker_unavailable_distinguishable_from_per_field_null() 
         inputs=_make_inputs(sentiment=(slb, ctra)),
     )
     lines = bundle.sentiment_text.splitlines()
-    slb_line = next(line for line in lines if line.startswith("SLB:"))
-    ctra_line = next(line for line in lines if line.startswith("CTRA:"))
+    slb_line = next((line for line in lines if line.startswith("SLB:")), None)
+    ctra_line = next((line for line in lines if line.startswith("CTRA:")), None)
+    assert slb_line is not None, f"SLB row missing from rendered bundle: {lines!r}"
+    assert ctra_line is not None, f"CTRA row missing from rendered bundle: {lines!r}"
     # Per-ticker unavailable: compact, no per-field placeholders.
     assert slb_line == "SLB: unavailable"
     # Per-field null: inline within the otherwise-numeric row.

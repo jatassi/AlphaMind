@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.calibration import CalibrationState
 from alphamind.analysis.qualitative_research import input_bundle_integrity as integrity
 from alphamind.analysis.qualitative_research.input_bundle_integrity import (
     SENTIMENT_CALIBRATED_BASELINE_WARN_THRESHOLD,
@@ -138,6 +139,7 @@ def _sentiment(ticker: str = "AAPL") -> SentimentAggregate:
         divergence_flag=None,
         percentile_vs_self=0.5,
         data_freshness=AS_OF,
+        calibration_state=CalibrationState.CALIBRATED,
     )
 
 

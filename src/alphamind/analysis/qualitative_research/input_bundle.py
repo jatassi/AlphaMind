@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from alphamind._kernel.calibration import CalibrationState
 from alphamind.analysis.qualitative_research.loaders import (
     QualitativeInputs,
     SentimentAggregate,
@@ -124,29 +125,18 @@ def _render_regime(regime_label: dict[str, Any]) -> str:
 def _render_sentiment(inputs: QualitativeInputs) -> str:
     """Render per-ticker sentiment aggregates sorted alphabetically by ticker.
 
-    Two missing-data patterns surface distinctly so the LLM cannot misread
-    either as a neutral or weak signal (ALP-569):
-
-    * **Per-ticker unavailable** — the loader's UNAVAILABLE branch emits a
-      record with every nullable field ``None`` for tickers whose sentiment
-      baseline has zero observations (collector down, vendor outage, or a
-      recently-added symbol whose news ingestion has not produced a baseline
-      row yet — e.g., SLB / XYZ in inv-20260519T030654Z). These render as a
-      compact ``{ticker}: unavailable`` line using the ALP-540 calibration
-      vocabulary.
-    * **Per-field null** — individual fields fall back to ``None`` when their
-      own per-window source data is missing (single baseline row, no daily-bar
-      history). These render inline as ``null`` within the otherwise-numeric
-      row.
+    ``UNAVAILABLE`` rows surface as a compact ``{ticker}: unavailable`` line
+    so per-ticker missing data stays distinguishable from per-field ``null``
+    fallbacks inside otherwise-numeric rows.
     """
     rows = sorted(inputs.sentiment_aggregates, key=lambda s: s.ticker)
     return "\n".join(_render_sentiment_row(s) for s in rows)
 
 
 def _render_sentiment_row(s: SentimentAggregate) -> str:
-    """Render one sentiment row, dispatching on the per-ticker missing-data state."""
-    if _is_per_ticker_unavailable(s):
-        return f"{s.ticker}: unavailable"
+    """Render one sentiment row, dispatching on ``calibration_state``."""
+    if s.calibration_state is CalibrationState.UNAVAILABLE:
+        return f"{s.ticker}: {CalibrationState.UNAVAILABLE.value}"
     return (
         f"{s.ticker}: directional={_render_optional(s.directional_score)},"
         f" magnitude={_render_optional(s.magnitude)},"
@@ -154,25 +144,6 @@ def _render_sentiment_row(s: SentimentAggregate) -> str:
         f" vol={_render_optional(s.volume)},"
         f" percentile={_render_optional(s.percentile_vs_self)},"
         f" divergence={_render_optional(s.divergence_flag)}"
-    )
-
-
-def _is_per_ticker_unavailable(s: SentimentAggregate) -> bool:
-    """True when every nullable field on the record is ``None``.
-
-    Mirrors the loader's UNAVAILABLE branch (``loaders.py:546-558``) which
-    emits an all-None record for tickers with zero sentiment observations.
-    Calibrated and accumulating tickers always populate ``directional_score``,
-    ``magnitude``, and ``percentile_vs_self``, so this pattern uniquely
-    identifies the per-ticker unavailable state.
-    """
-    return (
-        s.directional_score is None
-        and s.magnitude is None
-        and s.rate_of_change is None
-        and s.volume is None
-        and s.divergence_flag is None
-        and s.percentile_vs_self is None
     )
 
 
