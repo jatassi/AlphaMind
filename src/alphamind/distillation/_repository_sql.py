@@ -34,6 +34,10 @@ from alphamind.distillation._repository import (
     TickerBaselineRow,
 )
 from alphamind.distillation.baselines import PENDING_OUTCOME
+from alphamind.persistence.asset_universe_queries import (
+    adv_shares_select,
+    coerce_adv_shares,
+)
 from alphamind.persistence.models import (
     AssetUniverse,
     DistillationContractHistory,
@@ -283,19 +287,17 @@ class SqlDistillationRepository(DistillationRepository):
         return {ct: (today_by_contract.get(ct), prior_by_contract.get(ct)) for ct in all_contracts}
 
     def load_ticker_adv(self, *, ticker: str) -> TickerADVRow | None:
-        # One query selecting both the ticker key (presence sentinel) and
-        # the ADV column. Missing row → None; present row with a NULL ADV
-        # → TickerADVRow(avg_daily_volume_shares=None).
-        stmt = select(AssetUniverse.ticker, AssetUniverse.avg_daily_volume_shares).where(
-            AssetUniverse.ticker == ticker
-        )
-        row = self._session.execute(stmt).one_or_none()
+        # Shared SELECT + coercion lives in
+        # ``alphamind.persistence.asset_universe_queries`` (ALP-533) so the
+        # async wedge adapter consumes the same primitive. ``row is None``
+        # means the ticker is absent from ``asset_universe``; a present row
+        # with ``row[0] is None`` means the ADV column itself is NULL.
+        row = self._session.execute(adv_shares_select(ticker)).one_or_none()
         if row is None:
             return None
-        _present_ticker, adv = row
         return TickerADVRow(
             ticker=ticker,
-            avg_daily_volume_shares=float(adv) if adv is not None else None,
+            avg_daily_volume_shares=coerce_adv_shares(row[0]),
         )
 
     # --- qualitative news --------------------------------------------------

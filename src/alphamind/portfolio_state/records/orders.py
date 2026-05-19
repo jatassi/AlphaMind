@@ -45,6 +45,22 @@ class OrderDirection(StrEnum):
     SELL_TO_CLOSE = "SELL_TO_CLOSE"
 
 
+_BUY_DIRECTIONS: frozenset[OrderDirection] = frozenset(
+    {OrderDirection.BUY, OrderDirection.BUY_TO_OPEN, OrderDirection.BUY_TO_CLOSE}
+)
+
+
+def direction_to_side(direction: OrderDirection) -> Literal["buy", "sell"]:
+    """Collapse the six-variant ``OrderDirection`` to the buy-vs-sell partition.
+
+    Consumed by execution-side cash-movement (debit on buy, credit on sell)
+    and the paper-evaluation harness wedge (live-adjusted-price sign + fee
+    dispatch). The open/close discriminator is intentionally dropped — both
+    halves of the partition share the same downstream treatment.
+    """
+    return "buy" if direction in _BUY_DIRECTIONS else "sell"
+
+
 class OrderClass(StrEnum):
     """Contingent-order class per orders-and-brackets.md § Tier 2.
 

@@ -15,34 +15,28 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Any, Final, Literal
+from typing import Any, Final
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.config.models.execution import OrderType as HarnessOrderType
 from alphamind.execution.paper_evaluation_harness.enrichment import OrderAttributes
-from alphamind.persistence.models import AssetUniverse
-from alphamind.portfolio_state.records.orders import OrderDirection, OrderType
+from alphamind.persistence.asset_universe_queries import (
+    adv_shares_select,
+    coerce_adv_shares,
+)
+from alphamind.portfolio_state.records.orders import (
+    OrderDirection,
+    OrderType,
+    direction_to_side,
+)
 from alphamind.portfolio_state.records.positions import InstrumentType
 from alphamind.risk_guardrails.guardrail_evaluation import RealizedVolEntry
 from alphamind.state.tables.orders import OrderRow
 
 __all__ = ["MapVolLookup", "SqlAdvLookup", "SqlOrderLookup"]
 
-
-# OrderDirection has six variants (BUY, SELL, BUY_TO_OPEN, SELL_TO_OPEN,
-# BUY_TO_CLOSE, SELL_TO_CLOSE). The harness only cares about buy-vs-sell for
-# the live-adjusted-price sign and the fee dispatch, so the open/close
-# discriminator collapses here.
-_DIRECTION_TO_SIDE: Final[Mapping[OrderDirection, Literal["buy", "sell"]]] = {
-    OrderDirection.BUY: "buy",
-    OrderDirection.BUY_TO_OPEN: "buy",
-    OrderDirection.BUY_TO_CLOSE: "buy",
-    OrderDirection.SELL: "sell",
-    OrderDirection.SELL_TO_OPEN: "sell",
-    OrderDirection.SELL_TO_CLOSE: "sell",
-}
 
 # Portfolio-state OrderType has four variants (MARKET, LIMIT, STOP, STOP_LIMIT);
 # the harness's ``PaperHarness.impact_coefficients`` keys are the three
@@ -88,7 +82,7 @@ class SqlOrderLookup:
             return None
         return OrderAttributes(
             order_type=_ORDER_TYPE_TO_HARNESS[OrderType(row.order_type)],
-            side=_DIRECTION_TO_SIDE[OrderDirection(row.direction)],
+            side=direction_to_side(OrderDirection(row.direction)),
             instrument_type=InstrumentType(payload["instrument_type"]),
             ticker_or_underlying=ticker_or_underlying,
         )
@@ -111,10 +105,11 @@ def _extract_ticker(payload: dict[str, Any]) -> str | None:
 class SqlAdvLookup:
     """Production ``AdvLookup`` impl backed by ``asset_universe.avg_daily_volume_shares``.
 
-    Reads the same column ``SqlDistillationRepository.load_ticker_adv`` reads;
-    the queries diverged because the distillation repo uses a sync session
-    while the wedge runs in the async monitor's event loop. Consolidating to
-    a single read path is tracked separately (see ALP follow-up).
+    Consumes :func:`adv_shares_select` and :func:`coerce_adv_shares` from
+    ``alphamind.persistence.asset_universe_queries`` — the same primitives
+    :meth:`SqlDistillationRepository.load_ticker_adv` consumes (ALP-533).
+    The session-shape difference (async here, sync there) is the only
+    asymmetry that remains.
 
     Returns ``None`` when the ticker is missing from the universe *or* when
     its ADV column is NULL — both cases route through the same no-estimate
@@ -126,19 +121,10 @@ class SqlAdvLookup:
 
     async def get_adv_shares(self, ticker: str) -> float | None:
         async with self._session_factory() as sess:
-            row = (
-                await sess.execute(
-                    select(AssetUniverse.avg_daily_volume_shares).where(
-                        AssetUniverse.ticker == ticker
-                    )
-                )
-            ).one_or_none()
+            row = (await sess.execute(adv_shares_select(ticker))).one_or_none()
         if row is None:
             return None
-        (adv,) = row
-        if adv is None:
-            return None
-        return float(adv)
+        return coerce_adv_shares(row[0])
 
 
 class MapVolLookup:

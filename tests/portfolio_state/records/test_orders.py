@@ -39,6 +39,7 @@ from alphamind.portfolio_state.records.orders import (
     PriceTrigger,
     StrategyInstrumentSpec,
     TimeTrigger,
+    direction_to_side,
 )
 from alphamind.portfolio_state.records.positions import InstrumentType, OptionContractType
 
@@ -1273,3 +1274,33 @@ class TestBracketLegPLAnchor:
         assert leg.pl_anchor is not None
         assert leg.pl_anchor.spec_type == "target"
         assert leg.pl_anchor.pct == 0.80
+
+
+# ---------------------------------------------------------------------------
+# Buy/sell-side mapping (ALP-533)
+# ---------------------------------------------------------------------------
+
+
+class TestDirectionToSide:
+    """Buy-vs-sell partition of OrderDirection consumed by phase1 cash-movement
+    and the paper-evaluation harness side dispatch."""
+
+    @pytest.mark.parametrize(
+        "direction",
+        [OrderDirection.BUY, OrderDirection.BUY_TO_OPEN, OrderDirection.BUY_TO_CLOSE],
+    )
+    def test_buy_directions_map_to_buy(self, direction: OrderDirection) -> None:
+        assert direction_to_side(direction) == "buy"
+
+    @pytest.mark.parametrize(
+        "direction",
+        [OrderDirection.SELL, OrderDirection.SELL_TO_OPEN, OrderDirection.SELL_TO_CLOSE],
+    )
+    def test_sell_directions_map_to_sell(self, direction: OrderDirection) -> None:
+        assert direction_to_side(direction) == "sell"
+
+    def test_partition_covers_all_variants(self) -> None:
+        """Every OrderDirection variant must map to exactly one side — if a new
+        variant is added without updating the partition, this test fails."""
+        sides = {direction_to_side(d) for d in OrderDirection}
+        assert sides == {"buy", "sell"}

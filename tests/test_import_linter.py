@@ -484,11 +484,12 @@ def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
     ``*_compute.py`` cores are now enumerated by
     ``distillation-compute-no-sqlalchemy``.
 
-    Post-ALP-530 baseline (ALP-130 work tree, per-ticker realized-vol substrate):
-    - 32 direct sqlalchemy ignores (post-ALP-486 31 plus the new
+    Post-ALP-533 baseline (consolidated buy/sell + ADV lookup):
+    - 32 direct sqlalchemy ignores (post-ALP-486 31 plus the
       ``realized_vol -> sqlalchemy`` IO-shell entry added by ALP-530).
-    - 17 indirect ignores (post-ALP-486 16 plus the new
-      ``realized_vol -> alphamind.persistence.models`` entry added by ALP-530).
+    - 18 indirect ignores (post-ALP-530 17 plus the new
+      ``_repository_sql -> alphamind.persistence.asset_universe_queries``
+      entry added by ALP-533 for the shared ADV SELECT helper).
 
     Regression guard: a future story tightening this contract by accident
     would drop entries here and silently re-introduce violations.
@@ -502,9 +503,10 @@ def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
         f"direct sqlalchemy ignore_imports count drifted: expected 32, got {len(direct)}.\n"
         f"entries:\n  " + "\n  ".join(direct)
     )
-    assert len(indirect) == 17, (
-        f"indirect ignore_imports count drifted: expected 17 "
-        f"(post-ALP-486 16 plus the realized_vol -> persistence.models entry), "
+    assert len(indirect) == 18, (
+        f"indirect ignore_imports count drifted: expected 18 "
+        f"(post-ALP-530 17 plus the ALP-533 _repository_sql -> "
+        f"persistence.asset_universe_queries entry), "
         f"got {len(indirect)}.\n"
         f"entries:\n  " + "\n  ".join(indirect)
     )

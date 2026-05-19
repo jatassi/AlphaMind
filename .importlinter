@@ -180,6 +180,15 @@ ignore_imports =
     # the SqlDistillationRepository and the gap_loaders write path.
     alphamind.distillation._repository_sql -> alphamind.persistence.models
     alphamind.distillation.q1.gap_loaders -> alphamind.persistence.models
+    # ALP-533 — ``persistence.asset_universe_queries`` carries the shared ADV
+    # SELECT + int-to-float coercion previously duplicated between
+    # ``SqlDistillationRepository.load_ticker_adv`` (sync) and
+    # ``SqlAdvLookup.get_adv_shares`` (async). The helper module reaches
+    # sqlalchemy directly so each adapter can execute the returned ``Select``
+    # against its own session shape; the IO-shell carve-out matches the
+    # existing ``_repository_sql -> alphamind.persistence.models`` exception
+    # above and retires under the same punch-list #9 split.
+    alphamind.distillation._repository_sql -> alphamind.persistence.asset_universe_queries
     # ALP-484 piloted modules — q3 IO shells reach persistence.models for the
     # same reason: ORM queries (and the IV-rank UPSERT) live here, not in
     # the corresponding pure compute cores. ``q3._loaders`` composes the
