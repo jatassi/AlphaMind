@@ -74,6 +74,13 @@ narrative_lag:
   # with the universe size; BH bounds the expected false-discovery
   # proportion among published flags.
   correlation_breakdown_fdr_q:           0.05
+  # Locus-aggregation threshold (ALP-543). Pair-wise correlations are not
+  # independent when a single ticker's return path shifts — one shock to a
+  # locus ticker flips its correlation with N partners in lock-step. After
+  # BH-FDR + σ-gate filtering, any ticker appearing in at least this many
+  # surviving pairs is rolled up into one ``q7.correlation_locus.<ticker>``
+  # block and its contributing per-pair blocks are suppressed.
+  correlation_locus_pair_count_threshold: 3
   narrative_lag_media_silence_hours:     12
 
 persistence_windows:

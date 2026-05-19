@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import math
 import random
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 import pytest
@@ -484,6 +485,7 @@ class TestCorrelationRegimeChangeCompute:
             dispersion_window_days=5,
             dispersion_sigma=1.5,
             media_silence_hours=12,
+            correlation_locus_pair_count_threshold=999,
         )
         # 10 days of returns across 3 tickers — the per-day cross-ticker
         # dispersion needs to vary across days so the trailing-window
@@ -519,6 +521,7 @@ class TestCorrelationRegimeChangeCompute:
             dispersion_window_days=20,
             dispersion_sigma=1.5,
             media_silence_hours=12,
+            correlation_locus_pair_count_threshold=999,
         )
         long_a = [0.01, -0.005, 0.008, -0.012, 0.006] * 8
         long_b = [r + 0.0001 * (i % 3) for i, r in enumerate(long_a)]
@@ -555,6 +558,7 @@ class TestCorrelationRegimeChangeCompute:
             dispersion_window_days=20,
             dispersion_sigma=1.5,
             media_silence_hours=12,
+            correlation_locus_pair_count_threshold=999,
         )
         long_a = [0.01, -0.005, 0.008, -0.012, 0.006] * 8
         long_b = [r + 0.0001 * (i % 3) for i, r in enumerate(long_a)]
@@ -606,6 +610,7 @@ class TestCorrelationBreakdownDataAlignmentGuards:
             dispersion_window_days=20,
             dispersion_sigma=1.5,
             media_silence_hours=12,
+            correlation_locus_pair_count_threshold=999,
         )
 
     @staticmethod
@@ -800,6 +805,7 @@ class TestCorrelationBreakdownMultipleComparison:
             dispersion_window_days=20,
             dispersion_sigma=1.5,
             media_silence_hours=12,
+            correlation_locus_pair_count_threshold=999,
         )
 
     @staticmethod
@@ -953,6 +959,294 @@ class TestCorrelationBreakdownMultipleComparison:
             as_of=_as_of(),
         )
         assert self._filtered_pair_blocks(blocks_gated) == []
+
+
+def _meta_locus_universe_returns(
+    *, partners: Sequence[str] = ("A", "B", "C", "D")
+) -> dict[str, tuple[float, ...]]:
+    """``META`` is the breakdown locus across ``partners``.
+
+    All series share the co-moving prior pattern, so each (META, partner)
+    pair carries ``prior_corr ≈ +1``. In the short window, only META's
+    series inverts; every partner keeps the upward path, so each
+    (META, partner) pair flips to ``short_corr ≈ -1`` — high-sigma
+    breakdown. Cross-partner pairs (A, B), (A, C), ... all stay
+    co-moving in both windows and do not break down.
+
+    The result is exactly ``len(partners)`` pair-level breakdowns, all
+    sharing META as the common locus — the canonical "single ticker is
+    the source of N independent-looking flags" pattern this scope fixes.
+    """
+    long_base = [0.01, -0.005, 0.008, -0.012, 0.006] * 8
+    short_base = [
+        0.01, -0.02, 0.015, 0.005, -0.01,
+        0.012, -0.018, 0.02, -0.005, 0.008,
+        -0.015, 0.01, -0.005, 0.012, -0.008,
+        0.005, -0.012, 0.018, -0.01, 0.005,
+    ]  # fmt: skip
+    returns: dict[str, tuple[float, ...]] = {
+        "META": tuple(long_base + [-x for x in short_base]),
+    }
+    for offset, partner in enumerate(partners, start=1):
+        long_partner = [r + 0.0001 * ((i + offset) % 3) for i, r in enumerate(long_base)]
+        short_partner = [x + 0.00005 * offset for x in short_base]
+        returns[partner] = tuple(long_partner + short_partner)
+    return returns
+
+
+class TestCorrelationBreakdownLocusAggregation:
+    """ALP-543: aggregate per-pair breakdowns into per-ticker locus flags.
+
+    When a single ticker is the source of a correlation dislocation the
+    sigma-test fires once per affected pair — N independent-looking flags
+    that actually express one underlying signal. The locus-aggregation
+    pass counts each surviving pair's ticker frequencies; tickers appearing
+    in at least the configured pair-count threshold are emitted as a
+    single ``correlation_locus_flag`` and their per-pair blocks are
+    suppressed from the output stream.
+    """
+
+    @staticmethod
+    def _params(
+        *,
+        breakdown_sigma: float = 1.0,
+        fdr_q: float = 1.0,
+        noise_floor: float = 0.0,
+        locus_threshold: int = 3,
+    ) -> CorrelationRegimeChangeParameters:
+        return CorrelationRegimeChangeParameters(
+            short_window_days=20,
+            long_window_days=60,
+            correlation_breakdown_sigma=breakdown_sigma,
+            correlation_min_overlap_fraction=0.9,
+            correlation_noise_floor=noise_floor,
+            correlation_breakdown_fdr_q=fdr_q,
+            dispersion_window_days=20,
+            dispersion_sigma=1.5,
+            media_silence_hours=12,
+            correlation_locus_pair_count_threshold=locus_threshold,
+        )
+
+    @staticmethod
+    def _pair_blocks(blocks: list[OutputBlock]) -> list[OutputBlock]:
+        return [
+            b
+            for b in blocks
+            if b.block_id.startswith("q7.correlation_breakdown.")
+            and b.block_id != "q7.correlation_breakdown.dispersion_shift"
+        ]
+
+    @staticmethod
+    def _locus_blocks(blocks: list[OutputBlock]) -> list[OutputBlock]:
+        return [b for b in blocks if b.block_id.startswith("q7.correlation_locus.")]
+
+    def test_locus_flag_emits_when_ticker_pair_count_meets_threshold(self) -> None:
+        returns = _meta_locus_universe_returns(partners=("A", "B", "C", "D"))
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=tuple(returns),
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(locus_threshold=3),
+            as_of=_as_of(),
+        )
+        locus_blocks = self._locus_blocks(blocks)
+        assert locus_blocks, "expected a META locus block at threshold=3"
+        meta_blocks = [b for b in locus_blocks if b.block_id == "q7.correlation_locus.META"]
+        assert meta_blocks, [b.block_id for b in locus_blocks]
+        flag_names = {flag.name for block in meta_blocks for flag in block.anomaly_flags}
+        assert "correlation_locus_flag:META" in flag_names
+
+    def test_per_pair_flags_suppressed_for_locus_ticker(self) -> None:
+        returns = _meta_locus_universe_returns(partners=("A", "B", "C", "D"))
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=tuple(returns),
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(locus_threshold=3),
+            as_of=_as_of(),
+        )
+        pair_blocks = self._pair_blocks(blocks)
+        assert pair_blocks == [], (
+            "per-pair blocks for the META locus should be suppressed; "
+            f"got {[b.block_id for b in pair_blocks]}"
+        )
+
+        relaxed = compute_correlation_regime_change_pure(
+            universe_tickers=tuple(returns),
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(locus_threshold=99),
+            as_of=_as_of(),
+        )
+        assert self._pair_blocks(relaxed), (
+            "fixture should produce per-pair breakdowns when the locus threshold is unreachable — "
+            "otherwise the suppression test is vacuous"
+        )
+        assert self._locus_blocks(relaxed) == []
+
+    def test_locus_payload_carries_pair_count_max_sigma_and_partners(self) -> None:
+        returns = _meta_locus_universe_returns(partners=("A", "B", "C", "D"))
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=tuple(returns),
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(locus_threshold=3),
+            as_of=_as_of(),
+        )
+        meta = next(
+            b for b in self._locus_blocks(blocks) if b.block_id == "q7.correlation_locus.META"
+        )
+        payload = meta.payload
+        assert payload["locus_ticker"] == "META"
+        assert payload["pair_count"] == 4
+        assert sorted(payload["partner_tickers"]) == ["A", "B", "C", "D"]
+        relaxed = compute_correlation_regime_change_pure(
+            universe_tickers=tuple(returns),
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(locus_threshold=99),
+            as_of=_as_of(),
+        )
+        per_pair_sigmas = [float(b.payload["deviation_sigma"]) for b in self._pair_blocks(relaxed)]
+        assert per_pair_sigmas
+        assert payload["max_deviation_sigma"] == pytest.approx(max(per_pair_sigmas))
+        supporting = payload["supporting_pairs"]
+        assert isinstance(supporting, tuple | list)
+        assert all(pid.startswith("q7.correlation_breakdown.") for pid in supporting)
+
+    def test_residual_non_locus_pair_flags_preserved(self) -> None:
+        # One META-centred locus plus a single isolated G/H pair breakdown
+        # that involves no locus ticker — the G/H pair must survive
+        # aggregation. G and H follow an oscillation with period 2,
+        # orthogonal to the META-cluster's period-5 pattern; with
+        # ``breakdown_sigma=5.0`` the clean inversions (META/partners,
+        # G/H) fire at high sigma while weak cross-fixture correlations
+        # between the period-2 and period-5 series stay below the floor.
+        returns = dict(_meta_locus_universe_returns(partners=("A", "B", "C")))
+        period_two = [0.012 if i % 2 == 0 else -0.012 for i in range(40)]
+        short_period_two = [0.012 if i % 2 == 0 else -0.012 for i in range(20)]
+        returns["G"] = tuple(period_two + short_period_two)
+        returns["H"] = tuple(period_two + [-x for x in short_period_two])
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=tuple(returns),
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(locus_threshold=3, breakdown_sigma=5.0),
+            as_of=_as_of(),
+        )
+        locus_ids = {b.block_id for b in self._locus_blocks(blocks)}
+        assert "q7.correlation_locus.META" in locus_ids
+        assert "q7.correlation_locus.G" not in locus_ids
+        assert "q7.correlation_locus.H" not in locus_ids
+        pair_ids = {b.block_id for b in self._pair_blocks(blocks)}
+        assert "q7.correlation_breakdown.G_H" in pair_ids
+
+    def test_below_threshold_emits_no_locus_flag(self) -> None:
+        returns = _meta_locus_universe_returns(partners=("A", "B"))
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=tuple(returns),
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(locus_threshold=3),
+            as_of=_as_of(),
+        )
+        assert self._locus_blocks(blocks) == []
+        # The two META pair flags remain per-pair (one each for META/A, META/B).
+        pair_ids = {b.block_id for b in self._pair_blocks(blocks)}
+        assert "q7.correlation_breakdown.A_META" in pair_ids
+        assert "q7.correlation_breakdown.B_META" in pair_ids
+
+    def test_locus_threshold_is_configurable(self) -> None:
+        returns = _meta_locus_universe_returns(partners=("A", "B", "C", "D"))
+        # threshold=5 — META has only 4 pair flags → no locus.
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=tuple(returns),
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(locus_threshold=5),
+            as_of=_as_of(),
+        )
+        assert self._locus_blocks(blocks) == []
+        assert self._pair_blocks(blocks), "per-pair flags should survive when no locus emits"
+
+    def test_locus_block_audience_routes_to_correlation_brief(self) -> None:
+        returns = _meta_locus_universe_returns(partners=("A", "B", "C"))
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=tuple(returns),
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(locus_threshold=3),
+            as_of=_as_of(),
+        )
+        meta = next(
+            b for b in self._locus_blocks(blocks) if b.block_id == "q7.correlation_locus.META"
+        )
+        assert OutputAudience.CORRELATION_REGIME_BRIEF in meta.audience
+
+    def test_locus_groups_partners_by_sector_when_map_provided(self) -> None:
+        returns = _meta_locus_universe_returns(partners=("A", "B", "C", "D"))
+        sector_by_ticker = {
+            "META": "tech",
+            "A": "tech",
+            "B": "tech",
+            "C": "financials",
+            "D": "financials",
+        }
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=tuple(returns),
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(locus_threshold=3),
+            as_of=_as_of(),
+            sector_by_ticker=sector_by_ticker,
+        )
+        meta = next(
+            b for b in self._locus_blocks(blocks) if b.block_id == "q7.correlation_locus.META"
+        )
+        partners_by_sector = meta.payload["partners_by_sector"]
+        assert sorted(partners_by_sector["tech"]) == ["A", "B"]
+        assert sorted(partners_by_sector["financials"]) == ["C", "D"]
+        # 2 sectors → cross-sector spread reports both.
+        assert meta.payload["cross_sector_spread"] == "2 sectors"
+
+    def test_locus_payload_omits_sector_keys_when_no_map(self) -> None:
+        returns = _meta_locus_universe_returns(partners=("A", "B", "C"))
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=tuple(returns),
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(locus_threshold=3),
+            as_of=_as_of(),
+        )
+        meta = next(
+            b for b in self._locus_blocks(blocks) if b.block_id == "q7.correlation_locus.META"
+        )
+        assert meta.payload.get("partners_by_sector") is None
+        assert meta.payload.get("cross_sector_spread") is None
+
+    def test_locus_replay_scale_collapses_phantom_flag_burst(self) -> None:
+        """Mirrors inv-20260518T111140Z scale: META locus collapses N flags to 1.
+
+        Builds a 12-ticker universe where META inverts vs every other
+        ticker (11 pair breakdowns) and the remaining cross-pairs stay
+        co-moving (no inter-partner breakdowns). Pre-aggregation: 11
+        per-pair flags. Post-aggregation at threshold=3: one
+        ``q7.correlation_locus.META`` block, zero per-pair blocks.
+        """
+        partners = tuple(f"P{i:02d}" for i in range(11))
+        returns = _meta_locus_universe_returns(partners=partners)
+        blocks = compute_correlation_regime_change_pure(
+            universe_tickers=tuple(returns),
+            long_returns_by_ticker=returns,
+            qualifying_news_present=True,
+            params=self._params(locus_threshold=3),
+            as_of=_as_of(),
+        )
+        locus_ids = [b.block_id for b in self._locus_blocks(blocks)]
+        assert locus_ids == ["q7.correlation_locus.META"]
+        meta = self._locus_blocks(blocks)[0]
+        assert meta.payload["pair_count"] == 11
+        assert self._pair_blocks(blocks) == []
 
 
 # ---------------------------------------------------------------------------

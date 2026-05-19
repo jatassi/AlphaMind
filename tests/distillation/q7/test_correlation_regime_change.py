@@ -184,6 +184,7 @@ class TestCorrelationBreakdown:
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
+                correlation_locus_pair_count_threshold=999,
             ),
         )
 
@@ -228,6 +229,7 @@ class TestCorrelationBreakdown:
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
+                correlation_locus_pair_count_threshold=999,
             ),
         )
 
@@ -293,6 +295,7 @@ class TestDispersionShift:
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
+                correlation_locus_pair_count_threshold=999,
             ),
         )
 
@@ -354,6 +357,7 @@ class TestNarrativeLagFlag:
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
+                correlation_locus_pair_count_threshold=999,
             ),
         )
 
@@ -416,6 +420,7 @@ class TestNarrativeLagFlag:
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
+                correlation_locus_pair_count_threshold=999,
             ),
         )
 
@@ -479,6 +484,7 @@ class TestNarrativeLagFlag:
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
+                correlation_locus_pair_count_threshold=999,
             ),
         )
         narrative_blocks = [b for b in blocks if b.block_id == "q7.narrative_lag"]

@@ -140,6 +140,7 @@ def _build_distillation_config() -> DistillationDomainConfig:
             correlation_min_overlap_fraction=0.9,
             correlation_noise_floor=0.05,
             correlation_breakdown_fdr_q=0.05,
+            correlation_locus_pair_count_threshold=3,
             narrative_lag_media_silence_hours=12,
         ),
         persistence_windows=PersistenceWindows(

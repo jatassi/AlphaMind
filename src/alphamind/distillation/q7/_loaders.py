@@ -548,8 +548,14 @@ def _load_correlation_regime_change_blocks(
     universe_tickers: Sequence[str],
     as_of: datetime,
     params: CorrelationRegimeChangeParameters,
+    sector_by_ticker: Mapping[str, str] | None = None,
 ) -> tuple[OutputBlock, ...]:
-    """Read universe returns + qualifying-news flag for the regime-change blocks."""
+    """Read universe returns + qualifying-news flag for the regime-change blocks.
+
+    ``sector_by_ticker`` threads through to the pure compute so the
+    locus-aggregation pass can group partner tickers by sector and
+    surface the cross-sector spread in each locus block's payload.
+    """
     range_start, range_end = _window_bounds(as_of=as_of, window_days=params.long_window_days)
     long_returns: dict[str, tuple[float, ...]] = {}
     for ticker in universe_tickers:
@@ -570,6 +576,7 @@ def _load_correlation_regime_change_blocks(
             qualifying_news_present=qualifying_news,
             params=params,
             as_of=as_of,
+            sector_by_ticker=sector_by_ticker,
         )
     )
 
@@ -730,12 +737,19 @@ def load_q7_inputs(
         dispersion_window_days=pw.correlation_short_days,
         dispersion_sigma=config.narrative_lag.narrative_lag_correlation_shift_sigma,
         media_silence_hours=config.narrative_lag.narrative_lag_media_silence_hours,
+        correlation_locus_pair_count_threshold=(
+            config.narrative_lag.correlation_locus_pair_count_threshold
+        ),
     )
+    sector_by_ticker = {
+        ticker: sector for sector, tickers in sector_roster.items() for ticker in tickers
+    }
     correlation_regime_change_blocks = _load_correlation_regime_change_blocks(
         session,
         universe_tickers=scope,
         as_of=as_of,
         params=regime_change_params,
+        sector_by_ticker=sector_by_ticker,
     )
 
     return Q7Inputs(
