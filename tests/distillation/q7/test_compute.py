@@ -1071,8 +1071,6 @@ class TestCorrelationBreakdownLocusAggregation:
             f"got {[b.block_id for b in pair_blocks]}"
         )
 
-        # Pin the "would fire as per-pair flags on pre-PR code" baseline by
-        # raising the threshold above the locus pair count.
         relaxed = compute_correlation_regime_change_pure(
             universe_tickers=tuple(returns),
             long_returns_by_ticker=returns,
@@ -1102,7 +1100,6 @@ class TestCorrelationBreakdownLocusAggregation:
         assert payload["locus_ticker"] == "META"
         assert payload["pair_count"] == 4
         assert sorted(payload["partner_tickers"]) == ["A", "B", "C", "D"]
-        # Max sigma equals the strongest contributing pair's deviation.
         relaxed = compute_correlation_regime_change_pure(
             universe_tickers=tuple(returns),
             long_returns_by_ticker=returns,
@@ -1113,7 +1110,6 @@ class TestCorrelationBreakdownLocusAggregation:
         per_pair_sigmas = [float(b.payload["deviation_sigma"]) for b in self._pair_blocks(relaxed)]
         assert per_pair_sigmas
         assert payload["max_deviation_sigma"] == pytest.approx(max(per_pair_sigmas))
-        # supporting_pairs lists the per-pair block ids the locus replaces.
         supporting = payload["supporting_pairs"]
         assert isinstance(supporting, tuple | list)
         assert all(pid.startswith("q7.correlation_breakdown.") for pid in supporting)

@@ -174,13 +174,11 @@ class _BreakdownCandidate:
 
 @dataclass(frozen=True, slots=True)
 class _PublishedPair:
-    """A guard- and BH-surviving pair that cleared the publish gate.
+    """A guard- and BH-surviving pair before the locus-aggregation pass.
 
-    Held in this intermediate form so the locus-aggregation pass can
-    operate on the published set before the per-pair :class:`OutputBlock`
-    objects are constructed — the locus pass needs to suppress some of
-    the pairs entirely, so building blocks for them first would waste
-    work and tangle the call sites.
+    Held in intermediate form so the locus pass can decide whether to
+    suppress the pair in favour of a locus rollup before the
+    :class:`OutputBlock` is constructed.
     """
 
     candidate: _BreakdownCandidate
@@ -338,30 +336,27 @@ def _locus_block(
     )
     max_sigma = max(pair.candidate.magnitude for pair in contributing)
     supporting_pair_ids = tuple(sorted(_pair_block_id(pair.candidate) for pair in contributing))
+    partners_by_sector: dict[str, list[str]] | None = None
+    cross_sector_spread: str | None = None
+    if sector_by_ticker is not None:
+        partners_by_sector = {}
+        for partner in partners:
+            sector = sector_by_ticker.get(partner, "unknown")
+            partners_by_sector.setdefault(sector, []).append(partner)
+        if len(partners_by_sector) == 1:
+            (only_sector,) = partners_by_sector.keys()
+            cross_sector_spread = f"{only_sector}-only"
+        else:
+            cross_sector_spread = f"{len(partners_by_sector)} sectors"
     payload: dict[str, object] = {
         "locus_ticker": locus_ticker,
         "pair_count": len(contributing),
         "max_deviation_sigma": max_sigma,
         "partner_tickers": partners,
         "supporting_pairs": supporting_pair_ids,
-        "partners_by_sector": None,
-        "cross_sector_spread": None,
+        "partners_by_sector": partners_by_sector,
+        "cross_sector_spread": cross_sector_spread,
     }
-    if sector_by_ticker is not None:
-        partners_by_sector: dict[str, list[str]] = {}
-        for partner in partners:
-            sector = sector_by_ticker.get(partner, "unknown")
-            partners_by_sector.setdefault(sector, []).append(partner)
-        # Sort the per-sector lists for byte-identical brief output.
-        for sector_list in partners_by_sector.values():
-            sector_list.sort()
-        payload["partners_by_sector"] = partners_by_sector
-        n_sectors = len(partners_by_sector)
-        if n_sectors == 1:
-            (only_sector,) = partners_by_sector.keys()
-            payload["cross_sector_spread"] = f"{only_sector}-only"
-        else:
-            payload["cross_sector_spread"] = f"{n_sectors} sectors"
     return OutputBlock(
         block_id=f"{_BLOCK_NAMESPACE}.correlation_locus.{locus_ticker}",
         audience=frozenset({OutputAudience.CORRELATION_REGIME_BRIEF}),
@@ -390,16 +385,11 @@ def _correlation_breakdown_blocks(
 ) -> list[OutputBlock]:
     """Emit per-pair breakdown blocks plus per-ticker locus rollups.
 
-    Two-stage publish path:
-
-    1. Run guards + BH-FDR + sigma-gate to identify the published pairs.
-    2. Count published-pair occurrences per ticker. Tickers appearing in
-       at least ``correlation_locus_pair_count_threshold`` published pairs
-       are rolled up into one ``q7.correlation_locus.<ticker>`` block,
-       and the contributing per-pair blocks are suppressed from the
-       output stream so the synthesizer sees one signal per locus instead
-       of N independent-looking flags. Pairs not involving any locus
-       ticker continue to publish individually.
+    Tickers whose occurrence count across published pairs reaches
+    ``correlation_locus_pair_count_threshold`` are rolled up into one
+    ``q7.correlation_locus.<ticker>`` block and their contributing
+    per-pair blocks are suppressed; pairs not involving any locus ticker
+    continue to publish individually.
     """
     published = _published_pairs(
         long_returns=long_returns,
@@ -409,10 +399,9 @@ def _correlation_breakdown_blocks(
     if not published:
         return []
 
-    occurrences: Counter[str] = Counter()
-    for pair in published:
-        occurrences[pair.candidate.row] += 1
-        occurrences[pair.candidate.col] += 1
+    occurrences: Counter[str] = Counter(
+        ticker for pair in published for ticker in (pair.candidate.row, pair.candidate.col)
+    )
     locus_tickers: frozenset[str] = frozenset(
         ticker
         for ticker, count in occurrences.items()

@@ -86,10 +86,6 @@ _CATEGORY_ORDER: tuple[_Category, ...] = (
     _Category.CROSS_SECTOR_ROTATION,
     _Category.INTERMARKET,
     _Category.LEAD_LAG,
-    # Locus flags render BEFORE the per-pair section so the synthesizer
-    # sees the rolled-up "ticker X is the dislocation locus" finding
-    # ahead of any residual non-locus pair flags — the residuals are
-    # noisier context, not the headline signal.
     _Category.CORRELATION_LOCUS,
     _Category.CORRELATION_REGIME_CHANGE,
     _Category.NARRATIVE_LAG,
@@ -380,7 +376,7 @@ def _decompose_correlation_breakdown_block(block: OutputBlock) -> list[_Finding]
 
 
 def _decompose_correlation_locus_block(block: OutputBlock) -> list[_Finding]:
-    """One CR-N entry per locus block (ALP-543).
+    """One CR-N entry per locus block.
 
     Renders the rolled-up "ticker X is the dislocation locus" finding the
     locus-aggregation pass emits when a single ticker appears in the
@@ -391,19 +387,19 @@ def _decompose_correlation_locus_block(block: OutputBlock) -> list[_Finding]:
     """
     payload = block.payload
     locus_ticker = payload.get("locus_ticker", "")
-    pair_count = payload.get("pair_count", "")
+    pair_count = payload.get("pair_count")
     max_sigma = payload.get("max_deviation_sigma")
     partners = payload.get("partner_tickers") or ()
     partners_by_sector = payload.get("partners_by_sector")
     cross_sector_spread = payload.get("cross_sector_spread")
 
     summary = (
-        f"{locus_ticker}: locus of {pair_count} pair-wise breakdowns "
+        f"{locus_ticker}: locus of {_format_value(pair_count)} pair-wise breakdowns "
         f"(max deviation {_format_value(max_sigma)} sigma)"
     )
     detail: list[str] = [
         f"Locus ticker: {locus_ticker}",
-        f"Pair count: {pair_count}",
+        f"Pair count: {_format_value(pair_count)}",
         f"Max deviation sigma: {_format_value(max_sigma)}",
         f"Partner tickers: {', '.join(partners) if partners else ''}",
     ]
