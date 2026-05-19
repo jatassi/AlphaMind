@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
+from types import MappingProxyType
 
 import pytest
 
@@ -30,6 +31,10 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterSet,
 )
 from alphamind.portfolio_state.assembler import assemble_snapshot
+from alphamind.portfolio_state.consumers.synthesizer import (
+    SnapshotBackedSynthesizerReader,
+    adapt_ticker_sector_resolver,
+)
 from alphamind.portfolio_state.freshness import AssembledSnapshot, SnapshotFreshness
 from alphamind.portfolio_state.pricing import (
     PriceQuote,
@@ -89,6 +94,13 @@ from alphamind.portfolio_state.repository import (
     StubPortfolioStateRepository,
 )
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    EscalationZones,
+    FeatureFlagsView,
+    LibraryConfig,
+    build_risk_budget_consumption,
+)
+from alphamind.risk_guardrails.library_snapshot import to_library_snapshot
 
 # ---------------------------------------------------------------------------
 # Shared timestamps
@@ -233,12 +245,13 @@ def _make_prior_context(
     )
 
 
-def _make_open_equity_position(
+def _make_equity_position(
     position_id: str = "POS-001",
     ticker: str = "NVDA",
     share_count: float = 100.0,
     cost_per_share: float = 500.0,
     direction: Direction = Direction.LONG,
+    status: PositionStatus = PositionStatus.OPEN,
 ) -> PositionRecord:
     equity = EquityPositionDetails(
         ticker=Symbol(ticker),
@@ -255,15 +268,16 @@ def _make_open_equity_position(
         slippage=signed_money(0.01),
         fees=money(1.0),
     )
+    execution_history = () if status == PositionStatus.PENDING else (fill,)
     return PositionRecord(
         position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
-        status=PositionStatus.OPEN,
+        status=status,
         direction=direction,
         entry_timestamp=_ENTRY_AT,
         details=equity,
-        execution_history=(fill,),
+        execution_history=execution_history,
         realized_pnl_to_date_usd=None,
         corporate_action_adjustment_needed=False,
         parent_position_id=None,
@@ -646,7 +660,7 @@ def test_assemble_snapshot_call_returns_assembled_snapshot_not_coroutine() -> No
 def test_single_equity_position_enrichment() -> None:
     """Single LONG NVDA position; verify market value, weight, unrealized P/L."""
     # 100 shares, cost $500, price $520 → MV = $52,000, unrealized = $2,000
-    pos = _make_open_equity_position(share_count=100.0, cost_per_share=500.0)
+    pos = _make_equity_position(share_count=100.0, cost_per_share=500.0)
     fixture = _make_fixture(
         open_positions=(pos,),
         cash_ledger=_make_cash_ledger(current_cash=0.0),  # no cash, only position
@@ -685,15 +699,119 @@ def test_single_equity_position_enrichment() -> None:
 
 
 # ---------------------------------------------------------------------------
+# ALP-579: Pending positions contribute to sector / directional exposure
+# ---------------------------------------------------------------------------
+
+
+_DEFAULT_ZONES = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
+
+
+def test_pending_positions_flow_through_all_three_exposure_consumers() -> None:
+    """Snapshot reader, library snapshot, and risk-budget projection all
+    reflect PENDING positions consistently — guards the three tools that
+    diverged in invocation ``inv-20260519T030654Z-60f10023``:
+
+    * ``SnapshotBackedSynthesizerReader.get_exposure_snapshot`` (returned
+      "No exposure" pre-fix while ``get_positions_summary`` saw 8 positions).
+    * ``to_library_snapshot`` → ``LibrarySnapshot.sector_exposure_pct`` /
+      ``net_long_pct`` / ``gross_pct`` (the shape ``validate_guardrail``
+      reads and the headroom calculator projects rules against).
+    * ``build_risk_budget_consumption`` against that library snapshot (the
+      source of the headroom blocks in the analyst / strategist / PM bundles).
+    """
+    sector_by_ticker = {"NVDA": "tech", "AMD": "tech", "JPM": "financials"}
+
+    def ticker_sector(ticker: str) -> str:
+        return sector_by_ticker.get(ticker, "unclassified")
+
+    pending_positions = (
+        _make_equity_position(
+            "PND-NVDA", "NVDA", 10.0, 500.0, Direction.LONG, PositionStatus.PENDING
+        ),
+        _make_equity_position(
+            "PND-JPM", "JPM", 20.0, 150.0, Direction.LONG, PositionStatus.PENDING
+        ),
+    )
+    fixture = _make_fixture(
+        pending_positions=pending_positions,
+        cash_ledger=_make_cash_ledger(current_cash=20_000.0),
+        active_risk_parameters=_make_active_risk_parameters_with_entry(
+            "position_max_size_pct", 10.0
+        ),
+    )
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider(
+        {
+            "NVDA": _make_fresh_quote("NVDA", 520.0),
+            "JPM": _make_fresh_quote("JPM", 160.0),
+        },
+        _NOW,
+    )
+
+    assembled = _run(
+        assemble_snapshot(
+            repository=repo,
+            price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
+            sector_resolver=adapt_ticker_sector_resolver(ticker_sector),
+            config=_make_config(),
+            now=_NOW,
+        )
+    )
+    snapshot = assembled.snapshot
+
+    # Tool 1: SnapshotBackedSynthesizerReader.
+    reader = SnapshotBackedSynthesizerReader(snapshot, adapt_ticker_sector_resolver(ticker_sector))
+    positions = reader.get_positions_summary()
+    exposure = reader.get_exposure_snapshot()
+    assert {p.ticker for p in positions} == {"NVDA", "JPM"}
+    assert exposure.sector_exposure_pct != {}
+    assert exposure.gross_exposure_pct > 0.0
+    assert exposure.net_directional_pct > 0.0
+
+    # Tool 2: library snapshot.
+    library_snapshot = to_library_snapshot(snapshot, sector_resolver=ticker_sector)
+    assert library_snapshot.sector_exposure_pct["tech"] > 0.0
+    assert library_snapshot.sector_exposure_pct["financials"] > 0.0
+    assert library_snapshot.net_long_pct > 0.0
+    assert library_snapshot.gross_pct > 0.0
+
+    # Tool 3: build_risk_budget_consumption.
+    limits = {
+        "position_max_size_pct": 10.0,
+        "sector_concentration_pct": 25.0,
+        "net_long_pct": 60.0,
+        "gross_exposure_pct": 120.0,
+        "min_cash_reserve_pct": 10.0,
+        "pending_order_capital_pct": 20.0,
+    }
+    library_config = LibraryConfig(
+        effective_limits=MappingProxyType(limits),
+        escalation_zones=MappingProxyType({k: _DEFAULT_ZONES for k in limits}),
+        feature_flags=FeatureFlagsView(options_enabled=False, short_selling_enabled=False),
+        active_sectors=("tech", "financials"),
+        active_regime="normal",
+        active_profile="medium",
+        conservative_buffer_pct=10.0,
+    )
+    risk_budget = build_risk_budget_consumption(library_snapshot, library_config)
+    entries_by_id = {e.rule_id: e for e in risk_budget.entries}
+    assert entries_by_id["sector_concentration_tech"].current_value > 0.0
+    assert entries_by_id["sector_concentration_financials"].current_value > 0.0
+    assert entries_by_id["net_long_pct"].current_value > 0.0
+    assert entries_by_id["gross_exposure_pct"].current_value > 0.0
+
+
+# ---------------------------------------------------------------------------
 # Test 4: Multi-position — sector rollup, directional exposure, trail keying
 # ---------------------------------------------------------------------------
 
 
 def test_multi_position_rollup() -> None:
     """Three positions: two sectors, one short, one long-with-bracket, one plain long."""
-    pos_tech_long = _make_open_equity_position("POS-TECH", "NVDA", 10.0, 500.0, Direction.LONG)
-    pos_tech_short = _make_open_equity_position("POS-TECH-S", "AMD", 5.0, 100.0, Direction.SHORT)
-    pos_health = _make_open_equity_position("POS-HLTH", "JNJ", 20.0, 150.0, Direction.LONG)
+    pos_tech_long = _make_equity_position("POS-TECH", "NVDA", 10.0, 500.0, Direction.LONG)
+    pos_tech_short = _make_equity_position("POS-TECH-S", "AMD", 5.0, 100.0, Direction.SHORT)
+    pos_health = _make_equity_position("POS-HLTH", "JNJ", 20.0, 150.0, Direction.LONG)
 
     modification_trail_entry = ActivityLogEntry(
         entry_id="trail-1",
@@ -776,8 +894,8 @@ def test_multi_position_rollup() -> None:
 
 def test_two_pass_weight_enrichment() -> None:
     """Verify position_weight_pct == abs(mv) / total_portfolio_value * 100."""
-    pos_a = _make_open_equity_position("POS-A", "NVDA", 10.0, 500.0)
-    pos_b = _make_open_equity_position("POS-B", "AAPL", 20.0, 150.0)
+    pos_a = _make_equity_position("POS-A", "NVDA", 10.0, 500.0)
+    pos_b = _make_equity_position("POS-B", "AAPL", 20.0, 150.0)
     cash = 0.0
     # After price:
     # NVDA: 10 * 520 = 5200 MV
@@ -827,7 +945,7 @@ def test_two_pass_weight_enrichment() -> None:
 
 def test_stale_price_does_not_abort_assembly(caplog: pytest.LogCaptureFixture) -> None:
     """Provider returns is_stale=True; position has MV=0.0 but snapshot constructs."""
-    pos = _make_open_equity_position()
+    pos = _make_equity_position()
     fixture = _make_fixture(
         open_positions=(pos,),
         cash_ledger=_make_cash_ledger(current_cash=1000.0),
@@ -860,7 +978,7 @@ def test_stale_price_does_not_abort_assembly(caplog: pytest.LogCaptureFixture) -
 
 def test_missing_ticker_from_get_quotes_treated_as_stale(caplog: pytest.LogCaptureFixture) -> None:
     """Ticker absent from get_quotes result → warning logged, MV=0.0, snapshot constructs."""
-    pos = _make_open_equity_position(ticker=Symbol("UNKNOWN"))
+    pos = _make_equity_position(ticker=Symbol("UNKNOWN"))
     fixture = _make_fixture(
         open_positions=(pos,),
         cash_ledger=_make_cash_ledger(current_cash=1000.0),
@@ -1001,8 +1119,8 @@ def test_drawdown_by_source_enriched_when_empty() -> None:
     """Repository returns empty drawdown_by_source_pct with drawdown > 0; assembler enriches."""
     # Two positions: one with unrealized loss (will contribute to drawdown source)
     # bought at 600, now 520 → unrealized loss drives drawdown source
-    pos_loss = _make_open_equity_position("POS-LOSS", "NVDA", 100.0, 600.0)
-    pos_gain = _make_open_equity_position("POS-GAIN", "AAPL", 10.0, 100.0)
+    pos_loss = _make_equity_position("POS-LOSS", "NVDA", 100.0, 600.0)
+    pos_gain = _make_equity_position("POS-GAIN", "AAPL", 10.0, 100.0)
 
     fixture = _make_fixture(
         open_positions=(pos_loss, pos_gain),
@@ -1083,7 +1201,7 @@ def test_pending_order_age_enriched() -> None:
     order = _make_pending_order(submission_timestamp=_ORDER_SUBMITTED_AT)
 
     # Need an open position for the bracket/order to reference
-    pos = _make_open_equity_position()
+    pos = _make_equity_position()
     fixture = _make_fixture(
         open_positions=(pos,),
         pending_orders=(order,),
@@ -1151,7 +1269,7 @@ def test_strategy_position_missing_leg_price_handled_in_band() -> None:
 
 def test_determinism() -> None:
     """Identical inputs produce identical snapshots across repeated calls."""
-    pos = _make_open_equity_position()
+    pos = _make_equity_position()
     fixture = _make_fixture(
         open_positions=(pos,),
         cash_ledger=_make_cash_ledger(current_cash=1000.0),
@@ -1183,7 +1301,7 @@ def test_determinism() -> None:
 
 def test_position_age_computed_from_entry_timestamp() -> None:
     """position_age_hours = (now - entry_timestamp) / 3600."""
-    pos = _make_open_equity_position()  # entry_timestamp = _ENTRY_AT = 1.5h before _NOW
+    pos = _make_equity_position()  # entry_timestamp = _ENTRY_AT = 1.5h before _NOW
     fixture = _make_fixture(
         open_positions=(pos,),
         cash_ledger=_make_cash_ledger(current_cash=0.0),
@@ -1215,8 +1333,8 @@ def test_position_age_computed_from_entry_timestamp() -> None:
 
 def test_sector_resolver_used_for_sector_exposure() -> None:
     """Sector resolver is invoked; positions classified into named sectors."""
-    pos_nvda = _make_open_equity_position("POS-NVDA", "NVDA", 10.0, 500.0)
-    pos_jnj = _make_open_equity_position("POS-JNJ", "JNJ", 10.0, 150.0)
+    pos_nvda = _make_equity_position("POS-NVDA", "NVDA", 10.0, 500.0)
+    pos_jnj = _make_equity_position("POS-JNJ", "JNJ", 10.0, 150.0)
     fixture = _make_fixture(
         open_positions=(pos_nvda, pos_jnj),
         cash_ledger=_make_cash_ledger(current_cash=0.0),
@@ -1256,7 +1374,7 @@ def test_sector_resolver_used_for_sector_exposure() -> None:
 
 def test_assemble_snapshot_returns_assembled_snapshot_bundle() -> None:
     """assemble_snapshot returns an AssembledSnapshot bundling snapshot and freshness."""
-    pos = _make_open_equity_position("POS-NVDA", "NVDA", 10.0, 500.0)
+    pos = _make_equity_position("POS-NVDA", "NVDA", 10.0, 500.0)
     fixture = _make_fixture(
         open_positions=(pos,),
         cash_ledger=_make_cash_ledger(current_cash=0.0),
@@ -1302,8 +1420,8 @@ def test_assemble_snapshot_exposes_materialized_price_map() -> None:
     mapping the provider returned, keyed by the same tickers the
     assembler enumerated when fetching prices.
     """
-    pos_a = _make_open_equity_position("POS-A", "NVDA", 10.0, 500.0)
-    pos_b = _make_open_equity_position("POS-B", "AAPL", 20.0, 150.0)
+    pos_a = _make_equity_position("POS-A", "NVDA", 10.0, 500.0)
+    pos_b = _make_equity_position("POS-B", "AAPL", 20.0, 150.0)
     fixture = _make_fixture(
         open_positions=(pos_a, pos_b),
         cash_ledger=_make_cash_ledger(current_cash=0.0),
@@ -1341,8 +1459,8 @@ def test_assemble_snapshot_price_map_omits_unknown_ticker() -> None:
     unknown tickers are silently dropped from the result rather than
     raising.
     """
-    pos_known = _make_open_equity_position("POS-NVDA", "NVDA", 10.0, 500.0)
-    pos_unknown = _make_open_equity_position("POS-WTF", "WTF", 5.0, 100.0)
+    pos_known = _make_equity_position("POS-NVDA", "NVDA", 10.0, 500.0)
+    pos_unknown = _make_equity_position("POS-WTF", "WTF", 5.0, 100.0)
     fixture = _make_fixture(
         open_positions=(pos_known, pos_unknown),
         cash_ledger=_make_cash_ledger(current_cash=0.0),

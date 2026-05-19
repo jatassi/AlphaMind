@@ -51,7 +51,7 @@ def _pct(value: Money | Decimal, total: float) -> float:
 
 
 def compute_sector_exposure(
-    open_positions: tuple[PositionView, ...],
+    positions: tuple[PositionView, ...],
     resolver: SectorResolver,
     total_portfolio_value_usd: float,
 ) -> tuple[SectorExposureEntry, ...]:
@@ -66,12 +66,12 @@ def compute_sector_exposure(
     floats (derived ratios).
     """
     _validate_total(total_portfolio_value_usd)
-    _check_enriched(open_positions)
+    _check_enriched(positions)
 
     long_by_sector: dict[str, Decimal] = defaultdict(lambda: DECIMAL_ZERO)
     short_by_sector: dict[str, Decimal] = defaultdict(lambda: DECIMAL_ZERO)
 
-    for pos in open_positions:
+    for pos in positions:
         sector = resolver(pos.record) or _UNCLASSIFIED
         dae = pos.delta_adjusted_exposure_usd
         if pos.direction == Direction.LONG:
@@ -103,7 +103,7 @@ def compute_sector_exposure(
 
 
 def compute_directional_exposure(
-    open_positions: tuple[PositionView, ...],
+    positions: tuple[PositionView, ...],
     total_portfolio_value_usd: float,
 ) -> DirectionalExposure:
     """Compute portfolio-level directional and gross exposure.
@@ -114,12 +114,12 @@ def compute_directional_exposure(
     ALP-489 — accumulators sum ``Money`` values via Decimal arithmetic.
     """
     _validate_total(total_portfolio_value_usd)
-    _check_enriched(open_positions)
+    _check_enriched(positions)
 
     total_long: Decimal = sum(
         (
             pos.delta_adjusted_exposure_usd
-            for pos in open_positions
+            for pos in positions
             if pos.delta_adjusted_exposure_usd > 0
         ),
         DECIMAL_ZERO,
@@ -127,7 +127,7 @@ def compute_directional_exposure(
     total_short: Decimal = sum(
         (
             -pos.delta_adjusted_exposure_usd
-            for pos in open_positions
+            for pos in positions
             if pos.delta_adjusted_exposure_usd < 0
         ),
         DECIMAL_ZERO,

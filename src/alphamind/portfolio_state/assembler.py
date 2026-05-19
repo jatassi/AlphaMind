@@ -734,14 +734,19 @@ def assemble_snapshot(
 
     # ------------------------------------------------------------------
     # Step 13 — Compute sector and directional exposure
+    #
+    # Aggregate over OPEN + PENDING: both lifecycle states are live, appear
+    # in every consumer view, and feed into ``compute_total_portfolio_value_usd``
+    # — so the numerators must match the denominator.
     # ------------------------------------------------------------------
+    live_positions = (*final_open, *final_pending)
     sector_exposure = compute_sector_exposure(
-        open_positions=tuple(final_open),
+        positions=live_positions,
         resolver=sector_resolver,
         total_portfolio_value_usd=total_portfolio_value,
     )
     directional_exposure = compute_directional_exposure(
-        open_positions=tuple(final_open),
+        positions=live_positions,
         total_portfolio_value_usd=total_portfolio_value,
     )
 
