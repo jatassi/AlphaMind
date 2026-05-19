@@ -18,6 +18,7 @@ from alphamind.analysis.domain_researchers.qualitative_input import (
     HeadlineEntry,
     SectorQualitativeInput,
 )
+from alphamind.analysis.news_freshness import NewsEmptyDiagnosis, NewsEmptyReason
 from alphamind.data_sources._common import HeadlineType
 
 # ---------------------------------------------------------------------------
@@ -226,6 +227,67 @@ def test_non_empty_headlines_no_placeholder() -> None:
     qualitative = _make_qualitative(headlines=(_make_headline(),))
     bundle = _assemble_default(qualitative_input=qualitative)
     assert "(no qualifying headlines in window)" not in bundle.bundle_text
+
+
+def test_empty_headlines_reason_line_for_no_rows_in_db() -> None:
+    """Empty headlines + ``NO_ROWS_IN_DB`` diagnosis → reason line names cause."""
+    qualitative = SectorQualitativeInput(
+        sector=Sector.TECH_SEMIS,
+        as_of=_AS_OF,
+        lookback_window_hours=24,
+        headlines=(),
+        events=(),
+        data_freshness=_DATA_FRESHNESS,
+        headlines_empty_diagnosis=NewsEmptyDiagnosis(
+            reason=NewsEmptyReason.NO_ROWS_IN_DB, latest_ingested_at=None
+        ),
+    )
+    bundle = _assemble_default(qualitative_input=qualitative)
+    assert "Reason: news_articles table is empty" in bundle.bundle_text
+
+
+def test_empty_headlines_reason_line_for_collector_inactive() -> None:
+    """Empty headlines + ``COLLECTOR_INACTIVE`` diagnosis → reason line names latest."""
+    latest = datetime(2026, 5, 17, 23, 0, 0, tzinfo=UTC)
+    qualitative = SectorQualitativeInput(
+        sector=Sector.TECH_SEMIS,
+        as_of=_AS_OF,
+        lookback_window_hours=24,
+        headlines=(),
+        events=(),
+        data_freshness=_DATA_FRESHNESS,
+        headlines_empty_diagnosis=NewsEmptyDiagnosis(
+            reason=NewsEmptyReason.COLLECTOR_INACTIVE, latest_ingested_at=latest
+        ),
+    )
+    bundle = _assemble_default(qualitative_input=qualitative)
+    assert "Reason: collector inactive" in bundle.bundle_text
+    assert "2026-05-17T23:00:00Z" in bundle.bundle_text
+
+
+def test_empty_headlines_reason_line_for_no_headlines_in_window() -> None:
+    """Empty headlines + ``NO_HEADLINES_IN_WINDOW`` diagnosis → reason line names cause."""
+    latest = datetime(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
+    qualitative = SectorQualitativeInput(
+        sector=Sector.TECH_SEMIS,
+        as_of=_AS_OF,
+        lookback_window_hours=24,
+        headlines=(),
+        events=(),
+        data_freshness=_DATA_FRESHNESS,
+        headlines_empty_diagnosis=NewsEmptyDiagnosis(
+            reason=NewsEmptyReason.NO_HEADLINES_IN_WINDOW, latest_ingested_at=latest
+        ),
+    )
+    bundle = _assemble_default(qualitative_input=qualitative)
+    assert "Reason: collector current" in bundle.bundle_text
+
+
+def test_non_empty_headlines_no_reason_line() -> None:
+    """Populated headlines never render a reason line."""
+    qualitative = _make_qualitative(headlines=(_make_headline(),))
+    bundle = _assemble_default(qualitative_input=qualitative)
+    assert "Reason:" not in bundle.bundle_text
 
 
 # ---------------------------------------------------------------------------

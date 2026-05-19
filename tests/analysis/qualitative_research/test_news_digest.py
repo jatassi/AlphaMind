@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -731,3 +732,117 @@ def test_all_weights_and_caps_are_named_module_constants() -> None:
     assert nd_module.TOP_N_PER_SECTOR_BUCKET == 5
     assert nd_module.HIGH_PRIORITY_MAX == 3
     assert nd_module.DIGEST_TOTAL_TOKEN_SOFT_CAP == 1200
+
+
+# ---------------------------------------------------------------------------
+# Empty-window reason annotation — ALP-567
+# ---------------------------------------------------------------------------
+
+
+def test_empty_window_header_classifies_no_rows_in_db(session: Session) -> None:
+    """With an empty news_articles table, the digest header carries the
+    ``no_rows_in_db`` reason text so the LLM agent does not have to
+    re-diagnose absence."""
+    from alphamind.analysis.qualitative_research.news_digest import render_news_digest
+
+    digest = render_news_digest(
+        session,
+        invocation_id=INVOCATION_ID,
+        as_of=AS_OF,
+        last_invocation_time=LAST_INVOCATION,
+        sector_roster=_DEFAULT_ROSTER,
+    )
+
+    assert digest.total_collected == 0
+    assert "Reason: news_articles table is empty" in digest.digest_text
+    assert "bootstrap state" in digest.digest_text
+
+
+def test_empty_window_header_classifies_collector_inactive(session: Session) -> None:
+    """Latest ingestion before last_invocation_time → ``collector_inactive``
+    reason text naming the latest ingestion timestamp."""
+    from alphamind.analysis.qualitative_research.news_digest import render_news_digest
+
+    stale_ingested = LAST_INVOCATION - timedelta(hours=3)
+    _add_article(
+        session,
+        "stale-1",
+        headline="stale-headline",
+        published_at=stale_ingested,
+        tickers=(),
+    )
+    session.commit()
+
+    digest = render_news_digest(
+        session,
+        invocation_id=INVOCATION_ID,
+        as_of=AS_OF,
+        last_invocation_time=LAST_INVOCATION,
+        sector_roster=_DEFAULT_ROSTER,
+    )
+
+    assert digest.total_collected == 0
+    assert "Reason: collector inactive" in digest.digest_text
+    assert _iso(stale_ingested) in digest.digest_text
+
+
+def test_empty_window_header_classifies_no_headlines_in_window(session: Session) -> None:
+    """Latest ingestion inside the window but no published_at in window →
+    ``no_headlines_in_window`` reason text."""
+    from alphamind.analysis.qualitative_research.news_digest import render_news_digest
+
+    in_window_ingested = LAST_INVOCATION + timedelta(hours=1)
+    pre_window_published = LAST_INVOCATION - timedelta(hours=2)
+    _add_article(
+        session,
+        "ingested-in-window-published-before",
+        headline="published-too-early",
+        published_at=pre_window_published,
+        tickers=(),
+    )
+    session.flush()
+    # Override the auto-computed ingested_at so it falls inside the window.
+    session.execute(
+        update(NewsArticles)
+        .where(NewsArticles.article_id == "ingested-in-window-published-before")
+        .values(ingested_at=_iso(in_window_ingested))
+    )
+    session.commit()
+
+    digest = render_news_digest(
+        session,
+        invocation_id=INVOCATION_ID,
+        as_of=AS_OF,
+        last_invocation_time=LAST_INVOCATION,
+        sector_roster=_DEFAULT_ROSTER,
+    )
+
+    assert digest.total_collected == 0
+    assert "Reason: collector current" in digest.digest_text
+    assert "no headlines landed in this window" in digest.digest_text
+
+
+def test_populated_digest_omits_reason_line(session: Session) -> None:
+    """When the digest has headlines, no reason line is rendered."""
+    from alphamind.analysis.qualitative_research.news_digest import render_news_digest
+
+    _add_ticker(session, "NVDA")
+    _add_article(
+        session,
+        "art-1",
+        headline="NVDA new product",
+        published_at=AS_OF - timedelta(hours=1),
+        tickers=("NVDA",),
+    )
+    session.commit()
+
+    digest = render_news_digest(
+        session,
+        invocation_id=INVOCATION_ID,
+        as_of=AS_OF,
+        last_invocation_time=LAST_INVOCATION,
+        sector_roster=_DEFAULT_ROSTER,
+    )
+
+    assert digest.total_collected >= 1
+    assert "Reason:" not in digest.digest_text

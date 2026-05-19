@@ -205,27 +205,99 @@ def test_news_search_quality_complete_when_results_found(session: Session) -> No
 
 
 def test_news_search_empty_query_and_tickers_returns_unavailable(session: Session) -> None:
-    """Empty query AND empty tickers must not raise — returns UNAVAILABLE envelope."""
+    """Empty query AND empty tickers — UNAVAILABLE with ``invalid_input`` reason."""
     session.commit()
 
     fn = TOOLS["news_search"].callable_factory(session)
     result: NewsSearchOutput = fn(NewsSearchInput())
 
     assert result.quality == ToolQuality.UNAVAILABLE
+    assert result.reason == "invalid_input"
     assert result.articles == ()
     assert isinstance(result.data_freshness, datetime)
 
 
-def test_news_search_no_matching_articles_returns_unavailable(session: Session) -> None:
-    """Ticker with no articles → UNAVAILABLE."""
+def test_news_search_no_matching_articles_collector_inactive(session: Session) -> None:
+    """No matching rows in window AND latest ingestion before window →
+    UNAVAILABLE with ``vendor_api_error`` reason (collector inactive)."""
+    _add_ticker(session, "MSFT")
+    # Add an article ingested well before the lookback window (1h lookback).
+    _add_article(
+        session,
+        article_id="old",
+        headline="old MSFT note",
+        published_at=datetime.now(UTC) - timedelta(days=10),
+        ingested_at=datetime.now(UTC) - timedelta(days=10),
+        tickers=("MSFT",),
+    )
+    session.commit()
+
+    fn = TOOLS["news_search"].callable_factory(session)
+    result: NewsSearchOutput = fn(NewsSearchInput(tickers=("MSFT",), lookback_hours=1))
+
+    assert result.quality == ToolQuality.UNAVAILABLE
+    assert result.reason == "vendor_api_error"
+    assert result.articles == ()
+
+
+def test_news_search_no_matching_articles_no_data(session: Session) -> None:
+    """No matching rows but collector is current within window →
+    UNAVAILABLE with ``no_data`` reason (the search is honestly empty)."""
+    recent = datetime.now(UTC) - timedelta(hours=1)
+    _add_ticker(session, "MSFT")
+    _add_ticker(session, "AAPL")
+    # Recently-ingested row exists, but doesn't match the queried ticker.
+    _add_article(
+        session,
+        article_id="other-ticker",
+        headline="AAPL note",
+        published_at=recent,
+        ingested_at=recent,
+        tickers=("AAPL",),
+    )
+    session.commit()
+
+    fn = TOOLS["news_search"].callable_factory(session)
+    result: NewsSearchOutput = fn(NewsSearchInput(tickers=("MSFT",), lookback_hours=24))
+
+    assert result.quality == ToolQuality.UNAVAILABLE
+    assert result.reason == "no_data"
+    assert result.articles == ()
+
+
+def test_news_search_no_matching_articles_no_rows_in_db(session: Session) -> None:
+    """Empty news_articles table → UNAVAILABLE with ``vendor_api_error`` reason."""
     _add_ticker(session, "MSFT")
     session.commit()
 
     fn = TOOLS["news_search"].callable_factory(session)
-    result: NewsSearchOutput = fn(NewsSearchInput(tickers=("MSFT",)))
+    result: NewsSearchOutput = fn(NewsSearchInput(tickers=("MSFT",), lookback_hours=24))
 
     assert result.quality == ToolQuality.UNAVAILABLE
+    assert result.reason == "vendor_api_error"
     assert result.articles == ()
+
+
+def test_news_search_complete_result_has_no_reason(session: Session) -> None:
+    """A successful search omits the reason field (quality=COMPLETE)."""
+    recent = datetime.now(UTC) - timedelta(hours=1)
+    _add_ticker(session, "AAPL")
+    _add_article(
+        session,
+        article_id="ok",
+        headline="AAPL news",
+        published_at=recent,
+        ingested_at=recent,
+        tickers=("AAPL",),
+    )
+    session.commit()
+
+    fn = TOOLS["news_search"].callable_factory(session)
+    result: NewsSearchOutput = fn(NewsSearchInput(tickers=("AAPL",), lookback_hours=24))
+
+    assert result.quality == ToolQuality.COMPLETE
+    assert result.reason is None
+    assert result.articles
 
 
 # ---------------------------------------------------------------------------

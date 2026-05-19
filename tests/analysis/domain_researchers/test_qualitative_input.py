@@ -23,6 +23,7 @@ from alphamind.analysis.domain_researchers.qualitative_input import (
     SectorQualitativeInput,
     load_sector_qualitative_input,
 )
+from alphamind.analysis.news_freshness import NewsEmptyReason
 from alphamind.data_sources._common import HeadlineType
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -163,6 +164,76 @@ class TestEmptyDatabase:
         assert result.events == ()
         # Documented choice: empty DB → freshness is the lookback floor.
         assert result.data_freshness == as_of - timedelta(hours=24)
+
+    def test_empty_db_classifies_no_rows_in_db(self, session: Session) -> None:
+        """When no headlines exist anywhere in news_articles, the loader
+        records ``NO_ROWS_IN_DB`` so the input bundle can surface the cause
+        to the LLM agent (ALP-567)."""
+        as_of = datetime(2026, 4, 30, 12, tzinfo=UTC)
+        result = load_sector_qualitative_input(session, Sector.TECH_SEMIS, as_of)
+
+        assert result.headlines_empty_diagnosis is not None
+        assert result.headlines_empty_diagnosis.reason is NewsEmptyReason.NO_ROWS_IN_DB
+
+    def test_collector_inactive_classified(self, session: Session) -> None:
+        """Stale ingestion before window → ``COLLECTOR_INACTIVE``."""
+        as_of = datetime(2026, 4, 30, 12, tzinfo=UTC)
+        stale = as_of - timedelta(hours=30)  # before 24h lookback
+        _add_ticker(session, "AAPL", Sector.TECH_SEMIS)
+        _add_article(
+            session,
+            article_id="old",
+            headline="old",
+            published_at=stale,
+            ingested_at=stale,
+            tickers=("AAPL",),
+        )
+        result = load_sector_qualitative_input(session, Sector.TECH_SEMIS, as_of)
+
+        assert result.headlines == ()
+        assert result.headlines_empty_diagnosis is not None
+        assert result.headlines_empty_diagnosis.reason is NewsEmptyReason.COLLECTOR_INACTIVE
+
+    def test_filter_only_empty_does_not_emit_diagnosis(self, session: Session) -> None:
+        """Window has rows, but the per-sector filter rejects them → no diagnosis.
+
+        The freshness diagnostic surfaces data-layer state, not per-sector
+        filter outcomes; the LLM agent already knows it is looking at a
+        sector-scoped view, so a vendor/collector reason line would mislead.
+        """
+        as_of = datetime(2026, 4, 30, 12, tzinfo=UTC)
+        # Row inside the 24h window but tagged for a different sector — won't pass
+        # the tech_semis filter, so headlines is empty.
+        _add_ticker(session, "JPM", Sector.FINANCIALS)
+        _add_article(
+            session,
+            article_id="other-sector",
+            headline="JPM update",
+            published_at=as_of - timedelta(hours=2),
+            ingested_at=as_of - timedelta(hours=2),
+            tickers=("JPM",),
+        )
+        result = load_sector_qualitative_input(session, Sector.TECH_SEMIS, as_of)
+
+        assert result.headlines == ()
+        assert result.headlines_empty_diagnosis is None
+
+    def test_populated_input_has_no_diagnosis(self, session: Session) -> None:
+        """When headlines is non-empty, the diagnosis is None."""
+        as_of = datetime(2026, 4, 30, 12, tzinfo=UTC)
+        _add_ticker(session, "AAPL", Sector.TECH_SEMIS)
+        _add_article(
+            session,
+            article_id="ok",
+            headline="AAPL note",
+            published_at=as_of - timedelta(hours=1),
+            ingested_at=as_of - timedelta(hours=1),
+            tickers=("AAPL",),
+        )
+        result = load_sector_qualitative_input(session, Sector.TECH_SEMIS, as_of)
+
+        assert result.headlines
+        assert result.headlines_empty_diagnosis is None
 
 
 # ---------------------------------------------------------------------------
