@@ -1329,3 +1329,163 @@ class TestRunInvocationDebugE2EWiring:
         # is stable; ``None`` is the canonical "use the Alpaca default" value.
         assert gather_kw.get("account_queries_factory") is None
         assert gather_kw.get("ca_queries_factory") is None
+
+
+def _make_invocation_row(
+    invocation_id: str,
+    start_at: datetime,
+    *,
+    phase2_completed: bool,
+) -> InvocationRow:
+    """Build a minimal ``InvocationRow`` with the columns required by the schema."""
+    iso = start_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return InvocationRow(
+        invocation_id=invocation_id,
+        process_lifetime_id="proc-orch-1",
+        start_at=iso,
+        phase1_completed_at=iso,
+        phase2_completed_at=iso if phase2_completed else None,
+        trigger_type="manual",
+        trigger_source="cli",
+        trigger_reason="prior",
+        git_sha_at_invocation="b" * 40,
+        active_profile="medium",
+        active_regime="normal",
+        active_mode="normal",
+        active_overlays_json="[]",
+        resolved_config_hash="c" * 64,
+        resolved_config_snapshot_path="/tmp/resolved.json",
+        feature_flags_snapshot_json="{}",
+        data_calibration_state_snapshot_path="/tmp/calib.json",
+        data_source_freshness_json="{}",
+    )
+
+
+class TestRunInvocationLastInvocationTimeResolution:
+    """The analysis pipeline receives a real ``last_invocation_time`` (ALP-535).
+
+    Pre-ALP-535 the orchestrator passed ``last_invocation_time=now`` to
+    :func:`run_analysis_pipeline`, producing a zero-width news-digest window
+    ``(now, now)`` that selected zero headlines even when storage was
+    populated. The qualitative researcher then tagged news as unavailable.
+
+    Fix derives ``last_invocation_time`` from the most recent successful
+    prior invocation's ``start_at`` (or ``now - 24h`` when no prior exists)
+    so the digest covers the same headline corpus the domain researchers see.
+    """
+
+    async def test_falls_back_to_now_minus_24h_when_no_prior_invocation(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datetime import timedelta
+
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        assert captured["analysis"]["last_invocation_time"] == _NOW - timedelta(hours=24)
+
+    async def test_resolves_prior_invocation_start_at_when_prior_exists(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        db_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datetime import timedelta
+
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        prior_start_at = _NOW - timedelta(hours=3)
+        async with async_factory() as setup_session:
+            setup_session.add(
+                _make_invocation_row("inv-prior-0001", prior_start_at, phase2_completed=True)
+            )
+            await setup_session.commit()
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+                db_path=db_path,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        assert captured["analysis"]["last_invocation_time"] == prior_start_at
+
+    async def test_skips_aborted_prior_in_favor_of_last_successful(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        db_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An aborted prior (phase2_completed_at IS NULL) is skipped.
+
+        The resolver anchors the digest window to the last *successful*
+        invocation so headlines published between that success and a later
+        abort remain inside the next window. Mirrors the
+        ``_resolve_active_regime`` semantic in ``scheduler/runtime.py``.
+        """
+        from datetime import timedelta
+
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        successful_start_at = _NOW - timedelta(hours=5)
+        aborted_start_at = _NOW - timedelta(hours=2)
+        async with async_factory() as setup_session:
+            setup_session.add(
+                _make_invocation_row("inv-success-0001", successful_start_at, phase2_completed=True)
+            )
+            setup_session.add(
+                _make_invocation_row("inv-aborted-0002", aborted_start_at, phase2_completed=False)
+            )
+            await setup_session.commit()
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+                db_path=db_path,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        assert captured["analysis"]["last_invocation_time"] == successful_start_at
