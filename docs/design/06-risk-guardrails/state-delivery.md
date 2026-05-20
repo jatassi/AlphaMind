@@ -387,6 +387,8 @@ The tool can only project a proposal whose ticker the composed resolvers can res
 
 When a proposal's ticker falls outside coverage, the tool returns `overall: UNAVAILABLE` with `unavailable_reason` naming the gap (`missing_market_price` checked first, then `missing_borrow_cost_resolver`) rather than raising or reporting a generic `FAIL`. This lets the agent distinguish *"this thesis would breach a guardrail"* from *"the validation infrastructure cannot reason about this ticker this cycle"* — the latter is an infrastructure gap, not a disqualification of the thesis (ALP-581).
 
+The analyst and strategist consume `unavailable_reason` directly in their reasoning. The PM's submit-envelope check rejects an `UNAVAILABLE` command — a command that cannot be validated cannot be approved — and carries the coverage-gap guidance as the rejection's `suggested_modification` text.
+
 ### Behavioral contract
 
 **Cumulative tracking:** State persists across calls within a single agent invocation. When the analyst validates proposal #2, headroom accounts for proposal #1's projected impact — preventing N individually-compliant proposals that collectively breach.

@@ -427,7 +427,7 @@ Enum values and structural constraints trace back to these sources:
       "description": "Populated by the guardrail validation tool at pre-submission check time, not by the LLM.",
       "required": ["overall", "per_rule", "checked_at"],
       "properties": {
-        "overall": { "enum": ["PASS", "FAIL", "UNAVAILABLE"] },
+        "overall": { "enum": ["PASS", "FAIL"] },
         "per_rule": {
           "type": "array",
           "items": {

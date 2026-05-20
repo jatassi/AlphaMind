@@ -225,6 +225,17 @@ class ValidationResult(BaseModel):
     unavailable_reason: ValidationUnavailableReason | None = None
     proposal_index_in_invocation: int
 
+    @model_validator(mode="after")
+    def _validate_unavailable_reason(self) -> ValidationResult:
+        """``unavailable_reason`` is set if and only if ``overall`` is ``UNAVAILABLE``."""
+        if (self.overall == "UNAVAILABLE") != (self.unavailable_reason is not None):
+            msg = (
+                f"unavailable_reason must be set iff overall == 'UNAVAILABLE'; "
+                f"got overall={self.overall!r}, unavailable_reason={self.unavailable_reason!r}"
+            )
+            raise ValueError(msg)
+        return self
+
 
 class ProjectedDelta(BaseModel):
     """A previously-validated proposal's projected impact, for cumulative tracking.
@@ -384,7 +395,8 @@ def validate_guardrail(
         flags=flags,
     )
     if disabled_guidance is not None:
-        return _disabled_result(
+        return _short_circuit_result(
+            overall="FAIL",
             guidance=disabled_guidance,
             cumulative_impact_note=_format_cumulative_impact_note(state),
             proposal_index=proposal_index,
@@ -392,10 +404,12 @@ def validate_guardrail(
 
     coverage_gap = _resolver_coverage_gap(request, state=state)
     if coverage_gap is not None:
-        return _unavailable_result(
-            reason=coverage_gap,
+        return _short_circuit_result(
+            overall="UNAVAILABLE",
+            guidance=_UNAVAILABLE_GUIDANCE[coverage_gap],
             cumulative_impact_note=_format_cumulative_impact_note(state),
             proposal_index=proposal_index,
+            unavailable_reason=coverage_gap,
         )
 
     proposals = (
@@ -454,21 +468,29 @@ def _disabled_feature_guidance(
     return None
 
 
-def _disabled_result(
+def _short_circuit_result(
     *,
+    overall: Literal["FAIL", "UNAVAILABLE"],
     guidance: str,
     cumulative_impact_note: str,
     proposal_index: int,
+    unavailable_reason: ValidationUnavailableReason | None = None,
 ) -> ValidationResult:
-    """Build the early-exit ``ValidationResult`` for a disabled-feature rejection."""
+    """Build an early-exit ``ValidationResult`` that bypasses the library.
+
+    Backs both the disabled-feature rejection (``overall="FAIL"``) and the
+    resolver-coverage gap (``overall="UNAVAILABLE"``): neither composes the
+    guardrail library, so ``per_rule`` is empty and exposure/greeks are zero.
+    """
     return ValidationResult(
-        overall="FAIL",
+        overall=overall,
         per_rule=(),
         delta_adjusted_exposure=0.0,
         greeks=None,
         implied_volatility=None,
         cumulative_impact_note=cumulative_impact_note,
         failure_guidance=guidance,
+        unavailable_reason=unavailable_reason,
         proposal_index_in_invocation=proposal_index,
     )
 
@@ -489,6 +511,15 @@ _UNAVAILABLE_GUIDANCE: dict[ValidationUnavailableReason, str] = {
 }
 
 
+def _needs_borrow_cost(instrument: ValidationInstrument, action: ValidationAction) -> bool:
+    """True for short equity OPEN/ADD — the proposals a borrow-cost lookup applies to."""
+    return (
+        instrument.direction == Direction.SHORT
+        and instrument.asset_type == InstrumentType.EQUITY
+        and action in (ValidationAction.OPEN, ValidationAction.ADD)
+    )
+
+
 def _resolver_coverage_gap(
     request: ValidationRequest, *, state: ValidationToolState
 ) -> ValidationUnavailableReason | None:
@@ -497,41 +528,17 @@ def _resolver_coverage_gap(
     The validation tool can only project a proposal whose ticker the composed
     resolvers can resolve. Market price is the prerequisite for every
     instrument type, so it is checked first; the borrow-cost resolver applies
-    only to short equity OPEN/ADD (the same actions
-    :func:`_resolve_borrow_cost` derives a cost for). A non-``None`` return
-    drives an ``UNAVAILABLE`` result so the agent can tell an infrastructure
-    gap apart from a guardrail breach (ALP-581).
+    only to short equity OPEN/ADD. A non-``None`` return drives an
+    ``UNAVAILABLE`` result so the agent can tell an infrastructure gap apart
+    from a guardrail breach (ALP-581).
     """
     if request.instrument.ticker not in state.library_market.underlying_prices:
         return ValidationUnavailableReason.MISSING_MARKET_PRICE
-    needs_borrow_cost = (
-        request.instrument.direction == Direction.SHORT
-        and request.instrument.asset_type == InstrumentType.EQUITY
-        and request.action in (ValidationAction.OPEN, ValidationAction.ADD)
-    )
-    if needs_borrow_cost and state.borrow_cost_resolver is None:
+    if _needs_borrow_cost(request.instrument, request.action) and (
+        state.borrow_cost_resolver is None
+    ):
         return ValidationUnavailableReason.MISSING_BORROW_COST_RESOLVER
     return None
-
-
-def _unavailable_result(
-    *,
-    reason: ValidationUnavailableReason,
-    cumulative_impact_note: str,
-    proposal_index: int,
-) -> ValidationResult:
-    """Build the ``UNAVAILABLE`` ``ValidationResult`` for a resolver-coverage gap."""
-    return ValidationResult(
-        overall="UNAVAILABLE",
-        per_rule=(),
-        delta_adjusted_exposure=0.0,
-        greeks=None,
-        implied_volatility=None,
-        cumulative_impact_note=cumulative_impact_note,
-        failure_guidance=_UNAVAILABLE_GUIDANCE[reason],
-        unavailable_reason=reason,
-        proposal_index_in_invocation=proposal_index,
-    )
 
 
 _INSTRUMENT_TO_ASSET_TYPE: dict[InstrumentType, LibraryAssetType] = {
@@ -649,12 +656,7 @@ def _resolve_borrow_cost(
     short equity OPEN/ADD proposal slips into ``accumulated_deltas`` against a
     resolver-less state — a malformed-state guard, not a runtime path.
     """
-    needs_borrow_cost = (
-        instrument.direction == Direction.SHORT
-        and instrument.asset_type == InstrumentType.EQUITY
-        and action in (ValidationAction.OPEN, ValidationAction.ADD)
-    )
-    if not needs_borrow_cost:
+    if not _needs_borrow_cost(instrument, action):
         return None
     resolver = state.borrow_cost_resolver
     if resolver is None:
