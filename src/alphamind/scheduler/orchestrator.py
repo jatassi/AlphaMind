@@ -102,6 +102,7 @@ from alphamind.portfolio_state.pricing import (
     PriceSource,
     StubCurrentPriceProvider,
 )
+from alphamind.risk_guardrails.borrow_cost import build_borrow_cost_resolver
 from alphamind.risk_guardrails.breach_behavior.halt_state import compute_halt_state
 from alphamind.risk_guardrails.breach_behavior.types import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -329,6 +330,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     archive_root: Path,
     state_delivery_config: StateDeliveryConfig,
     sector_resolver: Callable[[str], str],
+    borrow_cost_resolver: Callable[[str], float | None],
     assembled_snapshot: AssembledSnapshot,
     repository: Any,
     regime_output: RegimeAdaptationOutput,
@@ -351,7 +353,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
         "agents_config": dict(resolved.agents.agents),
         "agent_overrides": dict(resolved.agent_overrides),
         "sector_resolver": sector_resolver,
-        "borrow_cost_resolver": None,
+        "borrow_cost_resolver": borrow_cost_resolver,
         "library_config": library_config,
         "library_market": phase1_market_inputs,
         "profile_feature_flags": library_config.feature_flags,
@@ -600,6 +602,11 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     )
 
     pipeline_mode = PipelineMode.from_config_mode(runtime.active_mode)
+    # Snapshot-backed borrow-cost resolver: read the latest borrow_cost_daily
+    # fee per ticker once so the decision layer can price short-equity borrow
+    # accrual (ALP-586). Pure + total for the rest of the invocation.
+    with context.sync_session_factory() as borrow_session:
+        borrow_cost_resolver = build_borrow_cost_resolver(borrow_session)
     decision_kwargs = _build_decision_kwargs(
         invocation_id=invocation_id,
         pipeline_config=pipeline_config,
@@ -611,6 +618,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         archive_root=archive_root,
         state_delivery_config=state_delivery_config,
         sector_resolver=sector_resolver,
+        borrow_cost_resolver=borrow_cost_resolver,
         assembled_snapshot=assembled,
         repository=snapshot_repository,
         regime_output=regime_output,

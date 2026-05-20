@@ -148,7 +148,7 @@ async def run_analyst(  # noqa: PLR0913 — signature dictated by ALP-299 spec p
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     agent_config: BaseAgentConfig | None = None,
-    borrow_cost_resolver: Callable[[str], float] | None = None,
+    borrow_cost_resolver: Callable[[str], float | None] | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "analyst",
 ) -> AnalystResult:

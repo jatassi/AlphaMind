@@ -66,6 +66,7 @@ from alphamind.portfolio_state.snapshot import (
     SectorExposureEntry,
 )
 from alphamind.portfolio_state.views.positions import PositionView
+from alphamind.risk_guardrails.borrow_cost import daily_borrow_cost_usd
 from alphamind.risk_guardrails.guardrail_evaluation import (
     Action,
     DeltaAdjustedExposure,
@@ -100,10 +101,11 @@ def _sector_resolver(ticker: str) -> str:
     return mapping.get(ticker, "UNKNOWN")
 
 
-def _borrow_cost_resolver(ticker: str) -> float:
-    # Fixed daily borrow cost in USD per ticker
-    costs = {"XOM": 5.0, "JPM": 2.0}
-    return costs.get(ticker, 0.0)
+def _borrow_cost_resolver(ticker: str) -> float | None:
+    # Annualized borrow fee rate (percent) per ticker; None for a ticker the
+    # borrow-cost store has no row for (the iBorrowDesk store is sparse).
+    rates = {"XOM": 5.0, "JPM": 2.0}
+    return rates.get(ticker)
 
 
 # ---------------------------------------------------------------------------
@@ -657,7 +659,8 @@ def test_existing_positions_equity_long_fields() -> None:
 
 
 def test_short_equity_borrow_cost() -> None:
-    """AC: ExistingPosition.daily_borrow_cost_usd non-None for SHORT equity with resolver."""
+    """AC: ExistingPosition.daily_borrow_cost_usd is the rate→USD conversion for
+    a SHORT equity position whose ticker the borrow-cost resolver covers."""
     pos = _make_equity_position_view(
         "POS-XOM",
         "XOM",
@@ -676,16 +679,18 @@ def test_short_equity_borrow_cost() -> None:
         borrow_cost_resolver=_borrow_cost_resolver,
     )
 
+    # The resolver yields XOM's annualized fee rate (5.0%); the translator
+    # converts it against the position notional (5_500.0).
+    expected_cost_usd = daily_borrow_cost_usd(notional_usd=5_500.0, annual_fee_pct=5.0)
     ep = lib.existing_positions["POS-XOM"]
     assert ep.daily_borrow_cost_usd is not None
-    assert ep.daily_borrow_cost_usd == pytest.approx(5.0)  # _borrow_cost_resolver("XOM") = 5.0
+    assert ep.daily_borrow_cost_usd == pytest.approx(expected_cost_usd)
 
-    # daily_borrow_cost_pct = sum(borrow costs) / portfolio_value * 100 — must match
-    # the library's _borrow_cost_contribute formula (cost_usd / portfolio_value * 100.0)
-    # so the read scale matches the write scale exactly.
+    # daily_borrow_cost_pct must match the library's _borrow_cost_contribute
+    # formula (cost_usd / portfolio_value * 100.0) so the read scale matches
+    # the write scale exactly.
     portfolio_value = 5_500.0 + 80_000.0
-    expected_pct = 5.0 / portfolio_value * 100
-    assert lib.daily_borrow_cost_pct == pytest.approx(expected_pct)
+    assert lib.daily_borrow_cost_pct == pytest.approx(expected_cost_usd / portfolio_value * 100)
 
 
 def test_short_equity_no_borrow_resolver() -> None:
@@ -704,6 +709,33 @@ def test_short_equity_no_borrow_resolver() -> None:
     lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)  # no resolver
 
     ep = lib.existing_positions["POS-XOM"]
+    assert ep.daily_borrow_cost_usd is None
+    assert lib.daily_borrow_cost_pct == pytest.approx(0.0)
+
+
+def test_short_equity_borrow_resolver_uncovered_ticker() -> None:
+    """AC (ALP-586): a SHORT equity whose ticker the resolver has no row for
+    yields daily_borrow_cost_usd=None — a clean signal, not a crash or a
+    silent 0.0 — and contributes nothing to daily_borrow_cost_pct."""
+    pos = _make_equity_position_view(
+        "POS-CSCO",
+        "CSCO",
+        Direction.SHORT,
+        share_count=50.0,
+        market_value_usd=5_500.0,
+        notional_usd=5_500.0,
+        delta_adjusted_usd=-5_500.0,
+        position_weight_pct=5.5,
+    )
+    snapshot = _make_pydantic_snapshot(open_positions=[pos])
+    # _borrow_cost_resolver covers XOM/JPM only; CSCO resolves to None.
+    lib = to_library_snapshot(
+        snapshot,
+        sector_resolver=_sector_resolver,
+        borrow_cost_resolver=_borrow_cost_resolver,
+    )
+
+    ep = lib.existing_positions["POS-CSCO"]
     assert ep.daily_borrow_cost_usd is None
     assert lib.daily_borrow_cost_pct == pytest.approx(0.0)
 
@@ -1132,7 +1164,9 @@ def test_full_normal_scenario() -> None:
     assert xom.asset_type == AssetType.EQUITY
     assert xom.current_greeks is None
     assert xom.daily_borrow_cost_usd is not None
-    assert xom.daily_borrow_cost_usd == pytest.approx(5.0)
+    assert xom.daily_borrow_cost_usd == pytest.approx(
+        daily_borrow_cost_usd(notional_usd=5_500.0, annual_fee_pct=5.0)
+    )
 
     # NVDA options
     nvda = lib.existing_positions["POS-NVDA-OPT"]
@@ -1164,8 +1198,8 @@ def test_full_normal_scenario() -> None:
     assert lib.single_short_max_pct == pytest.approx(5.5)
 
     # Borrow cost pct — matches library's _borrow_cost_contribute scale
-    expected_borrow_pct = 5.0 / expected_pv * 100
-    assert lib.daily_borrow_cost_pct == pytest.approx(expected_borrow_pct)
+    expected_borrow_cost_usd = daily_borrow_cost_usd(notional_usd=5_500.0, annual_fee_pct=5.0)
+    assert lib.daily_borrow_cost_pct == pytest.approx(expected_borrow_cost_usd / expected_pv * 100)
 
 
 # ---------------------------------------------------------------------------

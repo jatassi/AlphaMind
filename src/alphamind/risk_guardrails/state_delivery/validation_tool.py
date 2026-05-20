@@ -30,6 +30,7 @@ from alphamind._kernel.money import Money, money
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.records.positions import Direction, InstrumentType
+from alphamind.risk_guardrails.borrow_cost import daily_borrow_cost_usd
 from alphamind.risk_guardrails.guardrail_evaluation import (
     Action as LibraryAction,
 )
@@ -152,14 +153,16 @@ class ValidationUnavailableReason(StrEnum):
       map is sized to the resolvable universe (held book plus quoted
       names); a ticker outside it has no spot price, so neither an equity
       nor an options expression can be projected.
-    * ``MISSING_BORROW_COST_RESOLVER`` — a short equity OPEN/ADD was
-      requested but ``ValidationToolState.borrow_cost_resolver`` is ``None``
-      (no borrow-cost data source wired this cycle). Long-equity and
-      long-options expressions of the same ticker remain validatable.
+    * ``MISSING_BORROW_COST`` — a short equity OPEN/ADD was requested but no
+      borrow-cost rate is available for the ticker: either
+      ``ValidationToolState.borrow_cost_resolver`` is ``None`` (no borrow-cost
+      data source wired this cycle) or the resolver has no row for this
+      ticker (the borrow-cost store is sparse). Long-equity and long-options
+      expressions of the same ticker remain validatable.
     """
 
     MISSING_MARKET_PRICE = "missing_market_price"
-    MISSING_BORROW_COST_RESOLVER = "missing_borrow_cost_resolver"
+    MISSING_BORROW_COST = "missing_borrow_cost"
 
 
 class ValidationRequest(BaseModel):
@@ -174,10 +177,10 @@ class ValidationRequest(BaseModel):
     * ``existing_position_id`` is auto-resolved from the snapshot via the
       ticker/direction/asset-type lookup pattern (see
       ``_lookup_existing_position``).
-    * ``daily_borrow_cost_usd`` is resolved from the state's
-      ``borrow_cost_resolver`` for short equity OPEN/ADD; the request shape
-      itself carries no borrow-cost field so the caller is not forced to know
-      when the library's validators require one.
+    * ``daily_borrow_cost_usd`` is computed for short equity OPEN/ADD from the
+      state's ``borrow_cost_resolver`` rate and the proposal notional; the
+      request shape itself carries no borrow-cost field so the caller is not
+      forced to know when the library's validators require one.
     * ``reserves_capital`` flags non-marketable limit OPENs that contribute to
       ``pending_order_capital_pct``; defaults to ``False`` so marketable orders
       need not opt out explicitly.
@@ -266,7 +269,7 @@ class ValidationToolError(Exception):
     The library validates its inputs and raises ``LibraryInputError``; this
     error class is the tool-layer twin for preconditions the tool itself
     enforces before calling the library — most notably that short equity
-    proposals carry a ``borrow_cost_resolver`` on state.
+    proposals can resolve a borrow-cost rate from state.
     """
 
 
@@ -311,20 +314,23 @@ class ValidationToolState(BaseModel):
     library_market: SkipValidation[MarketInputs]
     # Tool helpers:
     sector_resolver: Callable[[str], str]
-    # Borrow-cost resolver: required for short equity OPEN/ADD; ``None`` is
-    # safe when the active profile disables short selling
-    # (``profile_feature_flags.short_selling_enabled=False``) since the library
-    # gate filters those proposals before borrow-cost lookup.
+    # Borrow-cost resolver: maps a ticker to its annualized borrow fee rate as
+    # a percentage (``borrow_cost_daily.fee_pct`` — e.g. ``15.0`` for 15%/yr),
+    # or ``None`` for a ticker the borrow-cost store has no row for. The tool
+    # converts the rate to a daily USD accrual against the proposal notional
+    # (see ``_resolve_borrow_cost``). Required for short equity OPEN/ADD;
+    # ``None`` (the whole resolver) is safe when the active profile disables
+    # short selling (``profile_feature_flags.short_selling_enabled=False``)
+    # since the library gate filters those proposals before borrow-cost lookup.
     #
     # Purity contract: must be a pure function — equal ``ticker`` inputs must
-    # produce equal ``float`` outputs across all calls within a
-    # ``validate_guardrail`` chain. The tool re-resolves borrow cost for every
-    # accumulated short equity OPEN/ADD on each call (see
-    # ``_projected_delta_to_library``); a closure over mutable state (live
-    # ledger, network resolver without caching, mutating counter) violates this
-    # contract and produces non-deterministic guidance across replays of the
-    # same proposal sequence.
-    borrow_cost_resolver: Callable[[str], float] | None = None
+    # produce equal outputs across all calls within a ``validate_guardrail``
+    # chain. The tool re-resolves borrow cost for every accumulated short
+    # equity OPEN/ADD on each call (see ``_projected_delta_to_library``); a
+    # closure over mutable state (live ledger, network resolver without
+    # caching, mutating counter) violates this contract and produces
+    # non-deterministic guidance across replays of the same proposal sequence.
+    borrow_cost_resolver: Callable[[str], float | None] | None = None
     accumulated_deltas: tuple[ProjectedDelta, ...] = ()
 
     @model_validator(mode="after")
@@ -374,8 +380,8 @@ def validate_guardrail(
 
     * market price — every instrument type needs a spot price from
       ``state.library_market.underlying_prices``;
-    * borrow cost — short equity OPEN/ADD additionally needs
-      ``state.borrow_cost_resolver``.
+    * borrow cost — short equity OPEN/ADD additionally needs a borrow-cost
+      rate for the ticker from ``state.borrow_cost_resolver``.
 
     A proposal whose ticker falls outside that coverage returns an
     ``UNAVAILABLE`` result (see :func:`_resolver_coverage_gap`) rather than
@@ -502,11 +508,11 @@ _UNAVAILABLE_GUIDANCE: dict[ValidationUnavailableReason, str] = {
         "is a resolver-coverage gap, not a guardrail breach — the thesis itself is "
         "not disqualified."
     ),
-    ValidationUnavailableReason.MISSING_BORROW_COST_RESOLVER: (
-        "Short-equity validation requires a borrow-cost resolver that is not wired "
-        "this cycle, so the short cannot be validated. This is a resolver-coverage "
-        "gap, not a guardrail breach — a long-equity or long-options expression of "
-        "the same ticker can still be validated."
+    ValidationUnavailableReason.MISSING_BORROW_COST: (
+        "Short-equity validation has no borrow-cost data for this ticker this "
+        "cycle, so the short cannot be validated. This is a resolver-coverage "
+        "gap, not a guardrail breach — a long-equity or long-options expression "
+        "of the same ticker can still be validated."
     ),
 }
 
@@ -528,16 +534,18 @@ def _resolver_coverage_gap(
     The validation tool can only project a proposal whose ticker the composed
     resolvers can resolve. Market price is the prerequisite for every
     instrument type, so it is checked first; the borrow-cost resolver applies
-    only to short equity OPEN/ADD. A non-``None`` return drives an
-    ``UNAVAILABLE`` result so the agent can tell an infrastructure gap apart
-    from a guardrail breach (ALP-581).
+    only to short equity OPEN/ADD, and the gap covers both a missing resolver
+    and a resolver with no row for the ticker (the borrow-cost store is
+    sparse). A non-``None`` return drives an ``UNAVAILABLE`` result so the
+    agent can tell an infrastructure gap apart from a guardrail breach
+    (ALP-581).
     """
     if request.instrument.ticker not in state.library_market.underlying_prices:
         return ValidationUnavailableReason.MISSING_MARKET_PRICE
-    if _needs_borrow_cost(request.instrument, request.action) and (
-        state.borrow_cost_resolver is None
-    ):
-        return ValidationUnavailableReason.MISSING_BORROW_COST_RESOLVER
+    if _needs_borrow_cost(request.instrument, request.action):
+        resolver = state.borrow_cost_resolver
+        if resolver is None or resolver(request.instrument.ticker) is None:
+            return ValidationUnavailableReason.MISSING_BORROW_COST
     return None
 
 
@@ -613,7 +621,7 @@ def _request_to_library_proposal(
         action=_ACTION_TO_LIBRARY[request.action],
         existing_position_id=_lookup_existing_position(request, snapshot=state.starting_snapshot),
         daily_borrow_cost_usd=_resolve_borrow_cost(
-            instrument=instrument, action=request.action, state=state
+            instrument=instrument, size=request.size, action=request.action, state=state
         ),
         reserves_capital=request.reserves_capital,
     )
@@ -641,31 +649,38 @@ def _library_notional_usd(instrument: ValidationInstrument, size: ValidationSize
 def _resolve_borrow_cost(
     *,
     instrument: ValidationInstrument,
+    size: ValidationSize,
     action: ValidationAction,
     state: ValidationToolState,
 ) -> float | None:
-    """Return the borrow cost for short equity OPEN/ADD; ``None`` otherwise.
+    """Return the daily borrow cost in USD for short equity OPEN/ADD; ``None`` otherwise.
 
-    Other actions (LONG, options, CLOSE/ADJUST) return ``None``; the library's
+    The state's ``borrow_cost_resolver`` returns an annualized borrow fee rate;
+    this helper converts it to a one-day USD accrual against the proposal
+    notional (``size.dollar_value``) via :func:`daily_borrow_cost_usd`.
+
+    Other actions (long, options, CLOSE/ADJUST) return ``None``; the library's
     borrow-cost rule reads the proposal field only where applicable.
 
-    Raises ``ValidationToolError`` when the resolver is missing on a request
-    that requires it. :func:`validate_guardrail` intercepts a missing resolver
-    on the *current* request upstream via :func:`_resolver_coverage_gap` and
-    returns an ``UNAVAILABLE`` result, so this raise is reached only if a
-    short equity OPEN/ADD proposal slips into ``accumulated_deltas`` against a
-    resolver-less state — a malformed-state guard, not a runtime path.
+    Raises ``ValidationToolError`` when no borrow-cost rate can be resolved on
+    a request that requires one. :func:`validate_guardrail` intercepts both a
+    missing resolver and an uncovered ticker on the *current* request upstream
+    via :func:`_resolver_coverage_gap` and returns an ``UNAVAILABLE`` result,
+    so this raise is reached only if a short equity OPEN/ADD proposal slips
+    into ``accumulated_deltas`` against a ticker the resolver cannot price — a
+    malformed-state guard, not a runtime path.
     """
     if not _needs_borrow_cost(instrument, action):
         return None
     resolver = state.borrow_cost_resolver
-    if resolver is None:
+    annual_fee_pct = resolver(instrument.ticker) if resolver is not None else None
+    if annual_fee_pct is None:
         msg = (
-            f"borrow_cost_resolver is required on ValidationToolState for "
+            f"borrow_cost_resolver resolved no rate on ValidationToolState for "
             f"short equity {action.value} (ticker={instrument.ticker!r})"
         )
         raise ValidationToolError(msg)
-    return resolver(instrument.ticker)
+    return daily_borrow_cost_usd(notional_usd=size.dollar_value, annual_fee_pct=annual_fee_pct)
 
 
 _POSITION_LOOKUP_ACTIONS = frozenset(
@@ -781,7 +796,7 @@ def _projected_delta_to_library(
         action=_ACTION_TO_LIBRARY[delta.action],
         existing_position_id=delta.existing_position_id,
         daily_borrow_cost_usd=_resolve_borrow_cost(
-            instrument=instrument, action=delta.action, state=state
+            instrument=instrument, size=delta.size, action=delta.action, state=state
         ),
         reserves_capital=delta.reserves_capital,
     )

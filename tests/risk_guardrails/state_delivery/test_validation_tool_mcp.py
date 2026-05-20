@@ -484,8 +484,8 @@ async def test_options_disabled_returns_fail_with_feature_disabled_guidance() ->
 @pytest.mark.asyncio
 async def test_short_equity_without_resolver_serialises_unavailable() -> None:
     """A short equity OPEN with no ``borrow_cost_resolver`` wired returns a
-    serialised ``UNAVAILABLE`` result naming the missing resolver — not a tool
-    error and not a generic FAIL (ALP-581)."""
+    serialised ``UNAVAILABLE`` result naming the missing borrow-cost data — not
+    a tool error and not a generic FAIL (ALP-581)."""
     import json
 
     state = _make_state()  # _make_state wires no borrow_cost_resolver
@@ -499,7 +499,7 @@ async def test_short_equity_without_resolver_serialises_unavailable() -> None:
 
     payload = json.loads(text)
     assert payload["overall"] == "UNAVAILABLE"
-    assert payload["unavailable_reason"] == "missing_borrow_cost_resolver"
+    assert payload["unavailable_reason"] == "missing_borrow_cost"
     assert payload["per_rule"] == []
     assert payload["failure_guidance"] is not None
     assert "checked_at" in payload

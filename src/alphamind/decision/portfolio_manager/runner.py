@@ -240,7 +240,7 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     agent_config: BaseAgentConfig | None = None,
-    borrow_cost_resolver: Callable[[str], float] | None = None,
+    borrow_cost_resolver: Callable[[str], float | None] | None = None,
     prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
     broker_dispatch: BrokerDispatch | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
