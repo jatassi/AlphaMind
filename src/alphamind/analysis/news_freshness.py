@@ -39,7 +39,7 @@ from alphamind.persistence.models import NewsArticles
 # therefore forms a circular import whenever ``news_freshness`` is the first
 # module in the chain to touch the ``tools`` package. Both helpers are used only
 # inside the functions below, so the import is deferred to call time, by which
-# point this module is fully initialized. See ALP-588 work tree.
+# point this module is fully initialized.
 
 __all__ = [
     "NewsEmptyDiagnosis",

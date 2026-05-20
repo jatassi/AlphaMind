@@ -390,6 +390,16 @@ def _build_invalidation_leg_order(  # noqa: PLR0913 — leg construction threads
     )
 
 
+_CONTRACT_TYPE_FROM_WIRE: dict[str, OptionContractType] = {
+    "call": OptionContractType.CALL,
+    "put": OptionContractType.PUT,
+}
+_DIRECTION_FROM_WIRE: dict[str, Direction] = {
+    "long": Direction.LONG,
+    "short": Direction.SHORT,
+}
+
+
 def _zeroed_option_greeks() -> OptionGreeks:
     """A fully-zeroed :class:`OptionGreeks` — the skeleton placeholder.
 
@@ -414,13 +424,14 @@ def _build_strategy_skeleton(
     ``contract_count=0.0`` / ``premium_paid_per_contract=0.0`` — the record
     reflects state, not intent, mirroring the single-option branch. Payoff
     metrics (``net_premium_usd``, ``max_profit_usd``, ``max_loss_usd``,
-    ``breakeven_levels``) and ``strategy_greeks`` are all skeleton zeros; story
-    02 recomputes them from the filled legs at the Phase 1 entry-fill.
+    ``breakeven_levels``) and ``strategy_greeks`` are all skeleton zeros; the
+    Phase 1 entry-fill handler recomputes them from the filled legs.
 
     Leg ids are deterministic — ``{position_id}-leg-{idx}`` — and each wire
     leg's ``direction`` is carried straight through. The strategy branch does
     not consume ``validation_greeks`` / ``validation_iv``.
     """
+    zeroed_greeks = _zeroed_option_greeks()
     legs: list[StrategyLeg] = []
     for idx, wire_leg in enumerate(instrument.legs):
         legs.append(
@@ -431,17 +442,13 @@ def _build_strategy_skeleton(
                     # ALP-462 — Price → float at the legacy OptionsPositionDetails surface.
                     strike_price=float(wire_leg.strike),
                     expiration_date=date.fromisoformat(wire_leg.expiration),
-                    contract_type=(
-                        OptionContractType.CALL
-                        if wire_leg.contract_type == "call"
-                        else OptionContractType.PUT
-                    ),
+                    contract_type=_CONTRACT_TYPE_FROM_WIRE[wire_leg.contract_type],
                     contract_count=0.0,
                     contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
                     premium_paid_per_contract=0.0,
-                    greeks=_zeroed_option_greeks(),
+                    greeks=zeroed_greeks,
                 ),
-                direction=(Direction.LONG if wire_leg.direction == "long" else Direction.SHORT),
+                direction=_DIRECTION_FROM_WIRE[wire_leg.direction],
             )
         )
     return StrategyPositionDetails(
@@ -451,7 +458,7 @@ def _build_strategy_skeleton(
         max_profit_usd=0.0,
         max_loss_usd=0.0,
         breakeven_levels=(),
-        strategy_greeks=_zeroed_option_greeks(),
+        strategy_greeks=zeroed_greeks,
     )
 
 
@@ -489,8 +496,8 @@ def _build_pending_position(
     leg, zeroed payoff metrics, zeroed greeks. The strategy branch does not
     read ``validation_greeks`` / ``validation_iv``; the validation metadata's
     strategy greeks are a per-leg average, not a net (parent ALP-588
-    § Surfacing conditions), so they must not seed ``strategy_greeks``. Story
-    02 recomputes the payoff metrics from the filled legs.
+    § Surfacing conditions), so they must not seed ``strategy_greeks``. The
+    Phase 1 entry-fill handler recomputes the payoff metrics from the filled legs.
     """
     if isinstance(instrument, OptionInstrument):
         if validation_greeks is None or validation_iv is None:
@@ -506,11 +513,7 @@ def _build_pending_position(
             # ALP-462 — Price → float at the legacy OptionsPositionDetails surface.
             strike_price=float(instrument.strike),
             expiration_date=date.fromisoformat(instrument.expiration),
-            contract_type=(
-                OptionContractType.CALL
-                if instrument.contract_type == "call"
-                else OptionContractType.PUT
-            ),
+            contract_type=_CONTRACT_TYPE_FROM_WIRE[instrument.contract_type],
             contract_count=0.0,
             contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
             premium_paid_per_contract=0.0,

@@ -11,8 +11,6 @@ naked short call) report `float('-inf')` for max loss.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from alphamind.portfolio_state.records.positions import (
     Direction,
     OptionContractType,
@@ -149,30 +147,28 @@ def compute_strategy_greeks(legs: tuple[StrategyLeg, ...]) -> OptionGreeks:
     expiration dates or underlying tickers.
     """
     _validate_legs(legs)
-    total_contracts = sum(
-        leg.options.contract_count * leg.options.contract_multiplier for leg in legs
-    )
-
-    def _weighted(selector: Callable[[OptionGreeks], float]) -> float:
-        return (
-            sum(
-                _leg_sign(leg)
-                * leg.options.contract_count
-                * leg.options.contract_multiplier
-                * selector(leg.options.greeks)
-                for leg in legs
-            )
-            / total_contracts
-        )
+    total_contracts = 0.0
+    w_delta = w_gamma = w_theta = w_vega = 0.0
+    refresh_failed = False
+    for leg in legs:
+        units = leg.options.contract_count * leg.options.contract_multiplier
+        signed_units = _leg_sign(leg) * units
+        greeks = leg.options.greeks
+        total_contracts += units
+        w_delta += signed_units * greeks.delta
+        w_gamma += signed_units * greeks.gamma
+        w_theta += signed_units * greeks.theta
+        w_vega += signed_units * greeks.vega
+        refresh_failed = refresh_failed or greeks.refresh_failed
 
     return OptionGreeks(
-        delta=_weighted(lambda g: g.delta),
-        gamma=_weighted(lambda g: g.gamma),
-        theta=_weighted(lambda g: g.theta),
-        vega=_weighted(lambda g: g.vega),
+        delta=w_delta / total_contracts,
+        gamma=w_gamma / total_contracts,
+        theta=w_theta / total_contracts,
+        vega=w_vega / total_contracts,
         as_of_timestamp=None,
         iv_used=None,
-        refresh_failed=any(leg.options.greeks.refresh_failed for leg in legs),
+        refresh_failed=refresh_failed,
     )
 
 
