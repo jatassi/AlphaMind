@@ -238,9 +238,14 @@ def _add_news_article(
     article_id: str,
     ticker: str,
     published_at: str,
+    vendor_sentiment_score: float | None = None,
 ) -> None:
     """Add a NewsArticles + matching NewsArticleTickers row, flushing in
-    FK-safe order."""
+    FK-safe order.
+
+    ``vendor_sentiment_score``: ``None`` leaves the article unscored —
+    excluded from ``load_sentiment_aggregates``'s window-mean query.
+    """
     session.add(
         NewsArticles(
             article_id=article_id,
@@ -253,7 +258,7 @@ def _add_news_article(
             body_path=None,
             published_at=published_at,
             ingested_at=published_at,
-            vendor_sentiment_score=None,
+            vendor_sentiment_score=vendor_sentiment_score,
             vendor_sentiment_label=None,
             topic_tags=None,
             cross_ticker_cluster_id=None,
@@ -265,7 +270,7 @@ def _add_news_article(
             article_id=article_id,
             ticker=ticker,
             is_primary=1,
-            vendor_sentiment_score=None,
+            vendor_sentiment_score=vendor_sentiment_score,
             vendor_sentiment_label=None,
         )
     )
@@ -712,6 +717,11 @@ class TestLoadSentimentAggregates:
         assert result == ()
 
     def test_calibrated_ticker_returns_record(self, session: Session) -> None:
+        """A lone calibrated baseline row returns a record, but with
+        ``magnitude`` / ``percentile_vs_self`` ``None``: one row has no
+        inter-baseline window, so there is no latest-period "current
+        reading" to locate within the trailing distribution (ALP-583).
+        """
         _add_ticker(session, "NVDA")
         _add_sentiment_baseline(
             session,
@@ -727,18 +737,30 @@ class TestLoadSentimentAggregates:
         assert len(result) == 1
         agg = result[0]
         assert agg.ticker == "NVDA"
-        assert agg.percentile_vs_self is not None
-        assert 0.0 <= agg.percentile_vs_self <= 1.0
+        assert agg.directional_score == pytest.approx(0.1)
+        assert agg.magnitude is None
+        assert agg.percentile_vs_self is None
 
     def test_percentile_vs_self_in_unit_range(self, session: Session) -> None:
+        """With an inter-baseline window holding a scored article,
+        ``percentile_vs_self`` is the Normal-CDF rank of that window's
+        sentiment mean — always inside the unit interval.
+        """
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        in_window_iso = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
         _add_ticker(session, "AAPL")
         _add_sentiment_baseline(
+            session, "AAPL", mean=0.2, stdev=0.4, n_observations=50, as_of_str=prior_iso
+        )
+        _add_sentiment_baseline(
+            session, "AAPL", mean=0.2, stdev=0.4, n_observations=50, as_of_str=_ISO
+        )
+        _add_news_article(
             session,
-            "AAPL",
-            mean=0.2,
-            stdev=0.4,
-            n_observations=50,
-            as_of_str=_ISO,
+            article_id="aapl-1",
+            ticker="AAPL",
+            published_at=in_window_iso,
+            vendor_sentiment_score=0.9,
         )
         session.commit()
 
@@ -747,6 +769,125 @@ class TestLoadSentimentAggregates:
         pct = result[0].percentile_vs_self
         assert pct is not None
         assert 0.0 <= pct <= 1.0
+
+    def test_two_calibrated_tickers_emit_distinct_magnitude_and_percentile(
+        self, session: Session
+    ) -> None:
+        """Two CALIBRATED tickers must not emit bit-identical numeric
+        placeholders (ALP-583). ``magnitude`` / ``percentile_vs_self`` locate
+        the latest inter-baseline-window sentiment mean within each ticker's
+        own rolling ``(mean, stdev)`` — the degenerate ``value == row.mean``
+        math that pinned every calibrated ticker at ``0.0`` / ``0.5`` is gone.
+        """
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        in_window_iso = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=prior_iso
+        )
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        _add_news_article(
+            session,
+            article_id="nvda-1",
+            ticker="NVDA",
+            published_at=in_window_iso,
+            vendor_sentiment_score=0.7,
+        )
+
+        _add_ticker(session, "JPM", sector="financials")
+        _add_sentiment_baseline(
+            session, "JPM", mean=0.0, stdev=0.2, n_observations=100, as_of_str=prior_iso
+        )
+        _add_sentiment_baseline(
+            session, "JPM", mean=0.0, stdev=0.2, n_observations=100, as_of_str=_ISO
+        )
+        _add_news_article(
+            session,
+            article_id="jpm-1",
+            ticker="JPM",
+            published_at=in_window_iso,
+            vendor_sentiment_score=-0.1,
+        )
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        by_ticker = {agg.ticker: agg for agg in result}
+        nvda, jpm = by_ticker["NVDA"], by_ticker["JPM"]
+        assert nvda.magnitude is not None
+        assert jpm.magnitude is not None
+        assert nvda.percentile_vs_self is not None
+        assert jpm.percentile_vs_self is not None
+        assert nvda.magnitude != jpm.magnitude
+        assert nvda.percentile_vs_self != jpm.percentile_vs_self
+
+    def test_percentile_and_magnitude_track_window_mean_vs_baseline(self, session: Session) -> None:
+        """``percentile_vs_self`` is the Normal-CDF rank of the latest
+        window's sentiment mean against the rolling ``(mean, stdev)``;
+        ``magnitude`` is that gap's z-distance capped at 1.0. A window mean
+        one stdev above the baseline mean lands at ``Phi(1)`` and
+        magnitude ``1.0`` (ALP-583).
+        """
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        in_window_iso = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.0, stdev=0.5, n_observations=100, as_of_str=prior_iso
+        )
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.0, stdev=0.5, n_observations=100, as_of_str=_ISO
+        )
+        # Two scored articles averaging 0.5 — one stdev above the rolling mean.
+        _add_news_article(
+            session,
+            article_id="nvda-1",
+            ticker="NVDA",
+            published_at=in_window_iso,
+            vendor_sentiment_score=0.4,
+        )
+        _add_news_article(
+            session,
+            article_id="nvda-2",
+            ticker="NVDA",
+            published_at=in_window_iso,
+            vendor_sentiment_score=0.6,
+        )
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        assert len(result) == 1
+        agg = result[0]
+        assert agg.percentile_vs_self == pytest.approx(0.8413447, abs=1e-6)
+        assert agg.magnitude == pytest.approx(1.0)
+
+    def test_percentile_none_when_window_articles_unscored(self, session: Session) -> None:
+        """An inter-baseline window holding articles that carry no vendor
+        sentiment score yields ``percentile_vs_self`` / ``magnitude``
+        ``None`` — there is no current reading to calibrate — even though
+        ``volume`` still counts those articles. The scored-mean and the
+        article-count gates are independent (ALP-583).
+        """
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        in_window_iso = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=prior_iso
+        )
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        # In-window article with no vendor_sentiment_score (helper default).
+        _add_news_article(session, article_id="nvda-1", ticker="NVDA", published_at=in_window_iso)
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        assert len(result) == 1
+        agg = result[0]
+        assert agg.volume == 1
+        assert agg.magnitude is None
+        assert agg.percentile_vs_self is None
 
     def test_ticker_scope_filters_results(self, session: Session) -> None:
         _add_ticker(session, "NVDA")
@@ -822,9 +963,24 @@ class TestLoadSentimentAggregates:
         assert agg.divergence_flag is None
 
     def test_record_fields_present(self, session: Session) -> None:
+        """A calibrated ticker with a prior baseline and a scored in-window
+        article populates every numeric field — magnitude / percentile are
+        real floats once a latest-period reading exists."""
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        in_window_iso = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
         _add_ticker(session, "JPM", sector="financials")
         _add_sentiment_baseline(
+            session, "JPM", mean=0.05, stdev=0.2, n_observations=120, as_of_str=prior_iso
+        )
+        _add_sentiment_baseline(
             session, "JPM", mean=0.05, stdev=0.2, n_observations=120, as_of_str=_ISO
+        )
+        _add_news_article(
+            session,
+            article_id="jpm-1",
+            ticker="JPM",
+            published_at=in_window_iso,
+            vendor_sentiment_score=0.3,
         )
         session.commit()
 
@@ -1237,10 +1393,21 @@ class TestLoadSentimentAggregates:
 
     def test_etf_row_distinct_from_single_name_row(self, session: Session) -> None:
         """ETFs/benchmarks without per-ticker sentiment ingestion (accumulating
-        coverage) emit null sentinel while calibrated single-names emit real
-        numeric fields (ALP-568).
+        coverage) emit null sentinel while a calibrated single-name with a
+        scored in-window article emits real numeric fields (ALP-568 / ALP-583).
         """
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        in_window_iso = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
         _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session,
+            "NVDA",
+            mean=0.4,
+            stdev=0.2,
+            n_observations=200,
+            as_of_str=prior_iso,
+            calibration_state="calibrated",
+        )
         _add_sentiment_baseline(
             session,
             "NVDA",
@@ -1249,6 +1416,13 @@ class TestLoadSentimentAggregates:
             n_observations=200,
             as_of_str=_ISO,
             calibration_state="calibrated",
+        )
+        _add_news_article(
+            session,
+            article_id="nvda-1",
+            ticker="NVDA",
+            published_at=in_window_iso,
+            vendor_sentiment_score=0.6,
         )
         _add_ticker(session, "SPY", sector="benchmark")
         _add_sentiment_baseline(

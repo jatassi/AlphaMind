@@ -106,7 +106,26 @@ _DEFAULT_DIVERGENCE_MIN_ABS: float = 0.02
 class SentimentAggregate:
     """Per-ticker sentiment aggregate, expressed as a percentile vs. history.
 
-    ``percentile_vs_self`` is in ``[0.0, 1.0]`` (unit interval, not 0-100).
+    ``directional_score`` is the ticker's rolling sentiment level — the
+    calibration-state baseline mean, clamped to ``[-1.0, 1.0]``.
+
+    ``percentile_vs_self`` and ``magnitude`` locate the *latest period's*
+    sentiment within the ticker's own trailing distribution, so a
+    high-sentiment-volatility name's ordinary swing is read against its own
+    history rather than a universal scale (distillation external.md §2). The
+    latest period is the mean per-article ``vendor_sentiment_score`` over the
+    inter-baseline window; the trailing distribution is the stored rolling
+    ``(mean, stdev)``. ``percentile_vs_self`` is the Normal-CDF rank of that
+    latest-period mean against ``(mean, stdev)``, in ``[0.0, 1.0]`` (unit
+    interval, not 0-100) — ``0.5`` sits at the rolling mean, ``> 0.5`` is
+    more bullish than the name's own history. ``magnitude`` is the same
+    gap's absolute z-distance, capped at ``1.0``. Both fall back to ``None``
+    when the inter-baseline window holds no scored article, or when the
+    stored ``stdev`` is non-positive — there is then no non-degenerate
+    current reading to calibrate. (The rolling window ends at ``as_of`` and
+    so contains the latest period; once the baseline carries a multi-week
+    observation history this self-overlap shifts the rank negligibly.)
+
     ``data_freshness`` is the timestamp of the underlying baseline row.
 
     ``calibration_state`` mirrors the baseline row's state from the ALP-540
@@ -416,6 +435,52 @@ def _load_article_volume_by_ticker(
     return {row[0]: int(row[1]) for row in rows}
 
 
+def _load_window_sentiment_mean_by_ticker(
+    session: Session,
+    *,
+    tickers: Sequence[str],
+    window_start_str: str,
+    window_end_str: str,
+) -> dict[str, float]:
+    """Return ``ticker → mean vendor_sentiment_score`` over the inter-baseline
+    window ``(window_start_str, window_end_str]``.
+
+    Only ``news_article_tickers`` rows carrying a non-NULL
+    ``vendor_sentiment_score`` contribute — the same per-article observations
+    the rolling sentiment baseline is built from (see
+    ``distillation.baselines._select_sentiment_observations``). This is the
+    "current reading" :func:`load_sentiment_aggregates` percentiles against a
+    ticker's own trailing distribution. Tickers with no scored article in the
+    window are absent from the mapping.
+
+    Deliberately parallels :func:`_load_article_volume_by_ticker` (same join,
+    same half-open lower / inclusive upper window edges) rather than sharing
+    one query: that helper counts every article, this one averages only the
+    scored ones. ``distillation.qualitative.sentiment_percentile_compute``
+    derives the same current-reading-vs-baseline percentile for its
+    ``qual.sentiment_percentile`` distillation block over a fixed short
+    trailing window; this loader instead reads the inter-baseline window for
+    the qualitative-researcher input bundle, so the two are not shared.
+    """
+    if not tickers:
+        return {}
+    rows = session.execute(
+        select(
+            NewsArticleTickers.ticker,
+            func.avg(NewsArticleTickers.vendor_sentiment_score),
+        )
+        .join(NewsArticles, NewsArticleTickers.article_id == NewsArticles.article_id)
+        .where(
+            NewsArticleTickers.ticker.in_(tuple(tickers)),
+            NewsArticleTickers.vendor_sentiment_score.isnot(None),
+            NewsArticles.published_at > window_start_str,
+            NewsArticles.published_at <= window_end_str,
+        )
+        .group_by(NewsArticleTickers.ticker)
+    ).all()
+    return {row[0]: float(row[1]) for row in rows if row[1] is not None}
+
+
 def _load_recent_sentiment_baselines(
     session: Session,
     *,
@@ -468,9 +533,15 @@ def load_sentiment_aggregates(
     a shared fallback distribution cannot broadcast bit-identical
     magnitude/percentile placeholders across every bootstrap ticker.
 
-    For calibrated tickers, ``percentile_vs_self`` is computed via the
-    Normal-CDF approximation using the stored ``(mean, stdev)`` from the
-    rolling calibration-state snapshot.
+    For calibrated tickers, ``percentile_vs_self`` and ``magnitude`` locate
+    the latest period's sentiment within the ticker's own trailing
+    distribution: the latest period is the mean per-article
+    ``vendor_sentiment_score`` over the inter-baseline window, the
+    distribution is the stored rolling ``(mean, stdev)``. ``percentile_vs_self``
+    is the Normal-CDF rank of that mean; ``magnitude`` is its absolute
+    z-distance capped at ``1.0``. Both are ``None`` when the window holds no
+    scored article or the stored ``stdev`` is non-positive — there is then no
+    non-degenerate current reading to calibrate.
 
     ``rate_of_change`` is the diff between the latest baseline mean and the
     prior-period mean; ``None`` when only one row exists OR when no articles
@@ -529,6 +600,19 @@ def load_sentiment_aggregates(
             )
         )
 
+    # Reuses window_buckets — one query per distinct (prior, latest) pair,
+    # same as the volume pass above.
+    window_sentiment_mean_by_ticker: dict[str, float] = {}
+    for (prior_as_of, latest_as_of), bucket_tickers in window_buckets.items():
+        window_sentiment_mean_by_ticker.update(
+            _load_window_sentiment_mean_by_ticker(
+                session,
+                tickers=bucket_tickers,
+                window_start_str=prior_as_of,
+                window_end_str=latest_as_of,
+            )
+        )
+
     price_returns = _load_price_returns_by_ticker(
         session,
         tickers=calibrated_tickers,
@@ -562,13 +646,24 @@ def load_sentiment_aggregates(
         mean = float(row.mean)
         stdev = float(row.stdev)
 
-        percentile = _percentile_from_normal(value=float(row.mean), mean=mean, stdev=stdev)
+        # directional_score: the rolling sentiment level, clamped to [-1, 1].
+        directional_score = max(-1.0, min(1.0, mean))
 
-        # directional_score: sign of mean relative to the baseline mean,
-        # clamped to [-1, 1].
-        directional_score = max(-1.0, min(1.0, float(row.mean)))
-        # magnitude: absolute deviation normalised by stdev (capped at 1.0).
-        magnitude = min(1.0, abs(float(row.mean) - mean) / stdev) if stdev > 0 else 0.0
+        # percentile_vs_self / magnitude: see the SentimentAggregate
+        # docstring. The stdev > 0 guard protects the magnitude z-distance
+        # division below; _percentile_from_normal would itself collapse a
+        # non-positive stdev to a degenerate 0.5.
+        window_sentiment_mean = window_sentiment_mean_by_ticker.get(ticker)
+        percentile: float | None
+        magnitude: float | None
+        if window_sentiment_mean is not None and stdev > 0:
+            percentile = _percentile_from_normal(
+                value=window_sentiment_mean, mean=mean, stdev=stdev
+            )
+            magnitude = min(1.0, abs(window_sentiment_mean - mean) / stdev)
+        else:
+            percentile = None
+            magnitude = None
         has_window = len(recent) == 2
         # Zero inflow leaves the mean diff as window-edge-eviction noise
         # and the article count as a mechanical zero — emit None for both
