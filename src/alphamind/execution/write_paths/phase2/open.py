@@ -36,6 +36,7 @@ from alphamind.execution.write_paths.phase2._shared import (
     _id_suffix,
     _instrument_ticker_key,
     _order_direction_for_close,
+    _order_position_direction,
     _price_to_float,
     _reserve_capital,
 )
@@ -162,6 +163,10 @@ async def _writeback_open(
         validation_greeks=validation_greeks,
         validation_iv=validation_iv,
     )
+    # Order builders require a non-None Direction; derive it once from the
+    # pending position (strategy positions yield the inert Direction.LONG
+    # placeholder — see _order_position_direction).
+    order_direction = _order_position_direction(position)
     thesis = _build_active_thesis(
         thesis_id=ids["thesis_id"],
         position_id=ids["position_id"],
@@ -186,7 +191,7 @@ async def _writeback_open(
         ticker=ticker,
         entry_order=command.entry_order,
         quantity=command.position_size.quantity,
-        direction=_order_direction_from_instrument(command.instrument),
+        direction=order_direction,
         pm_command_id=result.command_id,
         timestamp=timestamp,
         role=OrderRole.ENTRY,
@@ -200,7 +205,7 @@ async def _writeback_open(
         ticker=ticker,
         target=command.target,
         quantity=command.position_size.quantity,
-        direction=_order_direction_from_instrument(command.instrument),
+        direction=order_direction,
         pm_command_id=result.command_id,
         timestamp=timestamp,
     )
@@ -217,7 +222,7 @@ async def _writeback_open(
                 ticker=ticker,
                 wire_leg=wire_leg,
                 quantity=command.position_size.quantity,
-                direction=_order_direction_from_instrument(command.instrument),
+                direction=order_direction,
                 pm_command_id=result.command_id,
                 timestamp=timestamp,
             )
@@ -277,6 +282,16 @@ async def _writeback_open(
 # ---------------------------------------------------------------------------
 
 
+_CONTRACT_TYPE_FROM_WIRE: dict[str, OptionContractType] = {
+    "call": OptionContractType.CALL,
+    "put": OptionContractType.PUT,
+}
+_DIRECTION_FROM_WIRE: dict[str, Direction] = {
+    "long": Direction.LONG,
+    "short": Direction.SHORT,
+}
+
+
 def _direction_from_instrument(
     instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
 ) -> Direction | None:
@@ -292,22 +307,7 @@ def _direction_from_instrument(
     """
     if isinstance(instrument, StrategyInstrument):
         return None
-    return Direction.LONG if instrument.direction == "long" else Direction.SHORT
-
-
-def _order_direction_from_instrument(
-    instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
-) -> Direction:
-    """Order-level ``Direction`` for an OPEN command's entry / protective orders.
-
-    The order builders require a non-``None`` ``Direction`` for
-    ``OrderRecord.direction``. An equity / single-leg option yields its own
-    side; a :class:`StrategyInstrument` yields an inert ``Direction.LONG``
-    placeholder — ``OrderRecord.direction`` is not a meaningful side for a
-    strategy, and the order-level direction-field reshape that retires this
-    placeholder is the separate ALP-603 follow-on.
-    """
-    return _direction_from_instrument(instrument) or Direction.LONG
+    return _DIRECTION_FROM_WIRE[instrument.direction]
 
 
 def _new_open_ids(ticker: str, *, command_id: str) -> dict[str, str]:
@@ -405,16 +405,6 @@ def _build_invalidation_leg_order(  # noqa: PLR0913 — leg construction threads
         thesis_id=thesis_id,
         timestamp=timestamp,
     )
-
-
-_CONTRACT_TYPE_FROM_WIRE: dict[str, OptionContractType] = {
-    "call": OptionContractType.CALL,
-    "put": OptionContractType.PUT,
-}
-_DIRECTION_FROM_WIRE: dict[str, Direction] = {
-    "long": Direction.LONG,
-    "short": Direction.SHORT,
-}
 
 
 def _zeroed_option_greeks() -> OptionGreeks:
