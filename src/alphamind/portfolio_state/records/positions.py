@@ -316,3 +316,25 @@ class PositionRecord:
             if not self.corporate_action_adjustment_needed:
                 msg = "corporate_action_adjustment_needed must be True when origin is set"
                 raise ValueError(msg)
+
+
+def position_direction(record: PositionRecord) -> Direction | None:
+    """Return the position-level directional sign, instrument-aware.
+
+    An equity or single-leg options position is long or short, so the accessor
+    returns ``record.direction``. A multi-leg strategy is neither — its
+    directionality lives per-leg on each :class:`StrategyLeg` — so the accessor
+    returns ``None`` for a ``StrategyPositionDetails`` payload.
+
+    This is the one accessor for position-level direction: consumers must not
+    read ``PositionRecord.direction`` / ``PositionView.direction`` directly.
+    A consumer holding a ``PositionView`` calls ``position_direction(view.record)``.
+
+    The accessor is correct before story 03's field flip: pre-flip
+    ``record.direction`` is a non-optional ``Direction`` and a strategy carries
+    an inert ``LONG`` placeholder, but the ``isinstance`` check below yields
+    ``None`` for a strategy regardless of that placeholder.
+    """
+    if isinstance(record.details, StrategyPositionDetails):
+        return None
+    return record.direction

@@ -26,6 +26,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
     StrategyLeg,
     StrategyPositionDetails,
+    position_direction,
     resolve_ticker,
 )
 
@@ -493,6 +494,51 @@ class TestPositionRecordDiscriminator:
         p = _make_position(details=equity)
         assert isinstance(p.details, EquityPositionDetails)
         assert p.details.ticker == "AAPL"
+
+
+# ---------------------------------------------------------------------------
+# position_direction() accessor (ALP-604)
+# ---------------------------------------------------------------------------
+
+
+class TestPositionDirectionAccessor:
+    """``position_direction()`` is the canonical position-level direction read."""
+
+    def test_long_equity_returns_long(self) -> None:
+        p = _make_position(details=_LONG_EQUITY, direction=Direction.LONG)
+        assert position_direction(p) == Direction.LONG
+
+    def test_short_equity_returns_short(self) -> None:
+        p = _make_position(
+            details=_SHORT_EQUITY,
+            direction=Direction.SHORT,
+        )
+        assert position_direction(p) == Direction.SHORT
+
+    def test_long_options_returns_long(self) -> None:
+        p = _make_position(details=_OPTIONS_DETAILS, direction=Direction.LONG)
+        assert position_direction(p) == Direction.LONG
+
+    def test_short_options_returns_short(self) -> None:
+        p = _make_position(details=_OPTIONS_DETAILS, direction=Direction.SHORT)
+        assert position_direction(p) == Direction.SHORT
+
+    def test_strategy_returns_none(self) -> None:
+        """A multi-leg strategy is neither long nor short at the position level."""
+        leg = _make_strategy_leg()
+        strat = StrategyPositionDetails(
+            strategy_type_label="bull_call_spread",
+            legs=(leg,),
+            net_premium_usd=-500.0,
+            max_profit_usd=1000.0,
+            max_loss_usd=500.0,
+            breakeven_levels=(205.0,),
+            strategy_greeks=_GREEKS,
+        )
+        # Pre-flip, a strategy carries an inert LONG placeholder; the accessor
+        # yields None regardless of the placeholder.
+        p = _make_position(details=strat, direction=Direction.LONG)
+        assert position_direction(p) is None
 
 
 # ---------------------------------------------------------------------------
