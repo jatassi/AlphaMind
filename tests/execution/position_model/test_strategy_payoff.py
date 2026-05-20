@@ -1,7 +1,7 @@
 """Tests for strategy payoff utilities (story 01c)."""
 
 from collections.abc import Callable
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pytest
@@ -297,6 +297,176 @@ class TestComputeStrategyGreeks:
         result = compute_strategy_greeks((long_leg, short_leg))
         assert result.delta > 0.0
         assert result.delta == pytest.approx(0.15)
+
+    def test_net_short_delta_structure_returns_negative_delta(self) -> None:
+        # Short strangle: short call (long-equivalent delta +0.30) and short put
+        # (long-equivalent delta -0.30). Both SHORT, both 1 contract.
+        # leg_sign flips: -(+0.30) and -(-0.30) → -0.30 and +0.30 → net 0?
+        # Make it net-short: short call delta +0.45, short put delta -0.20.
+        # SHORT flips: -0.45 and +0.20 → sum -0.25 / 2 = -0.125.
+        short_call = _leg(
+            "L1",
+            Direction.SHORT,
+            OptionContractType.CALL,
+            110.0,
+            greeks=OptionGreeks(delta=0.45, gamma=0.03, theta=-0.04, vega=0.08),
+        )
+        short_put = _leg(
+            "L2",
+            Direction.SHORT,
+            OptionContractType.PUT,
+            90.0,
+            greeks=OptionGreeks(delta=-0.20, gamma=0.02, theta=-0.03, vega=0.05),
+        )
+        result = compute_strategy_greeks((short_call, short_put))
+        assert result.delta < 0.0
+        assert result.delta == pytest.approx(-0.125)
+
+    def test_leg_sign_flips_every_greek_for_short_leg(self) -> None:
+        # A single SHORT leg: every greek should be the negative of the leg's
+        # long-equivalent greek (contract-weighted average over one leg is the
+        # signed greek itself).
+        short_leg = _leg(
+            "L1",
+            Direction.SHORT,
+            OptionContractType.CALL,
+            100.0,
+            greeks=OptionGreeks(delta=0.50, gamma=0.04, theta=-0.06, vega=0.12),
+        )
+        result = compute_strategy_greeks((short_leg,))
+        assert result.delta == pytest.approx(-0.50)
+        assert result.gamma == pytest.approx(-0.04)
+        assert result.theta == pytest.approx(0.06)
+        assert result.vega == pytest.approx(-0.12)
+
+    def test_long_leg_preserves_greek_signs(self) -> None:
+        # A single LONG leg: the contract-weighted average is the leg's greeks
+        # unchanged (leg_sign = +1).
+        long_leg = _leg(
+            "L1",
+            Direction.LONG,
+            OptionContractType.CALL,
+            100.0,
+            greeks=OptionGreeks(delta=0.50, gamma=0.04, theta=-0.06, vega=0.12),
+        )
+        result = compute_strategy_greeks((long_leg,))
+        assert result.delta == pytest.approx(0.50)
+        assert result.gamma == pytest.approx(0.04)
+        assert result.theta == pytest.approx(-0.06)
+        assert result.vega == pytest.approx(0.12)
+
+    def test_short_heavy_structure_yields_negative_net_gamma_and_vega(self) -> None:
+        # Short strangle: two SHORT legs both with positive long-equivalent
+        # gamma/vega. leg_sign flips both → net gamma and vega are negative.
+        short_call = _leg(
+            "L1",
+            Direction.SHORT,
+            OptionContractType.CALL,
+            110.0,
+            greeks=OptionGreeks(delta=0.30, gamma=0.03, theta=-0.04, vega=0.08),
+        )
+        short_put = _leg(
+            "L2",
+            Direction.SHORT,
+            OptionContractType.PUT,
+            90.0,
+            greeks=OptionGreeks(delta=-0.25, gamma=0.02, theta=-0.03, vega=0.06),
+        )
+        result = compute_strategy_greeks((short_call, short_put))
+        assert result.gamma < 0.0
+        assert result.vega < 0.0
+
+    def test_contract_weighting_uses_contract_count_and_multiplier(self) -> None:
+        # Leg A: 3 long calls, delta +0.60. Leg B: 1 long call, delta +0.20.
+        # Weighted average = (3*100*0.60 + 1*100*0.20) / (3*100 + 1*100)
+        #                  = (180 + 20) / 400 = 0.50.
+        leg_a = _leg(
+            "L1",
+            Direction.LONG,
+            OptionContractType.CALL,
+            100.0,
+            contract_count=3.0,
+            greeks=OptionGreeks(delta=0.60, gamma=0.0, theta=0.0, vega=0.0),
+        )
+        leg_b = _leg(
+            "L2",
+            Direction.LONG,
+            OptionContractType.CALL,
+            110.0,
+            contract_count=1.0,
+            greeks=OptionGreeks(delta=0.20, gamma=0.0, theta=0.0, vega=0.0),
+        )
+        result = compute_strategy_greeks((leg_a, leg_b))
+        assert result.delta == pytest.approx(0.50)
+
+    def test_result_clears_iv_and_timestamp(self) -> None:
+        long_leg = _leg(
+            "L1",
+            Direction.LONG,
+            OptionContractType.CALL,
+            100.0,
+            greeks=OptionGreeks(
+                delta=0.50,
+                gamma=0.04,
+                theta=-0.06,
+                vega=0.12,
+                as_of_timestamp=datetime(2026, 6, 1, tzinfo=UTC),
+                iv_used=0.25,
+            ),
+        )
+        result = compute_strategy_greeks((long_leg,))
+        assert result.iv_used is None
+        assert result.as_of_timestamp is None
+
+    def test_refresh_failed_is_ored_across_legs(self) -> None:
+        ok_leg = _leg(
+            "L1",
+            Direction.LONG,
+            OptionContractType.CALL,
+            100.0,
+            greeks=OptionGreeks(delta=0.5, gamma=0.0, theta=0.0, vega=0.0, refresh_failed=False),
+        )
+        stale_leg = _leg(
+            "L2",
+            Direction.SHORT,
+            OptionContractType.CALL,
+            110.0,
+            greeks=OptionGreeks(delta=0.3, gamma=0.0, theta=0.0, vega=0.0, refresh_failed=True),
+        )
+        # One leg stale → strategy refresh_failed is True.
+        assert compute_strategy_greeks((ok_leg, stale_leg)).refresh_failed is True
+        # All legs fresh → strategy refresh_failed is False.
+        ok_leg_2 = _leg(
+            "L3",
+            Direction.SHORT,
+            OptionContractType.CALL,
+            110.0,
+            greeks=OptionGreeks(delta=0.3, gamma=0.0, theta=0.0, vega=0.0, refresh_failed=False),
+        )
+        assert compute_strategy_greeks((ok_leg, ok_leg_2)).refresh_failed is False
+
+
+class TestGreeksValidationErrors:
+    """`compute_strategy_greeks` delegates to `_validate_legs`."""
+
+    def test_empty_legs_raises(self) -> None:
+        with pytest.raises(ValueError, match="legs"):
+            compute_strategy_greeks(())
+
+    def test_missing_direction_raises_with_leg_id(self) -> None:
+        legs = (
+            _leg("BAD-LEG", None, OptionContractType.CALL, 100.0),
+            _leg("L2", Direction.SHORT, OptionContractType.CALL, 110.0),
+        )
+        with pytest.raises(ValueError, match="BAD-LEG"):
+            compute_strategy_greeks(legs)
+
+    def test_zero_contract_count_raises_with_leg_id(self) -> None:
+        legs = (
+            _leg("ZERO-LEG", Direction.LONG, OptionContractType.CALL, 100.0, contract_count=0.0),
+        )
+        with pytest.raises(ValueError, match="ZERO-LEG"):
+            compute_strategy_greeks(legs)
 
 
 class TestNetPremiumValidationErrors:
