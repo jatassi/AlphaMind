@@ -12,6 +12,7 @@ from alphamind._kernel.ids import (
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.position_model import (
     compute_strategy_breakeven_levels,
+    compute_strategy_greeks,
     compute_strategy_max_loss_usd,
     compute_strategy_max_profit_usd,
     compute_strategy_net_premium_usd,
@@ -267,6 +268,35 @@ class TestValidationErrors:
         )
         with pytest.raises(ValueError, match="expiration"):
             func(legs, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Net greeks aggregation (story 01b)
+# ---------------------------------------------------------------------------
+
+
+class TestComputeStrategyGreeks:
+    def test_net_long_delta_structure_returns_positive_delta(self) -> None:
+        # Bull call spread: long call delta +0.60, short call delta +0.30.
+        # Both legs are 1 contract, mult 100. The SHORT leg flips its +0.30 to
+        # -0.30, so net = (0.60 - 0.30) / 2 = +0.15.
+        long_leg = _leg(
+            "L1",
+            Direction.LONG,
+            OptionContractType.CALL,
+            100.0,
+            greeks=OptionGreeks(delta=0.60, gamma=0.04, theta=-0.05, vega=0.10),
+        )
+        short_leg = _leg(
+            "L2",
+            Direction.SHORT,
+            OptionContractType.CALL,
+            110.0,
+            greeks=OptionGreeks(delta=0.30, gamma=0.02, theta=-0.03, vega=0.06),
+        )
+        result = compute_strategy_greeks((long_leg, short_leg))
+        assert result.delta > 0.0
+        assert result.delta == pytest.approx(0.15)
 
 
 class TestNetPremiumValidationErrors:

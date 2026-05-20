@@ -11,6 +11,8 @@ naked short call) report `float('-inf')` for max loss.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from alphamind.portfolio_state.records.positions import (
     Direction,
     OptionContractType,
@@ -116,6 +118,61 @@ def compute_strategy_net_premium_usd(legs: tuple[StrategyLeg, ...]) -> float:
         * leg.options.contract_multiplier
         * leg.options.premium_paid_per_contract
         for leg in legs
+    )
+
+
+def compute_strategy_greeks(legs: tuple[StrategyLeg, ...]) -> OptionGreeks:
+    """Net-signed aggregate greeks of a multi-leg options strategy.
+
+    For each of delta / gamma / theta / vega the result is the
+    contract-weighted signed average::
+
+        sum(leg_sign * contract_count * contract_multiplier * leg.greeks.<g>)
+        / sum(contract_count * contract_multiplier)
+
+    where ``leg_sign`` is ``+1`` for a LONG leg and ``-1`` for a SHORT leg.
+    Weighting by contract exposure makes ``strategy_greeks.delta *
+    summed_notional`` equal the strategy's true delta-adjusted exposure (the
+    contract :func:`compute_strategy_delta_adjusted_exposure_usd` consumes).
+
+    Sign convention: the result is net-signed. A net-short-delta strategy
+    yields a negative ``delta``; a short-heavy strategy can yield negative net
+    gamma / theta / vega. ``OptionGreeks`` has no positivity validator, so
+    signed values are valid.
+
+    The result carries ``as_of_timestamp=None`` and ``iv_used=None`` (a
+    strategy has no single IV), and ``refresh_failed`` set to the OR of the
+    legs' flags.
+
+    Raises ``ValueError`` if ``legs`` is empty, any leg is missing direction,
+    any leg has non-positive ``contract_count``, or legs span multiple
+    expiration dates or underlying tickers.
+    """
+    _validate_legs(legs)
+    total_contracts = sum(
+        leg.options.contract_count * leg.options.contract_multiplier for leg in legs
+    )
+
+    def _weighted(selector: Callable[[OptionGreeks], float]) -> float:
+        return (
+            sum(
+                _leg_sign(leg)
+                * leg.options.contract_count
+                * leg.options.contract_multiplier
+                * selector(leg.options.greeks)
+                for leg in legs
+            )
+            / total_contracts
+        )
+
+    return OptionGreeks(
+        delta=_weighted(lambda g: g.delta),
+        gamma=_weighted(lambda g: g.gamma),
+        theta=_weighted(lambda g: g.theta),
+        vega=_weighted(lambda g: g.vega),
+        as_of_timestamp=None,
+        iv_used=None,
+        refresh_failed=any(leg.options.greeks.refresh_failed for leg in legs),
     )
 
 
