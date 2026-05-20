@@ -12,7 +12,7 @@ end-to-end; these tests cover the pure-compute boundaries.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -24,7 +24,7 @@ from alphamind.distillation._repository import (
     NewsLabelCountsRow,
     TickerBaselineRow,
 )
-from alphamind.distillation.output import AnomalyFlag, OutputAudience
+from alphamind.distillation.output import AnomalyFlag, OutputAudience, format_block
 from alphamind.distillation.qualitative.news_price_divergence_compute import (
     NewsPriceDivergenceInputs,
     compute_news_price_divergence_blocks,
@@ -428,3 +428,174 @@ class TestPredictionMarketDeltas:
             inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
         )
         assert blocks == []
+
+    def test_past_dated_question_flagged_but_kept(self) -> None:
+        """A question text referencing a date before ``as_of`` carries
+        ``is_question_past_dated=True`` in the per-contract payload (ALP-578)
+        — the synthesizer's downstream consumers see the contract tagged
+        rather than excluded."""
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.0005,
+                    delta_pp_since_prior=0.0,
+                    snapshot_ts="2026-05-15T00:00:00Z",
+                ),
+            },
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket",
+                    description="Iran closes its airspace by May 6?",
+                    category="conflict",
+                    resolution_date=date(2026, 5, 31),
+                ),
+            },
+            volume_liquidity={"POLY-1": (100.0, 200.0)},
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        entry = blocks[0].payload["per_contract"]["POLY-1"]
+        assert entry["is_question_past_dated"] is True
+
+    def test_future_dated_question_not_past_dated(self) -> None:
+        """A question with a future-dated reference is not flagged."""
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.6,
+                    delta_pp_since_prior=2.0,
+                    snapshot_ts="2026-05-15T00:00:00Z",
+                ),
+            },
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket",
+                    description="Will the FOMC cut rates by December 15?",
+                    category="rates",
+                    resolution_date=date(2026, 12, 31),
+                ),
+            },
+            volume_liquidity={"POLY-1": (200_000.0, 300_000.0)},
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        entry = blocks[0].payload["per_contract"]["POLY-1"]
+        assert entry["is_question_past_dated"] is False
+
+    def test_low_volume_flat_history_flagged_stale_low_signal(self) -> None:
+        """Low liquidity AND every trailing snapshot at the same yes_probability
+        → ``is_stale_low_signal=True`` in the per-contract payload (ALP-578).
+        Mirrors the QR loader's likely-resolved heuristic."""
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.0005,
+                    delta_pp_since_prior=0.0,
+                    snapshot_ts="2026-05-15T00:00:00Z",
+                ),
+            },
+            history={
+                "POLY-1": (
+                    ContractHistoryEntry(
+                        snapshot_ts="2026-05-10T00:00:00Z", yes_probability=0.0005
+                    ),
+                    ContractHistoryEntry(
+                        snapshot_ts="2026-05-15T00:00:00Z", yes_probability=0.0005
+                    ),
+                ),
+            },
+            volume_liquidity={"POLY-1": (10.0, 200.0)},
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        entry = blocks[0].payload["per_contract"]["POLY-1"]
+        assert entry["is_stale_low_signal"] is True
+
+    def test_high_volume_flat_history_not_stale_low_signal(self) -> None:
+        """Flat history but high liquidity → not stale-low-signal."""
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.7,
+                    delta_pp_since_prior=0.0,
+                    snapshot_ts="2026-05-15T00:00:00Z",
+                ),
+            },
+            history={
+                "POLY-1": (
+                    ContractHistoryEntry(snapshot_ts="2026-05-10T00:00:00Z", yes_probability=0.7),
+                    ContractHistoryEntry(snapshot_ts="2026-05-15T00:00:00Z", yes_probability=0.7),
+                ),
+            },
+            volume_liquidity={"POLY-1": (500_000.0, 100_000.0)},
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        entry = blocks[0].payload["per_contract"]["POLY-1"]
+        assert entry["is_stale_low_signal"] is False
+
+    def test_low_volume_moving_history_not_stale_low_signal(self) -> None:
+        """Low liquidity but at least one trailing snapshot differs in
+        yes_probability → not stale-low-signal."""
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.2,
+                    delta_pp_since_prior=10.0,
+                    snapshot_ts="2026-05-15T00:00:00Z",
+                ),
+            },
+            history={
+                "POLY-1": (
+                    ContractHistoryEntry(snapshot_ts="2026-05-10T00:00:00Z", yes_probability=0.1),
+                    ContractHistoryEntry(snapshot_ts="2026-05-15T00:00:00Z", yes_probability=0.2),
+                ),
+            },
+            volume_liquidity={"POLY-1": (100.0, 200.0)},
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        entry = blocks[0].payload["per_contract"]["POLY-1"]
+        assert entry["is_stale_low_signal"] is False
+
+    def test_rendered_block_carries_staleness_flags(self) -> None:
+        """The rendered ``qual.prediction_market_delta`` block — what the
+        synthesizer's UNIVERSAL CONTEXT consumes — surfaces both staleness
+        flags per contract (ALP-578 acceptance criterion)."""
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.0005,
+                    delta_pp_since_prior=0.0,
+                    snapshot_ts="2026-05-15T00:00:00Z",
+                ),
+            },
+            history={
+                "POLY-1": (
+                    ContractHistoryEntry(
+                        snapshot_ts="2026-05-15T00:00:00Z", yes_probability=0.0005
+                    ),
+                ),
+            },
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket",
+                    description="Iran closes its airspace by May 6?",
+                    category="conflict",
+                    resolution_date=date(2026, 5, 31),
+                ),
+            },
+            volume_liquidity={"POLY-1": (10.0, 200.0)},
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        rendered = format_block(blocks[0])
+        assert "is_question_past_dated: True" in rendered
+        assert "is_stale_low_signal: True" in rendered
+        assert "low_liquidity: True" in rendered

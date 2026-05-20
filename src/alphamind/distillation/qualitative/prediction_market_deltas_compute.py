@@ -32,6 +32,7 @@ from alphamind.distillation._repository import (
     ContractHistoryEntry,
     ContractMetadataRow,
 )
+from alphamind.distillation.contract_freshness import question_references_past_date
 from alphamind.distillation.output import AnomalyFlag, OutputAudience, OutputBlock
 
 # ---------------------------------------------------------------------------
@@ -118,6 +119,11 @@ class PredictionMarketDeltasInputs:
 # ---------------------------------------------------------------------------
 
 
+_EMPTY_METADATA = ContractMetadataRow(
+    platform="", description="", category="", resolution_date=None
+)
+
+
 def _build_per_contract_payload(
     *,
     contract_id: str,
@@ -125,27 +131,46 @@ def _build_per_contract_payload(
     delta_pp_threshold: float,
     low_liquidity_volume_min_usd: float,
 ) -> dict[str, Any] | None:
-    """Compose the per-contract payload, or ``None`` if no history exists."""
+    """Compose the per-contract payload, or ``None`` if no history exists.
+
+    Two staleness flags surface for the synthesizer brief's downstream
+    consumers (ALP-578); both apply "low liquidity AND no movement"
+    semantically but at a different historical reach than the QR loader's
+    flat-text bundle:
+
+    * ``is_question_past_dated`` — the question text references a date before
+      ``freshness_ts`` within the contract's lifetime. Shares its
+      :func:`question_references_past_date` helper with the QR loader.
+    * ``is_stale_low_signal`` — low liquidity AND constant ``yes_probability``
+      across the ``prediction_market_history_days`` trailing window. The QR
+      loader uses ``delta_pp_since_prior != 0`` across the contract's full
+      history (no window); both approximate "the market hasn't disagreed
+      recently" but a contract that moved before the trailing window will
+      read stale here and not in QR. The compute layer does not see the
+      persisted delta column.
+    """
     current = inputs.current_state_by_contract.get(contract_id)
     if current is None:
         return None
-    metadata = inputs.metadata_by_contract.get(contract_id)
-    platform, description, category = (
-        (metadata.platform, metadata.description, metadata.category)
-        if metadata is not None
-        else ("", "", "")
-    )
+    metadata = inputs.metadata_by_contract.get(contract_id) or _EMPTY_METADATA
     volume_24h_usd, liquidity_usd = inputs.volume_liquidity_by_contract.get(contract_id, (0.0, 0.0))
     history = inputs.history_by_contract.get(contract_id, ())
 
     delta_anomaly = abs(current.delta_pp_since_prior) >= delta_pp_threshold
     low_liquidity = volume_24h_usd <= low_liquidity_volume_min_usd
+    is_question_past_dated = question_references_past_date(
+        metadata.description,
+        inputs.freshness_ts,
+        resolution_date=metadata.resolution_date,
+    )
+    has_movement = len({entry.yes_probability for entry in history}) > 1
+    is_stale_low_signal = low_liquidity and not has_movement
 
     return {
         "contract_id": contract_id,
-        "platform": platform,
-        "description": description,
-        "category": category,
+        "platform": metadata.platform,
+        "description": metadata.description,
+        "category": metadata.category,
         "snapshot_ts": current.snapshot_ts,
         "yes_probability": current.yes_probability,
         "delta_pp_since_prior": current.delta_pp_since_prior,
@@ -153,6 +178,8 @@ def _build_per_contract_payload(
         "volume_24h_usd": volume_24h_usd,
         "liquidity_usd": liquidity_usd,
         "low_liquidity": low_liquidity,
+        "is_question_past_dated": is_question_past_dated,
+        "is_stale_low_signal": is_stale_low_signal,
         "trailing_history": tuple((entry.snapshot_ts, entry.yes_probability) for entry in history),
     }
 

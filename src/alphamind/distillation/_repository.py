@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from typing import Protocol
 
 # ---------------------------------------------------------------------------
@@ -143,11 +144,18 @@ class ContractCurrentStateRow:
 
 @dataclass(frozen=True, slots=True)
 class ContractMetadataRow:
-    """Static ``prediction_market_contracts`` projection for a contract."""
+    """Static ``prediction_market_contracts`` projection for a contract.
+
+    ``resolution_date`` is the parsed calendar ``date`` (or ``None`` when the
+    column is absent or unparseable) — the SQL shell calls
+    :func:`alphamind.distillation.contract_freshness.parse_resolution_date`
+    once at the boundary so compute consumers do field access, not parsing.
+    """
 
     platform: str
     description: str
     category: str
+    resolution_date: date | None = None
 
 
 # ---------------------------------------------------------------------------
