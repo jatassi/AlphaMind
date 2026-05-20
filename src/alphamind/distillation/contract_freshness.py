@@ -1,4 +1,4 @@
-"""Shared past-date detection helpers for prediction-market questions (ALP-578).
+"""Shared past-date detection helpers for prediction-market questions.
 
 The polymarket vendor leaves questions like ``"Iran closes its airspace by
 May 6?"`` listed at their last-traded probability long after May 6 — the
@@ -6,15 +6,16 @@ contract only formally resolves later, but consumers should treat the
 contract as stale.
 
 Both the distillation ``qual.prediction_market_delta`` block and the
-qualitative researcher's input bundle apply this heuristic; centralizing the
-logic here keeps them in lockstep. The module is pure — no ORM, no
-``Session`` — so it lives at the distillation compute boundary and
-:class:`distillation-compute-no-sqlalchemy` continues to hold.
+qualitative researcher's input bundle apply this heuristic; centralizing
+the logic here keeps them in lockstep. The module is pure (no ORM, no
+``Session``) and sits at the distillation package root rather than under
+``qualitative/`` so the SQL repository can parse the raw column at the IO
+boundary without triggering the qualitative subpackage's eager re-exports.
 
-The QR loader currently uses this as an exclusion filter (past-dated
-contracts disappear from the LLM's input). The distillation compute uses
-it as a flag (``is_question_past_dated``) so the synthesizer brief tags
-the contract for downstream agents rather than dropping it.
+The QR loader uses this as an exclusion filter (past-dated contracts
+disappear from the LLM's input). The distillation compute uses it as a flag
+(``is_question_past_dated``) so the synthesizer brief tags the contract for
+downstream agents rather than dropping it.
 """
 
 from __future__ import annotations

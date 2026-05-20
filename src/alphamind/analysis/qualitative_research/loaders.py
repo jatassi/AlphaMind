@@ -47,7 +47,7 @@ from sqlalchemy.orm import Session
 
 from alphamind._kernel.calibration import CalibrationState
 from alphamind.analysis._shared import Sector
-from alphamind.distillation.qualitative.contract_freshness import (
+from alphamind.distillation.contract_freshness import (
     parse_resolution_date,
     question_references_past_date,
 )

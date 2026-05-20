@@ -34,6 +34,7 @@ from alphamind.distillation._repository import (
     TickerBaselineRow,
 )
 from alphamind.distillation.baselines import PENDING_OUTCOME
+from alphamind.distillation.contract_freshness import parse_resolution_date
 from alphamind.persistence.asset_universe_queries import (
     adv_shares_select,
     coerce_adv_shares,
@@ -439,12 +440,12 @@ class SqlDistillationRepository(DistillationRepository):
         row = self._session.execute(stmt).first()
         if row is None:
             return None
-        platform, description, category, resolution_date = row
+        platform, description, category, resolution_date_raw = row
         return ContractMetadataRow(
             platform=platform,
             description=description,
             category=category,
-            resolution_date=resolution_date,
+            resolution_date=parse_resolution_date(resolution_date_raw),
         )
 
     def load_contract_24h_volume_and_liquidity(

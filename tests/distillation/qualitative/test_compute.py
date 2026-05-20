@@ -12,7 +12,7 @@ end-to-end; these tests cover the pure-compute boundaries.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -447,7 +447,7 @@ class TestPredictionMarketDeltas:
                     platform="polymarket",
                     description="Iran closes its airspace by May 6?",
                     category="conflict",
-                    resolution_date="2026-05-31T00:00:00Z",
+                    resolution_date=date(2026, 5, 31),
                 ),
             },
             volume_liquidity={"POLY-1": (100.0, 200.0)},
@@ -473,7 +473,7 @@ class TestPredictionMarketDeltas:
                     platform="polymarket",
                     description="Will the FOMC cut rates by December 15?",
                     category="rates",
-                    resolution_date="2026-12-31T00:00:00Z",
+                    resolution_date=date(2026, 12, 31),
                 ),
             },
             volume_liquidity={"POLY-1": (200_000.0, 300_000.0)},
@@ -587,7 +587,7 @@ class TestPredictionMarketDeltas:
                     platform="polymarket",
                     description="Iran closes its airspace by May 6?",
                     category="conflict",
-                    resolution_date="2026-05-31T00:00:00Z",
+                    resolution_date=date(2026, 5, 31),
                 ),
             },
             volume_liquidity={"POLY-1": (10.0, 200.0)},
