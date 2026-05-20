@@ -19,7 +19,17 @@ already tolerates ``NULL``: SQLite evaluates ``NULL IN (...)`` to ``NULL``,
 which a CHECK treats as a pass — so the constraint is preserved unchanged.
 
 SQLite recreates the table via ``batch_alter_table`` to alter column
-nullability.
+nullability: it builds a temp table, copies rows, ``DROP TABLE positions``,
+then renames. ``orders`` / ``brackets`` / ``theses`` carry ``ON DELETE
+RESTRICT`` foreign keys *into* ``positions`` (added by ``e9d2c4f7b3a1``), so on
+a populated database that intermediate ``DROP TABLE`` would trip
+``FOREIGN KEY constraint failed``. ``PRAGMA foreign_keys`` is silently ignored
+while a transaction is pending and Alembic runs every migration inside one
+connection-wide transaction, so the recreate cannot toggle it itself; the
+migration environment (``env.py``) instead disables FK enforcement for the
+whole run via a ``connect`` listener. The recreated table still declares the
+incoming FKs, so referential integrity is unchanged once application
+connections re-enable enforcement.
 
 Downgrade re-fills strategy rows to ``'LONG'`` before restoring ``NOT NULL``
 — lossy with respect to the new semantic (``'LONG'`` aliases the category
