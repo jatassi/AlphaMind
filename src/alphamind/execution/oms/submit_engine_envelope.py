@@ -450,7 +450,6 @@ def _engine_close_dispatch_kwargs(
     )
 
     if isinstance(position.details, EquityPositionDetails):
-        # Equity position: the position-level direction is well-defined.
         direction = position_direction(position)
         assert direction is not None  # equity position
         return {
@@ -460,8 +459,6 @@ def _engine_close_dispatch_kwargs(
             "position_side": "long" if direction is Direction.LONG else "short",
         }
     if isinstance(position.details, OptionsPositionDetails):
-        # Single-leg options position: the position-level direction is
-        # well-defined.
         direction = position_direction(position)
         assert direction is not None  # single-leg options position
         occ = build_occ_symbol(

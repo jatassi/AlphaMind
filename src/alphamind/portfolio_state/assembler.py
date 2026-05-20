@@ -447,11 +447,6 @@ def _enrich_position_first_pass(
         raise AssertionError(msg)
     bracket = brackets_by_bracket_id.get(position.bracket_id or "")
 
-    # ``position_direction()`` is the sole position-level direction accessor:
-    # it yields the record's ``Direction`` for an equity / single-leg options
-    # position and ``None`` for a multi-leg strategy. A strategy is neither
-    # long nor short, so its P/L and bracket-distance paths must not pass a
-    # position-level direction into a direction-keyed computation.
     direction = position_direction(position)
 
     # A STRATEGY position's P/L USD is the directionless ``market_value -

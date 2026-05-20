@@ -520,7 +520,6 @@ __all__ = [
     "_cancel_command_context",
     "_close_command_context",
     "_dispatcher_context_for",
-    "_equity_or_options_direction",
     "_persisted_legs_to_mleg_acks",
     "_read_position",
     "_route_through_broker",

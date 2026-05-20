@@ -168,7 +168,6 @@ def compute_regt_margin(
             continue
         details = pos.details
         if isinstance(details, EquityPositionDetails):
-            # Narrowed to a single-instrument position: direction is non-None.
             direction = position_direction(pos)
             assert direction is not None  # equity position
             total += _equity_margin(details, direction, underlying_prices)
