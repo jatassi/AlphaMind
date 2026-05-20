@@ -22,6 +22,7 @@ from alphamind.distillation.output import (
     OutputAudience,
 )
 from alphamind.distillation.q6_macro import (
+    CompositeMethod,
     DollarAttributionLabel,
     DollarAttributionResult,
     FundingStressResult,
@@ -495,27 +496,37 @@ class TestMarketLiquidityComposite:
 
     Per the story scope: ``alert_active = True`` when the composite is in the
     bottom ``market_liquidity_alert_percentile`` (default 10) of the trailing
-    60-day distribution.
+    60-day distribution. Per ALP-575 the composite is the sum of
+    per-component percentile ranks (0..300), so trailing composite history
+    is seeded on that normalized scale and per-component history governs
+    the current rank.
     """
 
     def test_alert_fires_when_in_bottom_10th_percentile(self, session: Session) -> None:
-        # Seed history climbing from 10.0 to 15.9; new value 9.0 is below all
-        # of them → bottom percentile → alert.
+        # Composite history climbing from 100..159 (normalized scale); the
+        # new normalized sum of 0 lands below the bottom decile.
         _seed_market_liquidity_history(
             session,
             n_rows=MARKET_LIQUIDITY_BASELINE_DAYS,
-            base_value=10.0,
-            increment=0.1,
+            base_value=100.0,
+            increment=1.0,
         )
         session.commit()
 
+        # Per-component history where every current value sits below all
+        # observations → 0th percentile per component → normalized sum = 0.
         result = refresh_market_liquidity_composite(
             session,
             components={
-                "spread_score": 5.0,
-                "depth_score": 2.0,
-                "volume_score": 2.0,
-            },  # composite sum 9.0 → below all seeded values
+                "spread_score": 0.0,
+                "depth_score": 0.0,
+                "volume_score": 0.0,
+            },
+            component_history={
+                "spread_score": [1.0, 2.0, 3.0],
+                "depth_score": [1.0, 2.0, 3.0],
+                "volume_score": [1.0, 2.0, 3.0],
+            },
             as_of=AS_OF,
             min_observations=MARKET_LIQUIDITY_MIN_OBSERVATIONS,
             alert_percentile=MARKET_LIQUIDITY_ALERT_PERCENTILE,
@@ -524,24 +535,33 @@ class TestMarketLiquidityComposite:
         assert result.alert_active is True
         assert result.percentile_60d is not None
         assert result.percentile_60d <= MARKET_LIQUIDITY_ALERT_PERCENTILE
+        assert result.composite_method == "normalized_percentile_sum"
 
     def test_alert_suppressed_when_above_10th_percentile(self, session: Session) -> None:
-        # New composite at 13.0 is around the median of [10.0..15.9] → no alert.
+        # Composite history 100..159; new normalized sum ~150 sits near
+        # the median.
         _seed_market_liquidity_history(
             session,
             n_rows=MARKET_LIQUIDITY_BASELINE_DAYS,
-            base_value=10.0,
-            increment=0.1,
+            base_value=100.0,
+            increment=1.0,
         )
         session.commit()
 
+        # Per-component history where each current value ranks at 50th
+        # percentile → normalized sum ~150.
         result = refresh_market_liquidity_composite(
             session,
             components={
-                "spread_score": 5.0,
-                "depth_score": 4.0,
-                "volume_score": 4.0,
-            },  # sum 13.0 → near the median
+                "spread_score": 2.0,
+                "depth_score": 2.0,
+                "volume_score": 2.0,
+            },
+            component_history={
+                "spread_score": [1.0, 2.0, 3.0, 4.0],
+                "depth_score": [1.0, 2.0, 3.0, 4.0],
+                "volume_score": [1.0, 2.0, 3.0, 4.0],
+            },
             as_of=AS_OF,
             min_observations=MARKET_LIQUIDITY_MIN_OBSERVATIONS,
             alert_percentile=MARKET_LIQUIDITY_ALERT_PERCENTILE,
@@ -679,8 +699,10 @@ def _make_funding_stress_result(alert: bool = False) -> FundingStressResult:
 
 def _make_market_liquidity_result(alert: bool = False) -> MarketLiquidityResult:
     return MarketLiquidityResult(
-        composite_value=12.0,
+        composite_value=180.0,
         components={"spread_score": 4.0, "depth_score": 4.0, "volume_score": 4.0},
+        normalized_components={"spread_score": 60.0, "depth_score": 60.0, "volume_score": 60.0},
+        composite_method=CompositeMethod.NORMALIZED_PERCENTILE_SUM,
         percentile_60d=50.0 if not alert else 5.0,
         alert_active=alert,
         state=CalibrationState.CALIBRATED,

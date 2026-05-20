@@ -49,6 +49,11 @@ from alphamind.distillation.q6 import (
 from alphamind.distillation.q6.funding_stress_compute import (
     compute_funding_stress_alert,
 )
+from alphamind.distillation.q6.market_liquidity_compute import (
+    BOOTSTRAP_NEUTRAL_SCORE,
+    CompositeMethod,
+    normalize_market_liquidity_components,
+)
 
 # ---------------------------------------------------------------------------
 # yield_curve_compute
@@ -342,6 +347,105 @@ def test_compute_funding_stress_alert_skips_zero_variance_component() -> None:
 
 
 # ---------------------------------------------------------------------------
+# market_liquidity_compute — normalization (ALP-575)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_market_liquidity_components_composite_distinct_from_volatility() -> None:
+    """With three non-degenerate components the normalized sum is NOT bit-identical
+    to any single raw component — the acceptance test from ALP-575."""
+    # All three components hold a current value that lands at the same
+    # 75th-percentile of its own trailing series, but the raw magnitudes
+    # differ wildly (stress is ~-1..+1, credit ~0..1, volatility ~10..50).
+    components = {
+        "stress_index_score": -1.0,
+        "credit_spread_score": 1.0,
+        "volatility_score": 20.0,
+    }
+    component_history = {
+        "stress_index_score": [-3.0, -2.0, -1.5],  # current -1.0 ranks above all
+        "credit_spread_score": [0.0, 0.5, 0.8],  # current 1.0 ranks above all
+        "volatility_score": [12.0, 14.0, 17.0],  # current 20.0 ranks above all
+    }
+    result = normalize_market_liquidity_components(components, component_history)
+    # Every component lands at 100th percentile, so the sum is 300.0.
+    composite_value = sum(result.normalized.values())
+    assert composite_value == pytest.approx(300.0)
+    # And — the load-bearing assertion — the composite is NOT equal to any
+    # single raw input value.
+    for raw_value in components.values():
+        assert composite_value != raw_value
+    assert result.composite_method == "normalized_percentile_sum"
+
+
+def test_normalize_market_liquidity_components_neutral_when_history_empty() -> None:
+    """A component with no trailing history falls back to the neutral midpoint
+    and tags the result with the bootstrap-neutral composite_method."""
+    components = {
+        "stress_index_score": -0.75,
+        "credit_spread_score": 0.76,
+        "volatility_score": 17.26,
+    }
+    component_history: dict[str, list[float]] = {
+        # stress_index has real history…
+        "stress_index_score": [-2.0, -1.0, 0.0, 1.0],
+        # …credit_spread has none (cold start)…
+        "credit_spread_score": [],
+        # …volatility's trailing series is degenerate (all identical).
+        "volatility_score": [17.0, 17.0, 17.0],
+    }
+    result = normalize_market_liquidity_components(components, component_history)
+    # stress_index ranks against [-2, -1, 0, 1]; -0.75 ≤ 4 of 4? No, only
+    # the -2, -1, 0 values ≤ -0.75 = 2 of 4 = 50th percentile.
+    assert result.normalized["stress_index_score"] == pytest.approx(50.0)
+    # credit_spread / volatility fall back to the neutral midpoint.
+    assert result.normalized["credit_spread_score"] == BOOTSTRAP_NEUTRAL_SCORE
+    assert result.normalized["volatility_score"] == BOOTSTRAP_NEUTRAL_SCORE
+    assert result.composite_method == "normalized_with_bootstrap_neutral"
+
+
+def test_normalize_market_liquidity_components_all_neutral_when_no_history() -> None:
+    """When no component has any usable history the composite is a tautological
+    150.0 (3x the neutral midpoint) and composite_method is all_neutral_bootstrap."""
+    components = {
+        "stress_index_score": -0.75,
+        "credit_spread_score": 0.76,
+        "volatility_score": 17.26,
+    }
+    component_history: dict[str, list[float]] = {}
+    result = normalize_market_liquidity_components(components, component_history)
+    for value in result.normalized.values():
+        assert value == BOOTSTRAP_NEUTRAL_SCORE
+    assert sum(result.normalized.values()) == pytest.approx(150.0)
+    assert result.composite_method == "all_neutral_bootstrap"
+
+
+def test_normalize_market_liquidity_components_does_not_collapse_to_vix() -> None:
+    """Regression test for ALP-575: the symptom invocation's exact numbers.
+
+    Reproduce the bootstrap-window scenario from the bug report — VIX at
+    17.26 dominating a raw sum — and verify the normalized composite is
+    NOT bit-identical to the VIX value.
+    """
+    components = {
+        "credit_spread_score": 0.76,
+        "stress_index_score": -0.7584,
+        "volatility_score": 17.26,
+    }
+    # Realistic non-empty per-component trailing series.
+    component_history = {
+        "credit_spread_score": [0.5, 0.6, 0.7, 0.8, 0.9],
+        "stress_index_score": [-1.5, -1.0, -0.5, 0.0, 0.5],
+        "volatility_score": [12.0, 14.0, 16.0, 18.0, 20.0],
+    }
+    result = normalize_market_liquidity_components(components, component_history)
+    composite_value = sum(result.normalized.values())
+    assert composite_value != components["volatility_score"]
+    assert composite_value != components["credit_spread_score"]
+    assert composite_value != components["stress_index_score"]
+
+
+# ---------------------------------------------------------------------------
 # macro_surprise_compute
 # ---------------------------------------------------------------------------
 
@@ -445,8 +549,10 @@ def _calibrated_funding_stress() -> FundingStressResult:
 
 def _calibrated_market_liquidity() -> MarketLiquidityResult:
     return MarketLiquidityResult(
-        composite_value=3.0,
+        composite_value=150.0,
         components={"a": 1.0, "b": 1.0, "c": 1.0},
+        normalized_components={"a": 50.0, "b": 50.0, "c": 50.0},
+        composite_method=CompositeMethod.NORMALIZED_PERCENTILE_SUM,
         percentile_60d=50.0,
         alert_active=False,
         state=CalibrationState.CALIBRATED,

@@ -58,6 +58,7 @@ from alphamind.distillation.q6.macro_surprise_compute import detect_macro_surpri
 from alphamind.distillation.q6.market_liquidity_compute import (
     MARKET_LIQUIDITY_COMPOSITE_KIND,
     MarketLiquidityResult,
+    normalize_market_liquidity_components,
 )
 from alphamind.distillation.q6.yield_curve_compute import (
     YieldCurveRegimeResult,
@@ -273,6 +274,37 @@ def _read_proxy_components(
         value = _select_latest_macro_value(session, series_id=series_id, on_or_before_date=end_date)
         out[component_name] = value if value is not None else 0.0
     return out
+
+
+def _read_proxy_component_history(
+    session: Session,
+    *,
+    as_of: datetime,
+    proxy_sources: Mapping[str, str],
+    lookback_days: int,
+) -> Mapping[str, list[float]]:
+    """Read trailing FRED values per component for percentile normalization.
+
+    For each named component the loader pulls the ``lookback_days``-day
+    window of FRED observations dated strictly before the ``as_of``
+    calendar day. Excluding observations dated ``as_of`` itself keeps the
+    rank well-defined when the latest reading is published intraday or
+    end-of-day; when the vendor series is stale (weekend, holiday, weekly
+    cadence) the most recent reading lives at an earlier ``observation_date``
+    and will still appear in the trailing window — the resulting self-rank
+    bias is order ``1/N`` on a window of ~8-60 observations.
+    """
+    range_end_date = (as_of - timedelta(days=1)).strftime("%Y-%m-%d")
+    range_start_date = (as_of - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    return {
+        component_name: _select_macro_series_window(
+            session,
+            series_id=series_id,
+            range_start_date=range_start_date,
+            range_end_date=range_end_date,
+        )
+        for component_name, series_id in proxy_sources.items()
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -537,27 +569,38 @@ def refresh_market_liquidity_composite(
     session: Session,
     *,
     components: Mapping[str, float],
+    component_history: Mapping[str, Sequence[float]],
     as_of: str,
     min_observations: int,
     alert_percentile: float,
 ) -> MarketLiquidityResult:
-    """Refresh the market-wide liquidity composite.
+    """Refresh the market-wide liquidity composite with per-component normalization.
 
-    Per the story Notes, the formula is "a normalized average of (sector-ETF
-    spread percentiles + universe-average spread percentiles + universe-
-    average volume percentile inverted)" — chosen for simplicity. The caller
-    has already done the per-input percentile computation; this function
-    receives the named scores via ``components`` and routes them through
-    story 07's :func:`refresh_composite_state`.
+    Each raw FRED component is converted to its percentile rank against its
+    own trailing series (``component_history``) before being summed into
+    the composite. Without normalization the volatility_score (VIX, order
+    ~10-50) dominates by magnitude over credit_spread_score (~0-10) and
+    stress_index_score (~-2..+2), so the composite degenerates to "VIX with
+    extra steps" (ALP-575).
+
+    Components that lack usable history (empty or zero-variance series)
+    fall back to a neutral midpoint score; the resulting
+    ``composite_method`` tag tells downstream consumers whether they're
+    looking at a fully-calibrated multi-component blend.
 
     Alert direction is ``"lower"``: a market_liquidity composite in the
     bottom ``alert_percentile`` (default 10th) means liquidity has thinned
-    relative to the trailing 60-day distribution — a stress signal.
+    relative to the trailing distribution — a stress signal. Because
+    ``composite_value`` is the sum of normalized 0..100 scores rather than
+    raw FRED magnitudes, the persisted history under
+    ``DistillationCompositeState`` is on the normalized scale only —
+    pre-ALP-575 raw-sum rows are deleted by the matching Alembic migration.
     """
+    normalization = normalize_market_liquidity_components(components, component_history)
     persistence_result = refresh_composite_state(
         session,
         composite_kind=MARKET_LIQUIDITY_COMPOSITE_KIND,
-        components=components,
+        components=normalization.normalized,
         as_of=as_of,
         min_observations=min_observations,
         alert_percentile=alert_percentile,
@@ -567,6 +610,8 @@ def refresh_market_liquidity_composite(
     return MarketLiquidityResult(
         composite_value=float(persistence_result.value["composite_value"]),
         components=dict(components),
+        normalized_components=dict(normalization.normalized),
+        composite_method=normalization.composite_method,
         percentile_60d=None if raw_percentile is None else float(raw_percentile),
         alert_active=bool(persistence_result.value["alert_active"]),
         state=persistence_result.state,
@@ -702,9 +747,16 @@ def load_q6_inputs(
     liquidity_components = _read_proxy_components(
         session, as_of=as_of, proxy_sources=_MARKET_LIQUIDITY_PROXY_SOURCES
     )
+    liquidity_component_history = _read_proxy_component_history(
+        session,
+        as_of=as_of,
+        proxy_sources=_MARKET_LIQUIDITY_PROXY_SOURCES,
+        lookback_days=config.persistence_windows.market_liquidity_baseline_days,
+    )
     ml_result = refresh_market_liquidity_composite(
         session,
         components=liquidity_components,
+        component_history=liquidity_component_history,
         as_of=as_of_iso,
         min_observations=config.persistence_windows.market_liquidity_baseline_days,
         alert_percentile=float(config.anomaly_detection.market_liquidity_alert_percentile),

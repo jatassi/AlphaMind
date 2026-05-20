@@ -180,6 +180,8 @@ def _build_market_liquidity_block(
         payload={
             "composite_value": result.composite_value,
             "components": dict(result.components),
+            "normalized_components": dict(result.normalized_components),
+            "composite_method": result.composite_method,
             "percentile_60d": result.percentile_60d,
             "alert_active": result.alert_active,
         },
