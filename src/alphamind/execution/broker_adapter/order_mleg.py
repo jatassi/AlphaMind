@@ -437,7 +437,7 @@ def strategy_legs_to_close_acks(
 
     Each leg's ``ratio_qty`` is ``1``: the strategy unit count rides on the
     request-level ``qty``, so this assumes a 1:1 leg structure (vertical
-    spreads, iron condors). Ratio strategies (e.g. 1×2) are not represented.
+    spreads, iron condors). Ratio strategies (e.g. 1x2) are not represented.
     """
     acks: list[MLEGLegAck] = []
     for leg in legs:
