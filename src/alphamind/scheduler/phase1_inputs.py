@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -86,9 +86,8 @@ _DTB3_SERIES_ID = "DTB3"
 _DEFAULT_RISK_FREE_RATE = 0.045
 
 
-# ALP-587 — the OHLCV daily-bar timeframe key. The latest ``1d`` bar's close
-# is the spot price used to guardrail-project active-universe tickers that
-# are not in the held book.
+# The ``timeframe`` string the OHLCV collector writes for end-of-day bars
+# (see ``data_sources/polygon/equity.py``).
 _OHLCV_DAILY_TIMEFRAME = "1d"
 
 # ALP-587 — staleness ceiling for an EOD bar consumed as a spot price. An
@@ -195,21 +194,6 @@ async def _read_latest_risk_free_rate(handle: InvocationHandle) -> float:
     return float(value) / 100.0
 
 
-def _bar_age_seconds(period_start: str, *, as_of: datetime) -> float:
-    """Seconds between an ``ohlcv_bars.period_start`` and ``as_of``.
-
-    ``period_start`` is the ISO-8601 string the OHLCV collector writes
-    (``datetime.isoformat()`` of a tz-aware UTC instant). A value that
-    parses without tzinfo is assumed UTC so the subtraction never raises
-    on a naive/aware mismatch.
-    """
-    parsed = datetime.fromisoformat(period_start)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    reference = as_of if as_of.tzinfo is not None else as_of.replace(tzinfo=UTC)
-    return (reference - parsed).total_seconds()
-
-
 async def _read_active_universe_prices(
     session: AsyncSession,
     *,
@@ -222,46 +206,53 @@ async def _read_active_universe_prices(
     the ``asset_universe`` table marks ``is_active`` and returns
     ``{ticker: unadj_close}``. The *unadjusted* close — the actual traded
     price, not the split-adjusted series — is used so the value carries
-    the same semantics as a broker ``current_price`` quote.
+    the same semantics as a broker ``current_price`` quote. A corporate
+    action between the bar and ``as_of`` (split, large dividend) leaves
+    the close slightly off as a current-spot proxy; that imprecision is
+    accepted for guardrail projection, which is a coarse pre-trade
+    notional/margin check rather than a fill-quality gate.
 
-    Bars older than ``max_bar_age_seconds`` are dropped: the validation
-    tool's ``UNAVAILABLE`` / ``missing_market_price`` path is the correct
-    fallback for a ticker whose price feed has genuinely stalled.
+    A ticker whose latest bar is older than ``max_bar_age_seconds`` is
+    dropped: the validation tool's ``UNAVAILABLE`` / ``missing_market_price``
+    path is the correct fallback for a price feed that has genuinely
+    stalled. The bound is applied in SQL via the ``period_start`` ISO-8601
+    string, whose lexicographic order matches chronological order.
 
     The decision agents propose against the full active universe, of which
     the held book priced by :func:`_build_market_inputs` is a strict
     subset. Held-position quotes still win on overlap — see the merge in
     that function.
     """
-    latest_rank = (
-        func.row_number()
-        .over(
-            partition_by=OhlcvBars.ticker,
-            order_by=OhlcvBars.period_start.desc(),
-        )
-        .label("rn")
-    )
-    ranked = (
+    cutoff_iso = (as_of - timedelta(seconds=max_bar_age_seconds)).replace(microsecond=0).isoformat()
+    # Latest ``period_start`` per active ticker — the MAX-per-group shape
+    # the sibling ``read_realized_vol_map`` uses, joined back for the close.
+    latest_subq = (
         select(
             OhlcvBars.ticker.label("ticker"),
-            OhlcvBars.unadj_close.label("close"),
-            OhlcvBars.period_start.label("period_start"),
-            latest_rank,
+            func.max(OhlcvBars.period_start).label("latest"),
         )
         .join(AssetUniverse, AssetUniverse.ticker == OhlcvBars.ticker)
         .where(
             OhlcvBars.timeframe == _OHLCV_DAILY_TIMEFRAME,
             AssetUniverse.is_active == 1,
         )
+        .group_by(OhlcvBars.ticker)
         .subquery()
     )
-    stmt = select(ranked.c.ticker, ranked.c.close, ranked.c.period_start).where(ranked.c.rn == 1)
+    stmt = (
+        select(OhlcvBars.ticker, OhlcvBars.unadj_close)
+        .join(
+            latest_subq,
+            (OhlcvBars.ticker == latest_subq.c.ticker)
+            & (OhlcvBars.period_start == latest_subq.c.latest),
+        )
+        .where(
+            OhlcvBars.timeframe == _OHLCV_DAILY_TIMEFRAME,
+            OhlcvBars.period_start >= cutoff_iso,
+        )
+    )
     rows = (await session.execute(stmt)).all()
-    return {
-        str(ticker): float(close)
-        for ticker, close, period_start in rows
-        if _bar_age_seconds(period_start, as_of=as_of) <= max_bar_age_seconds
-    }
+    return {str(ticker): float(close) for ticker, close in rows}
 
 
 def _build_market_inputs(
@@ -295,8 +286,7 @@ def _build_market_inputs(
     position_prices: dict[str, float] = {
         pos.symbol: float(pos.current_price) for pos in positions if pos.current_price is not None
     }
-    # ALP-587 — universe EOD closes are the base layer; held-position live
-    # quotes take precedence where a ticker appears in both.
+    # Held-position live quotes override universe EOD closes on overlap.
     underlying_prices: dict[str, float] = {**universe_prices, **position_prices}
     realized_vol_entries = {
         ticker: RealizedVolEntry(underlying=ticker, trailing_30d_realized_vol=vol)
@@ -421,9 +411,6 @@ async def gather_phase1_inputs(
         tickers=tuple(pos.symbol for pos in positions),
     )
 
-    # ALP-587 — latest EOD closes for the full active universe, so the
-    # decision agents' validation tool can price proposals against tickers
-    # that are in the universe but not yet held.
     universe_prices = await _read_active_universe_prices(handle.session, as_of=as_of)
 
     market_inputs = _build_market_inputs(
