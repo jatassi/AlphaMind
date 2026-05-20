@@ -28,6 +28,7 @@ from alphamind.portfolio_state.consumers.strategist import (
 from alphamind.portfolio_state.events.formatting import render_activity_log_row
 from alphamind.portfolio_state.records.activity_log import (
     ActivityLogEntry,
+    EventType,
     PMDecisionDetail,
 )
 from alphamind.portfolio_state.records.orders import (
@@ -247,6 +248,9 @@ def _render_portfolio_state_section(
 ) -> str:
     """Compose the strategist-specific portfolio-state block."""
     snapshots_by_thesis_id = {snap.thesis_id: snap for snap in prior_health_snapshots}
+    reconciliation_flagged = _reconciliation_flagged_position_ids(
+        strategist_view.intra_invocation_changelog
+    )
     blocks: list[str] = [
         _PORTFOLIO_HEADER,
         _render_aggregate_block(strategist_view),
@@ -259,7 +263,9 @@ def _render_portfolio_state_section(
                 if view.thesis is not None
                 else None
             )
-            blocks.append(_render_position_record(view, current_price_lookup, prior))
+            blocks.append(
+                _render_position_record(view, current_price_lookup, prior, reconciliation_flagged)
+            )
     else:
         blocks.append("Per-position records:\n  None")
     blocks.append(_render_between_invocation_closures(strategist_view.between_invocation_closures))
@@ -352,10 +358,30 @@ def _render_directional_lines(directional: DirectionalExposure) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _reconciliation_flagged_position_ids(
+    changelog: tuple[ActivityLogEntry, ...],
+) -> frozenset[str]:
+    """Return the position ids named by a RECONCILIATION_ALERT in *changelog*.
+
+    A reconciliation alert means local state diverged from the broker's, so any
+    P/L derived from the local record for that position is unreliable until the
+    divergence is resolved. ``alpaca_only_position`` alerts carry no
+    ``position_id`` (there is no matching local position) and so flag nothing —
+    matching a local position to such an alert on shared ticker alone would be
+    exactly the cross-attribution the P/L calculator avoids.
+    """
+    return frozenset(
+        entry.position_id
+        for entry in changelog
+        if entry.event_type == EventType.RECONCILIATION_ALERT and entry.position_id is not None
+    )
+
+
 def _render_position_record(
     view: StrategistPositionView,
     current_price_lookup: Callable[[str], float],
     prior_health_snapshot: ThesisHealthSnapshot | None,
+    reconciliation_flagged_position_ids: frozenset[str],
 ) -> str:
     pos = view.position
     ticker = _resolve_position_ticker(pos)
@@ -370,7 +396,12 @@ def _render_position_record(
     rows: list[str] = [pos.position_id]
     rows.append(_render_underlying_line(pos, ticker))
     rows.append(_render_size_line(pos))
-    rows.append(_render_pnl_line(pos))
+    rows.append(
+        _render_pnl_line(
+            pos,
+            reconciliation_flagged=pos.position_id in reconciliation_flagged_position_ids,
+        )
+    )
     rows.append(_render_age_line(pos))
     rows.append(_render_distance_and_rr_line(pos, view.bracket, current_price))
     rows.append(_render_bracket_block(view.bracket))
@@ -409,10 +440,16 @@ def _render_size_line(pos: PositionView) -> str:
     return f"  Size:          {size_label}  {market_value}  ({weight}% of portfolio)"
 
 
-def _render_pnl_line(pos: PositionView) -> str:
+def _render_pnl_line(pos: PositionView, *, reconciliation_flagged: bool) -> str:
     pnl_abs = _format_signed_dollar(float(pos.unrealized_pnl_usd))
     pnl_pct = _format_signed_pct(pos.unrealized_pnl_pct)
-    return f"  P/L:           {pnl_abs} since open ({pnl_pct})"
+    line = f"  P/L:           {pnl_abs} since open ({pnl_pct})"
+    if reconciliation_flagged:
+        # A RECONCILIATION_ALERT names this position — local state diverged
+        # from the broker's, so the P/L derived from the local record cannot
+        # be trusted until the divergence is resolved.
+        line += "  [unreliable — pending reconciliation]"
+    return line
 
 
 def _render_age_line(pos: PositionView) -> str:
