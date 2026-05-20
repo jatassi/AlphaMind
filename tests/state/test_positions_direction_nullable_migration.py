@@ -57,15 +57,9 @@ class TestPositionsDirectionNullableMigration:
 
         eng = make_engine(str(db_path))
         with eng.begin() as conn:
-            conn.execute(
-                text(_INSERT.format(pid="strat-1", direction="'LONG'", itype="STRATEGY"))
-            )
-            conn.execute(
-                text(_INSERT.format(pid="eq-1", direction="'LONG'", itype="EQUITY"))
-            )
-            conn.execute(
-                text(_INSERT.format(pid="opt-1", direction="'SHORT'", itype="OPTIONS"))
-            )
+            conn.execute(text(_INSERT.format(pid="strat-1", direction="'LONG'", itype="STRATEGY")))
+            conn.execute(text(_INSERT.format(pid="eq-1", direction="'LONG'", itype="EQUITY")))
+            conn.execute(text(_INSERT.format(pid="opt-1", direction="'SHORT'", itype="OPTIONS")))
         eng.dispose()
 
         command.upgrade(cfg, _REVISION)
@@ -75,9 +69,7 @@ class TestPositionsDirectionNullableMigration:
             with eng.connect() as conn:
                 rows = {
                     r.position_id: r.direction
-                    for r in conn.execute(
-                        text("SELECT position_id, direction FROM positions")
-                    )
+                    for r in conn.execute(text("SELECT position_id, direction FROM positions"))
                 }
             assert rows["strat-1"] is None
             assert rows["eq-1"] == "LONG"
@@ -85,9 +77,7 @@ class TestPositionsDirectionNullableMigration:
         finally:
             eng.dispose()
 
-    def test_strategy_row_inserts_with_null_direction_after_upgrade(
-        self, tmp_path: Path
-    ) -> None:
+    def test_strategy_row_inserts_with_null_direction_after_upgrade(self, tmp_path: Path) -> None:
         """Once the column is nullable a fresh strategy row inserts with direction NULL."""
         db_path = tmp_path / "alembic.db"
         command.upgrade(_alembic_config(db_path), "head")
@@ -106,9 +96,7 @@ class TestPositionsDirectionNullableMigration:
         finally:
             eng.dispose()
 
-    def test_downgrade_refills_strategy_rows_and_reinstates_not_null(
-        self, tmp_path: Path
-    ) -> None:
+    def test_downgrade_refills_strategy_rows_and_reinstates_not_null(self, tmp_path: Path) -> None:
         """The downgrade must re-fill strategy NULLs to 'LONG' *before* re-tightening
         the constraint — a regression that swaps the order would fail the migration."""
         db_path = tmp_path / "alembic.db"
@@ -117,12 +105,8 @@ class TestPositionsDirectionNullableMigration:
 
         eng = make_engine(str(db_path))
         with eng.begin() as conn:
-            conn.execute(
-                text(_INSERT.format(pid="strat-1", direction="NULL", itype="STRATEGY"))
-            )
-            conn.execute(
-                text(_INSERT.format(pid="eq-1", direction="'SHORT'", itype="EQUITY"))
-            )
+            conn.execute(text(_INSERT.format(pid="strat-1", direction="NULL", itype="STRATEGY")))
+            conn.execute(text(_INSERT.format(pid="eq-1", direction="'SHORT'", itype="EQUITY")))
         eng.dispose()
 
         command.downgrade(cfg, "-1")
@@ -136,9 +120,7 @@ class TestPositionsDirectionNullableMigration:
             with eng.connect() as conn:
                 rows = {
                     r.position_id: r.direction
-                    for r in conn.execute(
-                        text("SELECT position_id, direction FROM positions")
-                    )
+                    for r in conn.execute(text("SELECT position_id, direction FROM positions"))
                 }
             assert rows["strat-1"] == "LONG"
             assert rows["eq-1"] == "SHORT"

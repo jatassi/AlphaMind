@@ -614,9 +614,7 @@ def _proposed_close_for_position(
             position.details.ticker if isinstance(position.details, EquityPositionDetails) else "X"
         ),
         asset_type="equity",
-        direction=(
-            "long" if position_direction(position.record) == Direction.LONG else "short"
-        ),
+        direction=("long" if position_direction(position.record) == Direction.LONG else "short"),
         pre_close_size_pct_of_portfolio=pre_pct,
         close_size_pct_of_portfolio=pre_pct,
         pre_close_size_usd=pre_usd,
@@ -1101,9 +1099,7 @@ def _follow_up_full_close_selector(
             target.details.ticker if isinstance(target.details, EquityPositionDetails) else "X"
         ),
         asset_type="equity",
-        direction=(
-            "long" if position_direction(target.record) == Direction.LONG else "short"
-        ),
+        direction=("long" if position_direction(target.record) == Direction.LONG else "short"),
         pre_close_size_pct_of_portfolio=pre_pct,
         close_size_pct_of_portfolio=pre_pct,
         pre_close_size_usd=pre_usd,

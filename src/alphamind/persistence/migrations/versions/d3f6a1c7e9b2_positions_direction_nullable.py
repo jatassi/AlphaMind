@@ -46,9 +46,7 @@ def upgrade() -> None:
             existing_type=sa.Text(),
             nullable=True,
         )
-    op.execute(
-        sa.text("UPDATE positions SET direction = NULL WHERE instrument_type = 'STRATEGY'")
-    )
+    op.execute(sa.text("UPDATE positions SET direction = NULL WHERE instrument_type = 'STRATEGY'"))
 
 
 def downgrade() -> None:
