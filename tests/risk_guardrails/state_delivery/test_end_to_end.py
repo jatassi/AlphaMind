@@ -729,6 +729,7 @@ def _build_analyst_held_positions() -> tuple[AnalystHeldPosition, ...]:
             sector=sector if sector != "MISC" else "UNCLASSIFIED",
             size_pct=weight_pct,
             instrument_type=instrument,
+            strategy_type_label=None,
         )
         for position_id, ticker, direction, sector, weight_pct, _p, instrument in _POSITION_SPEC
     )

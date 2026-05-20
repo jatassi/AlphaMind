@@ -70,9 +70,11 @@ from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
     InstrumentType,
+    OptionGreeks,
     PositionFill,
     PositionRecord,
     PositionStatus,
+    StrategyPositionDetails,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -195,6 +197,48 @@ def _make_pending_position(pos_id: str = "POS-PEND") -> PositionView:
         unrealized_pnl_pct=0.0,
         position_weight_pct=0.0,
         position_age_hours=0.0,
+        notional_exposure_usd=money(0.0),
+        delta_adjusted_exposure_usd=signed_money(0.0),
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
+    )
+
+
+def _make_strategy_position(
+    pos_id: str = "POS-STRAT",
+    strategy_type_label: str = "iron_condor",
+) -> PositionView:
+    strategy = StrategyPositionDetails(
+        strategy_type_label=strategy_type_label,
+        legs=(),
+        net_premium_usd=-100.0,
+        max_profit_usd=200.0,
+        max_loss_usd=-500.0,
+        breakeven_levels=(),
+        strategy_greeks=OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0),
+    )
+    record = PositionRecord(
+        position_id=PositionId(pos_id),
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_T0,
+        details=strategy,
+        execution_history=(_make_fill(),),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=signed_money(0.0),
+        unrealized_pnl_usd=signed_money(0.0),
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=2.0,
+        position_age_hours=4.0,
         notional_exposure_usd=money(0.0),
         delta_adjusted_exposure_usd=signed_money(0.0),
         distance_to_target_usd=None,
@@ -631,6 +675,7 @@ class TestAnalystValueObjects:
             sector="TECHNOLOGY",
             size_pct=10.0,
             instrument_type=InstrumentType.EQUITY,
+            strategy_type_label=None,
         )
         with pytest.raises(FrozenInstanceError):
             hp.ticker = "MSFT"  # type: ignore[misc]
@@ -699,6 +744,43 @@ class TestProjectAnalystViewHappyPath:
         # Confirm no P/L fields
         assert not hasattr(pos, "unrealized_pnl_usd")
         assert not hasattr(pos, "current_market_value_usd")
+
+    def test_held_equity_position_carries_direction_and_no_strategy_label(self) -> None:
+        """An equity held position projects a concrete direction and a None label."""
+        snapshot = _make_snapshot()
+        view = project_analyst_view(
+            snapshot,
+            sector_resolver=_simple_sector_resolver(),
+            per_position_size_rule_id=_PER_POSITION_RULE_ID,
+            total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+        )
+        pos = next(p for p in view.held_positions if p.ticker == "AAPL")
+        assert pos.direction == Direction.LONG
+        assert pos.strategy_type_label is None
+
+    def test_held_strategy_position_projects_none_direction(self) -> None:
+        """A multi-leg strategy held position yields direction=None via the accessor."""
+        strategy = _make_strategy_position("POS-STRAT", "iron_condor")
+        snapshot = _make_snapshot(
+            open_positions=(strategy,),
+            pending_positions=(),
+            brackets=(),
+            active_theses=(),
+            position_modification_trail={},
+            intra_invocation_changelog=(),
+            recent_pm_decision_log=(),
+            pending_orders=(),
+        )
+        view = project_analyst_view(
+            snapshot,
+            sector_resolver=_simple_sector_resolver(),
+            per_position_size_rule_id=_PER_POSITION_RULE_ID,
+            total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+        )
+        pos = next(p for p in view.held_positions if p.position_id == "POS-STRAT")
+        assert pos.direction is None
+        assert pos.strategy_type_label == "iron_condor"
+        assert pos.instrument_type == InstrumentType.STRATEGY
 
     def test_available_capital_values(self) -> None:
         snapshot = _make_snapshot()

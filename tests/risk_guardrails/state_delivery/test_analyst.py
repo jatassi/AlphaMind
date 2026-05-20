@@ -113,10 +113,11 @@ def _make_held_position(
     *,
     position_id: str,
     ticker: str,
-    direction: Direction = Direction.LONG,
+    direction: Direction | None = Direction.LONG,
     sector: str = "tech",
     size_pct: float = 4.2,
     instrument_type: InstrumentType = InstrumentType.EQUITY,
+    strategy_type_label: str | None = None,
 ) -> AnalystHeldPosition:
     return AnalystHeldPosition(
         position_id=position_id,
@@ -125,6 +126,7 @@ def _make_held_position(
         sector=sector,
         size_pct=size_pct,
         instrument_type=instrument_type,
+        strategy_type_label=strategy_type_label,
     )
 
 

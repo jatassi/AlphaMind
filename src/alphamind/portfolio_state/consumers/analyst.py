@@ -17,7 +17,12 @@ from alphamind.portfolio_state.records.activity_log import (
     EventType,
 )
 from alphamind.portfolio_state.records.orders import OrderRecord
-from alphamind.portfolio_state.records.positions import Direction, InstrumentType
+from alphamind.portfolio_state.records.positions import (
+    Direction,
+    InstrumentType,
+    StrategyPositionDetails,
+    position_direction,
+)
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
 
 # ---------------------------------------------------------------------------
@@ -29,14 +34,22 @@ _ANALYST_AGENT = "analyst"
 
 @dataclass(frozen=True, slots=True)
 class AnalystHeldPosition:
-    """Thin per-position summary for the analyst (no P/L, no thesis content)."""
+    """Thin per-position summary for the analyst (no P/L, no thesis content).
+
+    ``direction`` is projected via :func:`position_direction`: an equity or
+    single-leg options position carries a concrete ``Direction``; a multi-leg
+    strategy carries ``None`` (its directionality lives per-leg). For a
+    strategy position ``strategy_type_label`` carries the strategy's label so
+    renderers can show it in the direction column; it is ``None`` otherwise.
+    """
 
     position_id: str
     ticker: str
-    direction: Direction
+    direction: Direction | None
     sector: str
     size_pct: float
     instrument_type: InstrumentType
+    strategy_type_label: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,14 +99,21 @@ def _project_held_positions(
     for pos in (*snapshot.open_positions, *snapshot.pending_positions):
         ticker = _ticker_from_position(pos)
         sector = sector_resolver(pos.record) or "UNCLASSIFIED"
+        details = pos.record.details
+        strategy_type_label = (
+            details.strategy_type_label
+            if isinstance(details, StrategyPositionDetails)
+            else None
+        )
         result.append(
             AnalystHeldPosition(
                 position_id=pos.position_id,
                 ticker=ticker,
-                direction=pos.direction,
+                direction=position_direction(pos.record),
                 sector=sector,
                 size_pct=pos.position_weight_pct,
                 instrument_type=pos.instrument_type,
+                strategy_type_label=strategy_type_label,
             )
         )
     return tuple(result)
