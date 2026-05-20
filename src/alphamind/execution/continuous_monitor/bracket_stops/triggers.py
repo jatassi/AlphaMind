@@ -37,6 +37,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     StrategyLeg,
     StrategyPositionDetails,
+    position_direction,
 )
 from alphamind.risk_guardrails.guardrail_evaluation.black_scholes import bs_price
 from alphamind.risk_guardrails.guardrail_evaluation.types import ContractType
@@ -126,6 +127,10 @@ def evaluate_pl_target_trigger(
         # prices. Treat as not-fired.
         return False
     option_details = _options_details_for_pl(position)
+    # ``_options_details_for_pl`` narrowed ``position`` to a single-leg options
+    # position, so the position-level direction is well-defined here.
+    direction = position_direction(position)
+    assert direction is not None  # single-leg options position
     derived_price = _bs_option_price(
         spot=spot,
         strike=option_details.strike_price,
@@ -137,7 +142,7 @@ def evaluate_pl_target_trigger(
     return _crosses_threshold(
         derived_price=derived_price,
         anchor=anchor,
-        position_direction=position.direction,
+        position_direction=direction,
         leg_type=leg.leg_type,
         entry_price=entry_price,
         buffer_pct=buffer_pct,
