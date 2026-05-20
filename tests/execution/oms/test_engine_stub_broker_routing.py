@@ -1649,6 +1649,59 @@ async def test_adjust_command_context_strategy_position_routes_mleg(
         await async_engine.dispose()
 
 
+async def test_close_command_context_strategy_position_threads_close_side_legs(
+    tmp_path: Path,
+) -> None:
+    """A PM-originated CLOSE on a strategy position threads close-side legs.
+
+    Each leg reverses the position it opened: the LONG-opened leg closes
+    sell / sell_to_close, the SHORT-opened leg closes buy / buy_to_close.
+    The open→close inversion happens once at the shared seam, and the
+    dispatcher receives the ``close_legs`` kwarg.
+    """
+    from alphamind.decision.portfolio_manager.submit_envelope.dispatch import (
+        _close_command_context,
+    )
+    from tests.execution.oms.test_submit_envelope_mcp import _close_command
+
+    async_engine, factory = _build_db_factory(tmp_path)
+    try:
+        await _seed_invocation_substrate(factory)
+        await _seed_cash_ledger(factory)
+        await _seed_position_cluster(
+            factory,
+            _strategy_open_position(),
+            _active_thesis(
+                thesis_id=ThesisId("THE-STRAT-1"), position_id=PositionId("POS-STRAT-001")
+            ),
+            _active_bracket(
+                bracket_id=BracketId("BRK-STRAT-1"), position_id=PositionId("POS-STRAT-001")
+            ),
+        )
+
+        ctx, handle = await _open_handle(factory)
+        try:
+            kwargs = await _close_command_context(
+                _close_command(position_id=PositionId("POS-STRAT-001")),
+                invocation_handle=handle,
+            )
+        finally:
+            await ctx.__aexit__(None, None, None)
+
+        assert kwargs["position_asset_type"] == "strategy"
+        assert kwargs["strategy_type"] == "vertical_spread"
+        close_legs = kwargs["close_legs"]
+        assert len(close_legs) == 2
+        # Long-opened leg → sell_to_close; short-opened leg → buy_to_close.
+        assert close_legs[0].side == "sell"
+        assert close_legs[0].position_intent == "sell_to_close"
+        assert close_legs[1].side == "buy"
+        assert close_legs[1].position_intent == "buy_to_close"
+        assert all(not leg.position_intent.endswith("_to_open") for leg in close_legs)
+    finally:
+        await async_engine.dispose()
+
+
 async def test_adjust_command_context_targets_take_profit_when_target_change(
     tmp_path: Path,
 ) -> None:

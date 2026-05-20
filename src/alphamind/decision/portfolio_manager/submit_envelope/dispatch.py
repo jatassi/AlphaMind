@@ -269,10 +269,14 @@ async def _close_command_context(
     if isinstance(position.details, StrategyPositionDetails):
         # StrategyPositionDetails carries legs and a strategy_type_label; the
         # broker translator needs the typed StrategyType, so we coerce here.
-        legs = _persisted_legs_to_mleg_acks(position.details.legs)
+        # The CLOSE threads *close-side* legs — the single open→close
+        # inversion seam reverses each leg (LONG → sell_to_close, SHORT →
+        # buy_to_close) and preserves the direction-is-None → ValueError guard.
+        from alphamind.execution.broker_adapter import strategy_legs_to_close_acks
+
         return {
             "position_asset_type": "strategy",
-            "open_legs": legs,
+            "close_legs": strategy_legs_to_close_acks(position.details.legs),
             "strategy_type": cast(StrategyType, position.details.strategy_type_label),
             "position_units": None,
         }
