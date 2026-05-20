@@ -178,6 +178,39 @@ class TestComputeStrategyNetPremium:
         )
         assert compute_strategy_net_premium_usd(legs) == 300.0
 
+    def test_credit_vertical_spread_returns_negative(self) -> None:
+        # Bear call spread: sell the lower strike, buy the higher.
+        # Sell 1 call @ 100 for $5/contract, buy 1 call @ 110 for $2/contract.
+        # mult=100. Net = -5*100 + 2*100 = -300 (net credit — SHORT subtracts).
+        legs = (
+            _leg("L1", Direction.SHORT, OptionContractType.CALL, 100.0, premium_paid_per_contract=5.0),
+            _leg("L2", Direction.LONG, OptionContractType.CALL, 110.0, premium_paid_per_contract=2.0),
+        )
+        assert compute_strategy_net_premium_usd(legs) == -300.0
+
+    def test_short_strangle_returns_negative(self) -> None:
+        # Short strangle: sell 1 call @ 110 for $3, sell 1 put @ 90 for $4.
+        # mult=100. Net = -3*100 - 4*100 = -700 (net credit).
+        legs = (
+            _leg("L1", Direction.SHORT, OptionContractType.CALL, 110.0, premium_paid_per_contract=3.0),
+            _leg("L2", Direction.SHORT, OptionContractType.PUT, 90.0, premium_paid_per_contract=4.0),
+        )
+        assert compute_strategy_net_premium_usd(legs) == -700.0
+
+    def test_contract_count_scales_premium(self) -> None:
+        # 3 long calls @ 100 for $5/contract. Net = +3 * 100 * 5 = +1500.
+        legs = (
+            _leg(
+                "L1",
+                Direction.LONG,
+                OptionContractType.CALL,
+                100.0,
+                contract_count=3.0,
+                premium_paid_per_contract=5.0,
+            ),
+        )
+        assert compute_strategy_net_premium_usd(legs) == 1500.0
+
 
 # ---------------------------------------------------------------------------
 # Validation paths (acceptance criteria 10-13)
@@ -234,6 +267,36 @@ class TestValidationErrors:
         )
         with pytest.raises(ValueError, match="expiration"):
             func(legs, 0.0)
+
+
+class TestNetPremiumValidationErrors:
+    """`compute_strategy_net_premium_usd` delegates to `_validate_legs`."""
+
+    def test_empty_legs_raises(self) -> None:
+        with pytest.raises(ValueError, match="legs"):
+            compute_strategy_net_premium_usd(())
+
+    def test_missing_direction_raises_with_leg_id(self) -> None:
+        legs = (
+            _leg("BAD-LEG", None, OptionContractType.CALL, 100.0),
+            _leg("L2", Direction.SHORT, OptionContractType.CALL, 110.0),
+        )
+        with pytest.raises(ValueError, match="BAD-LEG"):
+            compute_strategy_net_premium_usd(legs)
+
+    def test_zero_contract_count_raises_with_leg_id(self) -> None:
+        legs = (
+            _leg("ZERO-LEG", Direction.LONG, OptionContractType.CALL, 100.0, contract_count=0.0),
+        )
+        with pytest.raises(ValueError, match="ZERO-LEG"):
+            compute_strategy_net_premium_usd(legs)
+
+    def test_negative_contract_count_raises_with_leg_id(self) -> None:
+        legs = (
+            _leg("NEG-LEG", Direction.LONG, OptionContractType.CALL, 100.0, contract_count=-1.0),
+        )
+        with pytest.raises(ValueError, match="NEG-LEG"):
+            compute_strategy_net_premium_usd(legs)
 
 
 # ---------------------------------------------------------------------------
