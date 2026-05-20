@@ -19,6 +19,7 @@ from collections.abc import Callable
 from datetime import datetime
 
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.computations.activity_log import filter_by_event_type
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.consumers.strategist import (
     BetweenInvocationClosure,
@@ -264,7 +265,12 @@ def _render_portfolio_state_section(
                 else None
             )
             blocks.append(
-                _render_position_record(view, current_price_lookup, prior, reconciliation_flagged)
+                _render_position_record(
+                    view,
+                    current_price_lookup,
+                    prior,
+                    reconciliation_flagged_position_ids=reconciliation_flagged,
+                )
             )
     else:
         blocks.append("Per-position records:\n  None")
@@ -372,8 +378,8 @@ def _reconciliation_flagged_position_ids(
     """
     return frozenset(
         entry.position_id
-        for entry in changelog
-        if entry.event_type == EventType.RECONCILIATION_ALERT and entry.position_id is not None
+        for entry in filter_by_event_type(changelog, EventType.RECONCILIATION_ALERT)
+        if entry.position_id is not None
     )
 
 
@@ -381,6 +387,7 @@ def _render_position_record(
     view: StrategistPositionView,
     current_price_lookup: Callable[[str], float],
     prior_health_snapshot: ThesisHealthSnapshot | None,
+    *,
     reconciliation_flagged_position_ids: frozenset[str],
 ) -> str:
     pos = view.position
@@ -445,9 +452,6 @@ def _render_pnl_line(pos: PositionView, *, reconciliation_flagged: bool) -> str:
     pnl_pct = _format_signed_pct(pos.unrealized_pnl_pct)
     line = f"  P/L:           {pnl_abs} since open ({pnl_pct})"
     if reconciliation_flagged:
-        # A RECONCILIATION_ALERT names this position — local state diverged
-        # from the broker's, so the P/L derived from the local record cannot
-        # be trusted until the divergence is resolved.
         line += "  [unreliable — pending reconciliation]"
     return line
 

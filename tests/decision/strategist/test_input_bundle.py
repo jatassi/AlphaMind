@@ -1133,7 +1133,9 @@ def _make_reconciliation_alert(
 def _pnl_line(rendered: str) -> str:
     # "since open" is unique to the per-position record's P/L line, isolating
     # it from the state-delivery header's per-position constraint summary.
-    return next(line for line in rendered.splitlines() if "since open" in line)
+    line = next((ln for ln in rendered.splitlines() if "since open" in ln), None)
+    assert line is not None, "no per-position P/L line found in rendered bundle"
+    return line
 
 
 def test_pnl_line_annotated_when_position_flagged_by_reconciliation_alert() -> None:
