@@ -123,7 +123,7 @@ def _add_bar(
 class TestSqlRepositoryGapHistory:
     def test_gap_fill_counts_aggregate_resolved_and_filled(self, session: Session) -> None:
         _add_ticker(session, "AAPL")
-        # 3 filled + 2 unfilled = 5 resolved, 3 filled.
+        # 3 filled + 2 unfilled = 5 resolved, 3 filled, 1 pending.
         for i in range(3):
             _add_gap_event(
                 session, ticker=Symbol("AAPL"), event_ts=f"2026-03-01T00:0{i}:00Z", outcome="filled"
@@ -147,6 +147,50 @@ class TestSqlRepositoryGapHistory:
         )
         assert counts.resolved == 5
         assert counts.filled == 3
+        assert counts.pending == 1
+
+    def test_gap_fill_counts_pending_only(self, session: Session) -> None:
+        """All-pending history: 0 resolved, 0 filled, N pending."""
+        _add_ticker(session, "AAPL")
+        for i in range(4):
+            _add_gap_event(
+                session,
+                ticker=Symbol("AAPL"),
+                event_ts=f"2026-04-0{i + 1}T00:00:00Z",
+                outcome="pending",
+            )
+        session.commit()
+
+        repo = SqlDistillationRepository(session)
+        counts = repo.load_gap_fill_event_counts(
+            ticker=Symbol("AAPL"), as_of="2026-04-25T00:00:00Z"
+        )
+        assert counts.resolved == 0
+        assert counts.filled == 0
+        assert counts.pending == 4
+
+    def test_sector_pooled_counts_track_pending(self, session: Session) -> None:
+        """Sector pool sums pending across all tickers in the sector."""
+        _add_ticker(session, "AAPL", sector="tech")
+        _add_ticker(session, "MSFT", sector="tech")
+        _add_gap_event(
+            session, ticker=Symbol("AAPL"), event_ts="2026-04-01T00:00:00Z", outcome="pending"
+        )
+        _add_gap_event(
+            session, ticker=Symbol("MSFT"), event_ts="2026-04-02T00:00:00Z", outcome="pending"
+        )
+        _add_gap_event(
+            session, ticker=Symbol("MSFT"), event_ts="2026-03-01T00:00:00Z", outcome="filled"
+        )
+        session.commit()
+
+        repo = SqlDistillationRepository(session)
+        counts = repo.load_sector_pooled_gap_fill_counts(
+            sector="tech", as_of="2026-04-25T00:00:00Z"
+        )
+        assert counts.resolved == 1
+        assert counts.filled == 1
+        assert counts.pending == 2
 
 
 class TestSqlRepositoryBars:

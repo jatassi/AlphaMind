@@ -230,11 +230,10 @@ def _operator_summary_payload(outputs: DistillationOutputs, invocation_id: str) 
     sorted_blocks = sorted(outputs.all_blocks, key=lambda b: b.block_id)
 
     def _per_block(state: CalibrationState) -> list[dict[str, str]]:
-        # Dedupe on (module, reason): per-sector blocks like q1.gap ship
-        # once per sector audience (tech_semis, financials, energy). When
-        # all three carry the same bootstrap reason the operator would
-        # otherwise see the same line three times. Per-block detail still
-        # lives in the internal calibration snapshot.
+        # Dedupe on (module, reason): per-sector blocks (e.g. q1.*) emit one
+        # OutputBlock per sector audience, so the same module/reason pair
+        # would otherwise appear once per sector in the operator summary.
+        # The internal calibration snapshot keeps per-block detail.
         seen: set[tuple[str, str]] = set()
         out: list[dict[str, str]] = []
         for block in sorted_blocks:

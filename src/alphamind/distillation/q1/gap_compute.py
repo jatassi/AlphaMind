@@ -155,12 +155,12 @@ class GapFillEventHistory:
     calibration branches with no further DB access.
 
     ``ticker_pending`` is the count of detected-but-not-yet-resolved gap
-    events for the ticker. Per ALP-573 this distinguishes "collector
-    silent" (0 detected) from "bootstrap, awaiting outcome resolution"
-    (N detected, 0 resolved): with ``gap_fill_baseline_days`` set to 252
-    the resolution window is one trading year, so a freshly bootstrapped
-    universe will report 0 resolved events for months while still
-    detecting and persisting pending rows.
+    events for the ticker. The split lets the compute branch distinguish
+    "collector silent" (0 detected) from "bootstrap, awaiting outcome
+    resolution" (N detected, 0 resolved): with ``gap_fill_baseline_days``
+    set to 252 the resolution window is one trading year, so a freshly
+    bootstrapped universe will report 0 resolved events for months while
+    still detecting and persisting pending rows.
     """
 
     ticker_resolved: int
@@ -211,7 +211,7 @@ def compute_gap_fill_probability(
         return CalibratedValue(
             value=None,
             state=CalibrationState.UNAVAILABLE,
-            bootstrap_reason=(f"gap_fill_min_events: 0 < {min_events} (no gap events detected)"),
+            bootstrap_reason=f"gap_fill_min_events: 0 < {min_events} (no gap events detected)",
         )
 
     per_ticker_rate = float(history.ticker_filled) / float(history.ticker_resolved)
