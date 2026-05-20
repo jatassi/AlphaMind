@@ -31,6 +31,7 @@ from alphamind.config.models.guardrails import BreachResponse
 from alphamind.portfolio_state.records.positions import (
     Direction,
     InstrumentType,
+    position_direction,
 )
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior.config import BreachBehaviorConfig
@@ -166,7 +167,17 @@ def _asset_type_of(position: PositionView) -> _AssetType:
 
 
 def _direction_of(position: PositionView) -> _DirectionLabel:
-    return "long" if position.direction == Direction.LONG else "short"
+    """Resolve the ``ProposedClose`` direction label for a position.
+
+    Direction is read via ``position_direction()``. A multi-leg strategy
+    yields ``None`` — it has no single position-level side. ``ProposedClose``
+    /``ProposedDelta`` carry a non-optional ``Literal["long", "short"]``;
+    making that field strategy-aware is the separate ALP-603 follow-on.
+    ALP-588 story 01f made the close path leg-derived for an MLEG strategy, so
+    the proposal consumers do not branch on this label for a strategy. Until
+    ALP-603 lands, a strategy passes an inert ``"long"`` placeholder here.
+    """
+    return "long" if position_direction(position.record) != Direction.SHORT else "short"
 
 
 def _proposed_close_from_selection(
@@ -758,7 +769,17 @@ def _candidate_set(
             None,
         )
         if primary is not None:
-            return tuple(c for c in candidates if c.direction == primary.direction)
+            # Direction reads route through position_direction(): a strategy
+            # yields None and has no position-level side, so it is excluded
+            # from a directional-candidate set. Only candidates whose
+            # direction equals the primary's non-None direction are kept.
+            primary_direction = position_direction(primary.record)
+            return tuple(
+                c
+                for c in candidates
+                if primary_direction is not None
+                and position_direction(c.record) == primary_direction
+            )
     return candidates
 
 
