@@ -12,6 +12,8 @@ from __future__ import annotations
 from alphamind._kernel.money import price
 from alphamind.commands.command_models import (
     StrategyInstrument,
+)
+from alphamind.commands.command_models import (
     StrategyLeg as WireStrategyLeg,
 )
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER

@@ -441,9 +441,7 @@ def _build_strategy_skeleton(
                     premium_paid_per_contract=0.0,
                     greeks=_zeroed_option_greeks(),
                 ),
-                direction=(
-                    Direction.LONG if wire_leg.direction == "long" else Direction.SHORT
-                ),
+                direction=(Direction.LONG if wire_leg.direction == "long" else Direction.SHORT),
             )
         )
     return StrategyPositionDetails(
