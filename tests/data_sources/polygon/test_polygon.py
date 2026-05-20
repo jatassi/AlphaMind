@@ -666,6 +666,208 @@ class TestCollectCorporateActions:
         assert len(client.dividend_calls) == len(TICKERS)
         assert len(client.split_calls) == len(TICKERS)
 
+    def test_writes_delisting_row_for_delisted_ticker(self) -> None:
+        from alphamind.data_sources.polygon import corporate_actions
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL"], [])
+
+        client = FakePolygonAPI(
+            ticker_details={
+                "AAPL": make_ticker_details(
+                    ticker="AAPL", active=False, delisted_utc="2026-05-07T00:00:00Z"
+                )
+            }
+        )
+
+        corporate_actions.collect_corporate_actions(
+            ticker_scope=["AAPL"],
+            _client=client,
+            _session_factory=sf,
+            _repo=FakeRunRepo(),
+        )
+
+        with sf() as sess:
+            rows = sess.query(CorporateActions).all()
+        assert len(rows) == 1
+        assert rows[0].action_type == "delisting"
+        assert rows[0].ex_date == "2026-05-07"
+        assert rows[0].acquirer_ticker is None
+
+    def test_no_delisting_row_for_active_ticker(self) -> None:
+        from alphamind.data_sources.polygon import corporate_actions
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL"], [])
+
+        client = FakePolygonAPI(ticker_details={"AAPL": make_ticker_details(ticker="AAPL")})
+
+        corporate_actions.collect_corporate_actions(
+            ticker_scope=["AAPL"],
+            _client=client,
+            _session_factory=sf,
+            _repo=FakeRunRepo(),
+        )
+
+        with sf() as sess:
+            assert sess.query(CorporateActions).count() == 0
+
+    def test_delisted_ticker_deactivated_within_cycle(self) -> None:
+        """ALP-584 AC2: a delisting detected mid-collection flips the
+        asset_universe row in the same cycle via the post-collection reconciler."""
+        from alphamind.data_sources.polygon import corporate_actions
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL"], [])
+
+        client = FakePolygonAPI(
+            ticker_details={
+                "AAPL": make_ticker_details(
+                    ticker="AAPL", active=False, delisted_utc="2026-05-07T00:00:00Z"
+                )
+            }
+        )
+
+        corporate_actions.collect_corporate_actions(
+            ticker_scope=["AAPL"],
+            _client=client,
+            _session_factory=sf,
+            _repo=FakeRunRepo(),
+        )
+
+        with sf() as sess:
+            row = sess.query(AssetUniverse).filter_by(ticker="AAPL").first()
+        assert row is not None
+        assert row.is_active == 0
+        assert row.removed_date == "2026-05-07"
+        assert row.removal_reason == "delisted"
+
+    def test_ticker_details_failure_skips_ticker_not_run(self) -> None:
+        """A get_ticker_details failure for one ticker skips that ticker; the
+        multi-ticker cycle still completes and reconciliation runs (ALP-584)."""
+        from polygon import BadResponse
+
+        from alphamind.data_sources.polygon import corporate_actions
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL", "MSFT"], [])
+
+        class _PartialClient(FakePolygonAPI):
+            def get_ticker_details(self, ticker: str) -> Any:
+                if ticker == "AAPL":
+                    raise BadResponse("delisted ticker 404")
+                return super().get_ticker_details(ticker)
+
+        client = _PartialClient(dividends_by_ticker={"MSFT": [make_dividend(ticker="MSFT")]})
+
+        corporate_actions.collect_corporate_actions(
+            ticker_scope=["AAPL", "MSFT"],
+            _client=client,
+            _session_factory=sf,
+            _repo=FakeRunRepo(),
+        )
+
+        with sf() as sess:
+            rows = sess.query(CorporateActions).all()
+        # MSFT's dividend was collected; AAPL's fetch failure was skipped, not fatal.
+        assert {r.ticker for r in rows} == {"MSFT"}
+
+
+# ---------------------------------------------------------------------------
+# corporate_actions.py — reconcile_delisted_tickers
+# ---------------------------------------------------------------------------
+
+
+class TestReconcileDelistedTickers:
+    def _seed_action(self, sf: Any, **overrides: str | None) -> None:
+        defaults: dict[str, str | None] = {
+            "action_id": "ca-1",
+            "ticker": "AAPL",
+            "action_type": "merger",
+            "ex_date": "2026-05-07",
+            "source": "manual",
+            "ingested_at": "2026-05-07T00:00:00Z",
+        }
+        defaults.update(overrides)
+        with sf() as sess:
+            sess.merge(CorporateActions(**defaults))
+            sess.commit()
+
+    def test_merger_row_deactivates_ticker(self) -> None:
+        """ALP-584 AC4: a synthetic merger row flips the asset_universe row."""
+        from alphamind.data_sources.polygon import corporate_actions
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL"], [])
+        self._seed_action(sf, ticker="AAPL", action_type="merger", acquirer_ticker="MSFT")
+
+        deactivated = corporate_actions.reconcile_delisted_tickers(sf)
+
+        assert deactivated == 1
+        with sf() as sess:
+            row = sess.query(AssetUniverse).filter_by(ticker="AAPL").first()
+        assert row.is_active == 0
+        assert row.removed_date == "2026-05-07"
+        assert row.removal_reason == "acquired by MSFT"
+
+    def test_delisting_row_deactivates_ticker(self) -> None:
+        from alphamind.data_sources.polygon import corporate_actions
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL"], [])
+        self._seed_action(sf, ticker="AAPL", action_type="delisting")
+
+        corporate_actions.reconcile_delisted_tickers(sf)
+
+        with sf() as sess:
+            row = sess.query(AssetUniverse).filter_by(ticker="AAPL").first()
+        assert row.is_active == 0
+        assert row.removal_reason == "delisted"
+
+    def test_merger_without_acquirer_uses_generic_reason(self) -> None:
+        from alphamind.data_sources.polygon import corporate_actions
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL"], [])
+        self._seed_action(sf, ticker="AAPL", action_type="merger")
+
+        corporate_actions.reconcile_delisted_tickers(sf)
+
+        with sf() as sess:
+            row = sess.query(AssetUniverse).filter_by(ticker="AAPL").first()
+        assert row.is_active == 0
+        assert row.removal_reason == "merger completed"
+
+    def test_dividend_row_does_not_deactivate(self) -> None:
+        from alphamind.data_sources.polygon import corporate_actions
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL"], [])
+        self._seed_action(sf, ticker="AAPL", action_type="cash_dividend")
+
+        deactivated = corporate_actions.reconcile_delisted_tickers(sf)
+
+        assert deactivated == 0
+        with sf() as sess:
+            row = sess.query(AssetUniverse).filter_by(ticker="AAPL").first()
+        assert row.is_active == 1
+
+    def test_idempotent_rerun_is_noop(self) -> None:
+        from alphamind.data_sources.polygon import corporate_actions
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL"], [])
+        self._seed_action(sf, ticker="AAPL", action_type="merger", acquirer_ticker="MSFT")
+
+        first = corporate_actions.reconcile_delisted_tickers(sf)
+        second = corporate_actions.reconcile_delisted_tickers(sf)
+
+        assert first == 1
+        assert second == 0
+        with sf() as sess:
+            row = sess.query(AssetUniverse).filter_by(ticker="AAPL").first()
+        assert row.removed_date == "2026-05-07"
+
 
 # ---------------------------------------------------------------------------
 # reference.py

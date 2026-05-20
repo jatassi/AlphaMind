@@ -108,6 +108,8 @@ class FakeTickerDetails:
     weighted_shares_outstanding: int | None
     share_class_shares_outstanding: int | None
     name: str = ""
+    active: bool = True
+    delisted_utc: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +202,17 @@ class FakePolygonAPI:
 
     def get_ticker_details(self, ticker: str) -> object:
         self.ticker_detail_calls.append(ticker)
-        return self.ticker_details[ticker]
+        details = self.ticker_details.get(ticker)
+        if details is None:
+            # Polygon returns details for any valid ticker; an unconfigured
+            # ticker stands in for a still-listed name (active, not delisted).
+            return FakeTickerDetails(
+                ticker=ticker,
+                market_cap=None,
+                weighted_shares_outstanding=None,
+                share_class_shares_outstanding=None,
+            )
+        return details
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +309,8 @@ def make_ticker_details(
     shares_outstanding: int = 15_000_000_000,
     float_shares: int = 14_800_000_000,
     name: str = "Apple Inc.",
+    active: bool = True,
+    delisted_utc: str | None = None,
 ) -> FakeTickerDetails:
     return FakeTickerDetails(
         ticker=ticker,
@@ -304,6 +318,8 @@ def make_ticker_details(
         weighted_shares_outstanding=shares_outstanding,
         share_class_shares_outstanding=float_shares,
         name=name,
+        active=active,
+        delisted_utc=delisted_utc,
     )
 
 
