@@ -115,7 +115,7 @@ Options headroom:                          [omitted if options_enabled: false]
   Vega:           {current}% / {limit}%/pt
 
 Position-level constraint proximity:
-  POS-NVDA-001: 4.2% of portfolio (max 5.0%) — P/L: -18% of cost (max loss: -30%) [⚠ WARNING]
+  POS-NVDA-001: 4.2% of portfolio (max 5.0%) — P/L: -18% of cost (max loss: -30%) [⚠ WARNING: size]
   POS-AMD-002:  2.1% of portfolio (max 5.0%) — P/L: +5% of cost
   POS-JPM-003:  3.8% of portfolio (max 5.0%) — P/L: -2% of cost
   ...
@@ -158,6 +158,8 @@ Hard blocks (do NOT recommend):
 
 **Why position-level detail:** To recommend intelligently, the strategist needs to know which positions are nearest constraint boundaries, which sectors have room vs. capacity, and which positions contribute to drawdown.
 
+**Proximity zone tag:** Each row's trailing tag carries the displayed zone (the max severity of size-proximity and loss-proximity) and names its driver(s) — `[⚠ WARNING: size]`, `[🔴 CRITICAL: loss]`, or `[🔴 CRITICAL: size+loss]`. Size proximity compares position weight to the per-position cap; loss proximity compares signed P/L to the signed max-loss floor, so a winning position is never flagged for an approaching loss.
+
 **Abandoned position actions section:** ADD, ADJUST, CLOSE, CANCEL commands the PM approved in the prior invocation but failed at broker submission (per [state-persistence.md § Phase 2 write path](../05-execution-layer/state-persistence.md)). Scoped to the prior invocation only. Each entry prompts evaluation against current data; if intent holds, a new `SA-n` or `SA-ORD-n` may be produced. Action-decision rigor in [strategist.md](../04-decision-layer/strategist.md) applies unchanged. A CLOSE abandonment deserves particular attention — an intended risk-reducing exit that didn't execute is the most operationally consequential failure mode. The abandoned-openings section is portfolio-awareness context; the analyst owns re-proposing those.
 
 **Strategist remedy responsibility:** When regime-transition breaches are present, the strategist proposes specific remedies for each breaching position — trim to compliance (with quantity), close, or hold with thesis-based rationale. Position-level thesis context (target proximity, conviction, catalyst timing) makes the strategist the right agent to decide *which* positions to reduce; the PM handles cross-constraint interactions and execution.
@@ -199,7 +201,7 @@ Options headroom:                          [omitted if options_enabled: false]
   Vega:           {current}% / {limit}%/pt
 
 Position-level constraint proximity:
-  POS-NVDA-001: 4.2% of portfolio (max 5.0%) — P/L: -18% of cost (max loss: -30%) [⚠ WARNING]
+  POS-NVDA-001: 4.2% of portfolio (max 5.0%) — P/L: -18% of cost (max loss: -30%) [⚠ WARNING: size]
   POS-AMD-002:  2.1% of portfolio (max 5.0%) — P/L: +5% of cost
   ...
 

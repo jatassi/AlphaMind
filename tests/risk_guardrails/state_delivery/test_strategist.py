@@ -701,7 +701,7 @@ def test_render_strategist_header_full_system_profile_full_fixture() -> None:
             "",
             "Position-level constraint proximity:",
             "  POS-NVDA-001:  4.2% of portfolio (max 5.0%) — "
-            "P/L: -18.0% of cost (max loss: -30.0%) [⚠ WARNING]",
+            "P/L: -18.0% of cost (max loss: -30.0%) [⚠ WARNING: size]",
             "  POS-AAPL-002:  3.0% of portfolio (max 5.0%) — P/L: +5.0% of cost (max loss: -30.0%)",
             "  POS-MU-003:    2.5% of portfolio (max 5.0%) — P/L: +2.0% of cost (max loss: -30.0%)",
             "  POS-AVGO-004:  3.0% of portfolio (max 5.0%) — P/L: -2.0% of cost (max loss: -30.0%)",
@@ -986,12 +986,12 @@ def test_render_strategist_header_groups_unclassified_position_at_end() -> None:
     ("weight", "expected_tag"),
     [
         (3.4, ""),  # 68% — NORMAL, no tag
-        (3.5, " [⚠ WARNING]"),  # 70% — WARNING
-        (4.2, " [⚠ WARNING]"),  # 84% — WARNING
-        (4.3, " [\U0001f534 CRITICAL]"),  # 86% — CRITICAL
-        (4.7, " [\U0001f534 CRITICAL]"),  # 94% — CRITICAL
-        (4.75, " [BLOCKED]"),  # 95% — BLOCKED
-        (5.0, " [BLOCKED]"),  # 100% — BLOCKED
+        (3.5, " [⚠ WARNING: size]"),  # 70% — WARNING
+        (4.2, " [⚠ WARNING: size]"),  # 84% — WARNING
+        (4.3, " [\U0001f534 CRITICAL: size]"),  # 86% — CRITICAL
+        (4.7, " [\U0001f534 CRITICAL: size]"),  # 94% — CRITICAL
+        (4.75, " [BLOCKED: size]"),  # 95% — BLOCKED
+        (5.0, " [BLOCKED: size]"),  # 100% — BLOCKED
     ],
 )
 def test_render_strategist_header_emits_zone_tag_per_threshold(
@@ -1019,6 +1019,38 @@ def test_render_strategist_header_emits_zone_tag_per_threshold(
         line for line in rendered.splitlines() if line.lstrip().startswith("POS-NVDA-001:")
     )
     assert proximity_line.endswith(f"of cost (max loss: -30.0%){expected_tag}")
+
+
+def test_render_strategist_header_critical_from_size_not_positive_pnl() -> None:
+    """ALP-580 regression: debug-pos-07 (weight 4.5%, P/L +19900%) in the strategist header.
+
+    The CRITICAL tag must attribute to size proximity (4.5% / 5.0% = 90%), not
+    to the +19900% P/L — a large gain is the opposite of a max-loss breach.
+    """
+    pos = _make_equity_position(
+        position_id="POS-NVDA-001",
+        position_weight_pct=4.5,
+        unrealized_pnl_pct=19_900.0,
+    )
+    view = _make_strategist_view(positions=(_make_position_view(pos),))
+    rendered = render_strategist_header(
+        strategist_view=view,
+        invocation_id="inv-001",
+        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
+        options_enabled=False,
+        short_selling_enabled=False,
+        active_sectors=("tech", "semis"),
+        config=_make_state_delivery_config(),
+        sector_label_display=_MICRO_SECTOR_LABELS,
+        sector_resolver=_make_micro_sector_resolver(),
+        total_portfolio_value_usd=500_000.0,
+        available_for_new_positions_usd=300_000.0,
+    )
+    proximity_line = next(
+        line for line in rendered.splitlines() if line.lstrip().startswith("POS-NVDA-001:")
+    )
+    # An exact `: size]` tag rules out the `: loss]` and `: size+loss]` variants.
+    assert proximity_line.endswith("[\U0001f534 CRITICAL: size]")
 
 
 # ---------------------------------------------------------------------------

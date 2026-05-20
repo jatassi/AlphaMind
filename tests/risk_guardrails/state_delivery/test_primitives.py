@@ -819,7 +819,7 @@ def _make_active_parameters_for_proximity(
 
 
 def test_position_proximity_positive_pnl_exceeding_max_loss_magnitude_not_critical() -> None:
-    """ALP-550 AC#1: P/L=+19900%, max_loss=-80%, small size → no CRITICAL tag."""
+    """ALP-550 AC#1: P/L=+19900%, max_loss=-80%, small size → no zone tag."""
     pos = _make_strategist_position_view(
         position_id="POS-001",
         position_weight_pct=2.0,
@@ -829,13 +829,13 @@ def test_position_proximity_positive_pnl_exceeding_max_loss_magnitude_not_critic
         positions=(pos,),
         active_risk_parameters=_make_active_parameters_for_proximity(),
     )
-    assert "[\U0001f534 CRITICAL]" not in rendered
-    assert "[⚠ WARNING]" not in rendered
-    assert "[BLOCKED]" not in rendered
+    assert "CRITICAL" not in rendered
+    assert "WARNING" not in rendered
+    assert "BLOCKED" not in rendered
 
 
 def test_position_proximity_loss_breach_flags_critical_or_blocked() -> None:
-    """ALP-550 AC#2: P/L=-85%, max_loss=-80%, small size → critical-level tag."""
+    """ALP-550 AC#2: P/L=-85%, max_loss=-80%, small size → loss-driven CRITICAL tag."""
     pos = _make_strategist_position_view(
         position_id="POS-001",
         position_weight_pct=2.0,
@@ -845,7 +845,7 @@ def test_position_proximity_loss_breach_flags_critical_or_blocked() -> None:
         positions=(pos,),
         active_risk_parameters=_make_active_parameters_for_proximity(),
     )
-    assert "[\U0001f534 CRITICAL]" in rendered or "[BLOCKED]" in rendered
+    assert "[\U0001f534 CRITICAL: loss]" in rendered
 
 
 def test_position_proximity_loss_approaching_max_loss_flags_warning() -> None:
@@ -859,8 +859,8 @@ def test_position_proximity_loss_approaching_max_loss_flags_warning() -> None:
         positions=(pos,),
         active_risk_parameters=_make_active_parameters_for_proximity(),
     )
-    assert "[⚠ WARNING]" in rendered
-    assert "[\U0001f534 CRITICAL]" not in rendered
+    assert "[⚠ WARNING: loss]" in rendered
+    assert "CRITICAL" not in rendered
 
 
 def test_position_proximity_zero_pnl_with_max_loss_is_normal() -> None:
@@ -874,9 +874,9 @@ def test_position_proximity_zero_pnl_with_max_loss_is_normal() -> None:
         positions=(pos,),
         active_risk_parameters=_make_active_parameters_for_proximity(),
     )
-    assert "[\U0001f534 CRITICAL]" not in rendered
-    assert "[⚠ WARNING]" not in rendered
-    assert "[BLOCKED]" not in rendered
+    assert "CRITICAL" not in rendered
+    assert "WARNING" not in rendered
+    assert "BLOCKED" not in rendered
 
 
 def test_position_proximity_size_proximity_still_drives_tag_when_loss_normal() -> None:
@@ -890,7 +890,7 @@ def test_position_proximity_size_proximity_still_drives_tag_when_loss_normal() -
         positions=(pos,),
         active_risk_parameters=_make_active_parameters_for_proximity(),
     )
-    assert "[\U0001f534 CRITICAL]" in rendered
+    assert "[\U0001f534 CRITICAL: size]" in rendered
 
 
 def test_position_proximity_takes_max_severity_when_both_zones_fire() -> None:
@@ -904,5 +904,40 @@ def test_position_proximity_takes_max_severity_when_both_zones_fire() -> None:
         positions=(pos,),
         active_risk_parameters=_make_active_parameters_for_proximity(),
     )
-    assert "[\U0001f534 CRITICAL]" in rendered
-    assert "[⚠ WARNING]" not in rendered
+    assert "[\U0001f534 CRITICAL: loss]" in rendered
+    assert "WARNING" not in rendered
+
+
+def test_position_proximity_debug_pos_07_critical_is_size_not_loss() -> None:
+    """ALP-580 regression: debug-pos-07 (weight 4.5%, P/L +19900%, max_loss -80%).
+
+    The CRITICAL flag must be attributed to size proximity (4.5% / 5.0% = 90%),
+    NOT to the +19900% P/L — a large *gain* is the opposite of a max-loss breach
+    and its loss zone is NORMAL under the PR #96 signed comparison.
+    """
+    pos = _make_strategist_position_view(
+        position_id="debug-pos-07",
+        position_weight_pct=4.5,
+        unrealized_pnl_pct=19_900.0,
+    )
+    rendered = render_position_proximity_block(
+        positions=(pos,),
+        active_risk_parameters=_make_active_parameters_for_proximity(),
+    )
+    assert "[\U0001f534 CRITICAL: size]" in rendered
+    assert "[\U0001f534 CRITICAL: loss]" not in rendered
+    assert "[\U0001f534 CRITICAL: size+loss]" not in rendered
+
+
+def test_position_proximity_size_and_loss_both_critical_names_both_sources() -> None:
+    """When size and loss zones are both CRITICAL, the tag names size+loss."""
+    pos = _make_strategist_position_view(
+        position_id="POS-001",
+        position_weight_pct=4.5,  # 0.90 of 5.0 → CRITICAL by size
+        unrealized_pnl_pct=-72.0,  # 72/80 = 0.90 → CRITICAL by loss
+    )
+    rendered = render_position_proximity_block(
+        positions=(pos,),
+        active_risk_parameters=_make_active_parameters_for_proximity(),
+    )
+    assert "[\U0001f534 CRITICAL: size+loss]" in rendered

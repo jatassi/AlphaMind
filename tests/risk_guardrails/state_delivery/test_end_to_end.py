@@ -1283,7 +1283,7 @@ class TestNormalHeaderRendering:
     def test_strategist_header_block_inventory(self) -> None:
         rendered = _render_normal_strategist_header()
         assert "Position-level constraint proximity:" in rendered
-        assert "[⚠ WARNING]" in rendered  # POS-NVDA-001 at 4.5% / 5.0% > 0.85 threshold
+        assert "[⚠ WARNING: size]" in rendered  # POS-NVDA-001 at 4.0% / 5.0% = 0.80 size ratio
         # Sector breakdown: 4 active sectors + 1 unclassified group
         assert "  Tech (" in rendered
         assert "  Semis (" in rendered
