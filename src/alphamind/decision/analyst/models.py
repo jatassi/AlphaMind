@@ -437,6 +437,27 @@ class Recommendation(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_strategy_target_type(self) -> Recommendation:
+        # A multi-leg strategy take-profit references the strategy's net P/L
+        # (parent ALP-588 decision F) — an underlying-price target is a category
+        # error, and the strategy P/L evaluator scores a fraction of max profit,
+        # so the only coherent strategy target is pl_percentage. Rejecting the
+        # other types here keeps a non-pl_percentage strategy target from
+        # reaching the OPEN write path's pl_percentage-only bracket builder
+        # (ALP-611).
+        if (
+            isinstance(self.instrument, InstrumentStrategy)
+            and self.target.target_type != "pl_percentage"
+        ):
+            raise ValueError(
+                "a strategy-instrument recommendation requires "
+                "target.target_type='pl_percentage' (a strategy take-profit "
+                "references net P/L as a fraction of max profit); got "
+                f"target_type={self.target.target_type!r}"
+            )
+        return self
+
 
 # ---------------------------------------------------------------------------
 # WatchlistEntry

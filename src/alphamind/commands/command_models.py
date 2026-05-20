@@ -463,6 +463,27 @@ class OpenCommand(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_strategy_target_type(self) -> OpenCommand:
+        # A multi-leg strategy take-profit references the strategy's net P/L
+        # (parent ALP-588 decision F) — an underlying-price target is a category
+        # error, and the strategy P/L evaluator scores a fraction of max profit,
+        # so the only coherent strategy target is pl_percentage. Rejecting the
+        # other types here keeps the OPEN write path's pl_percentage-only
+        # _strategy_target_to_bracket_leg unreachable by non-pl_percentage
+        # targets (ALP-611).
+        if (
+            isinstance(self.instrument, StrategyInstrument)
+            and self.target.target_type != "pl_percentage"
+        ):
+            raise ValueError(
+                "OpenCommand for a strategy instrument requires "
+                "target.target_type='pl_percentage' (a strategy take-profit "
+                "references net P/L as a fraction of max profit); got "
+                f"target_type={self.target.target_type!r}"
+            )
+        return self
+
 
 class CloseCommand(BaseModel):
     """CLOSE command — exit a held position."""

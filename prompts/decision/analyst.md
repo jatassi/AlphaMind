@@ -116,6 +116,8 @@ Top-level shape:
 
 Within each recommendation, every required field in the schema must be present. `position_size.delta_adjusted_exposure` and `guardrail_validation_result` are populated from the final PASS call to `validate_guardrail`; do not author their values. `entry_window` and `entry_window_rationale` are paired — include both or neither.
 
+Target type by instrument: a `strategy` instrument requires `target.target_type = "pl_percentage"` — a multi-leg strategy take-profit references the strategy's net P/L as a fraction of its max profit, not an underlying price. `absolute_price` and `pl_dollar` targets are valid only for `equity` and `option` instruments.
+
 Source reference rule: every reference ID you emit in narrative fields must match a reference that actually appears in your synthesizer input (or is returned by a `retrieve_brief` call). Never invent a reference ID. If a claim needs a source and none exists, remove the claim or drop the thesis.
 
 Presentation order within `recommendations`: conviction descending; then entry window urgency (binary decay with nearest deadline first, then gradual, then no window); then risk asymmetry (defined-risk before open-ended). This is a readability convention to help the PM scan high-signal setups first — not a preference signal. Identical conviction and window characteristics may appear in any relative order.
