@@ -406,7 +406,7 @@ class TestSeederAgainstProdSnapshot:
                     "INSERT INTO distillation_ticker_baseline "
                     "(ticker, baseline_kind, as_of, mean, stdev, n_observations, "
                     " window_days, calibration_state, ingested_at) "
-                    "VALUES (:t, :k, :as_of, 0.0, 0.0, 0, 20, 'bootstrap', :ing)"
+                    "VALUES (:t, :k, :as_of, 0.0, 0.0, 0, 20, 'accumulating', :ing)"
                 ),
                 {
                     "t": "AAPL",
