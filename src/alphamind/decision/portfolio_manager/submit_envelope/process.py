@@ -57,6 +57,7 @@ from alphamind.portfolio_state.records.positions import (
     OptionsPositionDetails,
     PositionRecord,
     StrategyPositionDetails,
+    position_direction,
     resolve_ticker,
 )
 from alphamind.risk_guardrails.guardrail_evaluation import Status
@@ -479,10 +480,13 @@ def _add_instrument_kwargs(position: PositionRecord) -> dict[str, Any]:
     """Build the kwargs for :class:`ValidationInstrument` from a persisted
     :class:`PositionRecord` (the AddCommand resolution path).
 
-    Position-level direction is :class:`Direction.LONG` for STRATEGY by
-    persistence convention (see
-    :func:`~alphamind.execution.write_paths.phase2.open._direction_from_instrument`);
-    per-leg directions ride on the leg tuples.
+    The position-level direction is read through :func:`position_direction` —
+    a concrete :class:`Direction` for equity / single-leg options, ``None`` for
+    a strategy (which has no position-level direction). The strategy branch
+    below replaces that ``None`` with :class:`Direction.LONG`: that override is
+    ALP-588's proposal-side handling of the :class:`ValidationInstrument`
+    direction field (the per-leg directions ride on the leg tuples), retired by
+    the ALP-603 follow-on — it is left in place here.
     """
     details = position.details
     ticker = resolve_ticker(details)
@@ -494,7 +498,7 @@ def _add_instrument_kwargs(position: PositionRecord) -> dict[str, Any]:
         raise ValueError(msg)
     kwargs: dict[str, Any] = {
         "ticker": ticker,
-        "direction": position.direction,
+        "direction": position_direction(position),
     }
     if isinstance(details, EquityPositionDetails):
         kwargs["asset_type"] = InstrumentType.EQUITY
