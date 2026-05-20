@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from alphamind.distillation.aggregation import EMPTY_UNIVERSAL_CONTEXT_MARKER
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.correlation_brief import (
+    EMPTY_FINDINGS_MARKER,
     CorrelationRegimeBrief,
     assemble_correlation_brief,
 )
@@ -183,14 +185,23 @@ def test_no_data_invocation_renders_every_section_with_empty_state_marker() -> N
         "=== UNIVERSAL CONTEXT ===",
         "=== ANOMALY FLAGS (0) ===",
     )
+    # Each header appears exactly once, in document order. Counting on
+    # top of the position check hardens against a future regression that
+    # accidentally double-renders a section (``str.find`` would still
+    # return the first index and pass an ordering-only assertion).
     for header in expected_headers:
-        assert header in text, f"{header} missing from no-data brief"
-
-    # Document order — each header strictly follows the previous one.
+        count = text.count(header)
+        assert count == 1, f"{header} should appear exactly once, found {count}"
     positions = [text.find(header) for header in expected_headers]
     assert positions == sorted(positions), positions
 
-    # CR-N sections with no entries render the explicit empty-state marker.
+    # Every section pair is separated by exactly one blank line — the
+    # ``\n\n=== `` pattern precedes every header but the first.
+    for header in expected_headers[1:]:
+        assert f"\n\n{header}" in text, f"missing blank-line separator before {header}"
+
+    # CR-N sections with no entries render the explicit empty-state marker
+    # immediately after the section header.
     empty_cr_sections = (
         "=== INTRA-SECTOR CORRELATION ===",
         "=== CROSS-SECTOR ROTATION ===",
@@ -201,19 +212,14 @@ def test_no_data_invocation_renders_every_section_with_empty_state_marker() -> N
         "=== NARRATIVE LAG ===",
     )
     for header in empty_cr_sections:
-        idx = text.find(header)
-        following = text[idx + len(header) :].lstrip("\n")
-        assert following.startswith("(no findings)"), (
-            f"{header} should be followed by '(no findings)' marker, got: {following[:80]!r}"
+        assert f"{header}\n{EMPTY_FINDINGS_MARKER}\n" in text, (
+            f"{header} should be followed by the {EMPTY_FINDINGS_MARKER!r} marker"
         )
 
-    # Universal context section carries its own empty-state line (the regime
-    # block is excluded from the universal-context body — it is already
-    # embedded as CR-1).
-    universal_idx = text.find("=== UNIVERSAL CONTEXT ===")
-    next_section_idx = text.find("=== ANOMALY FLAGS", universal_idx)
-    universal_body = text[universal_idx + len("=== UNIVERSAL CONTEXT ===") : next_section_idx]
-    assert "(no universal-broadcast blocks)" in universal_body, universal_body
+    # Universal context section carries its own empty-state marker (the
+    # regime block is excluded from the universal-context body — it is
+    # already embedded as CR-1).
+    assert f"=== UNIVERSAL CONTEXT ===\n{EMPTY_UNIVERSAL_CONTEXT_MARKER}\n" in text
 
 
 def test_freshness_min_reflects_oldest_contributing_block() -> None:
