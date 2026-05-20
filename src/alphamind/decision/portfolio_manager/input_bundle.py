@@ -43,6 +43,8 @@ from alphamind.portfolio_state.records.positions import (
     InstrumentType,
     OptionsPositionDetails,
     PositionRecord,
+    StrategyPositionDetails,
+    position_direction,
     resolve_ticker,
 )
 from alphamind.portfolio_state.records.theses import (
@@ -345,9 +347,27 @@ def _render_per_position_record(
 
 def _render_underlying_line(pos: PositionView) -> str:
     ticker = _resolve_position_ticker(pos)
-    direction = _DIRECTION_DISPLAY[pos.direction]
     instrument = _INSTRUMENT_TYPE_DISPLAY[pos.instrument_type]
-    return f"  Underlying:    {ticker} (instrument: {instrument}, direction: {direction})"
+    return (
+        f"  Underlying:    {ticker} "
+        f"(instrument: {instrument}, direction: {_direction_display(pos)})"
+    )
+
+
+def _direction_display(pos: PositionView) -> str:
+    """Return the direction word for the underlying line.
+
+    An equity / single-leg options position is long or short. A multi-leg
+    strategy has no position-level direction — ``position_direction()`` returns
+    ``None`` — so the strategy-type label stands in its place, the same
+    treatment story 01b applies to ``AnalystHeldPosition``.
+    """
+    direction = position_direction(pos.record)
+    if direction is not None:
+        return _DIRECTION_DISPLAY[direction]
+    details = pos.details
+    assert isinstance(details, StrategyPositionDetails)
+    return details.strategy_type_label
 
 
 def _resolve_position_ticker(pos: PositionRecord | PositionView) -> str:
