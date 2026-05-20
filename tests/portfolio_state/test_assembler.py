@@ -1965,3 +1965,55 @@ def test_strategy_unbounded_max_loss_yields_zero_pnl_pct() -> None:
     )
     assert float(view.unrealized_pnl_usd) == pytest.approx(150.0)
     assert view.unrealized_pnl_pct == 0.0
+
+
+def test_equity_unrealized_pnl_pct_divides_by_cost_basis_unchanged() -> None:
+    """ALP-599 regression: an EQUITY position's P/L pct still divides by cost basis.
+
+    100 shares at $500 cost (cost basis $50,000); current price $550
+    (MV $55,000). P/L USD = $5,000; P/L pct = 5000 / 50000 = 10% — the
+    instrument_type branch leaves the equity path on compute_unrealized_pnl_pct.
+    """
+    pos = _make_equity_position(share_count=100.0, cost_per_share=500.0)
+    fixture = _make_fixture(
+        open_positions=(pos,),
+        cash_ledger=_make_cash_ledger(current_cash=0.0),
+    )
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 550.0)}, _NOW)
+    assembled = assemble_snapshot(
+        repository=repo,
+        price_provider=provider,
+        option_price_provider=StubOptionPriceProvider({}, _NOW),
+        sector_resolver=_null_sector_resolver,
+        config=_make_config(),
+        now=_NOW,
+    )
+    view = assembled.snapshot.open_positions[0]
+    assert float(view.unrealized_pnl_usd) == pytest.approx(5_000.0)
+    assert view.unrealized_pnl_pct == pytest.approx(10.0)
+
+
+def test_single_leg_option_unrealized_pnl_pct_divides_by_cost_basis_unchanged() -> None:
+    """ALP-599 regression: a single-leg OPTIONS position's P/L pct still divides by cost basis.
+
+    2 contracts at $5 premium (cost basis = 2 * 100 * 5 = $1,000); live mark
+    $7.50 (MV = 2 * 100 * 7.50 = $1,500). P/L USD = $500; P/L pct =
+    500 / 1000 = 50% — the instrument_type branch leaves OPTIONS unchanged.
+    """
+    occ = _occ_symbol_for_test()
+    assembled = _assemble_with_option_provider(
+        option_quotes={
+            occ: PriceQuote(
+                ticker=occ,
+                price_usd=7.50,
+                as_of_timestamp=_NOW - timedelta(seconds=30),
+                source=PriceSource.INTRADAY_QUOTE,
+                is_stale=False,
+            )
+        },
+        premium=5.0,
+    )
+    view = assembled.snapshot.open_positions[0]
+    assert float(view.unrealized_pnl_usd) == pytest.approx(500.0)
+    assert view.unrealized_pnl_pct == pytest.approx(50.0)
