@@ -31,6 +31,12 @@ from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
 )
+from alphamind.portfolio_state.computations.positions import (
+    compute_strategy_market_value_usd,
+    compute_unrealized_pnl_usd,
+)
+from alphamind.portfolio_state.pricing import PriceQuote, PriceSource
+from alphamind.portfolio_state.records.positions import StrategyPositionDetails
 from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
 from alphamind.scheduler.debug_e2e.seed import wipe_and_seed
 from alphamind.state.tables import (
@@ -40,9 +46,21 @@ from alphamind.state.tables import (
     ThesisRow,
 )
 from alphamind.state.tables.drawdown_state import DRAWDOWN_STATE_SINGLETON_ID
+from alphamind.state.tables.positions_codec import row_to_record
 from alphamind.state.tables.theses_codec import rows_to_record
 
 _NOW = datetime(2026, 5, 17, 14, 30, tzinfo=UTC)
+
+
+def _leg_quote(price_usd: float) -> PriceQuote:
+    """A fresh leg-price quote — mirrors the snapshot assembler's MTM fallback."""
+    return PriceQuote(
+        ticker="UNUSED",
+        price_usd=price_usd,
+        as_of_timestamp=_NOW,
+        source=PriceSource.INTRADAY_QUOTE,
+        is_stale=False,
+    )
 
 
 def _alembic_config(db_path: Path) -> Config:
@@ -196,6 +214,51 @@ class TestSeederPostStateInvariants:
                     f"strategy {row.position_id} leg {leg['leg_id']} has "
                     f"premium_paid_per_contract={premium}; pricing layer rejects price_usd<=0"
                 )
+
+    async def test_strategy_position_marks_to_cost_basis_at_seed_time(
+        self,
+        migrated_factory: tuple[Path, async_sessionmaker[AsyncSession]],
+    ) -> None:
+        """A freshly-seeded strategy position marks to its cost basis (≈ $0 P/L).
+
+        Every synthetic position is a "just placed" entry, so its P/L should
+        read ≈ $0 — as the seeded equity and option positions do. The seeder
+        picks each strategy leg's ``premium_paid_per_contract`` (the snapshot
+        assembler's mark-to-market fallback, since debug-e2e seeds no
+        option-price snapshots) so the direction-aware leg sum equals
+        ``net_premium_usd``. An even split across legs nets a debit spread to
+        ≈ $0 market value against a non-zero cost basis — a -100% P/L artifact
+        on debug-pos-07; see ALP-582.
+        """
+        db_path, factory = migrated_factory
+        await _run_seed(factory, db_path)
+
+        async with factory() as session:
+            strategy_rows = (
+                (
+                    await session.execute(
+                        select(PositionRow).where(PositionRow.instrument_type == "STRATEGY")
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        assert strategy_rows, "synthetic portfolio must include at least one strategy position"
+        for row in strategy_rows:
+            record = row_to_record(row)
+            assert isinstance(record.details, StrategyPositionDetails)
+            # No option-price snapshot is seeded, so each leg marks to its
+            # entry premium — the same fallback the snapshot assembler uses.
+            leg_prices = {
+                leg.leg_id: _leg_quote(leg.options.premium_paid_per_contract)
+                for leg in record.details.legs
+            }
+            market_value = compute_strategy_market_value_usd(record, leg_prices)
+            cost_basis = record.details.net_premium_usd
+            assert market_value == pytest.approx(cost_basis)
+            pnl = compute_unrealized_pnl_usd(market_value, cost_basis, record.direction)
+            assert pnl == pytest.approx(0.0)
 
 
 _PROD_SNAPSHOT_PATH = Path("data/alphamind-debug-e2e.db")
