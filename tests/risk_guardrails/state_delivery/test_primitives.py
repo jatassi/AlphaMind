@@ -28,6 +28,7 @@ from alphamind.portfolio_state.records.positions import (
 )
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.state_delivery.primitives import (
+    _classify_loss_zone,
     format_dollar,
     format_pct,
     render_capital_block,
@@ -941,3 +942,23 @@ def test_position_proximity_size_and_loss_both_critical_names_both_sources() -> 
         active_risk_parameters=_make_active_parameters_for_proximity(),
     )
     assert "[\U0001f534 CRITICAL: size+loss]" in rendered
+
+
+def test_classify_loss_zone_normal_for_winning_credit_strategy() -> None:
+    """ALP-599: a winning credit strategy (positive P/L pct) classifies as NORMAL.
+
+    Once the strategy P/L percentage is non-inverting (ALP-599 — divides by
+    abs(max_loss_usd)), a profitable net-credit strategy carries a positive
+    ``unrealized_pnl_pct``. ``_classify_loss_zone`` computes
+    ``loss_progress = -pnl_pct / max_loss_pct``; a positive P/L over a positive
+    max-loss magnitude is non-positive, so the zone stays NORMAL — no WARNING
+    or CRITICAL on a winner. ``primitives.py`` needs no change; it is a correct
+    consumer of a now-correct percentage.
+    """
+    # +30% P/L (the value the ALP-599 assembler tests assert for a profitable
+    # net-credit strategy) against an 80% max-loss floor.
+    assert _classify_loss_zone(30.0, 80.0) is RiskZone.NORMAL
+    # Even an extreme winner stays NORMAL.
+    assert _classify_loss_zone(19_900.0, 80.0) is RiskZone.NORMAL
+    # A losing credit strategy still escalates — the percentage is signed.
+    assert _classify_loss_zone(-72.0, 80.0) is RiskZone.CRITICAL
