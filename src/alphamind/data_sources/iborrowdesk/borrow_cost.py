@@ -10,8 +10,10 @@ Two public entry points:
 
     - ``IBorrowDeskCoverageError`` (404 not_found) → warn-log, continue.
     - ``IBorrowDeskBlockedError`` (444 / TCP empty-reply) → halt sweep,
-      mark ``collection_runs`` failed, re-raise.  No further requests are
-      issued within the same run.
+      persist a resume cursor at the blocked ticker, and complete as a
+      partial success.  No further requests are issued within the same run;
+      the next run resumes at the cursor so coverage rotates across the full
+      universe over consecutive runs (``borrow_cost_sweep_cursor``).
 
 ``refresh_ticker(ticker)``
     On-demand single-ticker refresh.  Same parse + upsert path; respects the
@@ -36,11 +38,19 @@ from alphamind.data_sources.iborrowdesk.client import (
     IBorrowDeskClient,
     IBorrowDeskCoverageError,
 )
-from alphamind.persistence.models import BorrowCostDaily, BorrowCostIntraday
+from alphamind.persistence.models import (
+    BorrowCostDaily,
+    BorrowCostIntraday,
+    BorrowCostSweepCursor,
+)
 
 log = logging.getLogger(__name__)
 
 _SOURCE = "iborrowdesk"
+
+# Collector name — used both as the ``collection_runs`` label and as the
+# primary key of the ``borrow_cost_sweep_cursor`` resume-cursor row.
+_SWEEP_COLLECTOR = "iborrowdesk.borrow_cost"
 
 # Module-level client — reused across the full universe sweep so a single
 # httpx.Client connection pool serves all tickers in one run.
@@ -58,15 +68,58 @@ def _fetch_ticker(ticker: str) -> dict[str, Any]:
 
 
 def _get_tickers(ticker_scope: list[str] | None) -> list[str]:
-    """Return the ticker list to sweep. Replaced by patch in tests."""
+    """Return the sorted ticker list to sweep. Replaced by patch in tests.
+
+    The list is sorted so the rotating resume cursor (``_resume_order``)
+    addresses a stable, deterministic sweep order run-to-run — the
+    ``asset_universe`` query carries no ``ORDER BY`` of its own.
+    """
     if ticker_scope is not None:
-        return ticker_scope
-    return active_universe_tickers(include_benchmarks=False)
+        return sorted(ticker_scope)
+    return sorted(active_universe_tickers(include_benchmarks=False))
 
 
 def _now() -> datetime:
     """Return current UTC time. Replaced by patch in tests."""
     return datetime.now(UTC)
+
+
+# ---------------------------------------------------------------------------
+# Resume cursor — rotates the sweep across the universe over several runs
+# ---------------------------------------------------------------------------
+
+
+def _resume_order(sess: Any, tickers: list[str]) -> list[str]:
+    """Rotate *tickers* so the sweep resumes at the persisted cursor.
+
+    The previous run records the ticker its 444 block tripped on; resuming
+    there rotates coverage across the universe rather than restarting at the
+    same head every run. Returns *tickers* unchanged when no cursor is set,
+    when a completed sweep cleared it, or when the cursor ticker has dropped
+    out of the active universe.
+    """
+    cursor = sess.get(BorrowCostSweepCursor, _SWEEP_COLLECTOR)
+    if cursor is None or cursor.next_ticker is None:
+        return list(tickers)
+    try:
+        idx = tickers.index(cursor.next_ticker)
+    except ValueError:
+        return list(tickers)
+    return tickers[idx:] + tickers[:idx]
+
+
+def _save_cursor(sess: Any, next_ticker: str | None, updated_at: str) -> None:
+    """Persist where the next sweep should resume.
+
+    *next_ticker* is the ticker a 444 block halted on, or *None* when the
+    sweep completed without a block (resetting the cursor to the head).
+    """
+    cursor = sess.get(BorrowCostSweepCursor, _SWEEP_COLLECTOR)
+    if cursor is None:
+        cursor = BorrowCostSweepCursor(collector=_SWEEP_COLLECTOR)
+        sess.add(cursor)
+    cursor.next_ticker = next_ticker
+    cursor.updated_at = updated_at
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +210,14 @@ def collect_borrow_cost(
     """
     Daily universe sweep: fetch borrow cost for every active ticker.
 
+    iBorrowDesk 444-blocks the egress IP after a fixed number of requests per
+    run, so one run only reaches part of the universe. On a block the sweep
+    halts (the client contract requires it — sustained requests deepen the
+    block), records the blocked ticker as a resume cursor, and completes as a
+    partial success rather than ``failed``. The next run resumes at that
+    ticker so coverage rotates across the whole universe over consecutive
+    runs.
+
     Parameters
     ----------
     ticker_scope:
@@ -172,12 +233,15 @@ def collect_borrow_cost(
 
     tickers = _get_tickers(ticker_scope)
 
-    with track_run("iborrowdesk.borrow_cost", _repo=_repo) as run:
+    with track_run(_SWEEP_COLLECTOR, _repo=_repo) as run:
         ingested_at = _now().isoformat()
         total_rows = 0
+        swept = 0
+        blocked_at: str | None = None
 
         with _session_factory() as sess:
-            for ticker in tickers:
+            sweep = _resume_order(sess, tickers)
+            for ticker in sweep:
                 try:
                     payload = _fetch_ticker(ticker)
                 except IBorrowDeskCoverageError:
@@ -185,17 +249,35 @@ def collect_borrow_cost(
                         "iborrowdesk: ticker %r not in coverage — skipping",
                         ticker,
                     )
+                    swept += 1
                     continue
                 except IBorrowDeskBlockedError:
-                    # Commit whatever we have, then propagate to abort the sweep.
-                    sess.commit()
-                    raise
+                    # 444 block — iBorrowDesk's per-run request quota for this
+                    # egress IP is spent. Halt the sweep and record this
+                    # ticker so the next run resumes here, rotating coverage
+                    # across the universe instead of stranding the tail.
+                    blocked_at = ticker
+                    log.warning(
+                        "iborrowdesk: 444 block at %r after %d/%d tickers — "
+                        "halting sweep; next run resumes here",
+                        ticker,
+                        swept,
+                        len(sweep),
+                    )
+                    break
 
                 total_rows += _process_response(sess, ticker, payload, ingested_at)
+                swept += 1
 
+            _save_cursor(sess, blocked_at, ingested_at)
             sess.commit()
 
         run.rows_written = total_rows
+        if blocked_at is not None:
+            run.error_summary = (
+                f"iBorrowDesk 444 block at {blocked_at} — swept "
+                f"{swept}/{len(sweep)} tickers; next run resumes at {blocked_at}"
+            )
 
 
 def refresh_ticker(

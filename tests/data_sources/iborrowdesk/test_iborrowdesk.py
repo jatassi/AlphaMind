@@ -22,6 +22,7 @@ from alphamind.persistence.models import (
     Base,
     BorrowCostDaily,
     BorrowCostIntraday,
+    BorrowCostSweepCursor,
 )
 from alphamind.persistence.session import make_engine, make_session_factory
 from tests.data_sources._fakes.run_repo import FakeRunRepo
@@ -63,6 +64,42 @@ def _seed_universe(sf: sessionmaker[Session], tickers: list[str]) -> None:
                     )
                 )
         sess.commit()
+
+
+_CURSOR_KEY = "iborrowdesk.borrow_cost"
+
+
+def _seed_cursor(sf: sessionmaker[Session], next_ticker: str | None) -> None:
+    """Seed the borrow-cost sweep resume cursor."""
+    with sf() as sess:
+        sess.add(
+            BorrowCostSweepCursor(
+                collector=_CURSOR_KEY,
+                next_ticker=next_ticker,
+                updated_at="2026-04-25T00:00:00+00:00",
+            )
+        )
+        sess.commit()
+
+
+def _read_cursor(sf: sessionmaker[Session]) -> BorrowCostSweepCursor | None:
+    """Return the persisted borrow-cost sweep cursor row (None when absent)."""
+    with sf() as sess:
+        return sess.get(BorrowCostSweepCursor, _CURSOR_KEY)
+
+
+def _blocking_fetch(block_on: str) -> Callable[[str], dict[str, Any]]:
+    """``_fetch_ticker`` side-effect: serve data for every ticker except
+    *block_on*, which raises ``IBorrowDeskBlockedError`` — simulating the
+    iBorrowDesk 444 per-IP quota trip."""
+    from alphamind.data_sources.iborrowdesk.client import IBorrowDeskBlockedError
+
+    def _side_effect(ticker: str) -> dict[str, Any]:
+        if ticker == block_on:
+            raise IBorrowDeskBlockedError(f"HTTP 444 from iBorrowDesk for {ticker}")
+        return _make_response(ticker=ticker)
+
+    return _side_effect
 
 
 def _make_response(*, ticker: str = "AAPL") -> dict[str, Any]:
@@ -428,61 +465,239 @@ class TestCoverageErrorHandling:
 
 
 # ---------------------------------------------------------------------------
-# collect_borrow_cost — BlockedError → halt sweep, mark failed
+# collect_borrow_cost — BlockedError → halt sweep, partial-success + cursor
 # ---------------------------------------------------------------------------
 
 
 class TestBlockedErrorHandling:
-    def test_halts_sweep_and_marks_failed_on_blocked(self) -> None:
-        from alphamind.data_sources.iborrowdesk.client import IBorrowDeskBlockedError
+    """A 444 block halts the sweep but lands a partial-success run carrying a
+    resume cursor — it no longer re-raises or marks the run ``failed``."""
 
+    def test_block_halts_sweep_without_fetching_remaining_tickers(self) -> None:
         _engine, sf = _make_db()
-        _seed_universe(sf, ["AAPL", "MSFT"])
-        repo = FakeRunRepo()
+        _seed_universe(sf, ["AAA", "BBB", "CCC"])
         fetched: list[str] = []
 
         def _side_effect(ticker: str) -> dict[str, Any]:
             fetched.append(ticker)
-            if ticker == "AAPL":
-                raise IBorrowDeskBlockedError("444 blocked")
+            return _blocking_fetch("BBB")(ticker)
+
+        with (
+            patch(_FETCH_TICKER, side_effect=_side_effect),
+            patch(_GET_TICKERS, return_value=["AAA", "BBB", "CCC"]),
+            patch(_NOW, return_value=_NOW_TS),
+        ):
+            from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
+
+            collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
+
+        # CCC never reached — the sweep halts on the block per the client contract.
+        assert fetched == ["AAA", "BBB"]
+
+    def test_block_is_partial_success_not_failed(self) -> None:
+        _engine, sf = _make_db()
+        _seed_universe(sf, ["AAA", "BBB"])
+        repo = FakeRunRepo()
+
+        with (
+            patch(_FETCH_TICKER, side_effect=_blocking_fetch("BBB")),
+            patch(_GET_TICKERS, return_value=["AAA", "BBB"]),
+            patch(_NOW, return_value=_NOW_TS),
+        ):
+            from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
+
+            # No exception propagates — the block is an expected degraded state.
+            collect_borrow_cost(_session_factory=sf, _repo=repo)
+
+        assert repo.succeeded()
+        assert not repo.failed()
+        summary = repo.latest()["error_summary"]
+        assert summary is not None
+        assert "BBB" in summary
+
+    def test_block_records_resume_cursor_at_blocked_ticker(self) -> None:
+        _engine, sf = _make_db()
+        _seed_universe(sf, ["AAA", "BBB", "CCC"])
+
+        with (
+            patch(_FETCH_TICKER, side_effect=_blocking_fetch("BBB")),
+            patch(_GET_TICKERS, return_value=["AAA", "BBB", "CCC"]),
+            patch(_NOW, return_value=_NOW_TS),
+        ):
+            from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
+
+            collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
+
+        cursor = _read_cursor(sf)
+        assert cursor is not None
+        assert cursor.next_ticker == "BBB"
+
+    def test_rows_swept_before_block_are_committed(self) -> None:
+        _engine, sf = _make_db()
+        _seed_universe(sf, ["AAA", "BBB"])
+
+        with (
+            patch(_FETCH_TICKER, side_effect=_blocking_fetch("BBB")),
+            patch(_GET_TICKERS, return_value=["AAA", "BBB"]),
+            patch(_NOW, return_value=_NOW_TS),
+        ):
+            from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
+
+            collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
+
+        with sf() as sess:
+            assert sess.query(BorrowCostDaily).filter_by(ticker="AAA").count() == 1
+            assert sess.query(BorrowCostDaily).filter_by(ticker="BBB").count() == 0
+
+    def test_block_on_first_ticker_writes_no_rows_but_still_succeeds(self) -> None:
+        from alphamind.data_sources.iborrowdesk.client import IBorrowDeskBlockedError
+
+        _engine, sf = _make_db()
+        _seed_universe(sf, ["AAA"])
+        repo = FakeRunRepo()
+
+        with (
+            patch(_FETCH_TICKER, side_effect=IBorrowDeskBlockedError("HTTP 444")),
+            patch(_GET_TICKERS, return_value=["AAA"]),
+            patch(_NOW, return_value=_NOW_TS),
+        ):
+            from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
+
+            collect_borrow_cost(_session_factory=sf, _repo=repo)
+
+        assert repo.succeeded()
+        with sf() as sess:
+            assert sess.query(BorrowCostDaily).count() == 0
+            assert sess.query(BorrowCostIntraday).count() == 0
+        # The blocked ticker is recorded so the next run retries it first.
+        cursor = _read_cursor(sf)
+        assert cursor is not None
+        assert cursor.next_ticker == "AAA"
+
+
+# ---------------------------------------------------------------------------
+# collect_borrow_cost — resumable rotating-cursor sweep
+# ---------------------------------------------------------------------------
+
+
+class TestResumableSweep:
+    """Consecutive runs resume from the persisted cursor, rotating coverage
+    across the universe instead of restarting at the same head every run."""
+
+    def test_run_resumes_from_persisted_cursor_and_wraps(self) -> None:
+        _engine, sf = _make_db()
+        universe = ["AAA", "BBB", "CCC", "DDD", "EEE"]
+        _seed_universe(sf, universe)
+        _seed_cursor(sf, "CCC")
+        fetched: list[str] = []
+
+        def _side_effect(ticker: str) -> dict[str, Any]:
+            fetched.append(ticker)
             return _make_response(ticker=ticker)
 
         with (
             patch(_FETCH_TICKER, side_effect=_side_effect),
-            patch(_GET_TICKERS, return_value=["AAPL", "MSFT"]),
+            patch(_GET_TICKERS, return_value=universe),
             patch(_NOW, return_value=_NOW_TS),
         ):
             from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
 
-            with pytest.raises(IBorrowDeskBlockedError):
-                collect_borrow_cost(_session_factory=sf, _repo=repo)
+            collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
 
-        # MSFT was never fetched — sweep halted
-        assert "MSFT" not in fetched
+        # Sweep starts at the cursor and wraps around the end of the universe.
+        assert fetched == ["CCC", "DDD", "EEE", "AAA", "BBB"]
 
-        # collection_runs row records failed
-        assert repo.failed()
-
-    def test_no_data_rows_written_when_blocked_on_first_ticker(self) -> None:
-        from alphamind.data_sources.iborrowdesk.client import IBorrowDeskBlockedError
-
+    def test_full_sweep_clears_cursor(self) -> None:
         _engine, sf = _make_db()
-        _seed_universe(sf, ["AAPL"])
-        repo = FakeRunRepo()
+        _seed_universe(sf, ["AAA", "BBB", "CCC"])
+        _seed_cursor(sf, "BBB")
 
         with (
-            patch(_FETCH_TICKER, side_effect=IBorrowDeskBlockedError("444")),
-            patch(_GET_TICKERS, return_value=["AAPL"]),
+            patch(_FETCH_TICKER, return_value=_make_response()),
+            patch(_GET_TICKERS, return_value=["AAA", "BBB", "CCC"]),
             patch(_NOW, return_value=_NOW_TS),
         ):
             from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
 
-            with pytest.raises(IBorrowDeskBlockedError):
-                collect_borrow_cost(_session_factory=sf, _repo=repo)
+            collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
+
+        # A block-free sweep covered the whole universe — cursor resets.
+        cursor = _read_cursor(sf)
+        assert cursor is not None
+        assert cursor.next_ticker is None
+
+    def test_cursor_pointing_at_inactive_ticker_restarts_from_head(self) -> None:
+        _engine, sf = _make_db()
+        universe = ["AAA", "BBB", "CCC"]
+        _seed_universe(sf, universe)
+        _seed_cursor(sf, "ZZZ")  # not in the active universe
+        fetched: list[str] = []
+
+        def _side_effect(ticker: str) -> dict[str, Any]:
+            fetched.append(ticker)
+            return _make_response(ticker=ticker)
+
+        with (
+            patch(_FETCH_TICKER, side_effect=_side_effect),
+            patch(_GET_TICKERS, return_value=universe),
+            patch(_NOW, return_value=_NOW_TS),
+        ):
+            from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
+
+            collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
+
+        assert fetched == ["AAA", "BBB", "CCC"]
+
+    def test_consecutive_blocked_runs_rotate_coverage(self) -> None:
+        """Two blocked runs cover disjoint slices — the tail is not stranded."""
+        _engine, sf = _make_db()
+        universe = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
+        _seed_universe(sf, universe)
+
+        from alphamind.data_sources.iborrowdesk.borrow_cost import collect_borrow_cost
+
+        # Run 1 blocks at CCC after landing AAA, BBB.
+        with (
+            patch(_FETCH_TICKER, side_effect=_blocking_fetch("CCC")),
+            patch(_GET_TICKERS, return_value=universe),
+            patch(_NOW, return_value=_NOW_TS),
+        ):
+            collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
+
+        # Run 2 resumes at CCC, blocks at FFF after landing CCC, DDD, EEE.
+        with (
+            patch(_FETCH_TICKER, side_effect=_blocking_fetch("FFF")),
+            patch(_GET_TICKERS, return_value=universe),
+            patch(_NOW, return_value=_NOW_TS),
+        ):
+            collect_borrow_cost(_session_factory=sf, _repo=FakeRunRepo())
 
         with sf() as sess:
-            assert sess.query(BorrowCostDaily).count() == 0
-            assert sess.query(BorrowCostIntraday).count() == 0
+            covered = {t for (t,) in sess.query(BorrowCostDaily.ticker).distinct()}
+
+        assert covered == {"AAA", "BBB", "CCC", "DDD", "EEE"}
+        cursor = _read_cursor(sf)
+        assert cursor is not None
+        assert cursor.next_ticker == "FFF"
+
+
+# ---------------------------------------------------------------------------
+# _get_tickers — deterministic sweep order
+# ---------------------------------------------------------------------------
+
+
+class TestSweepOrdering:
+    def test_get_tickers_returns_sorted_order(self) -> None:
+        """A deterministic sweep order keeps the rotating resume cursor
+        coherent run-to-run."""
+        from alphamind.data_sources.iborrowdesk.borrow_cost import _get_tickers
+
+        assert _get_tickers(["MSFT", "AAPL", "SHOP", "GOOG"]) == [
+            "AAPL",
+            "GOOG",
+            "MSFT",
+            "SHOP",
+        ]
 
 
 # ---------------------------------------------------------------------------
