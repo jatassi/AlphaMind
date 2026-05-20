@@ -280,8 +280,13 @@ def _direction_from_instrument(
 ) -> Direction:
     """Persisted ``Direction`` for an OPEN command's instrument.
 
-    Strategy instruments carry direction per-leg; the position-level direction
-    defaults to LONG (the leg-level direction is preserved on each leg).
+    For an equity or single-leg option the return is the instrument's own
+    ``direction``. For a :class:`StrategyInstrument` the return is an inert
+    placeholder ``Direction.LONG`` — not a meaningful direction. A multi-leg
+    strategy has no single position-level direction; per parent ALP-588's
+    resolved decision, strategy consumers derive directional sign from the
+    legs (each :class:`StrategyLeg` carries its own ``direction``). See
+    ``docs/design/05-execution-layer/position-model.md`` § Strategy position.
     """
     if isinstance(instrument, StrategyInstrument):
         return Direction.LONG
