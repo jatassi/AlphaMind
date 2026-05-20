@@ -20,6 +20,7 @@ net debit / paid premium; negative = net credit / received premium).
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -1069,8 +1070,14 @@ async def test_all_legs_filled_atomic_open_with_signed_net_cost_basis(
             .all()
         )
         types = [r.event_type for r in log_rows]
+        opened_rows = [r for r in log_rows if r.event_type == EventType.POSITION_OPENED.value]
     assert types.count(EventType.POSITION_OPENED.value) == 1
     assert types.count(EventType.BRACKET_ACTIVATED.value) == 1
+
+    # A strategy POSITION_OPENED carries no fabricated long/short direction —
+    # the position-level side is None for a multi-leg strategy (ALP-607).
+    opened_detail = json.loads(opened_rows[0].detail_json)
+    assert opened_detail["direction"] is None
 
 
 async def test_long_call_spread_has_positive_net_debit(
@@ -1575,8 +1582,6 @@ async def test_cancel_mid_fill_writes_bracket_incomplete_warning(
     assert EventType.POSITION_OPENED.value not in types
 
     # Warning detail names the cancelled legs.
-    import json
-
     detail = json.loads(warnings[0].detail_json)
     missing = detail["missing_leg_types"]
     assert "leg-short-call" in missing or "leg-long-call" in missing
@@ -1731,6 +1736,11 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
     assert EventType.POSITION_CLOSED.value in types
     assert EventType.BRACKET_DISSOLVED.value in types
     assert EventType.THESIS_RESOLVED.value in types
+    # The leg-1 close fill transitions the strategy OPEN→OPEN (leg 1 closed,
+    # leg 2 still open); that reducing fill emits POSITION_REDUCED. The
+    # per-leg reducing signal survives the position_direction() migration
+    # (ALP-607) — a strategy has no position-level direction.
+    assert EventType.POSITION_REDUCED.value in types
 
 
 # ---------------------------------------------------------------------------
@@ -2221,6 +2231,23 @@ async def test_strategy_add_recomputes_average_cost_basis(
         short_leg = leg_state["leg-short-upper"]
         assert short_leg.options.contract_count == pytest.approx(4.0)
         assert short_leg.options.premium_paid_per_contract == pytest.approx(2.25)
+
+        log_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.invocation_id == handle.invocation_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        types = {r.event_type for r in log_rows}
+    # An ADD on an OPEN strategy is a same-sided per-leg fill — it grows the
+    # strategy and must not emit POSITION_REDUCED. The per-leg opening signal
+    # (ALP-607) correctly classifies this OPEN→OPEN fill as non-reducing.
+    assert EventType.POSITION_REDUCED.value not in types
 
 
 async def test_strategy_add_recomputes_parent_payoff_metrics(

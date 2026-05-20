@@ -82,6 +82,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
     StrategyLeg,
     StrategyPositionDetails,
+    position_direction,
 )
 from alphamind.portfolio_state.records.theses import ThesisRecordStatus
 from alphamind.risk_guardrails.guardrail_evaluation.types import MarketInputs
@@ -626,7 +627,12 @@ def _apply_fill_to_options_position(
     if position.status == PositionStatus.PENDING:
         return _apply_options_entry_fill(position, details, fill)
     if position.status == PositionStatus.OPEN:
-        if _is_opening_fill(position.direction, is_buy_side):
+        # Strategy positions are intercepted upstream by _integrate_one_fill;
+        # this helper only ever sees single-leg options, so position_direction()
+        # is non-None here.
+        direction = position_direction(position)
+        assert direction is not None
+        if _is_opening_fill(direction, is_buy_side):
             return _apply_options_add_fill(position, details, fill)
         return _apply_options_exit_fill(position, details, fill)
     msg = f"Phase 1 cannot integrate fill against position status {position.status!r}"
@@ -636,6 +642,49 @@ def _apply_fill_to_options_position(
 def _is_opening_fill(direction: Direction, is_buy_side: bool) -> bool:
     """Same-sided fills grow the position; opposite-sided fills exit it."""
     return is_buy_side == (direction == Direction.LONG)
+
+
+def _strategy_fill_is_reducing(
+    details: StrategyPositionDetails,
+    order: OrderRecord,
+    *,
+    is_buy_side: bool,
+) -> bool:
+    """Return whether a fill against an OPEN strategy reduced (closed) it.
+
+    A strategy has no position-level direction, so the opening-vs-reducing
+    signal is per-leg: the fill targets one :class:`StrategyLeg`, and a
+    same-sided fill (buy on a long leg / sell on a short leg) grows that leg
+    while an opposite-sided fill reduces it. This mirrors the per-leg
+    classification :func:`_apply_strategy_open_fill` uses to route the fill to
+    the ADD vs CLOSE handler — an OPEN strategy can be grown via the ADD path,
+    so a strategy OPEN→OPEN fill is *not* unconditionally reducing.
+    """
+    leg = _strategy_leg_for_order(details.legs, order)
+    leg_is_long = leg.direction != Direction.SHORT
+    is_opening_for_leg = is_buy_side == leg_is_long
+    return not is_opening_for_leg
+
+
+def _fill_reduced_position(
+    position: PositionRecord,
+    order: OrderRecord,
+    *,
+    direction_is_buy: bool,
+) -> bool:
+    """Return whether a fill on an OPEN position reduced (closed) it.
+
+    Equity / single-leg options have a position-level direction:
+    :func:`position_direction` is non-None and an opposite-sided fill reduces
+    the position. A multi-leg strategy has no position-level side, so the
+    reducing signal is derived per-leg from the fill's order
+    (:func:`_strategy_fill_is_reducing`).
+    """
+    if isinstance(position.details, StrategyPositionDetails):
+        return _strategy_fill_is_reducing(position.details, order, is_buy_side=direction_is_buy)
+    direction = position_direction(position)
+    assert direction is not None
+    return not _is_opening_fill(direction, direction_is_buy)
 
 
 def _apply_entry_fill(
@@ -709,7 +758,11 @@ def _apply_exit_fill(
     fp = fill.fill_price
     avg_cost = Decimal(str(details.average_cost_basis_per_share))
     pnl_per_share = fp - avg_cost
-    direction_sign = Decimal(-1) if position.direction == Direction.SHORT else Decimal(1)
+    # Strategy positions never reach this equity helper (intercepted upstream),
+    # so position_direction() is non-None here.
+    direction = position_direction(position)
+    assert direction is not None
+    direction_sign = Decimal(-1) if direction == Direction.SHORT else Decimal(1)
     fq = Decimal(str(fill.fill_quantity))
     realized_delta = float(pnl_per_share * fq * direction_sign)
     cumulative_realized = (position.realized_pnl_to_date_usd or 0.0) + realized_delta
@@ -812,7 +865,11 @@ def _apply_options_exit_fill(
     fp = fill.fill_price
     paid_premium = Decimal(str(details.premium_paid_per_contract))
     pnl_per_contract = fp - paid_premium
-    direction_sign = Decimal(-1) if position.direction == Direction.SHORT else Decimal(1)
+    # Strategy positions never reach this single-leg options helper
+    # (intercepted upstream), so position_direction() is non-None here.
+    direction = position_direction(position)
+    assert direction is not None
+    direction_sign = Decimal(-1) if direction == Direction.SHORT else Decimal(1)
     fq = Decimal(str(fill.fill_quantity))
     multiplier = Decimal(str(details.contract_multiplier))
     realized_delta = float(pnl_per_contract * fq * multiplier * direction_sign)
@@ -1513,7 +1570,14 @@ async def _emit_fill_activity_log_entries(
             timestamp=fill.fill_timestamp,
             detail=PositionOpenedDetail(
                 ticker=_ticker_of(position_after),
-                direction=position_after.direction.value,
+                # position_direction() yields None for a strategy — it has no
+                # position-level side; PositionOpenedDetail.direction is
+                # str | None and round-trips the None faithfully (ALP-607).
+                direction=(
+                    pos_dir.value
+                    if (pos_dir := position_direction(position_after)) is not None
+                    else None
+                ),
                 fill_price=fill.fill_price,
                 quantity=fill.fill_quantity,
                 thesis_id=thesis_id,
@@ -1537,10 +1601,13 @@ async def _emit_fill_activity_log_entries(
             ),
         )
 
-    partial_close = (position_before.status, position_after.status) == (
+    open_to_open = (position_before.status, position_after.status) == (
         PositionStatus.OPEN,
         PositionStatus.OPEN,
-    ) and not _is_opening_fill(position_after.direction, direction_is_buy)
+    )
+    partial_close = open_to_open and _fill_reduced_position(
+        position_after, order, direction_is_buy=direction_is_buy
+    )
     if partial_close:
         partial_pnl = (position_after.realized_pnl_to_date_usd or 0.0) - (
             position_before.realized_pnl_to_date_usd or 0.0

@@ -24,10 +24,18 @@ from alphamind.portfolio_state.events.types import (
 
 @dataclass(frozen=True, slots=True)
 class PositionOpenedDetail:
-    """Detail payload for POSITION_OPENED events."""
+    """Detail payload for POSITION_OPENED events.
+
+    ``direction`` is ``None`` for a multi-leg strategy position — a strategy
+    has no single position-level long/short side; its directionality lives
+    per-leg. Equity and single-leg options positions carry their ``LONG`` /
+    ``SHORT`` value (ALP-607). The activity-log codec is generic over
+    ``dataclasses.fields()`` and round-trips a ``None`` ``str | None`` field
+    without a codec change.
+    """
 
     ticker: str
-    direction: str
+    direction: str | None
     fill_price: Price
     quantity: float
     thesis_id: str | None

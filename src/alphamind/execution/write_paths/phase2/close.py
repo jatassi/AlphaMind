@@ -12,6 +12,7 @@ from alphamind.execution.write_paths.phase2._shared import (
     _emit_order_submitted,
     _id_suffix,
     _order_direction_for_close,
+    _order_position_direction,
     _position_ticker,
     _price_to_float,
 )
@@ -118,7 +119,7 @@ async def _writeback_close(
         bracket_id=position.bracket_id or "",
         thesis_id=position.thesis_id,
         ticker=_position_ticker(position),
-        direction=position.direction,
+        direction=_order_position_direction(position),
         quantity=close_qty,
         order_type=order_type,
         price_parameters=price_parameters,
