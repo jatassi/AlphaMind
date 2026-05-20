@@ -11,7 +11,7 @@ Every position has:
 - **Position ID:** unique identifier
 - **Thesis ID:** binding to the thesis record justifying this position (see [thesis-model.md](thesis-model.md))
 - **Bracket parameters:** target exit condition and invalidation conditions with type classification (see [orders-and-brackets.md](orders-and-brackets.md))
-- **Direction:** long or short. This field is meaningful only for equity and single-leg options positions; strategy positions carry it as an inert placeholder (see § Strategy position).
+- **Direction:** `long`, `short`, or `None`. Equity and single-leg options positions are long or short; a strategy position carries `None` (direction is a category error for a multi-leg strategy — see § Strategy position).
 - **Entry timestamp:** time of initial fill
 - **Current market value:** updated at each pipeline invocation using latest price data
 - **Unrealized P/L:** current market value minus cost basis, absolute and percentage
@@ -73,7 +73,7 @@ A multi-leg options strategy modeled as a **single position with component legs*
 
 *Design rationale:* Strategy legs hedge each other. Viewing them individually would cause the guardrail layer to see risk that doesn't exist at the strategy level (e.g., an iron condor has defined max loss at the strategy level even though individual short legs have high theoretical risk), and would make P/L attribution meaningless. The strategy is one trade idea expressed through multiple instruments.
 
-**Position-level direction is a category error for strategies.** Long/short direction is not economically meaningful for a multi-leg strategy — an iron condor is neither long nor short. A strategy position carries `direction = LONG` as an inert placeholder required by the shared `PositionRecord` schema. Every consumer of a strategy position must derive directional sign from per-leg directions, net delta, or net premium — not from the position-level `direction` field. Branching on position-level `direction` for a strategy is a bug. The clean refactor — making `direction` instrument-specific or optional — is tracked as ALP-591.
+**Position-level direction is a category error for strategies.** Long/short direction is not economically meaningful for a multi-leg strategy — an iron condor is neither long nor short. A strategy `PositionRecord` carries `direction = None`; a record-level validator ties `direction is None` to a strategy payload and requires a non-`None` `Direction` for every equity / single-leg options record. Every consumer reads position-level direction through the `position_direction()` accessor, which returns `None` for a strategy and the record's `Direction` otherwise — strategy directional sign is derived instead from per-leg directions, net delta, or net premium.
 
 A strategy position holds:
 
