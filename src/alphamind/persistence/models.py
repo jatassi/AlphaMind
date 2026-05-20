@@ -890,7 +890,10 @@ class DistillationRegimeState(Base):
     as_of: Mapped[str] = mapped_column(Text, primary_key=True)
     regime_label: Mapped[str] = mapped_column(Text)
     vix_level: Mapped[float] = mapped_column(Float)
-    term_structure_basis: Mapped[float] = mapped_column(Float)
+    # Nullable per ALP-572: previously a non-null 0.0 fallback masked the
+    # unavailable VX1 series; the column now stores ``NULL`` when the
+    # basis cannot be computed.
+    term_structure_basis: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Nullable per ALP-571: previously a non-null 50.0 fallback masked the
     # unavailable VVIX series; the column now stores ``NULL`` when the
     # percentile cannot be computed.

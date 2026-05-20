@@ -199,6 +199,59 @@ class TestRegimeLabelClassification:
             is RegimeLabel.VOL_EXPANSION
         )
 
+    def test_low_vol_compression_rule_cannot_fire_when_basis_is_none(self) -> None:
+        """Per ALP-572: with VX1 unavailable, the rule that conditions on
+        ``vx1_minus_vix > 0.0`` cannot satisfy itself. The classifier
+        falls through to the VIX-band fallback — which returns
+        LOW_VOL_COMPRESSION on band-alone evidence (same label, different
+        path). Distinguishing the two paths is the operator's job via the
+        ``calibration_state`` tag on the block, not the label.
+        """
+        snapshot = RegimeSnapshot(
+            vix_level=12.0,
+            vx1_minus_vix=None,
+            vvix_percentile=20.0,
+            realized_vol_5d=8.0,
+            realized_vol_20d=10.0,
+        )
+        assert (
+            classify_regime(snapshot=snapshot, thresholds=_classification_thresholds())
+            is RegimeLabel.LOW_VOL_COMPRESSION
+        )
+
+    def test_crisis_spike_rule_cannot_fire_when_basis_is_none(self) -> None:
+        """Crisis-VIX snapshot with VX1 unavailable cannot satisfy the
+        backwardation precondition; the rule fails and the VIX-band
+        fallback returns CRISIS_SPIKE on band alone.
+        """
+        snapshot = RegimeSnapshot(
+            vix_level=42.0,
+            vx1_minus_vix=None,
+            vvix_percentile=90.0,
+            realized_vol_5d=30.0,
+            realized_vol_20d=20.0,
+        )
+        assert (
+            classify_regime(snapshot=snapshot, thresholds=_classification_thresholds())
+            is RegimeLabel.CRISIS_SPIKE
+        )
+
+    def test_vol_expansion_still_fires_when_basis_is_none(self) -> None:
+        """``vol_expansion`` doesn't condition on the basis; the rule
+        still produces the canonical label on partial inputs.
+        """
+        snapshot = RegimeSnapshot(
+            vix_level=18.0,
+            vx1_minus_vix=None,
+            vvix_percentile=55.0,
+            realized_vol_5d=12.0,
+            realized_vol_20d=10.0,
+        )
+        assert (
+            classify_regime(snapshot=snapshot, thresholds=_classification_thresholds())
+            is RegimeLabel.VOL_EXPANSION
+        )
+
 
 # ---------------------------------------------------------------------------
 # Indicator agreement count — votes per indicator
@@ -297,6 +350,26 @@ class TestIndicatorAgreementCount:
             thresholds=_classification_thresholds(),
         )
         assert count == 4
+
+    def test_count_drops_when_term_structure_basis_is_none(self) -> None:
+        """Per ALP-572: a ``None`` basis (VX1 unavailable) cannot agree
+        with any label. The basis indicator votes 0; the remaining three
+        indicators still vote.
+        """
+        snapshot = RegimeSnapshot(
+            vix_level=12.0,
+            vx1_minus_vix=None,
+            vvix_percentile=20.0,
+            realized_vol_5d=8.0,
+            realized_vol_20d=10.0,
+        )
+        count = compute_indicator_agreement_count(
+            snapshot=snapshot,
+            label=RegimeLabel.LOW_VOL_COMPRESSION,
+            thresholds=_classification_thresholds(),
+        )
+        # Three of four indicators agree (VIX band, VVIX, realized vol).
+        assert count == 3
 
 
 # ---------------------------------------------------------------------------

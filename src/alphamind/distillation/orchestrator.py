@@ -71,7 +71,7 @@ from alphamind.distillation.baselines import (
     refresh_pair_lag,
     refresh_ticker_baselines,
 )
-from alphamind.distillation.calibration import CalibrationState
+from alphamind.distillation.calibration import CalibrationState, combine_calibration_states
 from alphamind.distillation.calibration_snapshot import (
     write_calibration_state_snapshot,
     write_operator_data_health_summary,
@@ -653,6 +653,17 @@ _VVIX_PERCENTILE_LOOKBACK_DAYS: int = 365
 _VVIX_PERCENTILE_MIN_OBSERVATIONS: int = 60
 
 
+# VIX term-structure basis reads the front-month VIX future from this
+# ``macro_observations.series_id``. CBOE publishes the VX1 settlement
+# directly; the collector that will ingest it has not yet been built
+# (no VX1 entries in the FRED series list, no vendor adapter in
+# ``data_sources/``). The basis calculator therefore returns
+# ``UNAVAILABLE`` today, but the function is shaped to start returning
+# ``CALIBRATED`` values as soon as observations land — no further
+# plumbing change required.
+_VX1_SERIES_ID: str = "VX1"
+
+
 # Realized-vol computation pinned to SPY daily log returns annualized via
 # the standard √252 trading-days factor. The lookback fetches calendar days
 # rather than trading days; 35 calendar days yields ≥21 trading days
@@ -810,29 +821,56 @@ def _compute_vvix_percentile(
     return rank, CalibrationState.CALIBRATED, None
 
 
+def _compute_term_structure_basis(
+    session: Session, *, vix: float | None
+) -> tuple[float | None, CalibrationState, str | None]:
+    """Return ``(basis, calibration_state, reason)`` for the VIX term structure.
+
+    Two outcomes per the ALP-540 vocabulary:
+
+    - ``(basis, CALIBRATED, None)`` when VX1 (front-month VIX future) is
+      available and ``vix`` is non-null; ``basis = VX1 - VIX``.
+    - ``(None, UNAVAILABLE, reason)`` when VX1 is absent from
+      ``macro_observations`` — collector failure or series-not-yet-
+      implemented; operator action required. Also returns ``UNAVAILABLE``
+      when ``vix`` itself is null (no anchor for the subtraction); the
+      caller already surfaces the VIX outage separately so the duplicate
+      reason is omitted.
+
+    Per ALP-572: never returns ``0.0`` as a default. Downstream rendering
+    treats ``None`` as an explicit missing-data signal.
+    """
+    vx1 = _latest_macro_value(session, _VX1_SERIES_ID)
+    if vx1 is None:
+        return None, CalibrationState.UNAVAILABLE, "regime: VX1 series unavailable"
+    if vix is None:
+        # No anchor for the subtraction. The VIX outage is surfaced by
+        # the caller; emit UNAVAILABLE without a duplicate reason so the
+        # combined message stays scannable.
+        return None, CalibrationState.UNAVAILABLE, None
+    return vx1 - vix, CalibrationState.CALIBRATED, None
+
+
 def _build_regime_snapshot(
     session: Session, *, as_of: datetime
 ) -> tuple[RegimeSnapshot, CalibrationState, str | None]:
     """Build a :class:`RegimeSnapshot` plus the calibration state + reason.
 
-    Reads VIX (``VIXCLS``), VVIX, and SPY daily closes directly. The VX1
-    series remains a conservative placeholder when missing — per story
-    09's dispatch instruction the regime block emits rather than
-    blocking the orchestrator. Realized vol is computed from SPY log
-    returns when closes are available; absent SPY data, both windows
-    fall back to ``0.0`` and the downstream input-bundle integrity check
-    surfaces the gap.
+    Reads VIX (``VIXCLS``), VVIX, VX1, and SPY daily closes directly.
+    Realized vol is computed from SPY log returns when closes are
+    available; absent SPY data, both windows fall back to ``0.0`` and the
+    downstream input-bundle integrity check surfaces the gap.
 
-    Calibration-state precedence (worst wins):
-
-    - VIX missing → ``UNAVAILABLE`` with VIX reason. Zero VIX
-      observations is a collector failure per ALP-540 (operator action
-      required), not a "give it time" case.
-    - VIX present, VVIX state non-CALIBRATED → propagate the VVIX state
-      and reason. The regime block is still emitted with partial inputs;
-      the calibration tag surfaces the degradation through the
-      operator-facing data-health summary (ALP-571).
-    - Both present → ``CALIBRATED``.
+    Calibration-state precedence (worst wins via
+    :func:`combine_calibration_states`): each of the three supporting
+    series (VIX, VVIX, VX1) emits its own ``(state, reason)``; the
+    combiner picks the most-severe state and concatenates the reasons
+    that match it. When the regime block is degraded the operator sees
+    every contributing gap named in one combined string rather than the
+    first-discovered gap winner-takes-all. The block is still emitted
+    with partial inputs; the calibration tag surfaces the degradation
+    through the operator-facing data-health summary (ALP-540 / ALP-571 /
+    ALP-572).
 
     Carrying the state out alongside the snapshot avoids encoding the
     signal as a magic numeric sentinel — a real VIX print of exactly
@@ -841,33 +879,29 @@ def _build_regime_snapshot(
     vix = _latest_macro_value(session, "VIXCLS")
     realized_vol_5d, realized_vol_20d = _compute_realized_vols(session, as_of=as_of)
     vvix_percentile, vvix_state, vvix_reason = _compute_vvix_percentile(session, as_of=as_of)
-    if vix is None:
-        snapshot = RegimeSnapshot(
-            vix_level=0.0,
-            vx1_minus_vix=0.0,
-            vvix_percentile=vvix_percentile,
-            realized_vol_5d=realized_vol_5d,
-            realized_vol_20d=realized_vol_20d,
-            vix_trailing_20d_mean=None,
-            prior_term_structure_backwardation=False,
-        )
-        return (
-            snapshot,
-            CalibrationState.UNAVAILABLE,
-            "regime: VIXCLS observation missing",
-        )
+    vx1_minus_vix, basis_state, basis_reason = _compute_term_structure_basis(session, vix=vix)
+
+    vix_state, vix_reason = (
+        (CalibrationState.CALIBRATED, None)
+        if vix is not None
+        else (CalibrationState.UNAVAILABLE, "regime: VIXCLS observation missing")
+    )
+
     snapshot = RegimeSnapshot(
-        vix_level=vix,
-        vx1_minus_vix=0.0,
+        vix_level=vix if vix is not None else 0.0,
+        vx1_minus_vix=vx1_minus_vix,
         vvix_percentile=vvix_percentile,
         realized_vol_5d=realized_vol_5d,
         realized_vol_20d=realized_vol_20d,
         vix_trailing_20d_mean=None,
         prior_term_structure_backwardation=False,
     )
-    if vvix_state is not CalibrationState.CALIBRATED:
-        return snapshot, vvix_state, vvix_reason
-    return snapshot, CalibrationState.CALIBRATED, None
+    combined_state, combined_reason = combine_calibration_states(
+        (vix_state, vix_reason),
+        (vvix_state, vvix_reason),
+        (basis_state, basis_reason),
+    )
+    return snapshot, combined_state, combined_reason
 
 
 def _refresh_regime(

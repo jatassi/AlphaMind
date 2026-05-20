@@ -19,6 +19,7 @@ from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.orchestrator import (
     _VVIX_PERCENTILE_MIN_OBSERVATIONS,
     _VVIX_SERIES_ID,
+    _VX1_SERIES_ID,
     _build_regime_snapshot,
     _compute_realized_vols,
     _realized_vols_from_log_returns,
@@ -111,10 +112,11 @@ def _seed_spy_closes(session: Session, closes: list[float], *, end_date: datetim
 
 
 def _seed_calibrated_vvix(session: Session, *, end_date: datetime) -> None:
-    """Seed enough VVIX observations to put the regime block in CALIBRATED state.
+    """Seed enough VVIX + VX1 observations to put the regime block in CALIBRATED state.
 
     Tests that exercise rule-firing logic want a known regime calibration tag
-    so an unrelated VVIX-missing degradation doesn't taint the assertion.
+    so an unrelated VVIX- or VX1-missing degradation doesn't taint the
+    assertion. Seeds both supporting series in one call.
     """
     values = [80.0 + i for i in range(_VVIX_PERCENTILE_MIN_OBSERVATIONS)]
     for offset, value in enumerate(reversed(values)):
@@ -129,6 +131,19 @@ def _seed_calibrated_vvix(session: Session, *, end_date: datetime) -> None:
                 ingested_at=observation_day.strftime("%Y-%m-%dT00:00:00Z"),
             )
         )
+    # Seed a single VX1 observation so the term-structure basis calculator
+    # returns CALIBRATED — the latest-value query at ``end_date`` picks
+    # this up regardless of as_of date.
+    session.add(
+        MacroObservations(
+            source="cboe",
+            series_id=_VX1_SERIES_ID,
+            observation_date=end_date.strftime("%Y-%m-%d"),
+            revision_number=0,
+            value=18.0,
+            ingested_at=end_date.strftime("%Y-%m-%dT00:00:00Z"),
+        )
+    )
     session.flush()
 
 
@@ -303,8 +318,14 @@ def test_build_regime_snapshot_vix_missing_emits_unavailable(session: Session) -
     snapshot, calibration_state, bootstrap_reason = _build_regime_snapshot(session, as_of=AS_OF)
     # Per ALP-540: zero VIX observations is a collector failure, not a
     # warm-up state — the regime block should surface as UNAVAILABLE.
+    # Per ALP-572 the regime block now combines every contributing
+    # source's reason via the worst-wins fold, so the bootstrap_reason
+    # surfaces VIX, VVIX, and VX1 outages in one string (every source
+    # is empty in this test). Assert the VIX outage is named — that's
+    # the load-bearing signal — without pinning the exact ordering.
     assert calibration_state is CalibrationState.UNAVAILABLE
-    assert bootstrap_reason == "regime: VIXCLS observation missing"
+    assert bootstrap_reason is not None
+    assert "regime: VIXCLS observation missing" in bootstrap_reason
     assert snapshot.vix_level == 0.0
     assert snapshot.realized_vol_5d == 0.0
     assert snapshot.realized_vol_20d == 0.0

@@ -197,6 +197,11 @@ def _decompose_regime_block(block: OutputBlock) -> list[_Finding]:
     # ``str(None)`` as a live percentile (ALP-571).
     vvix_value = payload.get("vvix_percentile")
     vvix_text = "unavailable" if vvix_value is None else _format_value(vvix_value)
+    # Same treatment for the term-structure basis (ALP-572). The prior
+    # 0.0 default was indistinguishable from a live "flat term structure"
+    # reading; ``None`` surfaces the explicit missing-data signal.
+    basis_value = payload.get("term_structure_basis")
+    basis_text = "unavailable" if basis_value is None else _format_value(basis_value)
 
     summary = f"{label} ({transition}, indicator agreement {agreement}/4)"
     detail: list[str] = [
@@ -205,7 +210,7 @@ def _decompose_regime_block(block: OutputBlock) -> list[_Finding]:
         (
             "Underlying: "
             f"VIX {_format_value(payload.get('vix_level', ''))}, "
-            f"term-structure basis {_format_value(payload.get('term_structure_basis', ''))}, "
+            f"term-structure basis {basis_text}, "
             f"VVIX percentile {vvix_text}, "
             f"realized vol {_format_value(payload.get('realized_vol_5d', ''))}"
         ),

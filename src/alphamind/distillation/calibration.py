@@ -40,6 +40,7 @@ from sqlalchemy.orm import Session
 from alphamind._kernel.calibration import CALIBRATION_STATE_VALUES, CalibrationState
 from alphamind.distillation._calibration_core import (
     CalibratedValue,
+    combine_calibration_states,
     decide_calibration_state,
     tag_with_fallback,
 )
@@ -60,6 +61,7 @@ __all__ = [
     "EXTENDED_HOURS_BOOTSTRAP_RATE",
     "CalibratedValue",
     "CalibrationState",
+    "combine_calibration_states",
     "decide_calibration_state",
     "default_lead_lag_pair_estimate",
     "prediction_market_delta_default",

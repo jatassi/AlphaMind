@@ -414,7 +414,7 @@ def test_regime_section_renders_unavailable_when_vvix_percentile_is_null() -> No
             "indicator_agreement_count": 3,
             "regime_skip_emergency": False,
             "vix_level": 17.26,
-            "term_structure_basis": 0.0,
+            "term_structure_basis": 0.5,
             "vvix_percentile": None,
             "realized_vol_5d": 0.12,
             "realized_vol_20d": 0.10,
@@ -431,6 +431,81 @@ def test_regime_section_renders_unavailable_when_vvix_percentile_is_null() -> No
     # synthesizer sees why the field is missing rather than guessing.
     assert "Signal quality: unavailable" in brief.text
     assert "VVIX series unavailable" in brief.text
+
+
+def test_regime_section_renders_unavailable_when_term_structure_basis_is_null() -> None:
+    """Per ALP-572: null term_structure_basis renders as 'unavailable', never '0'.
+
+    Pre-fix the regime block stamped ``vx1_minus_vix=0.0`` unconditionally; the
+    brief rendered 'term-structure basis 0' and downstream agents treated it
+    as a live "flat term structure" reading. The fix propagates ``None``
+    through the payload and the brief surfaces the explicit missing-data
+    signal plus the calibration reason.
+    """
+    regime_block = OutputBlock(
+        block_id=REGIME_BLOCK_ID,
+        audience=frozenset({OutputAudience.UNIVERSAL_BROADCAST}),
+        freshness_ts=datetime(2026, 4, 27, 14, 30, tzinfo=UTC),
+        calibration_state=CalibrationState.UNAVAILABLE,
+        bootstrap_reason="regime: VX1 series unavailable",
+        payload={
+            "regime_label": "vol_expansion",
+            "transition_state": "stable",
+            "prior_label": None,
+            "invocations_held": 1,
+            "indicator_agreement_count": 3,
+            "regime_skip_emergency": False,
+            "vix_level": 17.26,
+            "term_structure_basis": None,
+            "vvix_percentile": 55.0,
+            "realized_vol_5d": 0.12,
+            "realized_vol_20d": 0.10,
+        },
+        anomaly_flags=(),
+        regime_context=None,
+    )
+
+    brief = assemble_correlation_brief(blocks=[regime_block], invocation_id="inv-null-basis")
+
+    assert "term-structure basis unavailable" in brief.text
+    assert "term-structure basis 0" not in brief.text
+    assert "Signal quality: unavailable" in brief.text
+    assert "VX1 series unavailable" in brief.text
+
+
+def test_regime_section_preserves_signed_basis_for_backwardation() -> None:
+    """A negative basis (backwardation) renders as the signed real, not 0.
+
+    Pre-fix the ``0.0`` default lost the sign; the fix ensures a real
+    ``-0.42`` continues to format as ``-0.42`` under the ``.4g`` precision
+    rule rather than truncating to integer ``0``.
+    """
+    regime_block = OutputBlock(
+        block_id=REGIME_BLOCK_ID,
+        audience=frozenset({OutputAudience.UNIVERSAL_BROADCAST}),
+        freshness_ts=datetime(2026, 4, 27, 14, 30, tzinfo=UTC),
+        calibration_state=CalibrationState.CALIBRATED,
+        bootstrap_reason=None,
+        payload={
+            "regime_label": "crisis_spike",
+            "transition_state": "early-strong",
+            "prior_label": "vol_expansion",
+            "invocations_held": 1,
+            "indicator_agreement_count": 4,
+            "regime_skip_emergency": False,
+            "vix_level": 38.0,
+            "term_structure_basis": -0.42,
+            "vvix_percentile": 90.0,
+            "realized_vol_5d": 0.32,
+            "realized_vol_20d": 0.22,
+        },
+        anomaly_flags=(),
+        regime_context=None,
+    )
+
+    brief = assemble_correlation_brief(blocks=[regime_block], invocation_id="inv-signed-basis")
+
+    assert "term-structure basis -0.42" in brief.text
 
 
 def _locus_block(
