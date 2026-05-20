@@ -226,7 +226,8 @@ def _strategy_leg_market_value(
     The leg's current option price is the Black-Scholes closed form at
     ``spot``; the value is ``contract_count * contract_multiplier * price``
     with the sign ``-1`` for a SHORT (written) leg and ``+1`` otherwise -- the
-    same signed convention as :func:`compute_strategy_market_value_usd`.
+    same signed convention as ``compute_strategy_market_value_usd`` in
+    ``portfolio_state.computations.positions``.
     """
     opts = leg.options
     derived_price = _bs_option_price(
