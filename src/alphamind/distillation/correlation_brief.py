@@ -26,6 +26,7 @@ from enum import StrEnum
 from typing import Any
 
 from alphamind.distillation.aggregation import (
+    EMPTY_UNIVERSAL_CONTEXT_MARKER,
     collect_anomalies,
     format_anomaly_summary,
     group_anomalies_by_audience,
@@ -577,21 +578,29 @@ def _reference_value(finding: _Finding) -> str:
     return f"{finding.source_block_id}::{finding.natural_key}"
 
 
+EMPTY_FINDINGS_MARKER = "(no findings)"
+
+
 def _render_universal_context(blocks: Iterable[OutputBlock]) -> str:
     """Render the trailing universal-context section.
 
     Excludes the ``regime.label`` block — it is already embedded in the
     REGIME section as ``CR-1``. Other universal-broadcast blocks (macro,
     breadth, intermarket-when-broadcast) appear without ``CR-N`` IDs;
-    the synthesizer cites them via the underlying source block IDs.
+    the synthesizer cites them via the underlying source block IDs. When
+    no universal-broadcast blocks beyond ``regime.label`` exist, the
+    section header is still emitted with an explicit empty-state marker
+    so the section never silently drops (ALP-577). The leading newline
+    produces the blank-line separator between the last CR-N section and
+    the universal-context header that every other section pair already has.
     """
     body = format_blocks_for_audience(
         (block for block in blocks if block.block_id != REGIME_BLOCK_ID),
         OutputAudience.UNIVERSAL_BROADCAST,
     )
     if not body:
-        return ""
-    return "=== UNIVERSAL CONTEXT ===\n" + body
+        return f"\n=== UNIVERSAL CONTEXT ===\n{EMPTY_UNIVERSAL_CONTEXT_MARKER}\n"
+    return "\n=== UNIVERSAL CONTEXT ===\n" + body
 
 
 def _render_anomaly_summary(blocks: Iterable[OutputBlock]) -> str:
@@ -630,14 +639,20 @@ def assemble_correlation_brief(
     ``block_id::natural_key`` when an intra-payload key disambiguates
     multi-finding blocks.
 
+    Section contract (ALP-577): every section renders at its fixed
+    position with either findings or an explicit empty-state marker —
+    never silently drops. CR-N category sections use
+    :data:`EMPTY_FINDINGS_MARKER`; the universal-context section uses
+    :data:`EMPTY_UNIVERSAL_CONTEXT_MARKER`; the anomaly-flags section
+    embeds the count in its header (``=== ANOMALY FLAGS (0) ===`` for the
+    zero case).
+
     Per the story scope "byte-identical across repeated calls" — the
     document is sorted deterministically, floats use the named precision
     constants, and the assembler never embeds the current wall clock.
     """
     materialized = list(blocks)
 
-    # The CR brief covers blocks audience-tagged for it, plus the universal
-    # regime.label (always embedded as CR-1 per the story scope).
     cr_blocks = [
         block
         for block in materialized
@@ -663,32 +678,26 @@ def assemble_correlation_brief(
 
     freshness_min = min(block.freshness_ts for block in cr_blocks)
 
-    # ----- Document body ------------------------------------------------
-    lines: list[str] = []
-    lines.append("CORRELATION & REGIME BRIEF")
-    lines.append(f"Invocation: {invocation_id}")
-    lines.append(f"Effective freshness: {freshness_min.isoformat()}")
-    lines.append("")
+    lines: list[str] = [
+        "CORRELATION & REGIME BRIEF",
+        f"Invocation: {invocation_id}",
+        f"Effective freshness: {freshness_min.isoformat()}",
+        "",
+    ]
 
     for category in _CATEGORY_ORDER:
+        lines.append(f"=== {category.value} ===")
         entries = cr_entries_by_category[category]
         if not entries:
-            continue
-        lines.append(f"=== {category.value} ===")
-        for reference_id, finding in entries:
-            lines.append(f"[{reference_id}] {finding.summary}")
-            for detail in finding.detail_lines:
-                lines.append(f"  {detail}")
+            lines.append(EMPTY_FINDINGS_MARKER)
+        else:
+            for reference_id, finding in entries:
+                lines.append(f"[{reference_id}] {finding.summary}")
+                for detail in finding.detail_lines:
+                    lines.append(f"  {detail}")
         lines.append("")
 
-    document = "\n".join(lines)
-    universal = _render_universal_context(materialized)
-    if universal:
-        document += universal
-        if not document.endswith("\n"):
-            document += "\n"
-        document += "\n"
-
+    document = "\n".join(lines) + _render_universal_context(materialized) + "\n"
     document += _render_anomaly_summary(cr_blocks)
 
     return CorrelationRegimeBrief(

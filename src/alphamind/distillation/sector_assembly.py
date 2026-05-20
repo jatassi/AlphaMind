@@ -34,6 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.aggregation import (
+    EMPTY_UNIVERSAL_CONTEXT_MARKER,
     collect_anomalies,
     format_anomaly_summary,
     group_anomalies_by_audience,
@@ -306,7 +307,7 @@ def assemble_sector_output(
         ),
         anomaly_summary,
         "=== UNIVERSAL CONTEXT ===",
-        universal_text or "(no universal-broadcast blocks)\n",
+        universal_text or f"{EMPTY_UNIVERSAL_CONTEXT_MARKER}\n",
         "=== SECTOR INDICATORS ===",
         sector_text or "(no sector indicator blocks)\n",
     ]
