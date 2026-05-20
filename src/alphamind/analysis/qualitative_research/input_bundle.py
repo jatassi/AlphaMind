@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from alphamind._kernel.calibration import CalibrationState
+from alphamind.analysis._shared import render_regime_payload_body
 from alphamind.analysis.qualitative_research.loaders import (
     QualitativeInputs,
     SentimentAggregate,
@@ -113,13 +114,11 @@ def _format_iso_utc(dt: datetime) -> str:
 def _render_regime(regime_label: dict[str, Any]) -> str:
     """Render the VOLATILITY REGIME section body.
 
-    Renders every key in ``regime_label`` as a ``key: value`` line in
-    deterministic alphabetical key order. The bundle is payload-agnostic:
-    additions to the regime payload (currently seven supporting indicators
-    on top of the four labels per :func:`alphamind.distillation.regime
-    .assemble_regime_block`) propagate to the LLM without renderer edits.
+    Delegates to :func:`render_regime_payload_body`, shared with the
+    adaptive bundle so both researchers see the same regime fields. The
+    bundle composer prepends the ``## VOLATILITY REGIME`` heading.
     """
-    return "\n".join(f"{key}: {regime_label[key]}" for key in sorted(regime_label))
+    return render_regime_payload_body(regime_label)
 
 
 def _render_sentiment(inputs: QualitativeInputs) -> str:

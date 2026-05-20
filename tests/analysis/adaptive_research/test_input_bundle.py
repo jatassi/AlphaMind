@@ -179,17 +179,12 @@ def test_empty_sector_renders_placeholder() -> None:
 
 # ---------------------------------------------------------------------------
 # Acceptance criterion: regime block renders every key in the payload —
-# matches the qualitative bundle's payload-agnostic rendering (ALP-574).
+# matches the qualitative bundle's payload-agnostic rendering.
 # ---------------------------------------------------------------------------
 
 
 def test_regime_renders_every_production_payload_key() -> None:
-    """Every key the distillation regime block emits appears in the regime_text.
-
-    Mirrors the qualitative bundle's payload-agnostic approach so additions
-    to the regime payload (per :func:`alphamind.distillation.regime
-    .assemble_regime_block`) propagate without renderer edits.
-    """
+    """Every key the distillation regime block emits appears in the regime_text."""
     from alphamind.analysis.adaptive_research.input_bundle import assemble_input_bundle
 
     bundle = assemble_input_bundle(
@@ -468,12 +463,12 @@ def test_distillation_magnitude_formatted_two_decimals() -> None:
 
 
 def test_distillation_regime_context_none_falls_back_to_active_label() -> None:
-    """D-flag ``regime_context=None`` falls back to the active regime label (ALP-574).
+    """D-flag ``regime_context=None`` falls back to the active regime label.
 
-    Block-level ``regime_context`` is by design ``None`` for most blocks; the
-    universal-broadcast regime block is the canonical regime source. The
-    adaptive bundle surfaces that active label per-flag so the agent does
-    not have to re-derive it from VIX via the macro_data tool.
+    Block-level ``regime_context`` is by design ``None`` for most blocks;
+    the universal-broadcast regime block is the canonical regime source.
+    The adaptive bundle surfaces that active label per-flag so the agent
+    does not re-derive it from VIX via the macro_data tool.
     """
     from alphamind.analysis.adaptive_research.input_bundle import assemble_input_bundle
 
@@ -497,6 +492,20 @@ def test_distillation_regime_context_block_level_takes_precedence() -> None:
         invocation_id=_INVOCATION_ID,
         as_of=_AS_OF,
         regime_label=_REGIME_LABEL,
+        anomaly_inputs=_make_inputs(distillation=records),
+    )
+    assert "regime_context=elevated vol regime" in bundle.distillation_text
+
+
+def test_distillation_regime_context_block_level_used_when_no_active_label() -> None:
+    """Block-level ``regime_context`` still wins when no active regime label is set."""
+    from alphamind.analysis.adaptive_research.input_bundle import assemble_input_bundle
+
+    records = (_make_distillation(regime_context="elevated vol regime"),)
+    bundle = assemble_input_bundle(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        regime_label={},
         anomaly_inputs=_make_inputs(distillation=records),
     )
     assert "regime_context=elevated vol regime" in bundle.distillation_text

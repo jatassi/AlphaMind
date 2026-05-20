@@ -163,10 +163,10 @@ def test_distillation_outputs_carries_mixed_anomaly_blocks() -> None:
 def test_universal_regime_label_carries_canonical_keys() -> None:
     """Regime fixture mirrors the production payload from ``assemble_regime_block``.
 
-    Per ALP-574 the adaptive bundle renders every key in the regime
-    payload (matching the qualitative bundle); the fixture must therefore
-    carry the same keys :func:`alphamind.distillation.regime
-    .assemble_regime_block` emits in production.
+    The adaptive bundle renders every key in the regime payload (matching
+    the qualitative bundle); the fixture must therefore carry the same
+    keys :func:`alphamind.distillation.regime.assemble_regime_block`
+    emits in production.
     """
     _sb, _qb, _crb, _do, regime = load_e2e_fixtures()
     expected = {

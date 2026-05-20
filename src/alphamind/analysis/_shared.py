@@ -7,6 +7,7 @@ already exist in distillation or elsewhere in the codebase.
 """
 
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -19,7 +20,20 @@ __all__ = [
     "Sector",
     "SignalQuality",
     "TokensUsed",
+    "render_regime_payload_body",
 ]
+
+
+def render_regime_payload_body(regime_label: dict[str, Any]) -> str:
+    """Render the universal-broadcast regime payload as deterministic body text.
+
+    Emits every key in the payload as a ``key: value`` line in sorted order
+    so the body is payload-agnostic — additions to the regime block (per
+    :func:`alphamind.distillation.regime.assemble_regime_block`) propagate
+    without renderer edits. Returns an empty string for an empty payload;
+    callers prepend their own section header.
+    """
+    return "\n".join(f"{key}: {regime_label[key]}" for key in sorted(regime_label))
 
 
 class Sector(StrEnum):

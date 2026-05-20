@@ -35,7 +35,7 @@ Fixture layout
   (``regime_label``, ``transition_state``, ``prior_label``,
   ``invocations_held``, ``indicator_agreement_count``,
   ``regime_skip_emergency`` and the supporting indicator snapshot).
-  The adaptive bundle renders every key (ALP-574).
+  The adaptive bundle renders every key.
 
 Refresh policy
 --------------
