@@ -28,6 +28,7 @@ from alphamind.execution.write_paths.phase2._shared import (
     _reserve_capital,
 )
 from alphamind.execution.write_paths.phase2.adjust import (
+    _apply_protective_leg_modification,
     _build_replacement_order_for_change_fields,
 )
 from alphamind.portfolio_state.events.activity_log import (
@@ -202,6 +203,15 @@ async def _apply_bracket_adjustment(
             thesis_id=position.thesis_id,
             timestamp=timestamp,
             pm_command_id=pm_command_id,
+        )
+        await _apply_protective_leg_modification(
+            handle,
+            bracket_id=position.bracket_id,
+            new_stop_level=adjustment.new_stop_level,
+            new_target_level=adjustment.new_target_level,
+            new_time_expiration=adjustment.new_time_expiration,
+            position=position,
+            replacement_order_id=new_order.order_id,
         )
     await _append_bracket_modification(
         handle,
