@@ -168,6 +168,13 @@ def _anomaly_sort_key(summary: AnomalySummary) -> tuple[int, float, str]:
 # downstream consumers can weight non-calibrated anomalies lower
 # without parsing the underlying block.
 
+# Shared empty-state marker for the universal-context section. The same
+# section is rendered by ``sector_assembly`` (per-audience sector outputs)
+# and ``correlation_brief`` (the synthesizer's CR brief); centralizing the
+# marker here gives the never-drop contract a single source of truth and
+# prevents the two assemblers from drifting (ALP-577).
+EMPTY_UNIVERSAL_CONTEXT_MARKER = "(no universal-broadcast blocks)"
+
 _SEVERITY_HEADER: dict[AnomalySeverity, str] = {
     "investigate_now": "INVESTIGATE NOW",
     "investigate_if_persists": "INVESTIGATE IF PERSISTS",

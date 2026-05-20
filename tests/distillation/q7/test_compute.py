@@ -124,15 +124,95 @@ class TestBreadthInternalsCompute:
         assert OutputAudience.CORRELATION_REGIME_BRIEF in block.audience
         assert OutputAudience.UNIVERSAL_BROADCAST in block.audience
 
-    def test_bootstrap_when_observations_below_required(self) -> None:
+    def test_all_windows_below_threshold_emit_null_with_per_window_reasons(self) -> None:
+        # 11 closes — below every EMA window threshold. Each pct_above_Xd_ema
+        # is null and the worst-wins fold names every undercalibrated window.
+        closes = _walked_closes([0.0] * 10)
         block = compute_breadth_internals_pure(
-            closes_by_ticker={"X": _walked_closes([0.0] * 10)},
-            sector_members={},
-            universe_tickers=("X",),
-            broad_market_closes=_walked_closes([0.0] * 10),
+            closes_by_ticker={"A": closes, "B": closes},
+            sector_members={"s": ("A", "B")},
+            universe_tickers=("A", "B"),
+            broad_market_closes=closes,
             as_of=_as_of(),
         )
+        payload = block.payload
+        assert payload["pct_above_20d_ema"] is None
+        assert payload["pct_above_50d_ema"] is None
+        assert payload["pct_above_200d_ema"] is None
         assert block.calibration_state is CalibrationState.ACCUMULATING
+        reason = block.bootstrap_reason
+        assert reason is not None
+        assert "breadth_ema_20d_observations" in reason
+        assert "breadth_ema_50d_observations" in reason
+        assert "breadth_ema_200d_observations" in reason
+
+    def test_undercalibrated_long_window_emits_null(self) -> None:
+        # 100 closes — past the 20d and 50d thresholds, short of the 200d.
+        closes = _walked_closes([0.005] * 99)
+        block = compute_breadth_internals_pure(
+            closes_by_ticker={t: closes for t in ("A", "B", "C", "D", "E")},
+            sector_members={"s": ("A", "B", "C", "D", "E")},
+            universe_tickers=("A", "B", "C", "D", "E"),
+            broad_market_closes=closes,
+            as_of=_as_of(),
+        )
+        payload = block.payload
+        assert isinstance(payload["pct_above_20d_ema"], float)
+        assert isinstance(payload["pct_above_50d_ema"], float)
+        assert payload["pct_above_200d_ema"] is None
+        assert block.calibration_state is CalibrationState.ACCUMULATING
+        reason = block.bootstrap_reason
+        assert reason is not None
+        assert "breadth_ema_200d_observations" in reason
+        assert "100 < 200" in reason
+        assert "breadth_ema_20d_observations" not in reason
+        assert "breadth_ema_50d_observations" not in reason
+
+    def test_distinct_50d_and_200d_breadth_when_emas_diverge(self) -> None:
+        # 250-close shapes are explicit rather than via _walked_closes because
+        # the bug repro needs linear ramps with a knee, not a constant-drift
+        # log path. Two tickers suffice to drive the aggregate counts apart:
+        # one above both EMAs and one in the recent-dip band where latest <
+        # 50d EMA but latest > 200d EMA. The aggregate then splits 1/2 vs
+        # 2/2 — the bit-identical 0.6515 collapse can't reproduce.
+        n = 250
+        knee = n - 30
+        trend_up = tuple(100.0 + 0.5 * i for i in range(n))
+        recent_dip = tuple(
+            100.0 + 0.5 * i if i < knee else 210.0 - 1.0 * (i - knee) for i in range(n)
+        )
+        block = compute_breadth_internals_pure(
+            closes_by_ticker={"trend_up": trend_up, "recent_dip": recent_dip},
+            sector_members={"s": ("trend_up", "recent_dip")},
+            universe_tickers=("trend_up", "recent_dip"),
+            broad_market_closes=trend_up,
+            as_of=_as_of(),
+        )
+        payload = block.payload
+        assert block.calibration_state is CalibrationState.CALIBRATED
+        assert block.bootstrap_reason is None
+        assert payload["pct_above_50d_ema"] != payload["pct_above_200d_ema"]
+
+    def test_no_observations_emits_unavailable(self) -> None:
+        block = compute_breadth_internals_pure(
+            closes_by_ticker={"A": (), "B": ()},
+            sector_members={"s": ("A", "B")},
+            universe_tickers=("A", "B"),
+            broad_market_closes=(),
+            as_of=_as_of(),
+        )
+        payload = block.payload
+        assert payload["pct_above_20d_ema"] is None
+        assert payload["pct_above_50d_ema"] is None
+        assert payload["pct_above_200d_ema"] is None
+        assert block.calibration_state is CalibrationState.UNAVAILABLE
+        reason = block.bootstrap_reason
+        assert reason is not None
+        # Worst-wins fold joins all three UNAVAILABLE reasons with "; ".
+        assert "breadth_ema_20d_observations" in reason
+        assert "breadth_ema_50d_observations" in reason
+        assert "breadth_ema_200d_observations" in reason
+        assert "0 observations" in reason
 
 
 # ---------------------------------------------------------------------------
