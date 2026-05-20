@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from enum import StrEnum
+from typing import NamedTuple
 
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -178,9 +179,10 @@ class TickerDeepPullOutput(ToolEnvelope, frozen=True):
     The aggregate ``quality`` reflects the worst per-category result; aggregate
     ``data_freshness`` is the minimum freshness across populated categories.
 
-    ``reason`` is non-None only when the aggregate quality is below COMPLETE and
-    at least one category contributed an explanation (e.g. ``price_volume``
-    staleness). Joins per-category reasons with " | " when multiple contribute.
+    ``reason`` is non-None when the aggregate quality is below COMPLETE and an
+    explanation is available — either a category-level note (e.g. ``price_volume``
+    staleness, joined with " | " when several contribute) or an envelope-level
+    note such as the delisted/inactive short-circuit (ALP-585).
     """
 
     ticker: str
@@ -192,17 +194,50 @@ class TickerDeepPullOutput(ToolEnvelope, frozen=True):
 
 
 # ---------------------------------------------------------------------------
-# Helper: ticker universe check
+# Helper: ticker universe status
 # ---------------------------------------------------------------------------
 
 
-def _ticker_in_universe(session: Session, ticker: str) -> bool:
-    return (
-        session.execute(
-            select(AssetUniverse.ticker).where(AssetUniverse.ticker == ticker).limit(1)
-        ).scalar()
-        is not None
+class _UniverseStatus(NamedTuple):
+    """The ``asset_universe`` fields ticker_deep_pull needs to decide whether a
+    ticker is reachable: active tickers fan out to the per-category loaders;
+    inactive ones (merged / delisted) short-circuit to an UNAVAILABLE envelope
+    that names the corporate event rather than masquerading as stale data.
+    """
+
+    is_active: bool
+    removed_date: str | None
+    removal_reason: str | None
+
+
+def _universe_status(session: Session, ticker: str) -> _UniverseStatus | None:
+    """Return the ticker's ``asset_universe`` status, or ``None`` when the ticker
+    is absent from the universe entirely."""
+    row = session.execute(
+        select(
+            AssetUniverse.is_active,
+            AssetUniverse.removed_date,
+            AssetUniverse.removal_reason,
+        )
+        .where(AssetUniverse.ticker == ticker)
+        .limit(1)
+    ).first()
+    if row is None:
+        return None
+    return _UniverseStatus(
+        is_active=bool(row.is_active),
+        removed_date=row.removed_date,
+        removal_reason=row.removal_reason,
     )
+
+
+def _delisted_reason(ticker: str, status: _UniverseStatus) -> str:
+    """Reason string for an inactive ticker. Names ``removed_date`` and
+    ``removal_reason`` verbatim so the calling agent can tell a resolved
+    corporate event apart from an ingestion gap on a still-trading ticker."""
+    removed_date = status.removed_date or "an unrecorded date"
+    removal_reason = status.removal_reason or "no reason recorded"
+    return f"{ticker} delisted on {removed_date} ({removal_reason})"
 
 
 # ---------------------------------------------------------------------------
@@ -528,7 +563,9 @@ def _aggregate_quality(qualities: list[ToolQuality]) -> ToolQuality:
 # ---------------------------------------------------------------------------
 
 
-def _unavailable_envelope(ticker: str, now: datetime) -> TickerDeepPullOutput:
+def _unavailable_envelope(
+    ticker: str, now: datetime, *, reason: str | None = None
+) -> TickerDeepPullOutput:
     return TickerDeepPullOutput(
         ticker=ticker,
         data_freshness=now,
@@ -537,6 +574,7 @@ def _unavailable_envelope(ticker: str, now: datetime) -> TickerDeepPullOutput:
         short_data=None,
         earnings=None,
         macro_context=None,
+        reason=reason,
     )
 
 
@@ -561,8 +599,12 @@ def ticker_deep_pull_factory(
         now = resolved_clock.now()
         ticker = args.ticker.upper()
 
-        if not _ticker_in_universe(session, ticker):
+        status = _universe_status(session, ticker)
+        if status is None:
             return _unavailable_envelope(ticker, now)
+
+        if not status.is_active:
+            return _unavailable_envelope(ticker, now, reason=_delisted_reason(ticker, status))
 
         if not args.categories:
             return _unavailable_envelope(ticker, now)
