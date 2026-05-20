@@ -89,6 +89,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     StrategyPositionDetails,
     occ_symbol_for_options,
+    position_direction,
 )
 from alphamind.portfolio_state.records.theses import RecentThesisResolution, ThesisRecord
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
@@ -446,20 +447,32 @@ def _enrich_position_first_pass(
         raise AssertionError(msg)
     bracket = brackets_by_bracket_id.get(position.bracket_id or "")
 
-    unrealized_pnl_usd = compute_unrealized_pnl_usd(
-        pf.current_market_value_usd, pf.cost_basis, position.direction
-    )
-    # A STRATEGY position's P/L percentage divides by the magnitude of capital
-    # at risk (``abs(max_loss_usd)``) rather than ``cost_basis`` — the latter is
-    # ``net_premium_usd``, negative for a net credit, which would invert the
-    # sign and display a profitable credit strategy as a loss (ALP-599 / parent
-    # ALP-588 § Pre-resolved decision B). Equity / single-leg option positions
-    # keep dividing by their own cost basis.
+    # ``position_direction()`` is the sole position-level direction accessor:
+    # it yields the record's ``Direction`` for an equity / single-leg options
+    # position and ``None`` for a multi-leg strategy. A strategy is neither
+    # long nor short, so its P/L and bracket-distance paths must not pass a
+    # position-level direction into a direction-keyed computation.
+    direction = position_direction(position)
+
+    # A STRATEGY position's P/L USD is the directionless ``market_value -
+    # net_premium_usd`` (current net value minus what was paid to open — the
+    # net credit makes ``cost_basis`` negative, so this stays correct for both
+    # debit and credit strategies). Its P/L percentage divides by the magnitude
+    # of capital at risk (``abs(max_loss_usd)``) rather than ``cost_basis``,
+    # which would invert the sign for a net credit (ALP-599 / parent ALP-588 §
+    # Pre-resolved decision B). Equity / single-leg option positions route P/L
+    # USD through the direction-keyed ``compute_unrealized_pnl_usd`` and divide
+    # the percentage by their own cost basis.
     if isinstance(position.details, StrategyPositionDetails):
+        unrealized_pnl_usd = pf.current_market_value_usd - pf.cost_basis
         unrealized_pnl_pct = compute_strategy_unrealized_pnl_pct(
             unrealized_pnl_usd, position.details.max_loss_usd
         )
     else:
+        assert direction is not None  # narrowed: non-strategy carries a Direction
+        unrealized_pnl_usd = compute_unrealized_pnl_usd(
+            pf.current_market_value_usd, pf.cost_basis, direction
+        )
         unrealized_pnl_pct = compute_unrealized_pnl_pct(unrealized_pnl_usd, pf.cost_basis)
 
     position_age_hours = (
@@ -472,11 +485,15 @@ def _enrich_position_first_pass(
     distance_to_stop_usd: float | None = None
     risk_reward_at_current: float | None = None
     if bracket is not None:
+        # A bracket is only attached to an equity / single-leg options
+        # position — a multi-leg strategy carries no position-level bracket —
+        # so ``direction`` is non-``None`` whenever a bracket is present.
+        assert direction is not None
         distance_to_target_usd = compute_distance_to_target_usd(
-            pf.current_price_usd, bracket, position.direction
+            pf.current_price_usd, bracket, direction
         )
         distance_to_stop_usd = compute_distance_to_stop_usd(
-            pf.current_price_usd, bracket, position.direction
+            pf.current_price_usd, bracket, direction
         )
         risk_reward_at_current = compute_risk_reward_at_current(
             distance_to_target_usd, distance_to_stop_usd
