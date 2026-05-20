@@ -1734,6 +1734,77 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
 
 
 # ---------------------------------------------------------------------------
+# Tests — Phase 1 strategy entry-fill payoff recompute (story 02 / ALP-598)
+# ---------------------------------------------------------------------------
+
+
+async def test_entry_fill_recomputes_net_premium_for_credit_strategy(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """After the atomic PENDING → OPEN entry fill, the parent
+    ``net_premium_usd`` equals ``compute_strategy_net_premium_usd`` of the
+    filled legs — negative for the net-credit iron condor."""
+    from alphamind.execution.position_model import (
+        compute_strategy_net_premium_usd,
+    )
+    from alphamind.execution.write_paths.phase1 import (
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    leg_orders = _make_iron_condor_leg_orders(quantity=1.0)
+    await _seed_strategy_cluster(
+        factory,
+        position=_make_pending_strategy_position(),
+        parent_order=_make_strategy_parent_order(),
+        leg_orders=leg_orders,
+        thesis=_make_active_strategy_thesis(),
+        bracket=_make_pending_strategy_bracket(),
+    )
+    await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=100_000.0))
+    await _seed_drawdown_state(factory)
+
+    fill_specs = (
+        ("leg-short-put", 4.20),
+        ("leg-long-put", 1.80),
+        ("leg-short-call", 3.50),
+        ("leg-long-call", 1.50),
+    )
+    for idx, (leg_order_id, leg_price) in enumerate(fill_specs):
+        await _append_fill(
+            factory,
+            _make_unprocessed_fill(
+                fill_id=f"fill-{leg_order_id}",
+                order_id=leg_order_id,
+                fill_price=leg_price,
+                fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
+            ),
+        )
+
+    ctx, handle = await _open_handle(factory)
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-strat-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert pos.status == PositionStatus.OPEN
+        assert isinstance(pos.details, StrategyPositionDetails)
+
+        expected_net_premium = compute_strategy_net_premium_usd(pos.details.legs)
+        # Net credit: -440.0 (premium received).
+        assert expected_net_premium == pytest.approx(-440.0)
+        assert pos.details.net_premium_usd == pytest.approx(expected_net_premium)
+
+
+# ---------------------------------------------------------------------------
 # Tests — ADD on a strategy
 # ---------------------------------------------------------------------------
 
