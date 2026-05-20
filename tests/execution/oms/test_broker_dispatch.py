@@ -23,7 +23,13 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from alpaca.trading.enums import OrderClass, OrderSide, OrderStatus, TimeInForce
+from alpaca.trading.enums import (
+    OrderClass,
+    OrderSide,
+    OrderStatus,
+    PositionIntent,
+    TimeInForce,
+)
 from alpaca.trading.requests import (
     LimitOrderRequest,
     MarketOrderRequest,
@@ -519,13 +525,13 @@ async def test_dispatch_close_options_routes_to_submit_options_close() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 8. CLOSE strategy threads open_legs + strategy_type
+# 8. CLOSE strategy threads close_legs + strategy_type
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_dispatch_close_strategy_routes_to_submit_mleg_close() -> None:
-    """A ``CloseCommand`` against a strategy position threads ``open_legs`` +
+    """A ``CloseCommand`` against a strategy position threads ``close_legs`` +
     ``strategy_type`` (+ ``position_units`` when ``quantity == 'all'``)
     from caller-supplied portfolio state into ``submit_mleg_close``."""
     fake_order = _make_fake_alpaca_order(order_class=OrderClass.MLEG)
@@ -533,18 +539,18 @@ async def test_dispatch_close_strategy_routes_to_submit_mleg_close() -> None:
     client.submit_order = MagicMock(return_value=fake_order)
     queries = MagicMock()
 
-    open_legs = (
+    close_legs = (
         MLEGLegAck(
             occ_symbol=OccSymbol("SPY   260619C00400000"),
-            side="buy",
+            side="sell",
             ratio_qty=1,
-            position_intent="buy_to_open",
+            position_intent="sell_to_close",
         ),
         MLEGLegAck(
             occ_symbol=OccSymbol("SPY   260619C00410000"),
-            side="sell",
+            side="buy",
             ratio_qty=1,
-            position_intent="sell_to_open",
+            position_intent="buy_to_close",
         ),
     )
 
@@ -555,7 +561,7 @@ async def test_dispatch_close_strategy_routes_to_submit_mleg_close() -> None:
         execution=_execution_config(),
         client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
         position_asset_type="strategy",
-        open_legs=open_legs,
+        close_legs=close_legs,
         strategy_type="vertical_spread",
         position_units=1.0,
     )
@@ -563,6 +569,8 @@ async def test_dispatch_close_strategy_routes_to_submit_mleg_close() -> None:
     assert outcome.payload.payload_kind == "mleg"
     submitted = client.submit_order.call_args[0][0]
     assert submitted.order_class == OrderClass.MLEG
+    intents = [leg.position_intent for leg in submitted.legs]
+    assert intents == [PositionIntent.SELL_TO_CLOSE, PositionIntent.BUY_TO_CLOSE]
 
 
 # ---------------------------------------------------------------------------

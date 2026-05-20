@@ -140,7 +140,11 @@ async def dispatch_command_to_broker(  # noqa: PLR0913 — caller threads every 
     occ_symbol: str | None = None,
     position_intent: Literal["buy_to_close", "sell_to_close"] | None = None,
     position_option_instrument: OptionInstrument | None = None,
+    # ADD strategy threads the position's open-side legs (ADD opens more of
+    # the same exposure); CLOSE strategy threads close-side legs (the
+    # open→close inversion happened upstream at the single seam).
     open_legs: Sequence[MLEGLegAck] | None = None,
+    close_legs: Sequence[MLEGLegAck] | None = None,
     strategy_type: StrategyType | None = None,
     position_units: float | None = None,
     # Threaded from order record for ADJUST / CANCEL:
@@ -194,7 +198,7 @@ async def dispatch_command_to_broker(  # noqa: PLR0913 — caller threads every 
             position_side=position_side,
             occ_symbol=occ_symbol,
             position_intent=position_intent,
-            open_legs=open_legs,
+            close_legs=close_legs,
             strategy_type=strategy_type,
             position_units=position_units,
         )
@@ -332,7 +336,7 @@ async def _dispatch_close(  # noqa: PLR0913 — close threads every per-asset-ty
     position_side: Literal["long", "short"] | None,
     occ_symbol: str | None,
     position_intent: Literal["buy_to_close", "sell_to_close"] | None,
-    open_legs: Sequence[MLEGLegAck] | None,
+    close_legs: Sequence[MLEGLegAck] | None,
     strategy_type: StrategyType | None,
     position_units: float | None,
 ) -> SubmissionOutcome[BrokerDispatchResult]:
@@ -362,7 +366,7 @@ async def _dispatch_close(  # noqa: PLR0913 — close threads every per-asset-ty
         client=client,
         execution=execution,
         client_order_id=client_order_id,
-        open_legs=open_legs,
+        close_legs=close_legs,
         strategy_type=strategy_type,
         position_units=position_units,
     )
@@ -430,12 +434,12 @@ async def _close_strategy(
     client: TradingClient,
     execution: ExecutionConfig,
     client_order_id: ClientOrderId,
-    open_legs: Sequence[MLEGLegAck] | None,
+    close_legs: Sequence[MLEGLegAck] | None,
     strategy_type: StrategyType | None,
     position_units: float | None,
 ) -> SubmissionOutcome[BrokerDispatchResult]:
-    if open_legs is None:
-        raise _missing("open_legs", command_kind="CLOSE strategy")
+    if close_legs is None:
+        raise _missing("close_legs", command_kind="CLOSE strategy")
     if strategy_type is None:
         raise _missing("strategy_type", command_kind="CLOSE strategy")
     outcome = await submit_mleg_close(
@@ -443,7 +447,7 @@ async def _close_strategy(
         client=client,
         execution=execution,
         client_order_id=client_order_id,
-        open_legs=open_legs,
+        close_legs=close_legs,
         strategy_type=strategy_type,
         position_units=position_units,
     )
