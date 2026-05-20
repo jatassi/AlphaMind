@@ -164,7 +164,7 @@ def build_initial_validation_state(  # noqa: PLR0913 — runner-facing assembler
     library_config: LibraryConfig,
     library_market: MarketInputs,
     sector_resolver: Callable[[str], str],
-    borrow_cost_resolver: Callable[[str], float] | None = None,
+    borrow_cost_resolver: Callable[[str], float | None] | None = None,
 ) -> ValidationToolState:
     """Construct the initial :class:`ValidationToolState` for one decision-layer
     invocation (analyst, strategist, or PM).

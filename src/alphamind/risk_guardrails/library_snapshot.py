@@ -25,6 +25,7 @@ from alphamind.portfolio_state.records.positions import (
 )
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
 from alphamind.portfolio_state.views.positions import PositionView
+from alphamind.risk_guardrails.borrow_cost import daily_borrow_cost_usd
 from alphamind.risk_guardrails.guardrail_evaluation import (
     AssetType,
     ExistingPosition,
@@ -167,7 +168,7 @@ def to_library_snapshot(
     snapshot: PortfolioStateSnapshot,
     *,
     sector_resolver: Callable[[str], str],
-    borrow_cost_resolver: Callable[[str], float] | None = None,
+    borrow_cost_resolver: Callable[[str], float | None] | None = None,
 ) -> LibrarySnapshot:
     """Translate a Pydantic ``PortfolioStateSnapshot`` to the library-shape dataclass.
 
@@ -180,8 +181,11 @@ def to_library_snapshot(
     sector_resolver:
         Maps an underlying ticker to its sector key string.
     borrow_cost_resolver:
-        Maps a ticker to its daily borrow cost in USD.  Required only when
-        short-selling is active; ``None`` is safe for long-only portfolios.
+        Maps a ticker to its annualized borrow fee rate as a percentage
+        (``borrow_cost_daily.fee_pct``), or ``None`` for a ticker with no
+        borrow data; ``daily_borrow_cost_usd`` converts the rate to a
+        per-position daily USD accrual.  Required only when short-selling is
+        active; ``None`` (the whole resolver) is safe for long-only portfolios.
 
     Returns
     -------
@@ -279,21 +283,31 @@ def to_library_snapshot(
             portfolio_theta_pct_per_day += t_contrib
             portfolio_vega_pct_per_iv_point += v_contrib
 
-        # Daily borrow cost accumulation — must mirror the library's
-        # _borrow_cost_contribute formula (cost_usd / portfolio_value * 100.0)
-        # so the read scale matches the write scale exactly. See
-        # src/alphamind/risk_guardrails/guardrail_evaluation/rules/shorts.py:108.
-        if is_short_equity and borrow_cost_resolver is not None and portfolio_value_usd > 0.0:
-            daily_borrow_cost_pct += borrow_cost_resolver(underlying) / portfolio_value_usd * 100.0
+        # Daily borrow cost — the resolver yields an annualized fee rate;
+        # daily_borrow_cost_usd converts it against the position's notional.
+        # The pct accumulation must mirror the library's _borrow_cost_contribute
+        # formula (cost_usd / portfolio_value * 100.0) so the read scale matches
+        # the write scale exactly. See
+        # src/alphamind/risk_guardrails/guardrail_evaluation/rules/shorts.py:114.
+        borrow_fee_pct: float | None = (
+            borrow_cost_resolver(underlying)
+            if is_short_equity and borrow_cost_resolver is not None
+            else None
+        )
+        position_borrow_cost_usd: float | None = (
+            daily_borrow_cost_usd(
+                notional_usd=abs(float(pos.notional_exposure_usd)),
+                annual_fee_pct=borrow_fee_pct,
+            )
+            if borrow_fee_pct is not None
+            else None
+        )
+        if position_borrow_cost_usd is not None and portfolio_value_usd > 0.0:
+            daily_borrow_cost_pct += position_borrow_cost_usd / portfolio_value_usd * 100.0
 
         # ExistingPosition construction
         current_greeks: Greeks | None = (
             None if isinstance(details, EquityPositionDetails) else _build_greeks(details)
-        )
-        daily_borrow_cost_usd: float | None = (
-            borrow_cost_resolver(underlying)
-            if is_short_equity and borrow_cost_resolver is not None
-            else None
         )
         # quantity: share_count for equity, contract_count for options, first-leg for strategy
         if isinstance(details, EquityPositionDetails):
@@ -313,7 +327,7 @@ def to_library_snapshot(
             notional_usd=float(pos.notional_exposure_usd),
             delta_adjusted_exposure_usd=float(pos.delta_adjusted_exposure_usd),
             current_greeks=current_greeks,
-            daily_borrow_cost_usd=daily_borrow_cost_usd,
+            daily_borrow_cost_usd=position_borrow_cost_usd,
             reserves_capital_usd=position_reservations.get(pos.position_id, 0.0),
             quantity=quantity,
         )

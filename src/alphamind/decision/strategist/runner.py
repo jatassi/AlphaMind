@@ -198,7 +198,7 @@ async def run_strategist(  # noqa: PLR0913 — signature dictated by ALP-308 spe
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
-    borrow_cost_resolver: Callable[[str], float] | None = None,
+    borrow_cost_resolver: Callable[[str], float | None] | None = None,
     prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "strategist",

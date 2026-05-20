@@ -197,7 +197,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     agents_config: Mapping[AgentName, BaseAgentConfig],
     agent_overrides: Mapping[AgentName, Mapping[str, Any]],
     sector_resolver: Callable[[str], str],
-    borrow_cost_resolver: Callable[[str], float] | None,
+    borrow_cost_resolver: Callable[[str], float | None] | None,
     library_config: LibraryConfig,
     library_market: MarketInputs,
     profile_feature_flags: FeatureFlagsView,

@@ -16,6 +16,7 @@ from alphamind._kernel.regime import (
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.records.positions import Direction, InstrumentType
+from alphamind.risk_guardrails.borrow_cost import daily_borrow_cost_usd
 from alphamind.risk_guardrails.guardrail_evaluation import (
     ContractType,
     DeltaAdjustedExposure,
@@ -198,7 +199,7 @@ def _state(
     invocation_id: str = "INV-001",
     sector_resolver: Callable[[str], str] | None = None,
     feature_flags: FeatureFlagsView | None = None,
-    borrow_cost_resolver: Callable[[str], float] | None = None,
+    borrow_cost_resolver: Callable[[str], float | None] | None = None,
 ) -> ValidationToolState:
     library_config = config or _config()
     return ValidationToolState(
@@ -1074,7 +1075,7 @@ def test_short_equity_open_uses_borrow_cost_resolver() -> None:
 
 def test_short_equity_open_without_resolver_returns_unavailable() -> None:
     """Short equity OPEN with ``borrow_cost_resolver=None`` returns an
-    ``UNAVAILABLE`` result naming the missing borrow-cost resolver — a
+    ``UNAVAILABLE`` result naming the missing borrow-cost data — a
     resolver-coverage gap, not a guardrail breach (ALP-581).
 
     Pre-ALP-581 this raised ``ValidationToolError``, which the MCP wrapper
@@ -1085,11 +1086,47 @@ def test_short_equity_open_without_resolver_returns_unavailable() -> None:
     request = _equity_request(direction=Direction.SHORT)
     result = validate_guardrail(request=request, state=state)
     assert result.overall == "UNAVAILABLE"
-    assert result.unavailable_reason is ValidationUnavailableReason.MISSING_BORROW_COST_RESOLVER
+    assert result.unavailable_reason is ValidationUnavailableReason.MISSING_BORROW_COST
     assert result.per_rule == ()
     assert result.delta_adjusted_exposure == 0.0
     assert result.failure_guidance is not None
-    assert "borrow-cost resolver" in result.failure_guidance
+    assert "borrow-cost data" in result.failure_guidance
+
+
+def test_short_equity_open_with_borrow_data_projects_nonzero_budget() -> None:
+    """A short-equity OPEN of a ticker the resolver covers validates (PASS/FAIL)
+    and the ``borrow_cost_budget_pct_per_day`` rule contributes a correct
+    non-zero projection — borrow-cost budgeting is enforced, no longer the
+    silent no-op it was while the resolver was hardcoded ``None`` (ALP-586)."""
+    rate_pct = 90.0  # hard-to-borrow name: 90% annualized fee
+    state = _state(borrow_cost_resolver=lambda _ticker: rate_pct)
+    request = _equity_request(direction=Direction.SHORT, dollar_value=3_000.0)
+    result = validate_guardrail(request=request, state=state)
+
+    assert result.overall in {"PASS", "FAIL"}
+    borrow_proj = next(p for p in result.per_rule if p.rule == "borrow_cost_budget_pct_per_day")
+    expected_cost_usd = daily_borrow_cost_usd(notional_usd=3_000.0, annual_fee_pct=rate_pct)
+    assert borrow_proj.current == pytest.approx(0.0)
+    assert borrow_proj.projected_after == pytest.approx(
+        expected_cost_usd / _PORTFOLIO_VALUE * 100.0
+    )
+    assert borrow_proj.projected_after > 0.0
+
+
+def test_short_equity_open_uncovered_ticker_returns_unavailable() -> None:
+    """A short-equity OPEN whose ticker the resolver has no rate for returns
+    ``UNAVAILABLE`` / ``MISSING_BORROW_COST`` — the per-ticker coverage gap,
+    distinguishable from a guardrail breach, not a silent ``0.0`` (ALP-586)."""
+    # Resolver covers AAPL only; NVDA (in market scope) resolves to None.
+    state = _state(borrow_cost_resolver=lambda ticker: {"AAPL": 40.0}.get(ticker))
+    request = _equity_request(ticker=Symbol("NVDA"), direction=Direction.SHORT)
+    result = validate_guardrail(request=request, state=state)
+
+    assert result.overall == "UNAVAILABLE"
+    assert result.unavailable_reason is ValidationUnavailableReason.MISSING_BORROW_COST
+    assert result.per_rule == ()
+    assert result.failure_guidance is not None
+    assert "borrow-cost data" in result.failure_guidance
 
 
 # ---------------------------------------------------------------------------
@@ -1181,8 +1218,9 @@ def test_borrow_cost_resolver_purity_replay_determinism() -> None:
 
     Replays of the same proposal sequence against fresh ``ValidationToolState``
     instances must yield byte-identical ``ValidationResult`` outputs. The
-    resolver is invoked once per short equity OPEN/ADD per call (the current
-    proposal plus each replayed prior delta in the chain).
+    resolver is invoked for the current short equity OPEN/ADD twice per call
+    (the resolver-coverage check plus the proposal build) and once for each
+    replayed prior delta in the chain.
     """
     calls: list[str] = []
 
@@ -1203,7 +1241,8 @@ def test_borrow_cost_resolver_purity_replay_determinism() -> None:
         ticker=Symbol("NVDA"), direction=Direction.SHORT, dollar_value=2_000.0
     )
 
-    # Call 1: validates request_a → resolver called once for AAPL.
+    # Call 1: validates request_a → resolver called twice for AAPL
+    # (coverage-gap check + proposal build).
     result_a = validate_guardrail(request=request_a, state=state)
     state = state.with_accepted_proposal(
         ProjectedDelta(
@@ -1216,9 +1255,10 @@ def test_borrow_cost_resolver_purity_replay_determinism() -> None:
             proposal_index=1,
         )
     )
-    # Call 2: replays request_a (resolver call) + validates request_b.
+    # Call 2: NVDA coverage-gap check, replays request_a (one AAPL call),
+    # then builds request_b (one NVDA call).
     result_b = validate_guardrail(request=request_b, state=state)
-    expected_calls = ["AAPL", "AAPL", "NVDA"]
+    expected_calls = ["AAPL", "AAPL", "NVDA", "AAPL", "NVDA"]
     assert calls == expected_calls
 
     # Replay the same sequence against a fresh state with a fresh tracking list;
