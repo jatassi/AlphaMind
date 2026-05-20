@@ -39,12 +39,11 @@ from __future__ import annotations
 import dataclasses
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from alphamind._kernel.ids import (
     AlpacaOrderId,
     ClientOrderId,
-    OccSymbol,
     OrderId,
     PositionId,
 )
@@ -427,16 +426,20 @@ def _engine_close_dispatch_kwargs(
     """Project the persisted *position* into the dispatcher's per-asset kwargs.
 
     Equity → symbol/qty/side. Options → OCC + sell-to-close intent. Strategy
-    → open_legs + strategy_type + units. Mirrors the per-asset routing the
+    → close_legs + strategy_type + units. Mirrors the per-asset routing the
     PM-side ``_close_command_context`` performs; surfaces engine-close on
     options / strategy positions so the substrate (``submit_options_close`` /
     ``submit_mleg_close``) is exercised end-to-end rather than blocked behind
     a hardcoded ``NotImplementedError``.
+
+    The strategy branch builds *close-side* legs via the single inversion
+    seam :func:`strategy_legs_to_close_acks` — each leg reverses the position
+    it opened (LONG → sell/sell_to_close, SHORT → buy/buy_to_close).
     """
     from typing import cast as _cast
 
     from alphamind.commands.command_models import StrategyType
-    from alphamind.execution.broker_adapter import MLEGLegAck
+    from alphamind.execution.broker_adapter import strategy_legs_to_close_acks
     from alphamind.execution.broker_adapter.order_options import build_occ_symbol
     from alphamind.portfolio_state.records.positions import (
         EquityPositionDetails,
@@ -467,34 +470,12 @@ def _engine_close_dispatch_kwargs(
             ),
         }
     if isinstance(position.details, StrategyPositionDetails):
-        legs: list[Any] = []
-        for leg in position.details.legs:
-            opt = leg.options
-            occ = build_occ_symbol(
-                opt.underlying_ticker, opt.expiration_date, opt.contract_type, opt.strike_price
-            )
-            leg_direction = leg.direction
-            if leg_direction is None:
-                msg = (
-                    f"engine CLOSE on strategy position {position_id!r} has leg "
-                    f"{leg.leg_id!r} with no direction set"
-                )
-                raise ValueError(msg)
-            side: Literal["buy", "sell"] = "buy" if leg_direction.value == "LONG" else "sell"
-            intent: Literal["buy_to_open", "sell_to_open"] = (
-                "buy_to_open" if side == "buy" else "sell_to_open"
-            )
-            legs.append(
-                MLEGLegAck(
-                    occ_symbol=OccSymbol(occ),
-                    side=side,
-                    ratio_qty=1,
-                    position_intent=intent,
-                )
-            )
+        # The seam reverses each leg (LONG → sell_to_close, SHORT →
+        # buy_to_close) and preserves the leg.direction-is-None → ValueError
+        # guard.
         return {
             "position_asset_type": "strategy",
-            "open_legs": tuple(legs),
+            "close_legs": strategy_legs_to_close_acks(position.details.legs),
             "strategy_type": _cast(StrategyType, position.details.strategy_type_label),
             "position_units": None,
         }

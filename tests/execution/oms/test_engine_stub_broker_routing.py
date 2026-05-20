@@ -1222,7 +1222,12 @@ def test_engine_close_dispatch_kwargs_routes_options_position() -> None:
 
 
 def test_engine_close_dispatch_kwargs_routes_strategy_position() -> None:
-    """Engine CLOSE on a strategy position threads open_legs + strategy_type."""
+    """Engine CLOSE on a strategy position threads close-side legs + strategy_type.
+
+    Each leg reverses the position it opened: the LONG-opened leg closes
+    sell / sell_to_close, the SHORT-opened leg closes buy / buy_to_close.
+    The inversion happens once at the shared seam.
+    """
     from alphamind.execution.oms.submit_engine_envelope import (
         _engine_close_dispatch_kwargs,
     )
@@ -1232,13 +1237,42 @@ def test_engine_close_dispatch_kwargs_routes_strategy_position() -> None:
 
     assert kwargs["position_asset_type"] == "strategy"
     assert kwargs["strategy_type"] == "vertical_spread"
-    open_legs = kwargs["open_legs"]
-    assert len(open_legs) == 2
-    # Long leg buy_to_open, short leg sell_to_open.
-    assert open_legs[0].side == "buy"
-    assert open_legs[0].position_intent == "buy_to_open"
-    assert open_legs[1].side == "sell"
-    assert open_legs[1].position_intent == "sell_to_open"
+    close_legs = kwargs["close_legs"]
+    assert len(close_legs) == 2
+    # Long-opened leg → sell_to_close; short-opened leg → buy_to_close.
+    assert close_legs[0].side == "sell"
+    assert close_legs[0].position_intent == "sell_to_close"
+    assert close_legs[1].side == "buy"
+    assert close_legs[1].position_intent == "buy_to_close"
+    # No leg of a strategy CLOSE carries a *_to_open intent.
+    assert all(not leg.position_intent.endswith("_to_open") for leg in close_legs)
+
+
+def test_engine_close_dispatch_kwargs_strategy_leg_without_direction_raises() -> None:
+    """A strategy CLOSE leg whose ``direction`` is unset raises ValueError.
+
+    The leg-direction-is-None guard is preserved in the shared close-leg seam.
+    """
+    import dataclasses
+
+    from alphamind.execution.oms.submit_engine_envelope import (
+        _engine_close_dispatch_kwargs,
+    )
+    from alphamind.portfolio_state.records.positions import StrategyPositionDetails
+
+    position = _strategy_open_position()
+    assert isinstance(position.details, StrategyPositionDetails)
+    legs = position.details.legs
+    directionless_first = dataclasses.replace(legs[0], direction=None)
+    broken_details = dataclasses.replace(
+        position.details, legs=(directionless_first, *legs[1:])
+    )
+    broken_position = dataclasses.replace(position, details=broken_details)
+
+    with pytest.raises(ValueError, match="direction"):
+        _engine_close_dispatch_kwargs(
+            broken_position, position_id=broken_position.position_id
+        )
 
 
 def test_engine_close_dispatch_kwargs_equity_unchanged() -> None:
