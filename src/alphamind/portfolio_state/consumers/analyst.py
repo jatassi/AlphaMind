@@ -101,9 +101,7 @@ def _project_held_positions(
         sector = sector_resolver(pos.record) or "UNCLASSIFIED"
         details = pos.record.details
         strategy_type_label = (
-            details.strategy_type_label
-            if isinstance(details, StrategyPositionDetails)
-            else None
+            details.strategy_type_label if isinstance(details, StrategyPositionDetails) else None
         )
         result.append(
             AnalystHeldPosition(
