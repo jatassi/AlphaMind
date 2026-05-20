@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -46,6 +45,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.calibration import CalibrationState
+from alphamind._kernel.stats import percentile_from_normal
 from alphamind.analysis._shared import Sector
 from alphamind.distillation.contract_freshness import (
     parse_resolution_date,
@@ -77,7 +77,6 @@ log = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-_SQRT_TWO: float = math.sqrt(1.0 + 1.0)
 _72_HOURS: timedelta = timedelta(hours=72)
 
 # Threshold above which |delta_pp| triggers meets_threshold_flag.
@@ -277,19 +276,6 @@ def _format_iso_utc(dt: datetime) -> str:
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _percentile_from_normal(*, value: float, mean: float, stdev: float) -> float:
-    """Return the Normal CDF percentile of ``value`` against ``(mean, stdev)``.
-
-    Returns ``0.5`` when ``stdev <= 0`` (degenerate / no information).
-    Result is in ``[0.0, 1.0]``.
-    """
-    if stdev <= 0:
-        return 0.5
-    z = (value - mean) / stdev
-    cdf = 0.5 * (1.0 + math.erf(z / _SQRT_TWO))
-    return max(0.0, min(1.0, cdf))
-
-
 def _parse_event_sectors(raw: str | None) -> frozenset[Sector]:
     """Parse the comma-separated sectors column into a ``frozenset[Sector]``."""
     if not raw:
@@ -456,11 +442,19 @@ def _load_window_sentiment_mean_by_ticker(
     Deliberately parallels :func:`_load_article_volume_by_ticker` (same join,
     same half-open lower / inclusive upper window edges) rather than sharing
     one query: that helper counts every article, this one averages only the
-    scored ones. ``distillation.qualitative.sentiment_percentile_compute``
-    derives the same current-reading-vs-baseline percentile for its
-    ``qual.sentiment_percentile`` distillation block over a fixed short
-    trailing window; this loader instead reads the inter-baseline window for
-    the qualitative-researcher input bundle, so the two are not shared.
+    scored ones.
+
+    The inter-baseline window here is not the fixed 4-hour window
+    ``distillation.qualitative.sentiment_percentile_compute`` uses for its
+    ``qual.sentiment_percentile`` block. The divergence is deliberate
+    (ALP-589): that block serves the sector analyst agents as a standalone
+    near-real-time indicator, whereas this reading feeds the qualitative
+    researcher's bundle, where ``percentile_vs_self`` must share a window
+    with the ``rate_of_change`` and ``volume`` fields of the same
+    ``SentimentAggregate`` so the three describe one coherent period. The
+    two surfaces share the rolling baseline and the percentile formula
+    (:func:`alphamind._kernel.stats.percentile_from_normal`); only the
+    window, output scale, and degenerate-stdev handling differ.
     """
     if not tickers:
         return {}
@@ -650,16 +644,14 @@ def load_sentiment_aggregates(
         directional_score = max(-1.0, min(1.0, mean))
 
         # percentile_vs_self / magnitude: see the SentimentAggregate
-        # docstring. The stdev > 0 guard protects the magnitude z-distance
-        # division below; _percentile_from_normal would itself collapse a
-        # non-positive stdev to a degenerate 0.5.
+        # docstring. The stdev > 0 guard is load-bearing — it gates both the
+        # magnitude z-distance division and percentile_from_normal, which
+        # requires a positive stdev; a degenerate baseline emits None.
         window_sentiment_mean = window_sentiment_mean_by_ticker.get(ticker)
         percentile: float | None
         magnitude: float | None
         if window_sentiment_mean is not None and stdev > 0:
-            percentile = _percentile_from_normal(
-                value=window_sentiment_mean, mean=mean, stdev=stdev
-            )
+            percentile = percentile_from_normal(value=window_sentiment_mean, mean=mean, stdev=stdev)
             magnitude = min(1.0, abs(window_sentiment_mean - mean) / stdev)
         else:
             percentile = None

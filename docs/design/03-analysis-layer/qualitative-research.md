@@ -18,7 +18,7 @@ Loaded before reasoning begins. Bounded and predictable regardless of market con
 Deterministic, ranked summary of headlines since the last invocation. See [news digest specification](#news-digest) below.
 
 **2. Sentiment aggregates (~3,000 tokens)**
-Pre-computed per-ticker sentiment from [qualitative 2a](../01-data-layer/external/qualitative.md) — directional score, magnitude, rate of change, volume, sentiment-price divergence flag. Percentiles against each ticker's own trailing distribution per [distillation external.md §3](../02-distillation-layer/external.md), not a universal scale.
+Pre-computed per-ticker sentiment from [qualitative 2a](../01-data-layer/external/qualitative.md) — directional score, magnitude, rate of change, volume, sentiment-price divergence flag. Percentiles against each ticker's own trailing distribution per [distillation external.md §2](../02-distillation-layer/external.md), not a universal scale.
 
 **3. Prediction market snapshot (~800–1,200 tokens)**
 All tracked contracts from [qualitative 3a–3c](../01-data-layer/external/qualitative.md) — current probability, delta since last invocation, delta since last 24h, volume, expiration. Contracts with delta >5pp are flagged per the distillation threshold.

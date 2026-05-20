@@ -18,13 +18,13 @@ percentile-calibration logic itself is identical regardless of input source.
 
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from alphamind._kernel.stats import percentile_from_normal
 from alphamind.distillation._calibration_core import (
     CalibratedValue,
     CalibrationState,
@@ -43,16 +43,6 @@ SENTIMENT_PROXY_WINDOW_HOURS: int = 4
 The v1 proxy averages ``vendor_sentiment_score`` from
 ``news_article_tickers`` over this window. When aggregated-sentiment
 ingestion lands, the loader swaps without touching the compute.
-"""
-
-
-_SQRT_TWO: float = math.sqrt(1.0 + 1.0)
-"""Precomputed ``sqrt(2)`` used in the standard-Normal CDF approximation.
-
-Computed as ``sqrt(1.0 + 1.0)`` rather than ``sqrt(2.0)`` to avoid a raw
-``2.0`` literal — the no-magic-numbers audit flags any literal whose
-value matches a Class A YAML threshold, and
-``funding_stress_component_alert_count: 2`` would collide.
 """
 
 
@@ -96,24 +86,31 @@ class SentimentPercentileInputs:
 # ---------------------------------------------------------------------------
 
 
-def _percentile_from_normal(*, value: float, mean: float, stdev: float) -> float:
-    """Return the cumulative-Normal percentile of ``value`` against (mean, stdev).
+def _sentiment_percentile_0_100(*, value: float, mean: float, stdev: float) -> float:
+    """Return the per-ticker sentiment percentile on the distillation 0-100 scale.
 
-    The trailing baseline carries (mean, stdev, n) per Welford's algorithm;
-    this approximates the percentile under a Normal assumption rather than
-    re-pulling raw observations on every distillation pass.
+    The trailing baseline carries ``(mean, stdev, n)`` per Welford's
+    algorithm; this approximates the percentile of ``value`` under a Normal
+    assumption rather than re-pulling raw observations on every distillation
+    pass.
 
-    ``stdev <= 0`` collapses to a degenerate distribution; return 50.0
-    (median, no information) rather than raise — the caller's
-    cross-sectional fallback handles the data-too-thin case via
-    ``min_observations``.
+    Wraps the shared :func:`alphamind._kernel.stats.percentile_from_normal`
+    (unit interval) with the two conventions of the ``qual.sentiment_percentile``
+    block: the ``0-100`` output scale, and a median ``50.0`` for a degenerate
+    baseline ``stdev``. ``stdev <= 0`` returns ``50.0`` (median, no
+    information) rather than raising — by the time a baseline reaches here it
+    has cleared ``sentiment_min_observations`` or the universe-pooled
+    fallback, so a zero-stdev baseline is rare and the data-too-thin case is
+    already handled upstream by :func:`tag_with_fallback`.
+
+    The analysis-layer ``load_sentiment_aggregates`` percentiles the *same*
+    rolling baseline on the unit interval and emits ``None`` for a degenerate
+    ``stdev``; the two surfaces are kept separate by design — see
+    :func:`compute_sentiment_percentile_blocks`.
     """
     if stdev <= 0:
         return 50.0
-    z = (value - mean) / stdev
-    # Phi(z) = 0.5 * (1 + erf(z / sqrt(2))). ``math.erf`` is exact enough.
-    cdf = 0.5 * (1.0 + math.erf(z / _SQRT_TWO))
-    return cdf * 100.0
+    return percentile_from_normal(value=value, mean=mean, stdev=stdev) * 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +135,19 @@ def compute_sentiment_percentile_blocks(
     Returns one block per sector audience containing all calibrated and
     accumulating per-ticker readings with ``payload["per_ticker"]`` keyed
     by ticker sorted ascending.
+
+    This is one of two per-ticker sentiment-percentile surfaces in the
+    codebase, and the two are deliberately kept separate (ALP-589). This one
+    percentiles a fixed 4-hour trailing reading
+    (:data:`SENTIMENT_PROXY_WINDOW_HOURS`) and serves the sector analyst
+    agents as a standalone near-real-time indicator. The analysis-layer
+    ``load_sentiment_aggregates`` percentiles the *same* rolling baseline
+    over the variable inter-baseline window instead, because there the
+    percentile must share a window with the ``rate_of_change`` and ``volume``
+    fields of the same ``SentimentAggregate`` record. The two consume one
+    shared baseline and one shared formula
+    (:func:`alphamind._kernel.stats.percentile_from_normal`); only the
+    window, output scale, and degenerate-/sub-threshold handling differ.
     """
     per_audience: dict[OutputAudience, dict[str, dict[str, Any]]] = defaultdict(dict)
     fallback = inputs.universe_pooled_sentiment
@@ -171,7 +181,7 @@ def compute_sentiment_percentile_blocks(
             continue
 
         baseline_mean, baseline_stdev = wrapped.value
-        percentile = _percentile_from_normal(
+        percentile = _sentiment_percentile_0_100(
             value=current_mean, mean=baseline_mean, stdev=baseline_stdev
         )
 
