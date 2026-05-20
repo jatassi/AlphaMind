@@ -25,9 +25,15 @@ from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
     LocateStatus,
+    OptionContractType,
+    OptionGreeks,
+    OptionsPositionDetails,
     PositionFill,
     PositionRecord,
     PositionStatus,
+    StrategyLeg,
+    StrategyPositionDetails,
+    position_direction,
 )
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import (
@@ -48,6 +54,7 @@ from alphamind.risk_guardrails.breach_behavior import (
     orchestrate_margin_call_cascade,
     search_for_alternate_position,
 )
+from alphamind.risk_guardrails.breach_behavior.cascade import _candidate_set
 from alphamind.risk_guardrails.breach_behavior.types import BreachDetails
 
 # ---------------------------------------------------------------------------
@@ -301,6 +308,83 @@ def _long_position(
     )
 
 
+def _strategy_position(
+    *,
+    position_id: str,
+    ticker: str,
+    weight_pct: float,
+    market_value_usd: float,
+) -> PositionView:
+    """Build an OPEN multi-leg STRATEGY ``PositionView``.
+
+    A strategy record carries ``direction = None`` (ALP-610) — a multi-leg
+    strategy has no position-level direction; ``position_direction()`` yields
+    ``None`` for it.
+    """
+    fill_ts = datetime(2026, 4, 28, 14, 0, tzinfo=UTC)
+    leg = StrategyLeg(
+        leg_id="leg-0",
+        direction=Direction.LONG,
+        options=OptionsPositionDetails(
+            underlying_ticker=Symbol(ticker),
+            strike_price=100.0,
+            expiration_date=fill_ts.date(),
+            contract_type=OptionContractType.CALL,
+            contract_count=1.0,
+            contract_multiplier=100.0,
+            premium_paid_per_contract=5.0,
+            greeks=OptionGreeks(
+                delta=0.5, gamma=0.02, theta=-0.1, vega=0.3, as_of_timestamp=fill_ts
+            ),
+        ),
+    )
+    record = PositionRecord(
+        position_id=PositionId(position_id),
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=None,
+        entry_timestamp=fill_ts,
+        details=StrategyPositionDetails(
+            strategy_type_label="bull_spread",
+            legs=(leg,),
+            net_premium_usd=-200.0,
+            max_profit_usd=800.0,
+            max_loss_usd=-200.0,
+            breakeven_levels=(102.0,),
+            strategy_greeks=OptionGreeks(
+                delta=0.3, gamma=0.01, theta=-0.05, vega=0.2, as_of_timestamp=fill_ts
+            ),
+        ),
+        execution_history=(
+            PositionFill(
+                fill_timestamp=fill_ts,
+                fill_price=price(2.0),
+                fill_quantity=1.0,
+                slippage=signed_money(0.01),
+                fees=money(1.0),
+            ),
+        ),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=signed_money(market_value_usd),
+        unrealized_pnl_usd=signed_money(0.0),
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=weight_pct,
+        position_age_hours=24.0,
+        notional_exposure_usd=money(market_value_usd),
+        delta_adjusted_exposure_usd=signed_money(market_value_usd),
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Common fixtures
 # ---------------------------------------------------------------------------
@@ -530,7 +614,7 @@ def _proposed_close_for_position(
             position.details.ticker if isinstance(position.details, EquityPositionDetails) else "X"
         ),
         asset_type="equity",
-        direction="long" if position.direction == Direction.LONG else "short",
+        direction=("long" if position_direction(position.record) == Direction.LONG else "short"),
         pre_close_size_pct_of_portfolio=pre_pct,
         close_size_pct_of_portfolio=pre_pct,
         pre_close_size_usd=pre_usd,
@@ -914,6 +998,77 @@ def test_search_for_alternate_position_directional_filters_to_same_side(
     assert selection.position_id == other_short.position_id
 
 
+def test_candidate_set_directional_excludes_strategy_positions() -> None:
+    """AC: the ``"directional"`` candidate filter excludes strategy positions.
+
+    A strategy has no position-level direction (``position_direction()`` is
+    ``None``); it must not enter a directional-candidate set even when its
+    inert placeholder matches the primary's direction. Only candidates whose
+    direction equals the primary's non-``None`` direction are kept.
+    """
+    primary = _short_position(
+        position_id=PositionId("POS-PRIMARY-SHORT"),
+        ticker=Symbol("AAA"),
+        weight_pct=8.0,
+        market_value_usd=8_000.0,
+    )
+    other_short = _short_position(
+        position_id=PositionId("POS-OTHER-SHORT"),
+        ticker=Symbol("BBB"),
+        weight_pct=7.0,
+        market_value_usd=7_000.0,
+    )
+    a_long = _long_position(
+        position_id=PositionId("POS-LONG-001"),
+        ticker=Symbol("LLL"),
+        weight_pct=10.0,
+        market_value_usd=10_000.0,
+    )
+    strategy = _strategy_position(
+        position_id="POS-STRAT",
+        ticker="SSS",
+        weight_pct=6.0,
+        market_value_usd=6_000.0,
+    )
+    open_positions = (primary, other_short, a_long, strategy)
+
+    candidates = _candidate_set(
+        primary_position_id="POS-PRIMARY-SHORT",
+        open_positions=open_positions,
+        primary_rule_breach_type="directional",
+    )
+    candidate_ids = {c.position_id for c in candidates}
+    # Only the genuine same-side short survives; the strategy and the long
+    # are both excluded.
+    assert candidate_ids == {"POS-OTHER-SHORT"}
+
+
+def test_candidate_set_non_directional_keeps_strategy_positions() -> None:
+    """AC: non-directional breach types leave strategy positions in the set.
+
+    A ``"sector"`` / ``"other"`` candidate set excludes only the original
+    position; a strategy is a legitimate alternate-close candidate there.
+    """
+    primary = _short_position(
+        position_id=PositionId("POS-PRIMARY-SHORT"),
+        ticker=Symbol("AAA"),
+        weight_pct=8.0,
+        market_value_usd=8_000.0,
+    )
+    strategy = _strategy_position(
+        position_id="POS-STRAT",
+        ticker="SSS",
+        weight_pct=6.0,
+        market_value_usd=6_000.0,
+    )
+    candidates = _candidate_set(
+        primary_position_id="POS-PRIMARY-SHORT",
+        open_positions=(primary, strategy),
+        primary_rule_breach_type="other",
+    )
+    assert {c.position_id for c in candidates} == {"POS-STRAT"}
+
+
 # ---------------------------------------------------------------------------
 # Cascade chain (multi-envelope)
 # ---------------------------------------------------------------------------
@@ -944,7 +1099,7 @@ def _follow_up_full_close_selector(
             target.details.ticker if isinstance(target.details, EquityPositionDetails) else "X"
         ),
         asset_type="equity",
-        direction="long" if target.direction == Direction.LONG else "short",
+        direction=("long" if position_direction(target.record) == Direction.LONG else "short"),
         pre_close_size_pct_of_portfolio=pre_pct,
         close_size_pct_of_portfolio=pre_pct,
         pre_close_size_usd=pre_usd,

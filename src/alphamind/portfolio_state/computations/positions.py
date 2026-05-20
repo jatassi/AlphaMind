@@ -19,6 +19,7 @@ from alphamind.portfolio_state.records.positions import (
     OptionsPositionDetails,
     PositionRecord,
     StrategyPositionDetails,
+    position_direction,
 )
 
 
@@ -48,8 +49,10 @@ def compute_market_value_usd(position: PositionRecord, price: PriceQuote) -> flo
         raise ValueError(msg)
     details = position.details
     if isinstance(details, EquityPositionDetails):
+        direction = position_direction(position)
+        assert direction is not None  # narrowed: STRATEGY already raised above
         mv = details.share_count * price.price_usd
-        return mv if position.direction == Direction.LONG else -mv
+        return mv if direction == Direction.LONG else -mv
     # OPTIONS
     assert isinstance(details, OptionsPositionDetails)
     return details.contract_count * details.contract_multiplier * price.price_usd
@@ -332,8 +335,10 @@ def compute_delta_adjusted_exposure_usd(position: PositionRecord, price: PriceQu
         raise ValueError(msg)
     details = position.details
     if isinstance(details, EquityPositionDetails):
+        direction = position_direction(position)
+        assert direction is not None  # narrowed: STRATEGY already raised above
         notional = details.share_count * price.price_usd
-        return notional if position.direction == Direction.LONG else -notional
+        return notional if direction == Direction.LONG else -notional
     # OPTIONS
     assert isinstance(details, OptionsPositionDetails)
     return (

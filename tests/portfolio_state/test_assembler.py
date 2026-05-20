@@ -431,7 +431,7 @@ def _make_strategy_position(
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=None,
         entry_timestamp=_ENTRY_AT,
         details=strategy_details,
         execution_history=(fill,),

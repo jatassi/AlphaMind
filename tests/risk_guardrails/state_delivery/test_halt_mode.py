@@ -572,6 +572,7 @@ def _make_held_position(
         sector=sector,
         size_pct=size_pct,
         instrument_type=InstrumentType.EQUITY,
+        strategy_type_label=None,
     )
 
 

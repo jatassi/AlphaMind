@@ -66,6 +66,7 @@ from alphamind.portfolio_state.records.positions import (
     OptionsPositionDetails,
     PositionRecord,
     StrategyPositionDetails,
+    position_direction,
 )
 from alphamind.portfolio_state.records.theses import (
     ThesisComponentType,
@@ -116,6 +117,24 @@ _OMS_COMPONENT_TYPE_TO_PERSISTED: dict[str, ThesisComponentType] = {
     "target_rationale": ThesisComponentType.TARGET_RATIONALE,
     "invalidation_rationale": ThesisComponentType.INVALIDATION_RATIONALE,
 }
+
+
+def _order_position_direction(position: PositionRecord) -> Direction:
+    """Resolve the position-level :class:`Direction` an order builder needs.
+
+    Reads route through :func:`position_direction`: equity / single-leg
+    options positions yield their non-None ``LONG`` / ``SHORT`` side. A
+    multi-leg strategy has no position-level direction, so the accessor
+    returns ``None`` — this helper substitutes an inert ``Direction.LONG``
+    placeholder. The resulting ``OrderRecord.direction`` is not a meaningful
+    side for a strategy: ALP-588 story 01f made the close path leg-derived,
+    and the order-level direction-field reshaping that retires this
+    placeholder is tracked by **ALP-614** (the proposal-side analogue for
+    ``ProposedDelta`` / ``ExistingPosition`` is ALP-603). Mirrors story 02a's
+    ``ProposedClose`` treatment in ``breach_behavior/cascade.py``.
+    """
+    direction = position_direction(position)
+    return direction if direction is not None else Direction.LONG
 
 
 def _order_direction_for_entry(direction: Direction) -> OrderDirection:

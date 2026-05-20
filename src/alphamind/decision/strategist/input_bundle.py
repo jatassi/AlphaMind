@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 
+from alphamind.decision._shared import direction_display
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.computations.activity_log import filter_by_event_type
 from alphamind.portfolio_state.computations.exposure import SectorResolver
@@ -47,6 +48,7 @@ from alphamind.portfolio_state.records.positions import (
     InstrumentType,
     OptionsPositionDetails,
     PositionRecord,
+    position_direction,
     resolve_ticker,
 )
 from alphamind.portfolio_state.records.theses import (
@@ -97,11 +99,6 @@ _DEFENSIVE_POSTURE_TOOL_NOTE = (
 )
 
 # Display dictionaries
-_DIRECTION_DISPLAY: dict[Direction, str] = {
-    Direction.LONG: "long",
-    Direction.SHORT: "short",
-}
-
 _INSTRUMENT_TYPE_DISPLAY: dict[InstrumentType, str] = {
     InstrumentType.EQUITY: "equity",
     InstrumentType.OPTIONS: "option",
@@ -429,9 +426,10 @@ def _resolve_position_ticker(pos: PositionRecord | PositionView) -> str:
 
 
 def _render_underlying_line(pos: PositionView, ticker: str) -> str:
-    direction = _DIRECTION_DISPLAY[pos.direction]
     instrument = _INSTRUMENT_TYPE_DISPLAY[pos.instrument_type]
-    return f"  Underlying:    {ticker} (instrument: {instrument}, direction: {direction})"
+    return (
+        f"  Underlying:    {ticker} (instrument: {instrument}, direction: {direction_display(pos)})"
+    )
 
 
 def _render_size_line(pos: PositionView) -> str:
@@ -475,7 +473,7 @@ def _render_distance_and_rr_line(
     stop_price = _bracket_leg_price(bracket, BracketLegType.PRICE_STOP)
     target_pct = _signed_distance_pct(current_price, target_price)
     stop_pct = _signed_distance_pct(current_price, stop_price)
-    rr = _risk_reward_at_current(pos.direction, current_price, target_price, stop_price)
+    rr = _risk_reward_at_current(pos, current_price, target_price, stop_price)
     target_str = target_pct if target_pct is not None else "—"
     stop_str = stop_pct if stop_pct is not None else "—"
     rr_str = f"{rr:.1f}:1" if rr is not None else "—"
@@ -510,12 +508,23 @@ def _signed_distance_pct(current_price: float, target: float | None) -> str | No
 
 
 def _risk_reward_at_current(
-    direction: Direction,
+    pos: PositionView,
     current_price: float,
     target: float | None,
     stop: float | None,
 ) -> float | None:
-    if target is None or stop is None:
+    """Risk/reward at the current price for an equity / single-leg options position.
+
+    R/R-at-current measures upside-to-target against downside-to-stop along a
+    single directional axis. A multi-leg strategy has no position-level
+    direction — ``position_direction()`` returns ``None`` — and its payoff is
+    non-monotonic in the underlying, so a single target/stop R/R is a category
+    error. The figure is omitted for a strategy (caller renders ``—``); the
+    strategy's own payoff metrics (max profit / max loss / breakevens) carry
+    its risk/reward shape instead.
+    """
+    direction = position_direction(pos.record)
+    if direction is None or target is None or stop is None:
         return None
     if direction == Direction.LONG:
         reward = target - current_price

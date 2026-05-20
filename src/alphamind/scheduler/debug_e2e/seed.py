@@ -345,7 +345,9 @@ def _build_strategy_position_row(
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.PENDING.value,
-        direction=Direction.LONG.value,
+        # A multi-leg strategy has no position-level direction (ALP-610) —
+        # the column is NULL; per-leg direction lives in ``details_json``.
+        direction=None,
         entry_timestamp=_isoformat(now),
         instrument_type=InstrumentType.STRATEGY.value,
         details_json=json.dumps(details),
@@ -453,10 +455,15 @@ def _build_entry_order_row(
     :mod:`alphamind.execution.write_paths.phase2.close` reads only
     ``position.share_count`` / ``position.contract_count`` to size the
     close, so a missing fill record doesn't affect command persistence.
+
+    A strategy row carries ``direction = NULL`` (ALP-610) — it has no
+    position-level side — so its entry order takes an inert ``BUY``
+    placeholder; the order-level direction is not a meaningful side for a
+    strategy (the order-direction reshape is the separate ALP-603 follow-on).
     """
     timestamp = _isoformat(now)
-    is_long = position_row.direction == Direction.LONG.value
-    order_direction = OrderDirection.BUY if is_long else OrderDirection.SELL
+    is_short = position_row.direction == Direction.SHORT.value
+    order_direction = OrderDirection.SELL if is_short else OrderDirection.BUY
     return OrderRow(
         order_id=order_id,
         position_id=position_row.position_id,

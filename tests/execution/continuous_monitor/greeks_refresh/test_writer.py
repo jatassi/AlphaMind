@@ -131,7 +131,7 @@ def _strategy_position(*, position_id: str = "strat-1") -> PositionRecord:
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=None,
         entry_timestamp=datetime(2026, 5, 1, 14, 30, tzinfo=UTC),
         details=StrategyPositionDetails(
             strategy_type_label="vertical_call_spread",

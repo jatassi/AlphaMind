@@ -33,7 +33,6 @@ from alphamind.persistence.session import (
 )
 from alphamind.portfolio_state.computations.positions import (
     compute_strategy_market_value_usd,
-    compute_unrealized_pnl_usd,
 )
 from alphamind.portfolio_state.pricing import PriceQuote, PriceSource
 from alphamind.portfolio_state.records.positions import StrategyPositionDetails
@@ -257,7 +256,11 @@ class TestSeederPostStateInvariants:
             market_value = compute_strategy_market_value_usd(record, leg_prices)
             cost_basis = record.details.net_premium_usd
             assert market_value == pytest.approx(cost_basis)
-            pnl = compute_unrealized_pnl_usd(market_value, cost_basis, record.direction)
+            # A strategy's P/L USD is the directionless ``market_value -
+            # net_premium_usd`` — the assembler computes it this way, not via
+            # the direction-keyed ``compute_unrealized_pnl_usd`` (a strategy
+            # carries ``direction = None``).
+            pnl = market_value - cost_basis
             assert pnl == pytest.approx(0.0)
 
 
@@ -274,13 +277,22 @@ def _expected_portfolio_tickers() -> set[str]:
 
 
 def _prepare_snapshot_copy(tmp_path: Path) -> Path:
-    """Copy the local prod snapshot into ``tmp_path``; skip the test if absent.
+    """Copy the local prod snapshot into ``tmp_path``, upgrade to head; skip if absent.
 
     Pulled out of the async fixture body because ASYNC240 forbids
     synchronous ``Path.exists()`` / ``shutil.copy2`` inside an async
     coroutine; the I/O is intentionally sync (one-shot setup), so a
     sync helper is the right shape rather than wrapping in
-    ``asyncio.to_thread``.
+    ``asyncio.to_thread``. ``command.upgrade`` and ``_alembic_config``
+    are also sync, so they belong here alongside the copy.
+
+    The prod snapshot carries whatever schema was current when
+    ``scripts/snapshot_prod_for_debug_e2e.py`` last ran. Upgrading to
+    head here ensures the copy's DDL matches the migration history the
+    seeder was written against — in particular, any migration that makes
+    a previously-NOT-NULL column nullable (e.g. ``d3f6a1c7e9b2``
+    for ``positions.direction``) must be applied before ``wipe_and_seed``
+    can write ``direction=NULL`` for a STRATEGY position.
     """
     import shutil
 
@@ -292,6 +304,7 @@ def _prepare_snapshot_copy(tmp_path: Path) -> Path:
 
     db_path = tmp_path / "alphamind-debug-e2e.db"
     shutil.copy2(_PROD_SNAPSHOT_PATH, db_path)
+    command.upgrade(_alembic_config(db_path), "head")
     return db_path
 
 
@@ -393,7 +406,7 @@ class TestSeederAgainstProdSnapshot:
                     "INSERT INTO distillation_ticker_baseline "
                     "(ticker, baseline_kind, as_of, mean, stdev, n_observations, "
                     " window_days, calibration_state, ingested_at) "
-                    "VALUES (:t, :k, :as_of, 0.0, 0.0, 0, 20, 'bootstrap', :ing)"
+                    "VALUES (:t, :k, :as_of, 0.0, 0.0, 0, 20, 'accumulating', :ing)"
                 ),
                 {
                     "t": "AAPL",

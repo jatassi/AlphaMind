@@ -141,7 +141,7 @@ def _strategy_position(
         thesis_id=ThesisId("THESIS-ST"),
         bracket_id=BracketId("brk-st"),
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=None,
         entry_timestamp=_NOW,
         details=StrategyPositionDetails(
             strategy_type_label="vertical_call_spread",
@@ -218,6 +218,30 @@ async def test_bracket_strategy_close_leg_without_direction_raises() -> None:
 
     with pytest.raises(ValueError, match="direction"):
         await submitter.submit_strategy_close(
+            position=position,
+            details=position.details,
+            client_order_id_base="MON.session.1.0",
+        )
+
+
+@pytest.mark.asyncio
+async def test_per_leg_fallback_requires_explicit_leg_direction() -> None:
+    """The per-leg fallback requires an explicit per-leg direction (ALP-608).
+
+    A strategy leg carries its own direction; the per-leg fallback must not
+    fall back to a position-level direction when a leg's ``direction`` is
+    ``None`` — a strategy is neither long nor short at the position level.
+    """
+    client = _CapturingClient()
+    submitter = AlpacaBracketCloseSubmitter(
+        client_factory=_ClientFactory(client),
+        execution_config=_execution_config(),
+    )
+    position = _strategy_position(leg_one_direction=None)
+    assert isinstance(position.details, StrategyPositionDetails)
+
+    with pytest.raises(ValueError, match="direction"):
+        await submitter._per_leg_fallback(
             position=position,
             details=position.details,
             client_order_id_base="MON.session.1.0",

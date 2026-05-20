@@ -458,6 +458,9 @@ class TestSeed:
         strategy_details = json.loads(strategy_row.details_json)
         assert strategy_details["strategy_type_label"] == "bull_call_spread"
         assert len(strategy_details["legs"]) == 2
+        # A strategy row carries direction = NULL — position-level direction is
+        # a category error for a multi-leg strategy (ALP-610).
+        assert strategy_row.direction is None
 
         # Theses are paired by position_index — thesis-XX references pos-XX.
         thesis_position_pairs = [(row.thesis_id, row.position_id) for row in theses]

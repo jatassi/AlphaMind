@@ -928,7 +928,7 @@ def test_unresolvable_position_skipped_with_warning(caplog: pytest.LogCaptureFix
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=None,
         entry_timestamp=_PHASE1,
         details=strategy_details,
         execution_history=(
@@ -1275,7 +1275,7 @@ def test_strategy_position_ticker_and_greeks() -> None:
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=None,
         entry_timestamp=_PHASE1,
         details=details,
         execution_history=(
@@ -1720,9 +1720,10 @@ def _make_strategy_position_view(
     """Build an OPEN multi-leg STRATEGY ``PositionView``.
 
     ``leg_specs`` is a sequence of ``(contract_count, contract_multiplier)``
-    pairs — one per leg. The position-level ``direction`` is the inert ``LONG``
-    placeholder per ALP-588 decision (C); the strategy's true directional
-    contribution rides on ``strategy_greeks``.
+    pairs — one per leg. A strategy record carries ``direction = None``
+    (ALP-610); the strategy's directional contribution rides on
+    ``strategy_greeks``, and direction reads route through
+    ``position_direction()``, which yields ``None`` for a strategy.
     """
     legs = tuple(
         StrategyLeg(
@@ -1757,7 +1758,7 @@ def _make_strategy_position_view(
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=None,
         entry_timestamp=_PHASE1,
         details=details,
         execution_history=(
@@ -1856,6 +1857,112 @@ def test_strategy_greek_contribution_uses_leg_summed_multiplier_units() -> None:
     first_leg_delta_pct = strategy_greeks.delta * first_leg_units / lib.portfolio_value_usd * 100.0
     # The leg-summed scaling must differ from the discarded first-leg scaling.
     assert lib.options_delta_pct != pytest.approx(first_leg_delta_pct)
+
+
+# ---------------------------------------------------------------------------
+# ALP-606 — strategy-aware direction reads route through position_direction()
+# ---------------------------------------------------------------------------
+
+
+def test_strategy_never_selected_by_single_short_max_filter() -> None:
+    """AC: a strategy position is never selected by the shorts filter.
+
+    ``_select_single_short_max`` reads direction via ``position_direction()``,
+    which returns ``None`` for a strategy — unequal to ``Direction.SHORT`` — so
+    the strategy is excluded regardless of its per-leg directions. Reading
+    the raw ``record.direction`` would mis-select it as the largest short.
+    """
+    strategy = _make_strategy_position_view(
+        "POS-STRAT",
+        "NVDA",
+        leg_specs=[(1.0, 100.0), (1.0, 100.0)],
+        strategy_greeks=OptionGreeks(
+            delta=-0.40, gamma=0.01, theta=0.05, vega=-0.20, as_of_timestamp=_NOW
+        ),
+        market_value_usd=9_000.0,
+        notional_usd=9_000.0,
+        delta_adjusted_usd=-9_000.0,
+        position_weight_pct=9.0,  # larger than the genuine short below
+    )
+    genuine_short = _make_equity_position_view(
+        "POS-XOM",
+        "XOM",
+        Direction.SHORT,
+        share_count=50.0,
+        market_value_usd=5_500.0,
+        notional_usd=5_500.0,
+        delta_adjusted_usd=-5_500.0,
+        position_weight_pct=5.5,
+    )
+    snapshot = _make_pydantic_snapshot(open_positions=[strategy, genuine_short])
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    # The strategy (weight 9.0) must not be picked despite outweighing the
+    # genuine equity short — the equity short (5.5) is the only short.
+    assert lib.single_short_max_pct == pytest.approx(5.5)
+    assert lib.single_short_max_position_id == "POS-XOM"
+
+
+def test_strategy_excluded_from_borrow_cost() -> None:
+    """AC: the short-equity borrow-cost loop reads direction via
+    ``position_direction()``; a strategy (``None``) is never treated as a
+    short equity, so no borrow cost accrues for it even when a borrow-cost
+    resolver is supplied.
+    """
+    strategy = _make_strategy_position_view(
+        "POS-STRAT",
+        "NVDA",
+        leg_specs=[(1.0, 100.0), (1.0, 100.0)],
+        strategy_greeks=OptionGreeks(
+            delta=-0.40, gamma=0.01, theta=0.05, vega=-0.20, as_of_timestamp=_NOW
+        ),
+        market_value_usd=9_000.0,
+        notional_usd=9_000.0,
+        delta_adjusted_usd=-9_000.0,
+        position_weight_pct=9.0,
+    )
+    snapshot = _make_pydantic_snapshot(open_positions=[strategy])
+    lib = to_library_snapshot(
+        snapshot,
+        sector_resolver=_sector_resolver,
+        borrow_cost_resolver=lambda _ticker: 10.0,
+    )
+
+    # A strategy is not a short equity → no borrow cost, no recorded accrual.
+    assert lib.daily_borrow_cost_pct == pytest.approx(0.0)
+    assert lib.existing_positions["POS-STRAT"].daily_borrow_cost_usd is None
+
+
+def test_strategy_existing_position_built_with_none_direction() -> None:
+    """AC: a strategy's ``ExistingPosition`` projection carries ``direction``
+    ``None``.
+
+    ``position_direction()`` returns ``None`` for a strategy and
+    ``ExistingPosition.direction`` is optional (ALP-603) — a strategy has no
+    position-level direction, its directional sign lives per-leg. The
+    guardrail consumers are leg-derived (ALP-588 story 01d) and do not branch
+    on this field for a strategy.
+    """
+    strategy = _make_strategy_position_view(
+        "POS-STRAT",
+        "NVDA",
+        leg_specs=[(1.0, 100.0), (1.0, 100.0)],
+        strategy_greeks=OptionGreeks(
+            delta=-0.40, gamma=0.01, theta=0.05, vega=-0.20, as_of_timestamp=_NOW
+        ),
+        market_value_usd=9_000.0,
+        notional_usd=9_000.0,
+        delta_adjusted_usd=-9_000.0,
+        position_weight_pct=9.0,
+    )
+    snapshot = _make_pydantic_snapshot(open_positions=[strategy])
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    assert "POS-STRAT" in lib.existing_positions
+    ep = lib.existing_positions["POS-STRAT"]
+    assert ep.asset_type == AssetType.STRATEGY
+    # A strategy has no position-level direction (ALP-603).
+    assert ep.direction is None
 
 
 def test_recompute_strategy_greeks_feeds_true_signed_delta_to_portfolio_view() -> None:

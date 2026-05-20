@@ -113,10 +113,11 @@ def _make_held_position(
     *,
     position_id: str,
     ticker: str,
-    direction: Direction = Direction.LONG,
+    direction: Direction | None = Direction.LONG,
     sector: str = "tech",
     size_pct: float = 4.2,
     instrument_type: InstrumentType = InstrumentType.EQUITY,
+    strategy_type_label: str | None = None,
 ) -> AnalystHeldPosition:
     return AnalystHeldPosition(
         position_id=position_id,
@@ -125,6 +126,7 @@ def _make_held_position(
         sector=sector,
         size_pct=size_pct,
         instrument_type=instrument_type,
+        strategy_type_label=strategy_type_label,
     )
 
 
@@ -415,6 +417,54 @@ def test_render_analyst_header_micro_profile_full_fixture() -> None:
         ]
     )
     assert rendered == expected
+
+
+def test_render_analyst_header_strategy_held_position_shows_strategy_label() -> None:
+    """A strategy held position (direction=None) renders its strategy-type label."""
+    held_positions = (
+        _make_held_position(
+            position_id=PositionId("POS-NVDA-001"),
+            ticker=Symbol("NVDA"),
+            sector="tech",
+            size_pct=4.2,
+        ),
+        _make_held_position(
+            position_id=PositionId("POS-IC-002"),
+            ticker=Symbol("SPY"),
+            direction=None,
+            sector="tech",
+            size_pct=2.5,
+            instrument_type=InstrumentType.STRATEGY,
+            strategy_type_label="iron_condor",
+        ),
+    )
+    view = _make_analyst_view(held_positions=held_positions)
+    rendered = render_analyst_header(
+        analyst_view=view,
+        risk_budget=_micro_risk_budget(),
+        active_risk_parameters=_make_active_parameters(),
+        invocation_id="inv-001",
+        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
+        options_enabled=False,
+        short_selling_enabled=False,
+        active_sectors=("tech", "semis"),
+        config=_make_state_delivery_config(),
+        sector_label_display=_MICRO_SECTOR_LABELS,
+    )
+    lines = rendered.splitlines()
+    header_idx = lines.index(
+        "Held positions (dedup — skip same underlying + direction; "
+        "strategist owns hold/add/reduce):"
+    )
+    equity_row = lines[header_idx + 1]
+    strategy_row = lines[header_idx + 2]
+    assert "long" in equity_row
+    assert "NVDA" in equity_row
+    # Strategy row shows the strategy-type label in the direction column.
+    assert "iron_condor" in strategy_row
+    assert "SPY" in strategy_row
+    assert "long" not in strategy_row
+    assert "short" not in strategy_row
 
 
 def _full_system_held_positions() -> tuple[AnalystHeldPosition, ...]:

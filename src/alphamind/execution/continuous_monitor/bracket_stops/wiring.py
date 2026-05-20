@@ -63,6 +63,7 @@ from alphamind.portfolio_state.records.positions import (
     OptionsPositionDetails,
     PositionRecord,
     StrategyPositionDetails,
+    position_direction,
 )
 from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
@@ -181,7 +182,11 @@ class AlpacaBracketCloseSubmitter:
             details.contract_type,
             details.strike_price,
         )
-        intent = _DIRECTION_TO_CLOSE_INTENT[position.direction]
+        # ``submit_options_close`` is the single-leg-option close path; the
+        # position-level direction is well-defined here.
+        direction = position_direction(position)
+        assert direction is not None  # single-leg options position
+        intent = _DIRECTION_TO_CLOSE_INTENT[direction]
         outcome = await submit_options_close(
             command=_build_synthetic_close_command(position),
             client=self._trading_client,  # type: ignore[arg-type]
@@ -270,8 +275,18 @@ class AlpacaBracketCloseSubmitter:
                 leg_details.contract_type,
                 leg_details.strike_price,
             )
-            leg_direction = leg.direction or position.direction
-            intent = _DIRECTION_TO_CLOSE_INTENT[leg_direction]
+            # A strategy leg carries its own direction. A strategy is neither
+            # long nor short at the position level, so there is no position-
+            # level direction to fall back to — an absent leg direction is a
+            # malformed record, surfaced as a clear ValueError (consistent with
+            # ``strategy_legs_to_close_acks``).
+            if leg.direction is None:
+                msg = (
+                    f"strategy leg {leg.leg_id!r} has no direction set; "
+                    "cannot build a per-leg close"
+                )
+                raise ValueError(msg)
+            intent = _DIRECTION_TO_CLOSE_INTENT[leg.direction]
             outcome = await submit_options_close(
                 command=_build_synthetic_close_command(position),
                 client=self._trading_client,  # type: ignore[arg-type]

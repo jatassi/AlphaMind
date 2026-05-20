@@ -584,3 +584,118 @@ async def test_margin_call_cascade_submits_returned_envelopes_in_order() -> None
     cascade_id = next(iter(cascade_ids))
     assert cascade_id is not None
     assert cascade_id.startswith(f"CASCADE.{_SESSION_ID}.")
+
+
+def _strategy_view(*, position_id: str) -> PositionView:
+    """Build a 2-leg vertical-spread ``PositionView`` for proposed-close tests."""
+    from datetime import date
+
+    from alphamind._kernel.ids import BracketId, ThesisId
+    from alphamind._kernel.money import money, price, signed_money
+    from alphamind.portfolio_state.records.positions import (
+        Direction,
+        OptionContractType,
+        OptionGreeks,
+        OptionsPositionDetails,
+        PositionFill,
+        PositionRecord,
+        PositionStatus,
+        StrategyLeg,
+        StrategyPositionDetails,
+    )
+
+    def _leg(strike: float, direction: Direction) -> StrategyLeg:
+        return StrategyLeg(
+            leg_id=f"leg-{strike}",
+            direction=direction,
+            options=OptionsPositionDetails(
+                underlying_ticker=Symbol("SPY"),
+                strike_price=strike,
+                expiration_date=date(2026, 6, 19),
+                contract_type=OptionContractType.CALL,
+                contract_count=1.0,
+                contract_multiplier=100.0,
+                premium_paid_per_contract=5.0,
+                greeks=OptionGreeks(delta=0.5, gamma=0.01, theta=-0.02, vega=0.1),
+            ),
+        )
+
+    record = PositionRecord(
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THE-{position_id}"),
+        bracket_id=BracketId(f"BRK-{position_id}"),
+        status=PositionStatus.OPEN,
+        direction=None,
+        entry_timestamp=NOW,
+        details=StrategyPositionDetails(
+            strategy_type_label="vertical_call_spread",
+            legs=(_leg(500.0, Direction.LONG), _leg(510.0, Direction.SHORT)),
+            net_premium_usd=300.0,
+            max_profit_usd=700.0,
+            max_loss_usd=-300.0,
+            breakeven_levels=(503.0,),
+            strategy_greeks=OptionGreeks(delta=0.2, gamma=0.0, theta=-0.005, vega=0.03),
+        ),
+        execution_history=(
+            PositionFill(
+                fill_timestamp=NOW,
+                fill_price=price(3.0),
+                fill_quantity=1.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
+            ),
+        ),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=signed_money(300.0),
+        unrealized_pnl_usd=signed_money(0.0),
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=10.0,
+        position_age_hours=2.0,
+        notional_exposure_usd=money(300.0),
+        delta_adjusted_exposure_usd=signed_money(300.0),
+        distance_to_target_usd=signed_money(10.0),
+        distance_to_stop_usd=signed_money(5.0),
+        risk_reward_at_current=2.0,
+    )
+
+
+def test_proposed_close_from_selection_handles_strategy_position() -> None:
+    """A strategy position routes through ``position_direction()`` without crashing.
+
+    A multi-leg strategy is neither long nor short at the position level
+    (``position_direction()`` returns ``None``). ``_proposed_close_from_selection``
+    must still produce a valid ``ProposedClose`` for it (ALP-608).
+    """
+    from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
+        _proposed_close_from_selection,
+    )
+    from alphamind.risk_guardrails.breach_behavior import (
+        PositionSelectionAction,
+        PositionSelectionResult,
+    )
+
+    view = _strategy_view(position_id="POS-SPREAD-1")
+    selection = PositionSelectionResult(
+        position_id=view.position_id,
+        action=PositionSelectionAction.FULL_CLOSE,
+        target_post_action_size_pct_of_portfolio=None,
+        rationale="protective close",
+    )
+
+    close = _proposed_close_from_selection(
+        selection=selection,
+        position=view,
+        portfolio_value_usd=100_000.0,
+    )
+
+    assert close.position_id == "POS-SPREAD-1"
+    assert close.asset_type == "strategy"
+    # A strategy is neither long nor short at the position level; mirroring
+    # ``_direction_of``, the inert placeholder falls to "long".
+    assert close.direction == "long"
