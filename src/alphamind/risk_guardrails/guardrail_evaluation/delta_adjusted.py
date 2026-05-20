@@ -100,7 +100,21 @@ def compute_delta_adjusted_exposure(
     buffered_abs_delta = unbuffered_abs_delta * (
         1 + _effective_buffer_fraction(config, factor=delta_buffer_factor)
     )
-    signed_notional = sign * buffered_abs_delta * spot * _CONTRACT_MULTIPLIER * proposal.quantity
+    # A single-leg OPTION carries its directional sign on the position-level
+    # ``direction``; the per-leg ``abs()`` above keeps a short-call long-direction
+    # leg from double-counting that sign. A multi-leg STRATEGY's position-level
+    # ``direction`` is an inert ``LONG`` placeholder (ALP-588 decision C) — its
+    # true directional sign already lives in the net-signed leg deltas, so the
+    # sign tracks ``net_greeks.delta``. ``CLOSE`` inverts either sign (the
+    # signed notional carries the direction of change).
+    if proposal.asset_type is AssetType.STRATEGY:
+        delta_sign = math.copysign(1.0, net_greeks.delta) if net_greeks.delta != 0.0 else 1.0
+        exposure_sign = -delta_sign if proposal.action is Action.CLOSE else delta_sign
+    else:
+        exposure_sign = sign
+    signed_notional = (
+        exposure_sign * buffered_abs_delta * spot * _CONTRACT_MULTIPLIER * proposal.quantity
+    )
 
     return DeltaAdjustedExposure(
         proposal_id=proposal.id,
