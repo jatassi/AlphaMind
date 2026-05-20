@@ -721,3 +721,23 @@ def test_inactive_ticker_returns_unavailable_with_delisted_reason(session: Sessi
     assert "CTRA" in result.reason
     assert "2026-05-07" in result.reason
     assert "acquired by DVN" in result.reason
+
+
+def test_inactive_ticker_with_null_removal_metadata_still_short_circuits(
+    session: Session,
+) -> None:
+    """An inactive ticker whose removed_date / removal_reason were never stamped
+    still short-circuits to quality=UNAVAILABLE with a usable reason — the
+    fallbacks keep a raw ``None`` out of the agent-facing string.
+    """
+    _add_ticker(session, "DEAD", is_active=0)
+    session.commit()
+
+    fn = ticker_deep_pull_factory(session, clock=_FixedClock())
+    result = fn(TickerDeepPullInput(ticker=Symbol("DEAD"), categories=("price_volume",)))
+
+    assert result.quality == ToolQuality.UNAVAILABLE
+    assert result.price_volume is None
+    assert result.reason is not None
+    assert "DEAD" in result.reason
+    assert "None" not in result.reason

@@ -199,10 +199,11 @@ class TickerDeepPullOutput(ToolEnvelope, frozen=True):
 
 
 class _UniverseStatus(NamedTuple):
-    """The ``asset_universe`` fields ticker_deep_pull needs to decide whether a
-    ticker is reachable: active tickers fan out to the per-category loaders;
-    inactive ones (merged / delisted) short-circuit to an UNAVAILABLE envelope
-    that names the corporate event rather than masquerading as stale data.
+    """A ticker's ``asset_universe`` membership state.
+
+    ``is_active`` is the universe membership flag. ``removed_date`` and
+    ``removal_reason`` carry the corporate-event date and cause; they are
+    populated only for inactive (merged / delisted) tickers.
     """
 
     is_active: bool
@@ -232,9 +233,14 @@ def _universe_status(session: Session, ticker: str) -> _UniverseStatus | None:
 
 
 def _delisted_reason(ticker: str, status: _UniverseStatus) -> str:
-    """Reason string for an inactive ticker. Names ``removed_date`` and
-    ``removal_reason`` verbatim so the calling agent can tell a resolved
-    corporate event apart from an ingestion gap on a still-trading ticker."""
+    """Build the agent-facing reason for an inactive ticker.
+
+    The string names ``removed_date`` and ``removal_reason`` verbatim so the
+    caller can tell a resolved corporate event apart from stale data on a
+    still-trading ticker. The ALP-584 reconciler stamps both fields whenever it
+    deactivates a ticker; the fallbacks only fire for an inactive row left with
+    NULL metadata by some other writer.
+    """
     removed_date = status.removed_date or "an unrecorded date"
     removal_reason = status.removal_reason or "no reason recorded"
     return f"{ticker} delisted on {removed_date} ({removal_reason})"
