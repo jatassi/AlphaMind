@@ -80,8 +80,9 @@ class ValidationInstrument(BaseModel):
     ``direction`` is the position-level long/short sign for an ``EQUITY`` or
     ``OPTIONS`` instrument and ``None`` for a multi-leg ``STRATEGY`` (ALP-603):
     a strategy has no meaningful position-level direction — its directional
-    sign lives in the per-leg directions on ``legs``. ``_validate_options_fields``
-    enforces the ``direction is None ⇔ asset_type is STRATEGY`` invariant.
+    sign lives in the per-leg directions on ``legs``.
+    ``_validate_cross_field_invariants`` enforces the ``direction is None ⇔
+    asset_type is STRATEGY`` invariant.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -102,7 +103,7 @@ class ValidationInstrument(BaseModel):
     legs: tuple[ValidationStrategyLeg, ...] | None = None
 
     @model_validator(mode="after")
-    def _validate_options_fields(self) -> ValidationInstrument:
+    def _validate_cross_field_invariants(self) -> ValidationInstrument:
         if self.asset_type == InstrumentType.OPTIONS:
             missing = [
                 f for f in ("strike", "expiration", "contract_type") if getattr(self, f) is None
@@ -116,11 +117,10 @@ class ValidationInstrument(BaseModel):
         # Position-level direction is meaningful for EQUITY / OPTIONS but a
         # category error for a multi-leg STRATEGY (ALP-603): a strategy's
         # directional sign lives in its per-leg directions, not here.
-        if self.asset_type == InstrumentType.STRATEGY:
-            if self.direction is not None:
-                msg = "STRATEGY asset_type must not carry a position-level direction"
-                raise ValueError(msg)
-        elif self.direction is None:
+        if self.asset_type == InstrumentType.STRATEGY and self.direction is not None:
+            msg = "STRATEGY asset_type must not carry a position-level direction"
+            raise ValueError(msg)
+        if self.asset_type != InstrumentType.STRATEGY and self.direction is None:
             msg = f"{self.asset_type.value} asset_type requires a direction"
             raise ValueError(msg)
         return self

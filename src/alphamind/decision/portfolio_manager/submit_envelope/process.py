@@ -397,7 +397,7 @@ def _build_constructive_request_from_open(command: OpenCommand) -> ValidationReq
     Reads instrument identity via :func:`_instrument_ticker_key` and sizing
     from :class:`PositionSize`. For :class:`OptionInstrument` sources,
     propagates strike/expiration/contract_type to :class:`ValidationInstrument`
-    so ``_validate_options_fields`` can compute greeks. For
+    so ``_validate_cross_field_invariants`` can compute greeks. For
     :class:`StrategyInstrument` sources, projects the per-leg directions /
     strikes / expirations / contract_types onto :class:`ValidationStrategyLeg`
     tuples; the position-level direction is ``None`` (ALP-603) so the validator
