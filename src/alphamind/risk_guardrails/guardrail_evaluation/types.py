@@ -159,15 +159,20 @@ class OptionLeg:
 class ProposedDelta:
     """Caller's proposed exposure change.
 
-    Cross-field invariants (e.g., ``option_legs is None ⇔ asset_type ==
-    EQUITY``) are checked at the entry point in story 05; the dataclass itself
-    is constructible without runtime validation beyond the type system.
+    ``direction`` is the position-level long/short sign for an EQUITY or
+    single-leg OPTION proposal and ``None`` for a multi-leg STRATEGY (ALP-603):
+    a strategy has no meaningful position-level direction — its directional
+    sign lives in the per-leg / net-greeks data. Cross-field invariants (e.g.,
+    ``option_legs is None ⇔ asset_type == EQUITY``, ``direction is None ⇔
+    asset_type == STRATEGY``) are checked at the entry point in story 05; the
+    dataclass itself is constructible without runtime validation beyond the
+    type system.
     """
 
     id: str
     underlying: str
     sector: str
-    direction: Direction
+    direction: Direction | None
     asset_type: AssetType
     notional_usd: Money
     quantity: float
@@ -182,21 +187,24 @@ class ProposedDelta:
 class ExistingPosition:
     """Minimal per-position fields the library consults for ADD/CLOSE/ADJUST.
 
-    ``current_greeks`` is per-contract (per-unit), not total position greeks;
-    the position's total theta/vega/etc. is ``current_greeks.X * quantity *
-    contract_multiplier``. It is None for equity. ``daily_borrow_cost_usd`` is
-    None for long and options positions, populated for shorts;
-    ``reserves_capital_usd`` is the capital the existing position holds against
-    an unfilled non-marketable limit (zero for filled positions). ``quantity``
-    is the position's current contract count (options/strategies) or share
-    count (equity); options/strategy positions must populate it for CLOSE on
-    options-greeks rules to compute correctly.
+    ``direction`` is the position-level long/short sign for an equity or
+    single-leg option position and ``None`` for a multi-leg strategy (ALP-603):
+    a strategy's directional sign lives in its per-leg / net-greeks data, not
+    this field. ``current_greeks`` is per-contract (per-unit), not total
+    position greeks; the position's total theta/vega/etc. is
+    ``current_greeks.X * quantity * contract_multiplier``. It is None for
+    equity. ``daily_borrow_cost_usd`` is None for long and options positions,
+    populated for shorts; ``reserves_capital_usd`` is the capital the existing
+    position holds against an unfilled non-marketable limit (zero for filled
+    positions). ``quantity`` is the position's current contract count
+    (options/strategies) or share count (equity); options/strategy positions
+    must populate it for CLOSE on options-greeks rules to compute correctly.
     """
 
     position_id: str
     underlying: str
     sector: str
-    direction: Direction
+    direction: Direction | None
     asset_type: AssetType
     notional_usd: float
     delta_adjusted_exposure_usd: float

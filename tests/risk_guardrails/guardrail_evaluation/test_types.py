@@ -333,6 +333,20 @@ def test_proposed_delta_optional_field_defaults() -> None:
     assert delta.reserves_capital is False
 
 
+def test_proposed_delta_and_existing_position_accept_none_direction() -> None:
+    """ALP-603: ``direction`` is ``Direction | None`` on both boundary types —
+    a multi-leg strategy constructs with ``direction=None``."""
+    delta = dataclasses.replace(
+        _build_proposed_delta(), direction=None, asset_type=AssetType.STRATEGY
+    )
+    position = dataclasses.replace(
+        _build_existing_position(), direction=None, asset_type=AssetType.STRATEGY
+    )
+
+    assert delta.direction is None
+    assert position.direction is None
+
+
 # ---------------------------------------------------------------------------
 # Public API surface
 # ---------------------------------------------------------------------------

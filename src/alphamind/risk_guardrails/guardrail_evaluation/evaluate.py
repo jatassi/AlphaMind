@@ -155,6 +155,7 @@ def _validate_proposal(
     """Per-proposal cross-field invariants. Returns the list of failure messages."""
     failures: list[str] = []
     failures.extend(_check_asset_type_legs_consistency(proposal))
+    failures.extend(_check_asset_type_direction_consistency(proposal))
     failures.extend(_check_action_position_id(proposal, state=state))
     failures.extend(_check_action_sector(proposal, state=state, config=config))
     failures.extend(_check_short_borrow_cost(proposal))
@@ -198,6 +199,26 @@ def _check_asset_type_legs_consistency(proposal: ProposedDelta) -> list[str]:
             f"proposal {proposal.id!r}: {proposal.asset_type.value} "
             f"requires at least {min_legs} {word}"
         ]
+    return []
+
+
+def _check_asset_type_direction_consistency(proposal: ProposedDelta) -> list[str]:
+    """direction vs asset_type.
+
+    A multi-leg STRATEGY has no meaningful position-level direction — its
+    directional sign lives in the per-leg / net-greeks data — so it carries
+    ``direction=None`` (ALP-603). An EQUITY or single-leg OPTION proposal
+    carries a non-``None`` ``Direction``. The invariant is ``direction is None
+    ⇔ asset_type is STRATEGY``.
+    """
+    is_strategy = proposal.asset_type is AssetType.STRATEGY
+    if is_strategy and proposal.direction is not None:
+        return [
+            f"proposal {proposal.id!r}: STRATEGY must not carry a position-level "
+            f"direction (got {proposal.direction})"
+        ]
+    if not is_strategy and proposal.direction is None:
+        return [f"proposal {proposal.id!r}: {proposal.asset_type.value} requires a direction"]
     return []
 
 

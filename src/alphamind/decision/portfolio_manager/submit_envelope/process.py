@@ -94,9 +94,9 @@ def _strategy_legs_for_validation(
     :class:`ValidationStrategyLeg` tuples for the guardrail validator.
 
     Each leg carries its own ``direction``; the library's option-leg builder
-    consumes these directly when computing per-leg greeks. Position-level
-    direction is :class:`Direction.LONG` by convention (matches
-    :func:`alphamind.execution.write_paths.phase2.open._direction_from_instrument`).
+    consumes these directly when computing per-leg greeks. A multi-leg strategy
+    has no position-level direction (ALP-603) — only the per-leg directions
+    projected here.
     """
     return tuple(
         ValidationStrategyLeg(
@@ -400,9 +400,9 @@ def _build_constructive_request_from_open(command: OpenCommand) -> ValidationReq
     so ``_validate_options_fields`` can compute greeks. For
     :class:`StrategyInstrument` sources, projects the per-leg directions /
     strikes / expirations / contract_types onto :class:`ValidationStrategyLeg`
-    tuples; the position-level direction is :class:`Direction.LONG` by
-    convention so the validator can build the option-leg tuple from the
-    per-leg fields rather than a synthetic top-level direction.
+    tuples; the position-level direction is ``None`` (ALP-603) so the validator
+    builds the option-leg tuple from the per-leg fields, not a synthetic
+    top-level direction.
     """
     instrument = ValidationInstrument(
         **_open_instrument_kwargs(command.instrument),
@@ -421,13 +421,14 @@ def _open_instrument_kwargs(
     """Build the kwargs for :class:`ValidationInstrument` from an OPEN
     command's instrument variant.
 
-    Position-level direction is :class:`Direction.LONG` for STRATEGY by
-    convention (matches Phase 2's
-    :func:`~alphamind.execution.write_paths.phase2.open._direction_from_instrument`);
-    per-leg directions ride on the :class:`ValidationStrategyLeg` tuples.
+    A multi-leg STRATEGY has no position-level direction (ALP-603) — its
+    directional sign rides on the per-leg :class:`ValidationStrategyLeg`
+    tuples — so ``direction`` is ``None`` for a strategy; equity / single-leg
+    options carry the mapped :class:`Direction`.
     """
+    direction: Direction | None
     if isinstance(instrument, StrategyInstrument):
-        direction = Direction.LONG
+        direction = None
     else:
         direction = _OMS_TO_VALIDATION_DIRECTION[instrument.direction]
     kwargs: dict[str, Any] = {
@@ -479,10 +480,10 @@ def _add_instrument_kwargs(position: PositionRecord) -> dict[str, Any]:
     """Build the kwargs for :class:`ValidationInstrument` from a persisted
     :class:`PositionRecord` (the AddCommand resolution path).
 
-    Position-level direction is :class:`Direction.LONG` for STRATEGY by
-    persistence convention (see
-    :func:`~alphamind.execution.write_paths.phase2.open._direction_from_instrument`);
-    per-leg directions ride on the leg tuples.
+    A multi-leg STRATEGY has no position-level direction (ALP-603) — its
+    directional sign rides on the per-leg tuples — so ``direction`` is ``None``
+    for a strategy; equity / single-leg options carry the persisted
+    :class:`Direction`.
     """
     details = position.details
     ticker = resolve_ticker(details)
@@ -506,7 +507,7 @@ def _add_instrument_kwargs(position: PositionRecord) -> dict[str, Any]:
         kwargs["contract_type"] = _OPTION_CONTRACT_TYPE_TO_VALIDATION_STR[details.contract_type]
         return kwargs
     if isinstance(details, StrategyPositionDetails):
-        kwargs["direction"] = Direction.LONG
+        kwargs["direction"] = None
         kwargs["asset_type"] = InstrumentType.STRATEGY
         kwargs["legs"] = _strategy_legs_from_persisted(details)
         return kwargs

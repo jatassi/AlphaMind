@@ -330,11 +330,21 @@ def to_library_snapshot(
             # StrategyPositionDetails: first-leg contract count per verify_pm.py pattern
             quantity = details.legs[0].options.contract_count if details.legs else 0.0
 
+        # A multi-leg strategy has no meaningful position-level direction
+        # (ALP-603) — its directional sign lives in the net-signed
+        # ``strategy_greeks``; equity / single-leg options carry the mapped
+        # ``Direction``.
+        direction = (
+            None
+            if pos.instrument_type is InstrumentType.STRATEGY
+            else _DIRECTION_TO_LIBRARY[pos.direction]
+        )
+
         existing_positions[pos.position_id] = ExistingPosition(
             position_id=pos.position_id,
             underlying=underlying,
             sector=sector_resolver(underlying),
-            direction=_DIRECTION_TO_LIBRARY[pos.direction],
+            direction=direction,
             asset_type=_INSTRUMENT_TO_ASSET_TYPE[pos.instrument_type],
             notional_usd=float(pos.notional_exposure_usd),
             delta_adjusted_exposure_usd=float(pos.delta_adjusted_exposure_usd),

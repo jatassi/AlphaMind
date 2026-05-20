@@ -1313,6 +1313,9 @@ def test_strategy_position_ticker_and_greeks() -> None:
     ep = lib.existing_positions["POS-STRAT"]
     assert ep.underlying == "NVDA"
     assert ep.asset_type == AssetType.STRATEGY
+    # ALP-603: a strategy has no position-level direction — the translator
+    # emits ``None`` for it regardless of the persisted record's placeholder.
+    assert ep.direction is None
     assert ep.current_greeks is not None
     assert ep.current_greeks.delta == pytest.approx(0.3)
     assert ep.current_greeks.vega == pytest.approx(0.20)
