@@ -157,7 +157,7 @@ class ValidationUnavailableReason(StrEnum):
       borrow-cost rate is available for the ticker: either
       ``ValidationToolState.borrow_cost_resolver`` is ``None`` (no borrow-cost
       data source wired this cycle) or the resolver has no row for this
-      ticker (the iBorrowDesk store is sparse). Long-equity and long-options
+      ticker (the borrow-cost store is sparse). Long-equity and long-options
       expressions of the same ticker remain validatable.
     """
 
@@ -535,7 +535,7 @@ def _resolver_coverage_gap(
     resolvers can resolve. Market price is the prerequisite for every
     instrument type, so it is checked first; the borrow-cost resolver applies
     only to short equity OPEN/ADD, and the gap covers both a missing resolver
-    and a resolver with no row for the ticker (the iBorrowDesk store is
+    and a resolver with no row for the ticker (the borrow-cost store is
     sparse). A non-``None`` return drives an ``UNAVAILABLE`` result so the
     agent can tell an infrastructure gap apart from a guardrail breach
     (ALP-581).

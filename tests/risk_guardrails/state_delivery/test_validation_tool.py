@@ -1129,6 +1129,32 @@ def test_short_equity_open_uncovered_ticker_returns_unavailable() -> None:
     assert "borrow-cost data" in result.failure_guidance
 
 
+def test_uncovered_short_in_accumulated_deltas_raises_tool_error() -> None:
+    """The malformed-state guard: ``validate_guardrail`` short-circuits an
+    uncovered short-equity OPEN to UNAVAILABLE, so one cannot legitimately
+    reach ``accumulated_deltas``. If one is forced in, replaying it raises
+    ``ValidationToolError`` rather than silently pricing borrow at ``0.0``."""
+    # Resolver covers AAPL only; the accumulated NVDA short has no rate.
+    state = _state(borrow_cost_resolver=lambda ticker: {"AAPL": 40.0}.get(ticker))
+    uncovered_short = ProjectedDelta(
+        instrument=ValidationInstrument(
+            ticker=Symbol("NVDA"),
+            asset_type=InstrumentType.EQUITY,
+            direction=Direction.SHORT,
+        ),
+        size=ValidationSize(quantity=10, dollar_value=2_000.0),
+        action=ValidationAction.OPEN,
+        sector="tech",
+        delta_adjusted_exposure=-2_000.0,
+        greeks=None,
+        proposal_index=1,
+    )
+    state = state.with_accepted_proposal(uncovered_short)
+    request = _equity_request(direction=Direction.SHORT)  # AAPL short — covered
+    with pytest.raises(ValidationToolError):
+        validate_guardrail(request=request, state=state)
+
+
 # ---------------------------------------------------------------------------
 # Resolver-coverage gap → UNAVAILABLE (ALP-581)
 # ---------------------------------------------------------------------------
