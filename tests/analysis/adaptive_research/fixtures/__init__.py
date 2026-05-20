@@ -30,9 +30,12 @@ Fixture layout
   payload with mixed audience and mixed anomaly counts (volume-spike,
   correlation-breakdown, macro-surprise flags).
 * ``universal_regime_label.json`` — the regime payload as a
-  ``dict[str, Any]`` with the four canonical keys the input-bundle
-  renderer reads (``regime``, ``transition_flag``, ``confidence``,
-  ``freshness_ts``).
+  ``dict[str, Any]`` mirroring
+  :func:`alphamind.distillation.regime.assemble_regime_block` output
+  (``regime_label``, ``transition_state``, ``prior_label``,
+  ``invocations_held``, ``indicator_agreement_count``,
+  ``regime_skip_emergency`` and the supporting indicator snapshot).
+  The adaptive bundle renders every key (ALP-574).
 
 Refresh policy
 --------------

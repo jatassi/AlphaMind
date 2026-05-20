@@ -69,7 +69,10 @@ def assemble_input_bundle(
     """
     header_text = _render_header(invocation_id=invocation_id, as_of=as_of)
     regime_text = _render_regime(regime_label)
-    distillation_text = _render_distillation(anomaly_inputs.distillation)
+    active_regime_label = _extract_active_regime_label(regime_label)
+    distillation_text = _render_distillation(
+        anomaly_inputs.distillation, active_regime_label=active_regime_label
+    )
     sector_text = _render_sector(anomaly_inputs.sector)
 
     bundle_text = _render_bundle(
@@ -107,35 +110,57 @@ def _render_header(*, invocation_id: str, as_of: datetime) -> str:
     )
 
 
-_REGIME_FIELDS: tuple[tuple[str, str], ...] = (
-    ("Regime", "regime"),
-    ("Transition", "transition_flag"),
-    ("Confidence", "confidence"),
-    ("Freshness", "freshness_ts"),
-)
-_UNKNOWN = "unknown"
-
-
 def _render_regime(regime_label: dict[str, Any]) -> str:
     """Render the VOLATILITY REGIME section.
 
-    Reads each canonical key from ``regime_label`` with a default of
-    ``unknown`` when missing — the upstream payload's exact shape is the
-    contract; this renderer surfaces what's present without raising.
+    Payload-agnostic: emits every key in ``regime_label`` as a ``key: value``
+    line in deterministic alphabetical order, matching the qualitative
+    bundle's renderer so the adaptive researcher sees the same regime
+    fields the qualitative researcher does (ALP-574). Additions to the
+    regime payload (per :func:`alphamind.distillation.regime
+    .assemble_regime_block`) propagate to the LLM without renderer edits.
     """
     lines = ["=== VOLATILITY REGIME ==="]
-    lines.extend(f"{label}: {regime_label.get(key, _UNKNOWN)}" for label, key in _REGIME_FIELDS)
+    lines.extend(f"{key}: {regime_label[key]}" for key in sorted(regime_label))
     return "\n".join(lines)
 
 
-def _render_distillation(records: tuple[DistillationAnomalyRecord, ...]) -> str:
-    """Render the DISTILLATION ANOMALY FLAGS section."""
+def _extract_active_regime_label(regime_label: dict[str, Any]) -> str | None:
+    """Pull the active regime label string from the payload, if present.
+
+    Returns the ``regime_label`` payload value (one of the four
+    :class:`alphamind.distillation.regime.RegimeLabel` values per
+    :func:`alphamind.distillation.regime.assemble_regime_block`) so the
+    D-flag renderer can fall back to it when a block-level
+    ``regime_context`` is ``None`` (ALP-574). Returns ``None`` when the
+    payload does not carry the key — the D-flag renderer then emits the
+    historical ``none`` literal.
+    """
+    value = regime_label.get("regime_label")
+    return str(value) if value is not None else None
+
+
+def _render_distillation(
+    records: tuple[DistillationAnomalyRecord, ...],
+    *,
+    active_regime_label: str | None,
+) -> str:
+    """Render the DISTILLATION ANOMALY FLAGS section.
+
+    Per-flag ``regime_context`` precedence: the block-level
+    :attr:`alphamind.distillation.output.OutputBlock.regime_context` wins
+    when set; otherwise the active regime label from the
+    universal-broadcast block fills in so the LLM sees the regime context
+    inline with each flag (ALP-574). Falls through to the literal
+    ``none`` only when both are absent.
+    """
     header = f"=== DISTILLATION ANOMALY FLAGS ({len(records)} flags) ==="
     if not records:
         return f"{header}\n(none)"
+    fallback = active_regime_label if active_regime_label is not None else "none"
     lines = [header]
     for i, rec in enumerate(records, start=1):
-        regime_context = rec.regime_context if rec.regime_context is not None else "none"
+        regime_context = rec.regime_context if rec.regime_context is not None else fallback
         lines.append(
             f"[D-{i}] block={rec.block_id} flag={rec.flag_name}"
             f" magnitude={rec.magnitude:.2f} severity={rec.severity}"
