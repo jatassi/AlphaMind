@@ -440,11 +440,12 @@ def _proposed_close_from_selection(
         asset_type = "strategy"
     # ``position_direction`` returns ``None`` for a multi-leg strategy — a
     # strategy is neither long nor short at the position level. Mirror story
-    # 02a's ``breach_behavior.cascade._direction_of`` treatment: only an
-    # explicit ``LONG`` maps to ``"long"``; ``None`` (strategy) and ``SHORT``
-    # fall to ``"short"``. The label is inert for a strategy ``ProposedClose``.
+    # 02a's ``breach_behavior.cascade._direction_of`` treatment: anything that
+    # is not an explicit ``SHORT`` maps to ``"long"``, so ``None`` (strategy)
+    # falls to the inert ``"long"`` placeholder. The label is inert for a
+    # strategy ``ProposedClose``.
     direction: Literal["long", "short"] = (
-        "long" if position_direction(position.record) == Direction.LONG else "short"
+        "long" if position_direction(position.record) != Direction.SHORT else "short"
     )
     return ProposedClose(
         position_id=position.position_id,

@@ -697,5 +697,5 @@ def test_proposed_close_from_selection_handles_strategy_position() -> None:
     assert close.position_id == "POS-SPREAD-1"
     assert close.asset_type == "strategy"
     # A strategy is neither long nor short at the position level; mirroring
-    # ``_direction_of``, the inert label falls to "short".
-    assert close.direction == "short"
+    # ``_direction_of``, the inert placeholder falls to "long".
+    assert close.direction == "long"
