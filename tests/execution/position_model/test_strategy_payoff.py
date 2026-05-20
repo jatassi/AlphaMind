@@ -174,8 +174,12 @@ class TestComputeStrategyNetPremium:
         # Bull call spread: buy 1 call @ 100 for $5/contract, sell 1 call @ 110
         # for $2/contract. mult=100. Net = +5*100 - 2*100 = +300 (net debit).
         legs = (
-            _leg("L1", Direction.LONG, OptionContractType.CALL, 100.0, premium_paid_per_contract=5.0),
-            _leg("L2", Direction.SHORT, OptionContractType.CALL, 110.0, premium_paid_per_contract=2.0),
+            _leg(
+                "L1", Direction.LONG, OptionContractType.CALL, 100.0, premium_paid_per_contract=5.0
+            ),
+            _leg(
+                "L2", Direction.SHORT, OptionContractType.CALL, 110.0, premium_paid_per_contract=2.0
+            ),
         )
         assert compute_strategy_net_premium_usd(legs) == 300.0
 
@@ -184,8 +188,12 @@ class TestComputeStrategyNetPremium:
         # Sell 1 call @ 100 for $5/contract, buy 1 call @ 110 for $2/contract.
         # mult=100. Net = -5*100 + 2*100 = -300 (net credit — SHORT subtracts).
         legs = (
-            _leg("L1", Direction.SHORT, OptionContractType.CALL, 100.0, premium_paid_per_contract=5.0),
-            _leg("L2", Direction.LONG, OptionContractType.CALL, 110.0, premium_paid_per_contract=2.0),
+            _leg(
+                "L1", Direction.SHORT, OptionContractType.CALL, 100.0, premium_paid_per_contract=5.0
+            ),
+            _leg(
+                "L2", Direction.LONG, OptionContractType.CALL, 110.0, premium_paid_per_contract=2.0
+            ),
         )
         assert compute_strategy_net_premium_usd(legs) == -300.0
 
@@ -193,8 +201,12 @@ class TestComputeStrategyNetPremium:
         # Short strangle: sell 1 call @ 110 for $3, sell 1 put @ 90 for $4.
         # mult=100. Net = -3*100 - 4*100 = -700 (net credit).
         legs = (
-            _leg("L1", Direction.SHORT, OptionContractType.CALL, 110.0, premium_paid_per_contract=3.0),
-            _leg("L2", Direction.SHORT, OptionContractType.PUT, 90.0, premium_paid_per_contract=4.0),
+            _leg(
+                "L1", Direction.SHORT, OptionContractType.CALL, 110.0, premium_paid_per_contract=3.0
+            ),
+            _leg(
+                "L2", Direction.SHORT, OptionContractType.PUT, 90.0, premium_paid_per_contract=4.0
+            ),
         )
         assert compute_strategy_net_premium_usd(legs) == -700.0
 
