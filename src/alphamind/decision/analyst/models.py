@@ -178,10 +178,16 @@ class PositionSize(BaseModel):
 
     ``delta_adjusted_exposure`` is populated by the guardrail validation tool;
     the LLM mirrors the value verbatim into the recommendation. Can be
-    negative for shorts. ``premium_at_risk`` is required for defined-risk
-    options/strategies (the schema description lists it as required for that
-    case but does not encode it as an invariant; that check lives in the
-    Layer-2/3 validator, not here).
+    negative for shorts.
+
+    ``premium_at_risk`` carries the position's *capital at risk* — the USD
+    magnitude of its worst-case loss: the premium paid for a net-debit options
+    position or debit strategy, and (strike width minus net credit received)
+    for a net-credit strategy. Left ``None`` for equity. Always strictly
+    positive when present, hence the ``gt=0`` constraint. It is required for
+    defined-risk options/strategies (the schema description lists it as
+    required for that case but does not encode it as an invariant; that check
+    lives in the Layer-2/3 validator, not here).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -189,7 +195,16 @@ class PositionSize(BaseModel):
     quantity: float = Field(gt=0)
     dollar_value: Money = Field(gt=0)
     pct_of_portfolio: float = Field(gt=0)
-    premium_at_risk: Money | None = Field(default=None, gt=0)
+    premium_at_risk: Money | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Capital at risk: the USD magnitude of the position's worst-case "
+            "loss — premium paid for a net-debit options position or debit "
+            "strategy, (strike width minus net credit received) for a "
+            "net-credit strategy. None for equity."
+        ),
+    )
     delta_adjusted_exposure: float | None = None
 
 

@@ -209,13 +209,28 @@ class PositionSize(BaseModel):
     Per parent decision (B): no ``sector`` field. Sector is a risk-side
     concept derived by the guardrail layer at intake — not carried on the
     command's wire format.
+
+    ``premium_at_risk`` carries the position's *capital at risk* — the USD
+    magnitude of its worst-case loss: the premium paid for a net-debit options
+    position or debit strategy, and (strike width minus net credit received)
+    for a net-credit strategy. Left ``None`` for equity; strictly positive
+    when present.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     quantity: float = Field(gt=0)
     dollar_value: Money = Field(gt=0)
-    premium_at_risk: Money | None = Field(default=None, gt=0)
+    premium_at_risk: Money | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Capital at risk: the USD magnitude of the position's worst-case "
+            "loss — premium paid for a net-debit options position or debit "
+            "strategy, (strike width minus net credit received) for a "
+            "net-credit strategy. None for equity."
+        ),
+    )
 
 
 class Target(BaseModel):
