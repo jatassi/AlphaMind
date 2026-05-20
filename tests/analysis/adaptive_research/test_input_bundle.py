@@ -21,10 +21,17 @@ _INVOCATION_ID = "inv-ar-001"
 
 
 _REGIME_LABEL: dict[str, object] = {
-    "regime": "vol_expansion",
-    "transition_flag": "early-weak",
-    "confidence": 0.82,
-    "freshness_ts": "2026-05-01T11:55:00Z",
+    "regime_label": "vol_expansion",
+    "transition_state": "early-weak",
+    "prior_label": "low_vol_compression",
+    "invocations_held": 13,
+    "indicator_agreement_count": 4,
+    "regime_skip_emergency": False,
+    "vix_level": 17.26,
+    "term_structure_basis": 0.35,
+    "vvix_percentile": 0.72,
+    "realized_vol_5d": 0.18,
+    "realized_vol_20d": 0.21,
 }
 
 
@@ -171,18 +178,49 @@ def test_empty_sector_renders_placeholder() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Acceptance criterion: regime_label missing keys render with default, no raise
+# Acceptance criterion: regime block renders every key in the payload —
+# matches the qualitative bundle's payload-agnostic rendering.
 # ---------------------------------------------------------------------------
 
 
-def test_regime_missing_confidence_renders_unknown() -> None:
-    """A regime_label missing the confidence key renders "Confidence: unknown" without raising."""
+def test_regime_renders_every_production_payload_key() -> None:
+    """Every key the distillation regime block emits appears in the regime_text."""
+    from alphamind.analysis.adaptive_research.input_bundle import assemble_input_bundle
+
+    bundle = assemble_input_bundle(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        regime_label=_REGIME_LABEL,
+        anomaly_inputs=_make_inputs(),
+    )
+    for key in _REGIME_LABEL:
+        assert f"{key}: " in bundle.regime_text, (
+            f"regime payload key {key!r} missing from regime_text"
+        )
+
+
+def test_regime_renders_keys_in_alphabetical_order() -> None:
+    """Regime keys are emitted in sorted order for deterministic output."""
+    from alphamind.analysis.adaptive_research.input_bundle import assemble_input_bundle
+
+    bundle = assemble_input_bundle(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        regime_label=_REGIME_LABEL,
+        anomaly_inputs=_make_inputs(),
+    )
+    body_lines = bundle.regime_text.splitlines()[1:]  # skip "=== VOLATILITY REGIME ==="
+    rendered_keys = [line.split(":", 1)[0] for line in body_lines if line]
+    assert rendered_keys == sorted(_REGIME_LABEL)
+
+
+def test_regime_partial_payload_renders_only_present_keys() -> None:
+    """Missing keys are simply absent; the renderer does not invent placeholders."""
     from alphamind.analysis.adaptive_research.input_bundle import assemble_input_bundle
 
     partial_regime: dict[str, object] = {
-        "regime": "vol_expansion",
-        "transition_flag": "early-weak",
-        "freshness_ts": "2026-05-01T11:55:00Z",
+        "regime_label": "vol_expansion",
+        "transition_state": "early-weak",
     }
     bundle = assemble_input_bundle(
         invocation_id=_INVOCATION_ID,
@@ -190,12 +228,13 @@ def test_regime_missing_confidence_renders_unknown() -> None:
         regime_label=partial_regime,
         anomaly_inputs=_make_inputs(),
     )
-    assert "Confidence: unknown" in bundle.regime_text
-    assert "Confidence: unknown" in bundle.bundle_text
+    assert "regime_label: vol_expansion" in bundle.regime_text
+    assert "transition_state: early-weak" in bundle.regime_text
+    assert "invocations_held" not in bundle.regime_text
 
 
-def test_regime_completely_empty_renders_all_unknown() -> None:
-    """An empty regime_label renders all four canonical fields as ``unknown`` without raising."""
+def test_regime_empty_payload_renders_header_only() -> None:
+    """An empty regime_label renders just the section header — no synthetic body."""
     from alphamind.analysis.adaptive_research.input_bundle import assemble_input_bundle
 
     bundle = assemble_input_bundle(
@@ -204,10 +243,7 @@ def test_regime_completely_empty_renders_all_unknown() -> None:
         regime_label={},
         anomaly_inputs=_make_inputs(),
     )
-    assert "Regime: unknown" in bundle.regime_text
-    assert "Transition: unknown" in bundle.regime_text
-    assert "Confidence: unknown" in bundle.regime_text
-    assert "Freshness: unknown" in bundle.regime_text
+    assert bundle.regime_text == "=== VOLATILITY REGIME ==="
 
 
 # ---------------------------------------------------------------------------
@@ -426,8 +462,14 @@ def test_distillation_magnitude_formatted_two_decimals() -> None:
     assert "magnitude=3.14159" not in bundle.distillation_text
 
 
-def test_distillation_regime_context_none_renders_none_literal() -> None:
-    """A distillation record with regime_context=None renders ``regime_context=none``."""
+def test_distillation_regime_context_none_falls_back_to_active_label() -> None:
+    """D-flag ``regime_context=None`` falls back to the active regime label.
+
+    Block-level ``regime_context`` is by design ``None`` for most blocks;
+    the universal-broadcast regime block is the canonical regime source.
+    The adaptive bundle surfaces that active label per-flag so the agent
+    does not re-derive it from VIX via the macro_data tool.
+    """
     from alphamind.analysis.adaptive_research.input_bundle import assemble_input_bundle
 
     records = (_make_distillation(regime_context=None),)
@@ -435,6 +477,49 @@ def test_distillation_regime_context_none_renders_none_literal() -> None:
         invocation_id=_INVOCATION_ID,
         as_of=_AS_OF,
         regime_label=_REGIME_LABEL,
+        anomaly_inputs=_make_inputs(distillation=records),
+    )
+    assert "regime_context=vol_expansion" in bundle.distillation_text
+    assert "regime_context=none" not in bundle.distillation_text
+
+
+def test_distillation_regime_context_block_level_takes_precedence() -> None:
+    """A block-level ``regime_context`` overrides the active-label fallback."""
+    from alphamind.analysis.adaptive_research.input_bundle import assemble_input_bundle
+
+    records = (_make_distillation(regime_context="elevated vol regime"),)
+    bundle = assemble_input_bundle(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        regime_label=_REGIME_LABEL,
+        anomaly_inputs=_make_inputs(distillation=records),
+    )
+    assert "regime_context=elevated vol regime" in bundle.distillation_text
+
+
+def test_distillation_regime_context_block_level_used_when_no_active_label() -> None:
+    """Block-level ``regime_context`` still wins when no active regime label is set."""
+    from alphamind.analysis.adaptive_research.input_bundle import assemble_input_bundle
+
+    records = (_make_distillation(regime_context="elevated vol regime"),)
+    bundle = assemble_input_bundle(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        regime_label={},
+        anomaly_inputs=_make_inputs(distillation=records),
+    )
+    assert "regime_context=elevated vol regime" in bundle.distillation_text
+
+
+def test_distillation_regime_context_none_when_no_active_label() -> None:
+    """Without an active regime label, ``regime_context=None`` still renders ``none``."""
+    from alphamind.analysis.adaptive_research.input_bundle import assemble_input_bundle
+
+    records = (_make_distillation(regime_context=None),)
+    bundle = assemble_input_bundle(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        regime_label={},
         anomaly_inputs=_make_inputs(distillation=records),
     )
     assert "regime_context=none" in bundle.distillation_text

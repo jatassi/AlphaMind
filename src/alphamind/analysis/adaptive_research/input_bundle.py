@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from alphamind.analysis._shared import render_regime_payload_body
 from alphamind.analysis.adaptive_research.loaders import (
     AdaptiveAnomalyInputs,
     DistillationAnomalyRecord,
@@ -69,7 +70,11 @@ def assemble_input_bundle(
     """
     header_text = _render_header(invocation_id=invocation_id, as_of=as_of)
     regime_text = _render_regime(regime_label)
-    distillation_text = _render_distillation(anomaly_inputs.distillation)
+    raw_active_label = regime_label.get("regime_label")
+    active_regime_label = str(raw_active_label) if raw_active_label is not None else None
+    distillation_text = _render_distillation(
+        anomaly_inputs.distillation, active_regime_label=active_regime_label
+    )
     sector_text = _render_sector(anomaly_inputs.sector)
 
     bundle_text = _render_bundle(
@@ -107,35 +112,41 @@ def _render_header(*, invocation_id: str, as_of: datetime) -> str:
     )
 
 
-_REGIME_FIELDS: tuple[tuple[str, str], ...] = (
-    ("Regime", "regime"),
-    ("Transition", "transition_flag"),
-    ("Confidence", "confidence"),
-    ("Freshness", "freshness_ts"),
-)
-_UNKNOWN = "unknown"
-
-
 def _render_regime(regime_label: dict[str, Any]) -> str:
-    """Render the VOLATILITY REGIME section.
+    """Render the VOLATILITY REGIME section under the section header.
 
-    Reads each canonical key from ``regime_label`` with a default of
-    ``unknown`` when missing — the upstream payload's exact shape is the
-    contract; this renderer surfaces what's present without raising.
+    Delegates body rendering to :func:`render_regime_payload_body`, shared
+    with the qualitative bundle. Header is part of the adaptive bundle's
+    ``=== ... ===`` convention; the qualitative bundle composes its
+    ``## VOLATILITY REGIME`` header outside the body renderer.
     """
-    lines = ["=== VOLATILITY REGIME ==="]
-    lines.extend(f"{label}: {regime_label.get(key, _UNKNOWN)}" for label, key in _REGIME_FIELDS)
-    return "\n".join(lines)
+    body = render_regime_payload_body(regime_label)
+    if not body:
+        return "=== VOLATILITY REGIME ==="
+    return f"=== VOLATILITY REGIME ===\n{body}"
 
 
-def _render_distillation(records: tuple[DistillationAnomalyRecord, ...]) -> str:
-    """Render the DISTILLATION ANOMALY FLAGS section."""
+def _render_distillation(
+    records: tuple[DistillationAnomalyRecord, ...],
+    *,
+    active_regime_label: str | None,
+) -> str:
+    """Render the DISTILLATION ANOMALY FLAGS section.
+
+    Per-flag ``regime_context`` precedence: block-level
+    :attr:`alphamind.distillation.output.OutputBlock.regime_context` wins
+    when set; otherwise the active regime label from the
+    universal-broadcast block fills in so the agent does not re-derive
+    the regime from VIX via the macro_data tool. Falls through to the
+    literal ``none`` only when both are absent.
+    """
     header = f"=== DISTILLATION ANOMALY FLAGS ({len(records)} flags) ==="
     if not records:
         return f"{header}\n(none)"
+    fallback = active_regime_label if active_regime_label is not None else "none"
     lines = [header]
     for i, rec in enumerate(records, start=1):
-        regime_context = rec.regime_context if rec.regime_context is not None else "none"
+        regime_context = rec.regime_context if rec.regime_context is not None else fallback
         lines.append(
             f"[D-{i}] block={rec.block_id} flag={rec.flag_name}"
             f" magnitude={rec.magnitude:.2f} severity={rec.severity}"
