@@ -27,6 +27,7 @@ from alphamind.portfolio_state.computations.positions import (
     compute_strategy_delta_adjusted_exposure_usd,
     compute_strategy_market_value_usd,
     compute_strategy_notional_exposure_usd,
+    compute_strategy_unrealized_pnl_pct,
     compute_unrealized_pnl_pct,
     compute_unrealized_pnl_usd,
 )
@@ -485,6 +486,63 @@ class TestComputeUnrealizedPnlPct:
 
     def test_zero_cost_basis_returns_zero(self) -> None:
         result = compute_unrealized_pnl_pct(unrealized_pnl_usd=100.0, cost_basis_usd=0.0)
+        assert result == 0.0
+
+
+class TestComputeStrategyUnrealizedPnlPct:
+    """ALP-599: strategy P/L percentage divides by ``abs(max_loss_usd)``.
+
+    The denominator is the magnitude of capital at risk — non-inverting and
+    uniform for debit and credit strategies, unlike ``net_premium_usd`` which
+    is negative for a net credit and inverts the sign of the percentage.
+    """
+
+    def test_net_credit_strategy_positive_pnl_yields_positive_pct(self) -> None:
+        # Net-credit strategy: max_loss_usd is a loss (negative). A profitable
+        # position has positive unrealized P/L USD and must show positive pct.
+        result = compute_strategy_unrealized_pnl_pct(
+            unrealized_pnl_usd=150.0,
+            max_loss_usd=-300.0,
+        )
+        assert result == pytest.approx(50.0)
+
+    def test_net_credit_strategy_negative_pnl_yields_negative_pct(self) -> None:
+        # A losing position has negative unrealized P/L USD and must show
+        # negative pct (not inverted to a positive "gain").
+        result = compute_strategy_unrealized_pnl_pct(
+            unrealized_pnl_usd=-150.0,
+            max_loss_usd=-300.0,
+        )
+        assert result == pytest.approx(-50.0)
+
+    def test_denominator_is_magnitude_of_max_loss(self) -> None:
+        # The denominator is abs(max_loss_usd): a -300.0 max loss and a +300.0
+        # max loss both yield the same percentage for the same P/L USD.
+        from_negative = compute_strategy_unrealized_pnl_pct(
+            unrealized_pnl_usd=60.0,
+            max_loss_usd=-300.0,
+        )
+        from_positive = compute_strategy_unrealized_pnl_pct(
+            unrealized_pnl_usd=60.0,
+            max_loss_usd=300.0,
+        )
+        assert from_negative == pytest.approx(20.0)
+        assert from_positive == pytest.approx(20.0)
+
+    def test_zero_max_loss_returns_zero(self) -> None:
+        # Skeleton / not-yet-recomputed strategy carries max_loss_usd == 0.0.
+        result = compute_strategy_unrealized_pnl_pct(
+            unrealized_pnl_usd=150.0,
+            max_loss_usd=0.0,
+        )
+        assert result == 0.0
+
+    def test_unbounded_max_loss_returns_zero(self) -> None:
+        # Unbounded downside (-inf) yields 0.0 with no division blow-up.
+        result = compute_strategy_unrealized_pnl_pct(
+            unrealized_pnl_usd=150.0,
+            max_loss_usd=float("-inf"),
+        )
         assert result == 0.0
 
 
