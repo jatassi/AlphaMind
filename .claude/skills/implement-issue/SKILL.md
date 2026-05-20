@@ -49,13 +49,14 @@ Pause and surface if:
 `TaskCreate` once, up front. Two groups:
 
 - **Implementation tasks** — one per acceptance criterion or named deliverable in Scope. Cluster related criteria into one task; split a multi-faceted deliverable into multiple.
-- **Completion-sequence tasks** — register all six before work begins:
+- **Completion-sequence tasks** — register all seven before work begins:
   1. `Open PR to main`
   2. `Spawn /review subagent (background)`
   3. `Run simplify in main (concurrent with /review)`
   4. `Address consolidated feedback`
   5. `Land PR and clean local git state`
   6. `Send PushNotification`
+  7. `Write final writeup`
 
 ### 4. Enter a worktree on the feature branch
 
@@ -225,6 +226,19 @@ PushNotification({
   body: "PR <PR number> merged. <any caveats — warranted lint suppressions, deferred follow-ups>"
 })
 ```
+
+### 7. Final writeup
+
+The operator may have stepped away during execution. Conclude with a short writeup so they can pick up cold on return. Output it as your final user-facing message — no separate file, no preamble.
+
+Four sections, in order, each with this exact heading:
+
+- **Summary of the issue as reported.** One or two sentences on what the Linear issue described — the symptom and scope, not the spec.
+- **Findings after investigating.** What the code actually showed: where the problem lived, which spec assumptions held vs. broke, anything surprising. Cite `file:line` when it tightens the story.
+- **The fix, in plain English.** No code blocks, no jargon dump. What changed and why, at the level a non-implementer can follow.
+- **What should now be improved.** The functional upside of this change — what the system should now do better as a result. Frame in terms of observable behavior (e.g., "X no longer mis-classifies Y", "downstream consumers of Z now get a non-null signal"), not implementation details.
+
+A handful of sentences per section. Brevity beats completeness — the operator can read the diff for detail.
 
 ## Boundaries
 
