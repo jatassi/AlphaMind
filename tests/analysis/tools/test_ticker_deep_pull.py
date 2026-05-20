@@ -90,7 +90,14 @@ def session(engine: Engine) -> Iterator[Session]:
 # ---------------------------------------------------------------------------
 
 
-def _add_ticker(session: Session, ticker: str) -> None:
+def _add_ticker(
+    session: Session,
+    ticker: str,
+    *,
+    is_active: int = 1,
+    removed_date: str | None = None,
+    removal_reason: str | None = None,
+) -> None:
     session.add(
         AssetUniverse(
             asset_id=f"asset-{ticker.lower()}",
@@ -99,8 +106,10 @@ def _add_ticker(session: Session, ticker: str) -> None:
             asset_class="equity",
             asset_role="universe",
             exchange="NASDAQ",
-            is_active=1,
+            is_active=is_active,
             added_date="2026-01-01",
+            removed_date=removed_date,
+            removal_reason=removal_reason,
             last_updated="2026-01-01T00:00:00Z",
         )
     )
@@ -428,7 +437,12 @@ def test_single_category_price_volume_only(session: Session) -> None:
 
 
 def test_unknown_ticker_returns_unavailable(session: Session) -> None:
-    """AC6: ticker not in AssetUniverse → quality=UNAVAILABLE, all payloads None."""
+    """AC6: ticker not in AssetUniverse → quality=UNAVAILABLE, all payloads None.
+
+    The ticker-absent path stays distinct from the delisted/inactive path
+    (ALP-585): a ticker that was never in the universe carries no ``reason``,
+    so callers never mistake "unknown symbol" for "resolved corporate event".
+    """
     session.commit()
     fn = ticker_deep_pull_factory(session)
     result = fn(
@@ -443,6 +457,7 @@ def test_unknown_ticker_returns_unavailable(session: Session) -> None:
     assert result.short_data is None
     assert result.earnings is None
     assert result.macro_context is None
+    assert result.reason is None
 
 
 # ---------------------------------------------------------------------------
@@ -666,3 +681,63 @@ def test_output_schema_exposes_reason_field() -> None:
     """TickerDeepPullOutput schema carries a Optional[str] reason field."""
     schema = TickerDeepPullOutput.model_json_schema()
     assert "reason" in schema.get("properties", {})
+
+
+# ---------------------------------------------------------------------------
+# ALP-585 — delisted / inactive ticker short-circuit
+# ---------------------------------------------------------------------------
+
+
+def test_inactive_ticker_returns_unavailable_with_delisted_reason(session: Session) -> None:
+    """A ticker present in asset_universe but is_active=0 short-circuits to
+    quality=UNAVAILABLE with a reason naming removed_date and removal_reason.
+    Per-category loaders are skipped: payloads stay None even though OHLCV bars
+    exist for the ticker (a populated price_volume would prove the loader ran).
+    """
+    _add_ticker(
+        session,
+        "CTRA",
+        is_active=0,
+        removed_date="2026-05-07",
+        removal_reason="acquired by DVN",
+    )
+    _add_ohlcv_bars(session, "CTRA", num_days=21, latest_age_days=11)
+    session.commit()
+
+    fn = ticker_deep_pull_factory(session, clock=_FixedClock())
+    result = fn(
+        TickerDeepPullInput(
+            ticker=Symbol("CTRA"),
+            categories=("price_volume", "short_data", "earnings", "macro_context"),
+        )
+    )
+
+    assert result.quality == ToolQuality.UNAVAILABLE
+    assert result.price_volume is None
+    assert result.short_data is None
+    assert result.earnings is None
+    assert result.macro_context is None
+    assert result.reason is not None
+    assert "CTRA" in result.reason
+    assert "2026-05-07" in result.reason
+    assert "acquired by DVN" in result.reason
+
+
+def test_inactive_ticker_with_null_removal_metadata_still_short_circuits(
+    session: Session,
+) -> None:
+    """An inactive ticker whose removed_date / removal_reason were never stamped
+    still short-circuits to quality=UNAVAILABLE with a usable reason — the
+    fallbacks keep a raw ``None`` out of the agent-facing string.
+    """
+    _add_ticker(session, "DEAD", is_active=0)
+    session.commit()
+
+    fn = ticker_deep_pull_factory(session, clock=_FixedClock())
+    result = fn(TickerDeepPullInput(ticker=Symbol("DEAD"), categories=("price_volume",)))
+
+    assert result.quality == ToolQuality.UNAVAILABLE
+    assert result.price_volume is None
+    assert result.reason is not None
+    assert "DEAD" in result.reason
+    assert "None" not in result.reason
