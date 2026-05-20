@@ -237,7 +237,7 @@ def record_to_row(record: PositionRecord) -> PositionRow:
         thesis_id=record.thesis_id,
         bracket_id=record.bracket_id,
         status=record.status.value,
-        direction=record.direction.value,
+        direction=record.direction.value if record.direction is not None else None,
         entry_timestamp=(
             record.entry_timestamp.isoformat() if record.entry_timestamp is not None else None
         ),
@@ -275,7 +275,7 @@ def row_to_record(row: PositionRow) -> PositionRecord:
         thesis_id=ThesisId(row.thesis_id) if row.thesis_id is not None else None,
         bracket_id=BracketId(row.bracket_id) if row.bracket_id is not None else None,
         status=PositionStatus(row.status),
-        direction=Direction(row.direction),
+        direction=Direction(row.direction) if row.direction is not None else None,
         entry_timestamp=(
             datetime.fromisoformat(row.entry_timestamp) if row.entry_timestamp is not None else None
         ),

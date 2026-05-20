@@ -76,7 +76,7 @@ class PositionRow(Base):
         nullable=True,
     )
     status: Mapped[str] = mapped_column(Text, nullable=False)
-    direction: Mapped[str] = mapped_column(Text, nullable=False)
+    direction: Mapped[str | None] = mapped_column(Text, nullable=True)
     entry_timestamp: Mapped[str | None] = mapped_column(Text, nullable=True)
     instrument_type: Mapped[str] = mapped_column(Text, nullable=False)
     details_json: Mapped[str] = mapped_column(Text, nullable=False)
