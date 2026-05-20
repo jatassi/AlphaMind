@@ -33,7 +33,6 @@ from alphamind.persistence.session import (
 )
 from alphamind.portfolio_state.computations.positions import (
     compute_strategy_market_value_usd,
-    compute_unrealized_pnl_usd,
 )
 from alphamind.portfolio_state.pricing import PriceQuote, PriceSource
 from alphamind.portfolio_state.records.positions import StrategyPositionDetails
@@ -257,7 +256,11 @@ class TestSeederPostStateInvariants:
             market_value = compute_strategy_market_value_usd(record, leg_prices)
             cost_basis = record.details.net_premium_usd
             assert market_value == pytest.approx(cost_basis)
-            pnl = compute_unrealized_pnl_usd(market_value, cost_basis, record.direction)
+            # A strategy's P/L USD is the directionless ``market_value -
+            # net_premium_usd`` — the assembler computes it this way, not via
+            # the direction-keyed ``compute_unrealized_pnl_usd`` (a strategy
+            # carries ``direction = None``).
+            pnl = market_value - cost_basis
             assert pnl == pytest.approx(0.0)
 
 

@@ -33,6 +33,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
     StrategyLeg,
     StrategyPositionDetails,
+    position_direction,
 )
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import (
@@ -313,13 +314,12 @@ def _strategy_position(
     ticker: str,
     weight_pct: float,
     market_value_usd: float,
-    placeholder_direction: Direction = Direction.LONG,
 ) -> PositionView:
     """Build an OPEN multi-leg STRATEGY ``PositionView``.
 
-    ``placeholder_direction`` is the inert position-level field (ALP-588
-    decision C); ``position_direction()`` yields ``None`` for a strategy
-    regardless of it.
+    A strategy record carries ``direction = None`` (ALP-610) — a multi-leg
+    strategy has no position-level direction; ``position_direction()`` yields
+    ``None`` for it.
     """
     fill_ts = datetime(2026, 4, 28, 14, 0, tzinfo=UTC)
     leg = StrategyLeg(
@@ -343,7 +343,7 @@ def _strategy_position(
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=placeholder_direction,
+        direction=None,
         entry_timestamp=fill_ts,
         details=StrategyPositionDetails(
             strategy_type_label="bull_spread",
@@ -614,7 +614,9 @@ def _proposed_close_for_position(
             position.details.ticker if isinstance(position.details, EquityPositionDetails) else "X"
         ),
         asset_type="equity",
-        direction="long" if position.direction == Direction.LONG else "short",
+        direction=(
+            "long" if position_direction(position.record) == Direction.LONG else "short"
+        ),
         pre_close_size_pct_of_portfolio=pre_pct,
         close_size_pct_of_portfolio=pre_pct,
         pre_close_size_usd=pre_usd,
@@ -1029,7 +1031,6 @@ def test_candidate_set_directional_excludes_strategy_positions() -> None:
         ticker="SSS",
         weight_pct=6.0,
         market_value_usd=6_000.0,
-        placeholder_direction=Direction.SHORT,  # matches primary's raw field
     )
     open_positions = (primary, other_short, a_long, strategy)
 
@@ -1100,7 +1101,9 @@ def _follow_up_full_close_selector(
             target.details.ticker if isinstance(target.details, EquityPositionDetails) else "X"
         ),
         asset_type="equity",
-        direction="long" if target.direction == Direction.LONG else "short",
+        direction=(
+            "long" if position_direction(target.record) == Direction.LONG else "short"
+        ),
         pre_close_size_pct_of_portfolio=pre_pct,
         close_size_pct_of_portfolio=pre_pct,
         pre_close_size_usd=pre_usd,

@@ -74,7 +74,7 @@ def _build_strategy_position(
         thesis_id="THE-NVDA-abc123",
         bracket_id="BRK-NVDA-abc123",
         instrument=instrument if instrument is not None else _vertical_spread(),
-        direction=Direction.LONG,
+        direction=None,
     )
 
 
@@ -162,7 +162,7 @@ def test_strategy_branch_ignores_validation_greeks_and_iv() -> None:
         thesis_id="THE-NVDA-abc123",
         bracket_id="BRK-NVDA-abc123",
         instrument=_vertical_spread(),
-        direction=Direction.LONG,
+        direction=None,
         validation_greeks=Greeks(delta=0.5, gamma=0.02, theta=-0.1, vega=0.3),
         validation_iv=0.45,
     )
@@ -186,14 +186,10 @@ def test_strategy_position_is_pending_and_passes_post_init() -> None:
     assert record.realized_pnl_to_date_usd is None
 
 
-def test_direction_from_strategy_instrument_is_inert_long_placeholder() -> None:
-    """_direction_from_instrument returns Direction.LONG for a strategy and its
-    docstring states this is an inert placeholder, not a meaningful
-    direction."""
-    assert _direction_from_instrument(_vertical_spread()) is Direction.LONG
-    assert _direction_from_instrument.__doc__ is not None
-    docstring = " ".join(_direction_from_instrument.__doc__.split())
-    assert "inert placeholder" in docstring
+def test_direction_from_strategy_instrument_is_none() -> None:
+    """_direction_from_instrument returns None for a strategy — a multi-leg
+    strategy has no position-level direction (ALP-610)."""
+    assert _direction_from_instrument(_vertical_spread()) is None
 
 
 # ---------------------------------------------------------------------------
