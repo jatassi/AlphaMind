@@ -742,6 +742,36 @@ class TestCollectCorporateActions:
         assert row.removed_date == "2026-05-07"
         assert row.removal_reason == "delisted"
 
+    def test_ticker_details_failure_skips_ticker_not_run(self) -> None:
+        """A get_ticker_details failure for one ticker skips that ticker; the
+        multi-ticker cycle still completes and reconciliation runs (ALP-584)."""
+        from polygon import BadResponse
+
+        from alphamind.data_sources.polygon import corporate_actions
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL", "MSFT"], [])
+
+        class _PartialClient(FakePolygonAPI):
+            def get_ticker_details(self, ticker: str) -> Any:
+                if ticker == "AAPL":
+                    raise BadResponse("delisted ticker 404")
+                return super().get_ticker_details(ticker)
+
+        client = _PartialClient(dividends_by_ticker={"MSFT": [make_dividend(ticker="MSFT")]})
+
+        corporate_actions.collect_corporate_actions(
+            ticker_scope=["AAPL", "MSFT"],
+            _client=client,
+            _session_factory=sf,
+            _repo=FakeRunRepo(),
+        )
+
+        with sf() as sess:
+            rows = sess.query(CorporateActions).all()
+        # MSFT's dividend was collected; AAPL's fetch failure was skipped, not fatal.
+        assert {r.ticker for r in rows} == {"MSFT"}
+
 
 # ---------------------------------------------------------------------------
 # corporate_actions.py — reconcile_delisted_tickers
@@ -793,6 +823,20 @@ class TestReconcileDelistedTickers:
             row = sess.query(AssetUniverse).filter_by(ticker="AAPL").first()
         assert row.is_active == 0
         assert row.removal_reason == "delisted"
+
+    def test_merger_without_acquirer_uses_generic_reason(self) -> None:
+        from alphamind.data_sources.polygon import corporate_actions
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL"], [])
+        self._seed_action(sf, ticker="AAPL", action_type="merger")
+
+        corporate_actions.reconcile_delisted_tickers(sf)
+
+        with sf() as sess:
+            row = sess.query(AssetUniverse).filter_by(ticker="AAPL").first()
+        assert row.is_active == 0
+        assert row.removal_reason == "merger completed"
 
     def test_dividend_row_does_not_deactivate(self) -> None:
         from alphamind.data_sources.polygon import corporate_actions

@@ -11,12 +11,13 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.persistence.models import AssetUniverse, CorporateActions
+from alphamind.persistence.session import make_session_factory
 from alphamind.scripts.backfill_ctra_merger import seed_ctra_merger
 
 
 def _seed_universe(engine: Engine) -> sessionmaker[Session]:
     """Seed CTRA and its acquirer DVN as active universe tickers."""
-    factory: sessionmaker[Session] = sessionmaker(bind=engine, expire_on_commit=False)
+    factory = make_session_factory(engine)
     with factory() as sess:
         for ticker in ("CTRA", "DVN"):
             sess.merge(

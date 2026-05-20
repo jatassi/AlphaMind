@@ -99,26 +99,27 @@ def collect_corporate_actions(
         for ticker in ticker_scope:
             try:
                 dividends = _fetch_dividends(ticker)
+                splits = _fetch_splits(ticker)
+                details = _fetch_details(ticker)
             except (BadResponse, httpx.HTTPError) as exc:
                 if single:
                     raise
+                # A delisted ticker is exactly where get_ticker_details is
+                # apt to fail — skip it rather than abort the whole run.
                 logger.warning(
-                    "polygon list_dividends failed for %s",
+                    "polygon corporate-actions fetch failed for %s",
                     ticker,
                     exc_info=exc,
                 )
                 continue
 
-            splits = _fetch_splits(ticker)
-            details = _fetch_details(ticker)
             rows = _build_rows(ticker, dividends, splits, details, ingested_at)
             _upsert_actions(_session_factory, rows)
             rows_written += len(rows)
 
         run.rows_written = rows_written
-        # Post-collection hook: deactivate any ticker whose corporate-action
-        # history now carries a merger / acquisition / delisting, so the next
-        # collection cycle no longer queries phantom tickers.
+        # Deactivate tickers newly flagged delisted so the next cycle no
+        # longer queries phantom names.
         reconcile_delisted_tickers(_session_factory)
 
 
@@ -187,7 +188,7 @@ def _delisting_row(ticker: str, details: Any, ingested_at: str) -> CorporateActi
         ticker=ticker,
         action_type="delisting",
         ex_date=ex_date,
-        description="polygon ticker-details reports the ticker delisted",
+        description="ticker delisted per Polygon reference data",
         source="polygon",
         ingested_at=ingested_at,
     )
@@ -217,10 +218,10 @@ def reconcile_delisted_tickers(session_factory: Any = None) -> int:
     ``ex_date``, and writes a ``removal_reason``.
 
     Idempotent: a ticker already inactive is skipped, so the call is safe to run
-    every collection cycle. When a ticker carries more than one deactivating
-    row, the earliest ``ex_date`` wins and an acquirer-bearing row is preferred
-    over a bare delisting on a date tie. Returns the count of rows newly
-    deactivated.
+    every collection cycle. When a ticker carries multiple deactivating rows
+    they are applied in ``ex_date`` order (earliest first, an acquirer-bearing
+    row breaking an exact-date tie); the first wins and the rest fall through.
+    Returns the count of rows newly deactivated.
     """
     session_factory = session_factory or default_session_factory()
     now_iso = datetime.now(UTC).isoformat()
@@ -232,18 +233,29 @@ def reconcile_delisted_tickers(session_factory: Any = None) -> int:
             .order_by(CorporateActions.ex_date, CorporateActions.acquirer_ticker.is_(None))
             .all()
         )
-        for action in actions:
-            row = (
-                sess.query(AssetUniverse)
-                .filter(AssetUniverse.ticker == action.ticker, AssetUniverse.is_active == 1)
-                .first()
+        if not actions:
+            return 0
+        # One query for every still-active target ticker; pop-on-use means a
+        # ticker carrying multiple deactivating rows is flipped once — by the
+        # first in sort order — and later rows fall through.
+        active_rows = {
+            row.ticker: row
+            for row in sess.query(AssetUniverse)
+            .filter(
+                AssetUniverse.ticker.in_({a.ticker for a in actions}),
+                AssetUniverse.is_active == 1,
             )
+            .all()
+        }
+        for action in actions:
+            row = active_rows.pop(action.ticker, None)
             if row is None:
                 continue
             row.is_active = 0
             row.removed_date = action.ex_date
             row.removal_reason = _removal_reason(action)
             row.last_updated = now_iso
+            logger.info("deactivated %s in asset_universe: %s", action.ticker, row.removal_reason)
             deactivated += 1
         sess.commit()
     return deactivated
