@@ -1,9 +1,8 @@
 """Synthetic-portfolio seeder for ``--debug-e2e`` mode (story 01c / ALP-496).
 
-``wipe_and_seed`` wipes the nine state-persistence tables enumerated in
-the debug-e2e design (§ 6.3) and seeds the synthetic portfolio
-(positions + theses + cash-ledger singleton) via the canonical SQLAlchemy
-ORM models.
+``wipe_and_seed`` wipes the state-persistence tables enumerated in
+``_WIPE_ORDER`` and seeds the synthetic portfolio (positions + theses +
+cash-ledger singleton) via the canonical SQLAlchemy ORM models.
 
 The function is guarded by a DB-path suffix check that refuses to run
 unless the resolved path ends with ``-debug-e2e.db`` — the smallest
@@ -23,7 +22,12 @@ from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from alphamind._kernel.ids import AlpacaOrderId
-from alphamind.persistence.models import Base, Brief, RegimeAdaptationStateRow
+from alphamind.persistence.models import (
+    Base,
+    Brief,
+    RegimeAdaptationStateRow,
+    TickerRealizedVolRow,
+)
 from alphamind.portfolio_state.records.orders import (
     BracketLegEnforcement,
     BracketLegStatus,
@@ -76,13 +80,8 @@ _OPTION_CONTRACT_MULTIPLIER = 100.0
 _STRATEGY_SHORT_LEG_MARK_USD = 1.0
 
 
-# Tables wiped in FK-safe order — children before parents.
-#
-# The list is the explicit 9 enumerated in the design (§ 6.3) and
-# parent issue ALP-493 pre-resolved decision § (L). The order maps to
-# the design's logical names: PositionFills → FillRecordRow,
-# PositionTheses → ThesisRow.
-# State-persistence tables wiped at the start of every debug-e2e invocation.
+# State-persistence tables wiped at the start of every debug-e2e
+# invocation, in FK-safe order — children before parents.
 #
 # The snapshot-from-prod workflow (``scripts/snapshot_prod_for_debug_e2e.py``)
 # means the bootstrap DB carries real production rows for every table below,
@@ -91,6 +90,13 @@ _STRATEGY_SHORT_LEG_MARK_USD = 1.0
 # truly fresh DB. Tables managed by collectors / the data layer
 # (``asset_universe``, distillation calibration, news, event calendar, ...)
 # are deliberately preserved by the snapshot and are NOT wiped here.
+#
+# ``ticker_realized_vol`` is the one entry that is not itself
+# state-persistence: it is distillation output, but each row carries a
+# NOT-NULL FK to the producing ``invocations`` row, so wiping
+# ``invocations`` without it leaves orphans that fail the commit-time FK
+# check. Distillation regenerates it every run, so wiping it is harmless
+# (ALP-616).
 #
 # ``PRAGMA defer_foreign_keys = ON`` (set inside :func:`wipe_and_seed`)
 # defers FK enforcement until commit, which lets the DELETEs run in any
@@ -108,6 +114,7 @@ _WIPE_ORDER: tuple[type[Base], ...] = (
     ThesisComponentRow,
     ThesisRow,
     Brief,
+    TickerRealizedVolRow,
     PositionRow,
     CashLedgerRow,
     DrawdownStateRow,
@@ -587,7 +594,7 @@ async def wipe_and_seed(
     db_path: str,
     portfolio: Any,
 ) -> None:
-    """Wipe the nine state-persistence tables and seed the synthetic portfolio.
+    """Wipe the ``_WIPE_ORDER`` tables and seed the synthetic portfolio.
 
     Refuses to run unless ``db_path`` ends with ``-debug-e2e.db``. Raises
     :class:`RuntimeError` with the refusing path quoted in the message on

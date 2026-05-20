@@ -3,7 +3,7 @@
 Covers:
 
 * DB-path guard refuses paths that do not end with ``-debug-e2e.db``.
-* Wipe of the 9 enumerated state-persistence tables (FK-safe order).
+* Wipe of every ``_WIPE_ORDER`` table (FK-safe order).
 * Seed of ``positions`` (equity / option / strategy variants),
   ``theses`` (one-to-one with positions), and ``cash_ledger``
   (singleton row).
@@ -22,7 +22,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alphamind.persistence.models import Base, Brief
+from alphamind.persistence.models import AssetUniverse, Base, Brief, TickerRealizedVolRow
 from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
@@ -94,68 +94,74 @@ def _make_portfolio(
 # ---------------------------------------------------------------------------
 
 
+def _process_lifetime_row(ts: str) -> ProcessLifetimeRow:
+    """A standalone ``process_lifetimes`` row (id ``proc-pre``)."""
+    return ProcessLifetimeRow(
+        process_lifetime_id="proc-pre",
+        process_role="pipeline",
+        process_start_at=ts,
+        process_pid=1,
+        hostname="host",
+        git_sha="a" * 40,
+        git_branch="main",
+        git_dirty=0,
+        python_version="3.13.1",
+        pip_freeze_hash="0" * 64,
+        pip_freeze_snapshot_path="/tmp/snap",
+        anthropic_sdk_version="0.40.0",
+        claude_agent_sdk_version="0.1.0",
+        os_release="Darwin",
+    )
+
+
+def _invocation_row(ts: str) -> InvocationRow:
+    """An ``invocations`` row (id ``inv-pre``) parented to ``proc-pre``."""
+    return InvocationRow(
+        invocation_id="inv-pre",
+        process_lifetime_id="proc-pre",
+        start_at=ts,
+        phase1_completed_at=None,
+        phase2_completed_at=None,
+        trigger_type="scheduled",
+        trigger_source="cron",
+        trigger_reason="9 * * *",
+        git_sha_at_invocation="a" * 40,
+        active_profile="medium",
+        active_regime="normal",
+        active_mode="normal",
+        active_overlays_json="[]",
+        resolved_config_hash="0" * 64,
+        resolved_config_snapshot_path="/tmp/cfg",
+        feature_flags_snapshot_json="{}",
+        data_calibration_state_snapshot_path="/tmp/calib",
+        data_source_freshness_json="{}",
+        fill_collection_summary_json=None,
+        command_execution_summary_json=None,
+        staleness_flag=None,
+        snapshot_metadata_json=None,
+    )
+
+
 def _prepopulate_wipe_list_tables(db_path: Path) -> None:
     """Seed pre-existing rows in the wipe-list tables that admit a clean seed.
 
-    Six of the nine wipe-list tables (``process_lifetimes``, ``invocations``,
-    ``positions``, ``theses``, ``cash_ledger``, ``activity_log``) can be seeded
-    standalone without depending on tables outside the wipe list. The
-    remaining three (``brackets``, ``bracket_legs``, ``fill_records``) require
-    an ``orders`` parent, which is NOT in the wipe list — pre-populating those
-    would leave orphan rows that the wipe cannot remove (orders.bracket_id is
-    a deferrable RESTRICT FK that survives). The test asserts the wipe
-    against the rows it CAN seed; the wipe still runs all 9 ``DELETE``
-    statements per the design contract, which is verified by the SELECT loop
-    in the test asserting every row class is empty.
+    Not every wipe-list table is pre-populated here. The
+    ``orders`` / ``brackets`` / ``bracket_legs`` / ``fill_records`` cluster is
+    knitted together by circular FKs (``orders.bracket_id`` ↔
+    ``brackets.entry_order_id``) that a plain flush-ordered insert cannot
+    satisfy, and those tables start empty in a fresh test DB regardless. This
+    helper seeds the tables that take a clean standalone insert
+    (``process_lifetimes``, ``invocations``, ``positions``, ``theses``,
+    ``activity_log``, ``cash_ledger``, ``briefs``); the wipe still issues a
+    ``DELETE`` for every wipe-list table, which the test's SELECT loop
+    confirms by asserting each row class is empty.
     """
     ts = "2026-05-07T14:30:00Z"
     sync_engine = make_engine(str(db_path))
     with make_session_factory(sync_engine)() as sess:
-        sess.add(
-            ProcessLifetimeRow(
-                process_lifetime_id="proc-pre",
-                process_role="pipeline",
-                process_start_at=ts,
-                process_pid=1,
-                hostname="host",
-                git_sha="a" * 40,
-                git_branch="main",
-                git_dirty=0,
-                python_version="3.13.1",
-                pip_freeze_hash="0" * 64,
-                pip_freeze_snapshot_path="/tmp/snap",
-                anthropic_sdk_version="0.40.0",
-                claude_agent_sdk_version="0.1.0",
-                os_release="Darwin",
-            )
-        )
+        sess.add(_process_lifetime_row(ts))
         sess.flush()  # process_lifetimes parent must exist before invocations.
-        sess.add(
-            InvocationRow(
-                invocation_id="inv-pre",
-                process_lifetime_id="proc-pre",
-                start_at=ts,
-                phase1_completed_at=None,
-                phase2_completed_at=None,
-                trigger_type="scheduled",
-                trigger_source="cron",
-                trigger_reason="9 * * *",
-                git_sha_at_invocation="a" * 40,
-                active_profile="medium",
-                active_regime="normal",
-                active_mode="normal",
-                active_overlays_json="[]",
-                resolved_config_hash="0" * 64,
-                resolved_config_snapshot_path="/tmp/cfg",
-                feature_flags_snapshot_json="{}",
-                data_calibration_state_snapshot_path="/tmp/calib",
-                data_source_freshness_json="{}",
-                fill_collection_summary_json=None,
-                command_execution_summary_json=None,
-                staleness_flag=None,
-                snapshot_metadata_json=None,
-            )
-        )
+        sess.add(_invocation_row(ts))
         sess.flush()  # invocations parent must exist before activity_log.
         sess.add(
             PositionRow(
@@ -231,6 +237,50 @@ def _prepopulate_wipe_list_tables(db_path: Path) -> None:
     sync_engine.dispose()
 
 
+def _prepopulate_ticker_realized_vol(db_path: Path) -> None:
+    """Seed one ``ticker_realized_vol`` row plus the rows it references.
+
+    Reproduces the post-run state every completed debug-e2e invocation
+    leaves behind: distillation phase 2 writes one ``ticker_realized_vol``
+    row per ticker, tagged with that run's ``invocation_id``. The
+    ``ticker`` FK targets ``asset_universe`` (not in the wipe list — it
+    survives); ``invocation_id`` is a NOT-NULL RESTRICT FK to
+    ``invocations`` (wiped). The row orphans on the next wipe unless
+    ``ticker_realized_vol`` is itself wiped (ALP-616).
+    """
+    ts = "2026-05-07T14:30:00Z"
+    sync_engine = make_engine(str(db_path))
+    with make_session_factory(sync_engine)() as sess:
+        sess.add(
+            AssetUniverse(
+                asset_id="asset-nvda",
+                ticker="NVDA",
+                full_name="NVIDIA Corporation",
+                asset_class="equity",
+                asset_role="universe",
+                exchange="NASDAQ",
+                is_active=1,
+                added_date=ts,
+                last_updated=ts,
+            )
+        )
+        sess.add(_process_lifetime_row(ts))
+        sess.flush()  # process_lifetimes parent must exist before invocations.
+        sess.add(_invocation_row(ts))
+        sess.flush()  # invocations parent must exist before ticker_realized_vol.
+        sess.add(
+            TickerRealizedVolRow(
+                ticker="NVDA",
+                as_of_date="2026-05-07",
+                trailing_30d_realized_vol=0.42,
+                invocation_id="inv-pre",
+                computed_at=ts,
+            )
+        )
+        sess.commit()
+    sync_engine.dispose()
+
+
 # ---------------------------------------------------------------------------
 # (a) DB-path guard
 # ---------------------------------------------------------------------------
@@ -288,6 +338,40 @@ class TestWipeClearsTables:
             cash_rows = (await session.execute(select(CashLedgerRow))).scalars().all()
             assert len(cash_rows) == 1
             assert float(cash_rows[0].current_cash_usd) == 0.0
+
+
+# ALP-616 regression: every completed debug-e2e run leaves
+# ``ticker_realized_vol`` populated, so the next run's wipe must clear it
+# — its ``invocation_id`` FK orphans when ``invocations`` is wiped otherwise.
+
+
+class TestWipeClearsTickerRealizedVol:
+    @pytest.mark.asyncio
+    async def test_wipe_clears_orphanable_ticker_realized_vol(
+        self,
+        async_factory: tuple[Path, async_sessionmaker[AsyncSession]],
+    ) -> None:
+        """wipe_and_seed succeeds when ticker_realized_vol is non-empty at wipe time.
+
+        ``ticker_realized_vol.invocation_id`` is a NOT-NULL RESTRICT FK to
+        ``invocations``. With ``invocations`` wiped but ``ticker_realized_vol``
+        left behind, the deferred FK check fails at commit (ALP-616) — the
+        wipe must clear ``ticker_realized_vol`` so no row orphans.
+        """
+        db_path, factory = async_factory
+        _prepopulate_ticker_realized_vol(db_path)
+
+        async with factory() as session:
+            await wipe_and_seed(
+                session=session,
+                now=_NOW,
+                db_path=str(db_path),
+                portfolio=_make_portfolio(),
+            )
+
+        async with factory() as session:
+            rows = (await session.execute(select(TickerRealizedVolRow))).scalars().all()
+        assert rows == []
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +590,7 @@ class TestWipeOrdering:
             "orders",
             "thesis_components",
             "theses",
+            "ticker_realized_vol",
         }
         parents = {
             "positions",
@@ -520,7 +605,7 @@ class TestWipeOrdering:
         assert set(names) == children | parents
 
         # Every child appears before every parent it can reference.
-        # The explicit FK relations among the 9 wipe-list tables:
+        # The explicit FK relations among the wipe-list tables:
         #   activity_log → invocations (RESTRICT, non-deferred)
         #   activity_log → positions / theses (deferred)
         #   bracket_legs → brackets (RESTRICT, non-deferred)
@@ -529,6 +614,7 @@ class TestWipeOrdering:
         #   theses → positions (deferred)
         #   positions → theses / brackets (deferred)
         #   invocations → process_lifetimes (RESTRICT, non-deferred)
+        #   ticker_realized_vol → invocations (RESTRICT, non-deferred)
         # The strict child→parent order the design names:
         for child in children:
             for parent in parents:
