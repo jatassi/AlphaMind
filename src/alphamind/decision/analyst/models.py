@@ -361,11 +361,15 @@ class GuardrailValidationResult(BaseModel):
     Reuses :class:`RuleProjection` and :class:`Greeks` from
     :mod:`alphamind.risk_guardrails.guardrail_evaluation` (frozen dataclasses,
     not Pydantic models — ``arbitrary_types_allowed=True`` carries them).
+
+    ``overall`` carries the tool's third outcome ``UNAVAILABLE`` (a
+    resolver-coverage gap, not a guardrail breach — ALP-581) alongside
+    ``PASS``/``FAIL`` so transcribed tool results validate faithfully.
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    overall: Literal["PASS", "FAIL"]
+    overall: Literal["PASS", "FAIL", "UNAVAILABLE"]
     per_rule: tuple[RuleProjection, ...]
     delta_adjusted_exposure: float | None = None
     greeks: Greeks | None = None

@@ -43,6 +43,7 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import (
     ValidationStrategyLeg,
     ValidationToolError,
     ValidationToolState,
+    ValidationUnavailableReason,
     validate_guardrail,
 )
 
@@ -1071,13 +1072,98 @@ def test_short_equity_open_uses_borrow_cost_resolver() -> None:
     assert result.overall in {"PASS", "FAIL"}
 
 
-def test_short_equity_open_without_resolver_raises_validation_error() -> None:
-    """Short equity OPEN with ``borrow_cost_resolver=None`` raises
-    ``ValidationToolError`` with a clear message."""
-    state = _state()  # default fixture: resolver=None
+def test_short_equity_open_without_resolver_returns_unavailable() -> None:
+    """Short equity OPEN with ``borrow_cost_resolver=None`` returns an
+    ``UNAVAILABLE`` result naming the missing borrow-cost resolver — a
+    resolver-coverage gap, not a guardrail breach (ALP-581).
+
+    Pre-ALP-581 this raised ``ValidationToolError``, which the MCP wrapper
+    surfaced to the agent as a generic tool error indistinguishable from a
+    real failure.
+    """
+    state = _state()  # default fixture: resolver=None; AAPL is in market scope
     request = _equity_request(direction=Direction.SHORT)
-    with pytest.raises(ValidationToolError, match="borrow_cost_resolver"):
-        validate_guardrail(request=request, state=state)
+    result = validate_guardrail(request=request, state=state)
+    assert result.overall == "UNAVAILABLE"
+    assert result.unavailable_reason is ValidationUnavailableReason.MISSING_BORROW_COST_RESOLVER
+    assert result.per_rule == ()
+    assert result.delta_adjusted_exposure == 0.0
+    assert result.failure_guidance is not None
+    assert "borrow-cost resolver" in result.failure_guidance
+
+
+# ---------------------------------------------------------------------------
+# Resolver-coverage gap → UNAVAILABLE (ALP-581)
+# ---------------------------------------------------------------------------
+
+
+def test_equity_open_ticker_missing_market_price_returns_unavailable() -> None:
+    """An equity OPEN on a ticker absent from ``library_market.underlying_prices``
+    returns ``UNAVAILABLE`` / ``MISSING_MARKET_PRICE``: the validation tool's
+    market scope is narrower than the active universe (ALP-581)."""
+    state = _state()  # market covers AAPL/NVDA/ABC; CSCO is out of scope
+    request = _equity_request(ticker=Symbol("CSCO"))
+    result = validate_guardrail(request=request, state=state)
+    assert result.overall == "UNAVAILABLE"
+    assert result.unavailable_reason is ValidationUnavailableReason.MISSING_MARKET_PRICE
+    assert result.per_rule == ()
+    assert result.delta_adjusted_exposure == 0.0
+    assert result.failure_guidance is not None
+
+
+def test_option_open_ticker_missing_market_price_returns_unavailable() -> None:
+    """The market-price gap blocks an options expression too: the issue's CSCO
+    long-put fallback failed for the same root cause as the short equity."""
+    state = _state()
+    request = _option_request(ticker=Symbol("CSCO"))
+    result = validate_guardrail(request=request, state=state)
+    assert result.overall == "UNAVAILABLE"
+    assert result.unavailable_reason is ValidationUnavailableReason.MISSING_MARKET_PRICE
+
+
+def test_missing_market_price_takes_precedence_over_missing_borrow_cost() -> None:
+    """A short equity OPEN on an out-of-market ticker with no borrow resolver
+    reports the market-price gap first — market price is the prerequisite for
+    every expression; borrow cost only narrows short equity further."""
+    state = _state()  # CSCO out of market; resolver=None
+    request = _equity_request(ticker=Symbol("CSCO"), direction=Direction.SHORT)
+    result = validate_guardrail(request=request, state=state)
+    assert result.unavailable_reason is ValidationUnavailableReason.MISSING_MARKET_PRICE
+
+
+def test_unavailable_result_does_not_compose_library(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A resolver-coverage gap short-circuits before ``evaluate_proposals`` —
+    the tool never feeds an unvalidatable ticker to the library."""
+
+    def fake_eval(**_kwargs: object) -> LibraryOutput:
+        raise AssertionError("evaluate_proposals must not be called on an UNAVAILABLE result")
+
+    monkeypatch.setattr(
+        "alphamind.risk_guardrails.state_delivery.validation_tool.evaluate_proposals",
+        fake_eval,
+    )
+    result = validate_guardrail(request=_equity_request(ticker=Symbol("CSCO")), state=_state())
+    assert result.overall == "UNAVAILABLE"
+
+
+def test_unavailable_preserves_proposal_index_and_cumulative_note() -> None:
+    """An UNAVAILABLE result still reports the proposal index and cumulative
+    note so the agent sees its place in the invocation sequence."""
+    result = validate_guardrail(request=_equity_request(ticker=Symbol("CSCO")), state=_state())
+    assert result.proposal_index_in_invocation == 1
+    assert "No prior proposals" in result.cumulative_impact_note
+
+
+def test_short_selling_disabled_precedes_resolver_coverage_check() -> None:
+    """The disabled-feature early-exit fires before the resolver-coverage
+    check: a short on a shorts-disabled profile is a feature FAIL, not
+    UNAVAILABLE, even when the ticker is also out of market scope."""
+    state = _state(config=_config(short_selling_enabled=False))
+    request = _equity_request(ticker=Symbol("CSCO"), direction=Direction.SHORT)
+    result = validate_guardrail(request=request, state=state)
+    assert result.overall == "FAIL"
+    assert result.unavailable_reason is None
+    assert result.failure_guidance == "Short selling is disabled for this portfolio profile."
 
 
 def test_long_equity_open_does_not_call_borrow_cost_resolver() -> None:
@@ -1273,6 +1359,9 @@ def test_state_delivery_reexports_validation_tool_symbols() -> None:
         ValidationToolState as RexValidationToolState,
     )
     from alphamind.risk_guardrails.state_delivery import (
+        ValidationUnavailableReason as RexValidationUnavailableReason,
+    )
+    from alphamind.risk_guardrails.state_delivery import (
         validate_guardrail as rex_validate_guardrail,
     )
 
@@ -1285,6 +1374,7 @@ def test_state_delivery_reexports_validation_tool_symbols() -> None:
     assert RexValidationStrategyLeg is ValidationStrategyLeg
     assert RexValidationToolError is ValidationToolError
     assert RexValidationToolState is ValidationToolState
+    assert RexValidationUnavailableReason is ValidationUnavailableReason
     assert rex_validate_guardrail is validate_guardrail
 
 

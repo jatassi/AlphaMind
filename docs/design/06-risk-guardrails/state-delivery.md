@@ -355,7 +355,7 @@ For the primary portfolio, immediately returns FAIL with reason `feature_disable
 
 ```
 {
-  overall: "PASS" | "FAIL",
+  overall: "PASS" | "FAIL" | "UNAVAILABLE",
   per_rule: [
     {
       rule: "sector_concentration",
@@ -371,9 +371,21 @@ For the primary portfolio, immediately returns FAIL with reason `feature_disable
   delta_adjusted_exposure: {computed delta-adj value for this instrument},
   greeks: {delta, gamma, theta, vega},           // options/strategies only
   cumulative_impact_note: "This is proposal #N in this invocation. Cumulative impact of proposals #1–{N-1} is included in headroom calculations.",
-  failure_guidance: "Reduce size by 15% to pass sector concentration"   // on FAIL only
+  failure_guidance: "Reduce size by 15% to pass sector concentration",  // on FAIL / UNAVAILABLE only
+  unavailable_reason: "missing_market_price" | "missing_borrow_cost_resolver"  // on UNAVAILABLE only
 }
 ```
+
+`overall` is `FAIL` when a guardrail rule would breach and `UNAVAILABLE` when the tool cannot project the proposal at all — see *Resolver coverage* below.
+
+### Resolver coverage
+
+The tool can only project a proposal whose ticker the composed resolvers can resolve. Coverage is bounded by two inputs the agent runtime constructs once per invocation:
+
+- **Market price** — every instrument type (equity, options, strategy) needs a spot price from `library_market.underlying_prices`. That map is sized to the resolvable universe — the held book plus quoted names — not the full active universe. A ticker outside it cannot be projected in any expression.
+- **Borrow cost** — a short equity `OPEN`/`ADD` additionally needs `borrow_cost_resolver`. When no borrow-cost data source is wired for the active profile this cycle, the resolver is `None` and short equity is unvalidatable; long-equity and long-options expressions of the same ticker remain validatable.
+
+When a proposal's ticker falls outside coverage, the tool returns `overall: UNAVAILABLE` with `unavailable_reason` naming the gap (`missing_market_price` checked first, then `missing_borrow_cost_resolver`) rather than raising or reporting a generic `FAIL`. This lets the agent distinguish *"this thesis would breach a guardrail"* from *"the validation infrastructure cannot reason about this ticker this cycle"* — the latter is an infrastructure gap, not a disqualification of the thesis (ALP-581).
 
 ### Behavioral contract
 
@@ -384,6 +396,8 @@ For the primary portfolio, immediately returns FAIL with reason `feature_disable
 **Shared math:** Per-rule projection, delta-adjusted exposure, regime parameter resolution, and feature-flag early-exit live in the [guardrail-evaluation library](guardrail-evaluation.md). The `per_rule[]` shape is the library's canonical output. A proposal passing the tool also passes T3, barring state drift.
 
 **Failure guidance:** On FAIL, output includes the minimum adjustment for compliance (e.g., "reduce size by 15%" or "switch to a lower-delta strike").
+
+**Resolver-coverage gap:** On UNAVAILABLE, output includes guidance explaining that the ticker is outside validation-infrastructure coverage this cycle — an infrastructure gap, not a guardrail breach — so the agent does not treat a coverage gap as a thesis disqualification.
 
 ---
 

@@ -112,7 +112,10 @@ def build_validate_guardrail_mcp_server(
         "validate_guardrail",
         (
             "Validate a proposed instrument/size/action against current guardrails; "
-            "returns per-rule pass/fail with current and projected-after headroom."
+            "returns per-rule pass/fail with current and projected-after headroom. "
+            "overall is PASS, FAIL (a guardrail would breach), or UNAVAILABLE (the "
+            "ticker is outside validation-infrastructure coverage this cycle — an "
+            "infrastructure gap, not a breach; unavailable_reason names the gap)."
         ),
         _VALIDATE_GUARDRAIL_INPUT_SCHEMA,
     )

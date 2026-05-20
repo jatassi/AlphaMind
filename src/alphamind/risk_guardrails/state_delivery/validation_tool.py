@@ -138,6 +138,30 @@ class ValidationAction(StrEnum):
     ADJUST = "ADJUST"
 
 
+class ValidationUnavailableReason(StrEnum):
+    """Why ``validate_guardrail`` could not project a proposal at all.
+
+    Distinct from a guardrail breach: an ``UNAVAILABLE`` result means the
+    validation infrastructure has no resolver coverage for the proposal's
+    ticker this cycle, so *no* expression of the thesis can be checked. The
+    agent should read this as an infrastructure gap — the thesis itself is
+    not disqualified — rather than as a rule failure.
+
+    * ``MISSING_MARKET_PRICE`` — the ticker is absent from
+      ``ValidationToolState.library_market.underlying_prices``. The market
+      map is sized to the resolvable universe (held book plus quoted
+      names); a ticker outside it has no spot price, so neither an equity
+      nor an options expression can be projected.
+    * ``MISSING_BORROW_COST_RESOLVER`` — a short equity OPEN/ADD was
+      requested but ``ValidationToolState.borrow_cost_resolver`` is ``None``
+      (no borrow-cost data source wired this cycle). Long-equity and
+      long-options expressions of the same ticker remain validatable.
+    """
+
+    MISSING_MARKET_PRICE = "missing_market_price"
+    MISSING_BORROW_COST_RESOLVER = "missing_borrow_cost_resolver"
+
+
 class ValidationRequest(BaseModel):
     """A single proposal to validate.
 
@@ -170,6 +194,15 @@ class ValidationRequest(BaseModel):
 class ValidationResult(BaseModel):
     """The tool's output, mirroring ``state-delivery.md`` § Output contract.
 
+    ``overall`` is ``PASS``/``FAIL`` for proposals the tool could project
+    through the guardrail rules, and ``UNAVAILABLE`` when a resolver-coverage
+    gap means the proposal could not be projected at all (see
+    :class:`ValidationUnavailableReason`). ``UNAVAILABLE`` carries
+    ``unavailable_reason`` set and ``per_rule`` empty; ``PASS``/``FAIL`` carry
+    ``unavailable_reason`` ``None``. The distinction lets the agent separate
+    "this thesis would breach a guardrail" from "the validation infrastructure
+    cannot reason about this ticker this cycle" (ALP-581).
+
     ``implied_volatility`` is the IV the library consumed when computing
     ``greeks`` — the average across legs for OPTIONS / STRATEGY proposals,
     sourced from the IV surface (or realized-vol fallback) per
@@ -182,13 +215,14 @@ class ValidationResult(BaseModel):
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    overall: Literal["PASS", "FAIL"]
+    overall: Literal["PASS", "FAIL", "UNAVAILABLE"]
     per_rule: tuple[RuleProjection, ...]
     delta_adjusted_exposure: float
     greeks: Greeks | None
     implied_volatility: float | None
     cumulative_impact_note: str
     failure_guidance: str | None
+    unavailable_reason: ValidationUnavailableReason | None = None
     proposal_index_in_invocation: int
 
 
@@ -323,6 +357,19 @@ def validate_guardrail(
     Pure function — does not mutate *state*. The caller invokes
     ``state.with_accepted_proposal(...)`` after a PASS if it wants the proposal
     counted toward subsequent calls.
+
+    Resolver coverage (ALP-581). The tool can only project a proposal whose
+    ticker the composed resolvers can resolve:
+
+    * market price — every instrument type needs a spot price from
+      ``state.library_market.underlying_prices``;
+    * borrow cost — short equity OPEN/ADD additionally needs
+      ``state.borrow_cost_resolver``.
+
+    A proposal whose ticker falls outside that coverage returns an
+    ``UNAVAILABLE`` result (see :func:`_resolver_coverage_gap`) rather than
+    raising or reporting a generic FAIL — the agent can then distinguish an
+    infrastructure gap from a guardrail breach.
     """
     proposal_index = len(state.accumulated_deltas) + 1
     flags = state.profile_feature_flags
@@ -339,6 +386,14 @@ def validate_guardrail(
     if disabled_guidance is not None:
         return _disabled_result(
             guidance=disabled_guidance,
+            cumulative_impact_note=_format_cumulative_impact_note(state),
+            proposal_index=proposal_index,
+        )
+
+    coverage_gap = _resolver_coverage_gap(request, state=state)
+    if coverage_gap is not None:
+        return _unavailable_result(
+            reason=coverage_gap,
             cumulative_impact_note=_format_cumulative_impact_note(state),
             proposal_index=proposal_index,
         )
@@ -414,6 +469,67 @@ def _disabled_result(
         implied_volatility=None,
         cumulative_impact_note=cumulative_impact_note,
         failure_guidance=guidance,
+        proposal_index_in_invocation=proposal_index,
+    )
+
+
+_UNAVAILABLE_GUIDANCE: dict[ValidationUnavailableReason, str] = {
+    ValidationUnavailableReason.MISSING_MARKET_PRICE: (
+        "Validation infrastructure has no market price for this ticker this cycle, "
+        "so no expression (equity or options) of the thesis can be validated. This "
+        "is a resolver-coverage gap, not a guardrail breach — the thesis itself is "
+        "not disqualified."
+    ),
+    ValidationUnavailableReason.MISSING_BORROW_COST_RESOLVER: (
+        "Short-equity validation requires a borrow-cost resolver that is not wired "
+        "this cycle, so the short cannot be validated. This is a resolver-coverage "
+        "gap, not a guardrail breach — a long-equity or long-options expression of "
+        "the same ticker can still be validated."
+    ),
+}
+
+
+def _resolver_coverage_gap(
+    request: ValidationRequest, *, state: ValidationToolState
+) -> ValidationUnavailableReason | None:
+    """Return the resolver-coverage gap blocking validation, or ``None``.
+
+    The validation tool can only project a proposal whose ticker the composed
+    resolvers can resolve. Market price is the prerequisite for every
+    instrument type, so it is checked first; the borrow-cost resolver applies
+    only to short equity OPEN/ADD (the same actions
+    :func:`_resolve_borrow_cost` derives a cost for). A non-``None`` return
+    drives an ``UNAVAILABLE`` result so the agent can tell an infrastructure
+    gap apart from a guardrail breach (ALP-581).
+    """
+    if request.instrument.ticker not in state.library_market.underlying_prices:
+        return ValidationUnavailableReason.MISSING_MARKET_PRICE
+    needs_borrow_cost = (
+        request.instrument.direction == Direction.SHORT
+        and request.instrument.asset_type == InstrumentType.EQUITY
+        and request.action in (ValidationAction.OPEN, ValidationAction.ADD)
+    )
+    if needs_borrow_cost and state.borrow_cost_resolver is None:
+        return ValidationUnavailableReason.MISSING_BORROW_COST_RESOLVER
+    return None
+
+
+def _unavailable_result(
+    *,
+    reason: ValidationUnavailableReason,
+    cumulative_impact_note: str,
+    proposal_index: int,
+) -> ValidationResult:
+    """Build the ``UNAVAILABLE`` ``ValidationResult`` for a resolver-coverage gap."""
+    return ValidationResult(
+        overall="UNAVAILABLE",
+        per_rule=(),
+        delta_adjusted_exposure=0.0,
+        greeks=None,
+        implied_volatility=None,
+        cumulative_impact_note=cumulative_impact_note,
+        failure_guidance=_UNAVAILABLE_GUIDANCE[reason],
+        unavailable_reason=reason,
         proposal_index_in_invocation=proposal_index,
     )
 
@@ -523,10 +639,15 @@ def _resolve_borrow_cost(
 ) -> float | None:
     """Return the borrow cost for short equity OPEN/ADD; ``None`` otherwise.
 
+    Other actions (LONG, options, CLOSE/ADJUST) return ``None``; the library's
+    borrow-cost rule reads the proposal field only where applicable.
+
     Raises ``ValidationToolError`` when the resolver is missing on a request
-    that requires it. Other actions (LONG, options, CLOSE/ADJUST) return
-    ``None``; the library's borrow-cost rule reads the proposal field only
-    where applicable.
+    that requires it. :func:`validate_guardrail` intercepts a missing resolver
+    on the *current* request upstream via :func:`_resolver_coverage_gap` and
+    returns an ``UNAVAILABLE`` result, so this raise is reached only if a
+    short equity OPEN/ADD proposal slips into ``accumulated_deltas`` against a
+    resolver-less state — a malformed-state guard, not a runtime path.
     """
     needs_borrow_cost = (
         instrument.direction == Direction.SHORT

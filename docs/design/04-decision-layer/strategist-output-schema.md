@@ -401,7 +401,7 @@ Enum values and structural constraints trace back to these sources:
       "description": "Populated by the guardrail validation tool at pre-submission check time, not by the LLM. Structure mirrors analyst-output-schema.md. Required for add actions; optional for close/reduce whose exposure impact interacts with a flagged constraint.",
       "required": ["overall", "per_rule", "checked_at"],
       "properties": {
-        "overall": { "enum": ["PASS", "FAIL"] },
+        "overall": { "enum": ["PASS", "FAIL", "UNAVAILABLE"] },
         "per_rule": {
           "type": "array",
           "items": {
