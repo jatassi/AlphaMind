@@ -39,7 +39,6 @@ from alphamind.portfolio_state.records.orders import (
     PriceTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
-    Direction,
     EquityPositionDetails,
     InstrumentType,
     OptionsPositionDetails,
@@ -91,11 +90,6 @@ _RECENT_RESOLUTIONS_HEADER = "=== RECENT THESIS RESOLUTIONS ==="
 _ABANDONED_HEADER = "=== ABANDONED OPENINGS / ACTIONS ==="
 _THESIS_QUALITY_HEADER = "=== THESIS QUALITY AGGREGATE ==="
 _NONE_LINE = "  None"
-
-_DIRECTION_DISPLAY: dict[Direction, str] = {
-    Direction.LONG: "long",
-    Direction.SHORT: "short",
-}
 
 _INSTRUMENT_TYPE_DISPLAY: dict[InstrumentType, str] = {
     InstrumentType.EQUITY: "equity",

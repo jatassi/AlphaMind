@@ -99,11 +99,6 @@ _DEFENSIVE_POSTURE_TOOL_NOTE = (
 )
 
 # Display dictionaries
-_DIRECTION_DISPLAY: dict[Direction, str] = {
-    Direction.LONG: "long",
-    Direction.SHORT: "short",
-}
-
 _INSTRUMENT_TYPE_DISPLAY: dict[InstrumentType, str] = {
     InstrumentType.EQUITY: "equity",
     InstrumentType.OPTIONS: "option",
