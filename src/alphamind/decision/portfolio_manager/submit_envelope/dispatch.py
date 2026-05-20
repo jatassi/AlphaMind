@@ -267,9 +267,7 @@ async def _close_command_context(
             "position_asset_type": "option",
             "occ_symbol": occ,
             "position_qty": position.details.contract_count,
-            "position_intent": (
-                "sell_to_close" if direction is Direction.LONG else "buy_to_close"
-            ),
+            "position_intent": ("sell_to_close" if direction is Direction.LONG else "buy_to_close"),
         }
     if isinstance(position.details, StrategyPositionDetails):
         # StrategyPositionDetails carries legs and a strategy_type_label; the
@@ -306,9 +304,7 @@ async def _add_command_context(command: AddCommand, *, invocation_handle: Any) -
         # float on legacy ``OptionsPositionDetails``; ``price()`` wraps at the
         # boundary so downstream consumers see Decimal-exact values.
         direction = _equity_or_options_direction(position)
-        side: Literal["long", "short"] = (
-            "long" if direction is Direction.LONG else "short"
-        )
+        side: Literal["long", "short"] = "long" if direction is Direction.LONG else "short"
         instrument = OptionInstrument(
             asset_type="option",
             underlying=position.details.underlying_ticker,

@@ -988,9 +988,7 @@ def test_held_strategy_position_omits_risk_reward() -> None:
     strategy_view = StrategistPositionView(
         position=_make_strategy_position_view(),
         thesis=None,
-        bracket=_make_bracket(
-            bracket_id="BRK-SPY-STRAT-001", position_id="POS-SPY-STRAT-001"
-        ),
+        bracket=_make_bracket(bracket_id="BRK-SPY-STRAT-001", position_id="POS-SPY-STRAT-001"),
         pending_orders=(),
         modification_trail=(),
     )
