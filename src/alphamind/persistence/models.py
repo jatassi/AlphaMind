@@ -710,6 +710,25 @@ class CollectionRuns(Base):
     __table_args__ = (Index("ix_collection_runs_collector_started", "collector", "started_at"),)
 
 
+class BorrowCostSweepCursor(Base):
+    """Resume cursor for the iBorrowDesk borrow-cost universe sweep.
+
+    iBorrowDesk 444-blocks the collector's egress IP after a fixed number of
+    requests per run, so one run only reaches part of the universe. One row
+    per collector records the ticker the next run should resume at — the
+    ticker the 444 block last tripped on — so coverage rotates across the
+    full universe over consecutive runs instead of always restarting at the
+    same head. ``next_ticker`` is NULL when the previous run swept the whole
+    universe without a block.
+    """
+
+    __tablename__ = "borrow_cost_sweep_cursor"
+
+    collector: Mapped[str] = mapped_column(Text, primary_key=True)
+    next_ticker: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[str] = mapped_column(Text)
+
+
 # ---------------------------------------------------------------------------
 # Distillation state (Class B rolling baselines) — story 02-distillation/03
 # ---------------------------------------------------------------------------

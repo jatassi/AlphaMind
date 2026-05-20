@@ -1,40 +1,47 @@
 ---
 name: linear-consolidate
-description: Use to consolidate AlphaMind's Linear workspace under the free-tier 250-issue cap by rolling up Done feature sub-issues into the parent Issue's body and deleting the sub-issues. Triggers on `/linear-consolidate <Feature>` and operator phrases like "free up Linear slots", "I'm hitting the Linear free-tier limit", "consolidate Done features", "roll up the X sub-issues", "clean up Linear", "the Linear workspace is full", "delete shipped sub-issues without losing history". The skill verifies parity between Linear sub-issue bodies and local archive files at `docs/_archive/implementation/<feature>/`, resolves drift via shipped `src/` as tiebreaker (the local archive is what survives deletion), drafts a rolled-up parent body that opens with a non-bullet paragraph (Linear's renderer drops bullets in the second list otherwise), saves it, and instructs the operator on bulk-deletion in the UI — the Linear MCP exposes neither archive nor delete. Auto-archive isn't an option (1-month minimum window). Do NOT use for non-AlphaMind workspaces, in-flight features, or features without local archive copies.
+description: Use to consolidate AlphaMind's Linear workspace under the free-tier 250-issue cap by rolling up Done feature sub-issues into the parent Issue's body and archiving the sub-issues. Triggers on `/linear-consolidate <Feature>` and operator phrases like "free up Linear slots", "I'm hitting the Linear free-tier limit", "consolidate Done features", "roll up the X sub-issues", "clean up Linear", "the Linear workspace is full", "archive shipped sub-issues without losing history". The skill verifies parity between Linear sub-issue bodies and local archive files at `docs/_archive/implementation/<layer>/<feature>/`, resolves drift via shipped `src/` as tiebreaker (the local archive is the in-repo canonical record), drafts a rolled-up parent body that opens with a non-bullet paragraph (Linear's renderer drops bullets in the second list otherwise), saves it, and archives the sub-issues via `scripts/archive_linear_issues.py` after operator approval. The supporting scripts (`check_linear_cap.py`, `export_linear_issues.py`, `linear_parity_diff.py`, `archive_linear_issues.py`) hit the Linear GraphQL API directly — the Linear MCP cannot count issues, archive them, or return un-truncated bodies. Do NOT use for non-AlphaMind workspaces, in-flight features, or features without local archive copies.
 ---
 
 # Linear consolidation under free-tier ceiling
 
-The operator names a Done AlphaMind feature whose Linear sub-issues should be rolled up into the parent Issue's body and then deleted, freeing slots against the free-tier 250-issue cap. The output of a successful run is: parent Issue body updated with a `## Shipped stories` index of every sub-issue, all sub-issues deleted by the operator in the Linear UI, and the workspace's Done count reduced by exactly the number of sub-issues deleted.
+The operator names a Done AlphaMind feature whose Linear sub-issues should be rolled up into the parent Issue's body and then archived, freeing slots against the free-tier 250-issue cap. The output of a successful run is: the parent Issue body updated with a `## Shipped stories` index of every sub-issue, every Done sub-issue archived via `scripts/archive_linear_issues.py`, and the workspace's active (non-archived) issue count reduced by exactly the number archived.
+
+This skill leans on four scripts under `scripts/` that hit the Linear GraphQL API directly — the Linear MCP server can neither count issues, archive them, nor return un-truncated issue bodies:
+
+- `check_linear_cap.py` — exact active-issue count and buffer to the cap (`--breakdown` splits it by state and project).
+- `export_linear_issues.py` — fetch sub-issue bodies (full, no truncation) into local archive files.
+- `linear_parity_diff.py` — diff Linear sub-issue bodies against the local archive files.
+- `archive_linear_issues.py` — archive a parent's Done sub-issues (dry-run by default; `--apply` to execute).
+
+All four read `LINEAR_API_KEY` from the repo-root `.env`.
 
 ## Why this skill exists
 
-Linear's free tier hard-caps the workspace at 250 active issues. AlphaMind hits this cap during long stretches of feature work because each feature parent has 10–30 sub-issues. Three consolidation mechanisms exist; only this one works:
+Linear's free tier hard-caps the workspace at 250 active (non-archived) issues. AlphaMind hits this cap during long stretches of feature work because each feature parent has 10–30 sub-issues. The fix is to roll a shipped feature's Done sub-issues up into the parent Issue's body (a `## Shipped stories` index for archaeology), then archive the sub-issues — archived issues stop counting against the cap.
 
-- **Auto-archive:** minimum cool-off is 1 month — too slow to unblock new Issue creation now.
-- **Manual archive:** does not exist in Linear ("Archiving happens automatically with no option to manually archive items").
-- **Delete + roll up into parent body:** what this skill does. The deleted sub-issues vanish from the count, the parent retains a `## Shipped stories` index for archaeology, and full story bodies survive at `docs/_archive/implementation/<feature>/`.
+Archiving is done by `archive_linear_issues.py`, which calls the GraphQL `issueArchive` mutation. It archives rather than trashes: archived issues are recoverable indefinitely via Linear's archive view, whereas trashed issues are purged after 30 days. Auto-archive is not an option — its minimum cool-off is one month, too slow to unblock new Issue creation now.
 
 ## Inputs the operator provides
 
 A feature name (e.g. `Configuration management`, `Collector`, `Portfolio state`). You resolve it to:
 
-1. **Parent ALP-ID** via `mcp__linear-server__list_issues` filtered by `query=<feature name>` or by reading the project bullet in `docs/project-tracker.md` if needed.
-2. **Local archive path** at `docs/_archive/implementation/<layer>/<feature>/` — e.g. `foundation/configuration/`, `01-data-layer/collector/`, `06-risk-guardrails/breach-behavior/`. List with `ls` to confirm the directory exists and contains one `.md` per expected sub-issue.
+1. **Parent ALP-ID** — via `mcp__linear-server__list_issues` filtered by `query=<feature name>`, or by reading the project bullet in `docs/project-tracker.md`.
+2. **Local archive path** at `docs/_archive/implementation/<layer>/<feature>/` — e.g. `foundation/configuration/`, `01-data-layer/collector/`, `06-risk-guardrails/breach-behavior/`. List with `ls` to confirm the directory exists and holds one `.md` per expected sub-issue.
 
-If the parent isn't in `Done` status, **stop** — the feature is in flight, sub-issues should not be deleted (orchestration may still need the dependency graph). Surface to the operator and exit.
+If the operator doesn't know which feature to consolidate, run `uv run python scripts/linear_consolidation_candidates.py` — it lists every parent whose sub-issues are all Done, ranked by the slots each rollup would free.
 
-**If the local archive directory is missing, do NOT proceed to consolidation — but do NOT exit either.** Run Phase 1.5 (Materialize archives) first to back the sub-issues up locally before they're deleted. This is the most common drift between feature shipping and consolidation: features completed in long runs (typically execution-layer or analysis-layer waves) often skip the archive-move step that older features (foundation, data-layer, risk-guardrails) had. Without local archives, the rich `Goal` / `Reading` / `Scope` / `Acceptance criteria` / `Verification` content of every sub-issue is lost forever once the operator deletes in the UI — the parent body's `## Shipped stories` index only carries titles. See `## Hard rule 0` and Phase 1.5 below.
+If the parent isn't in `Done` status, **stop** — the feature is in flight, its sub-issues should not be archived (orchestration may still need the dependency graph). Surface to the operator and exit.
+
+**If the local archive directory is missing, do NOT proceed to consolidation — but do NOT exit either.** Run Phase 1.5 (Materialize archives) first to write the sub-issue bodies to disk before they're archived. This is the most common drift between feature shipping and consolidation: features completed in long runs (typically execution-layer or analysis-layer waves) often skip the archive-move step that older features (foundation, data-layer, risk-guardrails) had. See Hard rule 0 and Phase 1.5 below.
 
 ## Hard rules
 
-### 0. Local archives are mandatory before deletion
+### 0. Local archives before archiving the sub-issues
 
-The `## Shipped stories` index in the rolled-up parent body carries only titles + IDs. Every sub-issue's substantive content — the `Goal`, `Reading`, `Scope`, `Acceptance criteria`, `Verification` sections — lives only in the sub-issue body itself. Once the operator deletes the sub-issue, that content is gone with no recovery path (the MCP exposes no `restore_issue` tool, and Linear's auto-archive only fires on issues that haven't been deleted).
+The `## Shipped stories` index in the rolled-up parent body carries only titles + IDs. Every sub-issue's substantive content — the `Goal`, `Reading`, `Scope`, `Acceptance criteria`, `Verification` sections — lives only in the sub-issue body itself. The local archive at `docs/_archive/implementation/<layer>/<feature>/` is the in-repo canonical record of that content: it does not depend on Linear and travels with the codebase.
 
-The local archive at `docs/_archive/implementation/<layer>/<feature>/` is the *only* preservation surface. **Do not run Phase 4–6 against a feature whose archive directory is missing or sparse** — materialize archives first via Phase 1.5. The materialization step is mechanical (fetch each sub-issue body, write to disk) and only takes a minute or two for 10–30 stories, but skipping it permanently loses design content that took the operator hours to draft via `/draft-user-stories`.
-
-This is a one-shot guard: once sub-issues are deleted, you cannot retroactively materialize archives. The cost of getting it wrong is asymmetric — pause and verify, don't optimize.
+Archived Linear issues stay recoverable indefinitely via Linear's archive view, so archiving (unlike a true delete) is not a point of no return. But do not rely on the archive view as the design record — **materialize the local archive first via Phase 1.5** whenever the directory is missing or sparse. The step is a single `export_linear_issues.py` invocation; skipping it leaves the feature's design content reachable only by un-archiving issues one at a time in the Linear UI.
 
 ### 1. Body MUST start with a non-bullet paragraph
 
@@ -44,83 +51,66 @@ The opening paragraph is load-bearing; lead with a one-sentence summary derivabl
 
 ### 2. Drift resolution: `src/` is the tiebreaker
 
-Linear sub-issue bodies and local archive files routinely drift — sub-issue bodies may have been edited via `/audit-user-stories`, or local files may have been touched post-implementation. When they disagree, **shipped `src/` code is ground truth**, not the spec. The local archive is what survives deletion, so it must reflect shipped reality; if Linear's body matches reality and the local file doesn't, update the local file (and vice-versa). For substantive schema/contract drift, read the actual `src/` modules to determine which version describes shipped behavior.
+Linear sub-issue bodies and local archive files routinely drift — sub-issue bodies may have been edited via `/audit-user-stories`, or local files may have been touched post-implementation. When they disagree, **shipped `src/` code is ground truth**, not the spec. The local archive is the surviving in-repo record, so it must reflect shipped reality; if Linear's body matches reality and the local file doesn't, update the local file (and vice-versa). For substantive schema/contract drift, read the actual `src/` modules to determine which version describes shipped behavior.
 
 This isn't optional. A pilot run found one cosmetic drift (`18 entries` vs `19 entries`) and one substantive drift (entire Pydantic model redesign for the regimes bundle); the substantive one would have lost design intent if blindly resolved either way.
 
-### 3. The Linear MCP cannot archive or delete issues
+### 3. Archiving runs through the script, not the MCP or the UI
 
-`save_issue` can update state, but there is no `archive_issue` or `delete_issue` tool. Both must happen in the UI. Don't try; don't promise the operator otherwise. The skill's job ends after the parent body is saved and verified — the operator does the bulk-delete by selecting all sub-issues in the parent's sub-issue panel and pressing Cmd+Delete.
+The Linear MCP exposes no archive or delete tool — `save_issue` only updates fields. Archiving happens via `scripts/archive_linear_issues.py`, which calls the GraphQL `issueArchive` mutation. The script is **dry-run by default**: a plain invocation prints exactly what it would archive and changes nothing; `--apply` performs the archive. Never hand the operator a manual Cmd+Delete instruction — the script is the mechanism, and the operator's role is to approve the dry-run plan before you re-run with `--apply`.
 
-### 4. Verification step uses a Haiku subagent
+### 4. Parity verification runs through the diff script
 
-Parity-checking 10–30 sub-issue bodies against local files is purely mechanical comparison — no synthesis, no judgment. Delegate it to a Haiku subagent with explicit mapping (`ALP-XX ↔ filename.md`) and a strict ignore list (frontmatter, heading-level, link rewriting, `<issue id>` injections). The main thread keeps drift resolution and body drafting because those need cross-reference judgment.
+Parity-checking 10–30 sub-issue bodies against local files is a deterministic text comparison — `linear_parity_diff.py` does it directly, no subagent. It fetches every body via GraphQL (no ~5KB MCP truncation), matches each to a local file by user-story index, normalises away the differences the check is meant to ignore (frontmatter, heading level, `<issue id>` cross-ref markup), and reports `MATCH` / `DIFFERS` (with a unified diff) per story. The main thread keeps drift resolution and body drafting — those need cross-reference judgment.
 
 ## Procedure
 
 ### Phase 1 — Resolve and gather
 
-1. Resolve the feature name to parent ALP-ID and confirm `status=Done`.
-2. Confirm the local archive directory exists at `docs/_archive/implementation/<layer>/<feature>/`.
-3. Fetch the parent body (`get_issue`) and the Done sub-issues (`list_issues parentId=ALP-X state=Done`) in parallel.
+1. Resolve the feature name to its parent ALP-ID and confirm `status=Done`.
+2. Confirm the local archive directory exists at `docs/_archive/implementation/<layer>/<feature>/` (if missing or sparse, Phase 1.5 will populate it).
+3. Fetch the parent body (`get_issue`) and the Done sub-issues (`list_issues parentId=ALP-X state=Done`).
 4. List the local archive files (`ls`).
 5. Build an ID-to-filename mapping by user-story index (the local files use `01-…`, `02-…`, `03a-…` prefixes; Linear sub-issue titles start with `01 — `, `02 — `, etc.).
+6. Capture the baseline cap count: run `uv run python scripts/check_linear_cap.py` and note the `active (non-archived) issues` figure. Phase 6 re-runs the script; the drop should equal the number of sub-issues archived.
 
 ### Phase 1.5 — Materialize missing archives (when needed)
 
-If `docs/_archive/implementation/<layer>/<feature>/` doesn't exist (or exists but contains fewer files than the Done sub-issue count), back the sub-issues up locally before continuing.
+If `docs/_archive/implementation/<layer>/<feature>/` doesn't exist, or holds fewer files than the Done sub-issue count, write the sub-issue bodies to disk before continuing.
 
-**Procedure:**
+1. Confirm the `<layer>` segment matches the existing convention — `ls docs/_archive/implementation/` first (`foundation`, `01-data-layer`, `02-distillation-layer`, `03-analysis-layer`, `04-decision-layer`, `05-execution-layer`, `06-risk-guardrails`).
+2. Run the export script — it resolves the parent, fetches every sub-issue body via GraphQL (full, no truncation), and writes one `.md` per sub-issue named by user-story index (`03a — Bracket-thesis coverage cross-validator` → `03a-bracket-thesis-coverage-cross-validator.md`):
 
-1. Create the directory: `mkdir -p docs/_archive/implementation/<layer>/<feature>/`. The `<layer>` segment must match the existing convention (`foundation`, `01-data-layer`, `02-distillation-layer`, `03-analysis-layer`, `04-decision-layer`, `05-execution-layer`, `06-risk-guardrails`) — list `docs/_archive/implementation/` first to confirm naming.
-2. Dispatch a Haiku subagent with the explicit ALP-ID list and instructions to:
-   - For each ALP-ID, call `mcp__linear-server__get_issue` and capture the `description` field verbatim
-   - Derive the filename from the issue title — strip the `## ` heading and convert `01a — Bracket-thesis coverage cross-validator` → `01a-bracket-thesis-coverage-cross-validator.md` (lowercase, hyphens, drop punctuation that doesn't survive in filenames)
-   - Write each body via the `Write` tool to `docs/_archive/implementation/<layer>/<feature>/<filename>.md` — the body becomes the entire file content (no frontmatter, no wrapper); the `# 01a — Title` header inside the body is the file's own H1
-   - If `get_issue` returns a body containing the `...(truncated)` marker (rare — the MCP usually returns full bodies but occasionally clips at ~5KB), record the ALP-ID in a `TRUNCATED_IDS` list and continue
-   - Return a markdown table: `| ALP-ID | File | Bytes | Status |` with status = WRITTEN / TRUNCATED / FAILED
-3. Title the dispatch with `[Haiku]` per the project's subagent-title convention.
-4. After the subagent returns, verify each file exists and is non-empty: `ls -la docs/_archive/implementation/<layer>/<feature>/ | wc -l` should equal the sub-issue count + 1 (for the dot-entry).
-5. **For each TRUNCATED_IDS entry**, the operator must paste the full body manually from the Linear web UI — the MCP cannot return more than its API gives. Surface the truncated ID list to the operator and pause until they confirm the file is complete.
-6. Once all archives exist locally, proceed to Phase 2 (or skip Phase 2 if the archives are sourced from the same Linear bodies — parity is trivially perfect by construction).
+       uv run python scripts/export_linear_issues.py ALP-X \
+           --out-dir docs/_archive/implementation/<layer>/<feature>
 
-**Skipping Phase 2 when archives were just materialized:** When the archives were freshly written from `get_issue` calls in Phase 1.5, there is no drift to detect — the local file *is* the Linear body verbatim. Phase 2 verification adds no signal in that case; jump directly to Phase 4 (drafting the parent body). The exception is if `get_issue` returned truncated bodies the operator restored manually — for those, run Phase 2 against the manually-restored files only.
+   Add `--include-archived` if some sub-issues were already archived in a prior partial run.
+3. Verify the file count matches the sub-issue count — the script's summary line reports `N written, M empty`. An `EMPTY` row means a sub-issue had no body; surface it to the operator.
+
+**Skip Phase 2 when archives were just materialized this way.** The local file *is* the Linear body verbatim — parity is perfect by construction. Jump straight to Phase 4.
 
 ### Phase 2 — Verify parity
 
-Dispatch a Haiku subagent with the explicit mapping and instructions to:
-- Fetch each Linear issue's body via `get_issue`
-- Read each local file
-- Compare for substantive parity (Goal, Scope, Acceptance criteria, Verification)
-- Ignore frontmatter, heading-level, link rewriting, `<issue id>` injections, `## Depends on` sections present locally but not in Linear
-- Return a markdown table: `| ALP-ID | File | Status | Notes |` with status = MATCH / DRIFT / OTHER, and a summary `X/N MATCH, Y DRIFT, Z OTHER. Safe to delete: <yes/no/conditional>`
+Run the parity-diff script against the pre-existing local archive:
 
-Title the dispatch with `[Haiku]` per the project's subagent-title convention.
+    uv run python scripts/linear_parity_diff.py ALP-X \
+        --archive-dir docs/_archive/implementation/<layer>/<feature>
 
-#### MCP `get_issue` truncates at ~5KB
+It prints a per-story table — `MATCH`, `DIFFERS`, `LINEAR-ONLY` (a sub-issue with no local file), `LOCAL-ONLY` (a local file with no sub-issue) — followed by a unified diff for every `DIFFERS` row. Exit code is `0` when every story matches, `1` when any drift is found.
 
-The MCP server truncates `description` on `get_issue` responses at roughly 5KB with a `...(truncated)` marker, despite the CLAUDE.md note implying it returns the full body. There's no flag to bypass and no MCP resource exposing the raw body. For long stories (typically anything with extensive Scope or Acceptance-criteria sections), the subagent can verify the visible prefix but cannot see the cut-off portions.
-
-Instruct the subagent to flag truncation explicitly in its Notes column ("Linear truncated mid-§N — visible content matches"). When the subagent returns MATCH on a truncated body, that's a partial verdict — visible content matched, the rest is unknown. The main thread must close the gap before treating the parent as safe to delete.
-
-#### Git-log + `updatedAt` spot check (when subagent flagged truncation)
-
-When the subagent reports MATCH on bodies it flags as truncated by the API, run this spot check from the main thread before saving the parent body:
-
-1. **Local-side freeze check** — `git log --all --follow --pretty=format:'%h %ai %s' -- docs/_archive/implementation/<layer>/<feature>/<one-of-the-stories>.md` (and the broader `git log --all --pretty=format:'%h %ai %s' --diff-filter=AM -- 'docs/implementation/<layer>/<feature>/*' 'docs/_archive/implementation/<layer>/<feature>/*' | head -30` to cover the pre-archive path). Note the latest content-edit timestamp (the archive-move commit doesn't count — it's a `git mv`).
-2. **Linear-side freeze check** — note the `updatedAt` from the original `list_issues` response for each truncated story. Status-bump updates (e.g. marking Done) count, but no body edits typically follow.
-3. **Inversion** — if the local content was finalized BEFORE the Linear bodies were created, Linear inherited from frozen-local at creation; neither has changed since; the truncated portions cannot have drifted. If Linear was created BEFORE the local file's last edit, the local file may have moved past Linear after divergence — investigate.
-
-Surface the result to the operator: "8 stories had API-truncated bodies; visible content matched + git log shows local frozen since 2026-04-29 12:27 + Linear `updatedAt` ≤ 2026-05-01 19:20 → no drift possible; safe to proceed." If the freeze check fails (recent edits to either side), pause and surface to the operator — the residual risk is no longer bounded and the operator should decide whether to defer or spot-check via the Linear web UI.
+- All `MATCH` → proceed to Phase 4.
+- Any `DIFFERS` / `LINEAR-ONLY` / `LOCAL-ONLY` → Phase 3.
 
 ### Phase 3 — Resolve drift
 
-For each DRIFT row:
+For each `DIFFERS` row, read the unified diff the script printed:
 
-- **Cosmetic** (e.g. count off-by-one, minor wording): edit the loser inline. Tell the operator what you found before editing; trivial fixes don't need approval per the operator's existing policy on subagent suppressions, but visible drift is worth disclosing.
-- **Substantive** (different schema, different file paths, different acceptance criteria): read the relevant `src/` modules to determine which version reflects shipped reality. Update the loser. Surface the finding and the resolution to the operator before proceeding to Phase 4.
+- **Cosmetic** (e.g. count off-by-one, minor wording): edit the loser inline. Tell the operator what you found before editing; trivial fixes don't need approval per the operator's existing policy, but visible drift is worth disclosing.
+- **Substantive** (different schema, different file paths, different acceptance criteria): read the relevant `src/` modules to determine which version reflects shipped reality (Hard rule 2 — `src/` is the tiebreaker). Update the loser. Surface the finding and the resolution to the operator before proceeding to Phase 4.
 
-If `src/` and *both* the Linear body and the local file disagree (rare), surface the three-way conflict to the operator and pause.
+A `LINEAR-ONLY` row means a sub-issue has no local archive file — re-run Phase 1.5's export (with `--include-archived` if needed); it writes the missing file. A `LOCAL-ONLY` row means a stray local file with no matching sub-issue — confirm with the operator whether it's an obsolete draft to delete or a misindexed file to rename.
+
+If `src/` and *both* the Linear body and the local file disagree (rare), surface the three-way conflict to the operator and pause. Re-run the parity-diff script after resolving until it exits `0`.
 
 ### Phase 4 — Draft the rolled-up parent body
 
@@ -137,10 +127,10 @@ Compose the body with this exact shape:
 …
 ```
 
-Bullets sorted by user-story index (01, 02, 03a–z, 04a–z, 05, 06a–b, 07, 08), not Linear ID. Use plain `ALP-XX` text — Linear auto-converts to `<issue id="UUID">ALP-XX</issue>` references that survive the target's deletion as broken-link archaeology.
+Bullets sorted by user-story index (01, 02, 03a–z, 04a–z, 05, 06a–b, 07, 08), not Linear ID. Use plain `ALP-XX` text — Linear auto-converts to `<issue id="UUID">ALP-XX</issue>` references that survive the sub-issue being archived as live links into the archive.
 
 **Drop from the original parent body:**
-- The `[Stories]` link to `docs/implementation/<feature>/` (those staging dirs are gone after deletion)
+- The `[Stories]` link to `docs/implementation/<feature>/` (those staging dirs are gone after consolidation)
 - Orchestrator notes / dependency graph / `blockedBy` (moot post-ship)
 - "Status: [x] done" checkboxes (redundant with the Issue's Done state)
 
@@ -152,38 +142,37 @@ Show the proposed body in a markdown code block. Wait for operator approval befo
 2. Count the bullets in the returned `description`.
 3. If the count matches the input bullet count, proceed. If it's lower, the renderer truncation bug fired — diagnose (almost always: missing or malformed opening paragraph), fix, re-save, re-verify.
 
-### Phase 6 — Operator deletes, you recount
+### Phase 6 — Archive the sub-issues, then recount
 
-Tell the operator:
-- Open the parent Issue in the UI
-- Sub-issue panel → click first → Shift-click last → Cmd+Delete → confirm
-- Say "done" when finished
+1. Dry-run the archive to produce the plan — it changes nothing:
 
-When the operator says done, recount via `list_issues state=Done`. The response will be too large to fit in context — it'll be saved to a file. Parse with:
+       uv run python scripts/archive_linear_issues.py --parent ALP-X
 
-```python
-import json
-with open('<dump-file-path>') as f:
-    data = json.load(f)
-print(f'Total Done issues: {len(data["issues"])}')
-print(f'hasNextPage: {data.get("hasNextPage")}')
-```
+   The script lists every Done sub-issue as `WOULD-ARCHIVE` and reports any non-Done sub-issue as `SKIP-NOT-DONE` (see "Features with active gaps" below — handled automatically).
+2. Show the operator the plan and get explicit approval.
+3. On approval, re-run with `--apply`:
 
-Confirm the count dropped by exactly the number of sub-issues deleted. If it didn't, something went wrong (operator partially completed, network issue, etc.) — surface and investigate.
+       uv run python scripts/archive_linear_issues.py --parent ALP-X --apply
+
+4. Recount: `uv run python scripts/check_linear_cap.py`. Compare `active` against the Phase 1 baseline — the drop should equal the number archived. If it didn't, something went wrong (a per-issue archive failed, network issue) — the script's own output flags `FAILED` rows; surface and investigate. The freed `buffer` is the headline result of the run.
+
+To archive a hand-picked set rather than a whole parent's Done children, use `--ids ALP-a,ALP-b,…` instead of `--parent`.
 
 ## Special cases
 
 ### Features with parallel sub-issue drafts in Done
 
-Some features (Breach behavior ALP-212, Regime adaptation ALP-213) carry two parallel drafts of the same stories — typically because the work was redrafted at some point and both drafts shipped Done. The operator's policy is **canonical drafts only**: include the canonical (later) draft in the rollup, delete both drafts in the UI. Confirm with the operator which draft is canonical before drafting the body if not obvious from the title prefixes.
+Some features (Breach behavior ALP-212, Regime adaptation ALP-213) carry two parallel drafts of the same stories — typically because the work was redrafted at some point and both drafts shipped Done. The operator's policy is **canonical drafts only**: index only the canonical (later) draft in the rollup body, but archive both drafts. `archive_linear_issues.py --parent` archives every Done sub-issue, so both drafts go; confirm with the operator which draft is canonical before drafting the body if it isn't obvious from the title prefixes.
 
 ### Features with active gaps
 
-Some features have non-Done sub-issues mixed into a contiguous Done range (e.g. Synthesizer ALP-114 with a gap at ALP-204; Domain researchers ALP-113 with gaps near ALP-185). The active sub-issues should not be touched — roll up only the Done ones, leave the gaps in place. The operator's UI delete will only select Done sub-issues if they're filtered correctly, but call this out so they don't accidentally include the active stragglers.
+Some features have non-Done sub-issues mixed into a contiguous Done range (e.g. Synthesizer ALP-114 with a gap at ALP-204; Domain researchers ALP-113 with gaps near ALP-185). `archive_linear_issues.py --parent` handles this automatically — it archives only the Done sub-issues and reports each non-Done one as `SKIP-NOT-DONE`, leaving the in-flight stories untouched. The rolled-up body should likewise index only the Done stories.
 
-### Standalone To-dos (no rollup needed)
+### Standalone To-dos and workspace-wide sweep
 
-The "To-dos" project contains 13 standalone Done issues with no sub-issues — one-off bug fixes (e.g. ALP-266 "session.py should fail loudly…", ALP-267 "Suppress benign aclose() warning…"). These don't need rollup; the operator deletes them directly in the UI. If the operator asks for the To-dos cleanup, just enumerate them and confirm before they delete.
+The "To-dos" project holds standalone Done issues with no sub-issues — one-off bug fixes (e.g. ALP-266 "session.py should fail loudly…", ALP-267 "Suppress benign aclose() warning…"). These need no rollup; archive them directly with `archive_linear_issues.py --ids ALP-a,ALP-b,…` after confirming the list with the operator.
+
+For dead-weight beyond shipped features, `uv run python scripts/linear_stale_sweep.py` finds non-archived Canceled / Duplicate issues — they count against the cap too, and can be archived directly via `--ids`.
 
 ### Parent not in Done status
 
@@ -192,10 +181,9 @@ Skip the feature. The dependency graph is still load-bearing for `/orchestrate` 
 ## Out of scope
 
 - **Auto-archive policy changes.** The 1-month minimum is too slow; no point configuring it.
-- **`docs/implementation/<feature>/` references in the rollup body.** Those staging dirs don't survive deletion. Local copies live at `docs/_archive/implementation/<layer>/<feature>/` only.
+- **`docs/implementation/<feature>/` references in the rollup body.** Those staging dirs don't survive consolidation. Local copies live at `docs/_archive/implementation/<layer>/<feature>/` only.
 - **Inventing description prose.** The opening sentence must be derivable from the rolled-up bullets — if you can't summarize the feature factually from its own shipped stories, ask the operator for one.
-- **Trying to archive/delete via MCP.** The MCP doesn't expose those tools and won't ever; trust the UI workflow.
 
 ## Cumulative tracking
 
-After each successful consolidation, the project memory file `project_linear_consolidation.md` should reflect the cumulative recovery. The operator may ask for a status check ("what have we cleaned up so far?"); pull the running tally from there or from `git log` of MEMORY.md edits.
+After each successful consolidation, the project memory file `project_linear_consolidation.md` should reflect the cumulative recovery. The operator may ask for a status check ("what have we cleaned up so far?"); pull the running tally from there, or get the current standing directly with `uv run python scripts/check_linear_cap.py --breakdown`.
