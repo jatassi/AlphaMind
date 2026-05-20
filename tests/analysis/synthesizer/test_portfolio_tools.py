@@ -121,6 +121,7 @@ async def test_positions_handler_returns_text() -> None:
                 sector="TECH",
                 size_pct=4.5,
                 position_age_hours=72.0,
+                strategy_type_label=None,
             ),
             SynthesizerPositionSummary(
                 ticker=Symbol("XOM"),
@@ -128,6 +129,7 @@ async def test_positions_handler_returns_text() -> None:
                 sector="ENERGY",
                 size_pct=2.1,
                 position_age_hours=10.0,
+                strategy_type_label=None,
             ),
         ),
     )

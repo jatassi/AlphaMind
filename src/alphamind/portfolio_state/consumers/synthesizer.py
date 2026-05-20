@@ -10,6 +10,8 @@ from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.records.positions import (
     Direction,
     PositionRecord,
+    StrategyPositionDetails,
+    position_direction,
     resolve_ticker,
 )
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
@@ -22,13 +24,22 @@ from alphamind.portfolio_state.views.positions import PositionView
 
 @dataclass(frozen=True, slots=True)
 class SynthesizerPositionSummary:
-    """Slim per-position summary for the synthesizer."""
+    """Slim per-position summary for the synthesizer.
+
+    ``direction`` is projected via :func:`position_direction`: an equity or
+    single-leg options position carries a concrete ``Direction``; a multi-leg
+    strategy carries ``None`` (its directionality lives per-leg). For a
+    strategy position ``strategy_type_label`` carries the strategy's label so
+    renderers can show it instead of a long/short direction; it is ``None``
+    otherwise.
+    """
 
     ticker: str
-    direction: Direction
+    direction: Direction | None
     sector: str
     size_pct: float
     position_age_hours: float
+    strategy_type_label: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,13 +133,20 @@ def _project_positions(
     for pos in all_positions:
         ticker = _ticker_from_position(pos)
         sector = sector_resolver(pos.record) or "UNCLASSIFIED"
+        details = pos.record.details
+        strategy_type_label = (
+            details.strategy_type_label
+            if isinstance(details, StrategyPositionDetails)
+            else None
+        )
         result.append(
             SynthesizerPositionSummary(
                 ticker=ticker,
-                direction=pos.direction,
+                direction=position_direction(pos.record),
                 sector=sector,
                 size_pct=pos.position_weight_pct,
                 position_age_hours=pos.position_age_hours,
+                strategy_type_label=strategy_type_label,
             )
         )
     return tuple(result)

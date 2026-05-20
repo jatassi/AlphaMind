@@ -647,6 +647,7 @@ class TestSynthesizerValueObjects:
             sector="TECHNOLOGY",
             size_pct=10.0,
             position_age_hours=4.0,
+            strategy_type_label=None,
         )
         with pytest.raises(FrozenInstanceError):
             summary.ticker = "MSFT"  # type: ignore[misc]
@@ -687,6 +688,7 @@ class TestSynthesizerValueObjects:
                     sector="S",
                     size_pct=1.0,
                     position_age_hours=0.0,
+                    strategy_type_label=None,
                 ),
             )
 
@@ -711,6 +713,25 @@ class TestProjectSynthesizerViewHappyPath:
         assert pos.sector == "TECHNOLOGY"
         assert pos.size_pct == 10.0
         assert pos.position_age_hours == 4.0
+        assert pos.strategy_type_label is None
+
+    def test_strategy_position_projects_none_direction(self) -> None:
+        """A multi-leg strategy position yields a summary with direction=None."""
+        strategy_pos = _make_empty_legs_strategy_position("POS-STRAT-EMPTY")
+        snapshot = _make_snapshot(
+            open_positions=(strategy_pos,),
+            pending_positions=(),
+            brackets=(),
+            active_theses=(),
+            pending_orders=(),
+            intra_invocation_changelog=(),
+            recent_pm_decision_log=(),
+            position_modification_trail={},
+        )
+        view = project_synthesizer_view(snapshot, sector_resolver=_simple_sector_resolver())
+        assert len(view.positions) == 1
+        assert view.positions[0].direction is None
+        assert view.positions[0].strategy_type_label == "iron_condor"
 
     def test_theses_length(self) -> None:
         snapshot = _make_snapshot()
