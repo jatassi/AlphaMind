@@ -95,7 +95,6 @@ def _make_portfolio(
 
 
 def _process_lifetime_row(ts: str) -> ProcessLifetimeRow:
-    """A standalone ``process_lifetimes`` row (id ``proc-pre``)."""
     return ProcessLifetimeRow(
         process_lifetime_id="proc-pre",
         process_role="pipeline",
@@ -115,7 +114,6 @@ def _process_lifetime_row(ts: str) -> ProcessLifetimeRow:
 
 
 def _invocation_row(ts: str) -> InvocationRow:
-    """An ``invocations`` row (id ``inv-pre``) parented to ``proc-pre``."""
     return InvocationRow(
         invocation_id="inv-pre",
         process_lifetime_id="proc-pre",
@@ -245,8 +243,7 @@ def _prepopulate_ticker_realized_vol(db_path: Path) -> None:
     row per ticker, tagged with that run's ``invocation_id``. The
     ``ticker`` FK targets ``asset_universe`` (not in the wipe list — it
     survives); ``invocation_id`` is a NOT-NULL RESTRICT FK to
-    ``invocations`` (wiped). The row orphans on the next wipe unless
-    ``ticker_realized_vol`` is itself wiped (ALP-616).
+    ``invocations`` (wiped).
     """
     ts = "2026-05-07T14:30:00Z"
     sync_engine = make_engine(str(db_path))
@@ -338,11 +335,6 @@ class TestWipeClearsTables:
             cash_rows = (await session.execute(select(CashLedgerRow))).scalars().all()
             assert len(cash_rows) == 1
             assert float(cash_rows[0].current_cash_usd) == 0.0
-
-
-# ALP-616 regression: every completed debug-e2e run leaves
-# ``ticker_realized_vol`` populated, so the next run's wipe must clear it
-# — its ``invocation_id`` FK orphans when ``invocations`` is wiped otherwise.
 
 
 class TestWipeClearsTickerRealizedVol:
