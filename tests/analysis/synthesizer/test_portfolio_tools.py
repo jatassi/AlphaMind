@@ -142,6 +142,30 @@ async def test_positions_handler_returns_text() -> None:
     assert "XOM" in text
 
 
+@pytest.mark.asyncio
+async def test_positions_handler_renders_strategy_label_for_none_direction() -> None:
+    """A strategy summary (direction=None) renders its strategy-type label, not a crash."""
+    reader = _StubReader(
+        positions=(
+            SynthesizerPositionSummary(
+                ticker=Symbol("SPY"),
+                direction=None,
+                sector="TECH",
+                size_pct=2.5,
+                position_age_hours=12.0,
+                strategy_type_label="iron_condor",
+            ),
+        ),
+    )
+    mcp_servers, _ = build_portfolio_state_mcp_server(reader)
+    server = mcp_servers["alphamind_synthesizer_portfolio"]["instance"]
+
+    text = await _invoke_mcp_tool(server, "get_positions_summary", {})
+
+    assert "SPY" in text
+    assert "iron_condor" in text
+
+
 # ---------------------------------------------------------------------------
 # 3. Theses handler renders text containing thesis summary
 # ---------------------------------------------------------------------------

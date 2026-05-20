@@ -45,12 +45,24 @@ _EMPTY_INPUT_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}}
 # ---------------------------------------------------------------------------
 
 
+def _position_direction_label(position: SynthesizerPositionSummary) -> str:
+    """Direction-column text for a position summary.
+
+    An equity / single-leg options position shows its long/short direction.
+    A multi-leg strategy has ``direction=None`` (its directionality lives
+    per-leg); it shows the strategy-type label instead.
+    """
+    if position.direction is None:
+        return position.strategy_type_label or "strategy"
+    return position.direction.value
+
+
 def _render_positions(positions: tuple[SynthesizerPositionSummary, ...]) -> str:
     """Render position summaries as one line per position."""
     if not positions:
         return "No open positions."
     return "\n".join(
-        f"{p.ticker} | {p.direction.value} | sector={p.sector} | "
+        f"{p.ticker} | {_position_direction_label(p)} | sector={p.sector} | "
         f"size={p.size_pct:.2f}% | age={p.position_age_hours:.1f}h"
         for p in positions
     )
