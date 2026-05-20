@@ -66,6 +66,15 @@ from alphamind.state.tables.drawdown_state import DRAWDOWN_STATE_SINGLETON_ID
 
 _DEBUG_DB_SUFFIX = "-debug-e2e.db"
 
+# Standard listed-option contract multiplier — applied to every synthetic
+# option and strategy leg.
+_OPTION_CONTRACT_MULTIPLIER = 100.0
+
+# A ``SyntheticStrategyLeg`` carries no per-leg premium, so the seeder
+# synthesizes one: SHORT legs are marked at this fixed positive premium and
+# LONG legs absorb the remainder (see :func:`_strategy_leg_premiums`).
+_STRATEGY_SHORT_LEG_MARK_USD = 1.0
+
 
 # Tables wiped in FK-safe order — children before parents.
 #
@@ -217,7 +226,7 @@ def _build_option_position_row(
         "expiration_date": expiration.isoformat(),
         "contract_type": contract_type.value,
         "contract_count": float(synthetic.contracts),
-        "contract_multiplier": 100.0,
+        "contract_multiplier": _OPTION_CONTRACT_MULTIPLIER,
         "premium_paid_per_contract": float(synthetic.premium_per_contract),
         "greeks": greeks,
     }
@@ -238,6 +247,43 @@ def _build_option_position_row(
     )
 
 
+def _strategy_leg_premiums(legs: tuple[Any, ...], net_premium: float) -> list[float]:
+    """Return each leg's ``premium_paid_per_contract`` for a synthetic strategy.
+
+    A ``SyntheticStrategyLeg`` carries no per-leg premium, and debug-e2e seeds
+    no option-price snapshots for the synthetic strikes — so the snapshot
+    assembler marks each leg to its ``premium_paid_per_contract`` fallback.
+    Choosing those premiums so the *direction-aware* leg sum equals
+    ``net_premium`` makes a freshly-placed spread mark to its cost basis
+    (≈ $0 P/L), matching every other "just placed" synthetic position. An even
+    split instead nets a debit spread to ≈ $0 market value against a non-zero
+    cost basis — the -100% P/L artifact on debug-pos-07 (ALP-582).
+
+    SHORT legs take a fixed positive mark; LONG legs split the remainder. Every
+    premium stays > 0 — ``PriceQuote.__post_init__`` rejects ``price_usd <= 0``.
+    This requires a net *debit* (``net_premium >= 0``); a net-credit strategy
+    has no positive long-leg premium under this scheme and is rejected.
+    """
+    directions = [Direction(leg.direction.value) for leg in legs]
+    units = [float(leg.contracts) * _OPTION_CONTRACT_MULTIPLIER for leg in legs]
+    long_units = sum(u for u, d in zip(units, directions, strict=True) if d is Direction.LONG)
+    short_units = sum(u for u, d in zip(units, directions, strict=True) if d is Direction.SHORT)
+    if long_units == 0.0:
+        msg = "synthetic strategy must carry at least one LONG leg"
+        raise ValueError(msg)
+    long_premium = (net_premium + _STRATEGY_SHORT_LEG_MARK_USD * short_units) / long_units
+    if long_premium <= 0.0:
+        msg = (
+            "net-credit synthetic strategy is unsupported: the even-mark scheme "
+            f"yields a non-positive long-leg premium ({long_premium}); "
+            "net_premium must be a debit (>= 0)"
+        )
+        raise ValueError(msg)
+    return [
+        long_premium if d is Direction.LONG else _STRATEGY_SHORT_LEG_MARK_USD for d in directions
+    ]
+
+
 def _build_strategy_position_row(
     synthetic: Any,
     *,
@@ -246,13 +292,7 @@ def _build_strategy_position_row(
 ) -> PositionRow:
     expiration = (now + timedelta(days=int(synthetic.expiration_offset_days))).date()
     legs_payload = []
-    # ``SyntheticStrategyLeg`` carries no per-leg premium (the synthetic
-    # spread is summarized by ``net_premium`` only), but the pricing layer's
-    # ``PriceQuote.__post_init__`` requires per-leg ``price_usd > 0`` when
-    # the strategy position is enriched. Spread ``net_premium`` evenly across
-    # legs so every leg gets a positive placeholder — the downstream P&L is
-    # nominal for debug-e2e (no real prices flow), but the invariant holds.
-    per_leg_premium = float(synthetic.net_premium) / max(len(synthetic.legs), 1)
+    leg_premiums = _strategy_leg_premiums(synthetic.legs, float(synthetic.net_premium))
     for index, leg in enumerate(synthetic.legs):
         leg_contract_type = OptionContractType(leg.contract_type.value)
         leg_direction = Direction(leg.direction.value)
@@ -267,8 +307,8 @@ def _build_strategy_position_row(
                     "expiration_date": expiration.isoformat(),
                     "contract_type": leg_contract_type.value,
                     "contract_count": float(leg.contracts),
-                    "contract_multiplier": 100.0,
-                    "premium_paid_per_contract": per_leg_premium,
+                    "contract_multiplier": _OPTION_CONTRACT_MULTIPLIER,
+                    "premium_paid_per_contract": leg_premiums[index],
                     "greeks": {
                         "delta": 0.0,
                         "gamma": 0.0,
