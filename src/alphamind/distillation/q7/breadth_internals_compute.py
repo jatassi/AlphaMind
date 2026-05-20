@@ -11,6 +11,10 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from itertools import pairwise
 
+from alphamind.distillation._calibration_core import (
+    CalibrationState,
+    combine_calibration_states,
+)
 from alphamind.distillation.output import (
     OutputAudience,
     OutputBlock,
@@ -48,25 +52,24 @@ def _ema(closes: Sequence[float], window: int) -> float:
     return float(ema_value)
 
 
-def _pct_above_ema(closes_by_ticker: Mapping[str, Sequence[float]], window: int) -> float:
+def _pct_above_ema(closes_by_ticker: Mapping[str, Sequence[float]], window: int) -> float | None:
     """Fraction of tickers whose latest close is above their ``window``-day EMA.
 
-    Returns 0.0 when no ticker has any closes (the empty universe edge
-    case); the caller should still emit the block so consumers see the
-    calibration tag.
+    Returns ``None`` when no non-empty ticker has accumulated at least
+    ``window`` closes — every per-ticker ``_ema`` call would short-circuit
+    to the simple-mean fallback, so emitting a fraction would publish a
+    bootstrap-window value as if it were a real EMA reading. ALP-576: the
+    null sentinel keeps the 200d simple-mean fallback from colliding with
+    the 50d real-EMA value in operator-facing artifacts during the
+    bootstrap window.
     """
-    above = 0
-    total = 0
-    for closes in closes_by_ticker.values():
-        if not closes:
-            continue
-        total += 1
-        ema_value = _ema(closes, window)
-        if closes[-1] > ema_value:
-            above += 1
-    if total == 0:
-        return 0.0
-    return float(above) / float(total)
+    non_empty = [closes for closes in closes_by_ticker.values() if closes]
+    if not non_empty:
+        return None
+    if any(len(closes) < window for closes in non_empty):
+        return None
+    above = sum(1 for closes in non_empty if closes[-1] > _ema(closes, window))
+    return float(above) / float(len(non_empty))
 
 
 def _last_two_closes(closes: Sequence[float]) -> tuple[float, float] | None:
@@ -144,11 +147,22 @@ def compute_breadth_internals_pure(
     caller (loader) reads the trailing 200-day closes for every ticker in
     ``universe_tickers`` plus the broad-market ETF and passes them in.
     """
-    long_window = max(EMA_WINDOWS_DAYS)
+    n_observed = min(
+        (len(closes) for closes in closes_by_ticker.values() if closes),
+        default=0,
+    )
 
     payload: dict[str, object] = {}
+    per_window_calibrations: list[tuple[CalibrationState, str | None]] = []
     for window in EMA_WINDOWS_DAYS:
         payload[f"pct_above_{window}d_ema"] = _pct_above_ema(closes_by_ticker, window)
+        per_window_calibrations.append(
+            _calibration_for_window(
+                n_observations=n_observed,
+                required=window,
+                input_name=f"breadth_ema_{window}d_observations",
+            )
+        )
     payload["advance_decline_per_sector"] = _advance_decline_per_sector(
         closes_by_ticker, sector_members
     )
@@ -156,15 +170,7 @@ def compute_breadth_internals_pure(
         closes_by_ticker, universe_tickers, broad_market_closes
     )
 
-    n_observed = min(
-        (len(closes) for closes in closes_by_ticker.values() if closes),
-        default=0,
-    )
-    state, reason = _calibration_for_window(
-        n_observations=n_observed,
-        required=long_window,
-        input_name="breadth_long_ema_observations",
-    )
+    state, reason = combine_calibration_states(*per_window_calibrations)
 
     return OutputBlock(
         block_id=f"{_BLOCK_NAMESPACE}.breadth_internals",
