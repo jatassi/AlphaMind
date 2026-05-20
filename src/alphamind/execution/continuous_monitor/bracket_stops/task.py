@@ -15,11 +15,10 @@ Each cycle:
    each leg fires at most once per monitor-process lifetime.
 
 Per parent issue ALP-123 § Pre-resolved decision (I), the closer submits
-directly to the broker adapter — no engine envelope. Strategy positions
-are NOT evaluated for P/L targets in this story (the trigger evaluator
-explicitly rejects them); only price-based invalidation on the underlying
-fires for strategies — matching the design's
-``orders-and-brackets.md § Options price-based stops`` semantics.
+directly to the broker adapter — no engine envelope. A strategy position's
+P/L-target leg routes into the strategy net-P/L evaluator (ALP-601);
+price-based invalidation on the underlying fires for strategies too,
+matching ``orders-and-brackets.md § Options price-based stops``.
 """
 
 from __future__ import annotations
@@ -39,6 +38,7 @@ from alphamind.execution.continuous_monitor.bracket_stops.closer import (
 from alphamind.execution.continuous_monitor.bracket_stops.triggers import (
     evaluate_pl_target_trigger,
     evaluate_price_based_trigger,
+    evaluate_strategy_pl_target_trigger,
 )
 from alphamind.execution.continuous_monitor.cascade_dispatch import TriggerIdGenerator
 from alphamind.execution.continuous_monitor.session import MonitorSession
@@ -267,13 +267,25 @@ def _leg_should_fire(
     now: datetime,
     risk_free_rate: float,
 ) -> bool:
-    """Route to the right evaluator based on leg geometry."""
+    """Route to the right evaluator based on leg geometry.
+
+    A P/L-anchored leg on a :class:`StrategyPositionDetails` position routes
+    into :func:`evaluate_strategy_pl_target_trigger` (the strategy net-P/L
+    evaluator); a single-leg options position routes into
+    :func:`evaluate_pl_target_trigger`. A non-P/L leg evaluates against the
+    underlying price.
+    """
     if leg.pl_anchor is not None:
-        # P/L target / stop — strategy positions are out-of-scope for P/L
-        # evaluation in this story (the trigger evaluator rejects them).
-        if isinstance(position.details, StrategyPositionDetails):
-            return False
         try:
+            if isinstance(position.details, StrategyPositionDetails):
+                return evaluate_strategy_pl_target_trigger(
+                    position=position,
+                    leg=leg,
+                    spot=spot,
+                    risk_free_rate=risk_free_rate,
+                    as_of=now,
+                    buffer_pct=0.0,
+                )
             return evaluate_pl_target_trigger(
                 position=position,
                 leg=leg,

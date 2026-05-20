@@ -56,6 +56,8 @@ from alphamind.portfolio_state.records.positions import (
     PositionFill,
     PositionRecord,
     PositionStatus,
+    StrategyLeg,
+    StrategyPositionDetails,
 )
 
 _NOW = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
@@ -461,6 +463,185 @@ class TestPLTargetFiring:
         )
         assert len(submitter.options_calls) == 1
         assert log.entries[0].detail.exit_method is PositionExitMethod.TARGET_REACHED
+
+
+# ---------------------------------------------------------------------------
+# Strategy P/L target firing
+# ---------------------------------------------------------------------------
+
+
+def _credit_spread_net_premium_at(entry_spot: float) -> float:
+    """Net premium (credit-negative) for a bull put credit spread at *entry_spot*.
+
+    Short 850 put, long 840 put — the signed sum (SHORT subtracts) is the
+    credit received, expressed credit-negative.
+    """
+    from alphamind.risk_guardrails.guardrail_evaluation.black_scholes import bs_price
+    from alphamind.risk_guardrails.guardrail_evaluation.types import ContractType
+
+    ttm = (date(2026, 6, 19) - _NOW.date()).days / 365
+    short_put = bs_price(
+        spot=entry_spot,
+        strike=850.0,
+        time_to_expiration_years=ttm,
+        risk_free_rate=0.045,
+        implied_volatility=0.30,
+        contract_type=ContractType.PUT,
+    )
+    long_put = bs_price(
+        spot=entry_spot,
+        strike=840.0,
+        time_to_expiration_years=ttm,
+        risk_free_rate=0.045,
+        implied_volatility=0.30,
+        contract_type=ContractType.PUT,
+    )
+    return (-short_put + long_put) * 100.0
+
+
+def _strategy_leg(*, leg_id: str, strike: float, direction: Direction) -> StrategyLeg:
+    return StrategyLeg(
+        leg_id=leg_id,
+        options=OptionsPositionDetails(
+            underlying_ticker=Symbol("NVDA"),
+            strike_price=strike,
+            expiration_date=date(2026, 6, 19),
+            contract_type=OptionContractType.PUT,
+            contract_count=1.0,
+            contract_multiplier=100.0,
+            premium_paid_per_contract=0.0,
+            greeks=OptionGreeks(
+                delta=-0.3,
+                gamma=0.02,
+                theta=-0.04,
+                vega=0.2,
+                as_of_timestamp=_NOW,
+                iv_used=0.30,
+            ),
+        ),
+        direction=direction,
+    )
+
+
+def _credit_strategy_position(*, net_premium_usd: float) -> PositionRecord:
+    return PositionRecord(
+        position_id=PositionId("pos-strat-1"),
+        thesis_id=ThesisId("THESIS-1"),
+        bracket_id=BracketId("brk-strat-1"),
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,  # inert placeholder for a strategy
+        entry_timestamp=_NOW,
+        details=StrategyPositionDetails(
+            strategy_type_label="vertical_spread",
+            legs=(
+                _strategy_leg(leg_id="leg-short", strike=850.0, direction=Direction.SHORT),
+                _strategy_leg(leg_id="leg-long", strike=840.0, direction=Direction.LONG),
+            ),
+            net_premium_usd=net_premium_usd,
+            max_profit_usd=abs(net_premium_usd),
+            max_loss_usd=-(1000.0 - abs(net_premium_usd)),
+            breakeven_levels=(),
+            strategy_greeks=OptionGreeks(delta=0.1, gamma=0.0, theta=0.01, vega=-0.05),
+        ),
+        execution_history=(
+            PositionFill(
+                fill_timestamp=_NOW,
+                fill_price=price(1.0),
+                fill_quantity=1.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
+            ),
+        ),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+
+
+def _strategy_pl_target_bracket(*, target_pct: float = 0.50) -> BracketRecord:
+    leg = BracketLeg(
+        leg_id="leg-strat-target",
+        leg_type=BracketLegType.TAKE_PROFIT,
+        order_id=None,
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"),
+            threshold_usd=850.0,
+            direction="GTE",
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.ACTIVE,
+        pl_anchor=PLAnchorSpec(
+            spec_type="target",
+            pct=target_pct,
+            planned_entry_price=3.0,
+        ),
+    )
+    return BracketRecord(
+        bracket_id=BracketId("brk-strat-1"),
+        position_id=PositionId("pos-strat-1"),
+        status=BracketStatus.ACTIVE,
+        entry_order_id=OrderId("ord-entry-strat"),
+        protective_legs=(leg,),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+    )
+
+
+class TestStrategyPLTargetFiring:
+    """Strategy P/L-target brackets are no longer disabled (ALP-601) — a
+    credit strategy's take-profit routes into the strategy evaluator."""
+
+    async def test_strategy_pl_target_fires_when_net_pl_at_target(self) -> None:
+        net_premium = _credit_spread_net_premium_at(entry_spot=850.0)
+        position = _credit_strategy_position(net_premium_usd=net_premium)
+        bracket = _strategy_pl_target_bracket(target_pct=0.50)
+        # Spot far above both strikes → spread near-worthless → net P/L ~ full
+        # credit, well past the 50%-of-credit target → fires.
+        cache = await _seed_cache({"NVDA": 1000.0})
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        await _run_bracket_stop_cycle(
+            config=_config(),
+            position_repository=FakePositionRepository((position,)),
+            bracket_repository=FakeBracketRepository((bracket,)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=log.emit,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=set(),
+        )
+        assert len(submitter.strategy_calls) == 1
+        assert log.entries[0].detail.exit_method is PositionExitMethod.TARGET_REACHED
+
+    async def test_strategy_pl_target_does_not_fire_below_target(self) -> None:
+        net_premium = _credit_spread_net_premium_at(entry_spot=850.0)
+        position = _credit_strategy_position(net_premium_usd=net_premium)
+        bracket = _strategy_pl_target_bracket(target_pct=0.50)
+        # Spot at the entry level → net P/L ~ 0, below the target → no fire.
+        cache = await _seed_cache({"NVDA": 850.0})
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        await _run_bracket_stop_cycle(
+            config=_config(),
+            position_repository=FakePositionRepository((position,)),
+            bracket_repository=FakeBracketRepository((bracket,)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=log.emit,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=set(),
+        )
+        assert submitter.strategy_calls == []
+        assert log.entries == []
 
 
 # ---------------------------------------------------------------------------
