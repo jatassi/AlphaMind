@@ -17,7 +17,7 @@ from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Literal
 
 from alphamind._kernel.regime import RegimeTransitionState
-from alphamind.portfolio_state.records.positions import Direction
+from alphamind.portfolio_state.records.positions import Direction, position_direction
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.regime_adaptation.types import (
     RegimeTransitionBreach,
@@ -111,7 +111,11 @@ def detect_regime_transition_breaches(
             held_positions=held_positions,
             new_effective_limits=new_effective_limits,
             rule_metadata=rule_metadata,
-            position_filter=lambda position: position.direction == Direction.SHORT,
+            # position_direction() yields None for a strategy, which compares
+            # unequal to Direction.SHORT — a strategy is correctly excluded
+            # from the short-position set for single_short_max_pct.
+            position_filter=lambda position: position_direction(position.record)
+            == Direction.SHORT,
         )
     )
     breaches.extend(

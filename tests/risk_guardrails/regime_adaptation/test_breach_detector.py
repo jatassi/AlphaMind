@@ -31,9 +31,14 @@ from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
     LocateStatus,
+    OptionContractType,
+    OptionGreeks,
+    OptionsPositionDetails,
     PositionFill,
     PositionRecord,
     PositionStatus,
+    StrategyLeg,
+    StrategyPositionDetails,
 )
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.regime_adaptation import (
@@ -102,6 +107,75 @@ def _equity_position(
         position_age_hours=0.0,
         notional_exposure_usd=money(1000.0),
         delta_adjusted_exposure_usd=signed_money(delta_adjusted),
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
+    )
+
+
+def _strategy_position(
+    *,
+    position_id: str,
+    position_weight_pct: float,
+    placeholder_direction: Direction = Direction.LONG,
+) -> PositionView:
+    """Build an OPEN multi-leg STRATEGY ``PositionView``.
+
+    ``placeholder_direction`` is the inert position-level field (ALP-588
+    decision C); ``position_direction()`` yields ``None`` for a strategy
+    regardless of it, so the short filter must exclude this position even
+    when the placeholder is ``SHORT``.
+    """
+    leg = StrategyLeg(
+        leg_id="leg-0",
+        direction=Direction.LONG,
+        options=OptionsPositionDetails(
+            underlying_ticker=Symbol("AAPL"),
+            strike_price=100.0,
+            expiration_date=_NOW.date(),
+            contract_type=OptionContractType.CALL,
+            contract_count=1.0,
+            contract_multiplier=100.0,
+            premium_paid_per_contract=5.0,
+            greeks=OptionGreeks(
+                delta=0.5, gamma=0.02, theta=-0.1, vega=0.3, as_of_timestamp=_NOW
+            ),
+        ),
+    )
+    details = StrategyPositionDetails(
+        strategy_type_label="bull_spread",
+        legs=(leg,),
+        net_premium_usd=-200.0,
+        max_profit_usd=800.0,
+        max_loss_usd=-200.0,
+        breakeven_levels=(102.0,),
+        strategy_greeks=OptionGreeks(
+            delta=0.3, gamma=0.01, theta=-0.05, vega=0.2, as_of_timestamp=_NOW
+        ),
+    )
+    record = PositionRecord(
+        position_id=PositionId(position_id),
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=placeholder_direction,
+        entry_timestamp=_NOW,
+        details=details,
+        execution_history=(_fill(),),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=signed_money(1000.0),
+        unrealized_pnl_usd=signed_money(0.0),
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=position_weight_pct,
+        position_age_hours=0.0,
+        notional_exposure_usd=money(1000.0),
+        delta_adjusted_exposure_usd=signed_money(1000.0),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -382,6 +456,29 @@ def test_single_short_max_no_breach_when_short_under_limit() -> None:
         )
         == ()
     )
+
+
+def test_single_short_max_excludes_strategy_position() -> None:
+    """AC: a strategy position is never counted in the short-position set.
+
+    The held-position short filter reads direction via ``position_direction()``,
+    which returns ``None`` for a strategy — so a strategy is excluded from the
+    ``single_short_max_pct`` scan even when its inert position-level placeholder
+    is ``SHORT``. Reading the raw ``record.direction`` would mis-flag it.
+    """
+    strategy = _strategy_position(
+        position_id=PositionId("POS-STRAT"),
+        position_weight_pct=5.0,
+        placeholder_direction=Direction.SHORT,
+    )
+    limits = _full_limits()
+    limits["position_max_size_pct"] = 10.0  # keep position_max_size out of the way
+    limits["single_short_max_pct"] = 3.0
+    breaches = _call(
+        held_positions=(strategy,),
+        new_effective_limits=limits,
+    )
+    assert all(b.rule_id != "single_short_max_pct" for b in breaches)
 
 
 def test_output_sorted_by_rule_id_then_position_id_with_aggregates_first() -> None:
