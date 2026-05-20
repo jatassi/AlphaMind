@@ -9,6 +9,7 @@ they mirror the FINRA Reg T rule.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 
 from alphamind.portfolio_state.records.positions import (
@@ -112,7 +113,7 @@ def _strategy_position_margin(
     than reporting zero margin.
     """
     max_loss = details.max_loss_usd
-    if max_loss == 0.0 or max_loss == float("-inf"):
+    if max_loss == 0.0 or not math.isfinite(max_loss):
         return _strategy_naked_leg_sum(details, underlying_prices)
     return abs(max_loss)
 

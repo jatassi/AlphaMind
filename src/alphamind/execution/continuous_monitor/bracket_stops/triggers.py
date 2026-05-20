@@ -21,6 +21,7 @@ Two evaluators, both pure and synchronous:
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 
 from alphamind.portfolio_state.records.orders import (
@@ -189,6 +190,11 @@ def evaluate_strategy_pl_target_trigger(
             f"got leg_id={leg.leg_id!r}"
         )
         raise ValueError(msg)
+    if details.max_profit_usd == 0.0 or not math.isfinite(details.max_profit_usd):
+        # No percentage-of-max-profit threshold to cross: a skeleton record
+        # (max_profit_usd 0.0, payoff not yet recomputed) or an unbounded-upside
+        # strategy (+inf). Neither admits a finite take-profit target.
+        return False
     market_value = sum(
         _strategy_leg_market_value(
             leg=strategy_leg, spot=spot, risk_free_rate=risk_free_rate, as_of=as_of

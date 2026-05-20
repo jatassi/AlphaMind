@@ -729,9 +729,6 @@ def _target_to_bracket_leg(
     )
 
 
-_PERCENT_TO_FRACTION = 100.0
-
-
 def _strategy_target_to_bracket_leg(
     *,
     leg_id: str,
@@ -764,11 +761,12 @@ def _strategy_target_to_bracket_leg(
             f"pl_percentage set; got target_type={target.target_type!r}"
         )
         raise ValueError(msg)
-    pct = target.pl_percentage / _PERCENT_TO_FRACTION
-    # ALP-462 — Price → float at the legacy PriceTrigger surface. ``Target``
-    # always carries ``price`` (its validator requires it for every
-    # ``target_type``); it is the planned price-equivalent of the P/L target.
-    planned_price = float(target.price) if target.price is not None else 0.01
+    pct = target.pl_percentage / 100.0
+    # ALP-462 — Price → float at the legacy PriceTrigger surface. ``Target``'s
+    # validator requires ``price`` for every ``target_type``; it is the planned
+    # price-equivalent of the P/L target.
+    assert target.price is not None
+    planned_price = float(target.price)
     return BracketLeg(
         leg_id=leg_id,
         leg_type=BracketLegType.TAKE_PROFIT,
