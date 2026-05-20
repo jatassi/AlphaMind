@@ -1891,7 +1891,10 @@ def test_strategy_open_validation_request_carries_per_leg_directions() -> None:
         instrument=strategy,
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
         position_size=PositionSize(quantity=1.0, dollar_value=money(1_000.0), premium_at_risk=None),
-        target=Target(target_type="absolute_price", price=price(830.0), order_type="limit"),
+        # A strategy take-profit must be pl_percentage (ALP-611).
+        target=Target(
+            target_type="pl_percentage", pl_percentage=80.0, price=price(830.0), order_type="limit"
+        ),
         invalidation_legs=(
             PriceLeg(
                 type="price",

@@ -308,6 +308,13 @@ class TestUnderlyingMatchesInstrument:
                 ),
             ),
             underlying=Symbol("NVDA"),
+            # A strategy take-profit must be pl_percentage (ALP-611).
+            target=Target(
+                target_type="pl_percentage",
+                price=price(890.0),
+                dollar_pl_target=money(190.0),
+                pl_percentage=80.0,
+            ),
             position_size=PositionSize(
                 quantity=4,
                 dollar_value=money(3370.0),

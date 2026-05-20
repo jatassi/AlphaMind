@@ -373,6 +373,65 @@ class TestOpenCommand:
             )
         assert "is_hard" in str(exc_info.value).lower() or "hard" in str(exc_info.value).lower()
 
+    def test_strategy_instrument_requires_pl_percentage_target(self) -> None:
+        # ALP-611 (option 2): a strategy take-profit references the strategy's
+        # net P/L, so it must be a pl_percentage target. pl_dollar and
+        # absolute_price are rejected at the command boundary — they never
+        # reach the OPEN write path's _strategy_target_to_bracket_leg.
+        strategy_kwargs = {
+            "command_type": "open",
+            "instrument": _strategy_instrument(),
+            "entry_order": _entry_order_market(),
+            "position_size": _position_size(),
+            "invalidation_legs": (_price_leg(),),
+            "thesis": _thesis(),
+        }
+        # pl_percentage strategy target constructs.
+        OpenCommand(
+            target=Target(
+                target_type="pl_percentage",
+                pl_percentage=80.0,
+                price=price(170.0),
+                order_type="limit",
+            ),
+            **strategy_kwargs,  # type: ignore[arg-type]
+        )
+        # pl_dollar on a strategy → reject with a pl_percentage-naming error.
+        with pytest.raises((ValueError, TypeError)) as pl_dollar_exc:
+            OpenCommand(
+                target=Target(
+                    target_type="pl_dollar",
+                    pl_dollar=money(500.0),
+                    price=price(170.0),
+                    order_type="limit",
+                ),
+                **strategy_kwargs,  # type: ignore[arg-type]
+            )
+        assert "pl_percentage" in str(pl_dollar_exc.value)
+        # absolute_price on a strategy → reject.
+        with pytest.raises((ValueError, TypeError)) as abs_exc:
+            OpenCommand(target=_target_absolute(), **strategy_kwargs)  # type: ignore[arg-type]
+        assert "pl_percentage" in str(abs_exc.value)
+
+    def test_non_strategy_instrument_allows_any_target_type(self) -> None:
+        # The strategy constraint must not regress equity / single-option OPENs —
+        # they keep their full absolute_price | pl_percentage | pl_dollar range.
+        for instrument in (_equity_instrument(), _option_instrument()):
+            OpenCommand(
+                command_type="open",
+                instrument=instrument,
+                entry_order=_entry_order_market(),
+                position_size=_position_size(),
+                target=Target(
+                    target_type="pl_dollar",
+                    pl_dollar=money(500.0),
+                    price=price(170.0),
+                    order_type="limit",
+                ),
+                invalidation_legs=(_price_leg(),),
+                thesis=_thesis(),
+            )
+
 
 class TestCloseCommand:
     def test_constructs_happy_path(self) -> None:

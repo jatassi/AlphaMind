@@ -131,7 +131,10 @@ def _strategy_open_command(
         legs=legs,
     )
     entry = EntryOrder(type=entry_type, limit_price=limit_price)  # type: ignore[arg-type]
-    target = Target(target_type="absolute_price", price=price(850.0), order_type="limit")
+    # A strategy take-profit must be pl_percentage (ALP-611).
+    target = Target(
+        target_type="pl_percentage", pl_percentage=80.0, price=price(850.0), order_type="limit"
+    )
     invalidation = (
         PriceLeg(
             type="price",

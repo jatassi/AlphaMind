@@ -294,7 +294,13 @@ def _strategy_recommendation(
         position_size=_position_size(
             quantity=quantity, dollar_value=dollar_value, premium_at_risk=premium_at_risk
         ),
-        target=_target(),
+        # A strategy take-profit must be pl_percentage (ALP-611).
+        target=Target(
+            target_type="pl_percentage",
+            price=price(200.0),
+            dollar_pl_target=money(5000.0),
+            pl_percentage=80.0,
+        ),
         invalidation_legs=(_invalidation_leg(),),
         guardrail_validation_result=_guardrail_result(),
         thesis_narrative="Test thesis",
