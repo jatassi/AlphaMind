@@ -123,8 +123,12 @@ class RegimeSnapshot:
     Field summary:
 
     - ``vix_level`` — current VIX spot level (FRED ``VIXCLS``).
-    - ``vx1_minus_vix`` — front-month VIX future minus VIX spot. Positive
-      values mean contango; negative values mean backwardation.
+    - ``vx1_minus_vix`` — front-month VIX future minus VIX spot, or
+      ``None`` when the VX1 series is unavailable. Positive values mean
+      contango; negative values mean backwardation. Per ALP-572 the
+      caller must propagate ``None`` rather than substituting ``0.0``
+      the downstream cannot distinguish from a live "flat term structure"
+      reading.
     - ``vvix_percentile`` — VVIX percentile rank (0..100) against trailing
       one-year history, or ``None`` when the VVIX series is unavailable
       or has insufficient observations to rank against. Per ALP-571 the
@@ -141,7 +145,7 @@ class RegimeSnapshot:
     """
 
     vix_level: float
-    vx1_minus_vix: float
+    vx1_minus_vix: float | None
     vvix_percentile: float | None
     realized_vol_5d: float
     realized_vol_20d: float
@@ -295,9 +299,17 @@ def classify_regime(
     (``vol_expansion``, ``vol_normalization``) and the VIX-band fallback
     still produce a label, so the regime block remains usable on partial
     inputs.
+
+    When ``snapshot.vx1_minus_vix`` is ``None`` (VX1 series unavailable),
+    the rules that condition on the term-structure basis
+    (``low_vol_compression``, ``crisis_spike``, ``vol_normalization``)
+    cannot fire — same partial-input principle as VVIX. The
+    ``vol_expansion`` rule and the VIX-band fallback do not depend on
+    the basis and still produce a label.
     """
     if (
         snapshot.vix_level <= thresholds.low_vol_vix_max
+        and snapshot.vx1_minus_vix is not None
         and snapshot.vx1_minus_vix > 0.0
         and snapshot.vvix_percentile is not None
         and snapshot.vvix_percentile <= thresholds.vvix_low_percentile
@@ -306,6 +318,7 @@ def classify_regime(
         return RegimeLabel.LOW_VOL_COMPRESSION
     if (
         snapshot.vix_level >= thresholds.crisis_vix_min
+        and snapshot.vx1_minus_vix is not None
         and snapshot.vx1_minus_vix <= thresholds.term_structure_backwardation_threshold
         and snapshot.vvix_percentile is not None
         and snapshot.vvix_percentile >= thresholds.vvix_high_percentile
@@ -316,6 +329,7 @@ def classify_regime(
         and snapshot.prior_term_structure_backwardation
         and snapshot.vix_level
         <= snapshot.vix_trailing_20d_mean - _VOL_NORMALIZATION_VIX_POINT_DECLINE
+        and snapshot.vx1_minus_vix is not None
         and snapshot.vx1_minus_vix > thresholds.term_structure_backwardation_threshold
         and snapshot.realized_vol_5d < snapshot.realized_vol_20d
     ):
@@ -399,35 +413,41 @@ def compute_indicator_agreement_count(
     vvix_in_indeterminate_band = vvix is not None and (
         thresholds.vvix_low_percentile < vvix < thresholds.vvix_high_percentile
     )
+    basis = snapshot.vx1_minus_vix
+    # A ``None`` term-structure basis (VX1 series unavailable) cannot
+    # agree with any label — same partial-input principle as VVIX.
     backwardation_threshold = thresholds.term_structure_backwardation_threshold
+    basis_above_backwardation = basis is not None and basis > backwardation_threshold
+    basis_at_or_below_backwardation = basis is not None and basis <= backwardation_threshold
+    basis_at_or_above_backwardation = basis is not None and basis >= backwardation_threshold
 
     # Each indicator votes once; ``sum(...)`` over a tuple of booleans
     # counts the agreements because ``bool`` is a subclass of ``int``.
     if label is RegimeLabel.LOW_VOL_COMPRESSION:
         votes = (
             in_low_vol_band,
-            snapshot.vx1_minus_vix > backwardation_threshold,
+            basis_above_backwardation,
             vvix_below_low,
             realized_declining,
         )
     elif label is RegimeLabel.CRISIS_SPIKE:
         votes = (
             in_crisis_band,
-            snapshot.vx1_minus_vix <= backwardation_threshold,
+            basis_at_or_below_backwardation,
             vvix_above_high,
             realized_rising,
         )
     elif label is RegimeLabel.VOL_EXPANSION:
         votes = (
             in_mid_band,
-            snapshot.vx1_minus_vix >= backwardation_threshold,
+            basis_at_or_above_backwardation,
             vvix_in_indeterminate_band,
             realized_rising,
         )
     else:  # vol_normalization
         votes = (
             in_mid_band,
-            snapshot.vx1_minus_vix > backwardation_threshold,
+            basis_above_backwardation,
             vvix_in_indeterminate_band,
             realized_declining,
         )
@@ -662,7 +682,7 @@ def refresh_regime_state(
                 as_of=as_of,
                 regime_label=label.value,
                 vix_level=float(snapshot.vix_level),
-                term_structure_basis=float(snapshot.vx1_minus_vix),
+                term_structure_basis=snapshot.vx1_minus_vix,
                 vvix_percentile=snapshot.vvix_percentile,
                 realized_vol=float(snapshot.realized_vol_5d),
                 indicator_agreement_count=int(agreement),
@@ -747,7 +767,9 @@ def assemble_regime_block(
         "indicator_agreement_count": result.indicator_agreement_count,
         "regime_skip_emergency": result.regime_skip_emergency,
         "vix_level": float(result.snapshot.vix_level),
-        "term_structure_basis": float(result.snapshot.vx1_minus_vix),
+        # ``None`` signals VX1 unavailable; never substitute ``0.0``
+        # (ALP-572). Downstream renders the explicit missing-data signal.
+        "term_structure_basis": result.snapshot.vx1_minus_vix,
         # ``None`` signals VVIX unavailable; never substitute a numeric
         # default (ALP-571).
         "vvix_percentile": result.snapshot.vvix_percentile,

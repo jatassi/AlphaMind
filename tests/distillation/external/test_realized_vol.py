@@ -19,6 +19,7 @@ from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.orchestrator import (
     _VVIX_PERCENTILE_MIN_OBSERVATIONS,
     _VVIX_SERIES_ID,
+    _VX1_SERIES_ID,
     _build_regime_snapshot,
     _compute_realized_vols,
     _realized_vols_from_log_returns,
@@ -111,10 +112,11 @@ def _seed_spy_closes(session: Session, closes: list[float], *, end_date: datetim
 
 
 def _seed_calibrated_vvix(session: Session, *, end_date: datetime) -> None:
-    """Seed enough VVIX observations to put the regime block in CALIBRATED state.
+    """Seed enough VVIX + VX1 observations to put the regime block in CALIBRATED state.
 
     Tests that exercise rule-firing logic want a known regime calibration tag
-    so an unrelated VVIX-missing degradation doesn't taint the assertion.
+    so an unrelated VVIX- or VX1-missing degradation doesn't taint the
+    assertion. Seeds both supporting series in one call.
     """
     values = [80.0 + i for i in range(_VVIX_PERCENTILE_MIN_OBSERVATIONS)]
     for offset, value in enumerate(reversed(values)):
@@ -129,6 +131,19 @@ def _seed_calibrated_vvix(session: Session, *, end_date: datetime) -> None:
                 ingested_at=observation_day.strftime("%Y-%m-%dT00:00:00Z"),
             )
         )
+    # Seed a single VX1 observation so the term-structure basis calculator
+    # returns CALIBRATED — the latest-value query at ``end_date`` picks
+    # this up regardless of as_of date.
+    session.add(
+        MacroObservations(
+            source="cboe",
+            series_id=_VX1_SERIES_ID,
+            observation_date=end_date.strftime("%Y-%m-%d"),
+            revision_number=0,
+            value=18.0,
+            ingested_at=end_date.strftime("%Y-%m-%dT00:00:00Z"),
+        )
+    )
     session.flush()
 
 

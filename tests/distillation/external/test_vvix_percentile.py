@@ -20,6 +20,7 @@ from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.orchestrator import (
     _VVIX_PERCENTILE_MIN_OBSERVATIONS,
     _VVIX_SERIES_ID,
+    _VX1_SERIES_ID,
     _build_regime_snapshot,
     _compute_vvix_percentile,
 )
@@ -174,11 +175,32 @@ def _seed_vix(session: Session) -> None:
     )
 
 
+def _seed_vx1(session: Session) -> None:
+    """Seed a single VX1 observation so the term-structure basis is CALIBRATED.
+
+    VVIX-focused tests isolate the VVIX failure mode by neutralizing the
+    VX1 dimension — without this seed every test where VX1 is otherwise
+    unrelated would surface a VX1-unavailable degradation that masks the
+    VVIX assertion.
+    """
+    session.add(
+        MacroObservations(
+            source="cboe",
+            series_id=_VX1_SERIES_ID,
+            observation_date="2026-05-15",
+            revision_number=0,
+            value=18.0,
+            ingested_at="2026-05-15T20:00:00Z",
+        )
+    )
+
+
 def test_build_regime_snapshot_vix_present_vvix_absent_tags_unavailable(
     session: Session,
 ) -> None:
-    """VIX present + VVIX series absent — block degraded, reason names VVIX."""
+    """VIX present + VX1 present + VVIX series absent — block degraded, reason names VVIX."""
     _seed_vix(session)
+    _seed_vx1(session)
     session.commit()
 
     snapshot, calibration_state, bootstrap_reason = _build_regime_snapshot(session, as_of=AS_OF)
@@ -190,8 +212,9 @@ def test_build_regime_snapshot_vix_present_vvix_absent_tags_unavailable(
 def test_build_regime_snapshot_vix_present_vvix_accumulating_tags_accumulating(
     session: Session,
 ) -> None:
-    """VIX present + VVIX accumulating — block tagged ACCUMULATING."""
+    """VIX + VX1 present + VVIX accumulating — block tagged ACCUMULATING."""
     _seed_vix(session)
+    _seed_vx1(session)
     sparse_history = [80.0 + i for i in range(_VVIX_PERCENTILE_MIN_OBSERVATIONS - 1)]
     _seed_vvix_history(session, sparse_history, end_date=AS_OF)
 
@@ -203,8 +226,9 @@ def test_build_regime_snapshot_vix_present_vvix_accumulating_tags_accumulating(
 
 
 def test_build_regime_snapshot_vix_and_vvix_present_is_calibrated(session: Session) -> None:
-    """VIX present + VVIX fully calibrated — block is CALIBRATED."""
+    """VIX + VX1 + VVIX all present and fully calibrated — block is CALIBRATED."""
     _seed_vix(session)
+    _seed_vx1(session)
     history = [80.0 + i for i in range(_VVIX_PERCENTILE_MIN_OBSERVATIONS)]
     _seed_vvix_history(session, history, end_date=AS_OF)
 
