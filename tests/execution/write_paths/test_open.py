@@ -11,15 +11,22 @@ from __future__ import annotations
 
 from alphamind._kernel.money import price
 from alphamind.commands.command_models import (
+    EquityInstrument,
     StrategyInstrument,
+    Target,
 )
 from alphamind.commands.command_models import (
     StrategyLeg as WireStrategyLeg,
 )
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.write_paths.phase2.open import (
+    _build_pending_bracket,
     _build_pending_position,
     _direction_from_instrument,
+)
+from alphamind.portfolio_state.records.orders import (
+    BracketLegType,
+    PriceTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -186,3 +193,80 @@ def test_direction_from_strategy_instrument_is_inert_long_placeholder() -> None:
     assert _direction_from_instrument.__doc__ is not None
     docstring = " ".join(_direction_from_instrument.__doc__.split())
     assert "inert placeholder" in docstring
+
+
+# ---------------------------------------------------------------------------
+# Strategy take-profit bracket build (ALP-601)
+# ---------------------------------------------------------------------------
+
+
+def _pl_percentage_target() -> Target:
+    """A P/L-percentage take-profit: capture 80% of the strategy's profit."""
+    return Target(
+        target_type="pl_percentage",
+        price=price(3.0),
+        pl_percentage=80.0,
+        order_type="limit",
+    )
+
+
+def _build_strategy_bracket(instrument: StrategyInstrument | None = None) -> object:
+    return _build_pending_bracket(
+        bracket_id="BRK-NVDA-abc123",
+        position_id="POS-NVDA-abc123",
+        ticker="NVDA",
+        entry_order_id="ORD-NVDA-entry-abc123",
+        target=_pl_percentage_target(),
+        target_order_id="ORD-NVDA-target-abc123",
+        invalidation_leg_orders=(),
+        instrument=instrument if instrument is not None else _vertical_spread(),
+    )
+
+
+def test_strategy_bracket_take_profit_leg_carries_pl_anchor() -> None:
+    """A strategy TAKE_PROFIT leg carries a PLAnchorSpec — the representation
+    the strategy net-P/L evaluator consumes — with pct = pl_percentage / 100."""
+    bracket = _build_strategy_bracket()
+    target_leg = bracket.protective_legs[0]  # type: ignore[attr-defined]
+
+    assert target_leg.leg_type is BracketLegType.TAKE_PROFIT
+    assert target_leg.pl_anchor is not None
+    assert target_leg.pl_anchor.spec_type == "target"
+    assert target_leg.pl_anchor.pct == 0.80
+
+
+def test_strategy_take_profit_does_not_apply_hard_coded_long_direction() -> None:
+    """The hard-coded-LONG GTE PriceTrigger direction from _target_to_bracket_leg
+    is NOT the firing logic for a strategy take-profit — a strategy take-profit
+    references the strategy's net P/L (parent ALP-588 decision F). The leg's
+    PLAnchorSpec, not the PriceTrigger direction, drives firing."""
+    bracket = _build_strategy_bracket()
+    target_leg = bracket.protective_legs[0]  # type: ignore[attr-defined]
+
+    # A pl_anchor on the leg means the strategy net-P/L evaluator scores it;
+    # the structurally-required PriceTrigger's direction is inert.
+    assert target_leg.pl_anchor is not None
+    assert isinstance(target_leg.trigger, PriceTrigger)
+
+
+def test_single_leg_bracket_take_profit_build_unchanged() -> None:
+    """Regression — an equity OPEN's take-profit leg keeps its plain
+    underlying-price PriceTrigger with no pl_anchor (single-leg / equity build
+    is out of scope for ALP-601)."""
+    equity = EquityInstrument(asset_type="equity", ticker="AAPL", direction="long")
+    bracket = _build_pending_bracket(
+        bracket_id="BRK-AAPL-abc123",
+        position_id="POS-AAPL-abc123",
+        ticker="AAPL",
+        entry_order_id="ORD-AAPL-entry-abc123",
+        target=Target(target_type="absolute_price", price=price(160.0), order_type="limit"),
+        target_order_id="ORD-AAPL-target-abc123",
+        invalidation_leg_orders=(),
+        instrument=equity,
+    )
+    target_leg = bracket.protective_legs[0]
+    assert target_leg.leg_type is BracketLegType.TAKE_PROFIT
+    assert target_leg.pl_anchor is None
+    assert isinstance(target_leg.trigger, PriceTrigger)
+    assert target_leg.trigger.direction == "GTE"
+    assert target_leg.trigger.threshold_usd == 160.0

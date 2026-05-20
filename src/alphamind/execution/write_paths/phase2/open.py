@@ -55,6 +55,7 @@ from alphamind.portfolio_state.records.orders import (
     OrderRecord,
     OrderRole,
     OrderType,
+    PLAnchorSpec,
     PriceParameters,
     PriceTrigger,
     TimeTrigger,
@@ -175,6 +176,7 @@ async def _writeback_open(
         target=command.target,
         target_order_id=target_order_id,
         invalidation_leg_orders=tuple(invalidation_leg_orders),
+        instrument=command.instrument,
     )
     entry_order = _build_entry_order_from_command(
         order_id=ids["entry_order_id"],
@@ -727,6 +729,65 @@ def _target_to_bracket_leg(
     )
 
 
+_PERCENT_TO_FRACTION = 100.0
+
+
+def _strategy_target_to_bracket_leg(
+    *,
+    leg_id: str,
+    target: Target,
+    target_order_id: str,
+    ticker: str,
+) -> BracketLeg:
+    """Translate a strategy's :class:`Target` to a P/L-anchored TAKE_PROFIT leg.
+
+    A multi-leg strategy take-profit references the strategy's *net P/L*, not a
+    single-sided underlying-price threshold (parent ALP-588 decision F) — so
+    the hard-coded-LONG ``PriceTrigger`` direction of :func:`_target_to_bracket_leg`
+    is not applied here. The leg carries a :class:`PLAnchorSpec` (``spec_type="target"``)
+    whose ``pct`` is the strategy profit fraction to capture; the strategy
+    net-P/L evaluator (``bracket_stops/triggers.py`` :func:`evaluate_strategy_pl_target_trigger`)
+    scores against ``pct * max_profit_usd`` and reads the strategy's cost basis
+    straight off ``StrategyPositionDetails.net_premium_usd`` — so the anchor
+    needs no ``actual_entry_price``.
+
+    The wire ``Target.pl_percentage`` is a whole-number percentage (per the
+    analyst output schema, "80 for +80%"); it is divided to the fraction the
+    :class:`PLAnchorSpec` carries. The leg still carries the structurally
+    required :class:`PriceTrigger` (the ``BracketLeg`` validator pairs a
+    ``TAKE_PROFIT`` leg with a price trigger), but its direction is inert for
+    a strategy — the ``pl_anchor`` drives firing.
+    """
+    if target.target_type != "pl_percentage" or target.pl_percentage is None:
+        msg = (
+            f"strategy take-profit requires target_type='pl_percentage' with "
+            f"pl_percentage set; got target_type={target.target_type!r}"
+        )
+        raise ValueError(msg)
+    pct = target.pl_percentage / _PERCENT_TO_FRACTION
+    # ALP-462 — Price → float at the legacy PriceTrigger surface. ``Target``
+    # always carries ``price`` (its validator requires it for every
+    # ``target_type``); it is the planned price-equivalent of the P/L target.
+    planned_price = float(target.price) if target.price is not None else 0.01
+    return BracketLeg(
+        leg_id=leg_id,
+        leg_type=BracketLegType.TAKE_PROFIT,
+        order_id=OrderId(target_order_id),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol(ticker),
+            threshold_usd=planned_price,
+            direction="GTE",  # inert for a strategy — pl_anchor drives firing
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.PENDING_ACTIVATION,
+        pl_anchor=PLAnchorSpec(
+            spec_type="target",
+            pct=pct,
+            planned_entry_price=planned_price,
+        ),
+    )
+
+
 def _build_pending_bracket(
     *,
     bracket_id: str,
@@ -736,20 +797,35 @@ def _build_pending_bracket(
     target: Target,
     target_order_id: str,
     invalidation_leg_orders: tuple[tuple[InvalidationLeg, str | None], ...],
+    instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
 ) -> BracketRecord:
     """Build a PENDING_ENTRY bracket.
 
     Take-profit leg comes from ``target``; one leg per ``invalidation_leg``
     entry. The bracket record carries no creation timestamp; per-leg
     submission timestamps live on the broker orders.
+
+    For a :class:`StrategyInstrument`, the take-profit leg is P/L-anchored
+    (see :func:`_strategy_target_to_bracket_leg`) — it references the
+    strategy's net P/L, not a single-sided underlying-price threshold. For
+    equity / single-leg options the take-profit keeps its plain
+    underlying-price :class:`PriceTrigger` (see :func:`_target_to_bracket_leg`).
     """
-    target_leg = _target_to_bracket_leg(
-        leg_id=f"{bracket_id}-leg-target",
-        target=target,
-        target_order_id=target_order_id,
-        ticker=ticker,
-        direction=Direction.LONG,
-    )
+    if isinstance(instrument, StrategyInstrument):
+        target_leg = _strategy_target_to_bracket_leg(
+            leg_id=f"{bracket_id}-leg-target",
+            target=target,
+            target_order_id=target_order_id,
+            ticker=ticker,
+        )
+    else:
+        target_leg = _target_to_bracket_leg(
+            leg_id=f"{bracket_id}-leg-target",
+            target=target,
+            target_order_id=target_order_id,
+            ticker=ticker,
+            direction=Direction.LONG,
+        )
     invalidation_legs: list[BracketLeg] = []
     for idx, (wire_leg, leg_order_id) in enumerate(invalidation_leg_orders):
         invalidation_legs.append(
