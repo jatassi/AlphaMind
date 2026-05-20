@@ -120,10 +120,11 @@ class SentimentAggregate:
     interval, not 0-100) — ``0.5`` sits at the rolling mean, ``> 0.5`` is
     more bullish than the name's own history. ``magnitude`` is the same
     gap's absolute z-distance, capped at ``1.0``. Both fall back to ``None``
-    when the inter-baseline window holds no scored article — there is then
-    no current reading to calibrate. (The rolling window ends at ``as_of``
-    and so contains the latest period; against a multi-week trailing depth
-    this self-overlap shifts the rank negligibly.)
+    when the inter-baseline window holds no scored article, or when the
+    stored ``stdev`` is non-positive — there is then no non-degenerate
+    current reading to calibrate. (The rolling window ends at ``as_of`` and
+    so contains the latest period; once the baseline carries a multi-week
+    observation history this self-overlap shifts the rank negligibly.)
 
     ``data_freshness`` is the timestamp of the underlying baseline row.
 
@@ -450,8 +451,16 @@ def _load_window_sentiment_mean_by_ticker(
     ``distillation.baselines._select_sentiment_observations``). This is the
     "current reading" :func:`load_sentiment_aggregates` percentiles against a
     ticker's own trailing distribution. Tickers with no scored article in the
-    window are absent from the mapping; the half-open lower / inclusive upper
-    edges match :func:`_load_article_volume_by_ticker`.
+    window are absent from the mapping.
+
+    Deliberately parallels :func:`_load_article_volume_by_ticker` (same join,
+    same half-open lower / inclusive upper window edges) rather than sharing
+    one query: that helper counts every article, this one averages only the
+    scored ones. ``distillation.qualitative.sentiment_percentile_compute``
+    derives the same current-reading-vs-baseline percentile for its
+    ``qual.sentiment_percentile`` distillation block over a fixed short
+    trailing window; this loader instead reads the inter-baseline window for
+    the qualitative-researcher input bundle, so the two are not shared.
     """
     if not tickers:
         return {}
@@ -591,10 +600,8 @@ def load_sentiment_aggregates(
             )
         )
 
-    # Mean per-article sentiment over each ticker's inter-baseline window —
-    # the "current reading" that percentile_vs_self / magnitude locate within
-    # the ticker's own rolling distribution. Reuses window_buckets, so it
-    # collapses to one query in the steady state just like the count above.
+    # Reuses window_buckets — one query per distinct (prior, latest) pair,
+    # same as the volume pass above.
     window_sentiment_mean_by_ticker: dict[str, float] = {}
     for (prior_as_of, latest_as_of), bucket_tickers in window_buckets.items():
         window_sentiment_mean_by_ticker.update(
@@ -642,12 +649,10 @@ def load_sentiment_aggregates(
         # directional_score: the rolling sentiment level, clamped to [-1, 1].
         directional_score = max(-1.0, min(1.0, mean))
 
-        # percentile_vs_self / magnitude locate the latest period's sentiment
-        # within the ticker's own rolling trailing distribution. The latest
-        # period is the mean per-article sentiment over the inter-baseline
-        # window; the distribution is the stored rolling (mean, stdev). Both
-        # fall back to None when the window holds no scored article (no
-        # current reading to calibrate) or the distribution is degenerate.
+        # percentile_vs_self / magnitude: see the SentimentAggregate
+        # docstring. The stdev > 0 guard protects the magnitude z-distance
+        # division below; _percentile_from_normal would itself collapse a
+        # non-positive stdev to a degenerate 0.5.
         window_sentiment_mean = window_sentiment_mean_by_ticker.get(ticker)
         percentile: float | None
         magnitude: float | None

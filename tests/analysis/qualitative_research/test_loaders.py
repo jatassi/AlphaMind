@@ -243,10 +243,8 @@ def _add_news_article(
     """Add a NewsArticles + matching NewsArticleTickers row, flushing in
     FK-safe order.
 
-    ``vendor_sentiment_score`` populates the per-ticker join row's score —
-    the column ``load_sentiment_aggregates`` averages for the latest-window
-    sentiment mean. ``None`` leaves the article unscored (skipped by the
-    window-mean query, whose SQL filters ``IS NOT NULL``).
+    ``vendor_sentiment_score``: ``None`` leaves the article unscored —
+    excluded from ``load_sentiment_aggregates``'s window-mean query.
     """
     session.add(
         NewsArticles(
