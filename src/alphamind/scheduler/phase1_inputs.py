@@ -23,11 +23,12 @@ implementations through the same seam. Retires the module-level
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.venue import VenueConfig
@@ -58,7 +59,7 @@ from alphamind.execution.corporate_actions.types import (
     CorporateActionActivity,
     PositionLookup,
 )
-from alphamind.persistence.models import MacroObservations
+from alphamind.persistence.models import AssetUniverse, MacroObservations, OhlcvBars
 from alphamind.portfolio_state.records.positions import Direction
 from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
@@ -83,6 +84,22 @@ log = logging.getLogger(__name__)
 # wedge — operators backfill the table separately.
 _DTB3_SERIES_ID = "DTB3"
 _DEFAULT_RISK_FREE_RATE = 0.045
+
+
+# ALP-587 — the OHLCV daily-bar timeframe key. The latest ``1d`` bar's close
+# is the spot price used to guardrail-project active-universe tickers that
+# are not in the held book.
+_OHLCV_DAILY_TIMEFRAME = "1d"
+
+# ALP-587 — staleness ceiling for an EOD bar consumed as a spot price. An
+# EOD close is structurally staler than the live-quote freshness window
+# (``config.snapshot_freshness_max_price_age_seconds`` is 900s) — applying
+# that bound would reject every EOD bar. A daily bar prints once per
+# trading session, so a seven-calendar-day ceiling clears the longest U.S.
+# market-holiday weekend yet still drops a ticker whose price feed has
+# genuinely stalled; a dropped ticker correctly falls back to the
+# validation tool's ``UNAVAILABLE`` / ``missing_market_price`` outcome.
+_MAX_EOD_BAR_AGE_SECONDS = 7 * 24 * 60 * 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,30 +195,109 @@ async def _read_latest_risk_free_rate(handle: InvocationHandle) -> float:
     return float(value) / 100.0
 
 
+def _bar_age_seconds(period_start: str, *, as_of: datetime) -> float:
+    """Seconds between an ``ohlcv_bars.period_start`` and ``as_of``.
+
+    ``period_start`` is the ISO-8601 string the OHLCV collector writes
+    (``datetime.isoformat()`` of a tz-aware UTC instant). A value that
+    parses without tzinfo is assumed UTC so the subtraction never raises
+    on a naive/aware mismatch.
+    """
+    parsed = datetime.fromisoformat(period_start)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    reference = as_of if as_of.tzinfo is not None else as_of.replace(tzinfo=UTC)
+    return (reference - parsed).total_seconds()
+
+
+async def _read_active_universe_prices(
+    session: AsyncSession,
+    *,
+    as_of: datetime,
+    max_bar_age_seconds: float = _MAX_EOD_BAR_AGE_SECONDS,
+) -> dict[str, float]:
+    """Latest EOD close per active-universe ticker (ALP-587).
+
+    Reads the most recent ``1d`` :class:`OhlcvBars` row for every ticker
+    the ``asset_universe`` table marks ``is_active`` and returns
+    ``{ticker: unadj_close}``. The *unadjusted* close — the actual traded
+    price, not the split-adjusted series — is used so the value carries
+    the same semantics as a broker ``current_price`` quote.
+
+    Bars older than ``max_bar_age_seconds`` are dropped: the validation
+    tool's ``UNAVAILABLE`` / ``missing_market_price`` path is the correct
+    fallback for a ticker whose price feed has genuinely stalled.
+
+    The decision agents propose against the full active universe, of which
+    the held book priced by :func:`_build_market_inputs` is a strict
+    subset. Held-position quotes still win on overlap — see the merge in
+    that function.
+    """
+    latest_rank = (
+        func.row_number()
+        .over(
+            partition_by=OhlcvBars.ticker,
+            order_by=OhlcvBars.period_start.desc(),
+        )
+        .label("rn")
+    )
+    ranked = (
+        select(
+            OhlcvBars.ticker.label("ticker"),
+            OhlcvBars.unadj_close.label("close"),
+            OhlcvBars.period_start.label("period_start"),
+            latest_rank,
+        )
+        .join(AssetUniverse, AssetUniverse.ticker == OhlcvBars.ticker)
+        .where(
+            OhlcvBars.timeframe == _OHLCV_DAILY_TIMEFRAME,
+            AssetUniverse.is_active == 1,
+        )
+        .subquery()
+    )
+    stmt = select(ranked.c.ticker, ranked.c.close, ranked.c.period_start).where(ranked.c.rn == 1)
+    rows = (await session.execute(stmt)).all()
+    return {
+        str(ticker): float(close)
+        for ticker, close, period_start in rows
+        if _bar_age_seconds(period_start, as_of=as_of) <= max_bar_age_seconds
+    }
+
+
 def _build_market_inputs(
     *,
     positions: tuple[PositionSnapshot, ...],
+    universe_prices: Mapping[str, float],
     risk_free_rate: float,
     as_of: datetime,
     realized_vol_map: dict[str, float],
 ) -> MarketInputs:
-    """Compose ``MarketInputs`` from broker positions + macro rate.
+    """Compose ``MarketInputs`` from universe + broker-position prices.
 
-    ``underlying_prices`` map is populated from each position's
-    ``current_price`` (skipping positions with ``None``). The IV provider's
-    ``surface`` is empty (no production options-chain producer yet); the
-    ``realized_vol`` mapping is the per-underlying trailing-30d scalar
-    produced by ALP-530's distillation hook, wrapped at this boundary
-    into ``RealizedVolEntry`` records. Underlyings without a row are
-    absent from the mapping — the consumer's fallback chain emits
+    ``underlying_prices`` merges two layers: ``universe_prices`` — latest
+    EOD closes for every active-universe ticker (ALP-587) — forms the base,
+    and each held position's ``current_price`` overrides it on overlap (a
+    live broker quote beats an EOD bar). The base layer lets the decision
+    agents validate proposals against active-universe tickers they do not
+    yet hold; without it the validation tool returns ``UNAVAILABLE`` /
+    ``missing_market_price`` for any unheld candidate.
+
+    The IV provider's ``surface`` is empty (no production options-chain
+    producer yet); the ``realized_vol`` mapping is the per-underlying
+    trailing-30d scalar produced by ALP-530's distillation hook, wrapped at
+    this boundary into ``RealizedVolEntry`` records. Underlyings without a
+    row are absent from the mapping — the consumer's fallback chain emits
     ``IvLookupError`` for those.
     """
     # ALP-462 — ``pos.current_price`` is ``Price`` (Decimal) on the
     # PositionSnapshot boundary; cast at the legacy MarketInputs surface which
     # still uses float (risk_guardrails/guardrail_evaluation/types is outside ALP-462).
-    underlying_prices: dict[str, float] = {
+    position_prices: dict[str, float] = {
         pos.symbol: float(pos.current_price) for pos in positions if pos.current_price is not None
     }
+    # ALP-587 — universe EOD closes are the base layer; held-position live
+    # quotes take precedence where a ticker appears in both.
+    underlying_prices: dict[str, float] = {**universe_prices, **position_prices}
     realized_vol_entries = {
         ticker: RealizedVolEntry(underlying=ticker, trailing_30d_realized_vol=vol)
         for ticker, vol in realized_vol_map.items()
@@ -226,9 +322,11 @@ async def gather_phase1_inputs(
     """Assemble the Phase 1 input bundle for ``process_unprocessed_fills``.
 
     Calls the broker adapter for account + positions, the v1beta1 fetcher
-    for CA activities, and the macro table for the risk-free rate. Each
-    call is independently wrapped: a ``RuntimeError`` from any sub-fetch
-    degrades the corresponding field to a no-op default and flips
+    for CA activities, the macro table for the risk-free rate, and
+    ``ohlcv_bars`` for the active-universe EOD closes that price the
+    decision agents' validation tool (ALP-587). Each broker call is
+    independently wrapped: a ``RuntimeError`` from any sub-fetch degrades
+    the corresponding field to a no-op default and flips
     ``staleness_flag`` to ``True``; the function never raises.
 
     The ``InvocationHandle`` carries the open transaction the v1beta1
@@ -323,8 +421,14 @@ async def gather_phase1_inputs(
         tickers=tuple(pos.symbol for pos in positions),
     )
 
+    # ALP-587 — latest EOD closes for the full active universe, so the
+    # decision agents' validation tool can price proposals against tickers
+    # that are in the universe but not yet held.
+    universe_prices = await _read_active_universe_prices(handle.session, as_of=as_of)
+
     market_inputs = _build_market_inputs(
         positions=positions,
+        universe_prices=universe_prices,
         risk_free_rate=risk_free_rate,
         as_of=as_of,
         realized_vol_map=dict(realized_vol_map),
