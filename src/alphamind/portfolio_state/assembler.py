@@ -59,6 +59,7 @@ from alphamind.portfolio_state.computations.positions import (
     compute_strategy_delta_adjusted_exposure_usd,
     compute_strategy_market_value_usd,
     compute_strategy_notional_exposure_usd,
+    compute_strategy_unrealized_pnl_pct,
     compute_unrealized_pnl_pct,
     compute_unrealized_pnl_usd,
 )
@@ -448,7 +449,18 @@ def _enrich_position_first_pass(
     unrealized_pnl_usd = compute_unrealized_pnl_usd(
         pf.current_market_value_usd, pf.cost_basis, position.direction
     )
-    unrealized_pnl_pct = compute_unrealized_pnl_pct(unrealized_pnl_usd, pf.cost_basis)
+    # A STRATEGY position's P/L percentage divides by the magnitude of capital
+    # at risk (``abs(max_loss_usd)``) rather than ``cost_basis`` — the latter is
+    # ``net_premium_usd``, negative for a net credit, which would invert the
+    # sign and display a profitable credit strategy as a loss (ALP-599 / parent
+    # ALP-588 § Pre-resolved decision B). Equity / single-leg option positions
+    # keep dividing by their own cost basis.
+    if isinstance(position.details, StrategyPositionDetails):
+        unrealized_pnl_pct = compute_strategy_unrealized_pnl_pct(
+            unrealized_pnl_usd, position.details.max_loss_usd
+        )
+    else:
+        unrealized_pnl_pct = compute_unrealized_pnl_pct(unrealized_pnl_usd, pf.cost_basis)
 
     position_age_hours = (
         compute_position_age_hours(position.entry_timestamp, now)
