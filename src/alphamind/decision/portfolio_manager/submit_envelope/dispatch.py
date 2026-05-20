@@ -34,9 +34,12 @@ from alphamind.decision.portfolio_manager.submit_envelope.types import (
     _BreachedRule,
 )
 from alphamind.portfolio_state.records.positions import (
+    Direction,
     EquityPositionDetails,
     OptionsPositionDetails,
+    PositionRecord,
     StrategyPositionDetails,
+    position_direction,
 )
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
@@ -241,17 +244,19 @@ async def _close_command_context(
     strategy: legs/strategy_type."""
     position = await _read_position(command.position_id, invocation_handle=invocation_handle)
     if isinstance(position.details, EquityPositionDetails):
+        direction = _equity_or_options_direction(position)
         return {
             "position_asset_type": "equity",
             "position_symbol": position.details.ticker,
             "position_qty": position.details.share_count,
-            "position_side": "long" if position.direction.value == "LONG" else "short",
+            "position_side": "long" if direction is Direction.LONG else "short",
         }
     if isinstance(position.details, OptionsPositionDetails):
         # OptionsPositionDetails stores contract fields, not the OCC symbol;
         # derive the OCC at the dispatcher boundary.
         from alphamind.execution.broker_adapter.order_options import build_occ_symbol
 
+        direction = _equity_or_options_direction(position)
         occ = build_occ_symbol(
             position.details.underlying_ticker,
             position.details.expiration_date,
@@ -263,7 +268,7 @@ async def _close_command_context(
             "occ_symbol": occ,
             "position_qty": position.details.contract_count,
             "position_intent": (
-                "sell_to_close" if position.direction.value == "LONG" else "buy_to_close"
+                "sell_to_close" if direction is Direction.LONG else "buy_to_close"
             ),
         }
     if isinstance(position.details, StrategyPositionDetails):
@@ -289,28 +294,33 @@ async def _add_command_context(command: AddCommand, *, invocation_handle: Any) -
     strategy: legs/strategy_type."""
     position = await _read_position(command.position_id, invocation_handle=invocation_handle)
     if isinstance(position.details, EquityPositionDetails):
+        direction = _equity_or_options_direction(position)
         return {
             "position_asset_type": "equity",
             "position_symbol": position.details.ticker,
-            "position_side": "long" if position.direction.value == "LONG" else "short",
+            "position_side": "long" if direction is Direction.LONG else "short",
         }
     if isinstance(position.details, OptionsPositionDetails):
         # Reconstruct the OptionInstrument from the persisted contract fields.
         # ALP-462: ``strike`` is ``Price`` here while ``strike_price`` is still
         # float on legacy ``OptionsPositionDetails``; ``price()`` wraps at the
         # boundary so downstream consumers see Decimal-exact values.
+        direction = _equity_or_options_direction(position)
+        side: Literal["long", "short"] = (
+            "long" if direction is Direction.LONG else "short"
+        )
         instrument = OptionInstrument(
             asset_type="option",
             underlying=position.details.underlying_ticker,
             strike=price(str(position.details.strike_price)),
             expiration=position.details.expiration_date.isoformat(),
             contract_type=("call" if position.details.contract_type.value == "CALL" else "put"),
-            direction="long" if position.direction.value == "LONG" else "short",
+            direction=side,
         )
         return {
             "position_asset_type": "option",
             "position_option_instrument": instrument,
-            "position_side": "long" if position.direction.value == "LONG" else "short",
+            "position_side": side,
         }
     if isinstance(position.details, StrategyPositionDetails):
         legs = _persisted_legs_to_mleg_acks(position.details.legs)
@@ -422,6 +432,20 @@ async def _read_position(position_id: PositionId, *, invocation_handle: Any) -> 
     return _position_row_to_record(pos_row)
 
 
+def _equity_or_options_direction(position: PositionRecord) -> Direction:
+    """Return the position-level direction for an equity / single-leg options record.
+
+    The equity / options dispatch builders are reached only inside ``isinstance``
+    narrowings, where :func:`position_direction` always yields a concrete
+    :class:`Direction` (a strategy — the one ``None`` case — routes to its own
+    branch). The non-``None`` assertion makes that instrument-narrowing
+    invariant explicit.
+    """
+    direction = position_direction(position)
+    assert direction is not None
+    return direction
+
+
 def _persisted_legs_to_mleg_acks(legs: Any) -> tuple[Any, ...]:
     """Translate persisted strategy legs to ``MLEGLegAck`` tuples (ratio=1)."""
     from alphamind.execution.broker_adapter import MLEGLegAck
@@ -500,6 +524,7 @@ __all__ = [
     "_cancel_command_context",
     "_close_command_context",
     "_dispatcher_context_for",
+    "_equity_or_options_direction",
     "_persisted_legs_to_mleg_acks",
     "_read_position",
     "_route_through_broker",
