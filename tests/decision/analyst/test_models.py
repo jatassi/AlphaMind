@@ -808,7 +808,7 @@ class TestStrategyTargetTypeInvariant:
         assert rec.target.target_type == "pl_percentage"
 
     def test_strategy_rejects_absolute_price_target(self) -> None:
-        with pytest.raises((ValueError, TypeError), match=r"(?i)pl_percentage"):
+        with pytest.raises((ValueError, TypeError), match=r"strateg.+pl_percentage"):
             _make_recommendation(
                 instrument=_strategy_instrument(),
                 target=Target(
@@ -819,7 +819,7 @@ class TestStrategyTargetTypeInvariant:
             )
 
     def test_strategy_rejects_pl_dollar_target(self) -> None:
-        with pytest.raises((ValueError, TypeError), match=r"(?i)pl_percentage"):
+        with pytest.raises((ValueError, TypeError), match=r"strateg.+pl_percentage"):
             _make_recommendation(
                 instrument=_strategy_instrument(),
                 target=Target(

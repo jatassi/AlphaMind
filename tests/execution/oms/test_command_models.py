@@ -407,11 +407,13 @@ class TestOpenCommand:
                 ),
                 **strategy_kwargs,  # type: ignore[arg-type]
             )
-        assert "pl_percentage" in str(pl_dollar_exc.value)
+        pl_dollar_msg = str(pl_dollar_exc.value)
+        assert "strategy" in pl_dollar_msg and "pl_percentage" in pl_dollar_msg
         # absolute_price on a strategy → reject.
         with pytest.raises((ValueError, TypeError)) as abs_exc:
             OpenCommand(target=_target_absolute(), **strategy_kwargs)  # type: ignore[arg-type]
-        assert "pl_percentage" in str(abs_exc.value)
+        abs_msg = str(abs_exc.value)
+        assert "strategy" in abs_msg and "pl_percentage" in abs_msg
 
     def test_non_strategy_instrument_allows_any_target_type(self) -> None:
         # The strategy constraint must not regress equity / single-option OPENs —
