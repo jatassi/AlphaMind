@@ -953,13 +953,20 @@ async def _apply_strategy_open_fill(
     updated_order: OrderRecord,
     leg: StrategyLeg,
 ) -> tuple[PositionRecord, tuple[str, ...]]:
-    """Apply a fill against an OPEN strategy: ADD (same-side) or CLOSE (opposite-side)."""
+    """Apply a fill against an OPEN strategy: ADD (same-side) or CLOSE (opposite-side).
+
+    On the ADD branch the parent payoff metrics are recomputed from the
+    post-add legs — every leg of an OPEN strategy is already positive, so the
+    recompute always fires.
+    """
     is_buy_side = direction_to_side(updated_order.direction) == "buy"
     leg_direction_is_long = leg.direction != Direction.SHORT
     is_opening_for_leg = is_buy_side == leg_direction_is_long
     if is_opening_for_leg:
         new_legs = _add_to_leg(details.legs, leg=leg, fill=fill)
-        new_details = dataclasses.replace(details, legs=new_legs)
+        new_details = _recompute_strategy_payoff_metrics(
+            dataclasses.replace(details, legs=new_legs)
+        )
         return (
             dataclasses.replace(
                 position,

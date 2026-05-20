@@ -2072,6 +2072,138 @@ async def test_strategy_add_recomputes_average_cost_basis(
         assert short_leg.options.premium_paid_per_contract == pytest.approx(2.25)
 
 
+async def test_strategy_add_recomputes_parent_payoff_metrics(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """An ADD fill that increases a strategy's leg counts triggers a
+    parent-metric recompute consistent with the new legs — every leg is
+    already positive on an OPEN strategy, so the recompute fires."""
+    from alphamind.execution.position_model import (
+        compute_strategy_breakeven_levels,
+        compute_strategy_max_loss_usd,
+        compute_strategy_max_profit_usd,
+        compute_strategy_net_premium_usd,
+    )
+    from alphamind.execution.write_paths.phase1 import (
+        process_unprocessed_fills,
+    )
+    from tests.state._fk_substrate import stub_order_row
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+
+    open_position = _make_open_strategy_position(
+        legs=_vertical_long_call_open_legs(),
+        execution_history=_vertical_long_call_history(),
+        strategy_type_label="long-call-vertical",
+    )
+
+    add_leg_orders = (
+        _make_leg_order(
+            order_id=OrderId("add-leg-long-lower"),
+            contract_type=OptionContractType.CALL,
+            strike=420.0,
+            direction=OrderDirection.BUY_TO_OPEN,
+            quantity=2.0,
+            role=OrderRole.ADD_ENTRY,
+        ),
+        _make_leg_order(
+            order_id=OrderId("add-leg-short-upper"),
+            contract_type=OptionContractType.CALL,
+            strike=425.0,
+            direction=OrderDirection.SELL_TO_OPEN,
+            quantity=2.0,
+            role=OrderRole.ADD_ENTRY,
+        ),
+    )
+    parent_legs = _vertical_call_parent_legs()
+    parent_open_order = _make_strategy_parent_order(quantity=2.0, legs=parent_legs)
+    parent_add_order = _make_strategy_parent_order(
+        order_id=OrderId("ord-strat-add"),
+        quantity=2.0,
+        legs=parent_legs,
+        position_id=PositionId("pos-strat-1"),
+        role=OrderRole.ADD_ENTRY,
+    )
+
+    thesis_row, component_rows = thesis_record_to_rows(_make_active_strategy_thesis())
+    bracket_row, leg_rows = bracket_record_to_rows(_make_active_strategy_bracket())
+
+    seeded_order_ids: set[str] = {
+        parent_open_order.order_id,
+        parent_add_order.order_id,
+        *(o.order_id for o in add_leg_orders),
+    }
+    extra_order_ids: list[str] = [bracket_row.entry_order_id] + [
+        lrow.order_id for lrow in leg_rows if lrow.order_id is not None
+    ]
+
+    async with factory() as sess:
+        sess.add(position_record_to_row(open_position))
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        sess.add(order_record_to_row(parent_open_order))
+        sess.add(order_record_to_row(parent_add_order))
+        for leg_order in add_leg_orders:
+            sess.add(order_record_to_row(leg_order))
+        for oid in extra_order_ids:
+            if oid not in seeded_order_ids:
+                sess.add(stub_order_row(oid, bracket_row.bracket_id))
+                seeded_order_ids.add(oid)
+        sess.add(bracket_row)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        await sess.commit()
+
+    await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=100_000.0))
+    await _seed_drawdown_state(factory)
+
+    for idx, (leg_id, leg_price) in enumerate(
+        (("add-leg-long-lower", 6.00), ("add-leg-short-upper", 2.50))
+    ):
+        await _append_fill(
+            factory,
+            _make_unprocessed_fill(
+                fill_id=f"fill-{leg_id}",
+                order_id=leg_id,
+                fill_quantity=2.0,
+                fill_price=leg_price,
+                fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
+            ),
+        )
+
+    ctx, handle = await _open_handle(factory)
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-strat-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert isinstance(pos.details, StrategyPositionDetails)
+
+        # Parent metrics agree with the post-ADD legs, not the skeleton zeros.
+        net_premium = compute_strategy_net_premium_usd(pos.details.legs)
+        assert pos.details.net_premium_usd == pytest.approx(net_premium)
+        assert pos.details.net_premium_usd != 0.0
+        assert pos.details.max_profit_usd == pytest.approx(
+            compute_strategy_max_profit_usd(pos.details.legs, net_premium)
+        )
+        assert pos.details.max_loss_usd == pytest.approx(
+            compute_strategy_max_loss_usd(pos.details.legs, net_premium)
+        )
+        assert pos.details.breakeven_levels == pytest.approx(
+            compute_strategy_breakeven_levels(pos.details.legs, net_premium)
+        )
+
+
 # ---------------------------------------------------------------------------
 # Tests — atomicity (rollback on failure)
 # ---------------------------------------------------------------------------
