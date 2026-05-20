@@ -11,7 +11,7 @@ Every position has:
 - **Position ID:** unique identifier
 - **Thesis ID:** binding to the thesis record justifying this position (see [thesis-model.md](thesis-model.md))
 - **Bracket parameters:** target exit condition and invalidation conditions with type classification (see [orders-and-brackets.md](orders-and-brackets.md))
-- **Direction:** long or short
+- **Direction:** long or short. This field is meaningful only for equity and single-leg options positions; strategy positions carry it as an inert placeholder (see § Strategy position).
 - **Entry timestamp:** time of initial fill
 - **Current market value:** updated at each pipeline invocation using latest price data
 - **Unrealized P/L:** current market value minus cost basis, absolute and percentage
@@ -73,15 +73,17 @@ A multi-leg options strategy modeled as a **single position with component legs*
 
 *Design rationale:* Strategy legs hedge each other. Viewing them individually would cause the guardrail layer to see risk that doesn't exist at the strategy level (e.g., an iron condor has defined max loss at the strategy level even though individual short legs have high theoretical risk), and would make P/L attribution meaningless. The strategy is one trade idea expressed through multiple instruments.
 
+**Position-level direction is a category error for strategies.** Long/short direction is not economically meaningful for a multi-leg strategy — an iron condor is neither long nor short. A strategy position carries `direction = LONG` as an inert placeholder required by the shared `PositionRecord` schema. Every consumer of a strategy position must derive directional sign from per-leg directions, net delta, or net premium — not from the position-level `direction` field. Branching on position-level `direction` for a strategy is a bug. The clean refactor — making `direction` instrument-specific or optional — is tracked as ALP-591.
+
 A strategy position holds:
 
 - **Strategy type label:** vertical spread, iron condor, straddle, calendar spread, custom, etc.
 - **Component legs:** each an options position with full detail
-- **Net premium:** total debit paid or credit received across legs
-- **Max profit:** best-case P/L — computed from the leg structure
-- **Max loss:** worst-case P/L — the risk the guardrail layer uses for margin and concentration
+- **Net premium:** total debit paid or credit received across legs. **Sign convention: positive for a net-debit strategy (premium paid), negative for a net-credit strategy (premium received).**
+- **Max profit:** best-case P/L — computed from the leg structure (positive value, or positive-infinity for unbounded upside)
+- **Max loss:** worst-case P/L — the risk the guardrail layer uses for margin and concentration (negative value, or negative-infinity for unbounded downside). The strategy's **capital at risk** is the magnitude of `max_loss_usd`.
 - **Breakeven levels:** the underlying price(s) at which the strategy breaks even
-- **Strategy-level greeks:** summed from component legs — aggregate exposure profile
+- **Strategy-level greeks:** net-signed aggregate across component legs — a net-short-delta strategy has a negative delta
 
 The bracket operates at the strategy level: target and invalidation reference the strategy's net P/L or the underlying's price, not individual legs.
 
