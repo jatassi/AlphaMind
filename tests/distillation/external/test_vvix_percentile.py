@@ -238,8 +238,17 @@ def test_build_regime_snapshot_vix_and_vvix_present_is_calibrated(session: Sessi
     assert bootstrap_reason is None
 
 
-def test_build_regime_snapshot_vix_missing_takes_precedence_over_vvix(session: Session) -> None:
-    """When VIX is missing the block is UNAVAILABLE with the VIX reason — VIX wins."""
+def test_build_regime_snapshot_vix_missing_surfaces_in_combined_reason(
+    session: Session,
+) -> None:
+    """When VIX is missing the block is UNAVAILABLE with VIX named in the reason.
+
+    Per ALP-572 the regime block now combines every contributing source's
+    state — VIX, VVIX, VX1 — via the worst-wins fold. Seeding VVIX (so it's
+    CALIBRATED) and VX1 (so its UNAVAILABLE reason is not in play) isolates
+    the assertion to the VIX-missing case.
+    """
+    _seed_vx1(session)
     history = [80.0 + i for i in range(_VVIX_PERCENTILE_MIN_OBSERVATIONS)]
     _seed_vvix_history(session, history, end_date=AS_OF)
 

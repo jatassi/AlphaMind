@@ -71,7 +71,7 @@ from alphamind.distillation.baselines import (
     refresh_pair_lag,
     refresh_ticker_baselines,
 )
-from alphamind.distillation.calibration import CalibrationState
+from alphamind.distillation.calibration import CalibrationState, combine_calibration_states
 from alphamind.distillation.calibration_snapshot import (
     write_calibration_state_snapshot,
     write_operator_data_health_summary,
@@ -851,31 +851,6 @@ def _compute_term_structure_basis(
     return vx1 - vix, CalibrationState.CALIBRATED, None
 
 
-def _combine_calibration_states(
-    *states: tuple[CalibrationState, str | None],
-) -> tuple[CalibrationState, str | None]:
-    """Worst-wins fold across multiple ``(state, reason)`` pairs.
-
-    Severity order is ``UNAVAILABLE > ACCUMULATING > CALIBRATED``. The
-    reason returned is a ``"; "``-joined string of every non-empty
-    reason from the most-severe pairs — when VVIX and VX1 are both
-    UNAVAILABLE the operator sees both gaps named on the regime block.
-
-    Returns ``(CALIBRATED, None)`` when every input is calibrated.
-    """
-    severity = {
-        CalibrationState.CALIBRATED: 0,
-        CalibrationState.ACCUMULATING: 1,
-        CalibrationState.UNAVAILABLE: 2,
-    }
-    worst_state = max(states, key=lambda pair: severity[pair[0]])[0]
-    if worst_state is CalibrationState.CALIBRATED:
-        return CalibrationState.CALIBRATED, None
-    reasons = [reason for state, reason in states if state is worst_state and reason]
-    combined_reason = "; ".join(reasons) if reasons else None
-    return worst_state, combined_reason
-
-
 def _build_regime_snapshot(
     session: Session, *, as_of: datetime
 ) -> tuple[RegimeSnapshot, CalibrationState, str | None]:
@@ -886,17 +861,16 @@ def _build_regime_snapshot(
     available; absent SPY data, both windows fall back to ``0.0`` and the
     downstream input-bundle integrity check surfaces the gap.
 
-    Calibration-state precedence (worst wins):
-
-    - VIX missing → ``UNAVAILABLE`` with VIX reason. Zero VIX
-      observations is a collector failure per ALP-540 (operator action
-      required), not a "give it time" case.
-    - VIX present, VVIX or VX1 state non-CALIBRATED → propagate the
-      worst state and concatenate the reasons. The regime block is still
-      emitted with partial inputs; the calibration tag surfaces the
-      degradation through the operator-facing data-health summary
-      (ALP-540 / ALP-571 / ALP-572).
-    - All present → ``CALIBRATED``.
+    Calibration-state precedence (worst wins via
+    :func:`combine_calibration_states`): each of the three supporting
+    series (VIX, VVIX, VX1) emits its own ``(state, reason)``; the
+    combiner picks the most-severe state and concatenates the reasons
+    that match it. When the regime block is degraded the operator sees
+    every contributing gap named in one combined string rather than the
+    first-discovered gap winner-takes-all. The block is still emitted
+    with partial inputs; the calibration tag surfaces the degradation
+    through the operator-facing data-health summary (ALP-540 / ALP-571 /
+    ALP-572).
 
     Carrying the state out alongside the snapshot avoids encoding the
     signal as a magic numeric sentinel — a real VIX print of exactly
@@ -906,23 +880,15 @@ def _build_regime_snapshot(
     realized_vol_5d, realized_vol_20d = _compute_realized_vols(session, as_of=as_of)
     vvix_percentile, vvix_state, vvix_reason = _compute_vvix_percentile(session, as_of=as_of)
     vx1_minus_vix, basis_state, basis_reason = _compute_term_structure_basis(session, vix=vix)
-    if vix is None:
-        snapshot = RegimeSnapshot(
-            vix_level=0.0,
-            vx1_minus_vix=vx1_minus_vix,
-            vvix_percentile=vvix_percentile,
-            realized_vol_5d=realized_vol_5d,
-            realized_vol_20d=realized_vol_20d,
-            vix_trailing_20d_mean=None,
-            prior_term_structure_backwardation=False,
-        )
-        return (
-            snapshot,
-            CalibrationState.UNAVAILABLE,
-            "regime: VIXCLS observation missing",
-        )
+
+    vix_state, vix_reason = (
+        (CalibrationState.CALIBRATED, None)
+        if vix is not None
+        else (CalibrationState.UNAVAILABLE, "regime: VIXCLS observation missing")
+    )
+
     snapshot = RegimeSnapshot(
-        vix_level=vix,
+        vix_level=vix if vix is not None else 0.0,
         vx1_minus_vix=vx1_minus_vix,
         vvix_percentile=vvix_percentile,
         realized_vol_5d=realized_vol_5d,
@@ -930,7 +896,8 @@ def _build_regime_snapshot(
         vix_trailing_20d_mean=None,
         prior_term_structure_backwardation=False,
     )
-    combined_state, combined_reason = _combine_calibration_states(
+    combined_state, combined_reason = combine_calibration_states(
+        (vix_state, vix_reason),
         (vvix_state, vvix_reason),
         (basis_state, basis_reason),
     )

@@ -16,13 +16,12 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from alphamind.distillation.calibration import CalibrationState
+from alphamind.distillation.calibration import CalibrationState, combine_calibration_states
 from alphamind.distillation.orchestrator import (
     _VVIX_PERCENTILE_MIN_OBSERVATIONS,
     _VVIX_SERIES_ID,
     _VX1_SERIES_ID,
     _build_regime_snapshot,
-    _combine_calibration_states,
     _compute_term_structure_basis,
 )
 from alphamind.persistence.models import Base, MacroObservations
@@ -143,12 +142,12 @@ def test_compute_term_structure_basis_never_returns_zero_as_default(
 
 
 # ---------------------------------------------------------------------------
-# _combine_calibration_states — worst-wins fold across multiple sources
+# combine_calibration_states — worst-wins fold across multiple sources
 # ---------------------------------------------------------------------------
 
 
 def test_combine_calibration_states_all_calibrated_is_calibrated() -> None:
-    state, reason = _combine_calibration_states(
+    state, reason = combine_calibration_states(
         (CalibrationState.CALIBRATED, None),
         (CalibrationState.CALIBRATED, None),
     )
@@ -158,7 +157,7 @@ def test_combine_calibration_states_all_calibrated_is_calibrated() -> None:
 
 def test_combine_calibration_states_one_unavailable_wins() -> None:
     """UNAVAILABLE beats CALIBRATED; the unavailable reason carries through."""
-    state, reason = _combine_calibration_states(
+    state, reason = combine_calibration_states(
         (CalibrationState.UNAVAILABLE, "regime: VX1 series unavailable"),
         (CalibrationState.CALIBRATED, None),
     )
@@ -168,7 +167,7 @@ def test_combine_calibration_states_one_unavailable_wins() -> None:
 
 def test_combine_calibration_states_two_unavailable_concatenates_reasons() -> None:
     """When two sources are both UNAVAILABLE, both reasons surface."""
-    state, reason = _combine_calibration_states(
+    state, reason = combine_calibration_states(
         (CalibrationState.UNAVAILABLE, "regime: VVIX series unavailable"),
         (CalibrationState.UNAVAILABLE, "regime: VX1 series unavailable"),
     )
@@ -181,7 +180,7 @@ def test_combine_calibration_states_two_unavailable_concatenates_reasons() -> No
 def test_combine_calibration_states_unavailable_beats_accumulating() -> None:
     """UNAVAILABLE > ACCUMULATING in the severity ladder."""
     accumulating_reason = "regime: VVIX percentile accumulating (40 obs < 60 required)"
-    state, reason = _combine_calibration_states(
+    state, reason = combine_calibration_states(
         (CalibrationState.ACCUMULATING, accumulating_reason),
         (CalibrationState.UNAVAILABLE, "regime: VX1 series unavailable"),
     )
@@ -258,18 +257,45 @@ def test_build_regime_snapshot_all_three_present_is_calibrated(session: Session)
     assert bootstrap_reason is None
 
 
-def test_build_regime_snapshot_vix_missing_still_carries_vx1_through_to_snapshot(
+def test_build_regime_snapshot_all_three_supporting_series_absent_combines_reasons(
     session: Session,
 ) -> None:
-    """VIX missing dominates the reason, but VX1 still flows through.
+    """Bootstrap with no VIX, VVIX, or VX1 data — the operator sees every gap.
 
-    The basis itself is ``None`` because the subtraction has no anchor —
-    not because the field was dropped on the floor. The calibration tag
-    carries the priority degradation signal.
+    All three sources are genuinely absent from the database, so each
+    surfaces its own ``UNAVAILABLE`` reason in the combined string. This
+    is the case the operator sees on a fresh install before any macro
+    collector has run.
+    """
+    snapshot, calibration_state, bootstrap_reason = _build_regime_snapshot(session, as_of=AS_OF)
+    assert snapshot.vx1_minus_vix is None
+    assert snapshot.vvix_percentile is None
+    assert calibration_state is CalibrationState.UNAVAILABLE
+    assert bootstrap_reason is not None
+    assert "regime: VIXCLS observation missing" in bootstrap_reason
+    assert "regime: VVIX series unavailable" in bootstrap_reason
+    assert "regime: VX1 series unavailable" in bootstrap_reason
+
+
+def test_build_regime_snapshot_vix_missing_emits_none_basis_even_when_vx1_seeded(
+    session: Session,
+) -> None:
+    """VIX missing — basis cannot be computed even when VX1 has data.
+
+    The basis itself is ``None`` because the subtraction has no anchor.
+    The combined reason names VIX (the operator's primary action item)
+    plus VVIX (also missing in this test setup); the VX1 reason is
+    intentionally suppressed by the basis calculator when VIX is the
+    upstream gap, avoiding a duplicate "X unavailable" line.
     """
     _seed_vx1(session, 18.0)
 
     snapshot, calibration_state, bootstrap_reason = _build_regime_snapshot(session, as_of=AS_OF)
     assert snapshot.vx1_minus_vix is None
     assert calibration_state is CalibrationState.UNAVAILABLE
-    assert bootstrap_reason == "regime: VIXCLS observation missing"
+    assert bootstrap_reason is not None
+    assert "regime: VIXCLS observation missing" in bootstrap_reason
+    # The basis calculator suppresses its own reason on VIX-missing
+    # (the caller already names VIX), so the combined string should
+    # not duplicate a VX1 line.
+    assert "VX1 series unavailable" not in bootstrap_reason

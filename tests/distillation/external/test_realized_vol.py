@@ -318,8 +318,14 @@ def test_build_regime_snapshot_vix_missing_emits_unavailable(session: Session) -
     snapshot, calibration_state, bootstrap_reason = _build_regime_snapshot(session, as_of=AS_OF)
     # Per ALP-540: zero VIX observations is a collector failure, not a
     # warm-up state — the regime block should surface as UNAVAILABLE.
+    # Per ALP-572 the regime block now combines every contributing
+    # source's reason via the worst-wins fold, so the bootstrap_reason
+    # surfaces VIX, VVIX, and VX1 outages in one string (every source
+    # is empty in this test). Assert the VIX outage is named — that's
+    # the load-bearing signal — without pinning the exact ordering.
     assert calibration_state is CalibrationState.UNAVAILABLE
-    assert bootstrap_reason == "regime: VIXCLS observation missing"
+    assert bootstrap_reason is not None
+    assert "regime: VIXCLS observation missing" in bootstrap_reason
     assert snapshot.vix_level == 0.0
     assert snapshot.realized_vol_5d == 0.0
     assert snapshot.realized_vol_20d == 0.0

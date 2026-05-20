@@ -124,17 +124,11 @@ class RegimeSnapshot:
 
     - ``vix_level`` — current VIX spot level (FRED ``VIXCLS``).
     - ``vx1_minus_vix`` — front-month VIX future minus VIX spot, or
-      ``None`` when the VX1 series is unavailable. Positive values mean
-      contango; negative values mean backwardation. Per ALP-572 the
-      caller must propagate ``None`` rather than substituting ``0.0``
-      the downstream cannot distinguish from a live "flat term structure"
-      reading.
+      ``None`` when the VX1 series is unavailable (ALP-572). Positive
+      values mean contango; negative values mean backwardation.
     - ``vvix_percentile`` — VVIX percentile rank (0..100) against trailing
       one-year history, or ``None`` when the VVIX series is unavailable
-      or has insufficient observations to rank against. Per ALP-571 the
-      caller must propagate ``None`` rather than substituting a default
-      (e.g. ``50.0``) the downstream cannot distinguish from a live
-      median-vol reading.
+      or has insufficient observations to rank against (ALP-571).
     - ``realized_vol_5d`` / ``realized_vol_20d`` — trailing 5-day and
       20-day realized volatility. The 5d-vs-20d comparison is the
       "realized vol direction" indicator: 5d < 20d means declining; 5d >

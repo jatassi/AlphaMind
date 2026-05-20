@@ -24,6 +24,7 @@ __all__ = [
     "CALIBRATION_STATE_VALUES",
     "CalibratedValue",
     "CalibrationState",
+    "combine_calibration_states",
     "decide_calibration_state",
     "tag_with_fallback",
 ]
@@ -112,3 +113,37 @@ def tag_with_fallback(
         state=CalibrationState.ACCUMULATING,
         bootstrap_reason=reason,
     )
+
+
+_STATE_SEVERITY: dict[CalibrationState, int] = {
+    CalibrationState.CALIBRATED: 0,
+    CalibrationState.ACCUMULATING: 1,
+    CalibrationState.UNAVAILABLE: 2,
+}
+"""Worst-wins severity rank for :class:`CalibrationState`.
+
+The three-state ladder (CALIBRATED → ACCUMULATING → UNAVAILABLE) is fixed
+by the ALP-540 framework; the explicit dict pins the ordering here so
+:func:`combine_calibration_states` doesn't depend on the iteration order
+of any other constant.
+"""
+
+
+def combine_calibration_states(
+    *states: tuple[CalibrationState, str | None],
+) -> tuple[CalibrationState, str | None]:
+    """Worst-wins fold across multiple ``(state, reason)`` pairs.
+
+    Severity order is ``UNAVAILABLE > ACCUMULATING > CALIBRATED``. The
+    reason returned is a ``"; "``-joined string of every non-empty
+    reason from the most-severe pairs — when two inputs are both
+    UNAVAILABLE the operator sees both gaps named on the same block.
+
+    Returns ``(CALIBRATED, None)`` when every input is calibrated.
+    """
+    worst_state = max(states, key=lambda pair: _STATE_SEVERITY[pair[0]])[0]
+    if worst_state is CalibrationState.CALIBRATED:
+        return CalibrationState.CALIBRATED, None
+    reasons = [reason for state, reason in states if state is worst_state and reason]
+    combined_reason = "; ".join(reasons) if reasons else None
+    return worst_state, combined_reason
