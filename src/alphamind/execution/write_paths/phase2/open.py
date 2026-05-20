@@ -66,8 +66,11 @@ from alphamind.portfolio_state.records.positions import (
     OptionContractType,
     OptionGreeks,
     OptionsPositionDetails,
+    PositionDetailsPayload,
     PositionRecord,
     PositionStatus,
+    StrategyLeg,
+    StrategyPositionDetails,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -382,6 +385,73 @@ def _build_invalidation_leg_order(  # noqa: PLR0913 — leg construction threads
     )
 
 
+def _zeroed_option_greeks() -> OptionGreeks:
+    """A fully-zeroed :class:`OptionGreeks` — the skeleton placeholder.
+
+    Per-leg and strategy-level greeks are zeroed at OPEN time and refreshed by
+    the continuous monitor (architecture.md § 4d), exactly as for single-leg
+    options. The validation-metadata strategy greeks are a per-leg *average*,
+    not a net, so they must not seed ``strategy_greeks`` (parent ALP-588
+    § Surfacing conditions).
+    """
+    return OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0)
+
+
+def _build_strategy_skeleton(
+    *,
+    instrument: StrategyInstrument,
+    position_id: str,
+) -> StrategyPositionDetails:
+    """Build a zeroed :class:`StrategyPositionDetails` for a strategy OPEN.
+
+    One record-form :class:`StrategyLeg` per wire :class:`StrategyLeg`, each
+    carrying an :class:`OptionsPositionDetails` skeleton at
+    ``contract_count=0.0`` / ``premium_paid_per_contract=0.0`` — the record
+    reflects state, not intent, mirroring the single-option branch. Payoff
+    metrics (``net_premium_usd``, ``max_profit_usd``, ``max_loss_usd``,
+    ``breakeven_levels``) and ``strategy_greeks`` are all skeleton zeros; story
+    02 recomputes them from the filled legs at the Phase 1 entry-fill.
+
+    Leg ids are deterministic — ``{position_id}-leg-{idx}`` — and each wire
+    leg's ``direction`` is carried straight through. The strategy branch does
+    not consume ``validation_greeks`` / ``validation_iv``.
+    """
+    legs: list[StrategyLeg] = []
+    for idx, wire_leg in enumerate(instrument.legs):
+        legs.append(
+            StrategyLeg(
+                leg_id=f"{position_id}-leg-{idx}",
+                options=OptionsPositionDetails(
+                    underlying_ticker=Symbol(instrument.underlying),
+                    # ALP-462 — Price → float at the legacy OptionsPositionDetails surface.
+                    strike_price=float(wire_leg.strike),
+                    expiration_date=date.fromisoformat(wire_leg.expiration),
+                    contract_type=(
+                        OptionContractType.CALL
+                        if wire_leg.contract_type == "call"
+                        else OptionContractType.PUT
+                    ),
+                    contract_count=0.0,
+                    contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
+                    premium_paid_per_contract=0.0,
+                    greeks=_zeroed_option_greeks(),
+                ),
+                direction=(
+                    Direction.LONG if wire_leg.direction == "long" else Direction.SHORT
+                ),
+            )
+        )
+    return StrategyPositionDetails(
+        strategy_type_label=instrument.strategy_type,
+        legs=tuple(legs),
+        net_premium_usd=0.0,
+        max_profit_usd=0.0,
+        max_loss_usd=0.0,
+        breakeven_levels=(),
+        strategy_greeks=_zeroed_option_greeks(),
+    )
+
+
 def _build_pending_position(
     *,
     position_id: str,
@@ -410,6 +480,14 @@ def _build_pending_position(
     ``_apply_options_entry_fill`` preserves these greeks unchanged when the
     entry fills — refresh is the continuous monitor's job (architecture.md
     § 4d).
+
+    :class:`StrategyInstrument` lands a :class:`StrategyPositionDetails`
+    skeleton (see :func:`_build_strategy_skeleton`) — one zeroed leg per wire
+    leg, zeroed payoff metrics, zeroed greeks. The strategy branch does not
+    read ``validation_greeks`` / ``validation_iv``; the validation metadata's
+    strategy greeks are a per-leg average, not a net (parent ALP-588
+    § Surfacing conditions), so they must not seed ``strategy_greeks``. Story
+    02 recomputes the payoff metrics from the filled legs.
     """
     if isinstance(instrument, OptionInstrument):
         if validation_greeks is None or validation_iv is None:
@@ -420,7 +498,7 @@ def _build_pending_position(
                 f"iv={validation_iv}"
             )
             raise ValueError(msg)
-        details: EquityPositionDetails | OptionsPositionDetails = OptionsPositionDetails(
+        details: PositionDetailsPayload = OptionsPositionDetails(
             underlying_ticker=Symbol(instrument.underlying),
             # ALP-462 — Price → float at the legacy OptionsPositionDetails surface.
             strike_price=float(instrument.strike),
@@ -452,12 +530,10 @@ def _build_pending_position(
             margin_held_usd=0.0 if short_fields_present else None,
         )
     else:
-        msg = (
-            f"OPEN writeback for instrument variant "
-            f"{type(instrument).__name__} is not yet supported; "
-            "extend _build_pending_position when adding STRATEGY support."
+        details = _build_strategy_skeleton(
+            instrument=instrument,
+            position_id=position_id,
         )
-        raise NotImplementedError(msg)
     return PositionRecord(
         position_id=PositionId(position_id),
         thesis_id=ThesisId(thesis_id),
