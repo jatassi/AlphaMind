@@ -56,6 +56,8 @@ from alphamind.execution.oms.command_ids import is_engine_originated, is_pm_orig
 from alphamind.portfolio_state.records.positions import (
     Direction,
     OptionContractType,
+)
+from alphamind.portfolio_state.records.positions import (
     StrategyLeg as PositionStrategyLeg,
 )
 
@@ -414,9 +416,7 @@ _CLOSE_INTENT_FOR_DIRECTION: dict[Direction, PositionIntentLiteral] = {
     Direction.SHORT: "buy_to_close",
 }
 
-_CLOSE_INTENTS: frozenset[PositionIntentLiteral] = frozenset(
-    {"buy_to_close", "sell_to_close"}
-)
+_CLOSE_INTENTS: frozenset[PositionIntentLiteral] = frozenset({"buy_to_close", "sell_to_close"})
 
 
 def strategy_legs_to_close_acks(
@@ -439,10 +439,7 @@ def strategy_legs_to_close_acks(
     for leg in legs:
         direction = leg.direction
         if direction is None:
-            msg = (
-                f"strategy leg {leg.leg_id!r} has no direction set; cannot "
-                f"build a close-side leg"
-            )
+            msg = f"strategy leg {leg.leg_id!r} has no direction set; cannot build a close-side leg"
             raise ValueError(msg)
         opt = leg.options
         occ = _build_occ_symbol(
@@ -602,18 +599,18 @@ async def submit_mleg_add(
     )
 
 
-def _underlying_from_legs(open_legs: Sequence[MLEGLegAck]) -> str:
+def _underlying_from_legs(legs: Sequence[MLEGLegAck]) -> str:
     """Recover the underlying root from the OCC symbols' shared prefix.
 
-    Used by close/add validators to confirm the open-leg set is internally
+    Used by close/add validators to confirm the leg set is internally
     consistent (single underlying); deeper than relying on caller state to
     pass it explicitly.
     """
-    if not open_legs:
+    if not legs:
         return ""
-    roots = {leg.occ_symbol[:6].rstrip() for leg in open_legs}
+    roots = {leg.occ_symbol[:6].rstrip() for leg in legs}
     if len(roots) > 1:
-        msg = f"open_legs span multiple underlyings: {sorted(roots)}"
+        msg = f"legs span multiple underlyings: {sorted(roots)}"
         raise ValueError(msg)
     return next(iter(roots))
 

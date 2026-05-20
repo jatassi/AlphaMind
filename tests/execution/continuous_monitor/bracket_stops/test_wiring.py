@@ -202,9 +202,7 @@ async def test_bracket_strategy_close_submits_close_side_legs() -> None:
         PositionIntent.BUY_TO_CLOSE,
     ]
     assert [leg.side for leg in request.legs] == [OrderSide.SELL, OrderSide.BUY]
-    assert all(
-        not leg.position_intent.value.endswith("_to_open") for leg in request.legs
-    )
+    assert all(not leg.position_intent.value.endswith("_to_open") for leg in request.legs)
 
 
 @pytest.mark.asyncio

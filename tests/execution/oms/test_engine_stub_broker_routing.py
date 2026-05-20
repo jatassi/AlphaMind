@@ -1264,15 +1264,11 @@ def test_engine_close_dispatch_kwargs_strategy_leg_without_direction_raises() ->
     assert isinstance(position.details, StrategyPositionDetails)
     legs = position.details.legs
     directionless_first = dataclasses.replace(legs[0], direction=None)
-    broken_details = dataclasses.replace(
-        position.details, legs=(directionless_first, *legs[1:])
-    )
+    broken_details = dataclasses.replace(position.details, legs=(directionless_first, *legs[1:]))
     broken_position = dataclasses.replace(position, details=broken_details)
 
     with pytest.raises(ValueError, match="direction"):
-        _engine_close_dispatch_kwargs(
-            broken_position, position_id=broken_position.position_id
-        )
+        _engine_close_dispatch_kwargs(broken_position, position_id=broken_position.position_id)
 
 
 def test_engine_close_dispatch_kwargs_equity_unchanged() -> None:
