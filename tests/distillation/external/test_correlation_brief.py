@@ -155,19 +155,65 @@ def test_lead_lag_block_with_pair_natural_key_uses_double_colon_form() -> None:
     assert pair_reference == "q7.lead_lag.alpha::alpha"
 
 
-def test_empty_sections_are_omitted() -> None:
-    """Regime-only invocation: only REGIME section appears; other sections suppressed."""
+def test_no_data_invocation_renders_every_section_with_empty_state_marker() -> None:
+    """Per ALP-577: every documented section appears with explicit empty-state text.
+
+    The contract: a brief section never silently drops on empty data — every
+    section has a fixed position and renders either findings or an explicit
+    empty-state marker. Pre-fix, the NARRATIVE LAG section vanished entirely
+    when the news pipeline produced no qualifying headlines (the symptom in
+    invocation ``inv-20260519T030654Z-60f10023``); downstream agents could
+    not distinguish "section not computed" from "section computed but
+    empty" from "section accidentally elided".
+    """
     regime_block = _regime_block()
 
     brief = assemble_correlation_brief(blocks=[regime_block], invocation_id="inv-empty")
 
-    assert "=== REGIME ===" in brief.text
-    assert "=== INTRA-SECTOR CORRELATION ===" not in brief.text
-    assert "=== CROSS-SECTOR ROTATION ===" not in brief.text
-    assert "=== INTERMARKET REGIME SIGNALS ===" not in brief.text
-    assert "=== LEAD-LAG ===" not in brief.text
-    assert "=== CORRELATION REGIME CHANGE ===" not in brief.text
-    assert "=== NARRATIVE LAG ===" not in brief.text
+    text = brief.text
+    expected_headers = (
+        "=== REGIME ===",
+        "=== INTRA-SECTOR CORRELATION ===",
+        "=== CROSS-SECTOR ROTATION ===",
+        "=== INTERMARKET REGIME SIGNALS ===",
+        "=== LEAD-LAG ===",
+        "=== LOCUS FLAGS ===",
+        "=== CORRELATION REGIME CHANGE ===",
+        "=== NARRATIVE LAG ===",
+        "=== UNIVERSAL CONTEXT ===",
+        "=== ANOMALY FLAGS (0) ===",
+    )
+    for header in expected_headers:
+        assert header in text, f"{header} missing from no-data brief"
+
+    # Document order — each header strictly follows the previous one.
+    positions = [text.find(header) for header in expected_headers]
+    assert positions == sorted(positions), positions
+
+    # CR-N sections with no entries render the explicit empty-state marker.
+    empty_cr_sections = (
+        "=== INTRA-SECTOR CORRELATION ===",
+        "=== CROSS-SECTOR ROTATION ===",
+        "=== INTERMARKET REGIME SIGNALS ===",
+        "=== LEAD-LAG ===",
+        "=== LOCUS FLAGS ===",
+        "=== CORRELATION REGIME CHANGE ===",
+        "=== NARRATIVE LAG ===",
+    )
+    for header in empty_cr_sections:
+        idx = text.find(header)
+        following = text[idx + len(header) :].lstrip("\n")
+        assert following.startswith("(no findings)"), (
+            f"{header} should be followed by '(no findings)' marker, got: {following[:80]!r}"
+        )
+
+    # Universal context section carries its own empty-state line (the regime
+    # block is excluded from the universal-context body — it is already
+    # embedded as CR-1).
+    universal_idx = text.find("=== UNIVERSAL CONTEXT ===")
+    next_section_idx = text.find("=== ANOMALY FLAGS", universal_idx)
+    universal_body = text[universal_idx + len("=== UNIVERSAL CONTEXT ===") : next_section_idx]
+    assert "(no universal-broadcast blocks)" in universal_body, universal_body
 
 
 def test_freshness_min_reflects_oldest_contributing_block() -> None:

@@ -577,20 +577,30 @@ def _reference_value(finding: _Finding) -> str:
     return f"{finding.source_block_id}::{finding.natural_key}"
 
 
+# Per ALP-577: every section in the brief renders at its fixed position. The
+# CR-N category sections share one marker line; the universal-context section
+# has its own (it carries blocks, not findings).
+_EMPTY_FINDINGS_MARKER = "(no findings)"
+_EMPTY_UNIVERSAL_CONTEXT_MARKER = "(no universal-broadcast blocks)"
+
+
 def _render_universal_context(blocks: Iterable[OutputBlock]) -> str:
     """Render the trailing universal-context section.
 
     Excludes the ``regime.label`` block — it is already embedded in the
     REGIME section as ``CR-1``. Other universal-broadcast blocks (macro,
     breadth, intermarket-when-broadcast) appear without ``CR-N`` IDs;
-    the synthesizer cites them via the underlying source block IDs.
+    the synthesizer cites them via the underlying source block IDs. When
+    no universal-broadcast blocks beyond ``regime.label`` exist, the
+    section header is still emitted with an explicit empty-state marker
+    so the section never silently drops (ALP-577).
     """
     body = format_blocks_for_audience(
         (block for block in blocks if block.block_id != REGIME_BLOCK_ID),
         OutputAudience.UNIVERSAL_BROADCAST,
     )
     if not body:
-        return ""
+        return f"=== UNIVERSAL CONTEXT ===\n{_EMPTY_UNIVERSAL_CONTEXT_MARKER}\n"
     return "=== UNIVERSAL CONTEXT ===\n" + body
 
 
@@ -671,23 +681,22 @@ def assemble_correlation_brief(
     lines.append("")
 
     for category in _CATEGORY_ORDER:
+        lines.append(f"=== {category.value} ===")
         entries = cr_entries_by_category[category]
         if not entries:
-            continue
-        lines.append(f"=== {category.value} ===")
-        for reference_id, finding in entries:
-            lines.append(f"[{reference_id}] {finding.summary}")
-            for detail in finding.detail_lines:
-                lines.append(f"  {detail}")
+            lines.append(_EMPTY_FINDINGS_MARKER)
+        else:
+            for reference_id, finding in entries:
+                lines.append(f"[{reference_id}] {finding.summary}")
+                for detail in finding.detail_lines:
+                    lines.append(f"  {detail}")
         lines.append("")
 
     document = "\n".join(lines)
-    universal = _render_universal_context(materialized)
-    if universal:
-        document += universal
-        if not document.endswith("\n"):
-            document += "\n"
+    document += _render_universal_context(materialized)
+    if not document.endswith("\n"):
         document += "\n"
+    document += "\n"
 
     document += _render_anomaly_summary(cr_blocks)
 
