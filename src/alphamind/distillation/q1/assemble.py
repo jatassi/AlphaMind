@@ -324,6 +324,7 @@ def _compute_gap_per_ticker(
             history=_GapFillEventHistory(
                 ticker_resolved=history_entry.ticker_counts.resolved,
                 ticker_filled=history_entry.ticker_counts.filled,
+                ticker_pending=history_entry.ticker_counts.pending,
                 sector_resolved=history_entry.sector_counts.resolved,
                 sector_filled=history_entry.sector_counts.filled,
             ),

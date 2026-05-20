@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import statistics
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -59,6 +59,31 @@ from alphamind.persistence.models import (
 # bootstrap order; instead the constants are inlined here. If the audience
 # set grows the SqlDistillationRepository default-scope query expands here.
 _AUDIENCE_COVERED_SECTORS: tuple[str, ...] = ("tech", "semis", "financials", "energy")
+
+_GAP_FILLED_OUTCOME: str = "filled"
+
+
+def _gap_counts_from_outcome_buckets(
+    rows: Iterable[tuple[str, int]],
+) -> GapEventCounts:
+    """Fold `(outcome, count)` rows from a `GROUP BY outcome` query into counts.
+
+    One pass over the result set yields resolved (all non-pending),
+    filled (the resolved subset that did fill), and pending — eliminates
+    the per-bucket round-trips the earlier two-query / three-query
+    structure used.
+    """
+    resolved = 0
+    filled = 0
+    pending = 0
+    for outcome, count in rows:
+        if outcome == PENDING_OUTCOME:
+            pending = int(count)
+            continue
+        resolved += int(count)
+        if outcome == _GAP_FILLED_OUTCOME:
+            filled = int(count)
+    return GapEventCounts(resolved=resolved, filled=filled, pending=pending)
 
 
 class SqlDistillationRepository(DistillationRepository):
@@ -157,30 +182,20 @@ class SqlDistillationRepository(DistillationRepository):
     # --- q1 gap history ---------------------------------------------------
 
     def load_gap_fill_event_counts(self, *, ticker: str, as_of: str) -> GapEventCounts:
-        base = (
-            select(func.count())
-            .select_from(DistillationEventHistory)
+        stmt = (
+            select(DistillationEventHistory.outcome, func.count())
             .where(
                 DistillationEventHistory.ticker == ticker,
                 DistillationEventHistory.event_kind == "gap",
-                DistillationEventHistory.outcome != PENDING_OUTCOME,
                 DistillationEventHistory.event_ts <= as_of,
             )
+            .group_by(DistillationEventHistory.outcome)
         )
-        resolved = int(self._session.execute(base).scalar_one())
-        if resolved == 0:
-            return GapEventCounts(resolved=0, filled=0)
-        filled = int(
-            self._session.execute(
-                base.where(DistillationEventHistory.outcome == "filled")
-            ).scalar_one()
-        )
-        return GapEventCounts(resolved=resolved, filled=filled)
+        return _gap_counts_from_outcome_buckets(self._session.execute(stmt).tuples().all())
 
     def load_sector_pooled_gap_fill_counts(self, *, sector: str, as_of: str) -> GapEventCounts:
-        base = (
-            select(func.count())
-            .select_from(DistillationEventHistory)
+        stmt = (
+            select(DistillationEventHistory.outcome, func.count())
             .join(
                 SectorClassification,
                 SectorClassification.ticker == DistillationEventHistory.ticker,
@@ -188,19 +203,11 @@ class SqlDistillationRepository(DistillationRepository):
             .where(
                 SectorClassification.alphamind_sector == sector,
                 DistillationEventHistory.event_kind == "gap",
-                DistillationEventHistory.outcome != PENDING_OUTCOME,
                 DistillationEventHistory.event_ts <= as_of,
             )
+            .group_by(DistillationEventHistory.outcome)
         )
-        resolved = int(self._session.execute(base).scalar_one())
-        if resolved == 0:
-            return GapEventCounts(resolved=0, filled=0)
-        filled = int(
-            self._session.execute(
-                base.where(DistillationEventHistory.outcome == "filled")
-            ).scalar_one()
-        )
-        return GapEventCounts(resolved=resolved, filled=filled)
+        return _gap_counts_from_outcome_buckets(self._session.execute(stmt).tuples().all())
 
     # --- q3 flow classification -------------------------------------------
 

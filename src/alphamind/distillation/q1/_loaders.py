@@ -212,7 +212,7 @@ def load_q1_inputs(
         sector_row = sector_rows.get(ticker)
         ticker_counts = repository.load_gap_fill_event_counts(ticker=ticker, as_of=as_of_iso)
         if sector_row is None:
-            sector_counts = GapEventCounts(resolved=0, filled=0)
+            sector_counts = GapEventCounts(resolved=0, filled=0, pending=0)
         else:
             sector = sector_row.alphamind_sector
             if sector not in sector_pool_cache:

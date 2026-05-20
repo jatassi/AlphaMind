@@ -121,8 +121,8 @@ These are the lookback windows that drive Class B rolling state.
 | `correlation_long_days` | 60 | Intra-sector pairwise correlation matrix (long window) and correlation-stability baseline |
 | `sentiment_baseline_days` | 60 | Per-ticker trailing sentiment distribution for percentile calibration |
 | `sentiment_min_observations` | 30 | Minimum observations before per-ticker sentiment baseline is treated as calibrated; below this, cross-sectional pooled baseline is used and the output is tagged `bootstrap` |
-| `gap_fill_baseline_days` | 252 | Per-ticker gap-fill history (one trading year) |
-| `gap_fill_min_events` | 30 | Minimum gap events before per-ticker gap-fill rate is treated as calibrated |
+| `gap_fill_baseline_days` | 252 | Per-ticker gap-fill outcome-resolution window (one trading year). A detected gap event stays `pending` until this many sessions have passed, then is resolved to `filled` or `unfilled`. |
+| `gap_fill_min_events` | 30 | Minimum **resolved** gap events (outcome known) before the per-ticker gap-fill rate is treated as calibrated. Counts events whose outcome is `filled` or `unfilled`, not raw per-session gap detections. |
 | `extended_hours_confirmation_days` | 90 | Per-ticker extended-hours confirmation rate window |
 | `extended_hours_min_events` | 20 | Minimum extended-hours events before per-ticker rate is treated as calibrated |
 | `prediction_market_history_days` | 30 | Per-contract trailing probability history retained for trajectory display |
@@ -233,7 +233,7 @@ For a paper-trading deployment starting from cold state:
 
 - Volume / ATR / spread baselines per ticker: `calibrated` after 20 trading days (~1 month).
 - Sentiment baseline per ticker: `calibrated` after the vendor's 30-day backfill plus 30 trading days of in-system observation. Most vendors backfill at API connection, so typically `calibrated` within 1–2 invocations.
-- Gap-fill rate per ticker: event-driven. Major caps often reach 30 events within 6 months; smaller names may take a year. Sector-pooled fallback is steady state for the long tail.
+- Gap-fill rate per ticker: event-driven and resolution-delayed. The aggregate counts only *resolved* gap events (outcome `filled` or `unfilled`); each detection then waits `gap_fill_baseline_days` (one trading year) before resolving. Fresh installs therefore see `q1.gap` in `accumulating` state — "N pending, awaiting outcome resolution" — for months even when gap detection is fully healthy; sector-pooled fallback is steady state for the long tail. Distinct from the per-session in-bar gap classification (`gap_absolute`, `direction`, `kind`) that domain researchers see in their per-ticker payload — that is computed live from the prior and current daily bars and does not depend on the aggregate.
 - Extended-hours confirmation rate: event-driven, similar to gap-fill.
 - Lead-lag pair estimates: meaningful after ~10 cycles per pair, typically 1–2 months.
 

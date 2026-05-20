@@ -69,10 +69,10 @@ class _StubDistillationRepository:
         return self._baselines.get((ticker, kind))
 
     def load_gap_fill_event_counts(self, *, ticker: str, as_of: str) -> GapEventCounts:
-        return self._gap_fill.get(ticker, GapEventCounts(resolved=0, filled=0))
+        return self._gap_fill.get(ticker, GapEventCounts(resolved=0, filled=0, pending=0))
 
     def load_sector_pooled_gap_fill_counts(self, *, sector: str, as_of: str) -> GapEventCounts:
-        return self._sector_gap.get(sector, GapEventCounts(resolved=0, filled=0))
+        return self._sector_gap.get(sector, GapEventCounts(resolved=0, filled=0, pending=0))
 
     # q3 surface — stubbed empty for the q1-only tests in this module.
     def load_options_contracts_for_underlying(

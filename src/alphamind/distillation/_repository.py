@@ -68,16 +68,19 @@ class TickerBaselineRow:
 
 @dataclass(frozen=True, slots=True)
 class GapEventCounts:
-    """Resolved-event totals for the gap-fill probability fallback chain.
+    """Event totals for the gap-fill probability fallback chain.
 
     ``resolved`` counts events whose ``outcome`` is not the pending sentinel
     at or before ``as_of``; ``filled`` is the subset whose outcome is
-    ``"filled"``. The compute step turns these into a per-ticker rate or a
-    sector-pooled fallback rate.
+    ``"filled"``; ``pending`` counts detected-but-not-yet-resolved events.
+    The compute step combines these into a per-ticker rate, a sector-pooled
+    fallback rate, or a calibration-state tag distinguishing "no events
+    detected" from "events detected, awaiting outcome resolution" (ALP-573).
     """
 
     resolved: int
     filled: int
+    pending: int
 
 
 @dataclass(frozen=True, slots=True)

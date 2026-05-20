@@ -230,11 +230,22 @@ def _operator_summary_payload(outputs: DistillationOutputs, invocation_id: str) 
     sorted_blocks = sorted(outputs.all_blocks, key=lambda b: b.block_id)
 
     def _per_block(state: CalibrationState) -> list[dict[str, str]]:
-        return [
-            {"module": block.block_id, "reason": block.bootstrap_reason or ""}
-            for block in sorted_blocks
-            if block.calibration_state is state
-        ]
+        # Dedupe on (module, reason): per-sector blocks (e.g. q1.*) emit one
+        # OutputBlock per sector audience, so the same module/reason pair
+        # would otherwise appear once per sector in the operator summary.
+        # The internal calibration snapshot keeps per-block detail.
+        seen: set[tuple[str, str]] = set()
+        out: list[dict[str, str]] = []
+        for block in sorted_blocks:
+            if block.calibration_state is not state:
+                continue
+            reason = block.bootstrap_reason or ""
+            key = (block.block_id, reason)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"module": block.block_id, "reason": reason})
+        return out
 
     return {
         "schema_version": OPERATOR_SUMMARY_SCHEMA_VERSION,

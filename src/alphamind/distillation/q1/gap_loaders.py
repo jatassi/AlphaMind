@@ -57,6 +57,7 @@ def resolve_gap_fill_probability(
         history = GapFillEventHistory(
             ticker_resolved=ticker_counts.resolved,
             ticker_filled=ticker_counts.filled,
+            ticker_pending=ticker_counts.pending,
             sector_resolved=0,
             sector_filled=0,
         )
@@ -65,6 +66,7 @@ def resolve_gap_fill_probability(
         history = GapFillEventHistory(
             ticker_resolved=ticker_counts.resolved,
             ticker_filled=ticker_counts.filled,
+            ticker_pending=ticker_counts.pending,
             sector_resolved=sector_counts.resolved,
             sector_filled=sector_counts.filled,
         )
