@@ -210,6 +210,39 @@ class TestRecomputeStrategyGreeks:
         expected = (3.0 * per_leg["heavy"].delta + 1.0 * per_leg["light"].delta) / 4.0
         assert aggregated.delta == pytest.approx(expected)
 
+    def test_leg_with_unset_direction_defaults_to_long(self) -> None:
+        """A ``StrategyLeg`` with ``direction=None`` is treated as LONG — the
+        field's optional convention for single-leg legs that inherit direction
+        from the parent ``PositionRecord``. Without the default, the canonical
+        aggregator's leg validator would reject the refresh outright."""
+        strategy = StrategyPositionDetails(
+            strategy_type_label="long_call",
+            legs=(
+                StrategyLeg(
+                    leg_id="leg-1",
+                    direction=None,
+                    options=_options(contract_type=OptionContractType.CALL, strike=200.0),
+                ),
+            ),
+            net_premium_usd=250.0,
+            max_profit_usd=float("inf"),
+            max_loss_usd=250.0,
+            breakeven_levels=(202.5,),
+            strategy_greeks=OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0),
+        )
+        as_of = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+        per_leg, aggregated = recompute_strategy_greeks(
+            strategy=strategy,
+            leg_ivs={"leg-1": 0.25},
+            spot=200.0,
+            as_of=as_of,
+            risk_free_rate=0.045,
+        )
+        # LONG default → the single leg's long-equivalent greek passes through
+        # with its sign intact (a SHORT default would flip it negative).
+        assert per_leg["leg-1"].delta > 0.0
+        assert aggregated.delta == pytest.approx(per_leg["leg-1"].delta)
+
     def test_aggregation_matches_canonical_compute_strategy_greeks(self) -> None:
         """ALP-612 AC: ``recompute_strategy_greeks`` and ``compute_strategy_greeks``
         produce the same aggregate for the same legs — recompute delegates to

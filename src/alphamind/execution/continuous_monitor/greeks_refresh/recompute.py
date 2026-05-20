@@ -120,20 +120,19 @@ def recompute_strategy_greeks(
     optional convention for single-leg legs that inherit direction from the
     parent ``PositionRecord``.
 
-    The aggregated ``strategy_greeks`` re-stamps the freshness metadata the
-    canonical aggregator clears: ``as_of_timestamp = as_of``,
-    ``iv_used = mean of leg IVs`` (a single scalar surfaces the sourced IV
-    at the strategy level for operator-facing audits),
-    ``refresh_failed = False``.
+    The aggregated ``strategy_greeks`` re-stamps the two freshness fields the
+    canonical aggregator clears — ``as_of_timestamp = as_of`` and
+    ``iv_used = mean of leg IVs`` (a single scalar surfaces the sourced IV at
+    the strategy level for operator-facing audits). ``refresh_failed`` carries
+    the canonical OR of the legs' flags — always ``False`` here, since
+    :func:`recompute_greeks` raises rather than emitting a failed-refresh leg.
     """
     per_leg_greeks: dict[str, OptionGreeks] = {}
     refreshed_legs: list[StrategyLeg] = []
-    iv_values: list[float] = []
     for leg in strategy.legs:
-        leg_iv = leg_ivs[leg.leg_id]
         leg_greeks = recompute_greeks(
             position=leg.options,
-            iv=leg_iv,
+            iv=leg_ivs[leg.leg_id],
             spot=spot,
             as_of=as_of,
             risk_free_rate=risk_free_rate,
@@ -146,16 +145,10 @@ def recompute_strategy_greeks(
                 direction=leg.direction if leg.direction is not None else Direction.LONG,
             )
         )
-        iv_values.append(leg_iv)
 
     # `compute_strategy_greeks` validates the legs (non-empty, single
-    # expiration / underlying), so call it before dividing by `len(iv_values)`.
+    # expiration / underlying); calling it first means an empty-legs strategy
+    # raises a clear ValueError before the IV-mean divide-by-zero below.
     canonical = compute_strategy_greeks(tuple(refreshed_legs))
-    aggregated_iv = math.fsum(iv_values) / len(iv_values)
-    aggregated = replace(
-        canonical,
-        as_of_timestamp=as_of,
-        iv_used=aggregated_iv,
-        refresh_failed=False,
-    )
-    return per_leg_greeks, aggregated
+    aggregated_iv = math.fsum(leg_ivs[leg.leg_id] for leg in strategy.legs) / len(strategy.legs)
+    return per_leg_greeks, replace(canonical, as_of_timestamp=as_of, iv_used=aggregated_iv)
