@@ -246,7 +246,7 @@ class PositionRecord:
     thesis_id: ThesisId | None
     bracket_id: BracketId | None
     status: PositionStatus
-    direction: Direction
+    direction: Direction | None
     entry_timestamp: datetime | None
     details: PositionDetailsPayload
 
@@ -263,9 +263,28 @@ class PositionRecord:
         return self.details.instrument_type
 
     def __post_init__(self) -> None:
+        self._check_direction_optionality()
         self._check_status_rules()
         self._check_equity_direction_fields()
         self._check_spinoff_invariant()
+
+    def _check_direction_optionality(self) -> None:
+        """``direction is None`` iff ``details`` is a strategy payload.
+
+        Position-level direction is a category error for a multi-leg strategy
+        (an iron condor is neither long nor short), so a strategy record
+        carries ``direction = None`` and reads its directional sign per-leg.
+        An equity or single-leg options record is long or short, so it
+        requires a non-``None`` ``Direction``. :func:`position_direction` is
+        the canonical accessor.
+        """
+        is_strategy = isinstance(self.details, StrategyPositionDetails)
+        if is_strategy and self.direction is not None:
+            msg = "direction must be None for a strategy position"
+            raise ValueError(msg)
+        if not is_strategy and self.direction is None:
+            msg = "direction must be non-None for an equity or options position"
+            raise ValueError(msg)
 
     def _check_status_rules(self) -> None:
         # Strategy positions accumulate per-leg fills in execution_history while
@@ -323,18 +342,12 @@ def position_direction(record: PositionRecord) -> Direction | None:
 
     An equity or single-leg options position is long or short, so the accessor
     returns ``record.direction``. A multi-leg strategy is neither — its
-    directionality lives per-leg on each :class:`StrategyLeg` — so the accessor
-    returns ``None`` for a ``StrategyPositionDetails`` payload.
+    directionality lives per-leg on each :class:`StrategyLeg` — and the record
+    validator ties ``direction is None`` to a strategy payload, so the accessor
+    returns ``None`` for a strategy.
 
     This is the one accessor for position-level direction: consumers must not
-    read ``PositionRecord.direction`` / ``PositionView.direction`` directly.
-    A consumer holding a ``PositionView`` calls ``position_direction(view.record)``.
-
-    The accessor is correct before story 03's field flip: pre-flip
-    ``record.direction`` is a non-optional ``Direction`` and a strategy carries
-    an inert ``LONG`` placeholder, but the ``isinstance`` check below yields
-    ``None`` for a strategy regardless of that placeholder.
+    read ``PositionRecord.direction`` directly. A consumer holding a
+    ``PositionView`` calls ``position_direction(view.record)``.
     """
-    if isinstance(record.details, StrategyPositionDetails):
-        return None
     return record.direction

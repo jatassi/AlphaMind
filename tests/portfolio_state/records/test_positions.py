@@ -413,6 +413,15 @@ _SHORT_EQUITY = EquityPositionDetails(
     margin_held_usd=5000.0,
 )
 _OPTIONS_DETAILS = _make_options_details()
+_STRATEGY_DETAILS = StrategyPositionDetails(
+    strategy_type_label="bull_call_spread",
+    legs=(_make_strategy_leg(),),
+    net_premium_usd=-500.0,
+    max_profit_usd=1000.0,
+    max_loss_usd=500.0,
+    breakeven_levels=(205.0,),
+    strategy_greeks=_GREEKS,
+)
 
 
 def _make_position(**overrides: object) -> PositionRecord:
@@ -465,7 +474,7 @@ class TestPositionRecordDiscriminator:
             breakeven_levels=(205.0,),
             strategy_greeks=_GREEKS,
         )
-        p = _make_position(details=strat, direction=Direction.LONG)
+        p = _make_position(details=strat, direction=None)
         assert isinstance(p.details, StrategyPositionDetails)
 
     def test_construction_from_dict_no_longer_supported(self) -> None:
@@ -535,9 +544,8 @@ class TestPositionDirectionAccessor:
             breakeven_levels=(205.0,),
             strategy_greeks=_GREEKS,
         )
-        # Pre-flip, a strategy carries an inert LONG placeholder; the accessor
-        # yields None regardless of the placeholder.
-        p = _make_position(details=strat, direction=Direction.LONG)
+        # A strategy record carries ``direction = None``; the accessor mirrors it.
+        p = _make_position(details=strat, direction=None)
         assert position_direction(p) is None
 
 
@@ -583,7 +591,7 @@ class TestPendingStatusRules:
             status=PositionStatus.PENDING,
             entry_timestamp=None,
             details=strat,
-            direction=Direction.LONG,
+            direction=None,
             execution_history=(_FILL,),
         )
         assert p.status == PositionStatus.PENDING
@@ -654,8 +662,36 @@ class TestDirectionShortFields:
 
 
 # ---------------------------------------------------------------------------
-# Range constraint tests
+# Optional-direction validator tests (ALP-610)
 # ---------------------------------------------------------------------------
+
+
+class TestOptionalDirectionValidator:
+    """``direction is None`` if and only if ``details`` is a strategy payload."""
+
+    def test_equity_with_direction_passes(self) -> None:
+        p = _make_position(details=_LONG_EQUITY, direction=Direction.LONG)
+        assert p.direction == Direction.LONG
+
+    def test_options_with_direction_passes(self) -> None:
+        p = _make_position(details=_OPTIONS_DETAILS, direction=Direction.SHORT)
+        assert p.direction == Direction.SHORT
+
+    def test_strategy_with_none_direction_passes(self) -> None:
+        p = _make_position(details=_STRATEGY_DETAILS, direction=None)
+        assert p.direction is None
+
+    def test_equity_with_none_direction_fails(self) -> None:
+        with pytest.raises(ValueError, match="direction"):
+            _make_position(details=_LONG_EQUITY, direction=None)
+
+    def test_options_with_none_direction_fails(self) -> None:
+        with pytest.raises(ValueError, match="direction"):
+            _make_position(details=_OPTIONS_DETAILS, direction=None)
+
+    def test_strategy_with_non_none_direction_fails(self) -> None:
+        with pytest.raises(ValueError, match="direction"):
+            _make_position(details=_STRATEGY_DETAILS, direction=Direction.LONG)
 
 
 # ---------------------------------------------------------------------------
