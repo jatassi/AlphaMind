@@ -52,6 +52,9 @@ _SOURCE = "iborrowdesk"
 # primary key of the ``borrow_cost_sweep_cursor`` resume-cursor row.
 _SWEEP_COLLECTOR = "iborrowdesk.borrow_cost"
 
+# ``collection_runs`` label for the on-demand single-ticker refresh path.
+_REFRESH_COLLECTOR = "iborrowdesk.refresh_ticker"
+
 # Module-level client — reused across the full universe sweep so a single
 # httpx.Client connection pool serves all tickers in one run.
 _client = IBorrowDeskClient()
@@ -236,7 +239,6 @@ def collect_borrow_cost(
     with track_run(_SWEEP_COLLECTOR, _repo=_repo) as run:
         ingested_at = _now().isoformat()
         total_rows = 0
-        swept = 0
         blocked_at: str | None = None
 
         with _session_factory() as sess:
@@ -249,34 +251,28 @@ def collect_borrow_cost(
                         "iborrowdesk: ticker %r not in coverage — skipping",
                         ticker,
                     )
-                    swept += 1
                     continue
                 except IBorrowDeskBlockedError:
-                    # 444 block — iBorrowDesk's per-run request quota for this
-                    # egress IP is spent. Halt the sweep and record this
-                    # ticker so the next run resumes here, rotating coverage
-                    # across the universe instead of stranding the tail.
+                    # Sustained requests deepen the block — halt now; the next
+                    # run resumes from this ticker on a fresh per-run quota.
                     blocked_at = ticker
                     log.warning(
-                        "iborrowdesk: 444 block at %r after %d/%d tickers — "
-                        "halting sweep; next run resumes here",
+                        "iborrowdesk: 444 block at %r — halting sweep; next run resumes here",
                         ticker,
-                        swept,
-                        len(sweep),
                     )
                     break
 
                 total_rows += _process_response(sess, ticker, payload, ingested_at)
-                swept += 1
 
             _save_cursor(sess, blocked_at, ingested_at)
             sess.commit()
 
         run.rows_written = total_rows
         if blocked_at is not None:
+            reached = sweep.index(blocked_at)
             run.error_summary = (
-                f"iBorrowDesk 444 block at {blocked_at} — swept "
-                f"{swept}/{len(sweep)} tickers; next run resumes at {blocked_at}"
+                f"iBorrowDesk 444 block at {blocked_at} after {reached} of "
+                f"{len(sweep)} tickers — sweep resumes here next run"
             )
 
 
@@ -321,7 +317,7 @@ def refresh_ticker(
 
     ingested_at = _now().isoformat()
 
-    with track_run("iborrowdesk.refresh_ticker", _repo=_repo) as run:
+    with track_run(_REFRESH_COLLECTOR, _repo=_repo) as run:
         with _session_factory() as sess:
             rows = _process_response(sess, ticker, payload, ingested_at)
             sess.commit()

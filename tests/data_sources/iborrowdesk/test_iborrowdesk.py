@@ -18,6 +18,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind._kernel.ids import Symbol
+from alphamind.data_sources.iborrowdesk.borrow_cost import _SWEEP_COLLECTOR as _CURSOR_KEY
 from alphamind.persistence.models import (
     Base,
     BorrowCostDaily,
@@ -64,9 +65,6 @@ def _seed_universe(sf: sessionmaker[Session], tickers: list[str]) -> None:
                     )
                 )
         sess.commit()
-
-
-_CURSOR_KEY = "iborrowdesk.borrow_cost"
 
 
 def _seed_cursor(sf: sessionmaker[Session], next_ticker: str | None) -> None:
@@ -477,10 +475,11 @@ class TestBlockedErrorHandling:
         _engine, sf = _make_db()
         _seed_universe(sf, ["AAA", "BBB", "CCC"])
         fetched: list[str] = []
+        blocking = _blocking_fetch("BBB")
 
         def _side_effect(ticker: str) -> dict[str, Any]:
             fetched.append(ticker)
-            return _blocking_fetch("BBB")(ticker)
+            return blocking(ticker)
 
         with (
             patch(_FETCH_TICKER, side_effect=_side_effect),
