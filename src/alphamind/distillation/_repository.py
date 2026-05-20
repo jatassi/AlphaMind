@@ -143,11 +143,18 @@ class ContractCurrentStateRow:
 
 @dataclass(frozen=True, slots=True)
 class ContractMetadataRow:
-    """Static ``prediction_market_contracts`` projection for a contract."""
+    """Static ``prediction_market_contracts`` projection for a contract.
+
+    ``resolution_date`` is the raw ``Z``-suffixed ISO 8601 string from the
+    contract row, or ``None`` when absent — the compute layer parses it via
+    :func:`alphamind.distillation.qualitative.contract_freshness.parse_resolution_date`
+    to anchor the implicit-year inference in past-date question detection.
+    """
 
     platform: str
     description: str
     category: str
+    resolution_date: str | None = None
 
 
 # ---------------------------------------------------------------------------

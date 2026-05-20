@@ -434,12 +434,18 @@ class SqlDistillationRepository(DistillationRepository):
             PredictionMarketContracts.platform,
             PredictionMarketContracts.description,
             PredictionMarketContracts.category,
+            PredictionMarketContracts.resolution_date,
         ).where(PredictionMarketContracts.contract_id == contract_id)
         row = self._session.execute(stmt).first()
         if row is None:
             return None
-        platform, description, category = row
-        return ContractMetadataRow(platform=platform, description=description, category=category)
+        platform, description, category, resolution_date = row
+        return ContractMetadataRow(
+            platform=platform,
+            description=description,
+            category=category,
+            resolution_date=resolution_date,
+        )
 
     def load_contract_24h_volume_and_liquidity(
         self, *, contract_id: str, as_of: str

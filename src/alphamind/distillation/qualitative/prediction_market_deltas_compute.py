@@ -33,6 +33,10 @@ from alphamind.distillation._repository import (
     ContractMetadataRow,
 )
 from alphamind.distillation.output import AnomalyFlag, OutputAudience, OutputBlock
+from alphamind.distillation.qualitative.contract_freshness import (
+    parse_resolution_date,
+    question_references_past_date,
+)
 
 # ---------------------------------------------------------------------------
 # Tokenization helpers (cross-platform contract matching)
@@ -125,21 +129,40 @@ def _build_per_contract_payload(
     delta_pp_threshold: float,
     low_liquidity_volume_min_usd: float,
 ) -> dict[str, Any] | None:
-    """Compose the per-contract payload, or ``None`` if no history exists."""
+    """Compose the per-contract payload, or ``None`` if no history exists.
+
+    Two staleness flags follow the QR loader's vocabulary (ALP-578) so the
+    synthesizer brief's YAML carries the same signal as the QR text bundle:
+
+    * ``is_question_past_dated`` — the question text references a date before
+      ``freshness_ts`` within the contract's lifetime (the polymarket pattern
+      of "Iran closes its airspace by May 6?" still listed long after May 6).
+    * ``is_stale_low_signal`` — low liquidity AND no movement across the
+      trailing history (yes_probability is constant). Mirrors the QR
+      likely-resolved heuristic.
+    """
     current = inputs.current_state_by_contract.get(contract_id)
     if current is None:
         return None
     metadata = inputs.metadata_by_contract.get(contract_id)
-    platform, description, category = (
-        (metadata.platform, metadata.description, metadata.category)
+    platform, description, category, resolution_date_raw = (
+        (metadata.platform, metadata.description, metadata.category, metadata.resolution_date)
         if metadata is not None
-        else ("", "", "")
+        else ("", "", "", None)
     )
     volume_24h_usd, liquidity_usd = inputs.volume_liquidity_by_contract.get(contract_id, (0.0, 0.0))
     history = inputs.history_by_contract.get(contract_id, ())
 
     delta_anomaly = abs(current.delta_pp_since_prior) >= delta_pp_threshold
     low_liquidity = volume_24h_usd <= low_liquidity_volume_min_usd
+    is_question_past_dated = question_references_past_date(
+        description,
+        inputs.freshness_ts,
+        resolution_date=parse_resolution_date(resolution_date_raw),
+    )
+    history_yes = {entry.yes_probability for entry in history}
+    has_movement = len(history_yes) > 1
+    is_stale_low_signal = low_liquidity and not has_movement
 
     return {
         "contract_id": contract_id,
@@ -153,6 +176,8 @@ def _build_per_contract_payload(
         "volume_24h_usd": volume_24h_usd,
         "liquidity_usd": liquidity_usd,
         "low_liquidity": low_liquidity,
+        "is_question_past_dated": is_question_past_dated,
+        "is_stale_low_signal": is_stale_low_signal,
         "trailing_history": tuple((entry.snapshot_ts, entry.yes_probability) for entry in history),
     }
 
