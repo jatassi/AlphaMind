@@ -426,14 +426,11 @@ def _max_severity_zone(*zones: RiskZone) -> RiskZone:
 
 
 def _render_proximity_zone_tag(size_zone: RiskZone, loss_zone: RiskZone) -> str:
-    """Render the proximity-row zone tag, naming the driver(s) that triggered it.
+    """Render the zone tag for a proximity row.
 
-    The displayed zone is the max severity of the size- and loss-proximity
-    zones; the trailing ``size`` / ``loss`` / ``size+loss`` label names which
-    driver(s) reached that severity. Without it a reader cannot tell whether a
-    ``[CRITICAL]`` flag came from position sizing or from an approaching
-    max-loss — a winning position near its size cap and a losing position near
-    its loss floor would render identically.
+    The displayed zone is the max severity of the two inputs, suffixed with the
+    ``size`` / ``loss`` / ``size+loss`` driver(s) that reached it. Returns the
+    empty string when the max-severity zone is NORMAL.
     """
     zone = _max_severity_zone(size_zone, loss_zone)
     if zone == RiskZone.NORMAL:
@@ -503,8 +500,8 @@ def render_position_proximity_block(
     the corresponding ``position_max_loss_*`` parameter is present, and a
     zone tag whose severity is the max of the size-proximity and loss-proximity
     zones. The tag names its driver(s) — ``[⚠ WARNING: size]`` /
-    ``[CRITICAL: loss]`` / ``[CRITICAL: size+loss]`` — so a reader can tell
-    whether the flag came from position sizing or an approaching max-loss.
+    ``[🔴 CRITICAL: loss]`` / ``[🔴 CRITICAL: size+loss]`` — so a reader can
+    tell whether the flag came from position sizing or an approaching max-loss.
     """
     rows: list[str] = [_POSITION_PROXIMITY_HEADER]
     if not positions:
