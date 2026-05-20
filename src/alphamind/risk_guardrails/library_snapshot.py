@@ -88,16 +88,29 @@ def _accumulate_portfolio_greeks(
 ) -> tuple[float, float, float]:
     """Return (delta_contrib, theta_contrib, vega_contrib) as % of portfolio for one position.
 
-    Contributions are signed by direction and scaled by qty * multiplier / portfolio_value * 100.
+    For an ``OptionsPositionDetails`` position the per-contract ``greeks`` are
+    long-equivalent, so the position-level ``direction`` supplies the sign and
+    the contribution scales by ``contract_count * contract_multiplier``.
+
+    For a ``StrategyPositionDetails`` position the sign already lives in the
+    net-signed ``strategy_greeks`` (ALP-588 decision C) — a net-short-delta
+    strategy carries a negative ``strategy_greeks.delta`` — so no
+    ``direction``-derived sign is applied, and the position-level ``LONG``
+    placeholder is never read. The contribution scales by the leg-summed
+    multiplier units (Σ ``contract_count * contract_multiplier`` across legs),
+    not a single leg's ``contract_count``.
     """
-    sign = 1.0 if direction == Direction.LONG else -1.0
     if isinstance(details, OptionsPositionDetails):
+        sign = 1.0 if direction == Direction.LONG else -1.0
         qty, multiplier, g = details.contract_count, details.contract_multiplier, details.greeks
+        scale = sign * qty * multiplier / portfolio_value_usd * 100.0
     else:  # StrategyPositionDetails
-        qty = details.legs[0].options.contract_count if details.legs else 1.0
-        multiplier = details.legs[0].options.contract_multiplier if details.legs else 1.0
+        leg_summed_units = sum(
+            leg.options.contract_count * leg.options.contract_multiplier
+            for leg in details.legs
+        )
         g = details.strategy_greeks
-    scale = sign * qty * multiplier / portfolio_value_usd * 100.0
+        scale = leg_summed_units / portfolio_value_usd * 100.0
     return g.delta * scale, g.theta * scale, g.vega * scale
 
 
