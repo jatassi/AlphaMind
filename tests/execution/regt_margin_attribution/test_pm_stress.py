@@ -179,6 +179,7 @@ def _bull_call_spread_position(
     underlying_ticker: str,
     long_strike: float,
     short_strike: float,
+    position_direction: Direction = Direction.LONG,
 ) -> PositionRecord:
     long_leg_details = OptionsPositionDetails(
         underlying_ticker=Symbol(underlying_ticker),
@@ -224,7 +225,7 @@ def _bull_call_spread_position(
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=position_direction,
         entry_timestamp=datetime(2026, 1, 1, 14, 30, tzinfo=UTC),
         details=details,
         execution_history=(_fill(),),
@@ -690,6 +691,161 @@ def test_strategy_position_sums_per_leg_pl_at_each_grid_point() -> None:
     # Sanity check the strategy direction: defined-risk bullish, worst at -1.0.
     worst_grid_index = min(range(10), key=lambda i: expected_pls[i])
     assert worst_grid_index == 0  # the -1.0 grid endpoint
+
+
+def test_strategy_stress_sign_independent_of_position_level_direction() -> None:
+    """A strategy's stress sign comes from its per-leg directions, not the
+    position-level direction placeholder (ALP-608).
+
+    The same bull call spread carried under a ``LONG`` vs ``SHORT``
+    position-level direction must produce an identical stress margin: a
+    multi-leg strategy is neither long nor short at the position level, so the
+    position-level field must not enter the revaluation.
+    """
+    long_placeholder = _bull_call_spread_position(
+        position_id=PositionId("p1"),
+        underlying_ticker=Symbol("NVDA"),
+        long_strike=100.0,
+        short_strike=105.0,
+        position_direction=Direction.LONG,
+    )
+    short_placeholder = _bull_call_spread_position(
+        position_id=PositionId("p1"),
+        underlying_ticker=Symbol("NVDA"),
+        long_strike=100.0,
+        short_strike=105.0,
+        position_direction=Direction.SHORT,
+    )
+    cfg = _config(per_symbol_overrides={"NVDA": 0.20})
+
+    margin_long = stress_class_group(
+        class_group=ClassGroup(underlying_symbol="NVDA", positions=(long_placeholder,)),
+        market_inputs=_market(underlying=Symbol("NVDA"), spot=100.0, strikes=(100.0, 105.0)),
+        config=cfg,
+    )
+    margin_short = stress_class_group(
+        class_group=ClassGroup(underlying_symbol="NVDA", positions=(short_placeholder,)),
+        market_inputs=_market(underlying=Symbol("NVDA"), spot=100.0, strikes=(100.0, 105.0)),
+        config=cfg,
+    )
+
+    assert margin_short == pytest.approx(margin_long)
+
+
+def test_net_short_delta_strategy_worst_loss_on_up_shock() -> None:
+    """A net-short-delta strategy (short call dominating) loses on the up-shock.
+
+    A bear call spread = short ATM call (100) + long OTM call (105). Its net
+    delta is negative, so the worst-case grid point is the up-shock (+1.0).
+    The stress sign is derived from the per-leg directions, confirming
+    ``pm_stress`` reads leg data rather than the position-level placeholder.
+    """
+    short_leg_details = OptionsPositionDetails(
+        underlying_ticker=Symbol("NVDA"),
+        strike_price=100.0,
+        expiration_date=_EXPIRATION,
+        contract_type=OptionContractType.CALL,
+        contract_count=1.0,
+        contract_multiplier=100.0,
+        premium_paid_per_contract=5.0,
+        greeks=_greeks(),
+    )
+    long_leg_details = OptionsPositionDetails(
+        underlying_ticker=Symbol("NVDA"),
+        strike_price=105.0,
+        expiration_date=_EXPIRATION,
+        contract_type=OptionContractType.CALL,
+        contract_count=1.0,
+        contract_multiplier=100.0,
+        premium_paid_per_contract=2.0,
+        greeks=_greeks(),
+    )
+    details = StrategyPositionDetails(
+        strategy_type_label="bear_call_spread",
+        legs=(
+            StrategyLeg(leg_id="short_call", direction=Direction.SHORT, options=short_leg_details),
+            StrategyLeg(leg_id="long_call", direction=Direction.LONG, options=long_leg_details),
+        ),
+        net_premium_usd=300.0,
+        max_profit_usd=300.0,
+        max_loss_usd=-200.0,
+        breakeven_levels=(103.0,),
+        strategy_greeks=_greeks(),
+    )
+    bear_spread = PositionRecord(
+        position_id=PositionId("p1"),
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=datetime(2026, 1, 1, 14, 30, tzinfo=UTC),
+        details=details,
+        execution_history=(_fill(),),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    group = ClassGroup(underlying_symbol="NVDA", positions=(bear_spread,))
+    shock_pct = 0.20
+    cfg = _config(per_symbol_overrides={"NVDA": shock_pct})
+    spot = 100.0
+
+    margin = stress_class_group(
+        class_group=group,
+        market_inputs=_market(underlying=Symbol("NVDA"), spot=spot, strikes=(100.0, 105.0)),
+        config=cfg,
+    )
+
+    # Hand-roll the per-grid-point net P/L: short call -1 contract, long call +1.
+    grid_positions = [-1.0 + i * (2.0 / 9.0) for i in range(10)]
+    short_baseline = bs_price(
+        spot=spot,
+        strike=100.0,
+        time_to_expiration_years=_TIME_TO_EXPIRATION_YEARS,
+        risk_free_rate=_RISK_FREE_RATE,
+        implied_volatility=_IV,
+        contract_type=ContractType.CALL,
+    )
+    long_baseline = bs_price(
+        spot=spot,
+        strike=105.0,
+        time_to_expiration_years=_TIME_TO_EXPIRATION_YEARS,
+        risk_free_rate=_RISK_FREE_RATE,
+        implied_volatility=_IV,
+        contract_type=ContractType.CALL,
+    )
+    iv_low = cfg.iv_shock.worst_down_multiplier
+    iv_high = cfg.iv_shock.worst_up_multiplier
+    expected_pls: list[float] = []
+    for grid_pos in grid_positions:
+        shocked_spot = spot * (1.0 + grid_pos * shock_pct)
+        weight = (grid_pos + 1.0) / 2.0
+        iv_mult = iv_low + weight * (iv_high - iv_low)
+        short_shocked = bs_price(
+            spot=shocked_spot,
+            strike=100.0,
+            time_to_expiration_years=_TIME_TO_EXPIRATION_YEARS,
+            risk_free_rate=_RISK_FREE_RATE,
+            implied_volatility=_IV * iv_mult,
+            contract_type=ContractType.CALL,
+        )
+        long_shocked = bs_price(
+            spot=shocked_spot,
+            strike=105.0,
+            time_to_expiration_years=_TIME_TO_EXPIRATION_YEARS,
+            risk_free_rate=_RISK_FREE_RATE,
+            implied_volatility=_IV * iv_mult,
+            contract_type=ContractType.CALL,
+        )
+        short_pl = (short_shocked - short_baseline) * -1.0 * 100.0
+        long_pl = (long_shocked - long_baseline) * 1.0 * 100.0
+        expected_pls.append(short_pl + long_pl)
+
+    assert margin == pytest.approx(abs(min(expected_pls)))
+    # Net-short-delta: worst loss is the up-shock endpoint.
+    worst_grid_index = min(range(10), key=lambda i: expected_pls[i])
+    assert worst_grid_index == 9  # the +1.0 grid endpoint
 
 
 def test_lookup_iv_called_once_per_option_leg() -> None:

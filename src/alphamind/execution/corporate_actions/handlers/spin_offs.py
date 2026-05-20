@@ -41,6 +41,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionFill,
     PositionRecord,
     PositionStatus,
+    position_direction,
 )
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
@@ -68,7 +69,10 @@ def _require_long_equity_parent(position: PositionRecord) -> EquityPositionDetai
     if not isinstance(details, EquityPositionDetails):
         msg = "SPIN_OFF on non-equity parent position not supported"
         raise NotImplementedError(msg)
-    if position.direction != Direction.LONG:
+    # Narrowed to an equity position: the position-level direction is non-None.
+    direction = position_direction(position)
+    assert direction is not None  # equity position
+    if direction != Direction.LONG:
         msg = "SPIN_OFF on non-LONG parent position not supported"
         raise NotImplementedError(msg)
     return details

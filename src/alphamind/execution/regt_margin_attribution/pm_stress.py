@@ -45,6 +45,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     StrategyLeg,
     StrategyPositionDetails,
+    position_direction,
 )
 from alphamind.risk_guardrails.guardrail_evaluation.black_scholes import bs_price
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
@@ -196,7 +197,10 @@ def _build_leg_baselines(
     baselines: list[_LegBaseline] = []
     for position in positions:
         if isinstance(position.details, OptionsPositionDetails):
-            position_sign = _direction_sign(position.direction)
+            # Single-leg option: directionality is the position-level sign.
+            direction = position_direction(position)
+            assert direction is not None  # narrowed to OptionsPositionDetails above
+            position_sign = _direction_sign(direction)
             baselines.append(
                 _baseline_for_leg(
                     underlying_ticker=position.details.underlying_ticker,
@@ -209,7 +213,11 @@ def _build_leg_baselines(
                 )
             )
         elif isinstance(position.details, StrategyPositionDetails):
-            position_sign = _direction_sign(position.direction)
+            # A multi-leg strategy is neither long nor short at the position
+            # level — ``position_direction`` returns ``None``. The strategy's
+            # net-signed exposure is the sum of its per-leg signed
+            # contributions, so each leg's sign comes solely from
+            # ``StrategyLeg.direction``.
             for leg in position.details.legs:
                 leg_sign = _strategy_leg_sign(leg)
                 baselines.append(
@@ -219,7 +227,7 @@ def _build_leg_baselines(
                         expiration=leg.options.expiration_date,
                         contract_type=leg.options.contract_type,
                         contract_multiplier=leg.options.contract_multiplier,
-                        signed_contracts=position_sign * leg_sign * leg.options.contract_count,
+                        signed_contracts=leg_sign * leg.options.contract_count,
                         market_inputs=market_inputs,
                     )
                 )
@@ -291,5 +299,7 @@ def _equity_signed_quantity_sum(
     total = 0.0
     for position in positions:
         if isinstance(position.details, EquityPositionDetails):
-            total += _direction_sign(position.direction) * position.details.share_count
+            direction = position_direction(position)
+            assert direction is not None  # narrowed to EquityPositionDetails above
+            total += _direction_sign(direction) * position.details.share_count
     return total

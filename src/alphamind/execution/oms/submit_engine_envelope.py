@@ -442,19 +442,28 @@ def _engine_close_dispatch_kwargs(
     from alphamind.execution.broker_adapter import strategy_legs_to_close_acks
     from alphamind.execution.broker_adapter.order_options import build_occ_symbol
     from alphamind.portfolio_state.records.positions import (
+        Direction,
         EquityPositionDetails,
         OptionsPositionDetails,
         StrategyPositionDetails,
+        position_direction,
     )
 
     if isinstance(position.details, EquityPositionDetails):
+        # Equity position: the position-level direction is well-defined.
+        direction = position_direction(position)
+        assert direction is not None  # equity position
         return {
             "position_asset_type": "equity",
             "position_symbol": position.details.ticker,
             "position_qty": position.details.share_count,
-            "position_side": "long" if position.direction.value == "LONG" else "short",
+            "position_side": "long" if direction is Direction.LONG else "short",
         }
     if isinstance(position.details, OptionsPositionDetails):
+        # Single-leg options position: the position-level direction is
+        # well-defined.
+        direction = position_direction(position)
+        assert direction is not None  # single-leg options position
         occ = build_occ_symbol(
             position.details.underlying_ticker,
             position.details.expiration_date,
@@ -465,9 +474,7 @@ def _engine_close_dispatch_kwargs(
             "position_asset_type": "option",
             "occ_symbol": occ,
             "position_qty": position.details.contract_count,
-            "position_intent": (
-                "sell_to_close" if position.direction.value == "LONG" else "buy_to_close"
-            ),
+            "position_intent": ("sell_to_close" if direction is Direction.LONG else "buy_to_close"),
         }
     if isinstance(position.details, StrategyPositionDetails):
         # The seam reverses each leg (LONG → sell_to_close, SHORT →

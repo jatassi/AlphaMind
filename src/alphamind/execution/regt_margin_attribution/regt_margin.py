@@ -20,6 +20,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     PositionStatus,
     StrategyPositionDetails,
+    position_direction,
 )
 
 # ---------------------------------------------------------------------------
@@ -167,9 +168,14 @@ def compute_regt_margin(
             continue
         details = pos.details
         if isinstance(details, EquityPositionDetails):
-            total += _equity_margin(details, pos.direction, underlying_prices)
+            # Narrowed to a single-instrument position: direction is non-None.
+            direction = position_direction(pos)
+            assert direction is not None  # equity position
+            total += _equity_margin(details, direction, underlying_prices)
         elif isinstance(details, OptionsPositionDetails):
-            total += _option_leg_margin(details, pos.direction, underlying_prices)
+            direction = position_direction(pos)
+            assert direction is not None  # single-leg options position
+            total += _option_leg_margin(details, direction, underlying_prices)
         elif isinstance(details, StrategyPositionDetails):
             total += _strategy_position_margin(details, underlying_prices)
     return total
