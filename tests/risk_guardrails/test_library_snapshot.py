@@ -1843,14 +1843,10 @@ def test_strategy_greek_contribution_uses_leg_summed_multiplier_units() -> None:
     lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
 
     leg_summed_units = (2.0 * 100.0) + (3.0 * 100.0)
-    expected_delta_pct = (
-        strategy_greeks.delta * leg_summed_units / lib.portfolio_value_usd * 100.0
-    )
+    expected_delta_pct = strategy_greeks.delta * leg_summed_units / lib.portfolio_value_usd * 100.0
     assert lib.options_delta_pct == pytest.approx(expected_delta_pct)
 
     first_leg_units = 2.0 * 100.0
-    first_leg_delta_pct = (
-        strategy_greeks.delta * first_leg_units / lib.portfolio_value_usd * 100.0
-    )
+    first_leg_delta_pct = strategy_greeks.delta * first_leg_units / lib.portfolio_value_usd * 100.0
     # The leg-summed scaling must differ from the discarded first-leg scaling.
     assert lib.options_delta_pct != pytest.approx(first_leg_delta_pct)

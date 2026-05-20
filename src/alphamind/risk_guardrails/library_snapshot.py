@@ -106,8 +106,7 @@ def _accumulate_portfolio_greeks(
         scale = sign * qty * multiplier / portfolio_value_usd * 100.0
     else:  # StrategyPositionDetails
         leg_summed_units = sum(
-            leg.options.contract_count * leg.options.contract_multiplier
-            for leg in details.legs
+            leg.options.contract_count * leg.options.contract_multiplier for leg in details.legs
         )
         g = details.strategy_greeks
         scale = leg_summed_units / portfolio_value_usd * 100.0

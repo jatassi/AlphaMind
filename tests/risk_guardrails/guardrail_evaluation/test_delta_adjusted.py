@@ -454,9 +454,7 @@ def test_net_short_delta_strategy_signed_notional_is_negative() -> None:
     # The signed notional must carry the net delta's sign.
     assert result.signed_notional_usd < 0
     # Magnitude matches |net delta| * buffer * spot * multiplier * quantity.
-    expected_magnitude = (
-        abs(result.net_greeks.delta) * 1.10 * _SPOT * _CONTRACT_MULTIPLIER * 1.0
-    )
+    expected_magnitude = abs(result.net_greeks.delta) * 1.10 * _SPOT * _CONTRACT_MULTIPLIER * 1.0
     assert result.signed_notional_usd == pytest.approx(-expected_magnitude, rel=1e-9)
 
 
