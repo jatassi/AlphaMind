@@ -16,14 +16,10 @@ Two pieces:
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alphamind._kernel.ids import (
-    OccSymbol,
-)
 from alphamind.commands.command_models import (
     CloseCommand,
     StrategyType,
@@ -31,8 +27,7 @@ from alphamind.commands.command_models import (
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.execution import ExecutionConfig
 from alphamind.execution.broker_adapter.order_mleg import (
-    MLEGLegAck,
-    PositionIntentLiteral,
+    strategy_legs_to_close_acks,
     submit_mleg_close,
 )
 from alphamind.execution.broker_adapter.order_options import (
@@ -219,7 +214,9 @@ class AlpacaBracketCloseSubmitter:
         details: StrategyPositionDetails,
         client_order_id_base: str,
     ) -> CloseSubmissionResult:
-        open_legs = _open_legs_from_strategy(details)
+        # The seam reverses each leg (LONG → sell_to_close, SHORT →
+        # buy_to_close); ``submit_mleg_close`` receives close-side legs.
+        close_legs = strategy_legs_to_close_acks(details.legs)
         strategy_type = _strategy_type_from_label(details.strategy_type_label)
         try:
             outcome = await submit_mleg_close(
@@ -227,7 +224,7 @@ class AlpacaBracketCloseSubmitter:
                 client=self._trading_client,  # type: ignore[arg-type]
                 execution=self._execution_config,
                 client_order_id=client_order_id_base,
-                open_legs=open_legs,
+                close_legs=close_legs,
                 strategy_type=strategy_type,
                 position_units=1.0,  # bracket close: one strategy unit
             )
@@ -320,38 +317,6 @@ def _build_synthetic_close_command(position: PositionRecord) -> CloseCommand:
         close_rationale_type="risk_management",
         risk_management_subtype="engine_guardrail",
     )
-
-
-def _open_legs_from_strategy(
-    details: StrategyPositionDetails,
-) -> Sequence[MLEGLegAck]:
-    """Reconstruct the open-legs ack tuple the mleg close path needs from a strategy position.
-
-    Mirrors the layout :func:`submit_mleg_open` produces — one ack per leg
-    with the original open-side intent, sized at ratio=1 (we use the
-    strategy's per-unit ratios). The ``occ_symbol`` per leg is rebuilt from
-    the leg's options details.
-    """
-    acks: list[MLEGLegAck] = []
-    for leg in details.legs:
-        opt = leg.options
-        occ = build_occ_symbol(
-            opt.underlying_ticker, opt.expiration_date, opt.contract_type, opt.strike_price
-        )
-        leg_direction = leg.direction or Direction.LONG
-        side: str = "buy" if leg_direction is Direction.LONG else "sell"
-        intent: PositionIntentLiteral = (
-            "buy_to_open" if leg_direction is Direction.LONG else "sell_to_open"
-        )
-        acks.append(
-            MLEGLegAck(
-                occ_symbol=OccSymbol(occ),
-                side=side,  # type: ignore[arg-type]
-                ratio_qty=int(opt.contract_count),
-                position_intent=intent,
-            )
-        )
-    return tuple(acks)
 
 
 _KNOWN_STRATEGY_TYPES: frozenset[str] = frozenset(
