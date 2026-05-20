@@ -20,24 +20,33 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from enum import StrEnum
 
 from alphamind.distillation._calibration_core import CalibrationState
 from alphamind.distillation.normalization import percentile_rank
 
 MARKET_LIQUIDITY_COMPOSITE_KIND = "market_liquidity"
 
-# A neutral midpoint (50th-percentile) score substituted when a component's
-# trailing series carries no signal — empty or zero-variance. Chosen as the
-# midpoint of the 0..100 percentile-rank scale so a bootstrap-neutral
-# component contributes neither stress nor calm to the sum.
+# A neutral midpoint score substituted when a component's trailing series
+# carries no signal — empty or zero-variance. Per-component scores live on
+# the 0..100 percentile-rank scale; the summed composite_value lives on a
+# 0..(N x 100) scale (300 for the current three-component blend). The
+# midpoint is chosen so a bootstrap-neutral component contributes neither
+# stress nor calm to the sum.
 BOOTSTRAP_NEUTRAL_SCORE: float = 50.0
 
-CompositeMethod = Literal[
-    "normalized_percentile_sum",
-    "normalized_with_bootstrap_neutral",
-    "all_neutral_bootstrap",
-]
+
+class CompositeMethod(StrEnum):
+    """How the per-component scores feeding ``composite_value`` were produced.
+
+    Surfaces alongside the composite in the published payload so downstream
+    consumers can tell a fully-calibrated multi-component blend from a
+    bootstrap-window fallback.
+    """
+
+    NORMALIZED_PERCENTILE_SUM = "normalized_percentile_sum"
+    NORMALIZED_WITH_BOOTSTRAP_NEUTRAL = "normalized_with_bootstrap_neutral"
+    ALL_NEUTRAL_BOOTSTRAP = "all_neutral_bootstrap"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,18 +61,22 @@ class NormalizedComponents:
 class MarketLiquidityResult:
     """Output of the market-liquidity composite refresh.
 
-    ``components`` carries the raw FRED proxy values; ``normalized_components``
-    carries the per-component percentile ranks (0..100) that feed the
-    composite sum. ``composite_value`` is the sum of the normalized scores,
-    so a non-degenerate input set yields a composite distinct from any
-    single raw component (ALP-575).
+    ``components`` carries the raw FRED proxy values purely for payload
+    transparency — no decision path reads the raw values; the structural
+    consumers are ``alert_active`` and ``state``.
+    ``normalized_components`` carries the per-component percentile ranks
+    (0..100) that feed ``composite_value`` (sum across components,
+    0..(N x 100); 300 for the current three-component blend), so a
+    non-degenerate input set
+    yields a composite distinct from any single raw component (ALP-575).
 
     ``composite_method`` tags which normalization regime produced the
-    composite — ``"normalized_percentile_sum"`` when every component had a
-    usable trailing series, ``"normalized_with_bootstrap_neutral"`` when one
-    or two components fell back to :data:`BOOTSTRAP_NEUTRAL_SCORE`, and
-    ``"all_neutral_bootstrap"`` when no component had usable history (the
-    composite is a tautological 150.0).
+    composite — :attr:`CompositeMethod.NORMALIZED_PERCENTILE_SUM` when every
+    component had a usable trailing series,
+    :attr:`CompositeMethod.NORMALIZED_WITH_BOOTSTRAP_NEUTRAL` when one or
+    two components fell back to :data:`BOOTSTRAP_NEUTRAL_SCORE`, and
+    :attr:`CompositeMethod.ALL_NEUTRAL_BOOTSTRAP` when no component had
+    usable history (the composite is a tautological 150.0).
 
     ``percentile_60d`` is ``None`` when the trailing composite distribution
     is empty or zero-variance; the assembler preserves the ``None`` so the
@@ -86,19 +99,12 @@ def normalize_market_liquidity_components(
 ) -> NormalizedComponents:
     """Percentile-rank each component against its own trailing FRED series.
 
-    Each raw FRED value is converted to its percentile rank against the
-    component's own trailing series. Without this normalization the
-    volatility_score (VIX, order ~10-50) dominates by magnitude over
-    credit_spread_score (~0-10) and stress_index_score (~-2..+2), so the
-    composite degenerates to "VIX with extra steps" (ALP-575).
-
-    When a component's trailing series is empty or zero-variance the
-    percentile rank is undefined; this helper substitutes
-    :data:`BOOTSTRAP_NEUTRAL_SCORE` (50.0, the percentile midpoint) for that
-    component and tags the result with
-    ``composite_method = "normalized_with_bootstrap_neutral"`` (or
-    ``"all_neutral_bootstrap"`` when no component had usable history) so
-    downstream consumers know the composite isn't a fully-calibrated blend.
+    A component whose trailing series is empty or zero-variance has no
+    well-defined percentile rank; this helper substitutes
+    :data:`BOOTSTRAP_NEUTRAL_SCORE` and tags the result via
+    :class:`CompositeMethod` so the downstream consumer can distinguish a
+    fully-calibrated blend from a bootstrap fallback. See the module
+    docstring for the broader ALP-575 rationale.
     """
     normalized: dict[str, float] = {}
     any_neutral = False
@@ -112,13 +118,12 @@ def normalize_market_liquidity_components(
         else:
             normalized[name] = percentile
             all_neutral = False
-    method: CompositeMethod
     if all_neutral:
-        method = "all_neutral_bootstrap"
+        method = CompositeMethod.ALL_NEUTRAL_BOOTSTRAP
     elif any_neutral:
-        method = "normalized_with_bootstrap_neutral"
+        method = CompositeMethod.NORMALIZED_WITH_BOOTSTRAP_NEUTRAL
     else:
-        method = "normalized_percentile_sum"
+        method = CompositeMethod.NORMALIZED_PERCENTILE_SUM
     return NormalizedComponents(normalized=normalized, composite_method=method)
 
 

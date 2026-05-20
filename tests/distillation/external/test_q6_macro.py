@@ -22,6 +22,7 @@ from alphamind.distillation.output import (
     OutputAudience,
 )
 from alphamind.distillation.q6_macro import (
+    CompositeMethod,
     DollarAttributionLabel,
     DollarAttributionResult,
     FundingStressResult,
@@ -701,7 +702,7 @@ def _make_market_liquidity_result(alert: bool = False) -> MarketLiquidityResult:
         composite_value=180.0,
         components={"spread_score": 4.0, "depth_score": 4.0, "volume_score": 4.0},
         normalized_components={"spread_score": 60.0, "depth_score": 60.0, "volume_score": 60.0},
-        composite_method="normalized_percentile_sum",
+        composite_method=CompositeMethod.NORMALIZED_PERCENTILE_SUM,
         percentile_60d=50.0 if not alert else 5.0,
         alert_active=alert,
         state=CalibrationState.CALIBRATED,

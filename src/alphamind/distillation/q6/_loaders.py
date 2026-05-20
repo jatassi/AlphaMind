@@ -283,14 +283,16 @@ def _read_proxy_component_history(
     proxy_sources: Mapping[str, str],
     lookback_days: int,
 ) -> Mapping[str, list[float]]:
-    """Read strictly-trailing FRED values per component for percentile normalization.
+    """Read trailing FRED values per component for percentile normalization.
 
     For each named component the loader pulls the ``lookback_days``-day
-    trailing window of FRED observations dated strictly before the
-    ``as_of`` calendar day. Excluding the current observation matches the
-    convention used by funding-stress's
-    :func:`_select_component_history` (``as_of < as_of``) and ensures the
-    current reading does not rank against itself.
+    window of FRED observations dated strictly before the ``as_of``
+    calendar day. Excluding observations dated ``as_of`` itself keeps the
+    rank well-defined when the latest reading is published intraday or
+    end-of-day; when the vendor series is stale (weekend, holiday, weekly
+    cadence) the most recent reading lives at an earlier ``observation_date``
+    and will still appear in the trailing window — the resulting self-rank
+    bias is order ``1/N`` on a window of ~8-60 observations.
     """
     range_end_date = (as_of - timedelta(days=1)).strftime("%Y-%m-%d")
     range_start_date = (as_of - timedelta(days=lookback_days)).strftime("%Y-%m-%d")

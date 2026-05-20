@@ -64,6 +64,7 @@ from alphamind.distillation.q6.inflation_compute import (
 from alphamind.distillation.q6.macro_surprise_compute import detect_macro_surprise_anomaly
 from alphamind.distillation.q6.market_liquidity_compute import (
     MARKET_LIQUIDITY_COMPOSITE_KIND,
+    CompositeMethod,
     MarketLiquidityResult,
 )
 from alphamind.distillation.q6.yield_curve_compute import (
@@ -76,6 +77,7 @@ __all__ = [
     "FUNDING_STRESS_COMPONENT_NAMES",
     "FUNDING_STRESS_COMPOSITE_KIND",
     "MARKET_LIQUIDITY_COMPOSITE_KIND",
+    "CompositeMethod",
     "DollarAttributionLabel",
     "DollarAttributionResult",
     "FundingStressResult",

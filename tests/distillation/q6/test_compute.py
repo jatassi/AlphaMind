@@ -51,6 +51,7 @@ from alphamind.distillation.q6.funding_stress_compute import (
 )
 from alphamind.distillation.q6.market_liquidity_compute import (
     BOOTSTRAP_NEUTRAL_SCORE,
+    CompositeMethod,
     normalize_market_liquidity_components,
 )
 
@@ -551,7 +552,7 @@ def _calibrated_market_liquidity() -> MarketLiquidityResult:
         composite_value=150.0,
         components={"a": 1.0, "b": 1.0, "c": 1.0},
         normalized_components={"a": 50.0, "b": 50.0, "c": 50.0},
-        composite_method="normalized_percentile_sum",
+        composite_method=CompositeMethod.NORMALIZED_PERCENTILE_SUM,
         percentile_60d=50.0,
         alert_active=False,
         state=CalibrationState.CALIBRATED,

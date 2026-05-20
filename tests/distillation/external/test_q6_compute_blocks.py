@@ -540,8 +540,9 @@ class TestMarketLiquidityBoundary:
     """
 
     def test_alert_fires_when_composite_in_bottom_decile(self, session: Session) -> None:
-        # Seed normalized-scale composite history climbing from 100..159 so
-        # any new composite below ~106 lands in the bottom decile.
+        # Seed prior composite history on the normalized 0..300 scale,
+        # climbing 100..159 — any new composite_value below ~106 lands in
+        # the bottom decile of that distribution.
         _seed_market_liquidity_history(session, n_rows=60, base_value=100.0, increment=1.0)
         # Seed multi-day per-component FRED history with non-degenerate
         # distributions (zero-variance series collapse percentile_rank to
@@ -570,8 +571,8 @@ class TestMarketLiquidityBoundary:
         ml_block = next(b for b in blocks if b.block_id == "q6.market_liquidity")
         assert ml_block.payload["alert_active"] is True
         assert ml_block.payload["percentile_60d"] <= 10.0
-        # And — the load-bearing assertion for ALP-575 — composite_value is
-        # NOT bit-identical to any single raw component.
+        # composite_value must not degenerate to any single raw input
+        # (normalization regression).
         for component_value in ml_block.payload["components"].values():
             assert ml_block.payload["composite_value"] != component_value
 
