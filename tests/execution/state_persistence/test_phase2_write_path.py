@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -41,9 +41,12 @@ from alphamind._kernel.ids import (
 )
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.commands.command_models import (
+    BracketAdjustment,
     BracketOrderParameters,
     EntryOrder,
     EquityInstrument,
+    NewStopLevel,
+    NewTargetLevel,
     PositionSize,
     PriceCondition,
     PriceLeg,
@@ -88,13 +91,21 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    PLAnchorSpec,
     PriceTrigger,
+    TimeTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
+    OptionContractType,
+    OptionGreeks,
+    OptionsPositionDetails,
+    PositionFill,
     PositionRecord,
     PositionStatus,
+    StrategyLeg,
+    StrategyPositionDetails,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -115,9 +126,13 @@ from alphamind.state.invocation_context.records import (
     process_lifetime_record_to_row,
 )
 from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
 from alphamind.state.tables.brackets_codec import (
     record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.brackets_codec import (
+    row_to_leg,
 )
 from alphamind.state.tables.cash_ledger import (
     CASH_LEDGER_SINGLETON_ID,
@@ -460,8 +475,6 @@ def _adjust_command(
     replacement protective order. Pass ``with_stop_level=False`` for a
     thesis-only ADJUST that exercises the no-broker-mutation path.
     """
-    from alphamind.commands.command_models import NewStopLevel
-
     return AdjustCommand(
         command_type="adjust",
         position_id=PositionId(position_id),
@@ -490,7 +503,11 @@ def _cancel_command(order_id: str = "ord-entry-1") -> CancelCommand:
     return CancelCommand(command_type="cancel", order_id=OrderId(order_id), cancel_reason="stale")
 
 
-def _add_command(position_id: str = "POS-NVDA-001") -> AddCommand:
+def _add_command(
+    position_id: str = "POS-NVDA-001",
+    *,
+    bracket_adjustment: BracketAdjustment | None = None,
+) -> AddCommand:
     return AddCommand(
         command_type="add",
         position_id=PositionId(position_id),
@@ -504,7 +521,7 @@ def _add_command(position_id: str = "POS-NVDA-001") -> AddCommand:
             narrative="Add to NVDA.",
             key_assumptions=("Setup intact.",),
         ),
-        bracket_adjustment=None,
+        bracket_adjustment=bracket_adjustment,
     )
 
 
@@ -677,6 +694,135 @@ def _active_bracket(
     )
 
 
+def _three_leg_bracket(
+    *,
+    bracket_id: str = "BRK-NVDA-1",
+    position_id: str = "POS-NVDA-001",
+    underlying: str = "NVDA",
+    target_pl_anchor: PLAnchorSpec | None = None,
+) -> BracketRecord:
+    """An ACTIVE bracket carrying one TAKE_PROFIT + PRICE_STOP + TIME_EXPIRATION
+    leg — the shape the ADJUST / ADD leg-modification path re-persists in place.
+
+    One leg of each modifiable type so the stop / target / time change-fields
+    each resolve to exactly one matching leg. ``target_pl_anchor`` seeds the
+    OPEN-time anchor on the take-profit leg (set for a strategy bracket).
+    """
+    take_profit = BracketLeg(
+        leg_id=f"{bracket_id}-leg-target",
+        leg_type=BracketLegType.TAKE_PROFIT,
+        order_id=OrderId(f"{bracket_id}-ord-target"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol(underlying), threshold_usd=950.0, direction="GTE"
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.ACTIVE,
+        pl_anchor=target_pl_anchor,
+    )
+    price_stop = BracketLeg(
+        leg_id=f"{bracket_id}-leg-stop",
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol(underlying), threshold_usd=140.0, direction="LTE"
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.ACTIVE,
+    )
+    time_leg = BracketLeg(
+        leg_id=f"{bracket_id}-leg-time",
+        leg_type=BracketLegType.TIME_EXPIRATION,
+        order_id=OrderId(f"{bracket_id}-ord-time"),
+        trigger=TimeTrigger(deadline=_NOW + timedelta(hours=24)),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.ACTIVE,
+    )
+    return BracketRecord(
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
+        status=BracketStatus.ACTIVE,
+        entry_order_id=OrderId("ord-entry-1"),
+        protective_legs=(take_profit, price_stop, time_leg),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+        entry_window_deadline=None,
+    )
+
+
+def _strategy_position(
+    position_id: str = "POS-NVDA-001",
+    *,
+    thesis_id: str = "THE-NVDA-1",
+    bracket_id: str = "BRK-NVDA-1",
+    net_premium_usd: float = -300.0,
+) -> PositionRecord:
+    """A bull put credit spread on NVDA (short 850 put / long 840 put).
+
+    Mirrors the strategy-evaluator test fixture: ``net_premium_usd`` is the
+    strategy cost basis (credit-negative), ``max_profit_usd`` its magnitude.
+    At a spot far above both strikes both puts decay worthless, so the
+    strategy's net P/L climbs toward the full credit.
+    """
+
+    def _leg(leg_id: str, strike: float, direction: Direction) -> StrategyLeg:
+        return StrategyLeg(
+            leg_id=leg_id,
+            options=OptionsPositionDetails(
+                underlying_ticker=Symbol("NVDA"),
+                strike_price=strike,
+                expiration_date=date(2026, 6, 19),
+                contract_type=OptionContractType.PUT,
+                contract_count=1.0,
+                contract_multiplier=100.0,
+                premium_paid_per_contract=0.0,
+                greeks=OptionGreeks(
+                    delta=-0.3,
+                    gamma=0.02,
+                    theta=-0.04,
+                    vega=0.2,
+                    as_of_timestamp=_NOW,
+                    iv_used=0.30,
+                ),
+            ),
+            direction=direction,
+        )
+
+    details = StrategyPositionDetails(
+        strategy_type_label="vertical_spread",
+        legs=(
+            _leg("leg-short", 850.0, Direction.SHORT),
+            _leg("leg-long", 840.0, Direction.LONG),
+        ),
+        net_premium_usd=net_premium_usd,
+        max_profit_usd=abs(net_premium_usd),
+        max_loss_usd=-(1000.0 - abs(net_premium_usd)),
+        breakeven_levels=(),
+        strategy_greeks=OptionGreeks(delta=0.1, gamma=0.0, theta=0.01, vega=-0.05),
+    )
+    return PositionRecord(
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id),
+        bracket_id=BracketId(bracket_id),
+        status=PositionStatus.OPEN,
+        direction=None,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=(
+            PositionFill(
+                fill_timestamp=_NOW - timedelta(hours=2),
+                fill_price=price(3.0),
+                fill_quantity=1.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
+            ),
+        ),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helper — read all activity log entries written under one invocation
 # ---------------------------------------------------------------------------
@@ -693,6 +839,18 @@ async def _read_activity_log_for(
                     select(ActivityLogRow).where(ActivityLogRow.invocation_id == invocation_id)
                 )
             )
+            .scalars()
+            .all()
+        )
+
+
+async def _read_leg_rows(
+    factory: async_sessionmaker[AsyncSession], *, leg_type: str
+) -> list[BracketLegRow]:
+    """Every ``bracket_legs`` row of a given ``leg_type``."""
+    async with factory() as sess:
+        return list(
+            (await sess.execute(select(BracketLegRow).where(BracketLegRow.leg_type == leg_type)))
             .scalars()
             .all()
         )
@@ -1662,7 +1820,6 @@ async def test_open_command_persists_target_and_invalidation_legs(
     from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
-    from alphamind.state.tables.bracket_legs import BracketLegRow
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -1916,6 +2073,300 @@ async def test_adjust_stop_only_leaves_take_profit_leg_pending(
         # spurious replacement was created from the stop-only ADJUST.
         assert len(all_take_profit) == 1
         assert all_take_profit[0].order_id == "ord-old-target"
+
+
+async def test_adjust_stop_repersists_price_stop_leg_trigger(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A stop-level ADJUST re-persists the bracket's PRICE_STOP leg so the
+    continuous-monitor watcher evaluates the new threshold, not the stale
+    OPEN-time one (ALP-613). The LTE/GTE side is preserved — an ADJUST moves
+    a leg's level, not its direction."""
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
+
+    envelope = _make_strategist_envelope(
+        commands=(_adjust_command(position_id=PositionId("POS-NVDA-001")),)
+    )
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    leg_rows = await _read_leg_rows(factory, leg_type="PRICE_STOP")
+    assert len(leg_rows) == 1
+    trigger = json.loads(leg_rows[0].trigger_payload_json)
+    # _adjust_command sets new_stop_level trigger_price=145.0; _active_bracket
+    # seeds the PRICE_STOP leg at the OPEN-time 140.0.
+    assert trigger["threshold_usd"] == pytest.approx(145.0)
+    assert trigger["direction"] == "LTE"
+
+
+async def test_adjust_target_repersists_equity_take_profit_as_plain_price(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """An equity take-profit ADJUST re-persists the TAKE_PROFIT leg with the
+    new underlying-price threshold and no pl_anchor — equity / single-option
+    targets keep a plain price trigger, mirroring the OPEN path (ALP-613)."""
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _three_leg_bracket())
+
+    cmd = AdjustCommand(
+        command_type="adjust",
+        position_id=PositionId("POS-NVDA-001"),
+        adjustment_rationale="Raise the take-profit.",
+        new_target_level=NewTargetLevel(
+            target_type="absolute_price", price=price(980.0), order_type="limit"
+        ),
+    )
+    envelope = _make_strategist_envelope(commands=(cmd,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    leg_rows = await _read_leg_rows(factory, leg_type="TAKE_PROFIT")
+    assert len(leg_rows) == 1
+    # _three_leg_bracket seeds the TAKE_PROFIT leg at the OPEN-time 950.0.
+    assert json.loads(leg_rows[0].trigger_payload_json)["threshold_usd"] == pytest.approx(980.0)
+    assert leg_rows[0].pl_anchor_json is None
+
+
+async def test_adjust_target_repersists_strategy_take_profit_as_pl_anchored(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A strategy position's bracket take-profit modified via ADJUST with a
+    pl_percentage NewTargetLevel produces a P/L-anchored replacement leg the
+    strategy net-P/L evaluator fires on — the modification counterpart of the
+    OPEN path's _strategy_target_to_bracket_leg (ALP-613)."""
+    from alphamind.execution.continuous_monitor.bracket_stops.triggers import (
+        evaluate_strategy_pl_target_trigger,
+    )
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+    # OPEN-time anchor captures 60% of max profit; the ADJUST drops it to 50%.
+    await _seed_position_cluster(
+        factory,
+        _strategy_position(),
+        _active_thesis(),
+        _three_leg_bracket(
+            target_pl_anchor=PLAnchorSpec(spec_type="target", pct=0.60, planned_entry_price=3.0)
+        ),
+    )
+
+    cmd = AdjustCommand(
+        command_type="adjust",
+        position_id=PositionId("POS-NVDA-001"),
+        adjustment_rationale="Lower the strategy take-profit to 50% of max profit.",
+        new_target_level=NewTargetLevel(
+            target_type="pl_percentage",
+            pl_percentage=50.0,
+            price=price(3.0),
+            order_type="limit",
+        ),
+    )
+    envelope = _make_strategist_envelope(commands=(cmd,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    leg_rows = await _read_leg_rows(factory, leg_type="TAKE_PROFIT")
+    assert len(leg_rows) == 1
+    leg = row_to_leg(leg_rows[0])
+
+    assert leg.pl_anchor is not None
+    assert leg.pl_anchor.spec_type == "target"
+    # pl_percentage=50 → 0.50 fraction; the OPEN-time 0.60 anchor is gone.
+    assert leg.pl_anchor.pct == pytest.approx(0.50)
+    # The strategy net-P/L evaluator fires on the re-persisted leg: at a spot
+    # far above both put strikes the credit spread has captured ~the full
+    # credit, clearing the 50%-of-max-profit target.
+    fired = evaluate_strategy_pl_target_trigger(
+        position=_strategy_position(),
+        leg=leg,
+        spot=1000.0,
+        risk_free_rate=0.045,
+        as_of=_NOW,
+    )
+    assert fired is True
+
+
+async def test_adjust_rejects_non_pl_percentage_target_on_strategy_position(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """An ADJUST replacement take-profit with a non-pl_percentage target on a
+    strategy position is rejected with a clear error. AdjustCommand carries no
+    instrument, so the strategy-ness is read from the persisted position — the
+    write-path counterpart of OpenCommand's ALP-611 model validator."""
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+    await _seed_position_cluster(
+        factory,
+        _strategy_position(),
+        _active_thesis(),
+        _three_leg_bracket(
+            target_pl_anchor=PLAnchorSpec(spec_type="target", pct=0.60, planned_entry_price=3.0)
+        ),
+    )
+
+    cmd = AdjustCommand(
+        command_type="adjust",
+        position_id=PositionId("POS-NVDA-001"),
+        adjustment_rationale="Set an absolute-price take-profit.",
+        new_target_level=NewTargetLevel(
+            target_type="absolute_price", price=price(890.0), order_type="limit"
+        ),
+    )
+    envelope = _make_strategist_envelope(commands=(cmd,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    with pytest.raises(ValueError, match=r"strategy position requires.+pl_percentage"):
+        async with InvocationContext(
+            session_factory=factory,
+            record=_make_invocation_record(invocation_id=_INV_ID + "-phase2"),
+        ) as handle:
+            await persist_envelope_outcome(
+                handle, envelope, results, config=_make_state_persistence_config()
+            )
+
+
+async def test_adjust_time_expiration_repersists_time_leg_deadline(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A time-expiration ADJUST re-persists the bracket's TIME_EXPIRATION leg
+    so the watcher fires on the new deadline, not the stale OPEN-time one
+    (ALP-613)."""
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _three_leg_bracket())
+
+    new_deadline = _NOW + timedelta(hours=48)
+    cmd = AdjustCommand(
+        command_type="adjust",
+        position_id=PositionId("POS-NVDA-001"),
+        adjustment_rationale="Extend the time stop.",
+        new_time_expiration=new_deadline,
+    )
+    envelope = _make_strategist_envelope(commands=(cmd,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    leg_rows = await _read_leg_rows(factory, leg_type="TIME_EXPIRATION")
+    assert len(leg_rows) == 1
+    trigger = json.loads(leg_rows[0].trigger_payload_json)
+    # _three_leg_bracket seeds the time leg at the OPEN-time _NOW + 24h.
+    assert datetime.fromisoformat(trigger["deadline"]) == new_deadline
+
+
+async def test_add_bracket_adjustment_repersists_modified_leg(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ADD's optional bracket_adjustment re-persists the modified bracket leg
+    exactly as ADJUST does — both route through the shared
+    _build_replacement_order_for_change_fields + _apply_protective_leg_modification
+    (ALP-613)."""
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _three_leg_bracket())
+
+    cmd = _add_command(
+        position_id=PositionId("POS-NVDA-001"),
+        bracket_adjustment=BracketAdjustment(
+            new_target_level=NewTargetLevel(
+                target_type="absolute_price", price=price(990.0), order_type="limit"
+            )
+        ),
+    )
+    envelope = _make_strategist_envelope(commands=(cmd,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    leg_rows = await _read_leg_rows(factory, leg_type="TAKE_PROFIT")
+    assert len(leg_rows) == 1
+    # _three_leg_bracket seeds the TAKE_PROFIT leg at the OPEN-time 950.0.
+    assert json.loads(leg_rows[0].trigger_payload_json)["threshold_usd"] == pytest.approx(990.0)
+
+
+async def test_adjust_targeting_absent_leg_type_fails_closed_with_clear_error(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """An ADJUST whose change-field targets a leg type the bracket was opened
+    without fails closed with a clear error rather than silently mismatching.
+    _active_bracket carries only a PRICE_STOP leg, so a new_time_expiration
+    ADJUST has no TIME_EXPIRATION leg to re-persist (ALP-613)."""
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
+
+    cmd = AdjustCommand(
+        command_type="adjust",
+        position_id=PositionId("POS-NVDA-001"),
+        adjustment_rationale="Extend a time stop the bracket never had.",
+        new_time_expiration=_NOW + timedelta(hours=48),
+    )
+    envelope = _make_strategist_envelope(commands=(cmd,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    with pytest.raises(ValueError, match=r"opened without a TIME_EXPIRATION leg"):
+        async with InvocationContext(
+            session_factory=factory,
+            record=_make_invocation_record(invocation_id=_INV_ID + "-phase2"),
+        ) as handle:
+            await persist_envelope_outcome(
+                handle, envelope, results, config=_make_state_persistence_config()
+            )
 
 
 async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(

@@ -156,7 +156,7 @@ def rows_to_record(bracket_row: BracketRow, leg_rows: tuple[BracketLegRow, ...])
     does not re-sort because callers normally read with an
     ``ORDER BY leg_index`` clause.
     """
-    legs = tuple(_row_to_leg(row) for row in leg_rows)
+    legs = tuple(row_to_leg(row) for row in leg_rows)
     history = tuple(
         _modification_from_dict(m) for m in json.loads(bracket_row.modification_history_json)
     )
@@ -172,24 +172,36 @@ def rows_to_record(bracket_row: BracketRow, leg_rows: tuple[BracketLegRow, ...])
     )
 
 
+def _leg_column_values(leg: BracketLeg) -> dict[str, Any]:
+    """The non-identity ``bracket_legs`` column values for *leg*.
+
+    Shared by :func:`_leg_to_row` (fresh insert) and :func:`update_leg_row`
+    (in-place modification) so the leg-row serialization lives in one place.
+    """
+    return {
+        "leg_type": leg.leg_type.value,
+        "order_id": leg.order_id,
+        "trigger_kind": leg.trigger.trigger_type.upper(),
+        "trigger_payload_json": json.dumps(_trigger_to_dict(leg.trigger)),
+        "pl_anchor_json": (
+            json.dumps(_pl_anchor_to_dict(leg.pl_anchor)) if leg.pl_anchor is not None else None
+        ),
+        "enforcement": leg.enforcement.value,
+        "leg_status": leg.status.value,
+    }
+
+
 def _leg_to_row(leg: BracketLeg, *, bracket_id: str, leg_index: int) -> BracketLegRow:
     return BracketLegRow(
         bracket_leg_id=leg.leg_id,
         bracket_id=bracket_id,
         leg_index=leg_index,
-        leg_type=leg.leg_type.value,
-        order_id=leg.order_id,
-        trigger_kind=leg.trigger.trigger_type.upper(),
-        trigger_payload_json=json.dumps(_trigger_to_dict(leg.trigger)),
-        pl_anchor_json=(
-            json.dumps(_pl_anchor_to_dict(leg.pl_anchor)) if leg.pl_anchor is not None else None
-        ),
-        enforcement=leg.enforcement.value,
-        leg_status=leg.status.value,
+        **_leg_column_values(leg),
     )
 
 
-def _row_to_leg(row: BracketLegRow) -> BracketLeg:
+def row_to_leg(row: BracketLegRow) -> BracketLeg:
+    """Hydrate a single persisted leg row to its typed ``BracketLeg`` record."""
     pl_anchor = (
         _pl_anchor_from_dict(json.loads(row.pl_anchor_json))
         if row.pl_anchor_json is not None
@@ -204,6 +216,19 @@ def _row_to_leg(row: BracketLegRow) -> BracketLeg:
         status=BracketLegStatus(row.leg_status),
         pl_anchor=pl_anchor,
     )
+
+
+def update_leg_row(row: BracketLegRow, leg: BracketLeg) -> None:
+    """Overwrite *row*'s non-identity columns in place to reflect *leg*.
+
+    The identity columns — ``bracket_leg_id``, ``bracket_id``, ``leg_index`` —
+    are left untouched: the caller is replacing the leg the row already holds,
+    not relocating it. Used by the ADJUST / ADD write paths to re-persist a
+    modified protective leg so the continuous-monitor watcher evaluates the
+    new trigger / ``pl_anchor`` rather than the stale OPEN-time one (ALP-613).
+    """
+    for column, value in _leg_column_values(leg).items():
+        setattr(row, column, value)
 
 
 def _parse_optional_datetime(value: str | None) -> datetime | None:
