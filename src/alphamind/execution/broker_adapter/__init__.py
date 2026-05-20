@@ -54,6 +54,7 @@ from alphamind.execution.broker_adapter.order_equity import (
 from alphamind.execution.broker_adapter.order_mleg import (
     MLEGLegAck,
     MLEGSubmission,
+    strategy_legs_to_close_acks,
     submit_mleg_add,
     submit_mleg_close,
     submit_mleg_open,
@@ -133,6 +134,7 @@ __all__ = [
     "submit_equity_add",
     "submit_equity_close",
     "submit_equity_open",
+    "strategy_legs_to_close_acks",
     "submit_mleg_add",
     "submit_mleg_close",
     "submit_mleg_open",

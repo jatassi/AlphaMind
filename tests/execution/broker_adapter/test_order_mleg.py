@@ -502,16 +502,150 @@ async def test_open_constructs_each_named_strategy_type(
 
 
 # ---------------------------------------------------------------------------
+# strategy_legs_to_close_acks — the single open→close inversion seam
+# ---------------------------------------------------------------------------
+
+
+def _persisted_strategy_leg(
+    *,
+    leg_id: str,
+    direction: Any,
+    strike: float = 800.0,
+    contract_type: Any = None,
+) -> Any:
+    """Build a portfolio-state ``StrategyLeg`` carrying an open-side direction."""
+    from datetime import date as _date
+
+    from alphamind.portfolio_state.records.positions import (
+        OptionContractType,
+        OptionGreeks,
+        OptionsPositionDetails,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        StrategyLeg as PersistedStrategyLeg,
+    )
+
+    return PersistedStrategyLeg(
+        leg_id=leg_id,
+        direction=direction,
+        options=OptionsPositionDetails(
+            underlying_ticker=Symbol("NVDA"),
+            strike_price=strike,
+            expiration_date=_date(2026, 6, 19),
+            contract_type=contract_type or OptionContractType.CALL,
+            contract_count=1.0,
+            contract_multiplier=100.0,
+            premium_paid_per_contract=8.0,
+            greeks=OptionGreeks(delta=0.5, gamma=0.02, theta=-0.1, vega=0.3, iv_used=0.25),
+        ),
+    )
+
+
+def test_strategy_legs_to_close_acks_inverts_each_open_direction() -> None:
+    """A LONG-opened leg closes sell/sell_to_close; a SHORT-opened leg closes buy/buy_to_close."""
+    from alphamind.execution.broker_adapter.order_mleg import strategy_legs_to_close_acks
+    from alphamind.portfolio_state.records.positions import Direction
+
+    legs = (
+        _persisted_strategy_leg(leg_id="leg-1", direction=Direction.LONG, strike=800.0),
+        _persisted_strategy_leg(leg_id="leg-2", direction=Direction.SHORT, strike=820.0),
+    )
+
+    acks = strategy_legs_to_close_acks(legs)
+
+    assert [ack.side for ack in acks] == ["sell", "buy"]
+    assert [ack.position_intent for ack in acks] == ["sell_to_close", "buy_to_close"]
+    assert [ack.occ_symbol for ack in acks] == [
+        "NVDA  260619C00800000",
+        "NVDA  260619C00820000",
+    ]
+
+
+def test_strategy_legs_to_close_acks_rejects_leg_without_direction() -> None:
+    """A leg whose ``direction`` is unset cannot be reversed — raises ValueError."""
+    from alphamind.execution.broker_adapter.order_mleg import strategy_legs_to_close_acks
+
+    legs = (_persisted_strategy_leg(leg_id="leg-x", direction=None),)
+
+    with pytest.raises(ValueError, match="direction"):
+        strategy_legs_to_close_acks(legs)
+
+
+# ---------------------------------------------------------------------------
 # submit_mleg_close
 # ---------------------------------------------------------------------------
 
 
+def _close_legs_nvda_vertical() -> tuple[MLEGLegAck, ...]:
+    """Close-side legs for a NVDA vertical spread (long call, short call).
+
+    A LONG-opened leg closes ``sell`` / ``sell_to_close``; a SHORT-opened leg
+    closes ``buy`` / ``buy_to_close``. ``submit_mleg_close`` receives these
+    close-side legs directly — the inversion happens upstream at the seam.
+    """
+    return (
+        MLEGLegAck(
+            occ_symbol=OccSymbol("NVDA  260619C00800000"),
+            side="sell",
+            ratio_qty=1,
+            position_intent="sell_to_close",
+        ),
+        MLEGLegAck(
+            occ_symbol=OccSymbol("NVDA  260619C00820000"),
+            side="buy",
+            ratio_qty=1,
+            position_intent="buy_to_close",
+        ),
+    )
+
+
 @pytest.mark.asyncio
-async def test_close_inverts_each_legs_position_intent() -> None:
-    """CLOSE flips buy_to_open → sell_to_close, sell_to_open → buy_to_close."""
-    # The OPEN had legs (long call, short call) → (buy_to_open, sell_to_open).
-    # CLOSE inverts to (sell_to_close, buy_to_close), with sides flipped accordingly.
-    open_legs = (
+async def test_close_translates_close_side_legs_straight() -> None:
+    """CLOSE submits the close-side legs it receives without re-inverting them."""
+    close_legs = _close_legs_nvda_vertical()
+    close_command = CloseCommand(
+        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
+        command_type="close",
+        position_id=PositionId("pos-1"),
+        quantity="all",
+        order_type="market",
+        close_rationale_type="target_reached",
+    )
+    response = _fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1")
+    client = _CapturingClient(response=response)
+
+    outcome = await submit_mleg_close(
+        close_command,
+        client=cast(Any, client),
+        execution=_execution_config(),
+        client_order_id="inv-test.ENV-SA-1.1.1",
+        close_legs=close_legs,
+        strategy_type="vertical_spread",
+        position_units=2.0,
+    )
+
+    assert isinstance(outcome, Submitted)
+    request = client.captured_request
+    assert request.qty == 2.0
+    assert request.order_class == OrderClass.MLEG
+    assert request.time_in_force == TimeInForce.DAY
+    intents = [leg.position_intent for leg in request.legs]
+    sides = [leg.side for leg in request.legs]
+    assert intents == [PositionIntent.SELL_TO_CLOSE, PositionIntent.BUY_TO_CLOSE]
+    assert sides == [OrderSide.SELL, OrderSide.BUY]
+    # OCC symbols carry over unchanged from the close legs.
+    assert [leg.symbol for leg in request.legs] == [
+        "NVDA  260619C00800000",
+        "NVDA  260619C00820000",
+    ]
+    # Strategy_type echoes from the close call.
+    assert outcome.payload.strategy_type == "vertical_spread"
+
+
+@pytest.mark.asyncio
+async def test_close_rejects_non_close_position_intent() -> None:
+    """A leg carrying an open-side intent is rejected — close legs must be ``*_to_close``."""
+    open_side_legs = (
         MLEGLegAck(
             occ_symbol=OccSymbol("NVDA  260619C00800000"),
             side="buy",
@@ -529,56 +663,38 @@ async def test_close_inverts_each_legs_position_intent() -> None:
         command_id=CommandId("inv-test.ENV-SA-1.1.1"),
         command_type="close",
         position_id=PositionId("pos-1"),
-        quantity="all",
+        quantity=1.0,
         order_type="market",
         close_rationale_type="target_reached",
     )
-    response = _fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1")
-    client = _CapturingClient(response=response)
+    client = _CapturingClient(response=_fake_alpaca_order(client_order_id="inv-x"))
 
-    outcome = await submit_mleg_close(
-        close_command,
-        client=cast(Any, client),
-        execution=_execution_config(),
-        client_order_id="inv-test.ENV-SA-1.1.1",
-        open_legs=open_legs,
-        strategy_type="vertical_spread",
-        position_units=2.0,
-    )
-
-    assert isinstance(outcome, Submitted)
-    request = client.captured_request
-    assert request.qty == 2.0
-    assert request.order_class == OrderClass.MLEG
-    assert request.time_in_force == TimeInForce.DAY
-    intents = [leg.position_intent for leg in request.legs]
-    sides = [leg.side for leg in request.legs]
-    assert intents == [PositionIntent.SELL_TO_CLOSE, PositionIntent.BUY_TO_CLOSE]
-    assert sides == [OrderSide.SELL, OrderSide.BUY]
-    # OCC symbols carry over unchanged from the open legs.
-    assert [leg.symbol for leg in request.legs] == [
-        "NVDA  260619C00800000",
-        "NVDA  260619C00820000",
-    ]
-    # Strategy_type echoes from the close call.
-    assert outcome.payload.strategy_type == "vertical_spread"
+    with pytest.raises(ValueError, match="non-close position_intent"):
+        await submit_mleg_close(
+            close_command,
+            client=cast(Any, client),
+            execution=_execution_config(),
+            client_order_id="inv-test.ENV-SA-1.1.1",
+            close_legs=open_side_legs,
+            strategy_type="vertical_spread",
+        )
 
 
 @pytest.mark.asyncio
-async def test_close_with_multi_underlying_open_legs_rejected() -> None:
-    """Open legs that span multiple underlyings raise ValueError."""
-    open_legs = (
+async def test_close_with_multi_underlying_close_legs_rejected() -> None:
+    """Close legs that span multiple underlyings raise ValueError."""
+    close_legs = (
         MLEGLegAck(
             occ_symbol=OccSymbol("NVDA  260619C00800000"),
-            side="buy",
+            side="sell",
             ratio_qty=1,
-            position_intent="buy_to_open",
+            position_intent="sell_to_close",
         ),
         MLEGLegAck(
             occ_symbol=OccSymbol("AAPL  260619C00150000"),
-            side="sell",
+            side="buy",
             ratio_qty=1,
-            position_intent="sell_to_open",
+            position_intent="buy_to_close",
         ),
     )
     close_command = CloseCommand(
@@ -597,7 +713,7 @@ async def test_close_with_multi_underlying_open_legs_rejected() -> None:
             client=cast(Any, client),
             execution=_execution_config(),
             client_order_id="inv-test.ENV-SA-1.1.1",
-            open_legs=open_legs,
+            close_legs=close_legs,
             strategy_type="custom",
         )
 
@@ -605,20 +721,7 @@ async def test_close_with_multi_underlying_open_legs_rejected() -> None:
 @pytest.mark.asyncio
 async def test_close_with_limit_price_uses_limit_order_request() -> None:
     """Close with a net-credit limit price submits a LimitOrderRequest mleg."""
-    open_legs = (
-        MLEGLegAck(
-            occ_symbol=OccSymbol("NVDA  260619C00800000"),
-            side="buy",
-            ratio_qty=1,
-            position_intent="buy_to_open",
-        ),
-        MLEGLegAck(
-            occ_symbol=OccSymbol("NVDA  260619C00820000"),
-            side="sell",
-            ratio_qty=1,
-            position_intent="sell_to_open",
-        ),
-    )
+    close_legs = _close_legs_nvda_vertical()
     close_command = CloseCommand(
         command_id=CommandId("inv-test.ENV-SA-1.1.1"),
         command_type="close",
@@ -635,7 +738,7 @@ async def test_close_with_limit_price_uses_limit_order_request() -> None:
         client=cast(Any, client),
         execution=_execution_config(),
         client_order_id="inv-test.ENV-SA-1.1.1",
-        open_legs=open_legs,
+        close_legs=close_legs,
         strategy_type="vertical_spread",
     )
 
@@ -647,20 +750,7 @@ async def test_close_with_limit_price_uses_limit_order_request() -> None:
 @pytest.mark.asyncio
 async def test_close_with_quantity_all_requires_position_units() -> None:
     """``quantity="all"`` without ``position_units`` raises ValueError."""
-    open_legs = (
-        MLEGLegAck(
-            occ_symbol=OccSymbol("NVDA  260619C00800000"),
-            side="buy",
-            ratio_qty=1,
-            position_intent="buy_to_open",
-        ),
-        MLEGLegAck(
-            occ_symbol=OccSymbol("NVDA  260619C00820000"),
-            side="sell",
-            ratio_qty=1,
-            position_intent="sell_to_open",
-        ),
-    )
+    close_legs = _close_legs_nvda_vertical()
     close_command = CloseCommand(
         command_id=CommandId("inv-test.ENV-SA-1.1.1"),
         command_type="close",
@@ -677,7 +767,7 @@ async def test_close_with_quantity_all_requires_position_units() -> None:
             client=cast(Any, client),
             execution=_execution_config(),
             client_order_id="inv-test.ENV-SA-1.1.1",
-            open_legs=open_legs,
+            close_legs=close_legs,
             strategy_type="vertical_spread",
         )
 
