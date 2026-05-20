@@ -2028,14 +2028,11 @@ def test_single_leg_option_unrealized_pnl_pct_divides_by_cost_basis_unchanged() 
 def test_strategy_position_with_bracket_assembles_without_crash() -> None:
     """ALP-617: a STRATEGY position carrying a position-level bracket assembles cleanly.
 
-    Production OPEN brackets every position, strategies included
-    (``_build_pending_bracket`` accepts a ``StrategyInstrument``), and a strategy
-    position carries ``direction=None`` (ALP-591). ALP-591 guarded the bracket
-    branch of ``_enrich_position_first_pass`` with a false
-    ``assert direction is not None`` that crashed on exactly this shape. The
-    direction-keyed distance / risk-reward metrics are underlying-price-anchored
-    and do not apply to a strategy's P/L-anchored take-profit leg, so they stay
-    ``None`` for a strategy even when a bracket is attached.
+    Production OPEN brackets every position, strategies included, and a strategy
+    position carries ``direction=None`` (ALP-591) — a shape ALP-591's
+    bracket-branch ``assert direction is not None`` wrongly declared impossible,
+    crashing snapshot assembly. The strategy still enriches fully; only the
+    direction-keyed bracket metrics are left ``None``.
     """
     pos = _make_strategy_position(position_id="STR-001", bracket_id=BracketId("BRK-STR-001"))
     bracket = _make_bracket(bracket_id="BRK-STR-001", position_id="STR-001")
@@ -2057,6 +2054,9 @@ def test_strategy_position_with_bracket_assembles_without_crash() -> None:
     )
 
     view = assembled.snapshot.open_positions[0]
+    # The strategy still enriches fully — only the direction-keyed bracket
+    # metrics are skipped. MV = 1 contract * 100 * ($10 + $5) entry premium.
+    assert float(view.current_market_value_usd) == pytest.approx(1500.0)
     assert view.distance_to_target_usd is None
     assert view.distance_to_stop_usd is None
     assert view.risk_reward_at_current is None

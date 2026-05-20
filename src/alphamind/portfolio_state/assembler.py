@@ -479,15 +479,12 @@ def _enrich_position_first_pass(
     distance_to_target_usd: float | None = None
     distance_to_stop_usd: float | None = None
     risk_reward_at_current: float | None = None
-    # The bracket-distance and risk-reward metrics are direction-keyed and
-    # measure the underlying-price distance to each protective leg's threshold,
-    # so they apply only to an equity / single-leg options position. A
-    # multi-leg strategy carries ``direction=None`` (ALP-591) and its
-    # take-profit bracket leg is P/L-anchored, not underlying-price-anchored
-    # (see ``_strategy_target_to_bracket_leg`` in ``phase2/open.py``) — so the
-    # three metrics stay ``None`` for a strategy even when it carries a bracket.
-    if bracket is not None and not isinstance(position.details, StrategyPositionDetails):
-        assert direction is not None  # narrowed: non-strategy carries a Direction
+    # The distance / risk-reward metrics are direction-keyed and measure the
+    # underlying-price distance to each protective leg's threshold, so they
+    # apply only to a directional position. A multi-leg strategy carries
+    # ``direction=None`` (ALP-591) and a P/L-anchored take-profit leg (built by
+    # ``_strategy_target_to_bracket_leg``), so its metrics stay ``None``.
+    if bracket is not None and direction is not None:
         distance_to_target_usd = compute_distance_to_target_usd(
             pf.current_price_usd, bracket, direction
         )
