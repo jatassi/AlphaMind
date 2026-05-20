@@ -344,10 +344,12 @@ Deterministic tool callable by analyst, strategist, and PM during reasoning. Pri
 ```
 validate_guardrail(
   instrument: {ticker, asset_type, direction, [options params if applicable]},
-  size: {quantity, dollar_value, [premium_at_risk if options]},
+  size: {quantity, dollar_value, [premium_at_risk if options/strategy]},
   action: "OPEN" | "ADD" | "CLOSE" | "ADJUST"
 )
 ```
+
+`premium_at_risk` is the position's capital at risk — the USD magnitude of its worst-case loss: the premium paid for a net-debit options position or debit strategy, and (strike width minus net credit received) for a net-credit strategy. It is supplied for options/strategy proposals and omitted for equity.
 
 For the primary portfolio, immediately returns FAIL with reason `feature_disabled` for any instrument with `asset_type: option` or `direction: short`.
 

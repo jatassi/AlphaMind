@@ -122,7 +122,7 @@ For each analyst proposal, the PM emits pass/fail on five criteria. Each criteri
 
 **2. Sizing proportionality** — whether the proposed size is proportionate to the claimed conviction and the instrument's risk profile.
 
-*Reads:* `conviction_level`, `position_size.pct_of_portfolio`, `position_size.premium_at_risk` (when present), `position_size_rationale`, `instrument.asset_type`.
+*Reads:* `conviction_level`, `position_size.pct_of_portfolio`, `position_size.premium_at_risk` (capital at risk — the USD magnitude of the position's worst-case loss; present for defined-risk options/strategies, covering both debit positions and net-credit strategies), `position_size_rationale`, `instrument.asset_type`.
 
 *Fails when:* sizing falls outside the conviction level's [advisory band](analyst.md#conviction-scale) without a concrete rationale for the deviation; sizing sits at a band extreme without addressing the risk-profile nuance the conviction scale requires (e.g., top-of-band on open-ended equity risk without a corresponding argument about tight invalidation or low correlation); the stated rationale contradicts the structured fields (claims defined-risk sizing on an equity position); the thesis narrative describes evidence whose quality, convergence, and catalyst hardness do not support the declared conviction — making the sizing inflated at the root rather than at the mapping.
 
