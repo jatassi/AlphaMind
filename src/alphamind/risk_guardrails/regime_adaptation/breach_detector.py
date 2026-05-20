@@ -114,8 +114,7 @@ def detect_regime_transition_breaches(
             # position_direction() yields None for a strategy, which compares
             # unequal to Direction.SHORT — a strategy is correctly excluded
             # from the short-position set for single_short_max_pct.
-            position_filter=lambda position: position_direction(position.record)
-            == Direction.SHORT,
+            position_filter=lambda position: position_direction(position.record) == Direction.SHORT,
         )
     )
     breaches.extend(

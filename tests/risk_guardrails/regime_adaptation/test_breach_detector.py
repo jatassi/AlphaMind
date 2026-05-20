@@ -137,9 +137,7 @@ def _strategy_position(
             contract_count=1.0,
             contract_multiplier=100.0,
             premium_paid_per_contract=5.0,
-            greeks=OptionGreeks(
-                delta=0.5, gamma=0.02, theta=-0.1, vega=0.3, as_of_timestamp=_NOW
-            ),
+            greeks=OptionGreeks(delta=0.5, gamma=0.02, theta=-0.1, vega=0.3, as_of_timestamp=_NOW),
         ),
     )
     details = StrategyPositionDetails(

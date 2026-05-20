@@ -171,9 +171,7 @@ def _select_single_short_max(
     correctly never selected as a short equity regardless of its inert
     position-level placeholder.
     """
-    shorts = [
-        p for p in open_positions if position_direction(p.record) == Direction.SHORT
-    ]
+    shorts = [p for p in open_positions if position_direction(p.record) == Direction.SHORT]
     if not shorts:
         return 0.0, None
     max_short = min(shorts, key=lambda p: (-p.position_weight_pct, p.position_id))
@@ -352,9 +350,7 @@ def to_library_snapshot(
         # placeholder here. The category-error cleanup that makes the field
         # optional is the separate ALP-603 follow-on.
         library_direction = (
-            _DIRECTION_TO_LIBRARY[direction]
-            if direction is not None
-            else LibraryDirection.LONG
+            _DIRECTION_TO_LIBRARY[direction] if direction is not None else LibraryDirection.LONG
         )
 
         existing_positions[pos.position_id] = ExistingPosition(
