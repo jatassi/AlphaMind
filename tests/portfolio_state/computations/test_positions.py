@@ -166,8 +166,16 @@ def _options_position(
 def _strategy_position(
     legs: list[tuple[str, float, float, float]],  # (leg_id, contract_count, multiplier, delta)
     strategy_delta: float = 0.3,
+    *,
+    leg_directions: tuple[Direction | None, ...] | None = None,
+    net_premium_usd: float = 200.0,
 ) -> PositionRecord:
-    """Build a strategy position from a list of (leg_id, contract_count, multiplier, delta)."""
+    """Build a strategy position from a list of (leg_id, contract_count, multiplier, delta).
+
+    ``leg_directions`` assigns each leg's :attr:`StrategyLeg.direction` positionally;
+    ``None`` (the default for every leg) leaves the field unset, matching legs that
+    carry no explicit direction.
+    """
     strategy_legs = tuple(
         StrategyLeg(
             leg_id=leg_id,
@@ -176,8 +184,9 @@ def _strategy_position(
                 contract_multiplier=mult,
                 delta=delta,
             ),
+            direction=(leg_directions[index] if leg_directions is not None else None),
         )
-        for leg_id, cc, mult, delta in legs
+        for index, (leg_id, cc, mult, delta) in enumerate(legs)
     )
     return PositionRecord(
         position_id=PositionId("pos-003"),
@@ -189,7 +198,7 @@ def _strategy_position(
         details=StrategyPositionDetails(
             strategy_type_label="iron_condor",
             legs=strategy_legs,
-            net_premium_usd=200.0,
+            net_premium_usd=net_premium_usd,
             max_profit_usd=500.0,
             max_loss_usd=-300.0,
             breakeven_levels=(140.0, 160.0),
@@ -324,6 +333,48 @@ class TestComputeStrategyMarketValueUsd:
         pos = _strategy_position([("leg-A", 1.0, 100.0, 0.5)])
         with pytest.raises(KeyError):
             compute_strategy_market_value_usd(pos, {})
+
+    def test_short_leg_contributes_negative_market_value(self) -> None:
+        # ALP-582 regression: a SHORT leg subtracts from the strategy market
+        # value. The prior implementation summed every leg as a positive
+        # contribution, so a spread with a short leg inflated its MV (and the
+        # P/L derived from it). Here the long and short legs price identically,
+        # so the direction-aware sum is 0 — not +$2,000.
+        pos = _strategy_position(
+            [("leg-long", 1.0, 100.0, 0.5), ("leg-short", 1.0, 100.0, 0.5)],
+            leg_directions=(Direction.LONG, Direction.SHORT),
+        )
+        leg_prices = {
+            "leg-long": _price(10.0, ticker=Symbol("leg-long")),
+            "leg-short": _price(10.0, ticker=Symbol("leg-short")),
+        }
+        # +1*100*10 (long) - 1*100*10 (short) = 0
+        assert compute_strategy_market_value_usd(pos, leg_prices) == pytest.approx(0.0)
+
+    def test_pnl_equals_leg_sum_minus_cost_basis_ignoring_other_holdings(self) -> None:
+        # ALP-582 regression: a strategy position's P/L is the direction-aware
+        # sum of its OWN legs minus its cost basis. Other holdings that merely
+        # share the underlying ticker (a separate equity line, an Alpaca-only
+        # orphan) must never enter the leg sum — the calculator keys on the
+        # strategy's leg ids, not the ticker.
+        pos = _strategy_position(
+            [("msft-leg-long", 2.0, 100.0, 0.6), ("msft-leg-short", 2.0, 100.0, 0.4)],
+            leg_directions=(Direction.LONG, Direction.SHORT),
+            net_premium_usd=25.0,
+        )
+        leg_prices = {
+            "msft-leg-long": _price(15.0, ticker=Symbol("MSFT")),
+            "msft-leg-short": _price(12.0, ticker=Symbol("MSFT")),
+            # Unrelated MSFT-keyed quotes — share the ticker, must not leak in.
+            "MSFT": _price(492.0, ticker=Symbol("MSFT")),
+            "alpaca-only-msft": _price(492.0, ticker=Symbol("MSFT")),
+        }
+        market_value = compute_strategy_market_value_usd(pos, leg_prices)
+        # LONG leg: +2*100*15 = +3,000; SHORT leg: -2*100*12 = -2,400; net = 600
+        assert market_value == pytest.approx(600.0)
+        pnl = compute_unrealized_pnl_usd(market_value, 25.0, Direction.LONG)
+        # 600 leg-sum - 25 cost basis = 575 (never +$4,895 from a stray holding)
+        assert pnl == pytest.approx(575.0)
 
 
 # ---------------------------------------------------------------------------

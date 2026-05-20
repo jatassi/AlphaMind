@@ -1104,6 +1104,78 @@ def test_reconciliation_alert_summary_surfaces_sources_and_delta() -> None:
     assert "position=debug-pos-07" in out
 
 
+def _make_reconciliation_alert(
+    *,
+    position_id: str | None,
+    entry_id: str = "ALE-REC-PNL",
+) -> ActivityLogEntry:
+    """Build a RECONCILIATION_ALERT entry for a share-count mismatch."""
+    return ActivityLogEntry(
+        entry_id=entry_id,
+        invocation_id=_INVOCATION_ID,
+        timestamp=_TIMESTAMP,
+        event_type=EventType.RECONCILIATION_ALERT,
+        event_group=EventGroup.RECONCILIATION,
+        position_id=position_id,
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.CORPORATE_ACTION_PROCESSOR,
+        detail=ReconciliationAlertDetail(
+            domain="position",
+            field_name="share_count",
+            local_value=200.0,
+            alpaca_value=199.0,
+            delta_description="NVDA: local share_count=200.0 vs Alpaca qty=199.0",
+        ),
+    )
+
+
+def _pnl_line(rendered: str) -> str:
+    # "since open" is unique to the per-position record's P/L line, isolating
+    # it from the state-delivery header's per-position constraint summary.
+    line = next((ln for ln in rendered.splitlines() if "since open" in ln), None)
+    assert line is not None, "no per-position P/L line found in rendered bundle"
+    return line
+
+
+def test_pnl_line_annotated_when_position_flagged_by_reconciliation_alert() -> None:
+    """ALP-582: a position named by a RECONCILIATION_ALERT carries an
+    unreliable-pending-reconciliation marker on its P/L line."""
+    view = _make_strategist_view(
+        intra_invocation_changelog=(_make_reconciliation_alert(position_id="POS-NVDA-001"),),
+    )
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(strategist_view=view),
+        sector_label_display=_SECTOR_LABELS,
+    )
+    pnl_line = _pnl_line(out)
+    assert "unreliable" in pnl_line.lower()
+    assert "reconciliation" in pnl_line.lower()
+
+
+def test_pnl_line_not_annotated_without_reconciliation_alert() -> None:
+    """ALP-582: a position with no RECONCILIATION_ALERT keeps a clean P/L line."""
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(),
+        sector_label_display=_SECTOR_LABELS,
+    )
+    assert "unreliable" not in _pnl_line(out).lower()
+
+
+def test_pnl_line_not_annotated_for_position_id_less_reconciliation_alert() -> None:
+    """ALP-582: an `alpaca_only_position` alert carries no position_id (there is
+    no matching local position) — it must not annotate an unrelated local
+    position that merely shares the underlying ticker."""
+    view = _make_strategist_view(
+        intra_invocation_changelog=(_make_reconciliation_alert(position_id=None),),
+    )
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(strategist_view=view),
+        sector_label_display=_SECTOR_LABELS,
+    )
+    assert "unreliable" not in _pnl_line(out).lower()
+
+
 def test_distillation_config_change_summary_surfaces_key_old_new() -> None:
     """``DISTILLATION_CONFIG_CHANGE`` entries surface the key_path and old/new values."""
     detail = DistillationConfigChangeDetail(

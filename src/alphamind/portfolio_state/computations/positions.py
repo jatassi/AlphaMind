@@ -60,9 +60,15 @@ def compute_strategy_market_value_usd(
 ) -> float:
     """Return market value in USD for a STRATEGY position, summing across legs.
 
-    Each leg contributes: contract_count * contract_multiplier * leg_prices[leg_id].price_usd
+    Each leg contributes a signed amount:
+    ``sign * contract_count * contract_multiplier * leg_prices[leg_id].price_usd``,
+    where ``sign`` is ``-1`` for a SHORT leg (a written contract — a liability
+    that must be bought back to close) and ``+1`` otherwise. A SHORT leg
+    therefore subtracts from the strategy's net value; for a debit spread the
+    net value tracks the premium paid rather than the gross sum of both legs.
 
-    Raises MissingLegPriceError if any leg_id is absent from leg_prices.
+    A leg with ``direction`` unset is treated as LONG. Raises MissingLegPriceError
+    if any leg_id is absent from leg_prices.
     """
     assert isinstance(position.details, StrategyPositionDetails)
     total = 0.0
@@ -70,7 +76,11 @@ def compute_strategy_market_value_usd(
         if leg.leg_id not in leg_prices:
             raise MissingLegPriceError(leg.leg_id)
         opts = leg.options
-        total += opts.contract_count * opts.contract_multiplier * leg_prices[leg.leg_id].price_usd
+        leg_value = (
+            opts.contract_count * opts.contract_multiplier * leg_prices[leg.leg_id].price_usd
+        )
+        sign = -1.0 if leg.direction == Direction.SHORT else 1.0
+        total += sign * leg_value
     return total
 
 
