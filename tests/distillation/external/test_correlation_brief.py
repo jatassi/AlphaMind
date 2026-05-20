@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from alphamind.distillation.aggregation import EMPTY_UNIVERSAL_CONTEXT_MARKER
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.correlation_brief import (
+    EMPTY_FINDINGS_MARKER,
     CorrelationRegimeBrief,
     assemble_correlation_brief,
 )
@@ -155,19 +157,69 @@ def test_lead_lag_block_with_pair_natural_key_uses_double_colon_form() -> None:
     assert pair_reference == "q7.lead_lag.alpha::alpha"
 
 
-def test_empty_sections_are_omitted() -> None:
-    """Regime-only invocation: only REGIME section appears; other sections suppressed."""
+def test_no_data_invocation_renders_every_section_with_empty_state_marker() -> None:
+    """Per ALP-577: every documented section appears with explicit empty-state text.
+
+    The contract: a brief section never silently drops on empty data — every
+    section has a fixed position and renders either findings or an explicit
+    empty-state marker. Pre-fix, the NARRATIVE LAG section vanished entirely
+    when the news pipeline produced no qualifying headlines (the symptom in
+    invocation ``inv-20260519T030654Z-60f10023``); downstream agents could
+    not distinguish "section not computed" from "section computed but
+    empty" from "section accidentally elided".
+    """
     regime_block = _regime_block()
 
     brief = assemble_correlation_brief(blocks=[regime_block], invocation_id="inv-empty")
 
-    assert "=== REGIME ===" in brief.text
-    assert "=== INTRA-SECTOR CORRELATION ===" not in brief.text
-    assert "=== CROSS-SECTOR ROTATION ===" not in brief.text
-    assert "=== INTERMARKET REGIME SIGNALS ===" not in brief.text
-    assert "=== LEAD-LAG ===" not in brief.text
-    assert "=== CORRELATION REGIME CHANGE ===" not in brief.text
-    assert "=== NARRATIVE LAG ===" not in brief.text
+    text = brief.text
+    expected_headers = (
+        "=== REGIME ===",
+        "=== INTRA-SECTOR CORRELATION ===",
+        "=== CROSS-SECTOR ROTATION ===",
+        "=== INTERMARKET REGIME SIGNALS ===",
+        "=== LEAD-LAG ===",
+        "=== LOCUS FLAGS ===",
+        "=== CORRELATION REGIME CHANGE ===",
+        "=== NARRATIVE LAG ===",
+        "=== UNIVERSAL CONTEXT ===",
+        "=== ANOMALY FLAGS (0) ===",
+    )
+    # Each header appears exactly once, in document order. Counting on
+    # top of the position check hardens against a future regression that
+    # accidentally double-renders a section (``str.find`` would still
+    # return the first index and pass an ordering-only assertion).
+    for header in expected_headers:
+        count = text.count(header)
+        assert count == 1, f"{header} should appear exactly once, found {count}"
+    positions = [text.find(header) for header in expected_headers]
+    assert positions == sorted(positions), positions
+
+    # Every section pair is separated by exactly one blank line — the
+    # ``\n\n=== `` pattern precedes every header but the first.
+    for header in expected_headers[1:]:
+        assert f"\n\n{header}" in text, f"missing blank-line separator before {header}"
+
+    # CR-N sections with no entries render the explicit empty-state marker
+    # immediately after the section header.
+    empty_cr_sections = (
+        "=== INTRA-SECTOR CORRELATION ===",
+        "=== CROSS-SECTOR ROTATION ===",
+        "=== INTERMARKET REGIME SIGNALS ===",
+        "=== LEAD-LAG ===",
+        "=== LOCUS FLAGS ===",
+        "=== CORRELATION REGIME CHANGE ===",
+        "=== NARRATIVE LAG ===",
+    )
+    for header in empty_cr_sections:
+        assert f"{header}\n{EMPTY_FINDINGS_MARKER}\n" in text, (
+            f"{header} should be followed by the {EMPTY_FINDINGS_MARKER!r} marker"
+        )
+
+    # Universal context section carries its own empty-state marker (the
+    # regime block is excluded from the universal-context body — it is
+    # already embedded as CR-1).
+    assert f"=== UNIVERSAL CONTEXT ===\n{EMPTY_UNIVERSAL_CONTEXT_MARKER}\n" in text
 
 
 def test_freshness_min_reflects_oldest_contributing_block() -> None:
