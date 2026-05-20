@@ -52,24 +52,22 @@ def _ema(closes: Sequence[float], window: int) -> float:
     return float(ema_value)
 
 
-def _pct_above_ema(closes_by_ticker: Mapping[str, Sequence[float]], window: int) -> float | None:
+def _pct_above_ema(closes_by_ticker: Mapping[str, Sequence[float]], window: int) -> float:
     """Fraction of tickers whose latest close is above their ``window``-day EMA.
 
-    Returns ``None`` when no non-empty ticker has accumulated at least
-    ``window`` closes — every per-ticker ``_ema`` call would short-circuit
-    to the simple-mean fallback, so emitting a fraction would publish a
-    bootstrap-window value as if it were a real EMA reading. ALP-576: the
-    null sentinel keeps the 200d simple-mean fallback from colliding with
-    the 50d real-EMA value in operator-facing artifacts during the
-    bootstrap window.
+    The caller pre-gates this call against the window's calibration state,
+    so every non-empty ticker is guaranteed to have at least ``window``
+    closes here.
     """
-    non_empty = [closes for closes in closes_by_ticker.values() if closes]
-    if not non_empty:
-        return None
-    if any(len(closes) < window for closes in non_empty):
-        return None
-    above = sum(1 for closes in non_empty if closes[-1] > _ema(closes, window))
-    return float(above) / float(len(non_empty))
+    above = 0
+    total = 0
+    for closes in closes_by_ticker.values():
+        if not closes:
+            continue
+        total += 1
+        if closes[-1] > _ema(closes, window):
+            above += 1
+    return float(above) / float(total)
 
 
 def _last_two_closes(closes: Sequence[float]) -> tuple[float, float] | None:
@@ -155,13 +153,19 @@ def compute_breadth_internals_pure(
     payload: dict[str, object] = {}
     per_window_calibrations: list[tuple[CalibrationState, str | None]] = []
     for window in EMA_WINDOWS_DAYS:
-        payload[f"pct_above_{window}d_ema"] = _pct_above_ema(closes_by_ticker, window)
-        per_window_calibrations.append(
-            _calibration_for_window(
-                n_observations=n_observed,
-                required=window,
-                input_name=f"breadth_ema_{window}d_observations",
-            )
+        calibration = _calibration_for_window(
+            n_observations=n_observed,
+            required=window,
+            input_name=f"breadth_ema_{window}d_observations",
+        )
+        per_window_calibrations.append(calibration)
+        # Null when this window's EMA would silently fall back to the
+        # simple mean of available closes — emitting a fraction would
+        # publish a bootstrap-window value as a real EMA reading.
+        payload[f"pct_above_{window}d_ema"] = (
+            _pct_above_ema(closes_by_ticker, window)
+            if calibration[0] is CalibrationState.CALIBRATED
+            else None
         )
     payload["advance_decline_per_sector"] = _advance_decline_per_sector(
         closes_by_ticker, sector_members
