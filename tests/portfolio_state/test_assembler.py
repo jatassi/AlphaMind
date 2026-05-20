@@ -377,6 +377,7 @@ def _make_bracket(
 
 def _make_strategy_position(
     position_id: str = "STR-001",
+    bracket_id: BracketId | None = None,
     leg1_underlying: str = "NVDA",
     leg2_underlying: str = "NVDA",
     premium1: float = 10.0,
@@ -429,7 +430,7 @@ def _make_strategy_position(
     return PositionRecord(
         position_id=PositionId(position_id),
         thesis_id=None,
-        bracket_id=None,
+        bracket_id=bracket_id,
         status=PositionStatus.OPEN,
         direction=None,
         entry_timestamp=_ENTRY_AT,
@@ -2017,3 +2018,45 @@ def test_single_leg_option_unrealized_pnl_pct_divides_by_cost_basis_unchanged() 
     view = assembled.snapshot.open_positions[0]
     assert float(view.unrealized_pnl_usd) == pytest.approx(500.0)
     assert view.unrealized_pnl_pct == pytest.approx(50.0)
+
+
+# ---------------------------------------------------------------------------
+# Strategy position carrying a position-level bracket (ALP-617 regression)
+# ---------------------------------------------------------------------------
+
+
+def test_strategy_position_with_bracket_assembles_without_crash() -> None:
+    """ALP-617: a STRATEGY position carrying a position-level bracket assembles cleanly.
+
+    Production OPEN brackets every position, strategies included, and a strategy
+    position carries ``direction=None`` (ALP-591) — a shape ALP-591's
+    bracket-branch ``assert direction is not None`` wrongly declared impossible,
+    crashing snapshot assembly. The strategy still enriches fully; only the
+    direction-keyed bracket metrics are left ``None``.
+    """
+    pos = _make_strategy_position(position_id="STR-001", bracket_id=BracketId("BRK-STR-001"))
+    bracket = _make_bracket(bracket_id="BRK-STR-001", position_id="STR-001")
+    fixture = _make_fixture(
+        open_positions=(pos,),
+        brackets=(bracket,),
+        cash_ledger=_make_cash_ledger(current_cash=0.0),
+    )
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 520.0)}, _NOW)
+
+    assembled = assemble_snapshot(
+        repository=repo,
+        price_provider=provider,
+        option_price_provider=StubOptionPriceProvider({}, _NOW),
+        sector_resolver=_null_sector_resolver,
+        config=_make_config(),
+        now=_NOW,
+    )
+
+    view = assembled.snapshot.open_positions[0]
+    # The strategy still enriches fully — only the direction-keyed bracket
+    # metrics are skipped. MV = 1 contract * 100 * ($10 + $5) entry premium.
+    assert float(view.current_market_value_usd) == pytest.approx(1500.0)
+    assert view.distance_to_target_usd is None
+    assert view.distance_to_stop_usd is None
+    assert view.risk_reward_at_current is None
