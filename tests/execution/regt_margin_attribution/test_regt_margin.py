@@ -257,38 +257,13 @@ def test_short_option_put_uses_strike_minus_underlying_for_otm() -> None:
     assert result == pytest.approx(5_000.0)
 
 
-def test_strategy_position_sums_per_leg_margins() -> None:
-    """NVDA short iron condor (4 legs: 2 short calls/puts, 2 long calls/puts).
+def _bull_put_spread_legs() -> tuple[StrategyLeg, StrategyLeg]:
+    """5-point-wide NVDA bull put credit spread legs at underlying 500.
 
-    Manually computed per-leg contributions must sum to the function result.
+    Short put strike=480 (premium 7); long put strike=475 (premium 4).
     """
-    from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
-
-    underlying = 500.0
-
-    # Leg 1: short call, strike=520, premium=8
-    # OTM_call = max(520-500, 0) = 20; max(500*0.20-20, 500*0.10, 8) = max(80,50,8) = 80
-    # contribution = 80 * 1 * 100 = 8_000
-    leg1 = StrategyLeg(
+    short_put = StrategyLeg(
         leg_id="l1",
-        direction=Direction.SHORT,
-        options=OptionsPositionDetails(
-            underlying_ticker=Symbol("NVDA"),
-            strike_price=520.0,
-            expiration_date=date(2026, 12, 19),
-            contract_type=OptionContractType.CALL,
-            contract_count=1.0,
-            contract_multiplier=100.0,
-            premium_paid_per_contract=8.0,
-            greeks=_greeks(),
-        ),
-    )
-
-    # Leg 2: short put, strike=480, premium=7
-    # OTM_put = max(500-480, 0) = 20; max(500*0.20-20, 500*0.10, 7) = max(80,50,7) = 80
-    # contribution = 80 * 1 * 100 = 8_000
-    leg2 = StrategyLeg(
-        leg_id="l2",
         direction=Direction.SHORT,
         options=OptionsPositionDetails(
             underlying_ticker=Symbol("NVDA"),
@@ -301,57 +276,46 @@ def test_strategy_position_sums_per_leg_margins() -> None:
             greeks=_greeks(),
         ),
     )
-
-    # Leg 3: long call, strike=560, premium=3
-    # contribution = 100% * 1 * 3 * 100 = 300
-    leg3 = StrategyLeg(
-        leg_id="l3",
+    long_put = StrategyLeg(
+        leg_id="l2",
         direction=Direction.LONG,
         options=OptionsPositionDetails(
             underlying_ticker=Symbol("NVDA"),
-            strike_price=560.0,
-            expiration_date=date(2026, 12, 19),
-            contract_type=OptionContractType.CALL,
-            contract_count=1.0,
-            contract_multiplier=100.0,
-            premium_paid_per_contract=3.0,
-            greeks=_greeks(),
-        ),
-    )
-
-    # Leg 4: long put, strike=440, premium=2
-    # contribution = 100% * 1 * 2 * 100 = 200
-    leg4 = StrategyLeg(
-        leg_id="l4",
-        direction=Direction.LONG,
-        options=OptionsPositionDetails(
-            underlying_ticker=Symbol("NVDA"),
-            strike_price=440.0,
+            strike_price=475.0,
             expiration_date=date(2026, 12, 19),
             contract_type=OptionContractType.PUT,
             contract_count=1.0,
             contract_multiplier=100.0,
-            premium_paid_per_contract=2.0,
+            premium_paid_per_contract=4.0,
             greeks=_greeks(),
         ),
     )
+    return short_put, long_put
 
+
+def _strategy_position(
+    *,
+    legs: tuple[StrategyLeg, ...],
+    max_loss_usd: float,
+    position_id: str = "strat1",
+    strategy_type_label: str = "bull_put_spread",
+    status: PositionStatus = PositionStatus.OPEN,
+) -> PositionRecord:
     strategy_details = StrategyPositionDetails(
-        strategy_type_label="iron_condor",
-        legs=(leg1, leg2, leg3, leg4),
-        net_premium_usd=500.0,
-        max_profit_usd=1_500.0,
-        max_loss_usd=-2_500.0,
-        breakeven_levels=(440.0, 560.0),
+        strategy_type_label=strategy_type_label,
+        legs=legs,
+        net_premium_usd=300.0,
+        max_profit_usd=300.0,
+        max_loss_usd=max_loss_usd,
+        breakeven_levels=(477.0,),
         strategy_greeks=_greeks(),
     )
-
-    pos = PositionRecord(
-        position_id=PositionId("strat1"),
+    return PositionRecord(
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
-        status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        status=status,
+        direction=Direction.SHORT,
         entry_timestamp=datetime(2026, 1, 1, 14, 30, tzinfo=UTC),
         details=strategy_details,
         execution_history=(_fill(),),
@@ -361,10 +325,19 @@ def test_strategy_position_sums_per_leg_margins() -> None:
         origin=None,
     )
 
-    # Two short legs at 8_000 each plus two long legs at 300 and 200 = 16_500.
-    result = compute_regt_margin((pos,), {"NVDA": underlying})
 
-    assert result == pytest.approx(16_500.0)
+def test_defined_risk_strategy_margin_is_abs_max_loss() -> None:
+    """A defined-risk strategy (finite max_loss_usd) margins at abs(max_loss_usd).
+
+    5-wide bull put spread sold for a $3.00/contract credit:
+    capped loss = (5 * 100 - 300) = -200; margin = abs(-200) = 200.
+    """
+    from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
+
+    pos = _strategy_position(legs=_bull_put_spread_legs(), max_loss_usd=-200.0)
+    result = compute_regt_margin((pos,), {"NVDA": 500.0})
+
+    assert result == pytest.approx(200.0)
 
 
 def test_mixed_portfolio_sums_correctly() -> None:
