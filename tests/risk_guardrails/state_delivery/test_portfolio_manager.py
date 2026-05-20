@@ -511,10 +511,54 @@ def test_render_pm_header_renders_position_level_constraint_proximity_block() ->
     )
     assert "Position-level constraint proximity:" in rendered
     assert (
-        "  POS-NVDA-001:  4.2% of portfolio (max 5.0%) — P/L: -18.0% of cost [⚠ WARNING]"
+        "  POS-NVDA-001:  4.2% of portfolio (max 5.0%) — P/L: -18.0% of cost [⚠ WARNING: size]"
         in rendered
     )
     assert "  POS-AMD-002:   2.1% of portfolio (max 5.0%) — P/L: +5.0% of cost" in rendered
+
+
+def test_render_pm_header_critical_from_size_not_positive_pnl() -> None:
+    """ALP-580 regression: debug-pos-07 (weight 4.5%, P/L +19900%) in the PM header.
+
+    The CRITICAL tag must attribute to size proximity (4.5% / 5.0% = 90%), not
+    to the +19900% P/L — confirms the PM header shares the strategist's
+    signed-comparison loss zone via render_position_proximity_block.
+    """
+    positions = (
+        _make_position(
+            position_id=PositionId("POS-NVDA-001"),
+            ticker=Symbol("NVDA"),
+            sector="tech",
+            weight_pct=4.5,
+            unrealized_pnl_pct=19_900.0,
+        ),
+    )
+    view = _make_pm_view(positions=positions)
+    impact = CrossConstraintImpact(
+        per_rule=(),
+        flagged_rule_ids=(),
+        available_capital_before_usd=300_000.0,
+        available_capital_after_usd=300_000.0,
+    )
+    rendered = render_pm_header(
+        pm_view=view,
+        invocation_id="inv-001",
+        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
+        options_enabled=False,
+        short_selling_enabled=False,
+        active_sectors=("tech", "semis"),
+        config=_make_state_delivery_config(),
+        sector_label_display=_MICRO_SECTOR_LABELS,
+        sector_resolver=_sector_resolver,
+        total_portfolio_value_usd=500_000.0,
+        available_for_new_positions_usd=300_000.0,
+        cross_constraint_impact=impact,
+    )
+    proximity_line = next(
+        line for line in rendered.splitlines() if line.lstrip().startswith("POS-NVDA-001:")
+    )
+    # An exact `: size]` tag rules out the `: loss]` and `: size+loss]` variants.
+    assert proximity_line.endswith("[\U0001f534 CRITICAL: size]")
 
 
 def test_render_pm_header_renders_sector_exposure_breakdown_per_position() -> None:
@@ -1684,7 +1728,7 @@ def test_render_pm_header_micro_fixture_full_render() -> None:
             "  Gross:     78.0% / 120.0% — room: 42.0%",
             "",
             "Position-level constraint proximity:",
-            "  POS-NVDA-001:  4.2% of portfolio (max 5.0%) — P/L: +5.0% of cost [⚠ WARNING]",
+            "  POS-NVDA-001:  4.2% of portfolio (max 5.0%) — P/L: +5.0% of cost [⚠ WARNING: size]",
             "  POS-AAPL-002:  3.1% of portfolio (max 5.0%) — P/L: +5.0% of cost",
             "  POS-MU-003:    2.5% of portfolio (max 5.0%) — P/L: +5.0% of cost",
             "",
@@ -1873,8 +1917,8 @@ def test_render_pm_header_full_system_fixture_full_render() -> None:
             "  Gross:     78.0% / 120.0% — room: 42.0%",
             "",
             "Position-level constraint proximity:",
-            "  POS-NVDA-001:  4.2% of portfolio (max 5.0%) — P/L: +5.0% of cost [⚠ WARNING]",
-            "  POS-AAPL-002:  3.5% of portfolio (max 5.0%) — P/L: +5.0% of cost [⚠ WARNING]",
+            "  POS-NVDA-001:  4.2% of portfolio (max 5.0%) — P/L: +5.0% of cost [⚠ WARNING: size]",
+            "  POS-AAPL-002:  3.5% of portfolio (max 5.0%) — P/L: +5.0% of cost [⚠ WARNING: size]",
             "  POS-AMD-003:   2.1% of portfolio (max 5.0%) — P/L: +5.0% of cost",
             "  POS-AVGO-004:  3.0% of portfolio (max 5.0%) — P/L: +5.0% of cost",
             "  POS-MU-005:    2.5% of portfolio (max 5.0%) — P/L: +5.0% of cost",

@@ -425,6 +425,27 @@ def _max_severity_zone(*zones: RiskZone) -> RiskZone:
     return max(zones, key=_ZONE_ORDER.index)
 
 
+def _render_proximity_zone_tag(size_zone: RiskZone, loss_zone: RiskZone) -> str:
+    """Render the proximity-row zone tag, naming the driver(s) that triggered it.
+
+    The displayed zone is the max severity of the size- and loss-proximity
+    zones; the trailing ``size`` / ``loss`` / ``size+loss`` label names which
+    driver(s) reached that severity. Without it a reader cannot tell whether a
+    ``[CRITICAL]`` flag came from position sizing or from an approaching
+    max-loss — a winning position near its size cap and a losing position near
+    its loss floor would render identically.
+    """
+    zone = _max_severity_zone(size_zone, loss_zone)
+    if zone == RiskZone.NORMAL:
+        return ""
+    sources = [
+        label
+        for label, candidate in (("size", size_zone), ("loss", loss_zone))
+        if candidate == zone
+    ]
+    return f" [{render_zone_tag(zone)}: {'+'.join(sources)}]"
+
+
 def _max_loss_for(active: ActiveRiskParameterSet, rule_id: str) -> float | None:
     for entry in active.entries:
         if entry.rule_id == rule_id:
@@ -463,8 +484,7 @@ def _render_proximity_row(
         suffix = f" (max loss: -{max_loss:.1f}%)"
     size_zone = _classify_position_zone(pos.position_weight_pct, per_position_max_pct)
     loss_zone = _classify_loss_zone(pos.unrealized_pnl_pct, max_loss)
-    zone = _max_severity_zone(size_zone, loss_zone)
-    zone_tag = f" [{render_zone_tag(zone)}]" if zone != RiskZone.NORMAL else ""
+    zone_tag = _render_proximity_zone_tag(size_zone, loss_zone)
     return (
         f"  {padded_id} {weight}% of portfolio (max {max_pct}%) "
         f"— P/L: {pnl}% of cost{suffix}{zone_tag}"
@@ -481,8 +501,10 @@ def render_position_proximity_block(
     Each row shows position weight against the per-position size limit, the
     unrealized P/L of cost, the per-instrument-type max-loss annotation when
     the corresponding ``position_max_loss_*`` parameter is present, and a
-    zone tag (``[⚠ WARNING]`` / ``[CRITICAL]`` / ``[BLOCKED]``) whose severity
-    is the max of the size-proximity and loss-proximity zones.
+    zone tag whose severity is the max of the size-proximity and loss-proximity
+    zones. The tag names its driver(s) — ``[⚠ WARNING: size]`` /
+    ``[CRITICAL: loss]`` / ``[CRITICAL: size+loss]`` — so a reader can tell
+    whether the flag came from position sizing or an approaching max-loss.
     """
     rows: list[str] = [_POSITION_PROXIMITY_HEADER]
     if not positions:

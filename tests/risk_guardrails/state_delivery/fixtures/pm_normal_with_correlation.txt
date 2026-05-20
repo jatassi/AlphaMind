@@ -22,13 +22,13 @@ Options headroom:
   Vega:           0.6% / 1.0%/pt
 
 Position-level constraint proximity:
-  POS-NVDA-001:  4.0% of portfolio (max 5.0%) — P/L: -2.0% of cost (max loss: -30.0%) [⚠ WARNING]
-  POS-AAPL-002:  3.5% of portfolio (max 5.0%) — P/L: +4.0% of cost (max loss: -30.0%) [⚠ WARNING]
+  POS-NVDA-001:  4.0% of portfolio (max 5.0%) — P/L: -2.0% of cost (max loss: -30.0%) [⚠ WARNING: size]
+  POS-AAPL-002:  3.5% of portfolio (max 5.0%) — P/L: +4.0% of cost (max loss: -30.0%) [⚠ WARNING: size]
   POS-MSFT-003:  2.0% of portfolio (max 5.0%) — P/L: +1.5% of cost (max loss: -80.0%)
   POS-AMD-004:   3.0% of portfolio (max 5.0%) — P/L: +5.0% of cost (max loss: -30.0%)
   POS-MU-005:    1.5% of portfolio (max 5.0%) — P/L: -1.0% of cost (max loss: -30.0%)
   POS-AVGO-006:  2.5% of portfolio (max 5.0%) — P/L: +0.5% of cost (max loss: -80.0%)
-  POS-JPM-007:   3.8% of portfolio (max 5.0%) — P/L: -1.0% of cost (max loss: -30.0%) [⚠ WARNING]
+  POS-JPM-007:   3.8% of portfolio (max 5.0%) — P/L: -1.0% of cost (max loss: -30.0%) [⚠ WARNING: size]
   POS-GS-008:    2.2% of portfolio (max 5.0%) — P/L: +2.5% of cost (max loss: -30.0%)
   POS-BAC-009:   1.5% of portfolio (max 5.0%) — P/L: +1.0% of cost (max loss: -30.0%)
   POS-XOM-010:   2.5% of portfolio (max 5.0%) — P/L: +8.0% of cost (max loss: -30.0%)
