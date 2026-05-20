@@ -20,7 +20,7 @@ Cold-start tolerance: when required series are missing from
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -498,20 +498,67 @@ def _seed_market_liquidity_history(
         )
 
 
+def _seed_market_liquidity_component_history(
+    session: Session,
+    *,
+    end: datetime,
+    series_values: Mapping[str, list[float]],
+) -> None:
+    """Seed trailing per-component FRED observations strictly before ``end``.
+
+    The loader pulls each component's history as a strictly-trailing
+    window (``observation_date < end``) so the percentile rank of the
+    current reading is well-defined. Tests pass a list of values per
+    series; this helper writes them at daily intervals ending the day
+    BEFORE ``end`` so they're all picked up by the trailing window.
+    """
+    for series_id, values in series_values.items():
+        for offset, value in enumerate(values):
+            observation_date = (end - timedelta(days=offset + 1)).strftime("%Y-%m-%d")
+            session.add(
+                MacroObservations(
+                    source="FRED",
+                    series_id=series_id,
+                    observation_date=observation_date,
+                    revision_number=0,
+                    release_date=observation_date,
+                    value=value,
+                    units="pct",
+                    frequency="d",
+                    ingested_at=observation_date + "T00:00:00Z",
+                )
+            )
+
+
 class TestMarketLiquidityBoundary:
-    """The wrapper preserves story-08c's bottom-10th-percentile alert boundary."""
+    """The wrapper preserves story-08c's bottom-10th-percentile alert boundary.
+
+    Per ALP-575, ``composite_value`` is now the sum of per-component
+    percentile ranks (0..300) rather than a raw FRED sum. Trailing history
+    rows must live on the same normalized scale, and per-component FRED
+    history must be present so the percentile ranks are well-defined.
+    """
 
     def test_alert_fires_when_composite_in_bottom_decile(self, session: Session) -> None:
-        # Seed history climbing from 100..159 so any composite below 100
-        # lands in the bottom percentile.
+        # Seed normalized-scale composite history climbing from 100..159 so
+        # any new composite below ~106 lands in the bottom decile.
         _seed_market_liquidity_history(session, n_rows=60, base_value=100.0, increment=1.0)
-        # The three FRED proxies all read at low values whose sum is far
-        # below the trailing-history floor.
-        for series_id, value in (
-            ("STLFSI4", 1.0),
-            ("BAMLC0A0CM", 1.0),
-            ("VIXCLS", 1.0),
-        ):
+        # Seed multi-day per-component FRED history with non-degenerate
+        # distributions (zero-variance series collapse percentile_rank to
+        # None); current readings sit below the entire history → 0th
+        # percentile per component → normalized sum = 0, well below the
+        # historical bottom decile.
+        _seed_market_liquidity_component_history(
+            session,
+            end=AS_OF,
+            series_values={
+                "STLFSI4": [10.0 + i * 0.1 for i in range(30)],
+                "BAMLC0A0CM": [10.0 + i * 0.1 for i in range(30)],
+                "VIXCLS": [30.0 + i * 0.1 for i in range(30)],
+            },
+        )
+        # Current-day FRED reads (below all trailing history).
+        for series_id, value in (("STLFSI4", 1.0), ("BAMLC0A0CM", 1.0), ("VIXCLS", 1.0)):
             _seed_macro_series(session, series_id=series_id, end=AS_OF, days=1, value=value)
         _seed_yield_curve_history(session, end=AS_OF, days=60)
         _seed_breakeven_history(session, end=AS_OF, days=120)
@@ -523,15 +570,26 @@ class TestMarketLiquidityBoundary:
         ml_block = next(b for b in blocks if b.block_id == "q6.market_liquidity")
         assert ml_block.payload["alert_active"] is True
         assert ml_block.payload["percentile_60d"] <= 10.0
+        # And — the load-bearing assertion for ALP-575 — composite_value is
+        # NOT bit-identical to any single raw component.
+        for component_value in ml_block.payload["components"].values():
+            assert ml_block.payload["composite_value"] != component_value
 
     def test_alert_suppressed_above_10th_percentile(self, session: Session) -> None:
         _seed_market_liquidity_history(session, n_rows=60, base_value=100.0, increment=1.0)
-        # Reads sum to 130, near the median of [100, 159].
-        for series_id, value in (
-            ("STLFSI4", 50.0),
-            ("BAMLC0A0CM", 50.0),
-            ("VIXCLS", 30.0),
-        ):
+        # Seed per-component history with non-degenerate distributions; the
+        # current readings rank near the middle of each → normalized sum
+        # ~150, well above the 10th percentile.
+        _seed_market_liquidity_component_history(
+            session,
+            end=AS_OF,
+            series_values={
+                "STLFSI4": [1.0, 2.0, 3.0, 4.0, 5.0] * 6,
+                "BAMLC0A0CM": [1.0, 2.0, 3.0, 4.0, 5.0] * 6,
+                "VIXCLS": [10.0, 20.0, 30.0, 40.0, 50.0] * 6,
+            },
+        )
+        for series_id, value in (("STLFSI4", 3.0), ("BAMLC0A0CM", 3.0), ("VIXCLS", 30.0)):
             _seed_macro_series(session, series_id=series_id, end=AS_OF, days=1, value=value)
         _seed_yield_curve_history(session, end=AS_OF, days=60)
         _seed_breakeven_history(session, end=AS_OF, days=120)
@@ -543,6 +601,8 @@ class TestMarketLiquidityBoundary:
         ml_block = next(b for b in blocks if b.block_id == "q6.market_liquidity")
         assert ml_block.payload["alert_active"] is False
         assert ml_block.payload["percentile_60d"] > 10.0
+        # composite_method is the normalized path (every component had history).
+        assert ml_block.payload["composite_method"] == "normalized_percentile_sum"
 
 
 # ---------------------------------------------------------------------------
