@@ -16,6 +16,7 @@ from typing import Literal
 
 from alphamind.distillation._calibration_core import (
     CalibratedValue,
+    CalibrationState,
     tag_with_fallback,
 )
 from alphamind.distillation.normalization import atr_normalize
@@ -148,14 +149,23 @@ def detect_session_gap(
 class GapFillEventHistory:
     """Frozen inputs for :func:`compute_gap_fill_probability`.
 
-    Carries the per-ticker resolved/filled counts and the sector-pool
-    resolved/filled counts the repository pre-loads in one pass. The
-    compute step combines these into the three calibration branches with
-    no further DB access.
+    Carries the per-ticker resolved/filled counts, per-ticker pending
+    count, and the sector-pool resolved/filled counts the repository
+    pre-loads in one pass. The compute step combines these into the
+    calibration branches with no further DB access.
+
+    ``ticker_pending`` is the count of detected-but-not-yet-resolved gap
+    events for the ticker. Per ALP-573 this distinguishes "collector
+    silent" (0 detected) from "bootstrap, awaiting outcome resolution"
+    (N detected, 0 resolved): with ``gap_fill_baseline_days`` set to 252
+    the resolution window is one trading year, so a freshly bootstrapped
+    universe will report 0 resolved events for months while still
+    detecting and persisting pending rows.
     """
 
     ticker_resolved: int
     ticker_filled: int
+    ticker_pending: int
     sector_resolved: int
     sector_filled: int
 
@@ -167,16 +177,44 @@ def compute_gap_fill_probability(
 ) -> CalibratedValue:
     """Resolve the gap-fill probability using pre-loaded event counts.
 
-    Mirrors the three-branch contract previously implemented in
-    :func:`alphamind.distillation.q1.gap.resolve_gap_fill_probability` but
-    consumes pre-loaded counts instead of issuing SQL itself.
+    Note that ``gap_fill_min_events`` counts *resolved* gap events
+    (outcome ``"filled"`` or ``"unfilled"``), not raw per-session gap
+    detections. The per-session in-bar gap classification surfaced to
+    domain researchers via :func:`analyze_gap` is a distinct concept
+    that does not feed this probability.
+
+    Branches:
+
+    - ``ticker_resolved >= min_events`` — per-ticker rate, CALIBRATED.
+    - ``ticker_resolved > 0`` but below the threshold — sector-pool
+      fallback via :func:`tag_with_fallback`.
+    - ``ticker_resolved == 0`` and ``ticker_pending > 0`` — ACCUMULATING
+      with a pending-count reason. Pending events exist, so the collector
+      is healthy; the gap-fill outcome window simply hasn't elapsed yet
+      (see :class:`GapFillEventHistory`).
+    - ``ticker_resolved == 0`` and ``ticker_pending == 0`` — UNAVAILABLE
+      with a "no gap events detected" reason. No events have been
+      recorded, which on a freshly bootstrapped universe usually means
+      the detection threshold hasn't fired; in steady state it would
+      indicate a collector outage.
     """
-    if history.ticker_resolved > 0:
-        per_ticker_rate: float | None = float(history.ticker_filled) / float(
-            history.ticker_resolved
+    if history.ticker_resolved == 0:
+        if history.ticker_pending > 0:
+            return CalibratedValue(
+                value=None,
+                state=CalibrationState.ACCUMULATING,
+                bootstrap_reason=(
+                    f"gap_fill_min_events: 0 < {min_events} "
+                    f"({history.ticker_pending} pending, awaiting outcome resolution)"
+                ),
+            )
+        return CalibratedValue(
+            value=None,
+            state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason=(f"gap_fill_min_events: 0 < {min_events} (no gap events detected)"),
         )
-    else:
-        per_ticker_rate = None
+
+    per_ticker_rate = float(history.ticker_filled) / float(history.ticker_resolved)
 
     def _sector_fallback() -> float | None:
         if history.sector_resolved == 0:

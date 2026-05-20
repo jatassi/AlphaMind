@@ -157,28 +157,33 @@ class SqlDistillationRepository(DistillationRepository):
     # --- q1 gap history ---------------------------------------------------
 
     def load_gap_fill_event_counts(self, *, ticker: str, as_of: str) -> GapEventCounts:
-        base = (
+        scope = (
             select(func.count())
             .select_from(DistillationEventHistory)
             .where(
                 DistillationEventHistory.ticker == ticker,
                 DistillationEventHistory.event_kind == "gap",
-                DistillationEventHistory.outcome != PENDING_OUTCOME,
                 DistillationEventHistory.event_ts <= as_of,
             )
         )
-        resolved = int(self._session.execute(base).scalar_one())
-        if resolved == 0:
-            return GapEventCounts(resolved=0, filled=0)
-        filled = int(
+        resolved_query = scope.where(DistillationEventHistory.outcome != PENDING_OUTCOME)
+        resolved = int(self._session.execute(resolved_query).scalar_one())
+        pending = int(
             self._session.execute(
-                base.where(DistillationEventHistory.outcome == "filled")
+                scope.where(DistillationEventHistory.outcome == PENDING_OUTCOME)
             ).scalar_one()
         )
-        return GapEventCounts(resolved=resolved, filled=filled)
+        if resolved == 0:
+            return GapEventCounts(resolved=0, filled=0, pending=pending)
+        filled = int(
+            self._session.execute(
+                resolved_query.where(DistillationEventHistory.outcome == "filled")
+            ).scalar_one()
+        )
+        return GapEventCounts(resolved=resolved, filled=filled, pending=pending)
 
     def load_sector_pooled_gap_fill_counts(self, *, sector: str, as_of: str) -> GapEventCounts:
-        base = (
+        scope = (
             select(func.count())
             .select_from(DistillationEventHistory)
             .join(
@@ -188,19 +193,24 @@ class SqlDistillationRepository(DistillationRepository):
             .where(
                 SectorClassification.alphamind_sector == sector,
                 DistillationEventHistory.event_kind == "gap",
-                DistillationEventHistory.outcome != PENDING_OUTCOME,
                 DistillationEventHistory.event_ts <= as_of,
             )
         )
-        resolved = int(self._session.execute(base).scalar_one())
-        if resolved == 0:
-            return GapEventCounts(resolved=0, filled=0)
-        filled = int(
+        resolved_query = scope.where(DistillationEventHistory.outcome != PENDING_OUTCOME)
+        resolved = int(self._session.execute(resolved_query).scalar_one())
+        pending = int(
             self._session.execute(
-                base.where(DistillationEventHistory.outcome == "filled")
+                scope.where(DistillationEventHistory.outcome == PENDING_OUTCOME)
             ).scalar_one()
         )
-        return GapEventCounts(resolved=resolved, filled=filled)
+        if resolved == 0:
+            return GapEventCounts(resolved=0, filled=0, pending=pending)
+        filled = int(
+            self._session.execute(
+                resolved_query.where(DistillationEventHistory.outcome == "filled")
+            ).scalar_one()
+        )
+        return GapEventCounts(resolved=resolved, filled=filled, pending=pending)
 
     # --- q3 flow classification -------------------------------------------
 

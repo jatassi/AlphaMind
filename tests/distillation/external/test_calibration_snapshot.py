@@ -556,6 +556,83 @@ def test_operator_summary_mixed_state_blocks(tmp_path: Path) -> None:
     ]
 
 
+def test_operator_summary_dedupes_identical_module_reason_entries(tmp_path: Path) -> None:
+    """Per-sector blocks sharing a module + reason collapse to one operator-facing entry.
+
+    ALP-573: q1.gap emits one OutputBlock per sector (tech_semis, financials,
+    energy). When all three carry the same bootstrap_reason — e.g. the
+    bootstrap-window `gap_fill_min_events: 0 < 30 (0 observations)` — the
+    operator sees the same line three times. The operator-facing summary
+    dedupes on `(module, reason)`; the internal `data_calibration_state`
+    snapshot keeps per-block detail.
+    """
+    reason = "gap_fill_min_events: 0 < 30 (0 observations)"
+    blocks = (
+        _block(
+            block_id="q1.gap",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason=reason,
+        ),
+        _block(
+            block_id="q1.gap",
+            audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
+            state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason=reason,
+        ),
+        _block(
+            block_id="q1.gap",
+            audience=frozenset({OutputAudience.SECTOR_ENERGY}),
+            state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason=reason,
+        ),
+    )
+    outputs = _build_outputs(blocks=blocks)
+    path = write_operator_data_health_summary(
+        outputs=outputs,
+        invocation_id="inv-id",
+        archive_root=tmp_path,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["unavailable"] == [{"module": "q1.gap", "reason": reason}]
+
+
+def test_operator_summary_keeps_distinct_reasons_for_same_module(tmp_path: Path) -> None:
+    """Same module with distinct reasons stays as separate entries (no over-dedup).
+
+    Dedup keys on the full `(module, reason)` tuple — a per-ticker baseline
+    reason like `baseline_days: ... for AAPL` differs from
+    `baseline_days: ... for MSFT` and both should survive.
+    """
+    blocks = (
+        _block(
+            block_id="q1.technicals",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.ACCUMULATING,
+            bootstrap_reason="baseline_days: 12 < 20 for AAPL",
+        ),
+        _block(
+            block_id="q1.technicals",
+            audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
+            state=CalibrationState.ACCUMULATING,
+            bootstrap_reason="baseline_days: 5 < 20 for JPM",
+        ),
+    )
+    outputs = _build_outputs(blocks=blocks)
+    path = write_operator_data_health_summary(
+        outputs=outputs,
+        invocation_id="inv-id",
+        archive_root=tmp_path,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["accumulating"] == [
+        {"module": "q1.technicals", "reason": "baseline_days: 12 < 20 for AAPL"},
+        {"module": "q1.technicals", "reason": "baseline_days: 5 < 20 for JPM"},
+    ]
+
+
 def test_operator_summary_writes_to_archive_root_invocation_path(tmp_path: Path) -> None:
     """The operator summary lands at <archive_root>/invocations/<id>/data_calibration_state.json."""
     outputs = _build_outputs(blocks=())
