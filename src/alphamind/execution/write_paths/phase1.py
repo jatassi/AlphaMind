@@ -681,9 +681,7 @@ def _fill_reduced_position(
     (:func:`_strategy_fill_is_reducing`).
     """
     if isinstance(position.details, StrategyPositionDetails):
-        return _strategy_fill_is_reducing(
-            position.details, order, is_buy_side=direction_is_buy
-        )
+        return _strategy_fill_is_reducing(position.details, order, is_buy_side=direction_is_buy)
     direction = position_direction(position)
     assert direction is not None
     return not _is_opening_fill(direction, direction_is_buy)
