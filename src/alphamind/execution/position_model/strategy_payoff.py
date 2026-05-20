@@ -14,6 +14,7 @@ from __future__ import annotations
 from alphamind.portfolio_state.records.positions import (
     Direction,
     OptionContractType,
+    OptionGreeks,
     StrategyLeg,
 )
 
@@ -87,6 +88,35 @@ def _sample_points(legs: tuple[StrategyLeg, ...]) -> list[float]:
     unique strike, sorted ascending."""
     strikes = {leg.options.strike_price for leg in legs}
     return sorted({0.0, *strikes})
+
+
+def compute_strategy_net_premium_usd(legs: tuple[StrategyLeg, ...]) -> float:
+    """Signed net premium (in USD) of a multi-leg options strategy.
+
+    Computed as the sum over legs of
+    ``leg_sign * contract_count * contract_multiplier * premium_paid_per_contract``,
+    where ``leg_sign`` is ``+1`` for a LONG leg (premium paid) and ``-1`` for a
+    SHORT leg (premium received).
+
+    Sign convention: a positive result is a net debit (the strategy costs
+    capital to open); a negative result is a net credit (the strategy is
+    opened for a cash inflow). This is exactly the ``net_premium_usd``
+    argument the :func:`compute_strategy_max_profit_usd` /
+    :func:`compute_strategy_max_loss_usd` / :func:`compute_strategy_breakeven_levels`
+    functions expect.
+
+    Raises ``ValueError`` if ``legs`` is empty, any leg is missing direction,
+    any leg has non-positive ``contract_count``, or legs span multiple
+    expiration dates or underlying tickers.
+    """
+    _validate_legs(legs)
+    return sum(
+        _leg_sign(leg)
+        * leg.options.contract_count
+        * leg.options.contract_multiplier
+        * leg.options.premium_paid_per_contract
+        for leg in legs
+    )
 
 
 def compute_strategy_max_profit_usd(

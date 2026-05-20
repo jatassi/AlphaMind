@@ -14,6 +14,7 @@ from alphamind.execution.position_model import (
     compute_strategy_breakeven_levels,
     compute_strategy_max_loss_usd,
     compute_strategy_max_profit_usd,
+    compute_strategy_net_premium_usd,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -41,6 +42,8 @@ def _leg(
     contract_count: float = 1.0,
     contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
     expiration_date: date = _EXP,
+    premium_paid_per_contract: float = 0.0,
+    greeks: OptionGreeks = _GREEKS,
 ) -> StrategyLeg:
     return StrategyLeg(
         leg_id=leg_id,
@@ -52,8 +55,8 @@ def _leg(
             contract_type=contract_type,
             contract_count=contract_count,
             contract_multiplier=contract_multiplier,
-            premium_paid_per_contract=0.0,
-            greeks=_GREEKS,
+            premium_paid_per_contract=premium_paid_per_contract,
+            greeks=greeks,
         ),
     )
 
@@ -158,6 +161,22 @@ class TestLongStrangle:
 
     def test_breakevens(self) -> None:
         assert compute_strategy_breakeven_levels(self._legs(), 300.0) == (92.0, 108.0)
+
+
+# ---------------------------------------------------------------------------
+# Net premium aggregation (story 01b)
+# ---------------------------------------------------------------------------
+
+
+class TestComputeStrategyNetPremium:
+    def test_debit_vertical_spread_returns_positive(self) -> None:
+        # Bull call spread: buy 1 call @ 100 for $5/contract, sell 1 call @ 110
+        # for $2/contract. mult=100. Net = +5*100 - 2*100 = +300 (net debit).
+        legs = (
+            _leg("L1", Direction.LONG, OptionContractType.CALL, 100.0, premium_paid_per_contract=5.0),
+            _leg("L2", Direction.SHORT, OptionContractType.CALL, 110.0, premium_paid_per_contract=2.0),
+        )
+        assert compute_strategy_net_premium_usd(legs) == 300.0
 
 
 # ---------------------------------------------------------------------------
