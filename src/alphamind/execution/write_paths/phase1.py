@@ -901,9 +901,7 @@ async def _apply_strategy_entry_or_continuation(
     PENDING → OPEN transition fills the final zero-count leg.
     """
     new_legs = _set_leg_entry(details.legs, leg=leg, fill=fill)
-    new_details = _recompute_strategy_payoff_metrics(
-        dataclasses.replace(details, legs=new_legs)
-    )
+    new_details = _recompute_strategy_payoff_metrics(dataclasses.replace(details, legs=new_legs))
 
     sibling_statuses = await _read_sibling_leg_statuses(
         handle,
