@@ -21,6 +21,7 @@ from alphamind.portfolio_state.records.positions import (
     InstrumentType,
     OptionsPositionDetails,
     StrategyPositionDetails,
+    position_direction,
     resolve_ticker,
 )
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
@@ -83,7 +84,7 @@ def _build_greeks(
 
 def _accumulate_portfolio_greeks(
     details: OptionsPositionDetails | StrategyPositionDetails,
-    direction: Direction,
+    direction: Direction | None,
     portfolio_value_usd: float,
 ) -> tuple[float, float, float]:
     """Return (delta_contrib, theta_contrib, vega_contrib) as % of portfolio for one position.
@@ -95,8 +96,9 @@ def _accumulate_portfolio_greeks(
     For a ``StrategyPositionDetails`` position the sign already lives in the
     net-signed ``strategy_greeks`` (ALP-588 decision C) — a net-short-delta
     strategy carries a negative ``strategy_greeks.delta`` — so no
-    ``direction``-derived sign is applied, and the position-level ``LONG``
-    placeholder is never read. The contribution scales by the leg-summed
+    ``direction``-derived sign is applied. ``direction`` is the value of
+    ``position_direction()``, which is ``None`` for a strategy and is never
+    read on the strategy path. The contribution scales by the leg-summed
     multiplier units (Σ ``contract_count * contract_multiplier`` across legs),
     not a single leg's ``contract_count``.
     """
@@ -163,8 +165,15 @@ def _select_single_short_max(
     ``abs(position_market_value_usd)``, so the field is always >= 0; no abs()
     needed. Lexicographic ``position_id`` is the tiebreaker. Returns
     ``(0.0, None)`` when the book holds no shorts.
+
+    Direction is read via ``position_direction()``: a multi-leg strategy yields
+    ``None``, which compares unequal to ``Direction.SHORT``, so a strategy is
+    correctly never selected as a short equity regardless of its inert
+    position-level placeholder.
     """
-    shorts = [p for p in open_positions if p.direction == Direction.SHORT]
+    shorts = [
+        p for p in open_positions if position_direction(p.record) == Direction.SHORT
+    ]
     if not shorts:
         return 0.0, None
     max_short = min(shorts, key=lambda p: (-p.position_weight_pct, p.position_id))
@@ -282,14 +291,19 @@ def to_library_snapshot(
             )
             continue
 
-        is_short_equity = pos.direction == Direction.SHORT and isinstance(
+        # Direction read routes through position_direction(): a strategy
+        # yields None, which compares unequal to Direction.SHORT, so a
+        # strategy is correctly never treated as a short equity. The
+        # isinstance(EquityPositionDetails) narrowing is independently kept.
+        direction = position_direction(pos.record)
+        is_short_equity = direction == Direction.SHORT and isinstance(
             details, EquityPositionDetails
         )
 
         # Portfolio-level greek aggregation (options and strategy only)
         if portfolio_value_usd > 0.0 and not isinstance(details, EquityPositionDetails):
             d_contrib, t_contrib, v_contrib = _accumulate_portfolio_greeks(
-                details, pos.direction, portfolio_value_usd
+                details, direction, portfolio_value_usd
             )
             options_delta_pct += d_contrib
             portfolio_theta_pct_per_day += t_contrib
@@ -330,11 +344,24 @@ def to_library_snapshot(
             # StrategyPositionDetails: first-leg contract count per verify_pm.py pattern
             quantity = details.legs[0].options.contract_count if details.legs else 0.0
 
+        # ExistingPosition.direction is a non-optional library Direction.
+        # position_direction() returns None for a strategy (its directionality
+        # lives per-leg), and a strategy has no single position-level sign.
+        # ALP-588 story 01d made the guardrail consumers leg-derived, so they
+        # never branch on this field for a strategy; pass an inert LONG
+        # placeholder here. The category-error cleanup that makes the field
+        # optional is the separate ALP-603 follow-on.
+        library_direction = (
+            _DIRECTION_TO_LIBRARY[direction]
+            if direction is not None
+            else LibraryDirection.LONG
+        )
+
         existing_positions[pos.position_id] = ExistingPosition(
             position_id=pos.position_id,
             underlying=underlying,
             sector=sector_resolver(underlying),
-            direction=_DIRECTION_TO_LIBRARY[pos.direction],
+            direction=library_direction,
             asset_type=_INSTRUMENT_TO_ASSET_TYPE[pos.instrument_type],
             notional_usd=float(pos.notional_exposure_usd),
             delta_adjusted_exposure_usd=float(pos.delta_adjusted_exposure_usd),
