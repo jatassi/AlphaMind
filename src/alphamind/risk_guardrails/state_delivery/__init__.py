@@ -44,6 +44,7 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import (
     ValidationStrategyLeg,
     ValidationToolError,
     ValidationToolState,
+    ValidationUnavailableReason,
     validate_guardrail,
 )
 from alphamind.risk_guardrails.state_delivery.validation_tool_mcp import (
@@ -71,6 +72,7 @@ __all__ = [
     "ValidationStrategyLeg",
     "ValidationToolError",
     "ValidationToolState",
+    "ValidationUnavailableReason",
     "build_initial_validation_state",
     "build_validate_guardrail_mcp_server",
     "prepend_emergency_block",

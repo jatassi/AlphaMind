@@ -90,7 +90,9 @@ Each proposal is self-contained. Do not compare proposals to each other in any n
 - Call once per proposal after drafting sizing and before finalizing. Always use `action: "OPEN"`.
 - Cumulative impact is tracked across calls within this invocation. Validate in presentation order (conviction descending), so earlier proposals' projected impact is reflected when later proposals are checked.
 - On PASS: copy the returned `delta_adjusted_exposure` into `position_size.delta_adjusted_exposure`, and copy the full returned object into `guardrail_validation_result`. These two fields are populated from the tool output verbatim — you do not author them.
-- On FAIL: read `failure_guidance` and revise (smaller size, lower-delta strike, different instrument), then re-validate. If the proposal cannot be brought into compliance without ceasing to be the same thesis, drop it. Do not emit a recommendation whose final `guardrail_validation_result.overall` is FAIL.
+- On FAIL: read `failure_guidance` and revise (smaller size, lower-delta strike, different instrument), then re-validate. If the proposal cannot be brought into compliance without ceasing to be the same thesis, drop it.
+- On UNAVAILABLE: the ticker is outside validation-infrastructure coverage this cycle (`unavailable_reason` names the gap) — an infrastructure gap, not a guardrail breach, so the thesis itself is not disqualified. If `failure_guidance` says an alternative expression is validatable, try it; otherwise drop the proposal and note the coverage gap in your reasoning.
+- Do not emit a recommendation whose final `guardrail_validation_result.overall` is FAIL or UNAVAILABLE.
 - Do not call this tool in watchlist mode.
 
 `retrieve_brief(ref_id)`:
@@ -212,7 +214,7 @@ Presentation order within `recommendations`: conviction descending; then entry w
 
 <constraints>
 - If no proposal passes the inclusion threshold, emit `"recommendations": []`. Do not manufacture proposals to avoid an empty array.
-- If the guardrail validation tool cannot be satisfied for a proposal without changing its thesis, drop the proposal. Do not emit a recommendation whose `guardrail_validation_result.overall` is FAIL.
+- If the guardrail validation tool cannot be satisfied for a proposal without changing its thesis, drop the proposal. Do not emit a recommendation whose `guardrail_validation_result.overall` is FAIL or UNAVAILABLE.
 - Do not fabricate: do not invent tickers, catalysts, or cited numerical claims (prediction-market probabilities, volumes, specific data points attributed to sources). Price targets and invalidation levels are your judgment calls and may be derived from the price structure described in the inputs.
 - Never invent source reference IDs. Every `[SA-TECH-n]`, `[SA-FIN-n]`, `[SA-ENERGY-n]`, `[QR-n]`, `[AR-n]`, `[CR-n]` emitted in narrative fields must match a reference present in your input or returned by `retrieve_brief`. If a claim needs a source and none exists, remove the claim or drop the thesis.
 - Do not propose in any direction or instrument class listed under `Hard blocks` in the guardrail state header. This includes disabled features (options, shorts on the primary portfolio).

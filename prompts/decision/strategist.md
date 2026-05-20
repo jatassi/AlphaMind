@@ -103,7 +103,9 @@ For every open position, execute this workflow. Missing any step is grounds for 
 - Do not call for `hold` or `adjust-bracket` actions — they don't change exposure.
 - Cumulative impact is tracked across calls within this invocation. Validate in the order you intend to present actions so earlier actions' projected impact is reflected when later actions are checked.
 - On PASS for add: copy the returned `delta_adjusted_exposure` and per-rule results into `guardrail_validation_result` and `exposure_impact`. On PASS for close/reduce remedies: confirm the remedy cures the breach; if the cumulative remedy set still leaves the breach uncured, revise the remedy quantities.
-- On FAIL: read `failure_guidance` and revise (different quantity, different remedy target position, dropped or deferred action). Do not emit an action whose final `guardrail_validation_result.overall` is FAIL.
+- On FAIL: read `failure_guidance` and revise (different quantity, different remedy target position, dropped or deferred action).
+- On UNAVAILABLE: the ticker is outside validation-infrastructure coverage this cycle (`unavailable_reason` names the gap) — an infrastructure gap, not a guardrail breach. If `failure_guidance` says an alternative expression is validatable, try it; otherwise drop or defer the action and document the gap in `portfolio_level_observations`.
+- Do not emit an action whose final `guardrail_validation_result.overall` is FAIL or UNAVAILABLE.
 
 `retrieve_brief(ref_id)`:
 - Call when a cited entry-thesis signal is flagged as contradicted or uncertain by the synthesizer and the contradiction's impact on the thesis is not clear from the synthesizer's surface language.
@@ -235,7 +237,7 @@ Anti-pattern names in rationale narratives use the canonical forms the PM's feed
 - Do not widen a stop or extend a time leg without naming a specific current signal that makes the original level wrong. Pair the old level with the new level in `adjustment_rationale`; a terse or generic rationale fails validation.
 - Do not emit a rationale that could be pasted across positions. Every `status_rationale` must cite at least one current-invocation source reference or a specific portfolio-state element (position age, P/L trajectory, distance-to-stop). Generic rationales are the single most common failure mode the PM will reject.
 - Do not invent source reference IDs. Every `[SA-TECH-n]`, `[SA-FIN-n]`, `[SA-ENERGY-n]`, `[QR-n]`, `[AR-n]`, `[CR-n]` emitted in any rationale must match a reference present in your input or returned by `retrieve_brief`.
-- Do not emit an exposure-changing action whose `guardrail_validation_result.overall` is FAIL. Revise quantity, revise target position (for remedies), or drop the action and document the gap in `portfolio_level_observations`.
+- Do not emit an exposure-changing action whose `guardrail_validation_result.overall` is FAIL or UNAVAILABLE. Revise quantity, revise target position (for remedies), or drop the action and document the gap in `portfolio_level_observations`.
 - Do not omit a contradiction or uncertainty the synthesizer flagged bearing on a position's thesis. Address it in the status rationale — either explain why it does not overturn the thesis (and downgrade status to reflect residual uncertainty) or acknowledge it as moving the thesis to at-risk or invalidated.
 - Do not ignore engine-originated envelopes in the activity log. Any closed position sharing thesis components with a currently-held position must be named in the adjacent assessment's `cross_position_observations`.
 - Do not hedge with "could potentially," "may play out," "there is a chance." Either the classification holds or it is wrong — revise the classification, do not dilute the narrative.

@@ -477,6 +477,81 @@ async def test_options_disabled_returns_fail_with_feature_disabled_guidance() ->
 
 
 # ---------------------------------------------------------------------------
+# 7b. Resolver-coverage gap → UNAVAILABLE, serialised with reason (ALP-581)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_short_equity_without_resolver_serialises_unavailable() -> None:
+    """A short equity OPEN with no ``borrow_cost_resolver`` wired returns a
+    serialised ``UNAVAILABLE`` result naming the missing resolver — not a tool
+    error and not a generic FAIL (ALP-581)."""
+    import json
+
+    state = _make_state()  # _make_state wires no borrow_cost_resolver
+    mcp_servers, _ = build_validate_guardrail_mcp_server(state)
+    server = mcp_servers["alphamind_decision_validation"]["instance"]
+
+    text, is_error = await _invoke_mcp_tool(
+        server, "validate_guardrail", _equity_open_args(direction="short")
+    )
+    assert not is_error  # a coverage gap is a domain result, not a tool error
+
+    payload = json.loads(text)
+    assert payload["overall"] == "UNAVAILABLE"
+    assert payload["unavailable_reason"] == "missing_borrow_cost_resolver"
+    assert payload["per_rule"] == []
+    assert payload["failure_guidance"] is not None
+    assert "checked_at" in payload
+
+
+@pytest.mark.asyncio
+async def test_ticker_outside_market_scope_serialises_unavailable() -> None:
+    """An OPEN on a ticker absent from ``library_market.underlying_prices``
+    serialises ``UNAVAILABLE`` / ``missing_market_price``."""
+    import json
+
+    state = _make_state()  # market covers AAPL/NVDA/ABC
+    mcp_servers, _ = build_validate_guardrail_mcp_server(state)
+    server = mcp_servers["alphamind_decision_validation"]["instance"]
+
+    text, is_error = await _invoke_mcp_tool(
+        server, "validate_guardrail", _equity_open_args(ticker="CSCO")
+    )
+    assert not is_error
+
+    payload = json.loads(text)
+    assert payload["overall"] == "UNAVAILABLE"
+    assert payload["unavailable_reason"] == "missing_market_price"
+
+
+@pytest.mark.asyncio
+async def test_unavailable_does_not_advance_cell() -> None:
+    """An UNAVAILABLE result, like a FAIL, leaves the cumulative-tracking cell
+    unchanged — an unvalidatable proposal is not counted toward headroom."""
+    import json
+
+    state = _make_state()
+    mcp_servers, _ = build_validate_guardrail_mcp_server(state)
+    server = mcp_servers["alphamind_decision_validation"]["instance"]
+
+    text1, _ = await _invoke_mcp_tool(server, "validate_guardrail", _equity_open_args())
+    assert json.loads(text1)["overall"] == "PASS"
+
+    text2, _ = await _invoke_mcp_tool(
+        server, "validate_guardrail", _equity_open_args(ticker="CSCO")
+    )
+    assert json.loads(text2)["overall"] == "UNAVAILABLE"
+
+    text3, _ = await _invoke_mcp_tool(
+        server, "validate_guardrail", _equity_open_args(ticker=Symbol("NVDA"))
+    )
+    # The PASS at step #1 advanced the cell to next-index=2; the UNAVAILABLE
+    # did NOT advance, so step #3 is proposal #2, not #3.
+    assert json.loads(text3)["proposal_index_in_invocation"] == 2
+
+
+# ---------------------------------------------------------------------------
 # 8. build_initial_validation_state helper assembles a fresh state with empty
 # accumulated deltas
 # ---------------------------------------------------------------------------
