@@ -294,7 +294,13 @@ def _strategy_recommendation(
         position_size=_position_size(
             quantity=quantity, dollar_value=dollar_value, premium_at_risk=premium_at_risk
         ),
-        target=_target(),
+        # A strategy take-profit must be pl_percentage (ALP-611).
+        target=Target(
+            target_type="pl_percentage",
+            price=price(200.0),
+            dollar_pl_target=money(5000.0),
+            pl_percentage=80.0,
+        ),
         invalidation_legs=(_invalidation_leg(),),
         guardrail_validation_result=_guardrail_result(),
         thesis_narrative="Test thesis",
@@ -354,6 +360,15 @@ def test_strategy_recommendation_legs() -> None:
     long_leg, short_leg = delta.option_legs
     assert long_leg.quantity == 3  # long direction → positive
     assert short_leg.quantity == -3  # short direction → negative
+
+
+def test_strategy_recommendation_has_no_position_level_direction() -> None:
+    """ALP-603: a multi-leg strategy carries ``direction=None`` — the
+    translator does not fabricate one from the first leg."""
+    rec = _strategy_recommendation(quantity=3.0, premium_at_risk=600.0)
+    delta = translate_recommendation_to_proposed_delta(rec, snapshot=_snapshot())
+
+    assert delta.direction is None
 
 
 # ===========================================================================

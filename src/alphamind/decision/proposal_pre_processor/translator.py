@@ -172,15 +172,15 @@ def _direction_from_str(direction: str) -> Direction:
 
 def _direction_from_instrument(
     instrument: InstrumentEquity | InstrumentOption | InstrumentStrategy,
-) -> Direction:
+) -> Direction | None:
     """Derive the overall direction from the instrument variant.
 
-    Equity and option carry a top-level ``direction`` field. Strategy has no
-    top-level direction; the conventional direction is taken from the first leg
-    (the primary leg that sets the trade's net directional bias).
+    Equity and option carry a top-level ``direction`` field. A multi-leg
+    strategy has no meaningful position-level direction (ALP-603) — its
+    directional sign lives in the per-leg data — so this returns ``None``.
     """
     if isinstance(instrument, InstrumentStrategy):
-        return _direction_from_str(instrument.legs[0].direction)
+        return None
     return _direction_from_str(instrument.direction)
 
 
@@ -253,7 +253,7 @@ def _build_option_legs_from_recommendation(
 def _resolve_borrow_cost_for_recommendation(
     recommendation: Recommendation,
     *,
-    direction: Direction,
+    direction: Direction | None,
     asset_type: AssetType,
     snapshot: PortfolioStateSnapshot,
 ) -> float | None:

@@ -75,20 +75,35 @@ class ValidationStrategyLeg(BaseModel):
 
 
 class ValidationInstrument(BaseModel):
-    """The instrument being validated."""
+    """The instrument being validated.
+
+    ``direction`` is the position-level long/short sign for an ``EQUITY`` or
+    ``OPTIONS`` instrument and ``None`` for a multi-leg ``STRATEGY`` (ALP-603):
+    a strategy has no meaningful position-level direction — its directional
+    sign lives in the per-leg directions on ``legs``.
+    ``_validate_cross_field_invariants`` enforces the ``direction is None ⇔
+    asset_type is STRATEGY`` invariant.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     ticker: str
     asset_type: InstrumentType
-    direction: Direction
+    direction: Direction | None = Field(
+        default=None,
+        description=(
+            "Position-level long/short direction. Required for an EQUITY or "
+            "OPTIONS instrument; omitted for a multi-leg STRATEGY, whose "
+            "directional sign lives in its per-leg directions."
+        ),
+    )
     strike: float | None = None
     expiration: datetime | None = None
     contract_type: Literal["call", "put"] | None = None
     legs: tuple[ValidationStrategyLeg, ...] | None = None
 
     @model_validator(mode="after")
-    def _validate_options_fields(self) -> ValidationInstrument:
+    def _validate_cross_field_invariants(self) -> ValidationInstrument:
         if self.asset_type == InstrumentType.OPTIONS:
             missing = [
                 f for f in ("strike", "expiration", "contract_type") if getattr(self, f) is None
@@ -98,6 +113,15 @@ class ValidationInstrument(BaseModel):
                 raise ValueError(msg)
         if self.asset_type == InstrumentType.STRATEGY and not self.legs:
             msg = "STRATEGY asset_type requires non-empty legs"
+            raise ValueError(msg)
+        # Position-level direction is meaningful for EQUITY / OPTIONS but a
+        # category error for a multi-leg STRATEGY (ALP-603): a strategy's
+        # directional sign lives in its per-leg directions, not here.
+        if self.asset_type == InstrumentType.STRATEGY and self.direction is not None:
+            msg = "STRATEGY asset_type must not carry a position-level direction"
+            raise ValueError(msg)
+        if self.asset_type != InstrumentType.STRATEGY and self.direction is None:
+            msg = f"{self.asset_type.value} asset_type requires a direction"
             raise ValueError(msg)
         return self
 
@@ -574,6 +598,18 @@ _DIRECTION_TO_LIBRARY: dict[Direction, LibraryDirection] = {
     Direction.SHORT: LibraryDirection.SHORT,
 }
 
+
+def _direction_to_library(direction: Direction | None) -> LibraryDirection | None:
+    """Map a request-side ``Direction`` to the library enum; ``None`` passes through.
+
+    A multi-leg STRATEGY carries no position-level direction (``None``); an
+    equity or single-leg options instrument carries a concrete ``Direction``
+    (ALP-603). The library's ``ProposedDelta.direction`` and
+    ``ExistingPosition.direction`` mirror the same optional shape.
+    """
+    return None if direction is None else _DIRECTION_TO_LIBRARY[direction]
+
+
 _ACTION_TO_LIBRARY: dict[ValidationAction, LibraryAction] = {
     ValidationAction.OPEN: LibraryAction.OPEN,
     ValidationAction.ADD: LibraryAction.ADD,
@@ -627,7 +663,7 @@ def _request_to_library_proposal(
         id=proposal_id,
         underlying=instrument.ticker,
         sector=state.sector_resolver(instrument.ticker),
-        direction=_DIRECTION_TO_LIBRARY[instrument.direction],
+        direction=_direction_to_library(instrument.direction),
         asset_type=_INSTRUMENT_TO_ASSET_TYPE[instrument.asset_type],
         notional_usd=_library_notional_usd(instrument, request.size),
         quantity=float(request.size.quantity),
@@ -710,14 +746,17 @@ def _lookup_existing_position(
     OPEN actions never reference an existing position (the library validates
     this). For other actions, scans ``snapshot.existing_positions`` for a
     single position matching the proposal's ticker / direction / asset-type;
-    returns its id if exactly one matches, else ``None``. The library raises
-    a structured input error when ``None`` is returned for an action that
-    requires it, surfacing the caller-side ambiguity at the right layer.
+    returns its id if exactly one matches, else ``None``. A multi-leg STRATEGY
+    request carries ``direction=None`` (ALP-603), so it matches a strategy
+    existing position on ticker + asset-type with ``direction == None`` on both
+    sides. The library raises a structured input error when ``None`` is
+    returned for an action that requires it, surfacing the caller-side
+    ambiguity at the right layer.
     """
     if request.action not in _POSITION_LOOKUP_ACTIONS:
         return None
     target_underlying = request.instrument.ticker
-    target_direction = _DIRECTION_TO_LIBRARY[request.instrument.direction]
+    target_direction = _direction_to_library(request.instrument.direction)
     target_asset_type = _INSTRUMENT_TO_ASSET_TYPE[request.instrument.asset_type]
     matches = [
         pos
@@ -767,15 +806,22 @@ def _build_option_legs(
 
 def _make_option_leg(
     *,
-    direction: Direction,
+    direction: Direction | None,
     strike: float | None,
     expiration: datetime | None,
     contract_type: Literal["call", "put"] | None,
     quantity: int,
 ) -> OptionLeg:
-    """Build one library ``OptionLeg`` from validated instrument fields."""
-    if strike is None or expiration is None or contract_type is None:
-        msg = "options leg requires strike, expiration, and contract_type"
+    """Build one library ``OptionLeg`` from validated instrument fields.
+
+    ``direction`` is ``Direction | None`` because a single-leg OPTIONS
+    instrument's ``direction`` is optional at the type level (ALP-603); the
+    ``ValidationInstrument`` validator guarantees it is set for OPTIONS, and
+    each STRATEGY leg always carries a concrete direction, so the ``None``
+    guard below is a defensive narrowing rather than a live path.
+    """
+    if direction is None or strike is None or expiration is None or contract_type is None:
+        msg = "options leg requires direction, strike, expiration, and contract_type"
         raise ValueError(msg)
     leg_sign = 1 if direction == Direction.LONG else -1
     return OptionLeg(
@@ -802,7 +848,7 @@ def _projected_delta_to_library(
         id=f"prior_{delta.proposal_index}",
         underlying=instrument.ticker,
         sector=delta.sector,
-        direction=_DIRECTION_TO_LIBRARY[instrument.direction],
+        direction=_direction_to_library(instrument.direction),
         asset_type=_INSTRUMENT_TO_ASSET_TYPE[instrument.asset_type],
         notional_usd=_library_notional_usd(instrument, delta.size),
         quantity=float(delta.size.quantity),

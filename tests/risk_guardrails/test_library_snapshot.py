@@ -25,6 +25,9 @@ from alphamind._kernel.regime import (
     RegimeTransitionState,
     RiskZone,
 )
+from alphamind.execution.continuous_monitor.greeks_refresh.recompute import (
+    recompute_strategy_greeks,
+)
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_budget import (
     RiskBudgetConsumption,
@@ -1310,6 +1313,9 @@ def test_strategy_position_ticker_and_greeks() -> None:
     ep = lib.existing_positions["POS-STRAT"]
     assert ep.underlying == "NVDA"
     assert ep.asset_type == AssetType.STRATEGY
+    # ALP-603: a strategy has no position-level direction — the translator
+    # emits ``None`` for it regardless of the persisted record's placeholder.
+    assert ep.direction is None
     assert ep.current_greeks is not None
     assert ep.current_greeks.delta == pytest.approx(0.3)
     assert ep.current_greeks.vega == pytest.approx(0.20)
@@ -1859,12 +1865,11 @@ def test_strategy_greek_contribution_uses_leg_summed_multiplier_units() -> None:
 
 
 def test_strategy_never_selected_by_single_short_max_filter() -> None:
-    """AC: a strategy position is never selected by the shorts filter, even
-    when its inert position-level placeholder happens to be ``SHORT``.
+    """AC: a strategy position is never selected by the shorts filter.
 
     ``_select_single_short_max`` reads direction via ``position_direction()``,
     which returns ``None`` for a strategy — unequal to ``Direction.SHORT`` — so
-    the strategy is excluded regardless of the raw placeholder field. Reading
+    the strategy is excluded regardless of its per-leg directions. Reading
     the raw ``record.direction`` would mis-select it as the largest short.
     """
     strategy = _make_strategy_position_view(
@@ -1898,11 +1903,11 @@ def test_strategy_never_selected_by_single_short_max_filter() -> None:
     assert lib.single_short_max_position_id == "POS-XOM"
 
 
-def test_strategy_with_short_placeholder_excluded_from_borrow_cost() -> None:
+def test_strategy_excluded_from_borrow_cost() -> None:
     """AC: the short-equity borrow-cost loop reads direction via
     ``position_direction()``; a strategy (``None``) is never treated as a
-    short equity, so no borrow cost accrues for it even when its inert
-    placeholder is ``SHORT`` and a borrow-cost resolver is supplied.
+    short equity, so no borrow cost accrues for it even when a borrow-cost
+    resolver is supplied.
     """
     strategy = _make_strategy_position_view(
         "POS-STRAT",
@@ -1928,14 +1933,15 @@ def test_strategy_with_short_placeholder_excluded_from_borrow_cost() -> None:
     assert lib.existing_positions["POS-STRAT"].daily_borrow_cost_usd is None
 
 
-def test_strategy_existing_position_built_with_placeholder_direction() -> None:
-    """AC: a strategy's ``ExistingPosition`` projection is built without error.
+def test_strategy_existing_position_built_with_none_direction() -> None:
+    """AC: a strategy's ``ExistingPosition`` projection carries ``direction``
+    ``None``.
 
     ``position_direction()`` returns ``None`` for a strategy and
-    ``_DIRECTION_TO_LIBRARY`` has no ``None`` key; the translator passes a
-    documented placeholder (credited to ALP-603) so construction does not
-    crash. The guardrail consumers are leg-derived (ALP-588 story 01d) and do
-    not branch on this field.
+    ``ExistingPosition.direction`` is optional (ALP-603) — a strategy has no
+    position-level direction, its directional sign lives per-leg. The
+    guardrail consumers are leg-derived (ALP-588 story 01d) and do not branch
+    on this field for a strategy.
     """
     strategy = _make_strategy_position_view(
         "POS-STRAT",
@@ -1955,6 +1961,89 @@ def test_strategy_existing_position_built_with_placeholder_direction() -> None:
     assert "POS-STRAT" in lib.existing_positions
     ep = lib.existing_positions["POS-STRAT"]
     assert ep.asset_type == AssetType.STRATEGY
-    # A library Direction is present (non-optional field); its value is an
-    # inert placeholder the leg-derived guardrail consumers never branch on.
-    assert ep.direction in (LibDirection.LONG, LibDirection.SHORT)
+    # A strategy has no position-level direction (ALP-603).
+    assert ep.direction is None
+
+
+def test_recompute_strategy_greeks_feeds_true_signed_delta_to_portfolio_view() -> None:
+    """ALP-612 end-to-end: the real ``recompute_strategy_greeks`` output,
+    consumed by ``_accumulate_portfolio_greeks`` via ``to_library_snapshot``,
+    contributes the strategy's *true* signed delta — not 2x — to the portfolio
+    greek view.
+
+    This exercises the production writer (the continuous-monitor greeks
+    refresh) and the production reader against the same convention. A synthetic
+    ``strategy_greeks`` fixture cannot catch a writer/reader convention drift;
+    only the real recompute output can.
+    """
+    # A net-short-delta bear call spread: short the lower-strike (higher-delta)
+    # call, long the higher-strike (lower-delta) call. 1 contract * 100 each.
+    expiry = date(2026, 3, 20)
+
+    def _leg_options(strike: float) -> OptionsPositionDetails:
+        return OptionsPositionDetails(
+            underlying_ticker=Symbol("NVDA"),
+            strike_price=strike,
+            expiration_date=expiry,
+            contract_type=OptionContractType.CALL,
+            contract_count=1.0,
+            contract_multiplier=100.0,
+            premium_paid_per_contract=5.0,
+            greeks=OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0),
+        )
+
+    base_strategy = StrategyPositionDetails(
+        strategy_type_label="bear_call_spread",
+        legs=(
+            StrategyLeg(leg_id="short-leg", direction=Direction.SHORT, options=_leg_options(195.0)),
+            StrategyLeg(leg_id="long-leg", direction=Direction.LONG, options=_leg_options(205.0)),
+        ),
+        net_premium_usd=-300.0,
+        max_profit_usd=300.0,
+        max_loss_usd=-700.0,
+        breakeven_levels=(198.0,),
+        strategy_greeks=OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0),
+    )
+
+    # Production writer: the continuous-monitor greeks refresh.
+    per_leg, aggregated = recompute_strategy_greeks(
+        strategy=base_strategy,
+        leg_ivs={"short-leg": 0.32, "long-leg": 0.30},
+        spot=200.0,
+        as_of=_NOW,
+        risk_free_rate=0.045,
+    )
+    # The spread is net-short delta: the short lower-strike call dominates.
+    assert aggregated.delta < 0.0
+
+    # Production reader: to_library_snapshot -> _accumulate_portfolio_greeks.
+    # The view's legs carry the same 1-contract * 100-multiplier units the
+    # recompute saw, so the leg-summed unit scale matches.
+    pos = _make_strategy_position_view(
+        "POS-BEARCALL",
+        "NVDA",
+        leg_specs=[(1.0, 100.0), (1.0, 100.0)],
+        strategy_greeks=aggregated,
+        market_value_usd=400.0,
+        notional_usd=400.0,
+        delta_adjusted_usd=-300.0,
+        position_weight_pct=0.4,
+    )
+    snapshot = _make_pydantic_snapshot(open_positions=[pos])
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    # The portfolio delta contribution must equal the strategy's true signed
+    # delta-units — Σ(leg_sign * contract_count * contract_multiplier * delta) —
+    # scaled to a percentage of portfolio value.
+    leg_units = 1.0 * 100.0
+    true_signed_delta_units = (
+        -1.0 * leg_units * per_leg["short-leg"].delta + 1.0 * leg_units * per_leg["long-leg"].delta
+    )
+    expected_delta_pct = true_signed_delta_units / lib.portfolio_value_usd * 100.0
+    assert lib.options_delta_pct == pytest.approx(expected_delta_pct)
+    assert lib.options_delta_pct < 0.0
+
+    # Regression guard: the pre-ALP-612 gross-sum writer folded contract_count
+    # into strategy_greeks, and _accumulate_portfolio_greeks then multiplied by
+    # Σ(contract_count * contract_multiplier) again — exactly 2x too large.
+    assert lib.options_delta_pct != pytest.approx(2.0 * expected_delta_pct)

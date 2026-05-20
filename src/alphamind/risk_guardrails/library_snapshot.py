@@ -342,16 +342,12 @@ def to_library_snapshot(
             # StrategyPositionDetails: first-leg contract count per verify_pm.py pattern
             quantity = details.legs[0].options.contract_count if details.legs else 0.0
 
-        # ExistingPosition.direction is a non-optional library Direction.
-        # position_direction() returns None for a strategy (its directionality
-        # lives per-leg), and a strategy has no single position-level sign.
-        # ALP-588 story 01d made the guardrail consumers leg-derived, so they
-        # never branch on this field for a strategy; pass an inert LONG
-        # placeholder here. The category-error cleanup that makes the field
-        # optional is the separate ALP-603 follow-on.
-        library_direction = (
-            _DIRECTION_TO_LIBRARY[direction] if direction is not None else LibraryDirection.LONG
-        )
+        # ExistingPosition.direction is an optional library Direction (ALP-603):
+        # a multi-leg strategy has no meaningful position-level direction — its
+        # directional sign lives per-leg / in the net-signed ``strategy_greeks``
+        # — so ``position_direction()`` yields ``None`` for a strategy and a
+        # mapped ``Direction`` for equity / single-leg options.
+        library_direction = _DIRECTION_TO_LIBRARY[direction] if direction is not None else None
 
         existing_positions[pos.position_id] = ExistingPosition(
             position_id=pos.position_id,

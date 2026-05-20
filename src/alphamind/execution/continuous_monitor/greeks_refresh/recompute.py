@@ -5,24 +5,28 @@ Single entry point :func:`recompute_greeks` for the refresh task. Wraps
 time) and assembles the result into an :class:`OptionGreeks` record with
 freshness-metadata fields populated.
 
-For strategy positions, :func:`recompute_strategy_greeks` aggregates the
-per-leg call so the typed ``strategy_greeks`` field on
-``StrategyPositionDetails`` stays consistent with the per-leg greeks that
-the guardrail-evaluation library produces at OPEN/ADD time. Aggregation
-mirrors ``delta_adjusted._sum_leg_greeks``: signed-weighted greeks summed
-across legs, with the leg's direction sign-flipping shorts.
+For strategy positions, :func:`recompute_strategy_greeks` refreshes each
+leg's greeks and then delegates aggregation to
+``position_model.strategy_payoff.compute_strategy_greeks`` — the
+parent-ALP-588-decision-(C)-canonical aggregator — so the typed
+``strategy_greeks`` field on ``StrategyPositionDetails`` carries the same
+contract-weighted signed-average convention every downstream consumer
+assumes (ALP-612).
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from datetime import datetime
 
+from alphamind.execution.position_model.strategy_payoff import compute_strategy_greeks
 from alphamind.portfolio_state.records.positions import (
     Direction,
     OptionContractType,
     OptionGreeks,
     OptionsPositionDetails,
+    StrategyLeg,
     StrategyPositionDetails,
 )
 from alphamind.risk_guardrails.guardrail_evaluation.black_scholes import bs_greeks
@@ -103,52 +107,48 @@ def recompute_strategy_greeks(
     responsible for stitching the per-leg ``OptionGreeks`` back onto each
     ``StrategyLeg.options.greeks`` field.
 
-    Aggregation:
+    Aggregation delegates to
+    :func:`alphamind.execution.position_model.strategy_payoff.compute_strategy_greeks`
+    — the parent-ALP-588-decision-(C)-canonical aggregator — so the refreshed
+    ``strategy_greeks`` carries the *contract-weighted signed average*
+    convention every downstream consumer assumes (ALP-612)::
 
-    * Each leg's greeks are signed by its :class:`Direction` — ``LONG``
-      keeps the long-equivalent sign, ``SHORT`` flips. (When a strategy
-      record carries ``direction=None`` on a leg, we default to LONG; this
-      matches the field's optional convention used by single-leg legs that
-      inherit direction from the parent ``PositionRecord``.)
-    * The four greeks are summed via ``math.fsum`` for numerical stability
-      under cancellation between long and short legs.
+        sum(leg_sign * contract_count * contract_multiplier * leg.greeks.<g>)
+        / sum(contract_count * contract_multiplier)
 
-    The aggregated ``strategy_greeks`` re-uses the same freshness metadata
-    as the per-leg refresh: ``as_of_timestamp = as_of``,
-    ``iv_used = mean of leg IVs`` (a single scalar surfaces the sourced IV
-    at the strategy level for operator-facing audits),
-    ``refresh_failed = False``.
+    A leg whose ``direction`` is unset defaults to ``LONG`` — the field's
+    optional convention for single-leg legs that inherit direction from the
+    parent ``PositionRecord``.
+
+    The aggregated ``strategy_greeks`` re-stamps the two freshness fields the
+    canonical aggregator clears — ``as_of_timestamp = as_of`` and
+    ``iv_used = mean of leg IVs`` (a single scalar surfaces the sourced IV at
+    the strategy level for operator-facing audits). ``refresh_failed`` carries
+    the canonical OR of the legs' flags — always ``False`` here, since
+    :func:`recompute_greeks` raises rather than emitting a failed-refresh leg.
     """
     per_leg_greeks: dict[str, OptionGreeks] = {}
-    signed_legs: list[tuple[float, OptionGreeks]] = []
-    iv_values: list[float] = []
+    refreshed_legs: list[StrategyLeg] = []
     for leg in strategy.legs:
-        leg_iv = leg_ivs[leg.leg_id]
         leg_greeks = recompute_greeks(
             position=leg.options,
-            iv=leg_iv,
+            iv=leg_ivs[leg.leg_id],
             spot=spot,
             as_of=as_of,
             risk_free_rate=risk_free_rate,
         )
         per_leg_greeks[leg.leg_id] = leg_greeks
-        sign = -1.0 if leg.direction is Direction.SHORT else 1.0
-        signed_legs.append((sign * leg.options.contract_count, leg_greeks))
-        iv_values.append(leg_iv)
+        refreshed_legs.append(
+            replace(
+                leg,
+                options=replace(leg.options, greeks=leg_greeks),
+                direction=leg.direction if leg.direction is not None else Direction.LONG,
+            )
+        )
 
-    delta = math.fsum(weight * g.delta for weight, g in signed_legs)
-    gamma = math.fsum(weight * g.gamma for weight, g in signed_legs)
-    theta = math.fsum(weight * g.theta for weight, g in signed_legs)
-    vega = math.fsum(weight * g.vega for weight, g in signed_legs)
-    aggregated_iv = math.fsum(iv_values) / len(iv_values) if iv_values else 0.0
-
-    aggregated = OptionGreeks(
-        delta=delta,
-        gamma=gamma,
-        theta=theta,
-        vega=vega,
-        as_of_timestamp=as_of,
-        iv_used=aggregated_iv,
-        refresh_failed=False,
-    )
-    return per_leg_greeks, aggregated
+    # `compute_strategy_greeks` validates the legs (non-empty, single
+    # expiration / underlying); calling it first means an empty-legs strategy
+    # raises a clear ValueError before the IV-mean divide-by-zero below.
+    canonical = compute_strategy_greeks(tuple(refreshed_legs))
+    aggregated_iv = math.fsum(leg_ivs[leg.leg_id] for leg in strategy.legs) / len(strategy.legs)
+    return per_leg_greeks, replace(canonical, as_of_timestamp=as_of, iv_used=aggregated_iv)

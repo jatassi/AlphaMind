@@ -721,7 +721,14 @@ class TestInstrumentUnion:
                 strategy_type="vertical_spread",
                 underlying=Symbol("NVDA"),
                 legs=legs,
-            )
+            ),
+            # A strategy take-profit must be pl_percentage (ALP-611).
+            target=Target(
+                target_type="pl_percentage",
+                price=price(890.0),
+                dollar_pl_target=money(190.0),
+                pl_percentage=80.0,
+            ),
         )
         assert isinstance(rec.instrument, InstrumentStrategy)
         assert len(rec.instrument.legs) == 2
@@ -756,6 +763,86 @@ class TestInstrumentUnion:
             }
         )
         assert isinstance(rec.instrument, InstrumentOption)
+
+
+# ---------------------------------------------------------------------------
+# 9b. Strategy instrument <-> pl_percentage target invariant (ALP-611)
+# ---------------------------------------------------------------------------
+
+
+def _strategy_instrument() -> InstrumentStrategy:
+    return InstrumentStrategy(
+        asset_type="strategy",
+        strategy_type="vertical_spread",
+        underlying=Symbol("NVDA"),
+        legs=(
+            StrategyLeg(
+                strike=price(850.0),
+                expiration=date(2026, 5, 17),
+                contract_type="call",
+                direction="long",
+                quantity_ratio=1,
+            ),
+            StrategyLeg(
+                strike=price(900.0),
+                expiration=date(2026, 5, 17),
+                contract_type="call",
+                direction="short",
+                quantity_ratio=1,
+            ),
+        ),
+    )
+
+
+class TestStrategyTargetTypeInvariant:
+    def test_strategy_accepts_pl_percentage_target(self) -> None:
+        rec = _make_recommendation(
+            instrument=_strategy_instrument(),
+            target=Target(
+                target_type="pl_percentage",
+                price=price(890.0),
+                dollar_pl_target=money(190.0),
+                pl_percentage=80.0,
+            ),
+        )
+        assert rec.target.target_type == "pl_percentage"
+
+    def test_strategy_rejects_absolute_price_target(self) -> None:
+        with pytest.raises((ValueError, TypeError), match=r"strateg.+pl_percentage"):
+            _make_recommendation(
+                instrument=_strategy_instrument(),
+                target=Target(
+                    target_type="absolute_price",
+                    price=price(890.0),
+                    dollar_pl_target=money(190.0),
+                ),
+            )
+
+    def test_strategy_rejects_pl_dollar_target(self) -> None:
+        with pytest.raises((ValueError, TypeError), match=r"strateg.+pl_percentage"):
+            _make_recommendation(
+                instrument=_strategy_instrument(),
+                target=Target(
+                    target_type="pl_dollar",
+                    price=price(890.0),
+                    dollar_pl_target=money(190.0),
+                    pl_dollar=money(500.0),
+                ),
+            )
+
+    def test_non_strategy_keeps_full_target_range(self) -> None:
+        # Equity / single-option recommendations keep the full target range —
+        # the constraint is strategy-specific.
+        for target in (
+            Target(target_type="absolute_price", price=price(890.0), dollar_pl_target=money(190.0)),
+            Target(
+                target_type="pl_dollar",
+                price=price(890.0),
+                dollar_pl_target=money(190.0),
+                pl_dollar=money(500.0),
+            ),
+        ):
+            _make_recommendation(target=target)
 
 
 # ---------------------------------------------------------------------------

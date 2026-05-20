@@ -760,6 +760,10 @@ def _strategy_target_to_bracket_leg(
     ``TAKE_PROFIT`` leg with a price trigger), but its direction is inert for
     a strategy — the ``pl_anchor`` drives firing.
     """
+    # The OpenCommand validator (_validate_strategy_target_type) rejects a
+    # non-pl_percentage strategy target at the command boundary (ALP-611), so a
+    # validated strategy OPEN never reaches this guard — it is a defense-in-depth
+    # backstop for direct / unvalidated construction.
     if target.target_type != "pl_percentage" or target.pl_percentage is None:
         msg = (
             f"strategy take-profit requires target_type='pl_percentage' with "

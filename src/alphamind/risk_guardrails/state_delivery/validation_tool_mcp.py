@@ -51,11 +51,19 @@ _VALIDATE_GUARDRAIL_INPUT_SCHEMA: dict[str, Any] = {
     "properties": {
         "instrument": {
             "type": "object",
-            "required": ["ticker", "asset_type", "direction"],
+            "required": ["ticker", "asset_type"],
             "properties": {
                 "ticker": {"type": "string"},
                 "asset_type": {"enum": ["equity", "options", "strategy"]},
-                "direction": {"enum": ["long", "short"]},
+                "direction": {
+                    "enum": ["long", "short"],
+                    "description": (
+                        "Position-level direction. Required for an equity or "
+                        "options instrument; omit it for a multi-leg strategy "
+                        "— a strategy's directional sign lives in its per-leg "
+                        "directions, not a position-level field."
+                    ),
+                },
                 "strike": {"type": "number"},
                 "expiration": {"type": "string", "format": "date-time"},
                 "contract_type": {"enum": ["call", "put"]},
