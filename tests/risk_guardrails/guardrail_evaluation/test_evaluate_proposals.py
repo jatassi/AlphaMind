@@ -238,7 +238,7 @@ def _option(
         id=proposal_id,
         underlying=underlying,
         sector=sector,
-        direction=direction,
+        direction=None if asset_type is AssetType.STRATEGY else direction,
         asset_type=asset_type,
         notional_usd=money(1_000.0),
         quantity=quantity,
@@ -963,7 +963,7 @@ def test_strategy_with_single_leg_raises() -> None:
         id="REC-BAD",
         underlying=Symbol("AAPL"),
         sector="tech",
-        direction=Direction.LONG,
+        direction=None,
         asset_type=AssetType.STRATEGY,
         notional_usd=money(1_000.0),
         quantity=1.0,
@@ -988,6 +988,69 @@ def test_strategy_with_single_leg_raises() -> None:
         )
 
 
+def test_strategy_with_position_level_direction_raises() -> None:
+    """ALP-603: a STRATEGY proposal must carry ``direction=None`` — a non-None
+    position-level direction is a category error and fails the entry point."""
+    bad = ProposedDelta(
+        id="REC-BAD",
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.STRATEGY,
+        notional_usd=money(1_000.0),
+        quantity=1.0,
+        option_legs=(
+            OptionLeg(
+                contract_type=ContractType.CALL,
+                strike=100.0,
+                expiration=_EXPIRATION,
+                quantity=1,
+            ),
+            OptionLeg(
+                contract_type=ContractType.CALL,
+                strike=110.0,
+                expiration=_EXPIRATION,
+                quantity=-1,
+            ),
+        ),
+        action=Action.OPEN,
+        existing_position_id=None,
+    )
+
+    with pytest.raises(LibraryInputError, match=r"REC-BAD.*STRATEGY must not carry"):
+        evaluate_proposals(
+            state=_snapshot(),
+            proposals=(bad,),
+            config=_full_config(),
+            market=_market(),
+        )
+
+
+def test_equity_without_direction_raises() -> None:
+    """ALP-603: an EQUITY proposal must carry a non-None ``direction`` — the
+    optional shape is reserved for a multi-leg STRATEGY."""
+    bad = ProposedDelta(
+        id="REC-BAD",
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=None,
+        asset_type=AssetType.EQUITY,
+        notional_usd=money(1_000.0),
+        quantity=10.0,
+        option_legs=None,
+        action=Action.OPEN,
+        existing_position_id=None,
+    )
+
+    with pytest.raises(LibraryInputError, match=r"REC-BAD.*EQUITY requires a direction"):
+        evaluate_proposals(
+            state=_snapshot(),
+            proposals=(bad,),
+            config=_full_config(),
+            market=_market(),
+        )
+
+
 def _existing_options_position(
     *,
     position_id: str,
@@ -999,7 +1062,7 @@ def _existing_options_position(
         position_id=PositionId(position_id),
         underlying=Symbol("AAPL"),
         sector="tech",
-        direction=Direction.LONG,
+        direction=None if asset_type is AssetType.STRATEGY else Direction.LONG,
         asset_type=asset_type,
         notional_usd=notional_usd,
         delta_adjusted_exposure_usd=delta_adjusted_exposure_usd,
@@ -1021,7 +1084,7 @@ def _close_proposal(
         id=proposal_id,
         underlying=Symbol("AAPL"),
         sector="tech",
-        direction=Direction.LONG,
+        direction=None if asset_type is AssetType.STRATEGY else Direction.LONG,
         asset_type=asset_type,
         notional_usd=money(notional_usd),
         quantity=quantity,

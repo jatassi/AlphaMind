@@ -18,9 +18,11 @@ from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParam
 from alphamind.portfolio_state.records.positions import Direction, InstrumentType
 from alphamind.risk_guardrails.borrow_cost import daily_borrow_cost_usd
 from alphamind.risk_guardrails.guardrail_evaluation import (
+    AssetType,
     ContractType,
     DeltaAdjustedExposure,
     EscalationZones,
+    ExistingPosition,
     FeatureFlagsView,
     FixtureIvProvider,
     Greeks,
@@ -107,6 +109,7 @@ def _snapshot(
     net_short_pct: float = 0.0,
     gross_pct: float = 78.0,
     cash_usd: float = 70_000.0,
+    existing_positions: Mapping[str, ExistingPosition] | None = None,
 ) -> PortfolioStateSnapshot:
     if sector_exposure_pct is None:
         sector_exposure_pct = {
@@ -130,7 +133,7 @@ def _snapshot(
         single_short_max_pct=0.0,
         daily_borrow_cost_pct=0.0,
         position_max_size_pct=5.0,
-        existing_positions=MappingProxyType({}),
+        existing_positions=MappingProxyType(dict(existing_positions or {})),
     )
 
 
@@ -306,7 +309,7 @@ def test_validation_instrument_strategy_missing_legs_raises() -> None:
         ValidationInstrument(
             ticker=Symbol("AAPL"),
             asset_type=InstrumentType.STRATEGY,
-            direction=Direction.LONG,
+            direction=None,
             legs=None,
         )
 
@@ -316,9 +319,103 @@ def test_validation_instrument_strategy_empty_legs_raises() -> None:
         ValidationInstrument(
             ticker=Symbol("AAPL"),
             asset_type=InstrumentType.STRATEGY,
-            direction=Direction.LONG,
+            direction=None,
             legs=(),
         )
+
+
+def _strategy_leg() -> ValidationStrategyLeg:
+    """One well-formed per-leg record for STRATEGY validator tests."""
+    return ValidationStrategyLeg(
+        direction=Direction.LONG,
+        asset_type=InstrumentType.OPTIONS,
+        strike=100.0,
+        expiration=_EXPIRATION_DT,
+        contract_type="call",
+        quantity=1,
+    )
+
+
+def test_validation_instrument_strategy_rejects_position_level_direction() -> None:
+    """ALP-603: a STRATEGY instrument must omit ``direction`` — a position-level
+    long/short is a category error for a multi-leg strategy."""
+    leg = _strategy_leg()
+    with pytest.raises(
+        ValueError, match="STRATEGY asset_type must not carry a position-level direction"
+    ):
+        ValidationInstrument(
+            ticker=Symbol("AAPL"),
+            asset_type=InstrumentType.STRATEGY,
+            direction=Direction.LONG,
+            legs=(leg, leg),
+        )
+
+
+def test_validation_instrument_strategy_accepts_omitted_direction() -> None:
+    """ALP-603: a STRATEGY instrument validates with ``direction`` omitted; the
+    field defaults to ``None``."""
+    leg = _strategy_leg()
+    instrument = ValidationInstrument(
+        ticker=Symbol("AAPL"),
+        asset_type=InstrumentType.STRATEGY,
+        legs=(leg, leg),
+    )
+
+    assert instrument.direction is None
+
+
+def test_validation_instrument_equity_requires_direction() -> None:
+    """ALP-603: an EQUITY instrument still requires a non-None ``direction``."""
+    with pytest.raises(ValueError, match="EQUITY asset_type requires a direction"):
+        ValidationInstrument(ticker=Symbol("AAPL"), asset_type=InstrumentType.EQUITY)
+
+
+def test_validation_instrument_options_requires_direction() -> None:
+    """ALP-603: an OPTIONS instrument still requires a non-None ``direction``."""
+    with pytest.raises(ValueError, match="OPTIONS asset_type requires a direction"):
+        ValidationInstrument(
+            ticker=Symbol("AAPL"),
+            asset_type=InstrumentType.OPTIONS,
+            strike=100.0,
+            expiration=_EXPIRATION_DT,
+            contract_type="call",
+        )
+
+
+def test_lookup_existing_position_resolves_strategy_with_none_direction() -> None:
+    """ALP-603: a STRATEGY ValidationRequest carries ``direction=None``; the
+    lookup resolves the matching strategy existing position on ticker +
+    asset-type, with ``direction == None`` on both sides."""
+    from alphamind.risk_guardrails.state_delivery.validation_tool import (
+        _lookup_existing_position,
+    )
+
+    strategy_pos = ExistingPosition(
+        position_id="POS-STRAT-1",
+        underlying="AAPL",
+        sector="tech",
+        direction=None,
+        asset_type=AssetType.STRATEGY,
+        notional_usd=4_000.0,
+        delta_adjusted_exposure_usd=-1_200.0,
+        current_greeks=None,
+        daily_borrow_cost_usd=None,
+        reserves_capital_usd=0.0,
+        quantity=4.0,
+    )
+    snapshot = _snapshot(existing_positions={"POS-STRAT-1": strategy_pos})
+    leg = _strategy_leg()
+    request = ValidationRequest(
+        instrument=ValidationInstrument(
+            ticker=Symbol("AAPL"),
+            asset_type=InstrumentType.STRATEGY,
+            legs=(leg, leg),
+        ),
+        size=ValidationSize(quantity=1, dollar_value=500.0),
+        action=ValidationAction.CLOSE,
+    )
+
+    assert _lookup_existing_position(request, snapshot=snapshot) == "POS-STRAT-1"
 
 
 def test_validation_size_negative_dollar_value_raises() -> None:
@@ -941,7 +1038,7 @@ def test_strategy_action_returns_populated_greeks(monkeypatch: pytest.MonkeyPatc
         instrument=ValidationInstrument(
             ticker=Symbol("AAPL"),
             asset_type=InstrumentType.STRATEGY,
-            direction=Direction.LONG,
+            direction=None,
             legs=(
                 ValidationStrategyLeg(
                     direction=Direction.LONG,
@@ -1009,13 +1106,13 @@ def _spread_market(underlying: str = "AAPL") -> MarketInputs:
 def _bear_call_spread_request() -> ValidationRequest:
     """A net-credit bear call spread sold for credit: short the lower-strike
     100 call, long the higher-strike 110 call — a genuinely net-short-delta
-    structure. The top-level ``direction`` is the inert ``LONG`` placeholder
-    (ALP-588 decision C); the per-leg directions carry the real sign."""
+    structure. A strategy carries no top-level ``direction`` (ALP-603,
+    ``direction=None``); the per-leg directions carry the real sign."""
     return ValidationRequest(
         instrument=ValidationInstrument(
             ticker=Symbol("AAPL"),
             asset_type=InstrumentType.STRATEGY,
-            direction=Direction.LONG,
+            direction=None,
             legs=(
                 ValidationStrategyLeg(
                     direction=Direction.SHORT,

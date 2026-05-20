@@ -1716,7 +1716,8 @@ def test_add_command_projects_options_position_into_validation_request() -> None
 def test_add_command_projects_strategy_position_with_per_leg_directions() -> None:
     """ADD against a :class:`StrategyPositionDetails` position projects each
     persisted leg's direction onto the :class:`ValidationStrategyLeg` tuple
-    and overrides position-level direction to :class:`Direction.LONG`."""
+    and emits ``direction=None`` — a strategy has no position-level direction
+    (ALP-603)."""
     from datetime import date
 
     from alphamind.decision.portfolio_manager.submit_envelope.process import (
@@ -1755,8 +1756,9 @@ def test_add_command_projects_strategy_position_with_per_leg_directions() -> Non
     add_position_id = "POS-NVDA-STRAT-001"
     record = _bypass_init_PositionRecord(
         position_id=add_position_id,
-        # Position-level direction on a strategy is a persistence artifact; the
-        # add path overrides to LONG regardless.
+        # Position-level direction on the persisted strategy record is an inert
+        # artifact (ALP-591 territory); the validation request emits
+        # ``direction=None`` regardless of what the record carries.
         direction=PSDirection.SHORT,
         details=StrategyPositionDetails(
             strategy_type_label="vertical_spread",
@@ -1777,7 +1779,7 @@ def test_add_command_projects_strategy_position_with_per_leg_directions() -> Non
         _add_command(position_id=add_position_id), position_lookup=lookup
     )
     assert request.instrument.asset_type is InstrumentType.STRATEGY
-    assert request.instrument.direction is PSDirection.LONG
+    assert request.instrument.direction is None
     assert request.instrument.legs is not None
     assert tuple(leg.direction for leg in request.instrument.legs) == (
         PSDirection.LONG,
@@ -1851,8 +1853,8 @@ def test_add_command_raises_on_strategy_leg_without_direction() -> None:
 
 def test_strategy_open_validation_request_carries_per_leg_directions() -> None:
     """OPEN of a StrategyInstrument projects each leg's direction into the
-    :class:`ValidationStrategyLeg` tuple — the position-level direction stays
-    LONG by convention (matches Phase 2's persistence)."""
+    :class:`ValidationStrategyLeg` tuple — the position-level direction is
+    ``None`` (a strategy has no position-level direction — ALP-603)."""
     from alphamind.commands.command_models import StrategyInstrument as OMSStrategyInstrument
     from alphamind.commands.command_models import StrategyLeg as OMSStrategyLeg
     from alphamind.decision.portfolio_manager.submit_envelope.process import (
@@ -1922,9 +1924,9 @@ def test_strategy_open_validation_request_carries_per_leg_directions() -> None:
     )
     request = _build_constructive_request_from_open(command)
     assert request.instrument.asset_type is InstrumentType.STRATEGY
-    # Position-level direction is LONG by convention (matches Phase 2's
-    # _direction_from_instrument).
-    assert request.instrument.direction is PSDirection.LONG
+    # A strategy has no position-level direction (ALP-603) — only the per-leg
+    # directions projected below.
+    assert request.instrument.direction is None
     assert request.instrument.legs is not None
     assert len(request.instrument.legs) == 2
     # Per-leg directions are preserved from the wire-format StrategyInstrument.

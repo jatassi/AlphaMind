@@ -73,16 +73,10 @@ def compute_delta_adjusted_exposure(
     ):
         return _exposure_neutral(proposal)
 
-    direction_sign = 1.0 if proposal.direction is Direction.LONG else -1.0
-    # ``CLOSE`` reduces exposure, so signed notional carries the *direction of
-    # change* — opposite the proposal's ``direction``. The rule-contribution
-    # math then sums ``current + Σ signed_notional`` uniformly across actions.
-    sign = -direction_sign if proposal.action is Action.CLOSE else direction_sign
-
     if proposal.asset_type is AssetType.EQUITY:
         return DeltaAdjustedExposure(
             proposal_id=proposal.id,
-            signed_notional_usd=sign * float(proposal.notional_usd),
+            signed_notional_usd=_directional_sign(proposal) * float(proposal.notional_usd),
             net_greeks=None,
             iv_used=None,
             iv_source=None,
@@ -102,16 +96,16 @@ def compute_delta_adjusted_exposure(
     )
     # A single-leg OPTION carries its directional sign on the position-level
     # ``direction``; the per-leg ``abs()`` above keeps a short-call long-direction
-    # leg from double-counting that sign. A multi-leg STRATEGY's position-level
-    # ``direction`` is an inert ``LONG`` placeholder (ALP-588 decision C) — its
-    # true directional sign already lives in the net-signed leg deltas, so the
-    # sign tracks ``net_greeks.delta``. ``CLOSE`` inverts either sign (the
-    # signed notional carries the direction of change).
+    # leg from double-counting that sign. A multi-leg STRATEGY has no
+    # position-level ``direction`` (``direction is None`` — ALP-603); its true
+    # directional sign already lives in the net-signed leg deltas, so the sign
+    # tracks ``net_greeks.delta``. ``CLOSE`` inverts either sign (the signed
+    # notional carries the direction of change).
     if proposal.asset_type is AssetType.STRATEGY:
         delta_sign = math.copysign(1.0, net_greeks.delta) if net_greeks.delta != 0.0 else 1.0
         exposure_sign = -delta_sign if proposal.action is Action.CLOSE else delta_sign
     else:
-        exposure_sign = sign
+        exposure_sign = _directional_sign(proposal)
     signed_notional = (
         exposure_sign * buffered_abs_delta * spot * _CONTRACT_MULTIPLIER * proposal.quantity
     )
@@ -139,6 +133,21 @@ class _LegResult:
     weighted_greeks: Greeks
     iv: float
     iv_source: IvSource
+
+
+def _directional_sign(proposal: ProposedDelta) -> float:
+    """Signed exposure direction for an EQUITY or single-leg OPTION proposal.
+
+    A multi-leg STRATEGY carries ``direction=None`` (ALP-603) and never reaches
+    this helper — its sign is derived from ``net_greeks.delta`` instead. For
+    the EQUITY / single-leg OPTION callers the entry point's cross-field check
+    guarantees a non-``None`` ``direction``: ``LONG`` maps to ``+1`` and
+    ``SHORT`` to ``-1``. ``CLOSE`` inverts the sign — a close reduces exposure,
+    so the signed notional carries the *direction of change* rather than the
+    position's own direction.
+    """
+    direction_sign = 1.0 if proposal.direction is Direction.LONG else -1.0
+    return -direction_sign if proposal.action is Action.CLOSE else direction_sign
 
 
 def _exposure_neutral(proposal: ProposedDelta) -> DeltaAdjustedExposure:

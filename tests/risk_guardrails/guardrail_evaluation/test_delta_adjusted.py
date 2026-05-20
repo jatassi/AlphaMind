@@ -296,7 +296,7 @@ def _long_call_spread() -> ProposedDelta:
         id="proposal-spread",
         underlying=Symbol("AAPL"),
         sector="Technology",
-        direction=Direction.LONG,
+        direction=None,
         asset_type=AssetType.STRATEGY,
         notional_usd=money(500.0),
         quantity=1.0,
@@ -368,7 +368,7 @@ def test_atm_straddle_has_near_zero_delta_with_long_vol_greek_signs() -> None:
         id="proposal-straddle",
         underlying=Symbol("AAPL"),
         sector="Technology",
-        direction=Direction.LONG,
+        direction=None,
         asset_type=AssetType.STRATEGY,
         notional_usd=money(600.0),
         quantity=1.0,
@@ -407,14 +407,14 @@ def _bear_call_spread() -> ProposedDelta:
     """A net-short-delta bear call spread sold for credit: short the lower-strike
     100 call, long the higher-strike 110 call. Net delta is negative.
 
-    The position-level ``direction`` is the inert ``LONG`` placeholder per
-    ALP-588 decision (C) — every directional sign rides on the per-leg
-    quantities (short leg = negative quantity)."""
+    A strategy has no position-level ``direction`` (ALP-603, ``direction=None``)
+    — every directional sign rides on the per-leg quantities (short leg =
+    negative quantity)."""
     return ProposedDelta(
         id="proposal-bear-call",
         underlying=Symbol("AAPL"),
         sector="Technology",
-        direction=Direction.LONG,
+        direction=None,
         asset_type=AssetType.STRATEGY,
         notional_usd=money(500.0),
         quantity=1.0,
@@ -439,9 +439,10 @@ def _bear_call_spread() -> ProposedDelta:
 
 def test_net_short_delta_strategy_signed_notional_is_negative() -> None:
     """AC: a net-short-delta strategy's ``signed_notional_usd`` is negative —
-    its directional sign comes from the net-signed leg deltas, not from the
-    position-level ``LONG`` placeholder. A positive signed notional here would
-    inflate ``net_long_pct`` for a strategy that is genuinely short delta."""
+    its directional sign comes from the net-signed leg deltas, not from a
+    position-level direction (a strategy has none — ALP-603). A positive
+    signed notional here would inflate ``net_long_pct`` for a strategy that is
+    genuinely short delta."""
     proposal = _bear_call_spread()
     market = _market(iv_provider=_spread_provider("AAPL"))
     config = _config(active_regime="normal", conservative_buffer_pct=10.0)
@@ -598,7 +599,7 @@ def test_iv_source_falls_back_when_any_leg_falls_back() -> None:
         id="proposal-mixed",
         underlying=Symbol("AAPL"),
         sector="Technology",
-        direction=Direction.LONG,
+        direction=None,
         asset_type=AssetType.STRATEGY,
         notional_usd=money(200.0),
         quantity=1.0,

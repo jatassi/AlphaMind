@@ -362,6 +362,15 @@ def test_strategy_recommendation_legs() -> None:
     assert short_leg.quantity == -3  # short direction → negative
 
 
+def test_strategy_recommendation_has_no_position_level_direction() -> None:
+    """ALP-603: a multi-leg strategy carries ``direction=None`` — the
+    translator does not fabricate one from the first leg."""
+    rec = _strategy_recommendation(quantity=3.0, premium_at_risk=600.0)
+    delta = translate_recommendation_to_proposed_delta(rec, snapshot=_snapshot())
+
+    assert delta.direction is None
+
+
 # ===========================================================================
 # AC-4 & AC-5: Short equity borrow cost
 # ===========================================================================
