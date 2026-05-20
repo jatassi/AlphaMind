@@ -26,6 +26,7 @@ from alphamind.execution.write_paths.phase2.open import (
 )
 from alphamind.portfolio_state.records.orders import (
     BracketLegType,
+    BracketRecord,
     PriceTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
@@ -210,7 +211,7 @@ def _pl_percentage_target() -> Target:
     )
 
 
-def _build_strategy_bracket(instrument: StrategyInstrument | None = None) -> object:
+def _build_strategy_bracket(instrument: StrategyInstrument | None = None) -> BracketRecord:
     return _build_pending_bracket(
         bracket_id="BRK-NVDA-abc123",
         position_id="POS-NVDA-abc123",
@@ -227,7 +228,7 @@ def test_strategy_bracket_take_profit_leg_carries_pl_anchor() -> None:
     """A strategy TAKE_PROFIT leg carries a PLAnchorSpec — the representation
     the strategy net-P/L evaluator consumes — with pct = pl_percentage / 100."""
     bracket = _build_strategy_bracket()
-    target_leg = bracket.protective_legs[0]  # type: ignore[attr-defined]
+    target_leg = bracket.protective_legs[0]
 
     assert target_leg.leg_type is BracketLegType.TAKE_PROFIT
     assert target_leg.pl_anchor is not None
@@ -241,7 +242,7 @@ def test_strategy_take_profit_does_not_apply_hard_coded_long_direction() -> None
     references the strategy's net P/L (parent ALP-588 decision F). The leg's
     PLAnchorSpec, not the PriceTrigger direction, drives firing."""
     bracket = _build_strategy_bracket()
-    target_leg = bracket.protective_legs[0]  # type: ignore[attr-defined]
+    target_leg = bracket.protective_legs[0]
 
     # A pl_anchor on the leg means the strategy net-P/L evaluator scores it;
     # the structurally-required PriceTrigger's direction is inert.
