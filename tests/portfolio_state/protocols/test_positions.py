@@ -164,13 +164,14 @@ def test_order_record_does_not_satisfy_base_protocol() -> None:
 
 def test_protocol_attrs_match_design_base_interface() -> None:
     """Acceptance: protocol fields cover position_id, thesis_id, bracket_id,
-    status, direction, entry_timestamp — the design's base-interface set."""
+    status, entry_timestamp — the design's base-interface set. Position-level
+    direction is instrument-specific (ALP-591) and read through
+    ``position_direction()``, so it is not a base-interface field."""
     expected_fields = {
         "position_id",
         "thesis_id",
         "bracket_id",
         "status",
-        "direction",
         "entry_timestamp",
     }
     # ``__protocol_attrs__`` is a CPython runtime implementation detail used
@@ -194,7 +195,6 @@ def test_protocol_accessors_return_record_values() -> None:
     assert base.thesis_id == "THESIS-001"
     assert base.bracket_id is None
     assert base.status is PositionStatus.OPEN
-    assert base.direction is Direction.LONG
     assert base.entry_timestamp == _NOW
 
 
@@ -205,4 +205,3 @@ def test_protocol_accessors_return_view_values() -> None:
     assert base.position_id == "POS-AAPL-001"
     assert base.thesis_id == "THESIS-001"
     assert base.status is PositionStatus.OPEN
-    assert base.direction is Direction.LONG

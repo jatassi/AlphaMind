@@ -18,7 +18,6 @@ from datetime import datetime
 
 from alphamind._kernel.money import Money
 from alphamind.portfolio_state.records.positions import (
-    Direction,
     InstrumentType,
     PositionDetailsPayload,
     PositionFill,
@@ -51,10 +50,13 @@ class PositionView:
 
     The ``record`` field gives consumers transparent access to the persistent
     position state (``view.record.position_id``, ``view.record.thesis_id``,
-    ``view.record.direction``, ``view.record.details``, ...). Convenience
-    pass-through properties below mirror the most frequently-used persistent
-    fields so existing consumer call sites remain ``view.position_id``,
-    ``view.direction``, etc. — minimising churn during the 05a migration.
+    ``view.record.details``, ...). Convenience pass-through properties below
+    mirror the most frequently-used persistent fields so existing consumer
+    call sites remain ``view.position_id``, ``view.status``, etc. — minimising
+    churn during the 05a migration. Position-level direction is *not* a
+    pass-through property: consumers read it through
+    :func:`alphamind.portfolio_state.records.positions.position_direction`,
+    which is instrument-aware (``None`` for a strategy).
 
     Sign conventions
     ----------------
@@ -117,10 +119,6 @@ class PositionView:
     @property
     def status(self) -> PositionStatus:
         return self.record.status
-
-    @property
-    def direction(self) -> Direction:
-        return self.record.direction
 
     @property
     def entry_timestamp(self) -> datetime | None:

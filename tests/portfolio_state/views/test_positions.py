@@ -99,6 +99,12 @@ class TestPositionViewConstruction:
         assert view.record.status == PositionStatus.OPEN
         assert isinstance(view.record.details, EquityPositionDetails)
 
+    def test_no_direction_passthrough_property(self) -> None:
+        """``direction`` is not a pass-through property — consumers route the
+        position-level direction read through ``position_direction()`` (ALP-610)."""
+        view = _make_view()
+        assert not hasattr(view, "direction")
+
 
 # ---------------------------------------------------------------------------
 # Frozen
