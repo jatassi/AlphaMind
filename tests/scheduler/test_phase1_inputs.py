@@ -33,7 +33,7 @@ from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
 )
-from alphamind.persistence.models import Base
+from alphamind.persistence.models import AssetUniverse, Base, OhlcvBars
 from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
@@ -241,6 +241,163 @@ async def _open_phase1_handle(
     )
     session = async_factory()
     return session, InvocationHandle(session=session, invocation_id=invocation_id)
+
+
+def _make_universe_row(
+    ticker: str,
+    *,
+    is_active: int = 1,
+    asset_role: str = "universe",
+) -> AssetUniverse:
+    """Build a minimal active ``asset_universe`` row for ``ticker``."""
+    return AssetUniverse(
+        asset_id=f"asset-{ticker.lower()}",
+        ticker=ticker,
+        full_name=f"{ticker} Inc.",
+        asset_class="equity",
+        asset_role=asset_role,
+        exchange="NASDAQ",
+        is_active=is_active,
+        added_date="2020-01-01",
+        last_updated="2026-05-07T00:00:00Z",
+    )
+
+
+def _make_ohlcv_bar(
+    ticker: str,
+    *,
+    period_start: str,
+    unadj_close: float,
+    adj_close: float | None = None,
+    timeframe: str = "1d",
+) -> OhlcvBars:
+    """Build an ``ohlcv_bars`` row; ``adj_close`` defaults to ``unadj_close``."""
+    adj = unadj_close if adj_close is None else adj_close
+    return OhlcvBars(
+        ticker=ticker,
+        timeframe=timeframe,
+        period_start=period_start,
+        period_end=period_start,
+        session="regular",
+        adj_open=adj,
+        adj_high=adj,
+        adj_low=adj,
+        adj_close=adj,
+        adj_volume=1_000_000,
+        unadj_open=unadj_close,
+        unadj_high=unadj_close,
+        unadj_low=unadj_close,
+        unadj_close=unadj_close,
+        unadj_volume=1_000_000,
+        source="polygon",
+        ingested_at="2026-05-07T00:00:00Z",
+    )
+
+
+class TestReadActiveUniversePrices:
+    """``_read_active_universe_prices`` — latest EOD close per active ticker (ALP-587)."""
+
+    async def test_returns_latest_daily_unadjusted_close_for_active_tickers(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The latest ``1d`` bar's ``unadj_close`` is returned per active ticker;
+        older bars and intraday timeframes are ignored, inactive tickers dropped."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        async with async_factory() as seed_session:
+            seed_session.add_all(
+                [
+                    _make_universe_row("CSCO"),
+                    _make_universe_row("MSFT"),
+                    _make_universe_row("INACT", is_active=0),
+                ]
+            )
+            await seed_session.flush()
+            seed_session.add_all(
+                [
+                    # CSCO: two daily bars — the later one wins; adj_close
+                    # differs from unadj_close so the assertion proves the
+                    # *unadjusted* close is selected.
+                    _make_ohlcv_bar(
+                        "CSCO", period_start="2026-05-05T00:00:00+00:00", unadj_close=47.0
+                    ),
+                    _make_ohlcv_bar(
+                        "CSCO",
+                        period_start="2026-05-06T00:00:00+00:00",
+                        unadj_close=48.5,
+                        adj_close=99.0,
+                    ),
+                    # An intraday bar more recent than the daily bar must not win.
+                    _make_ohlcv_bar(
+                        "CSCO",
+                        period_start="2026-05-07T13:00:00+00:00",
+                        unadj_close=50.0,
+                        timeframe="1h",
+                    ),
+                    _make_ohlcv_bar(
+                        "MSFT", period_start="2026-05-06T00:00:00+00:00", unadj_close=410.0
+                    ),
+                    _make_ohlcv_bar(
+                        "INACT", period_start="2026-05-06T00:00:00+00:00", unadj_close=12.0
+                    ),
+                ]
+            )
+            await seed_session.commit()
+
+        async with async_factory() as session:
+            prices = await module._read_active_universe_prices(session, as_of=_NOW)
+
+        assert prices == {"CSCO": 48.5, "MSFT": 410.0}
+
+    async def test_drops_stale_bars_past_the_age_bound(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A ticker whose only daily bar is older than the staleness bound is
+        omitted — it falls back to the validation tool's UNAVAILABLE path."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        async with async_factory() as seed_session:
+            seed_session.add_all([_make_universe_row("FRESH"), _make_universe_row("STALE")])
+            await seed_session.flush()
+            seed_session.add_all(
+                [
+                    _make_ohlcv_bar(
+                        "FRESH", period_start="2026-05-06T00:00:00+00:00", unadj_close=20.0
+                    ),
+                    # ~67 days before _NOW — well past the 7-day bound.
+                    _make_ohlcv_bar(
+                        "STALE", period_start="2026-03-01T00:00:00+00:00", unadj_close=30.0
+                    ),
+                ]
+            )
+            await seed_session.commit()
+
+        async with async_factory() as session:
+            prices = await module._read_active_universe_prices(session, as_of=_NOW)
+
+        assert prices == {"FRESH": 20.0}
+
+
+class TestBuildMarketInputs:
+    """``_build_market_inputs`` — held-position quotes override universe closes."""
+
+    def test_held_position_price_overrides_universe_close(self) -> None:
+        """On overlap the live broker ``current_price`` wins; unheld universe
+        tickers still surface from the EOD-close base layer (ALP-587)."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        positions = (_make_position_snapshot("AAPL", 175.0),)
+        market = module._build_market_inputs(
+            positions=positions,
+            universe_prices={"AAPL": 999.0, "CSCO": 48.5},
+            risk_free_rate=0.045,
+            as_of=_NOW,
+            realized_vol_map={},
+        )
+
+        assert dict(market.underlying_prices) == {"AAPL": 175.0, "CSCO": 48.5}
 
 
 class TestGatherPhase1Inputs:
@@ -474,3 +631,98 @@ class TestGatherPhase1Inputs:
         assert realized_vol_map["AAPL"].underlying == "AAPL"
         assert realized_vol_map["AAPL"].trailing_30d_realized_vol == pytest.approx(0.27)
         assert "MSFT" not in realized_vol_map
+
+    async def test_market_inputs_covers_unheld_active_universe_ticker(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+    ) -> None:
+        """ALP-587 — an active-universe ticker that is *not* held surfaces in
+        ``underlying_prices`` from its latest EOD bar, so the validation tool
+        no longer returns UNAVAILABLE / missing_market_price for it."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        positions = (_make_position_snapshot("AAPL", 175.0),)
+
+        async with async_factory() as seed_session:
+            seed_session.add_all(
+                [_make_universe_row("CSCO"), _make_universe_row("INACT", is_active=0)]
+            )
+            await seed_session.flush()
+            seed_session.add_all(
+                [
+                    _make_ohlcv_bar(
+                        "CSCO", period_start="2026-05-06T00:00:00+00:00", unadj_close=48.5
+                    ),
+                    _make_ohlcv_bar(
+                        "INACT", period_start="2026-05-06T00:00:00+00:00", unadj_close=12.0
+                    ),
+                ]
+            )
+            await seed_session.commit()
+
+        session, handle = await _open_phase1_handle(
+            async_factory=async_factory,
+            env_path=env_path,
+            archive_root=archive_root,
+        )
+        try:
+            inputs = await module.gather_phase1_inputs(
+                handle=handle,
+                venue_config=_make_venue_config(),
+                execution_mode=ExecutionMode.paper,
+                as_of=_NOW,
+                account_queries_factory=lambda v, m: _StubQueries(
+                    account=_make_account_snapshot(), positions=positions
+                ),
+                ca_queries_factory=lambda v, m: _StubCorporateActionsQueries(),
+            )
+        finally:
+            await session.close()
+
+        prices = dict(inputs.market_inputs.underlying_prices)
+        assert prices["AAPL"] == 175.0
+        assert prices["CSCO"] == 48.5
+        assert "INACT" not in prices
+
+    async def test_held_position_price_wins_over_eod_bar(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+    ) -> None:
+        """ALP-587 — when a ticker is both held and present in ``ohlcv_bars``,
+        the live broker ``current_price`` overrides the staler EOD close."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        positions = (_make_position_snapshot("AAPL", 175.0),)
+
+        async with async_factory() as seed_session:
+            seed_session.add(_make_universe_row("AAPL"))
+            await seed_session.flush()
+            seed_session.add(
+                _make_ohlcv_bar("AAPL", period_start="2026-05-06T00:00:00+00:00", unadj_close=999.0)
+            )
+            await seed_session.commit()
+
+        session, handle = await _open_phase1_handle(
+            async_factory=async_factory,
+            env_path=env_path,
+            archive_root=archive_root,
+        )
+        try:
+            inputs = await module.gather_phase1_inputs(
+                handle=handle,
+                venue_config=_make_venue_config(),
+                execution_mode=ExecutionMode.paper,
+                as_of=_NOW,
+                account_queries_factory=lambda v, m: _StubQueries(
+                    account=_make_account_snapshot(), positions=positions
+                ),
+                ca_queries_factory=lambda v, m: _StubCorporateActionsQueries(),
+            )
+        finally:
+            await session.close()
+
+        assert dict(inputs.market_inputs.underlying_prices)["AAPL"] == 175.0
