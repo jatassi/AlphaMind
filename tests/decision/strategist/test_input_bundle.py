@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pytest
@@ -82,9 +82,14 @@ from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
     InstrumentType,
+    OptionContractType,
+    OptionGreeks,
+    OptionsPositionDetails,
     PositionFill,
     PositionRecord,
     PositionStatus,
+    StrategyLeg,
+    StrategyPositionDetails,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -352,6 +357,90 @@ def _make_position_record(
         position_age_hours=age_hours,
         notional_exposure_usd=money(market_value),
         delta_adjusted_exposure_usd=signed_money(market_value),
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
+    )
+
+
+def _make_strategy_position_view(
+    *,
+    position_id: str = "POS-SPY-STRAT-001",
+    strategy_type_label: str = "bull_call_spread",
+) -> PositionView:
+    """Build a held multi-leg strategy ``PositionView`` for direction-read tests.
+
+    A strategy carries no position-level direction (``position_direction()``
+    returns ``None``); the renderers must show *strategy_type_label* instead and
+    omit the R/R figure.
+    """
+    leg_long = StrategyLeg(
+        leg_id="leg-long-call",
+        direction=Direction.LONG,
+        options=OptionsPositionDetails(
+            underlying_ticker=Symbol("SPY"),
+            strike_price=520.0,
+            expiration_date=date(2026, 6, 19),
+            contract_type=OptionContractType.CALL,
+            contract_count=10.0,
+            contract_multiplier=100.0,
+            premium_paid_per_contract=4.20,
+            greeks=OptionGreeks(delta=0.45, gamma=0.04, theta=-0.03, vega=0.20),
+        ),
+    )
+    leg_short = StrategyLeg(
+        leg_id="leg-short-call",
+        direction=Direction.SHORT,
+        options=OptionsPositionDetails(
+            underlying_ticker=Symbol("SPY"),
+            strike_price=530.0,
+            expiration_date=date(2026, 6, 19),
+            contract_type=OptionContractType.CALL,
+            contract_count=10.0,
+            contract_multiplier=100.0,
+            premium_paid_per_contract=2.10,
+            greeks=OptionGreeks(delta=0.30, gamma=0.03, theta=-0.025, vega=0.18),
+        ),
+    )
+    details = StrategyPositionDetails(
+        strategy_type_label=strategy_type_label,
+        legs=(leg_long, leg_short),
+        net_premium_usd=2100.0,
+        max_profit_usd=7900.0,
+        max_loss_usd=2100.0,
+        breakeven_levels=(522.10,),
+        strategy_greeks=OptionGreeks(delta=0.15, gamma=0.01, theta=-0.005, vega=0.02),
+    )
+    fill = PositionFill(
+        fill_timestamp=_ENTRY_TIMESTAMP,
+        fill_price=price(2.10),
+        fill_quantity=10.0,
+        slippage=signed_money(0.03),
+        fees=money(1.0),
+    )
+    record = PositionRecord(
+        position_id=PositionId(position_id),
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_ENTRY_TIMESTAMP,
+        details=details,
+        execution_history=(fill,),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=signed_money(21_000.0),
+        unrealized_pnl_usd=signed_money(500.0),
+        unrealized_pnl_pct=2.4,
+        position_weight_pct=4.5,
+        position_age_hours=12.0,
+        notional_exposure_usd=money(21_000.0),
+        delta_adjusted_exposure_usd=signed_money(3_000.0),
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -658,6 +747,7 @@ def _current_price_lookup(ticker: str) -> float:
         "NVDA": 862.0,  # avg cost 800 → +7.75% above avg
         "AAPL": 175.0,
         "AMD": 145.0,
+        "SPY": 525.0,
     }
     return prices[ticker]
 
@@ -866,6 +956,45 @@ def test_position_record_renders_risk_reward_at_current() -> None:
     )
     # Token "R/R" identifies the risk/reward line
     assert "R/R" in out
+
+
+def test_held_strategy_position_renders_strategy_type_label() -> None:
+    """A held multi-leg strategy renders without a fabricated long/short.
+
+    ``position_direction()`` returns ``None`` for a strategy; the underlying
+    line shows the strategy-type label in place of LONG/SHORT.
+    """
+    strategy_view = StrategistPositionView(
+        position=_make_strategy_position_view(),
+        thesis=None,
+        bracket=None,
+        pending_orders=(),
+        modification_trail=(),
+    )
+    view = _make_strategist_view(positions=(strategy_view,))
+    out = assemble_input_bundle_normal(**{**_normal_kwargs(), "strategist_view": view})
+    assert "direction: bull_call_spread" in out
+    assert "instrument: strategy" in out
+    assert "direction: long" not in out
+    assert "direction: short" not in out
+
+
+def test_held_strategy_position_omits_risk_reward() -> None:
+    """A strategy has no position-level direction, so R/R at-current is omitted.
+
+    The strategy still gets a bracket with target / stop legs; ``_risk_reward``
+    must return ``None`` (rendered ``—``) rather than fabricating a direction.
+    """
+    strategy_view = StrategistPositionView(
+        position=_make_strategy_position_view(),
+        thesis=None,
+        bracket=_make_bracket(bracket_id="BRK-SPY-STRAT-001", position_id="POS-SPY-STRAT-001"),
+        pending_orders=(),
+        modification_trail=(),
+    )
+    view = _make_strategist_view(positions=(strategy_view,))
+    out = assemble_input_bundle_normal(**{**_normal_kwargs(), "strategist_view": view})
+    assert "R/R at-current —" in out
 
 
 # ---------------------------------------------------------------------------

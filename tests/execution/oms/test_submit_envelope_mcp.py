@@ -1651,6 +1651,45 @@ def test_add_command_builds_real_validation_request_from_position_lookup() -> No
     assert request.size.quantity > 0
 
 
+def test_add_command_equity_carries_position_direction() -> None:
+    """ADD against an equity position projects its position-level direction.
+
+    ALP-609 — the equity ``ValidationInstrument`` direction is sourced via
+    ``position_direction()``; a SHORT equity position must project
+    ``Direction.SHORT`` (no fabricated LONG).
+    """
+    from alphamind.decision.portfolio_manager.submit_envelope.process import (
+        _command_to_validation_request,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        Direction as PSDirection,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        EquityPositionDetails,
+        LocateStatus,
+    )
+
+    add_position_id = "POS-NVDA-SHORT-001"
+    record = _bypass_init_PositionRecord(
+        position_id=add_position_id,
+        direction=PSDirection.SHORT,
+        details=EquityPositionDetails(
+            ticker="NVDA",  # type: ignore[arg-type]
+            share_count=100.0,
+            average_cost_basis_per_share=750.0,
+            borrow_rate_pct=3.0,
+            locate_status=LocateStatus.LOCATED,
+            margin_held_usd=10_000.0,
+        ),
+    )
+    lookup = {add_position_id: record}.get
+
+    request = _command_to_validation_request(
+        _add_command(position_id=add_position_id), position_lookup=lookup
+    )
+    assert request.instrument.direction is PSDirection.SHORT
+
+
 def test_add_command_raises_when_position_lookup_returns_none() -> None:
     """An AddCommand whose ``position_id`` doesn't resolve in the lookup
     surfaces as a :class:`ValueError` naming the missing id — better than
