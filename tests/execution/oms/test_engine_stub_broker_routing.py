@@ -1222,7 +1222,12 @@ def test_engine_close_dispatch_kwargs_routes_options_position() -> None:
 
 
 def test_engine_close_dispatch_kwargs_routes_strategy_position() -> None:
-    """Engine CLOSE on a strategy position threads open_legs + strategy_type."""
+    """Engine CLOSE on a strategy position threads close-side legs + strategy_type.
+
+    Each leg reverses the position it opened: the LONG-opened leg closes
+    sell / sell_to_close, the SHORT-opened leg closes buy / buy_to_close.
+    The inversion happens once at the shared seam.
+    """
     from alphamind.execution.oms.submit_engine_envelope import (
         _engine_close_dispatch_kwargs,
     )
@@ -1232,13 +1237,38 @@ def test_engine_close_dispatch_kwargs_routes_strategy_position() -> None:
 
     assert kwargs["position_asset_type"] == "strategy"
     assert kwargs["strategy_type"] == "vertical_spread"
-    open_legs = kwargs["open_legs"]
-    assert len(open_legs) == 2
-    # Long leg buy_to_open, short leg sell_to_open.
-    assert open_legs[0].side == "buy"
-    assert open_legs[0].position_intent == "buy_to_open"
-    assert open_legs[1].side == "sell"
-    assert open_legs[1].position_intent == "sell_to_open"
+    close_legs = kwargs["close_legs"]
+    assert len(close_legs) == 2
+    # Long-opened leg → sell_to_close; short-opened leg → buy_to_close.
+    assert close_legs[0].side == "sell"
+    assert close_legs[0].position_intent == "sell_to_close"
+    assert close_legs[1].side == "buy"
+    assert close_legs[1].position_intent == "buy_to_close"
+    # No leg of a strategy CLOSE carries a *_to_open intent.
+    assert all(not leg.position_intent.endswith("_to_open") for leg in close_legs)
+
+
+def test_engine_close_dispatch_kwargs_strategy_leg_without_direction_raises() -> None:
+    """A strategy CLOSE leg whose ``direction`` is unset raises ValueError.
+
+    The leg-direction-is-None guard is preserved in the shared close-leg seam.
+    """
+    import dataclasses
+
+    from alphamind.execution.oms.submit_engine_envelope import (
+        _engine_close_dispatch_kwargs,
+    )
+    from alphamind.portfolio_state.records.positions import StrategyPositionDetails
+
+    position = _strategy_open_position()
+    assert isinstance(position.details, StrategyPositionDetails)
+    legs = position.details.legs
+    directionless_first = dataclasses.replace(legs[0], direction=None)
+    broken_details = dataclasses.replace(position.details, legs=(directionless_first, *legs[1:]))
+    broken_position = dataclasses.replace(position, details=broken_details)
+
+    with pytest.raises(ValueError, match="direction"):
+        _engine_close_dispatch_kwargs(broken_position, position_id=broken_position.position_id)
 
 
 def test_engine_close_dispatch_kwargs_equity_unchanged() -> None:
@@ -1611,6 +1641,59 @@ async def test_adjust_command_context_strategy_position_routes_mleg(
         assert kwargs["target_asset_class"] == "us_option_strategy"
         assert kwargs["target_order_class"] == "mleg"
         assert kwargs["target_alpaca_order_id"] == "alp-ord-stop"
+    finally:
+        await async_engine.dispose()
+
+
+async def test_close_command_context_strategy_position_threads_close_side_legs(
+    tmp_path: Path,
+) -> None:
+    """A PM-originated CLOSE on a strategy position threads close-side legs.
+
+    Each leg reverses the position it opened: the LONG-opened leg closes
+    sell / sell_to_close, the SHORT-opened leg closes buy / buy_to_close.
+    The open→close inversion happens once at the shared seam, and the
+    dispatcher receives the ``close_legs`` kwarg.
+    """
+    from alphamind.decision.portfolio_manager.submit_envelope.dispatch import (
+        _close_command_context,
+    )
+    from tests.execution.oms.test_submit_envelope_mcp import _close_command
+
+    async_engine, factory = _build_db_factory(tmp_path)
+    try:
+        await _seed_invocation_substrate(factory)
+        await _seed_cash_ledger(factory)
+        await _seed_position_cluster(
+            factory,
+            _strategy_open_position(),
+            _active_thesis(
+                thesis_id=ThesisId("THE-STRAT-1"), position_id=PositionId("POS-STRAT-001")
+            ),
+            _active_bracket(
+                bracket_id=BracketId("BRK-STRAT-1"), position_id=PositionId("POS-STRAT-001")
+            ),
+        )
+
+        ctx, handle = await _open_handle(factory)
+        try:
+            kwargs = await _close_command_context(
+                _close_command(position_id=PositionId("POS-STRAT-001")),
+                invocation_handle=handle,
+            )
+        finally:
+            await ctx.__aexit__(None, None, None)
+
+        assert kwargs["position_asset_type"] == "strategy"
+        assert kwargs["strategy_type"] == "vertical_spread"
+        close_legs = kwargs["close_legs"]
+        assert len(close_legs) == 2
+        # Long-opened leg → sell_to_close; short-opened leg → buy_to_close.
+        assert close_legs[0].side == "sell"
+        assert close_legs[0].position_intent == "sell_to_close"
+        assert close_legs[1].side == "buy"
+        assert close_legs[1].position_intent == "buy_to_close"
+        assert all(not leg.position_intent.endswith("_to_open") for leg in close_legs)
     finally:
         await async_engine.dispose()
 

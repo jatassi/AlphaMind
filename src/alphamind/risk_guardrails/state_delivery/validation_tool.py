@@ -24,7 +24,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, SkipValidation, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SkipValidation, model_validator
 
 from alphamind._kernel.money import Money, money
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
@@ -103,13 +103,27 @@ class ValidationInstrument(BaseModel):
 
 
 class ValidationSize(BaseModel):
-    """Size of the proposed change."""
+    """Size of the proposed change.
+
+    ``premium_at_risk_usd`` carries the position's *capital at risk* — the USD
+    magnitude of its worst-case loss: the premium paid for a net-debit options
+    position or debit strategy, and (strike width minus net credit received)
+    for a net-credit strategy. Left ``None`` for equity; non-negative when set.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     quantity: int
     dollar_value: float
-    premium_at_risk_usd: float | None = None
+    premium_at_risk_usd: float | None = Field(
+        default=None,
+        description=(
+            "Capital at risk: the USD magnitude of the position's worst-case "
+            "loss — premium paid for a net-debit options position or debit "
+            "strategy, (strike width minus net credit received) for a "
+            "net-credit strategy. None for equity."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_non_negative(self) -> ValidationSize:
@@ -603,9 +617,9 @@ def _request_to_library_proposal(
 
     For short equity OPEN/ADD, derives ``daily_borrow_cost_usd`` via
     ``state.borrow_cost_resolver``. For options, the proposal's
-    ``notional_usd`` carries the premium-at-risk (``size.premium_at_risk_usd``
+    ``notional_usd`` carries the capital at risk (``size.premium_at_risk_usd``
     when set, else ``size.dollar_value``) — the library treats option
-    ``notional_usd`` as the cash impact / premium-at-risk for capital
+    ``notional_usd`` as the cash impact / capital at risk for capital
     accounting per ``rules/capital.py``.
     """
     instrument = request.instrument
@@ -632,7 +646,7 @@ def _library_notional_usd(instrument: ValidationInstrument, size: ValidationSize
 
     Equity: ``size.dollar_value``. Options/strategy: ``size.premium_at_risk_usd``
     when set, else ``size.dollar_value`` as a fallback. The library's
-    ``rules/capital.py`` consumes options ``notional_usd`` as premium-at-risk
+    ``rules/capital.py`` consumes options ``notional_usd`` as capital at risk
     for cash accounting; piping the spec's ``premium_at_risk_usd`` keeps the
     semantics aligned across the layers.
 

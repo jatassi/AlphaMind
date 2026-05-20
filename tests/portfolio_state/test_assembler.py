@@ -94,6 +94,7 @@ from alphamind.portfolio_state.repository import (
     StubPortfolioStateRepository,
 )
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.guardrail_evaluation import (
     EscalationZones,
     FeatureFlagsView,
@@ -380,6 +381,10 @@ def _make_strategy_position(
     leg2_underlying: str = "NVDA",
     premium1: float = 10.0,
     premium2: float = 5.0,
+    net_premium_usd: float | None = None,
+    max_loss_usd: float | None = None,
+    leg1_direction: Direction | None = None,
+    leg2_direction: Direction | None = None,
 ) -> PositionRecord:
     leg1_options = OptionsPositionDetails(
         underlying_ticker=Symbol(leg1_underlying),
@@ -401,15 +406,16 @@ def _make_strategy_position(
         premium_paid_per_contract=premium2,
         greeks=OptionGreeks(delta=-0.5, gamma=0.01, theta=-0.5, vega=0.2),
     )
+    gross_premium = (premium1 + premium2) * LISTED_OPTION_CONTRACT_MULTIPLIER
     strategy_details = StrategyPositionDetails(
         strategy_type_label="LONG_STRADDLE",
         legs=(
-            StrategyLeg(leg_id="leg-1", options=leg1_options),
-            StrategyLeg(leg_id="leg-2", options=leg2_options),
+            StrategyLeg(leg_id="leg-1", options=leg1_options, direction=leg1_direction),
+            StrategyLeg(leg_id="leg-2", options=leg2_options, direction=leg2_direction),
         ),
-        net_premium_usd=(premium1 + premium2) * LISTED_OPTION_CONTRACT_MULTIPLIER,
+        net_premium_usd=net_premium_usd if net_premium_usd is not None else gross_premium,
         max_profit_usd=float("inf"),
-        max_loss_usd=(premium1 + premium2) * LISTED_OPTION_CONTRACT_MULTIPLIER,
+        max_loss_usd=max_loss_usd if max_loss_usd is not None else gross_premium,
         breakeven_levels=(490.0, 520.0),
         strategy_greeks=OptionGreeks(delta=0.0, gamma=0.02, theta=-1.0, vega=0.4),
     )
@@ -1806,3 +1812,208 @@ def test_strategy_pricing_mixes_live_leg_with_entry_premium_leg() -> None:
         + 1.0 * LISTED_OPTION_CONTRACT_MULTIPLIER * leg2_premium
     )
     assert float(view.current_market_value_usd) == pytest.approx(expected_mv)
+
+
+# ---------------------------------------------------------------------------
+# Strategy unrealized P/L percentage — non-inverting denominator (ALP-599)
+# ---------------------------------------------------------------------------
+
+
+def _assemble_credit_strategy(
+    *,
+    leg1_mark: float,
+    leg2_mark: float,
+    net_premium_usd: float,
+    max_loss_usd: float,
+) -> PositionView:
+    """Assemble a SHORT-leg + LONG-leg credit strategy and return its enriched view.
+
+    Leg 1 is SHORT (a written contract — a liability) and leg 2 is LONG. Both
+    legs have ``contract_count=1`` and ``multiplier=100``; both option-contract
+    OCC symbols are given fresh live marks so market value is driven entirely
+    by ``leg1_mark`` / ``leg2_mark``.
+    """
+    pos = _make_strategy_position(
+        leg1_direction=Direction.SHORT,
+        leg2_direction=Direction.LONG,
+        net_premium_usd=net_premium_usd,
+        max_loss_usd=max_loss_usd,
+    )
+    assert isinstance(pos.details, StrategyPositionDetails)
+    leg1_occ = occ_symbol_for_options(pos.details.legs[0].options)
+    leg2_occ = occ_symbol_for_options(pos.details.legs[1].options)
+    fixture = _make_fixture(
+        open_positions=(pos,),
+        cash_ledger=_make_cash_ledger(current_cash=0.0),
+    )
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 520.0)}, _NOW)
+    option_provider = StubOptionPriceProvider(
+        {
+            leg1_occ: PriceQuote(
+                ticker=leg1_occ,
+                price_usd=leg1_mark,
+                as_of_timestamp=_NOW - timedelta(seconds=30),
+                source=PriceSource.INTRADAY_QUOTE,
+                is_stale=False,
+            ),
+            leg2_occ: PriceQuote(
+                ticker=leg2_occ,
+                price_usd=leg2_mark,
+                as_of_timestamp=_NOW - timedelta(seconds=30),
+                source=PriceSource.INTRADAY_QUOTE,
+                is_stale=False,
+            ),
+        },
+        _NOW,
+    )
+    assembled = assemble_snapshot(
+        repository=repo,
+        price_provider=provider,
+        option_price_provider=option_provider,
+        sector_resolver=_null_sector_resolver,
+        config=_make_config(),
+        now=_NOW,
+    )
+    return assembled.snapshot.open_positions[0]
+
+
+def test_strategy_credit_winner_has_positive_unrealized_pnl_pct() -> None:
+    """ALP-599: a net-credit strategy with positive P/L USD shows a positive pct.
+
+    Sold for a $300 credit (net_premium_usd = -300); legs now cost $150 to buy
+    back (MV = -300 + 150 = -150). P/L USD = -150 - (-300) = +150 (profit).
+    With abs(max_loss_usd)=500 the pct is +30% — not the -50% the old
+    net_premium_usd denominator would have inverted it to.
+    """
+    view = _assemble_credit_strategy(
+        leg1_mark=3.0,
+        leg2_mark=1.5,
+        net_premium_usd=-300.0,
+        max_loss_usd=-500.0,
+    )
+    assert float(view.unrealized_pnl_usd) == pytest.approx(150.0)
+    assert view.unrealized_pnl_pct == pytest.approx(30.0)
+    assert view.unrealized_pnl_pct > 0.0
+
+
+def test_strategy_credit_loser_has_negative_unrealized_pnl_pct() -> None:
+    """ALP-599: a net-credit strategy with negative P/L USD shows a negative pct.
+
+    Sold for a $300 credit; legs now cost $450 to buy back
+    (MV = -700 + 250 = -450). P/L USD = -450 - (-300) = -150 (loss).
+    With abs(max_loss_usd)=500 the pct is -30%.
+    """
+    view = _assemble_credit_strategy(
+        leg1_mark=7.0,
+        leg2_mark=2.5,
+        net_premium_usd=-300.0,
+        max_loss_usd=-500.0,
+    )
+    assert float(view.unrealized_pnl_usd) == pytest.approx(-150.0)
+    assert view.unrealized_pnl_pct == pytest.approx(-30.0)
+    assert view.unrealized_pnl_pct < 0.0
+
+
+def test_strategy_pnl_pct_denominator_is_abs_max_loss_not_net_premium() -> None:
+    """ALP-599: the strategy P/L pct denominator is abs(max_loss_usd).
+
+    Holding P/L USD (+150) and net_premium_usd (-300) fixed, doubling the
+    max_loss_usd magnitude halves the percentage — proving the denominator is
+    abs(max_loss_usd). If the denominator were still net_premium_usd the pct
+    would be a fixed -50% regardless of max_loss_usd.
+    """
+    view_max_loss_500 = _assemble_credit_strategy(
+        leg1_mark=3.0,
+        leg2_mark=1.5,
+        net_premium_usd=-300.0,
+        max_loss_usd=-500.0,
+    )
+    view_max_loss_1000 = _assemble_credit_strategy(
+        leg1_mark=3.0,
+        leg2_mark=1.5,
+        net_premium_usd=-300.0,
+        max_loss_usd=-1000.0,
+    )
+    # Same P/L USD in both: +150.
+    assert float(view_max_loss_500.unrealized_pnl_usd) == pytest.approx(150.0)
+    assert float(view_max_loss_1000.unrealized_pnl_usd) == pytest.approx(150.0)
+    # 150 / 500 = 30%; 150 / 1000 = 15% — denominator tracks abs(max_loss_usd).
+    assert view_max_loss_500.unrealized_pnl_pct == pytest.approx(30.0)
+    assert view_max_loss_1000.unrealized_pnl_pct == pytest.approx(15.0)
+
+
+def test_strategy_zero_max_loss_yields_zero_pnl_pct() -> None:
+    """ALP-599: a strategy with max_loss_usd == 0.0 (skeleton) yields pnl_pct == 0.0."""
+    view = _assemble_credit_strategy(
+        leg1_mark=3.0,
+        leg2_mark=1.5,
+        net_premium_usd=-300.0,
+        max_loss_usd=0.0,
+    )
+    assert float(view.unrealized_pnl_usd) == pytest.approx(150.0)
+    assert view.unrealized_pnl_pct == 0.0
+
+
+def test_strategy_unbounded_max_loss_yields_zero_pnl_pct() -> None:
+    """ALP-599: a strategy with max_loss_usd == -inf yields pnl_pct == 0.0, no blow-up."""
+    view = _assemble_credit_strategy(
+        leg1_mark=3.0,
+        leg2_mark=1.5,
+        net_premium_usd=-300.0,
+        max_loss_usd=float("-inf"),
+    )
+    assert float(view.unrealized_pnl_usd) == pytest.approx(150.0)
+    assert view.unrealized_pnl_pct == 0.0
+
+
+def test_equity_unrealized_pnl_pct_divides_by_cost_basis_unchanged() -> None:
+    """ALP-599 regression: an EQUITY position's P/L pct still divides by cost basis.
+
+    100 shares at $500 cost (cost basis $50,000); current price $550
+    (MV $55,000). P/L USD = $5,000; P/L pct = 5000 / 50000 = 10% — the
+    instrument_type branch leaves the equity path on compute_unrealized_pnl_pct.
+    """
+    pos = _make_equity_position(share_count=100.0, cost_per_share=500.0)
+    fixture = _make_fixture(
+        open_positions=(pos,),
+        cash_ledger=_make_cash_ledger(current_cash=0.0),
+    )
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 550.0)}, _NOW)
+    assembled = assemble_snapshot(
+        repository=repo,
+        price_provider=provider,
+        option_price_provider=StubOptionPriceProvider({}, _NOW),
+        sector_resolver=_null_sector_resolver,
+        config=_make_config(),
+        now=_NOW,
+    )
+    view = assembled.snapshot.open_positions[0]
+    assert float(view.unrealized_pnl_usd) == pytest.approx(5_000.0)
+    assert view.unrealized_pnl_pct == pytest.approx(10.0)
+
+
+def test_single_leg_option_unrealized_pnl_pct_divides_by_cost_basis_unchanged() -> None:
+    """ALP-599 regression: a single-leg OPTIONS position's P/L pct still divides by cost basis.
+
+    2 contracts at $5 premium (cost basis = 2 * 100 * 5 = $1,000); live mark
+    $7.50 (MV = 2 * 100 * 7.50 = $1,500). P/L USD = $500; P/L pct =
+    500 / 1000 = 50% — the instrument_type branch leaves OPTIONS unchanged.
+    """
+    occ = _occ_symbol_for_test()
+    assembled = _assemble_with_option_provider(
+        option_quotes={
+            occ: PriceQuote(
+                ticker=occ,
+                price_usd=7.50,
+                as_of_timestamp=_NOW - timedelta(seconds=30),
+                source=PriceSource.INTRADAY_QUOTE,
+                is_stale=False,
+            )
+        },
+        premium=5.0,
+    )
+    view = assembled.snapshot.open_positions[0]
+    assert float(view.unrealized_pnl_usd) == pytest.approx(500.0)
+    assert view.unrealized_pnl_pct == pytest.approx(50.0)

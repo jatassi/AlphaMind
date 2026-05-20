@@ -53,7 +53,13 @@ from alphamind.execution.broker_adapter.retry import (
     submit_with_retry,
 )
 from alphamind.execution.oms.command_ids import is_engine_originated, is_pm_originated
-from alphamind.portfolio_state.records.positions import OptionContractType
+from alphamind.portfolio_state.records.positions import (
+    Direction,
+    OptionContractType,
+)
+from alphamind.portfolio_state.records.positions import (
+    StrategyLeg as PositionStrategyLeg,
+)
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -379,16 +385,6 @@ async def submit_mleg_open(
     )
 
 
-_OPEN_TO_CLOSE_INTENT: dict[PositionIntentLiteral, PositionIntent] = {
-    "buy_to_open": PositionIntent.SELL_TO_CLOSE,
-    "sell_to_open": PositionIntent.BUY_TO_CLOSE,
-}
-
-_OPEN_TO_CLOSE_SIDE: dict[Literal["buy", "sell"], OrderSide] = {
-    "buy": OrderSide.SELL,
-    "sell": OrderSide.BUY,
-}
-
 _INTENT_ENUM_BY_LITERAL: dict[PositionIntentLiteral, PositionIntent] = {
     "buy_to_open": PositionIntent.BUY_TO_OPEN,
     "sell_to_open": PositionIntent.SELL_TO_OPEN,
@@ -402,30 +398,97 @@ _SIDE_ENUM_BY_LITERAL: dict[Literal["buy", "sell"], OrderSide] = {
 }
 
 
-def _build_close_legs(open_legs: Sequence[MLEGLegAck]) -> list[OptionLegRequest]:
-    """Build close-side leg requests by inverting each open leg's intent.
+# ---------------------------------------------------------------------------
+# The single open→close inversion seam
+# ---------------------------------------------------------------------------
 
-    OCC symbols and ratios carry over unchanged; only ``side`` /
-    ``position_intent`` flip per ``broker-adapter.md § Multi-leg fill events``
-    (closing a strategy reverses each leg's open intent).
+
+# A strategy leg is stored in the position record by its OPEN ``direction``
+# (LONG / SHORT = how it was opened). Closing reverses each leg: a LONG-opened
+# leg is sold to close; a SHORT-opened leg is bought to close.
+_CLOSE_SIDE_FOR_DIRECTION: dict[Direction, Literal["buy", "sell"]] = {
+    Direction.LONG: "sell",
+    Direction.SHORT: "buy",
+}
+
+_CLOSE_INTENT_FOR_DIRECTION: dict[Direction, PositionIntentLiteral] = {
+    Direction.LONG: "sell_to_close",
+    Direction.SHORT: "buy_to_close",
+}
+
+_CLOSE_INTENTS: frozenset[PositionIntentLiteral] = frozenset({"buy_to_close", "sell_to_close"})
+
+
+def strategy_legs_to_close_acks(
+    legs: Sequence[PositionStrategyLeg],
+) -> tuple[MLEGLegAck, ...]:
+    """Convert a position's open-side strategy legs into close-side ``MLEGLegAck`` legs.
+
+    This is the *single* seam where the open→close inversion happens. Each
+    persisted :class:`StrategyLeg` carries the ``direction`` it was opened
+    with; closing reverses it — a LONG-opened leg closes ``sell`` /
+    ``sell_to_close``, a SHORT-opened leg closes ``buy`` / ``buy_to_close``.
+    Every strategy-CLOSE caller (the OMS engine envelope, the bracket-stop
+    wiring, the PM submit-envelope dispatcher) routes through this helper so
+    the inversion is applied exactly once.
+
+    A leg with ``direction is None`` cannot be reversed and raises
+    :class:`ValueError`.
+
+    Each leg's ``ratio_qty`` is ``1``: the strategy unit count rides on the
+    request-level ``qty``, so this assumes a 1:1 leg structure (vertical
+    spreads, iron condors). Ratio strategies (e.g. 1x2) are not represented.
     """
-    inverted: list[OptionLegRequest] = []
-    for leg in open_legs:
-        if leg.position_intent not in _OPEN_TO_CLOSE_INTENT:
+    acks: list[MLEGLegAck] = []
+    for leg in legs:
+        direction = leg.direction
+        if direction is None:
+            msg = f"strategy leg {leg.leg_id!r} has no direction set; cannot build a close-side leg"
+            raise ValueError(msg)
+        opt = leg.options
+        occ = _build_occ_symbol(
+            opt.underlying_ticker,
+            opt.expiration_date,
+            opt.contract_type,
+            opt.strike_price,
+        )
+        acks.append(
+            MLEGLegAck(
+                occ_symbol=OccSymbol(occ),
+                side=_CLOSE_SIDE_FOR_DIRECTION[direction],
+                ratio_qty=1,
+                position_intent=_CLOSE_INTENT_FOR_DIRECTION[direction],
+            )
+        )
+    return tuple(acks)
+
+
+def _build_close_legs(close_legs: Sequence[MLEGLegAck]) -> list[OptionLegRequest]:
+    """Translate close-side ``MLEGLegAck`` legs into alpaca-py ``OptionLegRequest``s.
+
+    ``close_legs`` already carry close-side ``side`` / ``position_intent`` —
+    the open→close inversion happens upstream at
+    :func:`strategy_legs_to_close_acks`. This is a straight literal → enum
+    translation (mirroring :func:`_build_scaled_open_legs`); it rejects any
+    leg whose ``position_intent`` is not a ``*_to_close`` value.
+    """
+    requests: list[OptionLegRequest] = []
+    for leg in close_legs:
+        if leg.position_intent not in _CLOSE_INTENTS:
             msg = (
-                f"submit_mleg_close: open leg has non-open position_intent "
-                f"{leg.position_intent!r}; expected buy_to_open or sell_to_open"
+                f"submit_mleg_close: leg has non-close position_intent "
+                f"{leg.position_intent!r}; expected buy_to_close or sell_to_close"
             )
             raise ValueError(msg)
-        inverted.append(
+        requests.append(
             OptionLegRequest(
                 symbol=leg.occ_symbol,
                 ratio_qty=leg.ratio_qty,
-                side=_OPEN_TO_CLOSE_SIDE[leg.side],
-                position_intent=_OPEN_TO_CLOSE_INTENT[leg.position_intent],
+                side=_SIDE_ENUM_BY_LITERAL[leg.side],
+                position_intent=_INTENT_ENUM_BY_LITERAL[leg.position_intent],
             )
         )
-    return inverted
+    return requests
 
 
 def _build_scaled_open_legs(open_legs: Sequence[MLEGLegAck], scale: int) -> list[OptionLegRequest]:
@@ -456,22 +519,24 @@ async def submit_mleg_close(
     client: TradingClient,
     execution: ExecutionConfig,
     client_order_id: str,
-    open_legs: Sequence[MLEGLegAck],
+    close_legs: Sequence[MLEGLegAck],
     strategy_type: StrategyType,
     position_units: float | None = None,
 ) -> SubmissionOutcome[MLEGSubmission]:
-    """Translate a CLOSE on a strategy and submit as an inverted-intent mleg.
+    """Translate a CLOSE on a strategy and submit as a close-side mleg.
 
-    ``open_legs`` and ``strategy_type`` thread from portfolio state because
-    the canonical ``CloseCommand`` references the position by ID, not by leg
-    structure. ``position_units`` is the strategy's open unit count and is
-    required when ``command.quantity == "all"`` (mirroring story 02b's
-    ``position_qty``).
+    ``close_legs`` carry close-side ``side`` / ``position_intent`` already —
+    the open→close inversion happens upstream at the single seam
+    :func:`strategy_legs_to_close_acks`. ``close_legs`` and ``strategy_type``
+    thread from portfolio state because the canonical ``CloseCommand``
+    references the position by ID, not by leg structure. ``position_units``
+    is the strategy's open unit count and is required when
+    ``command.quantity == "all"`` (mirroring story 02b's ``position_qty``).
     """
     _validate_client_order_id(client_order_id)
-    _validate_alpaca_constraints(open_legs, _underlying_from_legs(open_legs))
+    _validate_alpaca_constraints(close_legs, _underlying_from_legs(close_legs))
 
-    leg_requests = _build_close_legs(open_legs)
+    leg_requests = _build_close_legs(close_legs)
     qty = _close_qty(command, position_units)
     request = _build_request(
         legs=leg_requests,
@@ -538,18 +603,18 @@ async def submit_mleg_add(
     )
 
 
-def _underlying_from_legs(open_legs: Sequence[MLEGLegAck]) -> str:
+def _underlying_from_legs(legs: Sequence[MLEGLegAck]) -> str:
     """Recover the underlying root from the OCC symbols' shared prefix.
 
-    Used by close/add validators to confirm the open-leg set is internally
+    Used by close/add validators to confirm the leg set is internally
     consistent (single underlying); deeper than relying on caller state to
     pass it explicitly.
     """
-    if not open_legs:
+    if not legs:
         return ""
-    roots = {leg.occ_symbol[:6].rstrip() for leg in open_legs}
+    roots = {leg.occ_symbol[:6].rstrip() for leg in legs}
     if len(roots) > 1:
-        msg = f"open_legs span multiple underlyings: {sorted(roots)}"
+        msg = f"legs span multiple underlyings: {sorted(roots)}"
         raise ValueError(msg)
     return next(iter(roots))
 

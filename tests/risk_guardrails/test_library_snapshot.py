@@ -1693,3 +1693,160 @@ def test_cancel_contribution_releases_reserved_capital_end_to_end() -> None:
     # ledger is the entire denominator).
     expected_pct = -5_000.0 / 95_000.0 * 100.0
     assert spec.contribute(proposal, dae, lib, config) == pytest.approx(expected_pct)
+
+
+# ---------------------------------------------------------------------------
+# ALP-595 — strategy portfolio-greek accumulation: net-signed, leg-summed
+# ---------------------------------------------------------------------------
+
+
+def _make_strategy_position_view(
+    position_id: str,
+    underlying: str,
+    *,
+    leg_specs: Sequence[tuple[float, float]],
+    strategy_greeks: OptionGreeks,
+    market_value_usd: float,
+    notional_usd: float,
+    delta_adjusted_usd: float,
+    position_weight_pct: float,
+) -> PositionView:
+    """Build an OPEN multi-leg STRATEGY ``PositionView``.
+
+    ``leg_specs`` is a sequence of ``(contract_count, contract_multiplier)``
+    pairs — one per leg. The position-level ``direction`` is the inert ``LONG``
+    placeholder per ALP-588 decision (C); the strategy's true directional
+    contribution rides on ``strategy_greeks``.
+    """
+    legs = tuple(
+        StrategyLeg(
+            leg_id=f"leg-{i}",
+            direction=Direction.LONG,
+            options=OptionsPositionDetails(
+                underlying_ticker=Symbol(underlying),
+                strike_price=100.0 + i,
+                expiration_date=_OPTION_EXPIRY,
+                contract_type=OptionContractType.CALL,
+                contract_count=count,
+                contract_multiplier=multiplier,
+                premium_paid_per_contract=5.0,
+                greeks=OptionGreeks(
+                    delta=0.5, gamma=0.02, theta=-0.10, vega=0.30, as_of_timestamp=_NOW
+                ),
+            ),
+        )
+        for i, (count, multiplier) in enumerate(leg_specs)
+    )
+    details = StrategyPositionDetails(
+        strategy_type_label="bear_call_spread",
+        legs=legs,
+        net_premium_usd=-200.0,
+        max_profit_usd=200.0,
+        max_loss_usd=-800.0,
+        breakeven_levels=(102.0,),
+        strategy_greeks=strategy_greeks,
+    )
+    record = PositionRecord(
+        position_id=PositionId(position_id),
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_PHASE1,
+        details=details,
+        execution_history=(
+            PositionFill(
+                fill_timestamp=_PHASE1,
+                fill_price=price(2.0),
+                fill_quantity=1.0,
+                slippage=signed_money(0.0),
+                fees=money(0.0),
+            ),
+        ),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=signed_money(market_value_usd),
+        unrealized_pnl_usd=signed_money(0.0),
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=position_weight_pct,
+        position_age_hours=1.0,
+        notional_exposure_usd=money(notional_usd),
+        delta_adjusted_exposure_usd=signed_money(delta_adjusted_usd),
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
+    )
+
+
+def test_net_short_delta_strategy_contributes_negative_portfolio_delta() -> None:
+    """AC: a net-short-delta strategy contributes a negative delta to the
+    portfolio greek view. The sign comes from ``strategy_greeks`` (net-signed
+    per ALP-588 decision C), not from the position-level ``LONG`` placeholder."""
+    short_delta_greeks = OptionGreeks(
+        delta=-0.40,
+        gamma=0.01,
+        theta=0.05,
+        vega=-0.20,
+        as_of_timestamp=_NOW,
+    )
+    pos = _make_strategy_position_view(
+        "POS-BEARCALL",
+        "NVDA",
+        leg_specs=[(1.0, 100.0), (1.0, 100.0)],
+        strategy_greeks=short_delta_greeks,
+        market_value_usd=400.0,
+        notional_usd=400.0,
+        delta_adjusted_usd=-300.0,
+        position_weight_pct=0.4,
+    )
+    snapshot = _make_pydantic_snapshot(open_positions=[pos])
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    # strategy_greeks.delta is negative → portfolio delta contribution negative.
+    assert lib.options_delta_pct < 0.0
+    # theta sign is also taken from strategy_greeks (positive for a credit
+    # strategy collecting decay), not flipped by a position-level direction.
+    assert lib.portfolio_theta_pct_per_day > 0.0
+    assert lib.portfolio_vega_pct_per_iv_point < 0.0
+
+
+def test_strategy_greek_contribution_uses_leg_summed_multiplier_units() -> None:
+    """AC: ``_accumulate_portfolio_greeks`` scales a strategy's contribution by
+    the leg-summed multiplier units (Σ contract_count * contract_multiplier),
+    not a single leg's ``contract_count``."""
+    strategy_greeks = OptionGreeks(
+        delta=0.30,
+        gamma=0.01,
+        theta=-0.05,
+        vega=0.20,
+        as_of_timestamp=_NOW,
+    )
+    # Two legs: 2 contracts and 3 contracts, both at multiplier 100.
+    # Leg-summed units = (2 * 100) + (3 * 100) = 500.
+    # A first-leg-only scaling would use 2 * 100 = 200.
+    pos = _make_strategy_position_view(
+        "POS-SPREAD",
+        "NVDA",
+        leg_specs=[(2.0, 100.0), (3.0, 100.0)],
+        strategy_greeks=strategy_greeks,
+        market_value_usd=400.0,
+        notional_usd=400.0,
+        delta_adjusted_usd=300.0,
+        position_weight_pct=0.4,
+    )
+    snapshot = _make_pydantic_snapshot(open_positions=[pos])
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+    leg_summed_units = (2.0 * 100.0) + (3.0 * 100.0)
+    expected_delta_pct = strategy_greeks.delta * leg_summed_units / lib.portfolio_value_usd * 100.0
+    assert lib.options_delta_pct == pytest.approx(expected_delta_pct)
+
+    first_leg_units = 2.0 * 100.0
+    first_leg_delta_pct = strategy_greeks.delta * first_leg_units / lib.portfolio_value_usd * 100.0
+    # The leg-summed scaling must differ from the discarded first-leg scaling.
+    assert lib.options_delta_pct != pytest.approx(first_leg_delta_pct)

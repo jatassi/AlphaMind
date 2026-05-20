@@ -33,6 +33,12 @@ from alphamind.execution.corporate_actions.types import (
     AlpacaPositionLookup,
     CorporateActionActivity,
 )
+from alphamind.execution.position_model import (
+    compute_strategy_breakeven_levels,
+    compute_strategy_max_loss_usd,
+    compute_strategy_max_profit_usd,
+    compute_strategy_net_premium_usd,
+)
 from alphamind.execution.regt_margin_attribution import (
     compute_attribution,
     load_regt_margin_attribution_config,
@@ -887,9 +893,15 @@ async def _apply_strategy_entry_or_continuation(
     updated_order: OrderRecord,
     leg: StrategyLeg,
 ) -> tuple[PositionRecord, tuple[str, ...]]:
-    """Update one leg's contract_count + premium and gate the atomic OPEN."""
+    """Update one leg's contract_count + premium and gate the atomic OPEN.
+
+    Once the post-fill legs are known, the parent payoff metrics
+    (``net_premium_usd`` / ``max_profit_usd`` / ``max_loss_usd`` /
+    ``breakeven_levels``) are recomputed from them — a no-op until the atomic
+    PENDING → OPEN transition fills the final zero-count leg.
+    """
     new_legs = _set_leg_entry(details.legs, leg=leg, fill=fill)
-    new_details = dataclasses.replace(details, legs=new_legs)
+    new_details = _recompute_strategy_payoff_metrics(dataclasses.replace(details, legs=new_legs))
 
     sibling_statuses = await _read_sibling_leg_statuses(
         handle,
@@ -939,13 +951,20 @@ async def _apply_strategy_open_fill(
     updated_order: OrderRecord,
     leg: StrategyLeg,
 ) -> tuple[PositionRecord, tuple[str, ...]]:
-    """Apply a fill against an OPEN strategy: ADD (same-side) or CLOSE (opposite-side)."""
+    """Apply a fill against an OPEN strategy: ADD (same-side) or CLOSE (opposite-side).
+
+    On the ADD branch the parent payoff metrics are recomputed from the
+    post-add legs — every leg of an OPEN strategy is already positive, so the
+    recompute always fires.
+    """
     is_buy_side = direction_to_side(updated_order.direction) == "buy"
     leg_direction_is_long = leg.direction != Direction.SHORT
     is_opening_for_leg = is_buy_side == leg_direction_is_long
     if is_opening_for_leg:
         new_legs = _add_to_leg(details.legs, leg=leg, fill=fill)
-        new_details = dataclasses.replace(details, legs=new_legs)
+        new_details = _recompute_strategy_payoff_metrics(
+            dataclasses.replace(details, legs=new_legs)
+        )
         return (
             dataclasses.replace(
                 position,
@@ -1039,6 +1058,38 @@ async def _apply_strategy_close_fill(
             realized_pnl_to_date_usd=cumulative_realized,
         ),
         (),
+    )
+
+
+def _recompute_strategy_payoff_metrics(
+    details: StrategyPositionDetails,
+) -> StrategyPositionDetails:
+    """Return ``details`` with parent payoff metrics recomputed from its legs.
+
+    Recomputes ``net_premium_usd`` / ``max_profit_usd`` / ``max_loss_usd`` /
+    ``breakeven_levels`` from the (already-updated) legs so the parent metrics
+    always agree with the legs once their counts and premiums are known.
+    ``strategy_greeks`` is left untouched — a fill carries no greeks and per-leg
+    greeks are still zero/stale at fill time; greek refresh is the continuous
+    monitor's job.
+
+    Recompute is gated on every leg having a positive ``contract_count`` — the
+    ``strategy_payoff`` primitives raise ``ValueError`` on a zero-count leg.
+    While any leg is still a zero-count skeleton (an entry not yet fully
+    filled), the details are returned unchanged so the parent metrics stay at
+    their skeleton zeros. The entry path first satisfies this at the atomic
+    PENDING → OPEN transition (a strategy enters all legs simultaneously); an
+    ADD on an already-OPEN strategy has every leg positive already.
+    """
+    if any(leg.options.contract_count <= 0 for leg in details.legs):
+        return details
+    net_premium_usd = compute_strategy_net_premium_usd(details.legs)
+    return dataclasses.replace(
+        details,
+        net_premium_usd=net_premium_usd,
+        max_profit_usd=compute_strategy_max_profit_usd(details.legs, net_premium_usd),
+        max_loss_usd=compute_strategy_max_loss_usd(details.legs, net_premium_usd),
+        breakeven_levels=compute_strategy_breakeven_levels(details.legs, net_premium_usd),
     )
 
 

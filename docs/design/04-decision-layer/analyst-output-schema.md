@@ -276,7 +276,7 @@ Enum values and structural constraints trace back to these sources:
         "dollar_value": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Notional dollar value. For defined-risk options (long options, debit spreads), also populate premium_at_risk."
+          "description": "Notional dollar value. For defined-risk options/strategies (long options, debit spreads, credit spreads, iron condors), also populate premium_at_risk."
         },
         "pct_of_portfolio": {
           "type": "number",
@@ -286,7 +286,7 @@ Enum values and structural constraints trace back to these sources:
         "premium_at_risk": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Required for defined-risk options/strategies. The sizing band applies to this value for defined-risk instruments (see analyst.md conviction scale — sizing bands express capital at risk, not notional)."
+          "description": "Capital at risk: the USD magnitude of the position's worst-case loss — premium paid for a net-debit options position or debit strategy, (strike width minus net credit received) for a net-credit strategy. Strictly positive when present; omit for equity. Required for defined-risk options/strategies. The sizing band applies to this value for defined-risk instruments (see analyst.md conviction scale — sizing bands express capital at risk, not notional)."
         },
         "delta_adjusted_exposure": {
           "type": "number",

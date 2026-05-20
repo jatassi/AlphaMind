@@ -30,8 +30,16 @@ from typing import NamedTuple
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from alphamind.analysis.tools._envelope import format_iso, parse_iso
 from alphamind.persistence.models import NewsArticles
+
+# NOTE: ``format_iso`` / ``parse_iso`` live in ``alphamind.analysis.tools._envelope``.
+# Importing that submodule runs the ``tools`` package ``__init__``, which eagerly
+# builds the on-demand-tool registry — and one of those tools (``news_search``)
+# imports ``NewsEmptyReason`` back from this module. A module-level import here
+# therefore forms a circular import whenever ``news_freshness`` is the first
+# module in the chain to touch the ``tools`` package. Both helpers are used only
+# inside the functions below, so the import is deferred to call time, by which
+# point this module is fully initialized.
 
 __all__ = [
     "NewsEmptyDiagnosis",
@@ -74,6 +82,8 @@ def diagnose_empty_news(
     the ``news_search`` tool). The classification reflects collector state
     relative to that bound, not relative to "now".
     """
+    from alphamind.analysis.tools._envelope import parse_iso  # deferred — see module note
+
     raw = session.execute(select(func.max(NewsArticles.ingested_at))).scalar()
     if raw is None:
         return NewsEmptyDiagnosis(reason=NewsEmptyReason.NO_ROWS_IN_DB, latest_ingested_at=None)
@@ -89,6 +99,8 @@ def diagnose_empty_news(
 
 def render_empty_reason_text(diagnosis: NewsEmptyDiagnosis) -> str:
     """Render a one-line, LLM-readable explanation of the empty-window cause."""
+    from alphamind.analysis.tools._envelope import format_iso  # deferred — see module note
+
     if diagnosis.reason is NewsEmptyReason.NO_ROWS_IN_DB:
         return (
             "news_articles table is empty — no collector ingestion has "

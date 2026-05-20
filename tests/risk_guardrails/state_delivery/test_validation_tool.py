@@ -971,6 +971,95 @@ def test_strategy_action_returns_populated_greeks(monkeypatch: pytest.MonkeyPatc
     assert result.implied_volatility == 0.28
 
 
+def _spread_provider(underlying: str = "AAPL") -> FixtureIvProvider:
+    """IV surface covering both legs of a 100/110 call spread."""
+    return FixtureIvProvider(
+        surface={
+            underlying: IvSurfaceEntry(
+                underlying=underlying,
+                quotes=(
+                    IvQuote(
+                        strike=100.0,
+                        expiration=_EXPIRATION_DATE,
+                        contract_type=ContractType.CALL,
+                        implied_volatility=_IV,
+                    ),
+                    IvQuote(
+                        strike=110.0,
+                        expiration=_EXPIRATION_DATE,
+                        contract_type=ContractType.CALL,
+                        implied_volatility=_IV,
+                    ),
+                ),
+            ),
+        },
+        realized_vol={},
+    )
+
+
+def _spread_market(underlying: str = "AAPL") -> MarketInputs:
+    return MarketInputs(
+        underlying_prices=MappingProxyType({underlying: _SPOT}),
+        risk_free_rate=_RISK_FREE_RATE,
+        iv_provider=_spread_provider(underlying),
+        as_of=_AS_OF,
+    )
+
+
+def _bear_call_spread_request() -> ValidationRequest:
+    """A net-credit bear call spread sold for credit: short the lower-strike
+    100 call, long the higher-strike 110 call — a genuinely net-short-delta
+    structure. The top-level ``direction`` is the inert ``LONG`` placeholder
+    (ALP-588 decision C); the per-leg directions carry the real sign."""
+    return ValidationRequest(
+        instrument=ValidationInstrument(
+            ticker=Symbol("AAPL"),
+            asset_type=InstrumentType.STRATEGY,
+            direction=Direction.LONG,
+            legs=(
+                ValidationStrategyLeg(
+                    direction=Direction.SHORT,
+                    asset_type=InstrumentType.OPTIONS,
+                    strike=100.0,
+                    expiration=_EXPIRATION_DT,
+                    contract_type="call",
+                    quantity=1,
+                ),
+                ValidationStrategyLeg(
+                    direction=Direction.LONG,
+                    asset_type=InstrumentType.OPTIONS,
+                    strike=110.0,
+                    expiration=_EXPIRATION_DT,
+                    contract_type="call",
+                    quantity=1,
+                ),
+            ),
+        ),
+        size=ValidationSize(quantity=1, dollar_value=500.0, premium_at_risk_usd=500.0),
+        action=ValidationAction.OPEN,
+    )
+
+
+def test_net_short_strategy_does_not_inflate_net_long_pct() -> None:
+    """AC (ALP-595): a net-short / net-credit strategy's ``net_long_pct``
+    contribution reflects its true signed directional exposure — it does NOT
+    inflate ``net_long_pct``.
+
+    The bear call spread is net-short delta; its delta-adjusted exposure is
+    negative, so the ``net_long_pct`` projection moves *down* from the
+    starting value, not up. End-to-end through the real library."""
+    state = _state(snapshot=_snapshot(net_long_pct=30.0), market=_spread_market())
+    result = validate_guardrail(request=_bear_call_spread_request(), state=state)
+
+    by_rule = {p.rule: p for p in result.per_rule}
+    net_long = by_rule["net_long_pct"]
+    # A net-short strategy reduces (or leaves flat) projected net long — it
+    # must not inflate it above the 30.0 starting value.
+    assert net_long.projected_after <= net_long.current
+    # The strategy's own signed exposure is negative (net-short delta).
+    assert result.delta_adjusted_exposure < 0.0
+
+
 # ---------------------------------------------------------------------------
 # Determinism
 # ---------------------------------------------------------------------------

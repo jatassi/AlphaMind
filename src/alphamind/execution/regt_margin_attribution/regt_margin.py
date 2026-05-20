@@ -9,6 +9,7 @@ they mirror the FINRA Reg T rule.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 
 from alphamind.portfolio_state.records.positions import (
@@ -73,16 +74,48 @@ def _option_leg_margin(
     return per_contract * contracts * _OPTION_CONTRACT_MULTIPLIER
 
 
-def _strategy_position_margin(
+def _strategy_naked_leg_sum(
     details: StrategyPositionDetails,
     underlying_prices: Mapping[str, float],
 ) -> float:
-    """Reg T margin for a strategy position: sum per-leg contributions."""
+    """Sum the per-leg naked Reg T margin across a strategy's legs.
+
+    The conservative treatment for an undefined-risk strategy: every leg
+    contributes its standalone naked-option margin with no spread offset.
+    """
     total = 0.0
     for leg in details.legs:
         leg_direction = leg.direction if leg.direction is not None else Direction.LONG
         total += _option_leg_margin(leg.options, leg_direction, underlying_prices)
     return total
+
+
+def _strategy_position_margin(
+    details: StrategyPositionDetails,
+    underlying_prices: Mapping[str, float],
+) -> float:
+    """Reg T margin for a strategy position.
+
+    A defined-risk strategy (a finite ``max_loss_usd``: vertical spreads,
+    iron condors) requires margin equal to its capped loss — the most the
+    position can lose — which is the collateral a broker holds for a
+    defined-risk structure. ``max_loss_usd`` is the signed worst-case P/L
+    (a loss → negative); margin is a positive USD requirement, hence
+    ``abs(...)``.
+
+    An undefined-risk strategy (``max_loss_usd == float('-inf')``, a naked
+    short component) has no capped loss; it falls back to the per-leg
+    naked-margin sum, the conservative treatment.
+
+    A ``max_loss_usd`` of ``0.0`` is a malformed record — ``compute_regt_margin``
+    only sums OPEN positions and an OPEN strategy carries story-02-recomputed
+    payoff metrics — so it also falls back to the per-leg naked sum rather
+    than reporting zero margin.
+    """
+    max_loss = details.max_loss_usd
+    if max_loss == 0.0 or not math.isfinite(max_loss):
+        return _strategy_naked_leg_sum(details, underlying_prices)
+    return abs(max_loss)
 
 
 # ---------------------------------------------------------------------------

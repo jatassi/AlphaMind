@@ -7,6 +7,7 @@ The assembler (story 06) calls these in a fixed order and supplies all external 
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 
 from alphamind.portfolio_state.pricing import PriceQuote
@@ -157,6 +158,28 @@ def compute_unrealized_pnl_pct(unrealized_pnl_usd: float, cost_basis_usd: float)
     if cost_basis_usd == 0:
         return 0.0
     return (unrealized_pnl_usd / cost_basis_usd) * 100.0
+
+
+def compute_strategy_unrealized_pnl_pct(
+    unrealized_pnl_usd: float,
+    max_loss_usd: float,
+) -> float:
+    """Return a STRATEGY position's unrealized P/L as a percentage of capital at risk.
+
+    The denominator is ``abs(max_loss_usd)`` — the magnitude of the strategy's
+    maximum loss (``StrategyPositionDetails.max_loss_usd`` is a loss: negative,
+    or ``-inf`` for unbounded downside). Using the magnitude makes the
+    percentage non-inverting and uniform for debit and credit strategies,
+    unlike ``net_premium_usd`` which is negative for a net credit and would
+    flip a winning credit strategy to a negative percentage.
+
+    Returns 0.0 when ``max_loss_usd`` is 0.0 (skeleton / not-yet-recomputed
+    strategy) or non-finite (``-inf`` unbounded downside) — no division
+    blow-up, consistent with the zero-cost-basis guard and ALP-588 decision B.
+    """
+    if max_loss_usd == 0.0 or not math.isfinite(max_loss_usd):
+        return 0.0
+    return (unrealized_pnl_usd / abs(max_loss_usd)) * 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +373,7 @@ __all__ = [
     "compute_strategy_delta_adjusted_exposure_usd",
     "compute_strategy_market_value_usd",
     "compute_strategy_notional_exposure_usd",
+    "compute_strategy_unrealized_pnl_pct",
     "compute_unrealized_pnl_pct",
     "compute_unrealized_pnl_usd",
 ]

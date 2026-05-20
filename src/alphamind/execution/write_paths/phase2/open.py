@@ -55,6 +55,7 @@ from alphamind.portfolio_state.records.orders import (
     OrderRecord,
     OrderRole,
     OrderType,
+    PLAnchorSpec,
     PriceParameters,
     PriceTrigger,
     TimeTrigger,
@@ -66,8 +67,11 @@ from alphamind.portfolio_state.records.positions import (
     OptionContractType,
     OptionGreeks,
     OptionsPositionDetails,
+    PositionDetailsPayload,
     PositionRecord,
     PositionStatus,
+    StrategyLeg,
+    StrategyPositionDetails,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -172,6 +176,7 @@ async def _writeback_open(
         target=command.target,
         target_order_id=target_order_id,
         invalidation_leg_orders=tuple(invalidation_leg_orders),
+        instrument=command.instrument,
     )
     entry_order = _build_entry_order_from_command(
         order_id=ids["entry_order_id"],
@@ -277,8 +282,13 @@ def _direction_from_instrument(
 ) -> Direction:
     """Persisted ``Direction`` for an OPEN command's instrument.
 
-    Strategy instruments carry direction per-leg; the position-level direction
-    defaults to LONG (the leg-level direction is preserved on each leg).
+    For an equity or single-leg option the return is the instrument's own
+    ``direction``. For a :class:`StrategyInstrument` the return is an inert
+    placeholder ``Direction.LONG`` — not a meaningful direction. A multi-leg
+    strategy has no single position-level direction; per parent ALP-588's
+    resolved decision, strategy consumers derive directional sign from the
+    legs (each :class:`StrategyLeg` carries its own ``direction``). See
+    ``docs/design/05-execution-layer/position-model.md`` § Strategy position.
     """
     if isinstance(instrument, StrategyInstrument):
         return Direction.LONG
@@ -382,6 +392,78 @@ def _build_invalidation_leg_order(  # noqa: PLR0913 — leg construction threads
     )
 
 
+_CONTRACT_TYPE_FROM_WIRE: dict[str, OptionContractType] = {
+    "call": OptionContractType.CALL,
+    "put": OptionContractType.PUT,
+}
+_DIRECTION_FROM_WIRE: dict[str, Direction] = {
+    "long": Direction.LONG,
+    "short": Direction.SHORT,
+}
+
+
+def _zeroed_option_greeks() -> OptionGreeks:
+    """A fully-zeroed :class:`OptionGreeks` — the skeleton placeholder.
+
+    Per-leg and strategy-level greeks are zeroed at OPEN time and refreshed by
+    the continuous monitor (architecture.md § 4d), exactly as for single-leg
+    options. The validation-metadata strategy greeks are a per-leg *average*,
+    not a net, so they must not seed ``strategy_greeks`` (parent ALP-588
+    § Surfacing conditions).
+    """
+    return OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0)
+
+
+def _build_strategy_skeleton(
+    *,
+    instrument: StrategyInstrument,
+    position_id: str,
+) -> StrategyPositionDetails:
+    """Build a zeroed :class:`StrategyPositionDetails` for a strategy OPEN.
+
+    One record-form :class:`StrategyLeg` per wire :class:`StrategyLeg`, each
+    carrying an :class:`OptionsPositionDetails` skeleton at
+    ``contract_count=0.0`` / ``premium_paid_per_contract=0.0`` — the record
+    reflects state, not intent, mirroring the single-option branch. Payoff
+    metrics (``net_premium_usd``, ``max_profit_usd``, ``max_loss_usd``,
+    ``breakeven_levels``) and ``strategy_greeks`` are all skeleton zeros; the
+    Phase 1 entry-fill handler recomputes them from the filled legs.
+
+    Leg ids are deterministic — ``{position_id}-leg-{idx}`` — and each wire
+    leg's ``direction`` is carried straight through. The strategy branch does
+    not consume ``validation_greeks`` / ``validation_iv``.
+    """
+    zeroed_greeks = _zeroed_option_greeks()
+    legs: list[StrategyLeg] = []
+    for idx, wire_leg in enumerate(instrument.legs):
+        legs.append(
+            StrategyLeg(
+                leg_id=f"{position_id}-leg-{idx}",
+                options=OptionsPositionDetails(
+                    underlying_ticker=Symbol(instrument.underlying),
+                    # ALP-462 — Price → float at the legacy OptionsPositionDetails surface.
+                    strike_price=float(wire_leg.strike),
+                    expiration_date=date.fromisoformat(wire_leg.expiration),
+                    contract_type=_CONTRACT_TYPE_FROM_WIRE[wire_leg.contract_type],
+                    contract_count=0.0,
+                    contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
+                    premium_paid_per_contract=0.0,
+                    greeks=zeroed_greeks,
+                ),
+                direction=_DIRECTION_FROM_WIRE[wire_leg.direction],
+            )
+        )
+    return StrategyPositionDetails(
+        strategy_type_label=instrument.strategy_type,
+        legs=tuple(legs),
+        net_premium_usd=0.0,
+        max_profit_usd=0.0,
+        max_loss_usd=0.0,
+        breakeven_levels=(),
+        strategy_greeks=zeroed_greeks,
+    )
+
+
 def _build_pending_position(
     *,
     position_id: str,
@@ -410,6 +492,14 @@ def _build_pending_position(
     ``_apply_options_entry_fill`` preserves these greeks unchanged when the
     entry fills — refresh is the continuous monitor's job (architecture.md
     § 4d).
+
+    :class:`StrategyInstrument` lands a :class:`StrategyPositionDetails`
+    skeleton (see :func:`_build_strategy_skeleton`) — one zeroed leg per wire
+    leg, zeroed payoff metrics, zeroed greeks. The strategy branch does not
+    read ``validation_greeks`` / ``validation_iv``; the validation metadata's
+    strategy greeks are a per-leg average, not a net (parent ALP-588
+    § Surfacing conditions), so they must not seed ``strategy_greeks``. The
+    Phase 1 entry-fill handler recomputes the payoff metrics from the filled legs.
     """
     if isinstance(instrument, OptionInstrument):
         if validation_greeks is None or validation_iv is None:
@@ -420,16 +510,12 @@ def _build_pending_position(
                 f"iv={validation_iv}"
             )
             raise ValueError(msg)
-        details: EquityPositionDetails | OptionsPositionDetails = OptionsPositionDetails(
+        details: PositionDetailsPayload = OptionsPositionDetails(
             underlying_ticker=Symbol(instrument.underlying),
             # ALP-462 — Price → float at the legacy OptionsPositionDetails surface.
             strike_price=float(instrument.strike),
             expiration_date=date.fromisoformat(instrument.expiration),
-            contract_type=(
-                OptionContractType.CALL
-                if instrument.contract_type == "call"
-                else OptionContractType.PUT
-            ),
+            contract_type=_CONTRACT_TYPE_FROM_WIRE[instrument.contract_type],
             contract_count=0.0,
             contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
             premium_paid_per_contract=0.0,
@@ -452,12 +538,10 @@ def _build_pending_position(
             margin_held_usd=0.0 if short_fields_present else None,
         )
     else:
-        msg = (
-            f"OPEN writeback for instrument variant "
-            f"{type(instrument).__name__} is not yet supported; "
-            "extend _build_pending_position when adding STRATEGY support."
+        details = _build_strategy_skeleton(
+            instrument=instrument,
+            position_id=position_id,
         )
-        raise NotImplementedError(msg)
     return PositionRecord(
         position_id=PositionId(position_id),
         thesis_id=ThesisId(thesis_id),
@@ -645,6 +729,63 @@ def _target_to_bracket_leg(
     )
 
 
+def _strategy_target_to_bracket_leg(
+    *,
+    leg_id: str,
+    target: Target,
+    target_order_id: str,
+    ticker: str,
+) -> BracketLeg:
+    """Translate a strategy's :class:`Target` to a P/L-anchored TAKE_PROFIT leg.
+
+    A multi-leg strategy take-profit references the strategy's *net P/L*, not a
+    single-sided underlying-price threshold (parent ALP-588 decision F) — so
+    the hard-coded-LONG ``PriceTrigger`` direction of :func:`_target_to_bracket_leg`
+    is not applied here. The leg carries a :class:`PLAnchorSpec` (``spec_type="target"``)
+    whose ``pct`` is the strategy profit fraction to capture; the strategy
+    net-P/L evaluator (``bracket_stops/triggers.py`` :func:`evaluate_strategy_pl_target_trigger`)
+    scores against ``pct * max_profit_usd`` and reads the strategy's cost basis
+    straight off ``StrategyPositionDetails.net_premium_usd`` — so the anchor
+    needs no ``actual_entry_price``.
+
+    The wire ``Target.pl_percentage`` is a whole-number percentage (per the
+    analyst output schema, "80 for +80%"); it is divided to the fraction the
+    :class:`PLAnchorSpec` carries. The leg still carries the structurally
+    required :class:`PriceTrigger` (the ``BracketLeg`` validator pairs a
+    ``TAKE_PROFIT`` leg with a price trigger), but its direction is inert for
+    a strategy — the ``pl_anchor`` drives firing.
+    """
+    if target.target_type != "pl_percentage" or target.pl_percentage is None:
+        msg = (
+            f"strategy take-profit requires target_type='pl_percentage' with "
+            f"pl_percentage set; got target_type={target.target_type!r}"
+        )
+        raise ValueError(msg)
+    pct = target.pl_percentage / 100.0
+    # ALP-462 — Price → float at the legacy PriceTrigger surface. ``Target``'s
+    # validator requires ``price`` for every ``target_type``; it is the planned
+    # price-equivalent of the P/L target.
+    assert target.price is not None
+    planned_price = float(target.price)
+    return BracketLeg(
+        leg_id=leg_id,
+        leg_type=BracketLegType.TAKE_PROFIT,
+        order_id=OrderId(target_order_id),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol(ticker),
+            threshold_usd=planned_price,
+            direction="GTE",  # inert for a strategy — pl_anchor drives firing
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.PENDING_ACTIVATION,
+        pl_anchor=PLAnchorSpec(
+            spec_type="target",
+            pct=pct,
+            planned_entry_price=planned_price,
+        ),
+    )
+
+
 def _build_pending_bracket(
     *,
     bracket_id: str,
@@ -654,20 +795,35 @@ def _build_pending_bracket(
     target: Target,
     target_order_id: str,
     invalidation_leg_orders: tuple[tuple[InvalidationLeg, str | None], ...],
+    instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
 ) -> BracketRecord:
     """Build a PENDING_ENTRY bracket.
 
     Take-profit leg comes from ``target``; one leg per ``invalidation_leg``
     entry. The bracket record carries no creation timestamp; per-leg
     submission timestamps live on the broker orders.
+
+    For a :class:`StrategyInstrument`, the take-profit leg is P/L-anchored
+    (see :func:`_strategy_target_to_bracket_leg`) — it references the
+    strategy's net P/L, not a single-sided underlying-price threshold. For
+    equity / single-leg options the take-profit keeps its plain
+    underlying-price :class:`PriceTrigger` (see :func:`_target_to_bracket_leg`).
     """
-    target_leg = _target_to_bracket_leg(
-        leg_id=f"{bracket_id}-leg-target",
-        target=target,
-        target_order_id=target_order_id,
-        ticker=ticker,
-        direction=Direction.LONG,
-    )
+    if isinstance(instrument, StrategyInstrument):
+        target_leg = _strategy_target_to_bracket_leg(
+            leg_id=f"{bracket_id}-leg-target",
+            target=target,
+            target_order_id=target_order_id,
+            ticker=ticker,
+        )
+    else:
+        target_leg = _target_to_bracket_leg(
+            leg_id=f"{bracket_id}-leg-target",
+            target=target,
+            target_order_id=target_order_id,
+            ticker=ticker,
+            direction=Direction.LONG,
+        )
     invalidation_legs: list[BracketLeg] = []
     for idx, (wire_leg, leg_order_id) in enumerate(invalidation_leg_orders):
         invalidation_legs.append(

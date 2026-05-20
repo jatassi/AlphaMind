@@ -9,6 +9,8 @@ absence each invocation.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
@@ -112,3 +114,23 @@ def test_no_headlines_in_window_when_latest_ingestion_is_in_window(session: Sess
     diagnosis = diagnose_empty_news(session, window_start=WINDOW_START)
     assert diagnosis.reason is NewsEmptyReason.NO_HEADLINES_IN_WINDOW
     assert diagnosis.latest_ingested_at == latest
+
+
+def test_news_freshness_imports_without_circular_import() -> None:
+    """Importing ``news_freshness`` first must not deadlock on a circular import.
+
+    ``news_freshness`` once imported ``format_iso`` / ``parse_iso`` from
+    ``alphamind.analysis.tools._envelope`` at module scope. That import runs the
+    ``tools`` package ``__init__``, which eagerly builds the on-demand-tool
+    registry — and ``news_search`` in that registry imports ``NewsEmptyReason``
+    back from ``news_freshness``, forming a circular import whenever
+    ``news_freshness`` is the first module in the chain to touch the ``tools``
+    package. A fresh subprocess guarantees that import order; the in-process
+    test suite can mask the cycle when another test imports ``tools`` first.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", "import alphamind.analysis.news_freshness"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr

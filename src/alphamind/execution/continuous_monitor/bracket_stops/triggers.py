@@ -21,6 +21,7 @@ Two evaluators, both pure and synchronous:
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 
 from alphamind.portfolio_state.records.orders import (
@@ -34,6 +35,7 @@ from alphamind.portfolio_state.records.positions import (
     OptionContractType,
     OptionsPositionDetails,
     PositionRecord,
+    StrategyLeg,
     StrategyPositionDetails,
 )
 from alphamind.risk_guardrails.guardrail_evaluation.black_scholes import bs_price
@@ -142,28 +144,122 @@ def evaluate_pl_target_trigger(
     )
 
 
+def evaluate_strategy_pl_target_trigger(
+    *,
+    position: PositionRecord,
+    leg: BracketLeg,
+    spot: float,
+    risk_free_rate: float,
+    as_of: datetime,
+    buffer_pct: float = 0.0,
+) -> bool:
+    """Return True when a strategy's net P/L has crossed the leg's take-profit.
+
+    A multi-leg strategy take-profit references the strategy's *net P/L*, not
+    a single-sided underlying-price threshold (parent ALP-588 decision F).
+    The net P/L is the strategy's current market value minus its cost basis:
+
+    * Current market value -- for each leg, the leg's current option price is
+      derived via the Black-Scholes closed form (the same primitive the
+      single-option evaluator and the breach loop use) from ``spot`` and the
+      leg's strike / contract type / expiration / IV; per-leg values are
+      summed signed (LONG ``+``, SHORT ``-``, scaled by
+      ``contract_count * contract_multiplier``).
+    * Cost basis -- the record's :attr:`StrategyPositionDetails.net_premium_usd`
+      (debit-positive / credit-negative). The strategy's cost basis is carried
+      straight on the record, so -- unlike the single-option path -- this
+      evaluator needs no :attr:`PLAnchorSpec.actual_entry_price` anchor.
+
+    The leg's :class:`PLAnchorSpec` ``pct`` is the fraction of the strategy's
+    max profit to capture; the dollar take-profit target is
+    ``pct * max_profit_usd``. The leg fires when net P/L reaches that target.
+    ``buffer_pct`` widens the target multiplicatively in the firing-suppression
+    direction (a higher bar), matching :func:`evaluate_pl_target_trigger`.
+    """
+    details = position.details
+    if not isinstance(details, StrategyPositionDetails):
+        msg = (
+            f"evaluate_strategy_pl_target_trigger requires a strategy position; "
+            f"got instrument_type={details.instrument_type!r}"
+        )
+        raise TypeError(msg)
+    anchor = leg.pl_anchor
+    if anchor is None:
+        msg = (
+            f"evaluate_strategy_pl_target_trigger requires a leg with pl_anchor set; "
+            f"got leg_id={leg.leg_id!r}"
+        )
+        raise ValueError(msg)
+    if details.max_profit_usd == 0.0 or not math.isfinite(details.max_profit_usd):
+        # No percentage-of-max-profit threshold to cross: a skeleton record
+        # (max_profit_usd 0.0, payoff not yet recomputed) or an unbounded-upside
+        # strategy (+inf). Neither admits a finite take-profit target.
+        return False
+    market_value = sum(
+        _strategy_leg_market_value(
+            leg=strategy_leg, spot=spot, risk_free_rate=risk_free_rate, as_of=as_of
+        )
+        for strategy_leg in details.legs
+    )
+    net_pl = market_value - details.net_premium_usd
+    target_pl = anchor.pct * details.max_profit_usd
+    # Buffer raises the bar (harder to fire) — same suppression direction as
+    # the single-option long take-profit.
+    effective_target = target_pl * (1.0 + buffer_pct)
+    return net_pl >= effective_target
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
 
-def _options_details_for_pl(position: PositionRecord) -> OptionsPositionDetails:
-    """Return the OptionsPositionDetails the P/L target evaluator scores against.
+def _strategy_leg_market_value(
+    *,
+    leg: StrategyLeg,
+    spot: float,
+    risk_free_rate: float,
+    as_of: datetime,
+) -> float:
+    """Signed current USD market value of a single strategy leg.
 
-    For single-leg options positions, the position's own details. For strategy
-    positions, P/L-target evaluation is deferred to the per-leg pricing the
-    watcher composes — this helper raises a clear error so the watcher routes
-    strategy positions through a separate path.
+    The leg's current option price is the Black-Scholes closed form at
+    ``spot``; the value is ``contract_count * contract_multiplier * price``
+    with the sign ``-1`` for a SHORT (written) leg and ``+1`` otherwise -- the
+    same signed convention as ``compute_strategy_market_value_usd`` in
+    ``portfolio_state.computations.positions``.
+    """
+    opts = leg.options
+    derived_price = _bs_option_price(
+        spot=spot,
+        strike=opts.strike_price,
+        time_to_expiration_years=_time_to_expiration_years(opts, as_of),
+        risk_free_rate=risk_free_rate,
+        iv=_iv_for_pl(opts),
+        contract_type=opts.contract_type,
+    )
+    leg_value = opts.contract_count * opts.contract_multiplier * derived_price
+    sign = -1.0 if leg.direction is Direction.SHORT else 1.0
+    return sign * leg_value
+
+
+def _options_details_for_pl(position: PositionRecord) -> OptionsPositionDetails:
+    """Return the OptionsPositionDetails the single-option P/L evaluator scores against.
+
+    For single-leg options positions, the position's own details. Strategy
+    positions are evaluated by :func:`evaluate_strategy_pl_target_trigger`,
+    which the watcher routes to directly -- so a strategy reaching this helper
+    is a routing bug, surfaced as a clear ``TypeError``.
     """
     details = position.details
     if isinstance(details, OptionsPositionDetails):
         return details
     if isinstance(details, StrategyPositionDetails):
         msg = (
-            "evaluate_pl_target_trigger does not support strategy positions directly; "
-            "the watcher must aggregate per-leg pricing for strategy P/L firing"
+            "evaluate_pl_target_trigger does not score strategy positions; "
+            "route strategy P/L firing through evaluate_strategy_pl_target_trigger"
         )
-        raise NotImplementedError(msg)
+        raise TypeError(msg)
     msg = (
         f"evaluate_pl_target_trigger requires an options or strategy position; "
         f"got instrument_type={details.instrument_type!r}"

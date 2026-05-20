@@ -403,6 +403,76 @@ def test_atm_straddle_has_near_zero_delta_with_long_vol_greek_signs() -> None:
     assert result.net_greeks.vega > 0
 
 
+def _bear_call_spread() -> ProposedDelta:
+    """A net-short-delta bear call spread sold for credit: short the lower-strike
+    100 call, long the higher-strike 110 call. Net delta is negative.
+
+    The position-level ``direction`` is the inert ``LONG`` placeholder per
+    ALP-588 decision (C) — every directional sign rides on the per-leg
+    quantities (short leg = negative quantity)."""
+    return ProposedDelta(
+        id="proposal-bear-call",
+        underlying=Symbol("AAPL"),
+        sector="Technology",
+        direction=Direction.LONG,
+        asset_type=AssetType.STRATEGY,
+        notional_usd=money(500.0),
+        quantity=1.0,
+        option_legs=(
+            OptionLeg(
+                contract_type=ContractType.CALL,
+                strike=100.0,
+                expiration=_EXPIRATION,
+                quantity=-1,
+            ),
+            OptionLeg(
+                contract_type=ContractType.CALL,
+                strike=110.0,
+                expiration=_EXPIRATION,
+                quantity=1,
+            ),
+        ),
+        action=Action.OPEN,
+        existing_position_id=None,
+    )
+
+
+def test_net_short_delta_strategy_signed_notional_is_negative() -> None:
+    """AC: a net-short-delta strategy's ``signed_notional_usd`` is negative —
+    its directional sign comes from the net-signed leg deltas, not from the
+    position-level ``LONG`` placeholder. A positive signed notional here would
+    inflate ``net_long_pct`` for a strategy that is genuinely short delta."""
+    proposal = _bear_call_spread()
+    market = _market(iv_provider=_spread_provider("AAPL"))
+    config = _config(active_regime="normal", conservative_buffer_pct=10.0)
+
+    result = compute_delta_adjusted_exposure(proposal=proposal, market=market, config=config)
+
+    assert result.net_greeks is not None
+    # Short the 100 call, long the 110 call → net delta negative.
+    assert result.net_greeks.delta < 0
+    # The signed notional must carry the net delta's sign.
+    assert result.signed_notional_usd < 0
+    # Magnitude matches |net delta| * buffer * spot * multiplier * quantity.
+    expected_magnitude = abs(result.net_greeks.delta) * 1.10 * _SPOT * _CONTRACT_MULTIPLIER * 1.0
+    assert result.signed_notional_usd == pytest.approx(-expected_magnitude, rel=1e-9)
+
+
+def test_net_long_delta_strategy_signed_notional_is_positive() -> None:
+    """A net-long-delta strategy keeps a positive ``signed_notional_usd`` — the
+    sign tracks the net delta, so a long call spread is unaffected by the
+    strategy directional-sign fix."""
+    proposal = _long_call_spread()
+    market = _market(iv_provider=_spread_provider("AAPL"))
+    config = _config(active_regime="normal", conservative_buffer_pct=10.0)
+
+    result = compute_delta_adjusted_exposure(proposal=proposal, market=market, config=config)
+
+    assert result.net_greeks is not None
+    assert result.net_greeks.delta > 0
+    assert result.signed_notional_usd > 0
+
+
 # ---------------------------------------------------------------------------
 # Action-conditional behaviour
 # ---------------------------------------------------------------------------
