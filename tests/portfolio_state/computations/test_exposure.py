@@ -27,6 +27,8 @@ from alphamind.portfolio_state.records.positions import (
     PositionFill,
     PositionRecord,
     PositionStatus,
+    StrategyLeg,
+    StrategyPositionDetails,
 )
 from alphamind.portfolio_state.snapshot import DirectionalExposure, SectorExposureEntry
 from alphamind.portfolio_state.views.positions import PositionView
@@ -161,6 +163,67 @@ def _make_long_option(
         direction=Direction.LONG,
         entry_timestamp=_NOW,
         details=options_details,
+        execution_history=(_FILL,),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=signed_money(1_000.0),
+        unrealized_pnl_usd=signed_money(0.0),
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=2.0,
+        position_age_hours=10.0,
+        notional_exposure_usd=money(8_000.0),
+        delta_adjusted_exposure_usd=signed_money(delta_adjusted_exposure_usd),
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
+    )
+
+
+def _make_strategy(
+    position_id: str,
+    ticker: str,
+    delta_adjusted_exposure_usd: float,
+) -> PositionView:
+    """Build a multi-leg strategy PositionView with a caller-supplied net delta exposure.
+
+    The record carries the inert ``Direction.LONG`` placeholder a strategy
+    carries pre-flip; ``position_direction()`` resolves it to ``None``. The
+    bucket assignment must therefore key on the sign of
+    ``delta_adjusted_exposure_usd``, not on ``record.direction``.
+    """
+    greeks = OptionGreeks(delta=-0.6, gamma=0.05, theta=-0.01, vega=0.3)
+    leg_options = OptionsPositionDetails(
+        underlying_ticker=Symbol(ticker),
+        strike_price=200.0,
+        expiration_date=date(2025, 12, 31),
+        contract_type=OptionContractType.PUT,
+        contract_count=2.0,
+        contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
+        premium_paid_per_contract=5.0,
+        greeks=greeks,
+    )
+    strategy_details = StrategyPositionDetails(
+        strategy_type_label="bear_put_spread",
+        legs=(StrategyLeg(leg_id="leg-A", options=leg_options, direction=Direction.LONG),),
+        net_premium_usd=-500.0,
+        max_profit_usd=1_000.0,
+        max_loss_usd=-500.0,
+        breakeven_levels=(195.0,),
+        strategy_greeks=greeks,
+    )
+    record = PositionRecord(
+        position_id=PositionId(position_id),
+        thesis_id=None,
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,  # inert placeholder for a strategy
+        entry_timestamp=_NOW,
+        details=strategy_details,
         execution_history=(_FILL,),
         realized_pnl_to_date_usd=None,
         corporate_action_adjustment_needed=False,
@@ -328,6 +391,48 @@ class TestComputeSectorExposureOrdering:
 
         result = compute_sector_exposure((nvda, jpm, xom), resolver, 100_000.0)
         assert [e.sector for e in result] == ["energy", "financials", "tech"]
+
+
+class TestComputeSectorExposureBucketsByDeltaSign:
+    """ALP-604: bucket assignment keys on the sign of delta_adjusted_exposure_usd.
+
+    ``position_direction()`` returns ``None`` for a strategy, so the long/short
+    split must be uniform across instrument types — driven by the already-signed
+    ``delta_adjusted_exposure_usd`` on the view, not by ``record.direction``.
+    """
+
+    def test_net_short_delta_strategy_lands_in_short_bucket(self) -> None:
+        # A bear put spread has net-short delta -> negative delta-adjusted
+        # exposure. Its record carries an inert Direction.LONG placeholder, so
+        # direction-keyed bucketing would mis-file it long; sign-keyed bucketing
+        # lands it short.
+        strategy = _make_strategy("POS-STRAT", "SPY", -7_000.0)
+        resolver: SectorResolver = _resolve_tech
+        result = compute_sector_exposure((strategy,), resolver, 100_000.0)
+
+        assert len(result) == 1
+        assert float(result[0].short_delta_adjusted_usd) == pytest.approx(7_000.0)
+        assert float(result[0].long_delta_adjusted_usd) == pytest.approx(0.0)
+
+    def test_net_long_delta_strategy_lands_in_long_bucket(self) -> None:
+        strategy = _make_strategy("POS-STRAT", "SPY", 4_000.0)
+        resolver: SectorResolver = _resolve_tech
+        result = compute_sector_exposure((strategy,), resolver, 100_000.0)
+
+        assert len(result) == 1
+        assert float(result[0].long_delta_adjusted_usd) == pytest.approx(4_000.0)
+        assert float(result[0].short_delta_adjusted_usd) == pytest.approx(0.0)
+
+    def test_long_put_negative_delta_lands_in_short_bucket(self) -> None:
+        # A Direction.LONG single-leg put with negative delta exposure also
+        # buckets short under sign-keyed assignment.
+        long_put = _make_long_option("POS-PUT", "NVDA", -3_000.0, delta=-0.4)
+        resolver: SectorResolver = _resolve_tech
+        result = compute_sector_exposure((long_put,), resolver, 100_000.0)
+
+        assert len(result) == 1
+        assert float(result[0].short_delta_adjusted_usd) == pytest.approx(3_000.0)
+        assert float(result[0].long_delta_adjusted_usd) == pytest.approx(0.0)
 
 
 class TestComputeSectorExposureLongShortRatio:

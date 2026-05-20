@@ -7,7 +7,7 @@ from collections.abc import Callable
 from decimal import Decimal
 
 from alphamind._kernel.money import DECIMAL_ZERO, Money, signed_money
-from alphamind.portfolio_state.records.positions import Direction, PositionRecord
+from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.portfolio_state.snapshot import DirectionalExposure, SectorExposureEntry
 from alphamind.portfolio_state.views.positions import PositionView
 
@@ -58,7 +58,12 @@ def compute_sector_exposure(
     """Compute per-sector long/short delta-adjusted exposure rollup.
 
     Positions where resolver returns None are aggregated under "UNCLASSIFIED".
-    Bucket assignment uses Direction (LONG -> long, SHORT -> abs into short).
+    Bucket assignment uses the sign of ``delta_adjusted_exposure_usd`` —
+    positive into the long bucket, negative (absolute value) into the short
+    bucket. This sign-keyed split is uniform across equity, single-leg options
+    and multi-leg strategies: a strategy has no position-level direction
+    (``position_direction()`` returns ``None`` for it), and a long put has
+    ``Direction.LONG`` but net-short delta, so direction would mis-file both.
     Returns entries sorted by sector label ascending.
 
     ALP-489 — accumulators sum ``Money`` values via Decimal arithmetic; no
@@ -74,7 +79,7 @@ def compute_sector_exposure(
     for pos in positions:
         sector = resolver(pos.record) or _UNCLASSIFIED
         dae = pos.delta_adjusted_exposure_usd
-        if pos.direction == Direction.LONG:
+        if dae >= 0:
             long_by_sector[sector] += dae
         else:
             short_by_sector[sector] += abs(dae)
