@@ -172,20 +172,31 @@ def rows_to_record(bracket_row: BracketRow, leg_rows: tuple[BracketLegRow, ...])
     )
 
 
+def _leg_column_values(leg: BracketLeg) -> dict[str, Any]:
+    """The non-identity ``bracket_legs`` column values for *leg*.
+
+    Shared by :func:`_leg_to_row` (fresh insert) and :func:`update_leg_row`
+    (in-place modification) so the leg-row serialization lives in one place.
+    """
+    return {
+        "leg_type": leg.leg_type.value,
+        "order_id": leg.order_id,
+        "trigger_kind": leg.trigger.trigger_type.upper(),
+        "trigger_payload_json": json.dumps(_trigger_to_dict(leg.trigger)),
+        "pl_anchor_json": (
+            json.dumps(_pl_anchor_to_dict(leg.pl_anchor)) if leg.pl_anchor is not None else None
+        ),
+        "enforcement": leg.enforcement.value,
+        "leg_status": leg.status.value,
+    }
+
+
 def _leg_to_row(leg: BracketLeg, *, bracket_id: str, leg_index: int) -> BracketLegRow:
     return BracketLegRow(
         bracket_leg_id=leg.leg_id,
         bracket_id=bracket_id,
         leg_index=leg_index,
-        leg_type=leg.leg_type.value,
-        order_id=leg.order_id,
-        trigger_kind=leg.trigger.trigger_type.upper(),
-        trigger_payload_json=json.dumps(_trigger_to_dict(leg.trigger)),
-        pl_anchor_json=(
-            json.dumps(_pl_anchor_to_dict(leg.pl_anchor)) if leg.pl_anchor is not None else None
-        ),
-        enforcement=leg.enforcement.value,
-        leg_status=leg.status.value,
+        **_leg_column_values(leg),
     )
 
 
@@ -216,14 +227,8 @@ def update_leg_row(row: BracketLegRow, leg: BracketLeg) -> None:
     modified protective leg so the continuous-monitor watcher evaluates the
     new trigger / ``pl_anchor`` rather than the stale OPEN-time one (ALP-613).
     """
-    fresh = _leg_to_row(leg, bracket_id=row.bracket_id, leg_index=row.leg_index)
-    row.leg_type = fresh.leg_type
-    row.order_id = fresh.order_id
-    row.trigger_kind = fresh.trigger_kind
-    row.trigger_payload_json = fresh.trigger_payload_json
-    row.pl_anchor_json = fresh.pl_anchor_json
-    row.enforcement = fresh.enforcement
-    row.leg_status = fresh.leg_status
+    for column, value in _leg_column_values(leg).items():
+        setattr(row, column, value)
 
 
 def _parse_optional_datetime(value: str | None) -> datetime | None:

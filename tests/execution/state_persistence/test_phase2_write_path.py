@@ -126,9 +126,13 @@ from alphamind.state.invocation_context.records import (
     process_lifetime_record_to_row,
 )
 from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
 from alphamind.state.tables.brackets_codec import (
     record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.brackets_codec import (
+    row_to_leg,
 )
 from alphamind.state.tables.cash_ledger import (
     CASH_LEDGER_SINGLETON_ID,
@@ -835,6 +839,18 @@ async def _read_activity_log_for(
                     select(ActivityLogRow).where(ActivityLogRow.invocation_id == invocation_id)
                 )
             )
+            .scalars()
+            .all()
+        )
+
+
+async def _read_leg_rows(
+    factory: async_sessionmaker[AsyncSession], *, leg_type: str
+) -> list[BracketLegRow]:
+    """Every ``bracket_legs`` row of a given ``leg_type``."""
+    async with factory() as sess:
+        return list(
+            (await sess.execute(select(BracketLegRow).where(BracketLegRow.leg_type == leg_type)))
             .scalars()
             .all()
         )
@@ -1804,7 +1820,6 @@ async def test_open_command_persists_target_and_invalidation_legs(
     from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
-    from alphamind.state.tables.bracket_legs import BracketLegRow
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -2070,7 +2085,6 @@ async def test_adjust_stop_repersists_price_stop_leg_trigger(
     from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
-    from alphamind.state.tables.bracket_legs import BracketLegRow
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -2087,22 +2101,13 @@ async def test_adjust_stop_repersists_price_stop_leg_trigger(
     )
     await ctx.__aexit__(None, None, None)
 
-    async with factory() as sess:
-        leg_rows = (
-            (
-                await sess.execute(
-                    select(BracketLegRow).where(BracketLegRow.leg_type == "PRICE_STOP")
-                )
-            )
-            .scalars()
-            .all()
-        )
-        assert len(leg_rows) == 1
-        trigger = json.loads(leg_rows[0].trigger_payload_json)
-        # _adjust_command sets new_stop_level trigger_price=145.0; _active_bracket
-        # seeds the PRICE_STOP leg at the OPEN-time 140.0.
-        assert trigger["threshold_usd"] == pytest.approx(145.0)
-        assert trigger["direction"] == "LTE"
+    leg_rows = await _read_leg_rows(factory, leg_type="PRICE_STOP")
+    assert len(leg_rows) == 1
+    trigger = json.loads(leg_rows[0].trigger_payload_json)
+    # _adjust_command sets new_stop_level trigger_price=145.0; _active_bracket
+    # seeds the PRICE_STOP leg at the OPEN-time 140.0.
+    assert trigger["threshold_usd"] == pytest.approx(145.0)
+    assert trigger["direction"] == "LTE"
 
 
 async def test_adjust_target_repersists_equity_take_profit_as_plain_price(
@@ -2114,7 +2119,6 @@ async def test_adjust_target_repersists_equity_take_profit_as_plain_price(
     from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
-    from alphamind.state.tables.bracket_legs import BracketLegRow
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -2137,20 +2141,11 @@ async def test_adjust_target_repersists_equity_take_profit_as_plain_price(
     )
     await ctx.__aexit__(None, None, None)
 
-    async with factory() as sess:
-        leg_rows = (
-            (
-                await sess.execute(
-                    select(BracketLegRow).where(BracketLegRow.leg_type == "TAKE_PROFIT")
-                )
-            )
-            .scalars()
-            .all()
-        )
-        assert len(leg_rows) == 1
-        # _three_leg_bracket seeds the TAKE_PROFIT leg at the OPEN-time 950.0.
-        assert json.loads(leg_rows[0].trigger_payload_json)["threshold_usd"] == pytest.approx(980.0)
-        assert leg_rows[0].pl_anchor_json is None
+    leg_rows = await _read_leg_rows(factory, leg_type="TAKE_PROFIT")
+    assert len(leg_rows) == 1
+    # _three_leg_bracket seeds the TAKE_PROFIT leg at the OPEN-time 950.0.
+    assert json.loads(leg_rows[0].trigger_payload_json)["threshold_usd"] == pytest.approx(980.0)
+    assert leg_rows[0].pl_anchor_json is None
 
 
 async def test_adjust_target_repersists_strategy_take_profit_as_pl_anchored(
@@ -2166,8 +2161,6 @@ async def test_adjust_target_repersists_strategy_take_profit_as_pl_anchored(
     from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
-    from alphamind.state.tables.bracket_legs import BracketLegRow
-    from alphamind.state.tables.brackets_codec import row_to_leg
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -2201,18 +2194,9 @@ async def test_adjust_target_repersists_strategy_take_profit_as_pl_anchored(
     )
     await ctx.__aexit__(None, None, None)
 
-    async with factory() as sess:
-        leg_rows = (
-            (
-                await sess.execute(
-                    select(BracketLegRow).where(BracketLegRow.leg_type == "TAKE_PROFIT")
-                )
-            )
-            .scalars()
-            .all()
-        )
-        assert len(leg_rows) == 1
-        leg = row_to_leg(leg_rows[0])
+    leg_rows = await _read_leg_rows(factory, leg_type="TAKE_PROFIT")
+    assert len(leg_rows) == 1
+    leg = row_to_leg(leg_rows[0])
 
     assert leg.pl_anchor is not None
     assert leg.pl_anchor.spec_type == "target"
@@ -2284,7 +2268,6 @@ async def test_adjust_time_expiration_repersists_time_leg_deadline(
     from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
-    from alphamind.state.tables.bracket_legs import BracketLegRow
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -2306,20 +2289,11 @@ async def test_adjust_time_expiration_repersists_time_leg_deadline(
     )
     await ctx.__aexit__(None, None, None)
 
-    async with factory() as sess:
-        leg_rows = (
-            (
-                await sess.execute(
-                    select(BracketLegRow).where(BracketLegRow.leg_type == "TIME_EXPIRATION")
-                )
-            )
-            .scalars()
-            .all()
-        )
-        assert len(leg_rows) == 1
-        trigger = json.loads(leg_rows[0].trigger_payload_json)
-        # _three_leg_bracket seeds the time leg at the OPEN-time _NOW + 24h.
-        assert datetime.fromisoformat(trigger["deadline"]) == new_deadline
+    leg_rows = await _read_leg_rows(factory, leg_type="TIME_EXPIRATION")
+    assert len(leg_rows) == 1
+    trigger = json.loads(leg_rows[0].trigger_payload_json)
+    # _three_leg_bracket seeds the time leg at the OPEN-time _NOW + 24h.
+    assert datetime.fromisoformat(trigger["deadline"]) == new_deadline
 
 
 async def test_add_bracket_adjustment_repersists_modified_leg(
@@ -2332,7 +2306,6 @@ async def test_add_bracket_adjustment_repersists_modified_leg(
     from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
-    from alphamind.state.tables.bracket_legs import BracketLegRow
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -2355,19 +2328,45 @@ async def test_add_bracket_adjustment_repersists_modified_leg(
     )
     await ctx.__aexit__(None, None, None)
 
-    async with factory() as sess:
-        leg_rows = (
-            (
-                await sess.execute(
-                    select(BracketLegRow).where(BracketLegRow.leg_type == "TAKE_PROFIT")
-                )
+    leg_rows = await _read_leg_rows(factory, leg_type="TAKE_PROFIT")
+    assert len(leg_rows) == 1
+    # _three_leg_bracket seeds the TAKE_PROFIT leg at the OPEN-time 950.0.
+    assert json.loads(leg_rows[0].trigger_payload_json)["threshold_usd"] == pytest.approx(990.0)
+
+
+async def test_adjust_targeting_absent_leg_type_fails_closed_with_clear_error(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """An ADJUST whose change-field targets a leg type the bracket was opened
+    without fails closed with a clear error rather than silently mismatching.
+    _active_bracket carries only a PRICE_STOP leg, so a new_time_expiration
+    ADJUST has no TIME_EXPIRATION leg to re-persist (ALP-613)."""
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
+
+    cmd = AdjustCommand(
+        command_type="adjust",
+        position_id=PositionId("POS-NVDA-001"),
+        adjustment_rationale="Extend a time stop the bracket never had.",
+        new_time_expiration=_NOW + timedelta(hours=48),
+    )
+    envelope = _make_strategist_envelope(commands=(cmd,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    with pytest.raises(ValueError, match=r"opened without a TIME_EXPIRATION leg"):
+        async with InvocationContext(
+            session_factory=factory,
+            record=_make_invocation_record(invocation_id=_INV_ID + "-phase2"),
+        ) as handle:
+            await persist_envelope_outcome(
+                handle, envelope, results, config=_make_state_persistence_config()
             )
-            .scalars()
-            .all()
-        )
-        assert len(leg_rows) == 1
-        # _three_leg_bracket seeds the TAKE_PROFIT leg at the OPEN-time 950.0.
-        assert json.loads(leg_rows[0].trigger_payload_json)["threshold_usd"] == pytest.approx(990.0)
 
 
 async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(

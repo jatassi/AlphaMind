@@ -312,10 +312,16 @@ def _effective_change_kind(
 ) -> _ChangeKind | None:
     """The single protective change-field a replacement order + leg derive from.
 
-    Precedence is stop -> target -> time: a multi-field ADJUST yields exactly
-    one replacement order and one rebuilt leg, so the two always describe the
-    same protective leg. ``None`` means no protective change-field is set
-    (event-only or thesis-only paths produce no broker order or leg change).
+    Precedence is stop -> target -> time. ``None`` means no protective
+    change-field is set (event-only or thesis-only paths produce no broker
+    order or leg change).
+
+    Multi-field ADJUSTs are only partially handled — a pre-existing limitation
+    this does not change. ``_cancel_pending_protective_orders`` cancels the
+    order for *every* set change-field, but the replacement order and the
+    rebuilt leg are produced for the precedence-winning field alone; a
+    non-winning field's order is left cancelled with no replacement. In
+    practice the analyst / strategist emit single-field ADJUSTs.
     """
     if new_stop_level is not None:
         return "stop"
@@ -463,9 +469,14 @@ async def _apply_protective_leg_modification(
         ).scalars()
     )
     if len(rows) != 1:
+        detail = (
+            f"the bracket was opened without a {leg_type.value} leg"
+            if not rows
+            else f"the bracket has {len(rows)} {leg_type.value} legs (ambiguous)"
+        )
         msg = (
-            f"ADJUST/ADD {kind} change requires exactly one {leg_type.value} leg on "
-            f"bracket {bracket_id!r} to re-persist; found {len(rows)}"
+            f"ADJUST/ADD {kind} change cannot re-persist a {leg_type.value} leg on "
+            f"bracket {bracket_id!r}: {detail}"
         )
         raise ValueError(msg)
     row = rows[0]
@@ -479,6 +490,16 @@ async def _apply_protective_leg_modification(
         replacement_order_id=replacement_order_id,
     )
     update_leg_row(row, new_leg)
+
+
+def _price_trigger_at(old_trigger: PriceTrigger, threshold_usd: float) -> PriceTrigger:
+    """*old_trigger* at a new threshold — an ADJUST moves a price leg's level,
+    not its underlying ticker or its LTE/GTE side."""
+    return PriceTrigger(
+        underlying_ticker=old_trigger.underlying_ticker,
+        threshold_usd=threshold_usd,
+        direction=old_trigger.direction,
+    )
 
 
 def _rebuild_protective_leg(
@@ -508,15 +529,14 @@ def _rebuild_protective_leg(
     time trigger, mirroring the OPEN-path dispatch (ALP-613).
     """
     trigger: PriceTrigger | TimeTrigger
+    # A rebuilt stop carries no pl_anchor: NewStopLevel has no P/L field and the
+    # OPEN path never P/L-anchors a stop leg, so a stop is always plain price.
+    # (If OPEN ever P/L-anchors strategy stops, this would de-anchor them.)
     pl_anchor: PLAnchorSpec | None = None
     if kind == "stop":
         assert new_stop_level is not None
         assert isinstance(old_leg.trigger, PriceTrigger)
-        trigger = PriceTrigger(
-            underlying_ticker=old_leg.trigger.underlying_ticker,
-            threshold_usd=float(new_stop_level.trigger_price),
-            direction=old_leg.trigger.direction,
-        )
+        trigger = _price_trigger_at(old_leg.trigger, float(new_stop_level.trigger_price))
     elif kind == "target":
         assert new_target_level is not None
         assert isinstance(old_leg.trigger, PriceTrigger)
@@ -561,24 +581,14 @@ def _rebuild_target_trigger(
         assert new_target_level.pl_percentage is not None
         assert new_target_level.price is not None
         planned_price = float(new_target_level.price)
-        trigger = PriceTrigger(
-            underlying_ticker=old_trigger.underlying_ticker,
-            threshold_usd=planned_price,
-            direction=old_trigger.direction,
-        )
         anchor = PLAnchorSpec(
             spec_type="target",
             pct=new_target_level.pl_percentage / 100.0,
             planned_entry_price=planned_price,
         )
-        return trigger, anchor
+        return _price_trigger_at(old_trigger, planned_price), anchor
     # Equity / single-option take-profit: a market replacement target carries
     # no price, so fall back to the same 0.01 floor as _target_to_bracket_leg
     # to satisfy the PriceTrigger threshold_usd > 0 invariant.
     threshold = float(new_target_level.price) if new_target_level.price is not None else 0.01
-    trigger = PriceTrigger(
-        underlying_ticker=old_trigger.underlying_ticker,
-        threshold_usd=threshold,
-        direction=old_trigger.direction,
-    )
-    return trigger, None
+    return _price_trigger_at(old_trigger, threshold), None
