@@ -340,6 +340,145 @@ def test_defined_risk_strategy_margin_is_abs_max_loss() -> None:
     assert result == pytest.approx(200.0)
 
 
+def test_credit_vertical_spread_margin_far_below_per_leg_naked_sum() -> None:
+    """A defined-risk credit spread's Reg T margin equals its capped loss.
+
+    The capped loss is far below the summed per-leg naked margin. Same
+    bull put spread legs, contrasted against the value when the strategy
+    is treated as undefined-risk (per-leg naked fallback): the short put
+    alone naked-margins in the thousands while the spread's capped loss is
+    only a few hundred dollars.
+    """
+    from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
+
+    legs = _bull_put_spread_legs()
+    prices = {"NVDA": 500.0}
+
+    defined_risk = _strategy_position(legs=legs, max_loss_usd=-200.0)
+    undefined_risk = _strategy_position(legs=legs, max_loss_usd=float("-inf"))
+
+    capped = compute_regt_margin((defined_risk,), prices)
+    naked_sum = compute_regt_margin((undefined_risk,), prices)
+
+    assert capped == pytest.approx(200.0)
+    assert capped < naked_sum
+    # The capped loss is a small fraction of the conservative naked sum.
+    assert capped < naked_sum / 10.0
+
+
+def _short_strangle_legs() -> tuple[StrategyLeg, StrategyLeg]:
+    """NVDA short strangle legs at underlying 500: naked short call + short put.
+
+    Short call strike=520 (premium 8); short put strike=480 (premium 7).
+    OTM_call = max(520-500,0)=20 → max(500*0.20-20, 500*0.10, 8)=80 → 8_000.
+    OTM_put  = max(500-480,0)=20 → max(500*0.20-20, 500*0.10, 7)=80 → 8_000.
+    Per-leg naked sum = 16_000.
+    """
+    short_call = StrategyLeg(
+        leg_id="l1",
+        direction=Direction.SHORT,
+        options=OptionsPositionDetails(
+            underlying_ticker=Symbol("NVDA"),
+            strike_price=520.0,
+            expiration_date=date(2026, 12, 19),
+            contract_type=OptionContractType.CALL,
+            contract_count=1.0,
+            contract_multiplier=100.0,
+            premium_paid_per_contract=8.0,
+            greeks=_greeks(),
+        ),
+    )
+    short_put = StrategyLeg(
+        leg_id="l2",
+        direction=Direction.SHORT,
+        options=OptionsPositionDetails(
+            underlying_ticker=Symbol("NVDA"),
+            strike_price=480.0,
+            expiration_date=date(2026, 12, 19),
+            contract_type=OptionContractType.PUT,
+            contract_count=1.0,
+            contract_multiplier=100.0,
+            premium_paid_per_contract=7.0,
+            greeks=_greeks(),
+        ),
+    )
+    return short_call, short_put
+
+
+def test_undefined_risk_strategy_falls_back_to_per_leg_naked_sum() -> None:
+    """An undefined-risk strategy (max_loss_usd == -inf) sums per-leg naked margin.
+
+    A short strangle has unbounded downside on the naked call side; with
+    no capped loss it falls back to the conservative per-leg treatment:
+    8_000 (short call) + 8_000 (short put) = 16_000.
+    """
+    from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
+
+    pos = _strategy_position(
+        legs=_short_strangle_legs(),
+        max_loss_usd=float("-inf"),
+        strategy_type_label="short_strangle",
+    )
+    result = compute_regt_margin((pos,), {"NVDA": 500.0})
+
+    assert result == pytest.approx(16_000.0)
+
+
+def test_zero_max_loss_falls_back_to_per_leg_sum_not_zero_margin() -> None:
+    """A strategy with max_loss_usd == 0.0 is a malformed record.
+
+    OPEN strategies carry story-02-recomputed payoff metrics, so a 0.0
+    here is not a normal state. The function falls back to the per-leg
+    naked sum (16_000 for these strangle legs), never zero margin.
+    """
+    from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
+
+    pos = _strategy_position(
+        legs=_short_strangle_legs(),
+        max_loss_usd=0.0,
+        strategy_type_label="malformed_strategy",
+    )
+    result = compute_regt_margin((pos,), {"NVDA": 500.0})
+
+    assert result == pytest.approx(16_000.0)
+    assert result != 0.0
+
+
+def test_mixed_portfolio_with_defined_risk_strategy_uses_capped_loss() -> None:
+    """compute_regt_margin contributes a defined-risk strategy's capped loss.
+
+    Equity and single-option contributions are unchanged; the strategy
+    adds abs(max_loss_usd) rather than its per-leg naked sum.
+    """
+    from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
+
+    # Long AAPL: 200 shares at 180 → 0.50 * 200 * 180 = 18_000.
+    aapl = _equity_position(
+        position_id=PositionId("eq_aapl"),
+        ticker=Symbol("AAPL"),
+        direction=Direction.LONG,
+        share_count=200.0,
+    )
+    # Long QQQ put: 3 contracts, premium 5 → 100% * 3 * 5 * 100 = 1_500.
+    qqq_put = _option_position(
+        position_id=PositionId("opt_qqq"),
+        underlying_ticker=Symbol("QQQ"),
+        direction=Direction.LONG,
+        contract_type=OptionContractType.PUT,
+        strike_price=400.0,
+        contract_count=3.0,
+        premium=5.0,
+    )
+    # Defined-risk bull put spread: capped loss 200.
+    spread = _strategy_position(legs=_bull_put_spread_legs(), max_loss_usd=-200.0)
+
+    prices = {"AAPL": 180.0, "NVDA": 500.0, "QQQ": 450.0}
+    result = compute_regt_margin((aapl, qqq_put, spread), prices)
+
+    # 18_000 equity + 1_500 single-option + 200 capped-loss strategy = 19_700.
+    assert result == pytest.approx(19_700.0)
+
+
 def test_mixed_portfolio_sums_correctly() -> None:
     """Long AAPL stock + short NVDA call + long QQQ put.
 
