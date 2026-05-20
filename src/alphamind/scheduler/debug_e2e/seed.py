@@ -261,6 +261,8 @@ def _strategy_leg_premiums(legs: tuple[Any, ...], net_premium: float) -> list[fl
 
     SHORT legs take a fixed positive mark; LONG legs split the remainder. Every
     premium stays > 0 — ``PriceQuote.__post_init__`` rejects ``price_usd <= 0``.
+    This requires a net *debit* (``net_premium >= 0``); a net-credit strategy
+    has no positive long-leg premium under this scheme and is rejected.
     """
     directions = [Direction(leg.direction.value) for leg in legs]
     units = [float(leg.contracts) * _OPTION_CONTRACT_MULTIPLIER for leg in legs]
@@ -270,6 +272,13 @@ def _strategy_leg_premiums(legs: tuple[Any, ...], net_premium: float) -> list[fl
         msg = "synthetic strategy must carry at least one LONG leg"
         raise ValueError(msg)
     long_premium = (net_premium + _STRATEGY_SHORT_LEG_MARK_USD * short_units) / long_units
+    if long_premium <= 0.0:
+        msg = (
+            "net-credit synthetic strategy is unsupported: the even-mark scheme "
+            f"yields a non-positive long-leg premium ({long_premium}); "
+            "net_premium must be a debit (>= 0)"
+        )
+        raise ValueError(msg)
     return [
         long_premium if d is Direction.LONG else _STRATEGY_SHORT_LEG_MARK_USD for d in directions
     ]

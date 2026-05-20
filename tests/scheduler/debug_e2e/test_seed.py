@@ -35,7 +35,12 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
 )
 from alphamind.portfolio_state.records.theses import ThesisRecordStatus
-from alphamind.scheduler.debug_e2e.seed import _WIPE_ORDER, wipe_and_seed
+from alphamind.scheduler.debug_e2e.seed import (
+    _OPTION_CONTRACT_MULTIPLIER,
+    _WIPE_ORDER,
+    _strategy_leg_premiums,
+    wipe_and_seed,
+)
 from alphamind.state.tables import (
     ActivityLogRow,
     BracketLegRow,
@@ -527,3 +532,40 @@ class TestWipeOrdering:
                 assert names.index(child) < names.index(parent), (
                     f"{child} must be wiped before {parent}"
                 )
+
+
+class TestStrategyLegPremiums:
+    """``_strategy_leg_premiums`` — synthesizes per-leg premiums for a strategy."""
+
+    def test_direction_aware_leg_sum_equals_net_premium(self) -> None:
+        # Asymmetric leg counts: a LONG leg of 2 contracts, a SHORT leg of 1.
+        legs = (
+            _synthetic_strategy_leg("CALL", 100.0, "LONG", contracts=2),
+            _synthetic_strategy_leg("CALL", 120.0, "SHORT", contracts=1),
+        )
+        net_premium = 50.0
+        premiums = _strategy_leg_premiums(legs, net_premium)
+
+        assert all(premium > 0.0 for premium in premiums)
+        market_value = sum(
+            (1.0 if leg.direction.value == "LONG" else -1.0)
+            * leg.contracts
+            * _OPTION_CONTRACT_MULTIPLIER
+            * premium
+            for leg, premium in zip(legs, premiums, strict=True)
+        )
+        assert market_value == pytest.approx(net_premium)
+
+    def test_raises_when_strategy_has_no_long_leg(self) -> None:
+        legs = (_synthetic_strategy_leg("CALL", 120.0, "SHORT", contracts=1),)
+        with pytest.raises(ValueError, match="at least one LONG leg"):
+            _strategy_leg_premiums(legs, 50.0)
+
+    def test_raises_for_net_credit_strategy(self) -> None:
+        # A net credit large enough to drive the long-leg premium non-positive.
+        legs = (
+            _synthetic_strategy_leg("CALL", 100.0, "LONG", contracts=1),
+            _synthetic_strategy_leg("CALL", 120.0, "SHORT", contracts=1),
+        )
+        with pytest.raises(ValueError, match="net-credit"):
+            _strategy_leg_premiums(legs, -150.0)
