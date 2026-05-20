@@ -59,6 +59,11 @@ def _disable_foreign_keys_for_migrations(engine: Engine) -> None:
     the change. Migrations are pure schema operations and never rely on FK
     *enforcement* while they run; application connections re-enable it via the
     session-layer pragma hook, so durable referential integrity is unaffected.
+
+    **Standing invariant**: every Alembic migration in this repo runs with
+    FK enforcement OFF. A migration must therefore not rely on FK constraints
+    to fail-fast on bad data moves — any such integrity check must be written
+    explicitly inside the migration itself.
     """
 
     def _pragma_off(dbapi_connection: Any, _connection_record: Any) -> None:

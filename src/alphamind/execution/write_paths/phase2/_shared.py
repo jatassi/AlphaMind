@@ -129,7 +129,8 @@ def _order_position_direction(position: PositionRecord) -> Direction:
     placeholder. The resulting ``OrderRecord.direction`` is not a meaningful
     side for a strategy: ALP-588 story 01f made the close path leg-derived,
     and the order-level direction-field reshaping that retires this
-    placeholder is the separate ALP-603 follow-on. Mirrors story 02a's
+    placeholder is tracked by **ALP-614** (the proposal-side analogue for
+    ``ProposedDelta`` / ``ExistingPosition`` is ALP-603). Mirrors story 02a's
     ``ProposedClose`` treatment in ``breach_behavior/cascade.py``.
     """
     direction = position_direction(position)

@@ -661,6 +661,8 @@ def _strategy_fill_is_reducing(
     so a strategy OPEN→OPEN fill is *not* unconditionally reducing.
     """
     leg = _strategy_leg_for_order(details.legs, order)
+    # Safe: an OPEN strategy's legs always carry an explicit direction (bracket_stops/wiring.py
+    # raises ValueError on a None leg direction), so leg.direction is non-None here.
     leg_is_long = leg.direction != Direction.SHORT
     is_opening_for_leg = is_buy_side == leg_is_long
     return not is_opening_for_leg
