@@ -136,6 +136,18 @@ def render_analyst_header(  # noqa: PLR0913 — signature dictated by story 04a 
 # ---------------------------------------------------------------------------
 
 
+def _held_position_direction_label(position: AnalystHeldPosition) -> str:
+    """Direction-column text for a held position.
+
+    Equity / single-leg options positions show their long/short label. A
+    multi-leg strategy has ``direction=None`` (its directionality lives
+    per-leg); it shows the strategy-type label instead.
+    """
+    if position.direction is None:
+        return position.strategy_type_label or _INSTRUMENT_TYPE_DISPLAY[position.instrument_type]
+    return _DIRECTION_DISPLAY[position.direction]
+
+
 def _render_held_positions_block(
     positions: tuple[AnalystHeldPosition, ...],
     sector_label_resolver: Callable[[str], str],
@@ -145,9 +157,11 @@ def _render_held_positions_block(
         rows.append(_NONE_LINE)
         return "\n".join(rows)
     ticker_width = max(len(p.ticker) for p in positions)
+    direction_labels = {p.position_id: _held_position_direction_label(p) for p in positions}
+    direction_width = max(_DIRECTION_COLUMN_WIDTH, *(len(d) for d in direction_labels.values()))
     for position in positions:
         ticker = position.ticker.ljust(ticker_width)
-        direction = _DIRECTION_DISPLAY[position.direction].ljust(_DIRECTION_COLUMN_WIDTH)
+        direction = direction_labels[position.position_id].ljust(direction_width)
         size = f"{format_pct(position.size_pct)}%".rjust(5)
         sector_label = sector_label_resolver(f"{SECTOR_RULE_PREFIX}{position.sector}")
         rows.append(f"  {ticker}  {direction}  {size}  {sector_label}")
