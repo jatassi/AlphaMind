@@ -304,7 +304,7 @@ def make_open_strategy_position(
         thesis_id=ThesisId(thesis_id) if thesis_id else None,
         bracket_id=BracketId(bracket_id) if bracket_id else None,
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=None,
         entry_timestamp=NOW - timedelta(hours=2),
         details=details,
         execution_history=history,

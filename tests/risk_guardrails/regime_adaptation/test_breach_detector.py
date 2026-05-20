@@ -117,14 +117,12 @@ def _strategy_position(
     *,
     position_id: str,
     position_weight_pct: float,
-    placeholder_direction: Direction = Direction.LONG,
 ) -> PositionView:
     """Build an OPEN multi-leg STRATEGY ``PositionView``.
 
-    ``placeholder_direction`` is the inert position-level field (ALP-588
-    decision C); ``position_direction()`` yields ``None`` for a strategy
-    regardless of it, so the short filter must exclude this position even
-    when the placeholder is ``SHORT``.
+    A strategy record carries ``direction = None`` (ALP-610);
+    ``position_direction()`` yields ``None`` for it, so the short filter must
+    exclude this position.
     """
     leg = StrategyLeg(
         leg_id="leg-0",
@@ -156,7 +154,7 @@ def _strategy_position(
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=placeholder_direction,
+        direction=None,
         entry_timestamp=_NOW,
         details=details,
         execution_history=(_fill(),),
@@ -467,7 +465,6 @@ def test_single_short_max_excludes_strategy_position() -> None:
     strategy = _strategy_position(
         position_id=PositionId("POS-STRAT"),
         position_weight_pct=5.0,
-        placeholder_direction=Direction.SHORT,
     )
     limits = _full_limits()
     limits["position_max_size_pct"] = 10.0  # keep position_max_size out of the way

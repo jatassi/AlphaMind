@@ -1443,7 +1443,7 @@ def _strategy_open_position(
         thesis_id=ThesisId("THE-STRAT-1"),
         bracket_id=BracketId(bracket_id) if bracket_id else None,
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=None,
         entry_timestamp=_NOW - timedelta(hours=2),
         details=details,
         execution_history=history,

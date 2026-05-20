@@ -1796,7 +1796,7 @@ def test_add_command_projects_strategy_position_with_per_leg_directions() -> Non
         position_id=add_position_id,
         # Position-level direction on a strategy is a persistence artifact; the
         # add path overrides to LONG regardless.
-        direction=PSDirection.SHORT,
+        direction=None,
         details=StrategyPositionDetails(
             strategy_type_label="vertical_spread",
             legs=(
@@ -1834,9 +1834,6 @@ def test_add_command_raises_on_strategy_leg_without_direction() -> None:
         _command_to_validation_request,
     )
     from alphamind.portfolio_state.records.positions import (
-        Direction as PSDirection,
-    )
-    from alphamind.portfolio_state.records.positions import (
         OptionContractType,
         OptionGreeks,
         OptionsPositionDetails,
@@ -1849,7 +1846,7 @@ def test_add_command_raises_on_strategy_leg_without_direction() -> None:
     add_position_id = "POS-NVDA-STRAT-BAD"
     record = _bypass_init_PositionRecord(
         position_id=add_position_id,
-        direction=PSDirection.LONG,
+        direction=None,
         details=StrategyPositionDetails(
             strategy_type_label="vertical_spread",
             legs=(

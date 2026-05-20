@@ -925,7 +925,7 @@ def test_unresolvable_position_skipped_with_warning(caplog: pytest.LogCaptureFix
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=None,
         entry_timestamp=_PHASE1,
         details=strategy_details,
         execution_history=(
@@ -1272,7 +1272,7 @@ def test_strategy_position_ticker_and_greeks() -> None:
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=None,
         entry_timestamp=_PHASE1,
         details=details,
         execution_history=(
@@ -1710,17 +1710,14 @@ def _make_strategy_position_view(
     notional_usd: float,
     delta_adjusted_usd: float,
     position_weight_pct: float,
-    placeholder_direction: Direction = Direction.LONG,
 ) -> PositionView:
     """Build an OPEN multi-leg STRATEGY ``PositionView``.
 
     ``leg_specs`` is a sequence of ``(contract_count, contract_multiplier)``
-    pairs — one per leg. The position-level ``direction`` is an inert
-    placeholder per ALP-588 decision (C); the strategy's true directional
-    contribution rides on ``strategy_greeks``. ``placeholder_direction`` lets a
-    test vary that inert field to prove direction reads route through
-    ``position_direction()`` — which yields ``None`` regardless of the
-    placeholder — rather than reading the raw field.
+    pairs — one per leg. A strategy record carries ``direction = None``
+    (ALP-610); the strategy's directional contribution rides on
+    ``strategy_greeks``, and direction reads route through
+    ``position_direction()``, which yields ``None`` for a strategy.
     """
     legs = tuple(
         StrategyLeg(
@@ -1755,7 +1752,7 @@ def _make_strategy_position_view(
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=placeholder_direction,
+        direction=None,
         entry_timestamp=_PHASE1,
         details=details,
         execution_history=(
@@ -1881,7 +1878,6 @@ def test_strategy_never_selected_by_single_short_max_filter() -> None:
         notional_usd=9_000.0,
         delta_adjusted_usd=-9_000.0,
         position_weight_pct=9.0,  # larger than the genuine short below
-        placeholder_direction=Direction.SHORT,
     )
     genuine_short = _make_equity_position_view(
         "POS-XOM",
@@ -1919,7 +1915,6 @@ def test_strategy_with_short_placeholder_excluded_from_borrow_cost() -> None:
         notional_usd=9_000.0,
         delta_adjusted_usd=-9_000.0,
         position_weight_pct=9.0,
-        placeholder_direction=Direction.SHORT,
     )
     snapshot = _make_pydantic_snapshot(open_positions=[strategy])
     lib = to_library_snapshot(
@@ -1953,7 +1948,6 @@ def test_strategy_existing_position_built_with_placeholder_direction() -> None:
         notional_usd=9_000.0,
         delta_adjusted_usd=-9_000.0,
         position_weight_pct=9.0,
-        placeholder_direction=Direction.SHORT,
     )
     snapshot = _make_pydantic_snapshot(open_positions=[strategy])
     lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)

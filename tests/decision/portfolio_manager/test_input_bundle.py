@@ -438,7 +438,7 @@ def _make_strategy_position_view(
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=None,
         entry_timestamp=_ENTRY_TIMESTAMP,
         details=details,
         execution_history=(fill,),

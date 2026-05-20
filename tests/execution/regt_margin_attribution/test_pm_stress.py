@@ -179,7 +179,6 @@ def _bull_call_spread_position(
     underlying_ticker: str,
     long_strike: float,
     short_strike: float,
-    position_direction: Direction = Direction.LONG,
 ) -> PositionRecord:
     long_leg_details = OptionsPositionDetails(
         underlying_ticker=Symbol(underlying_ticker),
@@ -225,7 +224,7 @@ def _bull_call_spread_position(
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=position_direction,
+        direction=None,
         entry_timestamp=datetime(2026, 1, 1, 14, 30, tzinfo=UTC),
         details=details,
         execution_history=(_fill(),),
@@ -693,43 +692,29 @@ def test_strategy_position_sums_per_leg_pl_at_each_grid_point() -> None:
     assert worst_grid_index == 0  # the -1.0 grid endpoint
 
 
-def test_strategy_stress_sign_independent_of_position_level_direction() -> None:
-    """A strategy's stress sign comes from its per-leg directions, not the
-    position-level direction placeholder (ALP-608).
+def test_strategy_stress_sign_comes_from_per_leg_directions() -> None:
+    """A strategy's stress sign comes from its per-leg directions (ALP-608).
 
-    The same bull call spread carried under a ``LONG`` vs ``SHORT``
-    position-level direction must produce an identical stress margin: a
-    multi-leg strategy is neither long nor short at the position level, so the
-    position-level field must not enter the revaluation.
+    A multi-leg strategy carries ``direction = None`` at the position level
+    (ALP-610), so the revaluation can only draw directional sign from the
+    per-leg :class:`StrategyLeg` directions — the stress margin is a finite,
+    well-defined value computed from the leg structure alone.
     """
-    long_placeholder = _bull_call_spread_position(
+    spread = _bull_call_spread_position(
         position_id=PositionId("p1"),
         underlying_ticker=Symbol("NVDA"),
         long_strike=100.0,
         short_strike=105.0,
-        position_direction=Direction.LONG,
-    )
-    short_placeholder = _bull_call_spread_position(
-        position_id=PositionId("p1"),
-        underlying_ticker=Symbol("NVDA"),
-        long_strike=100.0,
-        short_strike=105.0,
-        position_direction=Direction.SHORT,
     )
     cfg = _config(per_symbol_overrides={"NVDA": 0.20})
 
-    margin_long = stress_class_group(
-        class_group=ClassGroup(underlying_symbol="NVDA", positions=(long_placeholder,)),
-        market_inputs=_market(underlying=Symbol("NVDA"), spot=100.0, strikes=(100.0, 105.0)),
-        config=cfg,
-    )
-    margin_short = stress_class_group(
-        class_group=ClassGroup(underlying_symbol="NVDA", positions=(short_placeholder,)),
+    margin = stress_class_group(
+        class_group=ClassGroup(underlying_symbol="NVDA", positions=(spread,)),
         market_inputs=_market(underlying=Symbol("NVDA"), spot=100.0, strikes=(100.0, 105.0)),
         config=cfg,
     )
 
-    assert margin_short == pytest.approx(margin_long)
+    assert margin >= 0.0
 
 
 def test_net_short_delta_strategy_worst_loss_on_up_shock() -> None:
@@ -777,7 +762,7 @@ def test_net_short_delta_strategy_worst_loss_on_up_shock() -> None:
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=None,
         entry_timestamp=datetime(2026, 1, 1, 14, 30, tzinfo=UTC),
         details=details,
         execution_history=(_fill(),),

@@ -315,7 +315,7 @@ def _strategy_position(
         thesis_id=None,
         bracket_id=None,
         status=status,
-        direction=Direction.SHORT,
+        direction=None,
         entry_timestamp=datetime(2026, 1, 1, 14, 30, tzinfo=UTC),
         details=strategy_details,
         execution_history=(_fill(),),

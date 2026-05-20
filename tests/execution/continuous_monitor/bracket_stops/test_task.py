@@ -529,7 +529,7 @@ def _credit_strategy_position(*, net_premium_usd: float) -> PositionRecord:
         thesis_id=ThesisId("THESIS-1"),
         bracket_id=BracketId("brk-strat-1"),
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,  # inert placeholder for a strategy
+        direction=None,
         entry_timestamp=_NOW,
         details=StrategyPositionDetails(
             strategy_type_label="vertical_spread",

@@ -625,7 +625,7 @@ def _strategy_view(*, position_id: str) -> PositionView:
         thesis_id=ThesisId(f"THE-{position_id}"),
         bracket_id=BracketId(f"BRK-{position_id}"),
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=None,
         entry_timestamp=NOW,
         details=StrategyPositionDetails(
             strategy_type_label="vertical_call_spread",

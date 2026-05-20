@@ -141,7 +141,7 @@ def _strategy_position(
         thesis_id=ThesisId("THESIS-ST"),
         bracket_id=BracketId("brk-st"),
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=None,
         entry_timestamp=_NOW,
         details=StrategyPositionDetails(
             strategy_type_label="vertical_call_spread",

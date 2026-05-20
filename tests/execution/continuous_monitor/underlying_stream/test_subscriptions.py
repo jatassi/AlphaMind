@@ -130,7 +130,7 @@ def _strategy(*, position_id: str, leg_underlyings: tuple[str, ...]) -> Position
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,
+        direction=None,
         entry_timestamp=ts,
         details=StrategyPositionDetails(
             strategy_type_label="iron_condor",

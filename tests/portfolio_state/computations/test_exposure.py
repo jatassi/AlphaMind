@@ -221,7 +221,7 @@ def _make_strategy(
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
-        direction=Direction.LONG,  # inert placeholder for a strategy
+        direction=None,
         entry_timestamp=_NOW,
         details=strategy_details,
         execution_history=(_FILL,),
