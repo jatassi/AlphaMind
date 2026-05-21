@@ -8,10 +8,9 @@ stdout before exiting.
 
 The subprocess boundary is the workaround for the SDK's process-level
 state leakage that causes intermittent ``stop_reason: null`` /
-zero-token stalls on the second-or-later SDK call in a Python process
-(see ``docs/_investigation/debug-e2e-sdk-stall.md``). Each invocation
-gets a fresh process and therefore a fresh SDK module / CLI subprocess
-context.
+zero-token stalls on the second-or-later SDK call in a Python process.
+Each invocation gets a fresh process and therefore a fresh SDK module /
+CLI subprocess context.
 """
 
 from __future__ import annotations

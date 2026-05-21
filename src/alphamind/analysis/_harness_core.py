@@ -38,11 +38,14 @@ from __future__ import annotations
 # ruff: noqa: N818  # Exception class names are spec-mandated and mirror the
 #                   #  per-harness names retained for API stability.
 import asyncio
+import contextlib
 import json
+import os
 import random
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
@@ -64,11 +67,13 @@ __all__ = [
     "SDKFailure",
     "TimeoutFailure",
     "_CLIResultError",
+    "_SdkCallTracer",
     "_StuckSDKCall",
     "_absorb_metadata",
     "_add_tokens",
     "_build_retry_message",
     "_collect_response",
+    "_describe_sdk_message",
     "_load_prompt",
     "_render_raw_response",
     "_tokens_from_usage",
@@ -433,6 +438,23 @@ class DiagState:
     # default, decision harnesses override to "decision".
     archive_layer: str = "analysis"
 
+    @property
+    def diag_dir(self) -> Path | None:
+        """Per-agent diagnostic directory, or ``None`` when unarchived.
+
+        ``invoke_sdk`` reads this off the *diag* it is handed so the
+        per-call ``sdk_trace.jsonl`` lands next to ``metadata.json``.
+        """
+        if self.archive_root is None:
+            return None
+        return (
+            self.archive_root
+            / INVOCATIONS_DIRNAME
+            / self.invocation_id
+            / self.archive_layer
+            / self.agent_name
+        )
+
     def write(
         self,
         *,
@@ -441,15 +463,9 @@ class DiagState:
         stop_reason: str | None,
     ) -> None:
         """Flush the diagnostic record to disk, if archive_root is set."""
-        if self.archive_root is None:
+        diag_dir = self.diag_dir
+        if diag_dir is None:
             return
-        diag_dir = (
-            self.archive_root
-            / INVOCATIONS_DIRNAME
-            / self.invocation_id
-            / self.archive_layer
-            / self.agent_name
-        )
         diag_dir.mkdir(parents=True, exist_ok=True)
 
         (diag_dir / "prompt.md").write_text(self.prompt_text, encoding="utf-8")
@@ -495,6 +511,134 @@ class CollectOutcome:
     session_id: str | None
 
 
+def _describe_block(block: Any) -> dict[str, Any]:
+    """One content-block summary for :func:`_describe_sdk_message`."""
+    summary: dict[str, Any] = {"block": type(block).__name__}
+    name = getattr(block, "name", None)
+    if name is not None:
+        summary["tool"] = name
+    text = getattr(block, "text", None)
+    if isinstance(text, str):
+        summary["text_len"] = len(text)
+    return summary
+
+
+def _describe_sdk_message(message: Any) -> dict[str, Any]:
+    """Compact, JSON-safe description of one SDK message — never raises.
+
+    Captures the message class plus whichever diagnostic attributes are
+    present: a ``RateLimitEvent`` carries the full rate-limit posture
+    (status / utilization / reset epoch), an ``AssistantMessage`` a
+    per-block summary, a ``ResultMessage`` the terminal status + usage.
+    Attribute-probed rather than ``isinstance``-typed so an unrecognised
+    or future message type still lands a useful row in the trace.
+    """
+    detail: dict[str, Any] = {"type": type(message).__name__}
+    try:
+        rate_limit = getattr(message, "rate_limit_info", None)
+        if rate_limit is not None:
+            detail["rate_limit_info"] = (
+                asdict(rate_limit)
+                if is_dataclass(rate_limit) and not isinstance(rate_limit, type)
+                else str(rate_limit)
+            )
+        subtype = getattr(message, "subtype", None)
+        if subtype is not None:
+            detail["subtype"] = subtype
+        content = getattr(message, "content", None)
+        if isinstance(content, list):
+            detail["blocks"] = [_describe_block(block) for block in content]
+        for attr in ("stop_reason", "is_error", "num_turns", "duration_ms", "duration_api_ms"):
+            value = getattr(message, attr, None)
+            if value is not None:
+                detail[attr] = value
+        usage = getattr(message, "usage", None)
+        if isinstance(usage, dict):
+            detail["usage"] = {
+                key: usage[key] for key in ("input_tokens", "output_tokens") if key in usage
+            }
+    except (TypeError, AttributeError, ValueError) as exc:
+        detail["describe_error"] = repr(exc)
+    return detail
+
+
+class _SdkCallTracer:
+    """Append-only forensic trace of one SDK call.
+
+    Writes ``sdk_trace.jsonl`` into the agent's diagnostic directory: one
+    JSON line per SDK message arrival — carrying the inter-message
+    ``gap_s`` — plus one per ``stderr`` line the CLI subprocess emits and
+    harness-side lifecycle markers. Every record is flushed + ``fsync``'d,
+    so when a stalled call is hard-killed at the latency budget the file
+    still pinpoints *where* the stream went silent and what (if anything)
+    the CLI logged across the gap.
+
+    A no-op when the harness runs without an archive (``diag_dir=None``):
+    production-without-archive and unit-test callers see no file writes
+    and no behaviour change.
+    """
+
+    _FILENAME = "sdk_trace.jsonl"
+
+    def __init__(self, diag_dir: Path | None) -> None:
+        self._path: Path | None = diag_dir / self._FILENAME if diag_dir is not None else None
+        self._start = time.monotonic()
+
+    @property
+    def enabled(self) -> bool:
+        """Whether records are persisted (an archive directory was supplied)."""
+        return self._path is not None
+
+    def event(self, name: str, **fields: Any) -> None:
+        """Record a harness-side lifecycle marker (call start, timeout, …)."""
+        self._emit({"event": name, **fields})
+
+    def message(self, message: Any, *, gap_s: float) -> None:
+        """Record one SDK message arrival and the silence that preceded it."""
+        if self._path is None:
+            return
+        self._emit(
+            {"event": "sdk_message", "gap_s": round(gap_s, 3), **_describe_sdk_message(message)}
+        )
+
+    def cli_stderr(self, line: str) -> None:
+        """Record one CLI ``stderr`` line — wired as ``ClaudeAgentOptions.stderr``."""
+        self._emit({"event": "cli_stderr", "line": line.rstrip("\n")})
+
+    def _emit(self, record: dict[str, Any]) -> None:
+        if self._path is None:
+            return
+        framed = {
+            "ts": datetime.now(UTC).isoformat(),
+            "elapsed_s": round(time.monotonic() - self._start, 3),
+            **record,
+        }
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            with self._path.open("a", encoding="utf-8", newline="") as handle:
+                handle.write(json.dumps(framed, default=str, sort_keys=True) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError:
+            # Diagnostics must never break the call they observe.
+            pass
+
+
+def _attach_stderr_hook(options: Any, tracer: _SdkCallTracer) -> Any:
+    """Rebuild SDK *options* with the tracer's CLI-stderr callback wired in.
+
+    Returns *options* unchanged when tracing is disabled or the options
+    shape cannot carry a ``stderr`` field (e.g. a unit-test stub) — so a
+    stall that logs retry/backoff chatter is captured without perturbing
+    a production or test call that has no archive.
+    """
+    if not tracer.enabled or not is_dataclass(options) or isinstance(options, type):
+        return options
+    with contextlib.suppress(TypeError):
+        options = replace(options, stderr=tracer.cli_stderr)
+    return options
+
+
 async def _next_message(
     async_iter: AsyncIterator[Any],
     *,
@@ -530,6 +674,7 @@ async def _collect_response(
     init_stall_timeout_seconds: float | None = None,
     between_message_stall_seconds: float | None = None,
     tool_name_prefix: str | tuple[str, ...] | None = None,
+    tracer: _SdkCallTracer | None = None,
 ) -> CollectOutcome:
     """Drive the SDK generator to completion.
 
@@ -585,14 +730,25 @@ async def _collect_response(
     tool_calls = 0
     session_id: str | None = None
 
+    # A disabled (no-archive) tracer keeps every call site unconditional —
+    # its writes early-return, so production and unit-test paths are unchanged.
+    tracer = tracer if tracer is not None else _SdkCallTracer(None)
+    options = _attach_stderr_hook(options, tracer)
+    tracer.event("call_start")
+
     query_iter = sdk_query_fn(prompt=prompt, options=options)
     async_iter = aiter(query_iter)
     pending_stall = init_stall_timeout_seconds
+    last_message_at = time.monotonic()
     try:
         while True:
             message = await _next_message(async_iter, init_stall_timeout_seconds=pending_stall)
+            arrived_at = time.monotonic()
             if message is None:
+                tracer.event("iterator_exhausted", gap_s=round(arrived_at - last_message_at, 3))
                 break
+            tracer.message(message, gap_s=arrived_at - last_message_at)
+            last_message_at = arrived_at
             pending_stall = between_message_stall_seconds
             if isinstance(message, AssistantMessage):
                 for block in message.content:
@@ -621,6 +777,7 @@ async def _collect_response(
                     )
                 break
     finally:
+        tracer.event("collect_exit")
         # Close from this task; GC-time aclose() races the SDK reader
         # and prints "asynchronous generator is already running" to stderr.
         await cast(AsyncGenerator[Any], query_iter).aclose()
@@ -711,6 +868,8 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
 
     progress.agent_request(phase=phase, agent=agent_name, model=diag.model)
 
+    tracer = _SdkCallTracer(getattr(diag, "diag_dir", None))
+
     def _emit_response(
         *,
         stop_reason: str | None,
@@ -742,6 +901,7 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
         else 1
     )
     for stall_attempt in range(1, stall_attempts + 1):
+        tracer.event("attempt_start", attempt=stall_attempt)
         try:
             async with _get_sdk_call_semaphore():
                 outcome = await asyncio.wait_for(
@@ -752,10 +912,12 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
                         init_stall_timeout_seconds=init_stall_timeout_seconds,
                         between_message_stall_seconds=between_message_stall_seconds,
                         tool_name_prefix=tool_name_prefix,
+                        tracer=tracer,
                     ),
                     timeout=budget_seconds,
                 )
         except _StuckSDKCall as exc:
+            tracer.event("stuck", attempt=stall_attempt, retrying=stall_attempt < stall_attempts)
             if stall_attempt < stall_attempts:
                 continue
             _record_failure(None)
@@ -769,6 +931,7 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
                 invocation_id=invocation_id,
             ) from exc
         except TimeoutError as exc:
+            tracer.event("budget_timeout", attempt=stall_attempt, budget_s=budget_seconds)
             _record_failure(None)
             _emit_response(stop_reason=None)
             raise TimeoutFailure(
@@ -811,6 +974,12 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
                 cause=exc,
             ) from exc
         else:
+            tracer.event(
+                "success",
+                stop_reason=outcome.stop_reason,
+                output_tokens=outcome.tokens_used.output_tokens,
+                tool_calls=outcome.tool_calls,
+            )
             _emit_response(
                 stop_reason=outcome.stop_reason,
                 input_tokens=outcome.tokens_used.input_tokens,

@@ -131,7 +131,12 @@ agents:
   qualitative_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/qualitative_researcher.md
-    latency_budget_seconds: 360
+    # Healthy calls run 250-365s (e2e sdk_trace.jsonl, 2026-05-21): Sonnet's
+    # extended thinking produces 150s+ silent gaps between SDK messages. The
+    # prior 360s sat inside that healthy range and intermittently killed
+    # sound calls mid-think (surfacing as a zero-token TimeoutFailure).
+    # Raised to 600s for parity with the sector researchers and real headroom.
+    latency_budget_seconds: 600
     context_token_budget: 8000
     # Sonnet 4.6 emits ~4400 tokens of extended thinking before brief text;
     # cap covers thinking + the design-doc 300–600 brief target. Post-ALP-288
@@ -190,12 +195,14 @@ agents:
   synthesizer:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/synthesizer.md
-    latency_budget_seconds: 540
+    # 2026-05-21 e2e run observed a healthy 520s call against the prior 540s
+    # cap — 19s of headroom. Same too-tight edge that bit qualitative; raised
+    # to 900s for parity with adaptive_researcher and extended-thinking room.
+    latency_budget_seconds: 900
     context_token_budget: 12000
     # Extended thinking (~4400 tok) plus the synthesizer's prose response.
     # Preemptive bump 2026-05-09: 8000 → 14000 to mirror the qualitative/adaptive
-    # ALP-288 drift pattern (denser JSON-Schema outputs across the analysis
-    # layer); latency raised from 360→540 in the same pass for symmetry.
+    # ALP-288 drift pattern (denser JSON-Schema outputs across the analysis layer).
     output_token_budget: 14000
     # tools intentionally empty: synthesizer's portfolio-state and retrieve_brief
     # tools are wired at the harness level via per-invocation closures over the

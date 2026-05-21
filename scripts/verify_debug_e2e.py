@@ -260,9 +260,10 @@ def check_jsonl_ordering(path: Path) -> CheckResult:
        (``domain_researchers``/``qualitative`` and
        ``analyst``/``strategist``) are NOT each other's predecessors, so
        their event interleaving validates either way.
-    4. **9 SDK call pairs.** Each of the 9 ``(phase, agent)`` tuples in
-       ``_SDK_CALL_PAIRS`` emits one ``agent_request`` followed by one
-       ``agent_response``.
+    4. **SDK call pairs.** Each of the 9 ``(phase, agent)`` tuples in
+       ``_SDK_CALL_PAIRS`` emits at least one ``agent_request`` closed by
+       a matching ``agent_response``; a corrective retry adds a second
+       fully closed pair for that agent, which is tolerated.
     """
     try:
         events = _load_jsonl(path)
@@ -427,31 +428,13 @@ def _check_agent_response_fields(
     return None
 
 
-def _check_sdk_call_pairs(events: list[dict[str, object]]) -> str | None:
-    """Validate the 9 SDK call request/response pairs."""
-    seen_requests: set[tuple[str, str]] = set()
-    matched_pairs: set[tuple[str, str]] = set()
-    for index, ev in enumerate(events):
-        kind = ev.get("event")
-        phase_raw = ev.get("phase")
-        agent_raw = ev.get("agent")
-        if not isinstance(phase_raw, str) or not isinstance(agent_raw, str):
-            continue
-        key = (phase_raw, agent_raw)
-        if kind == "agent_request":
-            if key in seen_requests:
-                return f"duplicate agent_request for {key!r}"
-            seen_requests.add(key)
-        elif kind == "agent_response":
-            if key not in seen_requests:
-                return (
-                    f"agent_response for {key!r} at event #{index} has no preceding agent_request"
-                )
-            field_error = _check_agent_response_fields(event_index=index, ev=ev, key=key)
-            if field_error is not None:
-                return field_error
-            matched_pairs.add(key)
-
+def _report_pair_gaps(
+    open_requests: set[tuple[str, str]], matched_pairs: set[tuple[str, str]]
+) -> str | None:
+    """Final SDK-pair tally: orphan requests, missing pairs, unexpected pairs."""
+    if open_requests:
+        sorted_open = ", ".join(sorted(f"{p}:{a}" for p, a in open_requests))
+        return f"agent_request(s) with no matching agent_response: {sorted_open}"
     expected = set(_SDK_CALL_PAIRS)
     missing = expected - matched_pairs
     if missing:
@@ -462,6 +445,48 @@ def _check_sdk_call_pairs(events: list[dict[str, object]]) -> str | None:
         sorted_extra = ", ".join(sorted(f"{p}:{a}" for p, a in unexpected))
         return f"unexpected agent_request/response pair(s): {sorted_extra}"
     return None
+
+
+def _check_sdk_call_pairs(events: list[dict[str, object]]) -> str | None:
+    """Validate the SDK call request/response pairs.
+
+    Each of the 9 ``_SDK_CALL_PAIRS`` ``(phase, agent)`` tuples must emit
+    at least one ``agent_request`` closed by a matching ``agent_response``.
+    A *corrective retry* legitimately emits a second request/response
+    pair for the same agent — the harness's designed recovery from a
+    malformed first response — so a repeated, fully closed pair is
+    tolerated. What is NOT tolerated: a second ``agent_request`` while the
+    prior one for that key is still open (overlapping calls), or an
+    ``agent_response`` with no open request.
+    """
+    open_requests: set[tuple[str, str]] = set()
+    matched_pairs: set[tuple[str, str]] = set()
+    for index, ev in enumerate(events):
+        kind = ev.get("event")
+        phase_raw = ev.get("phase")
+        agent_raw = ev.get("agent")
+        if not isinstance(phase_raw, str) or not isinstance(agent_raw, str):
+            continue
+        key = (phase_raw, agent_raw)
+        if kind == "agent_request":
+            if key in open_requests:
+                return (
+                    f"agent_request for {key!r} at event #{index} opens while "
+                    "its prior request is still unclosed"
+                )
+            open_requests.add(key)
+        elif kind == "agent_response":
+            if key not in open_requests:
+                return (
+                    f"agent_response for {key!r} at event #{index} has no preceding agent_request"
+                )
+            field_error = _check_agent_response_fields(event_index=index, ev=ev, key=key)
+            if field_error is not None:
+                return field_error
+            open_requests.discard(key)
+            matched_pairs.add(key)
+
+    return _report_pair_gaps(open_requests, matched_pairs)
 
 
 # ---------------------------------------------------------------------------

@@ -266,8 +266,9 @@ _INIT_STALL_TIMEOUT_SECONDS = 60.0
 # 180s with zero output tokens against the byte-identical
 # user_message.md the in-isolation run succeeded with). The outer
 # ``latency_budget_seconds`` already bounds the call; the init watchdog
-# still catches the CLI-spawn-failure case fast. See
-# ``docs/_investigation/debug-e2e-sdk-stall.md``.
+# still catches the CLI-spawn-failure case fast. Confirmed 2026-05-21 by
+# the sdk_trace.jsonl instrumentation: healthy calls show 150s+ silent
+# extended-thinking gaps between SDK messages.
 _BETWEEN_MESSAGE_STALL_SECONDS: float | None = None
 
 # Launch jitter applied to each domain researcher's SDK call. The

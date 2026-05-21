@@ -51,9 +51,29 @@ invariant the prior per-feature verify suite collectively covered:
 2. **`CLAUDE_CODE_OAUTH_TOKEN` exported.** Generate with
    `claude setup-token` if missing. Source `.env` inline before each
    debug-e2e invocation:
-   `set -a && source .env && set +a && uv run python scripts/...`.
+   `set -a && source <(tr -d '\r' < .env) && set +a && uv run python scripts/...`.
    Alpaca credentials are **deliberately not required** — the debug-e2e
    mode replaces the broker adapter with a log-only stand-in.
+
+   **Strip CR while sourcing `.env`.** On the Windows production
+   server `.env` carries CRLF line endings. A bare `source .env` under
+   Git Bash leaves a trailing `\r` on every value — including
+   `CLAUDE_CODE_OAUTH_TOKEN`. The token still reads as non-empty, so
+   the `check_auth` pre-flight passes (`PASS: auth`), but the `\r`
+   corrupts the bearer header and SDK authentication fails several
+   minutes into the run — at the first agent call, after distillation
+   — wasting the whole pass. `source <(tr -d '\r' < .env)` strips the
+   CR and is a harmless no-op on an LF-only `.env`, so it is the
+   canonical form in every command block below. To confirm a clean
+   load before committing to a long run:
+
+   ```bash
+   set -a && source <(tr -d '\r' < .env) && set +a && \
+       uv run python -c "import os; t=os.environ['CLAUDE_CODE_OAUTH_TOKEN']; \
+           print('len', len(t), 'clean', t == t.strip())"
+   ```
+
+   should print the token length and `clean True`.
 3. **`uv sync` completed.**
 4. **Dedicated debug DB seeded from a prod snapshot.** Debug-e2e wipes
    the state-persistence subset on every invocation (parent issue § C,
@@ -117,7 +137,7 @@ invocation directory rather than a stale prior run.
 The wrapped verify harness is the standard entry point:
 
 ```bash
-set -a && source .env && set +a && \
+set -a && source <(tr -d '\r' < .env) && set +a && \
     uv run python scripts/verify_debug_e2e.py \
         --archive-root .archive/verify-debug-e2e \
         [--db-path data/alphamind-debug-e2e.db] \
@@ -259,7 +279,7 @@ To drive the CLI directly without the wrapper (e.g., when iterating on
 the underlying mode rather than the check semantics):
 
 ```bash
-set -a && source .env && set +a && \
+set -a && source <(tr -d '\r' < .env) && set +a && \
     DATABASE_PATH=data/alphamind-debug-e2e.db \
         uv run python -m alphamind.scheduler run \
             --debug-e2e --once market_hours_rolling \
