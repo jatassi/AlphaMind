@@ -9,8 +9,7 @@ with zero output tokens. Even the same-process stall-retry mechanism
 sometimes fails (both attempts stall) because the process state itself
 has degraded.
 
-See ``docs/_investigation/debug-e2e-sdk-stall.md`` for the full
-reproduction and analysis. The "back-to-back" diagnostic
+The "back-to-back" diagnostic
 (``scripts/_debug_two_back_to_back.py``) shows call 1 sometimes stalls
 once and retries to success, call 2 sometimes has both attempts stall.
 

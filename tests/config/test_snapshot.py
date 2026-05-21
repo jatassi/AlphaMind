@@ -158,10 +158,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     """
     resolved = _fixture_resolved()
     digest = compute_snapshot_hash(serialize_resolved_config(resolved))
-    # Pin updated 2026-05-18 after ALP-524 added fee_schedule schema entries
-    # and ALP-530 (per-ticker realized-vol, ALP-130 work tree) extended the
-    # config model; the fixture's canonical bytes shifted by those additions.
-    expected = "84d27f5c39b2a0471b07ccd5d842be7f931e1cb6923737d1177d9427fdd4c21b"
+    # Pin updated 2026-05-21: qualitative_researcher.latency_budget_seconds
+    # 360→600 and synthesizer.latency_budget_seconds 540→900 (e2e-verified
+    # too-tight extended-thinking budgets); the fixture's canonical bytes
+    # shifted by those two value changes.
+    expected = "34de80a3343fb8255831e1e8408f515e63dc7ee6773d3b3fc7ebc51f1c944640"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

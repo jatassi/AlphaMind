@@ -670,6 +670,57 @@ def test_check_jsonl_ordering_allows_null_stop_reason(
     assert result.passed is True, result.message
 
 
+def test_check_jsonl_ordering_tolerates_corrective_retry_pair(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """A second request/response pair from a corrective retry is tolerated.
+
+    A decision-layer harness re-invokes the SDK when a first response
+    fails validation; that emits a second fully closed
+    ``agent_request``/``agent_response`` pair for the same agent. The
+    pipeline still completes, so the check must not fail on it.
+    """
+    stream = _canonical_event_stream()
+    idx = next(
+        i
+        for i, e in enumerate(stream)
+        if e.get("event") == "agent_response" and e.get("agent") == "strategist"
+    )
+    resp = stream[idx]
+    retry_request = {
+        "event": "agent_request",
+        "phase": "strategist",
+        "agent": "strategist",
+        "model": "opus",
+        "timestamp": resp["timestamp"],
+    }
+    stream[idx + 1 : idx + 1] = [retry_request, {**resp}]
+    jsonl = tmp_path / "progress.jsonl"
+    _write_jsonl(jsonl, stream)
+
+    result = verify_module.check_jsonl_ordering(jsonl)
+    assert result.passed is True, result.message
+
+
+def test_check_jsonl_ordering_fails_on_overlapping_agent_request(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """A second ``agent_request`` before the prior one is closed is a failure."""
+    stream = _canonical_event_stream()
+    idx = next(
+        i
+        for i, e in enumerate(stream)
+        if e.get("event") == "agent_request" and e.get("agent") == "strategist"
+    )
+    stream[idx + 1 : idx + 1] = [{**stream[idx]}]
+    jsonl = tmp_path / "progress.jsonl"
+    _write_jsonl(jsonl, stream)
+
+    result = verify_module.check_jsonl_ordering(jsonl)
+    assert result.passed is False
+    assert "strategist" in result.message
+
+
 # ---------------------------------------------------------------------------
 # check_synthetic_portfolio_visibility
 # ---------------------------------------------------------------------------

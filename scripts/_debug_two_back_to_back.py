@@ -5,8 +5,7 @@ Extends ``scripts/_debug_energy_isolated.py`` to invoke
 using the byte-identical captured ``user_message.md`` from the most recent
 failed verify run. If the second call stalls, the
 "first-call-succeeds, subsequent-may-stall" process-state-leakage
-hypothesis (see docs/_investigation/debug-e2e-sdk-stall.md) is confirmed
-and we have a minimal upstream repro.
+hypothesis is confirmed and we have a minimal upstream repro.
 
 Each call uses a distinct invocation_id so the diagnostic archive captures
 both attempts side-by-side under ``.archive/repro-two-back-to-back/``.

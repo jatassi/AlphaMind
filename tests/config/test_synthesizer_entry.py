@@ -32,7 +32,7 @@ def test_synthesizer_entry_loads() -> None:
     entry = _load_synthesizer_entry()
     assert entry.model == "claude-sonnet-4-6"
     assert entry.prompt == "prompts/analysis/synthesizer.md"
-    assert entry.latency_budget_seconds == 540
+    assert entry.latency_budget_seconds == 900
     assert entry.context_token_budget == 12000
     assert entry.output_token_budget == 14000
 

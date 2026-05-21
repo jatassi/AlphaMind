@@ -1014,3 +1014,142 @@ async def test_invoke_sdk_defaults_progress_to_noop(tmp_path: Path) -> None:
         phase="some-phase",
     )
     assert outcome.structured_output == {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# SDK-call tracer (sdk_trace.jsonl forensic instrumentation)
+# ---------------------------------------------------------------------------
+
+
+def test_diagstate_diag_dir_resolves_under_archive(tmp_path: Path) -> None:
+    diag = _make_diag(tmp_path)
+    assert diag.diag_dir == tmp_path / "invocations" / "inv-001" / "analysis" / "demo_agent"
+
+
+def test_diagstate_diag_dir_is_none_without_archive(tmp_path: Path) -> None:
+    assert _make_diag(tmp_path, archive_root=None).diag_dir is None
+
+
+def test_describe_sdk_message_summarises_rate_limit_event() -> None:
+    """A ``RateLimitEvent`` is decoded to its full rate-limit posture."""
+    from claude_agent_sdk import RateLimitEvent, RateLimitInfo
+
+    event = RateLimitEvent(
+        rate_limit_info=RateLimitInfo(
+            status="allowed_warning",
+            resets_at=1779501600,
+            rate_limit_type="seven_day",
+            utilization=0.97,
+            overage_status=None,
+            overage_resets_at=None,
+            overage_disabled_reason=None,
+            raw={"surpassedThreshold": 0.75},
+        ),
+        uuid="u-1",
+        session_id="s-1",
+    )
+    desc = core._describe_sdk_message(event)
+    assert desc["type"] == "RateLimitEvent"
+    assert desc["rate_limit_info"]["utilization"] == 0.97
+    assert desc["rate_limit_info"]["status"] == "allowed_warning"
+    assert desc["rate_limit_info"]["rate_limit_type"] == "seven_day"
+
+
+def test_describe_sdk_message_summarises_assistant_blocks() -> None:
+    desc = core._describe_sdk_message(_make_sdk_assistant(text="hello"))
+    assert desc["type"] == "AssistantMessage"
+    assert desc["blocks"] == [{"block": "TextBlock", "text_len": 5}]
+    assert desc["usage"] == {"input_tokens": 10, "output_tokens": 20}
+
+
+def test_describe_sdk_message_summarises_result_terminal_state() -> None:
+    desc = core._describe_sdk_message(_make_sdk_result(stop_reason="end_turn"))
+    assert desc["type"] == "ResultMessage"
+    assert desc["stop_reason"] == "end_turn"
+    assert desc["is_error"] is False
+
+
+def test_sdk_call_tracer_disabled_without_diag_dir(tmp_path: Path) -> None:
+    tracer = core._SdkCallTracer(None)
+    assert tracer.enabled is False
+    tracer.event("call_start")
+    tracer.cli_stderr("noise")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_sdk_call_tracer_appends_jsonl_records(tmp_path: Path) -> None:
+    tracer = core._SdkCallTracer(tmp_path)
+    assert tracer.enabled is True
+    tracer.event("call_start")
+    tracer.message(_make_sdk_assistant(text="hi"), gap_s=1.5)
+    tracer.cli_stderr("cli line\n")
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "sdk_trace.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [r["event"] for r in records] == ["call_start", "sdk_message", "cli_stderr"]
+    assert records[1]["gap_s"] == 1.5
+    assert records[1]["type"] == "AssistantMessage"
+    assert records[2]["line"] == "cli line"
+    assert all("ts" in r and "elapsed_s" in r for r in records)
+
+
+@pytest.mark.asyncio
+async def test_collect_response_writes_trace_when_tracer_enabled(tmp_path: Path) -> None:
+    messages = [
+        _make_sdk_assistant(text="narration"),
+        _make_sdk_result(structured_output={"x": 1}),
+    ]
+    tracer = core._SdkCallTracer(tmp_path)
+    await core._collect_response(
+        _make_stub(messages),
+        prompt="p",
+        options=None,
+        tracer=tracer,
+    )
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "sdk_trace.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    events = [r["event"] for r in records]
+    assert events[0] == "call_start"
+    assert events[-1] == "collect_exit"
+    assert events.count("sdk_message") == 2
+
+
+@pytest.mark.asyncio
+async def test_collect_response_no_trace_file_without_tracer(tmp_path: Path) -> None:
+    await core._collect_response(
+        _make_stub([_make_sdk_result(structured_output={"x": 1})]),
+        prompt="p",
+        options=None,
+    )
+    assert not (tmp_path / "sdk_trace.jsonl").exists()
+
+
+@pytest.mark.asyncio
+async def test_invoke_sdk_writes_sdk_trace_to_diag_dir(tmp_path: Path) -> None:
+    """``invoke_sdk`` builds a tracer from ``diag.diag_dir`` and persists it."""
+    diag = _make_diag(tmp_path)
+    messages = [
+        _make_sdk_assistant(text="ok"),
+        _make_sdk_result(structured_output={"x": 1}),
+    ]
+    await core.invoke_sdk(
+        sdk_query_fn=_make_stub(messages),
+        prompt="p",
+        options=None,
+        diag=diag,
+        budget_seconds=5.0,
+        init_stall_timeout_seconds=None,
+        wall_start=0.0,
+        agent_name="demo_agent",
+        invocation_id="inv-001",
+        on_cli_result_error="sdk_failure",
+        phase="demo",
+    )
+    trace = tmp_path / "invocations" / "inv-001" / "analysis" / "demo_agent" / "sdk_trace.jsonl"
+    records = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+    events = [r["event"] for r in records]
+    assert "attempt_start" in events
+    assert "success" in events
