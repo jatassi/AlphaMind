@@ -247,18 +247,18 @@ def _classify_invocation(
         for e in entries
     )
     defensive_event_present = any(e.event_type in _DEFENSIVE_EVENT_TYPES for e in entries)
-    approve_decisions = [
+    remediating_decisions = [
         e
         for e in pm_decisions
         if isinstance(e.detail, PMDecisionDetail)
         and e.detail.verdict in _REMEDIATING_PM_VERDICTS
         and e.detail.resulting_command_ids
     ]
-    action_count = len(approve_decisions) if defensive_event_present else 0
+    action_count = len(remediating_decisions) if defensive_event_present else 0
 
     if operator_event_present:
         return Classification.OPERATOR_OVERRIDDEN, pm_count, action_count
-    if approve_decisions and defensive_event_present:
+    if remediating_decisions and defensive_event_present:
         return Classification.DROVE_REMEDIATING_ACTION, pm_count, action_count
     return Classification.PRODUCED_NO_OP, pm_count, action_count
 
