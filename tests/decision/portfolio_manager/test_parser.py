@@ -11,7 +11,12 @@ VALID_PAYLOAD = {
     "invocation_id": "inv-001",
     "timestamp": "2026-01-01T00:00:00Z",
     "envelopes_submitted": 2,
-    "verdict_summary": {"approve": 1, "approve_with_modification": 0, "reject": 1},
+    "verdict_summary": {
+        "approve": 1,
+        "approve_with_modification": 0,
+        "reject": 1,
+        "override_with_corrective_action": 0,
+    },
 }
 
 
@@ -63,7 +68,12 @@ def test_parser_wraps_verdict_sum_invariant_failure() -> None:
     payload = {
         **VALID_PAYLOAD,
         "envelopes_submitted": 3,
-        "verdict_summary": {"approve": 1, "approve_with_modification": 0, "reject": 1},
+        "verdict_summary": {
+            "approve": 1,
+            "approve_with_modification": 0,
+            "reject": 1,
+            "override_with_corrective_action": 0,
+        },
     }
     with pytest.raises(ParseError):
         parse_pm_completion_record(payload, invocation_id="inv-001")
