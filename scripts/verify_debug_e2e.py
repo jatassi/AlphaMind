@@ -508,6 +508,14 @@ class PortfolioExpectations:
     $100,000). The verify harness selects between them via the
     ``--fresh-start`` flag and passes the chosen expectations to
     :func:`check_synthetic_portfolio_visibility` (ALP-618).
+
+    ``cash_usd`` is typed ``float`` on purpose — :class:`SyntheticPortfolio`
+    keeps ``starting_cash_usd`` as ``Decimal`` for money-discipline at the
+    seeder, but the verify check reads ``cash_ledger.current_cash_usd`` via
+    SQLite (``float(cash_rows[0][0])``) and compares against this field;
+    keeping both ends of the comparison ``float`` avoids a spurious
+    ``Decimal``/``float`` cross-type compare and matches the SQLite round-trip.
+    The two literal expectations are exactly representable in IEEE-754.
     """
 
     positions: int

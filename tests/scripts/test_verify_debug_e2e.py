@@ -1262,6 +1262,113 @@ def test_drive_debug_e2e_subprocess_captures_stdout_and_stderr(
 
 
 # ---------------------------------------------------------------------------
+# main() — selector polarity for fresh-start vs synthetic expectations
+# ---------------------------------------------------------------------------
+
+
+def _stub_main_dependencies(
+    verify_module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    stdout_payload: str = '{"invocation_id": "inv-test", "staleness_flag": false, '
+    '"trigger_source": "debug_e2e_cli", "commands_submitted": 0}',
+) -> dict[str, Any]:
+    """Stub the IO/check layer so ``main()`` runs end-to-end in-process.
+
+    Captures the ``expected`` kwarg threaded into
+    :func:`check_synthetic_portfolio_visibility` so a polarity flip in
+    the selector ternary at ``main()`` fails loudly (ALP-618).
+    """
+    captured: dict[str, Any] = {}
+
+    def _stub_run(_cmd: list[str], **_kwargs: Any) -> Any:
+        class _Completed:
+            returncode = 0
+            stdout = stdout_payload
+            stderr = ""
+
+        return _Completed()
+
+    monkeypatch.setattr(verify_module.subprocess, "run", _stub_run)
+
+    def _passing_archive(*, archive_root: Path, invocation_id: str) -> Any:
+        # main() reads progress_path.is_file() directly before dispatching
+        # to check_jsonl_ordering, so the stub must touch the JSONL file
+        # (otherwise the missing-file branch fires and the monkey-patched
+        # ordering check never runs).
+        inv_dir = archive_root / "invocations" / invocation_id
+        inv_dir.mkdir(parents=True, exist_ok=True)
+        (inv_dir / "progress.jsonl").touch()
+        return verify_module.CheckResult(label="archive_directory", passed=True, message="stub")
+
+    monkeypatch.setattr(verify_module, "check_archive_directory", _passing_archive)
+    monkeypatch.setattr(
+        verify_module,
+        "check_jsonl_ordering",
+        lambda _path: verify_module.CheckResult(
+            label="jsonl_ordering", passed=True, message="stub"
+        ),
+    )
+
+    def _capturing_visibility(_engine: Any, *, expected: Any) -> Any:
+        captured["expected"] = expected
+        return verify_module.CheckResult(label="synthetic_portfolio", passed=True, message="stub")
+
+    monkeypatch.setattr(
+        verify_module, "check_synthetic_portfolio_visibility", _capturing_visibility
+    )
+
+    # Pre-flight auth: ensure CLAUDE_CODE_OAUTH_TOKEN is set so check_auth passes.
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "stub-token")
+    return captured
+
+
+def test_main_threads_synthetic_expectations_by_default(
+    verify_module: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without ``--fresh-start``, ``main()`` selects ``SYNTHETIC_EXPECTATIONS`` (ALP-618).
+
+    Locks the selector polarity at the ``main()`` ternary — a swapped
+    branch would still pass every direct ``check_synthetic_portfolio_visibility``
+    test (they pass ``expected`` explicitly), so this is the only seam that
+    pins the runtime selector.
+    """
+    captured = _stub_main_dependencies(verify_module, monkeypatch)
+
+    exit_code = verify_module.main(
+        [
+            "--archive-root",
+            str(tmp_path / "archive"),
+            "--db-path",
+            str(tmp_path / "alphamind-debug-e2e.db"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["expected"] is verify_module.SYNTHETIC_EXPECTATIONS
+
+
+def test_main_threads_fresh_start_expectations_when_flag_set(
+    verify_module: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With ``--fresh-start``, ``main()`` selects ``FRESH_START_EXPECTATIONS`` (ALP-618)."""
+    captured = _stub_main_dependencies(verify_module, monkeypatch)
+
+    exit_code = verify_module.main(
+        [
+            "--archive-root",
+            str(tmp_path / "archive"),
+            "--db-path",
+            str(tmp_path / "alphamind-debug-e2e.db"),
+            "--fresh-start",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["expected"] is verify_module.FRESH_START_EXPECTATIONS
+
+
+# ---------------------------------------------------------------------------
 # format_data_health_block
 # ---------------------------------------------------------------------------
 
