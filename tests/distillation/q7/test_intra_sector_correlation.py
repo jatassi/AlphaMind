@@ -33,6 +33,7 @@ from alphamind.persistence.session import make_engine, make_session_factory
 CORRELATION_SHORT_DAYS = 20
 CORRELATION_LONG_DAYS = 60
 NARRATIVE_LAG_CORRELATION_SHIFT_SIGMA = 1.5
+CORRELATION_LOCUS_PAIR_COUNT_THRESHOLD = 3
 
 
 @pytest.fixture()
@@ -152,6 +153,7 @@ class TestIntraSectorCorrelationHappyPath:
             short_window_days=CORRELATION_SHORT_DAYS,
             long_window_days=CORRELATION_LONG_DAYS,
             divergence_sigma=NARRATIVE_LAG_CORRELATION_SHIFT_SIGMA,
+            correlation_locus_pair_count_threshold=CORRELATION_LOCUS_PAIR_COUNT_THRESHOLD,
         )
 
         # One correlation block per sector.
@@ -269,6 +271,7 @@ class TestIntraSectorCorrelationDivergence:
             short_window_days=20,
             long_window_days=60,
             divergence_sigma=NARRATIVE_LAG_CORRELATION_SHIFT_SIGMA,
+            correlation_locus_pair_count_threshold=CORRELATION_LOCUS_PAIR_COUNT_THRESHOLD,
         )
 
         block = blocks[0]
@@ -312,6 +315,7 @@ class TestIntraSectorCorrelationDivergence:
             short_window_days=20,
             long_window_days=60,
             divergence_sigma=NARRATIVE_LAG_CORRELATION_SHIFT_SIGMA,
+            correlation_locus_pair_count_threshold=CORRELATION_LOCUS_PAIR_COUNT_THRESHOLD,
         )
 
         # An event was persisted for the (A, B) pair.
@@ -365,6 +369,7 @@ class TestIntraSectorCorrelationDivergence:
             short_window_days=20,
             long_window_days=60,
             divergence_sigma=NARRATIVE_LAG_CORRELATION_SHIFT_SIGMA,
+            correlation_locus_pair_count_threshold=CORRELATION_LOCUS_PAIR_COUNT_THRESHOLD,
         )
 
         # When the short-window pair matches the long-window pair, no flag

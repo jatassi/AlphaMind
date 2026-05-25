@@ -56,6 +56,7 @@ from alphamind.distillation.q7.intermarket_regime_compute import (
     compute_intermarket_regime_pure,
 )
 from alphamind.distillation.q7.intra_sector_correlation_compute import (
+    apply_intra_sector_locus_aggregation,
     compute_intra_sector_correlation_pure,
 )
 from alphamind.distillation.q7.lead_lag_compute import (
@@ -384,8 +385,15 @@ def _load_intra_sector_blocks(
     short_window_days: int,
     long_window_days: int,
     divergence_sigma: float,
+    correlation_locus_pair_count_threshold: int,
 ) -> tuple[OutputBlock, ...]:
-    """Read per-sector closes, compute correlation matrices, write divergence events."""
+    """Read per-sector closes, compute correlation matrices, write divergence events.
+
+    Event persistence runs on the unfiltered sector blocks so the
+    per-pair ``correlation_divergence`` history is preserved even when
+    the locus-aggregation pass rolls the contributing pair flags up into
+    a ``q7.correlation_locus.<ticker>`` block (ALP-632).
+    """
     long_start, range_end = _window_bounds(as_of=as_of, window_days=long_window_days)
     blocks: list[OutputBlock] = []
     for sector in sorted(sector_roster):
@@ -411,7 +419,11 @@ def _load_intra_sector_blocks(
         blocks.append(block)
     if blocks:
         session.flush()
-    return tuple(blocks)
+    return apply_intra_sector_locus_aggregation(
+        sector_blocks=blocks,
+        pair_count_threshold=correlation_locus_pair_count_threshold,
+        as_of=as_of,
+    )
 
 
 def _load_cross_sector_blocks(
@@ -720,6 +732,9 @@ def load_q7_inputs(
         short_window_days=pw.correlation_short_days,
         long_window_days=pw.correlation_long_days,
         divergence_sigma=config.narrative_lag.narrative_lag_correlation_shift_sigma,
+        correlation_locus_pair_count_threshold=(
+            config.narrative_lag.correlation_locus_pair_count_threshold
+        ),
     )
     cross_sector_blocks = _load_cross_sector_blocks(
         session,

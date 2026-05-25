@@ -23,6 +23,10 @@ from alphamind.distillation.output import (
     OutputAudience,
     OutputBlock,
 )
+from alphamind.distillation.q7._correlation_locus import (
+    CorrelationLocusContribution,
+    build_correlation_locus_block,
+)
 from alphamind.distillation.q7._helpers import (
     _BLOCK_NAMESPACE,
     _calibration_for_window,
@@ -333,51 +337,27 @@ def _locus_block(
     sector_by_ticker: Mapping[str, str] | None,
     as_of: datetime,
 ) -> OutputBlock:
-    """Build a single locus block summarising one ticker's contributing pairs."""
-    partners = sorted(
-        {
-            pair.candidate.col if pair.candidate.row == locus_ticker else pair.candidate.row
-            for pair in contributing
-        }
+    """Build a locus block from the cross-universe published-pair stream.
+
+    Thin wrapper over :func:`build_correlation_locus_block` that adapts the
+    cross-universe ``_PublishedPair`` representation to the shared
+    contribution / supporting-pair contract.
+    """
+    contributions = tuple(
+        CorrelationLocusContribution(
+            row=pair.candidate.row,
+            col=pair.candidate.col,
+            magnitude=pair.candidate.magnitude,
+        )
+        for pair in contributing
     )
-    max_sigma = max(pair.candidate.magnitude for pair in contributing)
     supporting_pair_ids = tuple(sorted(_pair_block_id(pair.candidate) for pair in contributing))
-    partners_by_sector: dict[str, list[str]] | None = None
-    cross_sector_spread: str | None = None
-    if sector_by_ticker is not None:
-        partners_by_sector = {}
-        for partner in partners:
-            sector = sector_by_ticker.get(partner, "unknown")
-            partners_by_sector.setdefault(sector, []).append(partner)
-        if len(partners_by_sector) == 1:
-            (only_sector,) = partners_by_sector.keys()
-            cross_sector_spread = f"{only_sector}-only"
-        else:
-            cross_sector_spread = f"{len(partners_by_sector)} sectors"
-    payload: dict[str, object] = {
-        "locus_ticker": locus_ticker,
-        "pair_count": len(contributing),
-        "max_deviation_sigma": max_sigma,
-        "partner_tickers": partners,
-        "supporting_pairs": supporting_pair_ids,
-        "partners_by_sector": partners_by_sector,
-        "cross_sector_spread": cross_sector_spread,
-    }
-    return OutputBlock(
-        block_id=f"{_BLOCK_NAMESPACE}.correlation_locus.{locus_ticker}",
-        audience=frozenset({OutputAudience.CORRELATION_REGIME_BRIEF}),
-        freshness_ts=as_of,
-        calibration_state=CalibrationState.CALIBRATED,
-        bootstrap_reason=None,
-        payload=payload,
-        anomaly_flags=(
-            AnomalyFlag(
-                name=f"correlation_locus_flag:{locus_ticker}",
-                magnitude=max_sigma,
-                severity="investigate_now",
-            ),
-        ),
-        regime_context=None,
+    return build_correlation_locus_block(
+        locus_ticker=locus_ticker,
+        contributions=contributions,
+        sector_by_ticker=sector_by_ticker,
+        supporting_pair_ids=supporting_pair_ids,
+        as_of=as_of,
     )
 
 
