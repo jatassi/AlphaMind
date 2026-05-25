@@ -55,7 +55,14 @@ def build_correlation_locus_block(
 
     - ``locus_ticker`` — the name the rollup is centred on.
     - ``pair_count`` — number of contributing pairs.
-    - ``max_deviation_sigma`` — strongest contributing deviation magnitude.
+    - ``max_deviation_sigma`` — strongest contributing deviation magnitude
+      in the *producer's native sigma unit* (cross-universe path: Fisher-z
+      deviation divided by the null-distribution stdev; per-sector path:
+      raw-correlation deviation divided by the sector's long-window
+      off-diagonal pstdev). Both producers report on a sigma scale but the
+      scales are not directly comparable across paths — the brief renders
+      both opaquely as ``sigma`` and downstream consumers treat the value
+      as a within-producer severity ranking, not a cross-producer absolute.
     - ``partner_tickers`` — sorted partner-ticker list (excluding the locus).
     - ``supporting_pairs`` — producer-native references (block ids for the
       cross-universe path, flag names for the per-sector path) so a

@@ -228,17 +228,17 @@ def apply_intra_sector_locus_aggregation(
                     )
                     supporting_by_locus[ticker].append(flag.name)
 
+        # Every ticker appearing in this sector's pairs maps to this sector by
+        # construction; build the mapping once and reuse across loci.
+        sector_by_ticker = dict.fromkeys(
+            {ticker for row, col, _ in parsed for ticker in (row, col)},
+            sector,
+        )
         for locus_ticker in sorted(locus_tickers):
-            contributions = contributions_by_locus[locus_ticker]
-            partners = {
-                contribution.col if contribution.row == locus_ticker else contribution.row
-                for contribution in contributions
-            }
-            sector_by_ticker = {partner: sector for partner in partners}
             locus_blocks.append(
                 build_correlation_locus_block(
                     locus_ticker=locus_ticker,
-                    contributions=tuple(contributions),
+                    contributions=tuple(contributions_by_locus[locus_ticker]),
                     sector_by_ticker=sector_by_ticker,
                     supporting_pair_ids=tuple(sorted(supporting_by_locus[locus_ticker])),
                     as_of=as_of,
