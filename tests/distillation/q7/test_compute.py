@@ -56,6 +56,7 @@ from alphamind.distillation.q7.cross_sector_rotation_compute import (
     compute_cross_sector_rotation_pure,
 )
 from alphamind.distillation.q7.intermarket_regime_compute import (
+    IntermarketRegimeInputs,
     compute_intermarket_regime_pure,
 )
 from alphamind.distillation.q7.intra_sector_correlation_compute import (
@@ -304,20 +305,20 @@ class TestCrossSectorRotationCompute:
 class TestIntermarketRegimeCompute:
     def test_four_relationships_emit_one_block_each(self) -> None:
         # SPY and TLT positively correlated → inflation environment.
-        closes = {
-            "SPY": _walked_closes([0.01, -0.01, 0.005, -0.005] * 10),
-            "TLT": _walked_closes([0.01, -0.01, 0.005, -0.005] * 10),
-            "GLD": _walked_closes([0.005, -0.005, 0.01, -0.01] * 10),
-            "XLE": _walked_closes([0.01, -0.005, 0.008, -0.012] * 10),
-        }
-        macros: dict[str, tuple[float, ...]] = {
-            "DFII10": tuple(2.0 + 0.01 * i for i in range(40)),  # rising real yields
-            "VIXCLS": tuple(15.0 + 0.5 * ((i % 2) - 0.5) for i in range(40)),
-            "DCOILWTICO": tuple(75.0 + 0.01 * i for i in range(40)),
-        }
+        spy = _walked_closes([0.01, -0.01, 0.005, -0.005] * 10)
+        tlt = _walked_closes([0.01, -0.01, 0.005, -0.005] * 10)
+        gld = _walked_closes([0.005, -0.005, 0.01, -0.01] * 10)
+        xle = _walked_closes([0.01, -0.005, 0.008, -0.012] * 10)
+        real_yields = tuple(2.0 + 0.01 * i for i in range(len(spy)))
+        vix = tuple(15.0 + 0.5 * ((i % 2) - 0.5) for i in range(len(spy)))
+        oil = tuple(75.0 + 0.01 * i for i in range(len(spy)))
         blocks = compute_intermarket_regime_pure(
-            closes_by_ticker=closes,
-            macros_by_series=macros,
+            inputs=IntermarketRegimeInputs(
+                spy_tlt=(spy, tlt),
+                gld_real_yields=(gld, real_yields),
+                oil_xle_beta=(xle, oil),
+                vix_spy=(spy, vix),
+            ),
             window_days=40,
             short_window_days=10,
             as_of=_as_of(),
@@ -335,20 +336,19 @@ class TestIntermarketRegimeCompute:
             assert OutputAudience.UNIVERSAL_BROADCAST in block.audience
 
     def test_spy_tlt_positive_correlation_tags_inflation_environment(self) -> None:
-        closes = {
-            "SPY": _walked_closes([0.01, -0.01, 0.005, -0.005] * 10),
-            "TLT": _walked_closes([0.01, -0.01, 0.005, -0.005] * 10),  # perfectly correlated
-            "GLD": _walked_closes([0.0] * 40),
-            "XLE": _walked_closes([0.0] * 40),
-        }
-        macros = {
-            "DFII10": tuple(2.0 for _ in range(40)),
-            "VIXCLS": tuple(15.0 for _ in range(40)),
-            "DCOILWTICO": tuple(75.0 for _ in range(40)),
-        }
+        spy = _walked_closes([0.01, -0.01, 0.005, -0.005] * 10)
+        tlt = _walked_closes([0.01, -0.01, 0.005, -0.005] * 10)
+        flat = _walked_closes([0.0] * 40)
+        real_yields = tuple(2.0 for _ in range(len(spy)))
+        vix = tuple(15.0 for _ in range(len(spy)))
+        oil = tuple(75.0 for _ in range(len(spy)))
         blocks = compute_intermarket_regime_pure(
-            closes_by_ticker=closes,
-            macros_by_series=macros,
+            inputs=IntermarketRegimeInputs(
+                spy_tlt=(spy, tlt),
+                gld_real_yields=(flat, real_yields),
+                oil_xle_beta=(flat, oil),
+                vix_spy=(spy, vix),
+            ),
             window_days=40,
             short_window_days=10,
             as_of=_as_of(),
@@ -362,18 +362,14 @@ class TestIntermarketRegimeCompute:
         # The block carries UNAVAILABLE calibration (ALP-540) AND the
         # numeric payload fields surface as None, not 0.0 — so a downstream
         # consumer can't read a fabricated zero correlation/beta.
+        empty: tuple[float, ...] = ()
         blocks = compute_intermarket_regime_pure(
-            closes_by_ticker={
-                "SPY": (),
-                "TLT": (),
-                "GLD": (),
-                "XLE": (),
-            },
-            macros_by_series={
-                "DFII10": (),
-                "VIXCLS": (),
-                "DCOILWTICO": (),
-            },
+            inputs=IntermarketRegimeInputs(
+                spy_tlt=(empty, empty),
+                gld_real_yields=(empty, empty),
+                oil_xle_beta=(empty, empty),
+                vix_spy=(empty, empty),
+            ),
             window_days=60,
             short_window_days=20,
             as_of=_as_of(),

@@ -10,7 +10,8 @@ Each helper returns one ``OutputBlock`` per relationship; the public
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from itertools import pairwise
 
@@ -326,10 +327,32 @@ def _vix_spy_block(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class IntermarketRegimeInputs:
+    """Pre-aligned per-block value sequences for the four intermarket pairs.
+
+    Each tuple holds the two value series for one relationship, position-
+    aligned on the date intersection performed by the IO shell (ALP-629).
+    A single ticker like SPY appears in two pairs (``spy_tlt`` and
+    ``vix_spy``) with different intersections because TLT (NYSE) and VIX
+    (FRED) share different overlap sets with the SPY calendar — that is
+    why each block carries its own pair rather than reading from a shared
+    ``closes_by_ticker`` mapping.
+    """
+
+    spy_tlt: tuple[Sequence[float], Sequence[float]]
+    """``(spy_closes, tlt_closes)`` aligned on common dates."""
+    gld_real_yields: tuple[Sequence[float], Sequence[float]]
+    """``(gld_closes, real_yield_values)`` aligned on common dates."""
+    oil_xle_beta: tuple[Sequence[float], Sequence[float]]
+    """``(xle_closes, oil_values)`` aligned on common dates."""
+    vix_spy: tuple[Sequence[float], Sequence[float]]
+    """``(spy_closes, vix_values)`` aligned on common dates."""
+
+
 def compute_intermarket_regime_pure(
     *,
-    closes_by_ticker: Mapping[str, Sequence[float]],
-    macros_by_series: Mapping[str, Sequence[float]],
+    inputs: IntermarketRegimeInputs,
     window_days: int,
     short_window_days: int,
     as_of: datetime,
@@ -345,14 +368,17 @@ def compute_intermarket_regime_pure(
     Each block carries both
     :attr:`OutputAudience.CORRELATION_REGIME_BRIEF` and
     :attr:`OutputAudience.UNIVERSAL_BROADCAST`.
+
+    The four per-block value pairs in ``inputs`` are pre-aligned on shared
+    calendar dates by :mod:`alphamind.distillation.q7._loaders` — ALP-629
+    moved alignment responsibility out of the pure compute into the IO
+    shell so SPY can carry distinct intersections against TLT (NYSE) and
+    VIX (FRED) at the same time.
     """
-    spy_closes = closes_by_ticker.get(SPY_TICKER, ())
-    tlt_closes = closes_by_ticker.get(TLT_TICKER, ())
-    gld_closes = closes_by_ticker.get(GLD_TICKER, ())
-    xle_closes = closes_by_ticker.get(XLE_TICKER, ())
-    real_yields = macros_by_series.get(REAL_YIELD_SERIES, ())
-    vix_values = macros_by_series.get(VIX_SERIES, ())
-    oil_values = macros_by_series.get(OIL_SERIES, ())
+    gld_closes, real_yields = inputs.gld_real_yields
+    xle_closes, oil_values = inputs.oil_xle_beta
+    spy_closes_for_tlt, tlt_closes = inputs.spy_tlt
+    spy_closes_for_vix, vix_values = inputs.vix_spy
     return [
         _gld_real_yields_block(
             gld_closes=gld_closes,
@@ -368,13 +394,13 @@ def compute_intermarket_regime_pure(
             short_window_days=short_window_days,
         ),
         _spy_tlt_regime_block(
-            spy_closes=spy_closes,
+            spy_closes=spy_closes_for_tlt,
             tlt_closes=tlt_closes,
             as_of=as_of,
             window_days=window_days,
         ),
         _vix_spy_block(
-            spy_closes=spy_closes,
+            spy_closes=spy_closes_for_vix,
             vix_values=vix_values,
             as_of=as_of,
             window_days=window_days,
@@ -393,5 +419,6 @@ __all__ = [
     "VIX_SERIES",
     "VIX_SOURCE",
     "XLE_TICKER",
+    "IntermarketRegimeInputs",
     "compute_intermarket_regime_pure",
 ]
