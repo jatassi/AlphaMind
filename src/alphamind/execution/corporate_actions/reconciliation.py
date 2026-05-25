@@ -61,6 +61,15 @@ Alpaca-only orphans continue as ALERT-only — synthesizing a thesis_id,
 cost basis, and execution history from the snapshot isn't honest enough to
 auto-materialize a local row. Operator triage handles those out of band.
 
+Multi-leg strategy positions are intentionally skipped at this layer (the
+``StrategyPositionDetails`` branch of the position-record discriminated
+union is a no-op). Alpaca reports each leg as its own ``us_option`` row
+keyed by OCC symbol; those legs will therefore surface as
+``alpaca_only_position`` orphan alerts on every invocation for any held
+strategy. Leg-level reconciliation lives in the continuous monitor
+(ALP-123), not this post-Phase-1 sweep — the orphan-alert noise is
+expected and known.
+
 See ``docs/design/05-execution-layer/corporate-actions.md`` § Phase 1
 integration sequence step 4 and ``broker-adapter.md`` § Account state
 queries — "Alpaca's positions and account endpoints are the source of
@@ -138,16 +147,20 @@ def _alpaca_occ_symbol(details: OptionsPositionDetails) -> str:
 
     Alpaca's ``GET /v2/positions`` keys ``asset_class="us_option"`` entries by
     the compact OCC symbol (e.g. ``"AAPL250620C00200000"``), with no Polygon
-    ``O:`` prefix and no space-padding on the underlying root. This differs
-    from :func:`occ_symbol_for_options` in ``portfolio_state.records.positions``,
-    which prepends ``O:`` for the Polygon options table; that form is the
-    canonical key for greeks/price lookups but not for Alpaca position
-    matching.
+    ``O:`` prefix and no space-padding on the underlying root. Share-class
+    tickers (``BRK.B``, ``BF.B``) are encoded WITHOUT the dot per OCC
+    convention — mirrors ``build_occ_symbol`` in
+    ``broker_adapter.order_options`` (which strips the dot for order
+    submission, so Alpaca's position-fetch returns the same dot-stripped
+    form). This differs from :func:`occ_symbol_for_options` in
+    ``portfolio_state.records.positions``, which prepends ``O:`` and is the
+    canonical Polygon key for greeks/price lookups.
     """
+    underlying = details.underlying_ticker.replace(".", "")
     expiry = details.expiration_date.strftime("%y%m%d")
     cp = "C" if details.contract_type is OptionContractType.CALL else "P"
     strike_milli = round(details.strike_price * 1000)
-    return f"{details.underlying_ticker}{expiry}{cp}{strike_milli:08d}"
+    return f"{underlying}{expiry}{cp}{strike_milli:08d}"
 
 
 async def reconcile(

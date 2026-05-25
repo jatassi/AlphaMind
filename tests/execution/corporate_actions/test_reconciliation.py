@@ -77,10 +77,20 @@ def _equity_position_snapshot(*, symbol: str = "AAPL", qty: float = 10.0) -> Pos
 
 
 # OCC contract symbol Alpaca returns for the default ``make_open_options_position``
-# (AAPL call, strike $150, expiry 2026-09-18). Defined once so a strike/expiry
-# tweak in the substrate surfaces as a single failure rather than scattershot
-# test edits.
-_DEFAULT_OPTIONS_OCC_SYMBOL = "AAPL260918C00150000"
+# (AAPL call, strike $150, expiry 2026-09-18). Derived from the substrate
+# defaults at module-import time so a strike/expiry tweak in the substrate
+# auto-retags every test that plants an Alpaca-side snapshot — no scattered
+# string edits, no risk of the constant going stale silently.
+def _default_options_occ_symbol() -> str:
+    from alphamind.execution.corporate_actions.reconciliation import _alpaca_occ_symbol
+    from alphamind.portfolio_state.records.positions import OptionsPositionDetails
+
+    details = make_open_options_position().details
+    assert isinstance(details, OptionsPositionDetails)
+    return _alpaca_occ_symbol(details)
+
+
+_DEFAULT_OPTIONS_OCC_SYMBOL = _default_options_occ_symbol()
 
 
 def _options_position_snapshot(
@@ -103,6 +113,28 @@ def _options_position_snapshot(
         current_price=price(2.50),
         side="long",
     )
+
+
+def test_alpaca_occ_symbol_strips_dot_from_share_class_ticker() -> None:
+    """ALP-637 — share-class tickers (BRK.B, BF.B) are encoded WITHOUT the
+    dot in the OCC convention; Alpaca's `get_all_positions` returns the
+    dot-stripped form, and `build_occ_symbol` in the order-submission path
+    likewise strips the dot. The reconciler's helper must mirror that —
+    otherwise the lookup misses for every share-class options position,
+    autocorrect fires, and the local row gets zeroed."""
+    from dataclasses import replace as dc_replace
+
+    from alphamind._kernel.ids import Symbol
+    from alphamind.execution.corporate_actions.reconciliation import _alpaca_occ_symbol
+    from alphamind.portfolio_state.records.positions import OptionsPositionDetails
+
+    details = make_open_options_position().details
+    assert isinstance(details, OptionsPositionDetails)
+    brk_b_details = dc_replace(details, underlying_ticker=Symbol("BRK.B"))
+
+    occ = _alpaca_occ_symbol(brk_b_details)
+    assert occ.startswith("BRKB"), f"expected dot-stripped root, got {occ!r}"
+    assert "." not in occ
 
 
 async def test_reconcile_emits_no_alert_when_state_matches(

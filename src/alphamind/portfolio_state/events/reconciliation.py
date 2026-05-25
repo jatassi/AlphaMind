@@ -16,24 +16,21 @@ class ReconciliationAlertDetail:
     from Alpaca's authoritative ``GET /v2/positions`` / ``GET /v2/account``
     snapshot beyond the documented tolerance. One alert per unexplained delta.
 
-    Mutation contract (ALP-619). An alert WITHOUT a paired
+    Mutation contract (ALP-619 / ALP-637). An alert WITHOUT a paired
     :class:`ReconciliationCorrectionDetail` row for the same
     ``(invocation_id, position_id, field_name)`` means local state was NOT
     mutated — the auto-correction path skipped this drift. Skips happen for:
 
     * Alpaca-only orphans (no local row to mutate honestly).
-    * Options positions (the existing comparator matches by underlying
-      ticker; Alpaca returns OCC contract symbols — writeback would zero
-      out every options contract_count, follow-up tracks the OCC-matching
-      fix).
-    * PENDING (not OPEN) equity positions.
+    * PENDING (not OPEN) equity / options positions.
     * Direction-flip alerts (Alpaca side disagrees with local direction;
       semantically distinct from a quantity drift, demands operator review).
     * Half-degraded broker state (``alpaca_positions=()`` with positive
       account evidence — gate suppresses position writeback to avoid wiping
       the book on a transient broker failure).
 
-    When auto-correction does run (OPEN equity quantity drift and cash
+    When auto-correction does run (OPEN equity ``share_count`` drift, OPEN
+    options ``contract_count`` drift, and ``cash_ledger.current_cash_usd``
     drift), the paired CORRECTION row captures the prior local value and
     the applied Alpaca value.
 
