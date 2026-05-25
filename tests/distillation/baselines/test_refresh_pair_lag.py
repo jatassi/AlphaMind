@@ -122,11 +122,10 @@ class TestRefreshPairLagHappyPath:
 
         result = refresh_pair_lag(
             session,
-            pair_scope=(("SMH", "QQQ"),),
+            pair_scope=(("SMH", "QQQ", PAIR_LAG_MAX_DAYS),),
             as_of="2026-04-25T00:00:00Z",
             window_days=PAIR_LAG_WINDOW_DAYS,
             min_events=PAIR_LAG_MIN_EVENTS,
-            max_lag_days=PAIR_LAG_MAX_DAYS,
         )
 
         cv = result[("SMH", "QQQ")]
@@ -169,11 +168,10 @@ class TestRefreshPairLagBootstrapPath:
 
         result = refresh_pair_lag(
             session,
-            pair_scope=(("SMH", "QQQ"),),
+            pair_scope=(("SMH", "QQQ", PAIR_LAG_MAX_DAYS),),
             as_of="2026-04-25T00:00:00Z",
             window_days=PAIR_LAG_WINDOW_DAYS,
             min_events=PAIR_LAG_MIN_EVENTS,
-            max_lag_days=PAIR_LAG_MAX_DAYS,
         )
 
         cv = result[("SMH", "QQQ")]
@@ -197,11 +195,10 @@ class TestRefreshPairLagBootstrapPath:
 
         result = refresh_pair_lag(
             session,
-            pair_scope=(("SMH", "QQQ"),),
+            pair_scope=(("SMH", "QQQ", PAIR_LAG_MAX_DAYS),),
             as_of="2026-04-25T00:00:00Z",
             window_days=PAIR_LAG_WINDOW_DAYS,
             min_events=PAIR_LAG_MIN_EVENTS,
-            max_lag_days=PAIR_LAG_MAX_DAYS,
         )
 
         cv = result[("SMH", "QQQ")]
@@ -229,11 +226,10 @@ class TestRefreshPairLagIdempotent:
             _add_close(session, ticker=Symbol("QQQ"), period_start=ts, close=200.0 + day)
         session.commit()
         kwargs: dict[str, Any] = dict(
-            pair_scope=(("SMH", "QQQ"),),
+            pair_scope=(("SMH", "QQQ", PAIR_LAG_MAX_DAYS),),
             as_of="2026-04-25T00:00:00Z",
             window_days=PAIR_LAG_WINDOW_DAYS,
             min_events=PAIR_LAG_MIN_EVENTS,
-            max_lag_days=PAIR_LAG_MAX_DAYS,
         )
         refresh_pair_lag(session, **kwargs)
         first = session.scalar(select(func.count()).select_from(DistillationPairLag))
@@ -279,11 +275,13 @@ class TestRefreshPairLagFaultInjection:
             with pytest.raises(RuntimeError, match="simulated mid-refresh"):
                 refresh_pair_lag(
                     session,
-                    pair_scope=(("SMH", "QQQ"), ("XLF", "SPY")),
+                    pair_scope=(
+                        ("SMH", "QQQ", PAIR_LAG_MAX_DAYS),
+                        ("XLF", "SPY", PAIR_LAG_MAX_DAYS),
+                    ),
                     as_of="2026-04-25T00:00:00Z",
                     window_days=PAIR_LAG_WINDOW_DAYS,
                     min_events=PAIR_LAG_MIN_EVENTS,
-                    max_lag_days=PAIR_LAG_MAX_DAYS,
                 )
         finally:
             session.execute = original_execute  # type: ignore[method-assign]
@@ -292,3 +290,88 @@ class TestRefreshPairLagFaultInjection:
         # rolled back when the second pair's query failed.
         count = session.scalar(select(func.count()).select_from(DistillationPairLag))
         assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# Per-pair max_lag_days (ALP-628)
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshPairLagPerPairMaxDays:
+    """Each pair's ``max_lag_days`` caps its own lag search.
+
+    Regression for ALP-628: the orchestrator previously passed a single
+    scalar ``max_lag_days`` for every pair, letting estimates exceed each
+    pair's configured ceiling whenever the true correlation peak sat above
+    a smaller cap.
+    """
+
+    def test_per_pair_max_days_caps_estimate_independently(self, session: Session) -> None:
+        # Three pairs share an identical lag-3 lead/lag relationship — the
+        # lag series for each pair is the lead series shifted forward by 3
+        # days. If the implementation respects per-pair caps, the three
+        # estimates land at 3, ≤2, and 1; if it collapses to a single bound
+        # (the regression), all three would pick lag 3.
+        pairs = (("HYG", "SPY", 3), ("SOXX", "QQQ", 2), ("XLF", "TLT", 1))
+        for lead, lag, _ in pairs:
+            _add_ticker(session, lead)
+            _add_ticker(session, lag)
+
+        # Lead returns chosen to have varied magnitudes and signs so the
+        # series autocorrelation at lags 1 and 2 stays well below 1, leaving
+        # lag 3 as the unique correlation peak.
+        lead_returns = [
+            0.01, -0.02, 0.03, -0.01, 0.02, 0.05, -0.03, 0.01, -0.02, 0.04,
+            0.01, -0.01, 0.02, -0.03, 0.01, 0.02, -0.01, 0.03, -0.02, 0.01,
+            0.02, -0.01, 0.03, -0.02,
+        ]  # fmt: skip
+        # Lag series tracks the lead with a 3-day lag — the first three lag
+        # returns are filler so the close series is non-degenerate but they
+        # fall outside any d≤3 alignment window.
+        filler = [0.001, -0.001, 0.001]
+        lag_returns = [*filler, *lead_returns[: len(lead_returns) - 3]]
+
+        for lead, lag, _ in pairs:
+            lead_close = 100.0
+            lag_close = 200.0
+            for day_idx in range(len(lead_returns) + 1):
+                ts = f"2026-04-{day_idx + 1:02d}T00:00:00Z"
+                _add_close(session, ticker=Symbol(lead), period_start=ts, close=lead_close)
+                _add_close(session, ticker=Symbol(lag), period_start=ts, close=lag_close)
+                if day_idx < len(lead_returns):
+                    lead_close *= 1 + lead_returns[day_idx]
+                    lag_close *= 1 + lag_returns[day_idx]
+        session.commit()
+
+        result = refresh_pair_lag(
+            session,
+            pair_scope=pairs,
+            as_of="2026-04-25T00:00:00Z",
+            window_days=PAIR_LAG_WINDOW_DAYS,
+            min_events=PAIR_LAG_MIN_EVENTS,
+        )
+
+        # Each pair's persisted estimate respects its own bound.
+        hyg_spy = result[("HYG", "SPY")].value["lead_lag_days_estimate"]
+        soxx_qqq = result[("SOXX", "QQQ")].value["lead_lag_days_estimate"]
+        xlf_tlt = result[("XLF", "TLT")].value["lead_lag_days_estimate"]
+
+        assert hyg_spy == pytest.approx(3.0), (
+            f"max=3 pair should pick the true lag-3 peak; got {hyg_spy}"
+        )
+        # The bug being regressed: a collapsed-bound implementation reports 3.
+        assert soxx_qqq <= 2.0, (
+            f"max=2 pair must stay within its own cap; got {soxx_qqq} — "
+            "the per-pair max_lag_days is being ignored."
+        )
+        assert xlf_tlt == pytest.approx(1.0), f"max=1 pair has only lag 1 available; got {xlf_tlt}"
+
+        # All persisted rows respect their own bound.
+        rows = session.execute(select(DistillationPairLag)).scalars().all()
+        by_pair = {(r.lead_ticker, r.lag_ticker): r for r in rows}
+        for lead, lag, max_days in pairs:
+            row = by_pair[(lead, lag)]
+            assert row.lead_lag_days_estimate <= max_days, (
+                f"({lead}→{lag}) persisted estimate {row.lead_lag_days_estimate} "
+                f"exceeds max_lag_days={max_days}"
+            )

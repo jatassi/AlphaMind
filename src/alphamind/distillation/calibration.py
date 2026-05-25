@@ -64,6 +64,7 @@ __all__ = [
     "combine_calibration_states",
     "decide_calibration_state",
     "default_lead_lag_pair_estimate",
+    "pair_max_lag_days",
     "prediction_market_delta_default",
     "sector_pooled_atr_baseline",
     "sector_pooled_gap_fill_rate",
@@ -298,6 +299,22 @@ _LEAD_LAG_MAX_DAYS_FIELDS: dict[str, str] = {
 }
 
 
+def pair_max_lag_days(
+    *,
+    pair_key: str,
+    lead_lag_config: LeadLagDomainConfig,
+) -> int:
+    """Return the configured ``_max_days`` ceiling for ``pair_key``.
+
+    ``pair_key`` is the unprefixed pair identifier (e.g.
+    ``"funding_to_credit"``). Raises ``KeyError`` for any unrecognized pair
+    — the caller passed a name the configuration does not enumerate, which
+    indicates a bug at the call site.
+    """
+    field_name = _LEAD_LAG_MAX_DAYS_FIELDS[pair_key]
+    return int(getattr(lead_lag_config, field_name))
+
+
 def default_lead_lag_pair_estimate(
     *,
     pair_key: str,
@@ -308,14 +325,8 @@ def default_lead_lag_pair_estimate(
     Per ``threshold-calibration.md`` § Bootstrap policy, lead-lag pair
     estimates begin updating after the first 10 observed pair events; until
     then the prior *is* the configured ``_max_days`` ceiling for the pair.
-
-    ``pair_key`` is the unprefixed pair identifier (e.g. ``"funding_to_credit"``).
-    Raises ``KeyError`` for any unrecognized pair — the caller passed a name
-    the configuration does not enumerate, which indicates a bug at the call
-    site rather than a missing prior.
     """
-    field_name = _LEAD_LAG_MAX_DAYS_FIELDS[pair_key]
-    return int(getattr(lead_lag_config, field_name))
+    return pair_max_lag_days(pair_key=pair_key, lead_lag_config=lead_lag_config)
 
 
 def prediction_market_delta_default(
