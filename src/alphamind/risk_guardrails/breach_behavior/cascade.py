@@ -169,13 +169,13 @@ def _asset_type_of(position: PositionView) -> _AssetType:
 def _direction_of(position: PositionView) -> _DirectionLabel:
     """Resolve the ``ProposedClose`` direction label for a position.
 
-    Direction is read via ``position_direction()``. A multi-leg strategy
-    yields ``None`` — it has no single position-level side. ``ProposedClose``
-    /``ProposedDelta`` carry a non-optional ``Literal["long", "short"]``;
-    making that field strategy-aware is the separate ALP-603 follow-on.
-    ALP-588 story 01f made the close path leg-derived for an MLEG strategy, so
-    the proposal consumers do not branch on this label for a strategy. Until
-    ALP-603 lands, a strategy passes an inert ``"long"`` placeholder here.
+    Direction is read via ``position_direction()``. A multi-leg strategy yields
+    ``None`` — it has no single position-level side. ALP-588 story 01f made the
+    close path leg-derived for an MLEG strategy, so proposal consumers do not
+    branch on this label for a strategy. ``ProposedClose.direction`` remains a
+    required ``Literal["long", "short"]`` — making it strategy-aware is
+    unscheduled follow-on work — so a strategy passes an inert ``"long"``
+    placeholder here.
     """
     return "long" if position_direction(position.record) != Direction.SHORT else "short"
 
