@@ -29,13 +29,14 @@ def compute_intra_sector_correlation(
     short_window_days: int,
     long_window_days: int,
     divergence_sigma: float,
+    correlation_locus_pair_count_threshold: int,
 ) -> list[OutputBlock]:
     """Compute the per-sector intra-sector correlation block.
 
     Session-accepting thin shim. Delegates to :func:`_load_intra_sector_blocks`
     with a single-sector roster; the loader reads per-ticker closes, runs
-    the pure compute, persists the divergence events, and flushes the
-    session.
+    the pure compute, persists the divergence events, runs the
+    locus-aggregation pass (ALP-632), and flushes the session.
     """
     blocks = _load_intra_sector_blocks(
         session,
@@ -44,6 +45,7 @@ def compute_intra_sector_correlation(
         short_window_days=short_window_days,
         long_window_days=long_window_days,
         divergence_sigma=divergence_sigma,
+        correlation_locus_pair_count_threshold=correlation_locus_pair_count_threshold,
     )
     return list(blocks)
 

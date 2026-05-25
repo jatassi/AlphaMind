@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 
@@ -19,11 +20,18 @@ from alphamind.distillation.output import (
     OutputAudience,
     OutputBlock,
 )
+from alphamind.distillation.q7._correlation_locus import (
+    CorrelationLocusContribution,
+    build_correlation_locus_block,
+)
 from alphamind.distillation.q7._helpers import (
     _BLOCK_NAMESPACE,
     _calibration_for_window,
     _correlation_matrix,
 )
+
+# Pair-divergence flag name prefix shared by emitter and locus-aggregation pass.
+_DIVERGENCE_FLAG_PREFIX = "intra_sector_correlation_divergence"
 
 
 def _detect_pair_divergence(
@@ -61,7 +69,7 @@ def _detect_pair_divergence(
             if magnitude >= divergence_sigma:
                 flags.append(
                     AnomalyFlag(
-                        name=f"intra_sector_correlation_divergence:{row}:{col}",
+                        name=f"{_DIVERGENCE_FLAG_PREFIX}:{row}:{col}",
                         magnitude=magnitude,
                         severity="investigate_if_persists",
                     )
@@ -142,6 +150,125 @@ def compute_intra_sector_correlation_pure(
     )
 
 
+def _parse_divergence_flag(flag: AnomalyFlag) -> tuple[str, str] | None:
+    """Return ``(row, col)`` parsed from a divergence flag name, or :data:`None`."""
+    try:
+        prefix, row, col = flag.name.split(":")
+    except ValueError:
+        return None
+    if prefix != _DIVERGENCE_FLAG_PREFIX:
+        return None
+    return row, col
+
+
+def apply_intra_sector_locus_aggregation(
+    *,
+    sector_blocks: Sequence[OutputBlock],
+    pair_count_threshold: int,
+    as_of: datetime,
+) -> tuple[OutputBlock, ...]:
+    """Roll per-sector divergence pairs into per-ticker locus blocks.
+
+    Walks each sector block's
+    ``intra_sector_correlation_divergence:<row>:<col>`` flags, counts
+    ticker occurrences, and emits one ``q7.correlation_locus.<ticker>``
+    block per ticker reaching ``pair_count_threshold``. The contributing
+    per-pair flags are suppressed from the sector block's
+    ``anomaly_flags`` rollup so the synthesizer sees one rolled-up signal
+    rather than N independent-looking pair flags — matching the
+    cross-universe ``correlation_breakdown`` locus path (ALP-543).
+
+    Returns the filtered sector blocks first (preserving input order),
+    followed by the per-ticker locus blocks in deterministic ticker-sort
+    order. Sector blocks without any locus ticker are passed through
+    unchanged.
+
+    All partners of a per-sector locus share the sector by construction,
+    so each locus block carries a single-key ``partners_by_sector`` and a
+    ``"<sector>-only"`` ``cross_sector_spread`` — the same payload shape
+    the cross-universe path uses.
+    """
+    out_sector_blocks: list[OutputBlock] = []
+    locus_blocks: list[OutputBlock] = []
+    for block in sector_blocks:
+        sector = str(block.payload.get("sector", ""))
+        parsed: list[tuple[str, str, AnomalyFlag]] = []
+        other_flags: list[AnomalyFlag] = []
+        for flag in block.anomaly_flags:
+            pair = _parse_divergence_flag(flag)
+            if pair is None:
+                other_flags.append(flag)
+                continue
+            row, col = pair
+            parsed.append((row, col, flag))
+
+        ticker_counts: Counter[str] = Counter()
+        for row, col, _flag in parsed:
+            ticker_counts[row] += 1
+            ticker_counts[col] += 1
+        locus_tickers = frozenset(
+            ticker for ticker, count in ticker_counts.items() if count >= pair_count_threshold
+        )
+
+        if not locus_tickers:
+            out_sector_blocks.append(block)
+            continue
+
+        contributions_by_locus: dict[str, list[CorrelationLocusContribution]] = {
+            ticker: [] for ticker in locus_tickers
+        }
+        supporting_by_locus: dict[str, list[str]] = {ticker: [] for ticker in locus_tickers}
+        for row, col, flag in parsed:
+            for ticker in (row, col):
+                if ticker in locus_tickers:
+                    contributions_by_locus[ticker].append(
+                        CorrelationLocusContribution(
+                            row=row, col=col, magnitude=float(flag.magnitude)
+                        )
+                    )
+                    supporting_by_locus[ticker].append(flag.name)
+
+        # Every ticker appearing in this sector's pairs maps to this sector by
+        # construction; build the mapping once and reuse across loci.
+        sector_by_ticker = dict.fromkeys(
+            {ticker for row, col, _ in parsed for ticker in (row, col)},
+            sector,
+        )
+        for locus_ticker in sorted(locus_tickers):
+            locus_blocks.append(
+                build_correlation_locus_block(
+                    locus_ticker=locus_ticker,
+                    contributions=tuple(contributions_by_locus[locus_ticker]),
+                    sector_by_ticker=sector_by_ticker,
+                    supporting_pair_ids=tuple(sorted(supporting_by_locus[locus_ticker])),
+                    as_of=as_of,
+                )
+            )
+
+        # Per-pair flags involving any locus ticker are suppressed; non-locus
+        # pairs continue to publish on the sector block's rollup.
+        filtered_divergence = [
+            flag
+            for row, col, flag in parsed
+            if row not in locus_tickers and col not in locus_tickers
+        ]
+        out_sector_blocks.append(
+            OutputBlock(
+                block_id=block.block_id,
+                audience=block.audience,
+                freshness_ts=block.freshness_ts,
+                calibration_state=block.calibration_state,
+                bootstrap_reason=block.bootstrap_reason,
+                payload=block.payload,
+                anomaly_flags=tuple(other_flags) + tuple(filtered_divergence),
+                regime_context=block.regime_context,
+            )
+        )
+
+    return tuple(out_sector_blocks) + tuple(locus_blocks)
+
+
 __all__ = [
+    "apply_intra_sector_locus_aggregation",
     "compute_intra_sector_correlation_pure",
 ]

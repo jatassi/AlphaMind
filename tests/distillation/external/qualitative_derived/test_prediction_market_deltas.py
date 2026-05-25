@@ -260,17 +260,21 @@ class TestPredictionMarketLowLiquidityTagging:
 
 
 class TestPredictionMarketTrailingHistory:
-    def test_history_includes_all_rows_in_30_day_window(self, session: Session) -> None:
-        _add_contract(session, contract_id="pm-001")
-        # 5 snapshots within 30 days, 1 outside
-        for day in range(1, 6):
+    def test_history_excludes_rows_outside_30_day_window(self, session: Session) -> None:
+        """The 30-day-window filter on ``distillation_contract_history`` is
+        applied at load time; rows outside the window never reach the brief
+        payload regardless of ALP-633's downstream trim cap."""
+        _add_contract(session, contract_id="pm-001", category="monetary_policy")
+        # 2 snapshots within 30 days — fewer than the trim cap so the in-window
+        # set passes through untouched and the filter assertion is unambiguous.
+        for day in range(1, 3):
             _add_history_row(
                 session,
                 contract_id="pm-001",
                 snapshot_ts=f"2026-04-{20 + day:02d}T00:00:00Z",
                 yes_probability=0.4 + 0.02 * day,
             )
-        # Outside the 30d window
+        # Outside the 30d window — must not appear in the trailing tuple.
         _add_history_row(
             session,
             contract_id="pm-001",
@@ -295,13 +299,48 @@ class TestPredictionMarketTrailingHistory:
         delta_blocks = [b for b in blocks if b.block_id == "qual.prediction_market_delta"]
         per_contract = delta_blocks[0].payload["per_contract"]
         history = per_contract["pm-001"]["trailing_history"]
-        # 5 rows in window
-        assert len(history) == 5
+        assert len(history) == 2
         assert history[0][0] == "2026-04-21T00:00:00Z"
-        assert history[-1][0] == "2026-04-25T00:00:00Z"
-        # ascending
+        assert history[-1][0] == "2026-04-22T00:00:00Z"
         timestamps = [row[0] for row in history]
         assert timestamps == sorted(timestamps)
+        assert "2026-03-01T00:00:00Z" not in timestamps
+
+    def test_history_trimmed_to_last_three_when_window_holds_more(self, session: Session) -> None:
+        """ALP-633: when more than three in-window rows exist, the brief
+        payload's ``trailing_history`` tuple keeps only the three most
+        recent so the per-contract row stays compact."""
+        _add_contract(session, contract_id="pm-001", category="monetary_policy")
+        for day in range(1, 6):
+            _add_history_row(
+                session,
+                contract_id="pm-001",
+                snapshot_ts=f"2026-04-{20 + day:02d}T00:00:00Z",
+                yes_probability=0.4 + 0.02 * day,
+            )
+        _add_snapshot(
+            session,
+            contract_id="pm-001",
+            snapshot_ts="2026-04-25T00:00:00Z",
+        )
+        session.commit()
+
+        blocks = compute_prediction_market_deltas(
+            session,
+            contract_scope=("pm-001",),
+            as_of="2026-04-26T00:00:00Z",
+            delta_pp_threshold=DELTA_PP_THRESHOLD,
+            low_liquidity_volume_min_usd=LOW_LIQUIDITY_VOLUME_MIN_USD,
+            prediction_market_history_days=HISTORY_DAYS,
+        )
+        delta_blocks = [b for b in blocks if b.block_id == "qual.prediction_market_delta"]
+        per_contract = delta_blocks[0].payload["per_contract"]
+        history = per_contract["pm-001"]["trailing_history"]
+        assert [row[0] for row in history] == [
+            "2026-04-23T00:00:00Z",
+            "2026-04-24T00:00:00Z",
+            "2026-04-25T00:00:00Z",
+        ]
 
 
 # ---------------------------------------------------------------------------

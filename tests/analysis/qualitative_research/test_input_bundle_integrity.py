@@ -105,7 +105,7 @@ def _contract_row(contract_id: str) -> PredictionMarketContracts:
         contract_id=contract_id,
         platform="polymarket",
         description="x",
-        category="macro",
+        category="monetary_policy",
         resolution_date="2026-12-31",
         resolution_outcome=None,
         created_at="2026-01-01T00:00:00Z",
@@ -148,7 +148,7 @@ def _prediction_market(contract_id: str = "0x01") -> PredictionMarketSnapshot:
         contract_id=contract_id,
         description="x",
         platform="polymarket",
-        category="macro",
+        category="monetary_policy",
         current_probability=0.5,
         delta_since_last_invocation_pp=0.0,
         delta_since_prior_pp=0.0,
@@ -434,6 +434,51 @@ def test_gap3_future_history_only_no_warning(
     assert not _gap_records(caplog, "Gap 3")
 
 
+def test_gap3_non_macro_relevance_contracts_only_no_warning(
+    session: Session, caplog: pytest.LogCaptureFixture
+) -> None:
+    """ALP-633: an empty bundle is legitimate when only non-macro-relevance
+    (e.g., ``election``) contracts have history — those rows are curated
+    out of the brief unless they show delta-anomaly, so their absence is
+    expected, not a regression."""
+    session.add(
+        PredictionMarketContracts(
+            contract_id="0xELECTION",
+            platform="polymarket",
+            description="2028 longshot",
+            category="election",
+            resolution_date="2028-11-30",
+            resolution_outcome=None,
+            created_at="2026-01-01T00:00:00Z",
+            last_seen_at=EARLIER_ISO,
+        )
+    )
+    session.flush()
+    session.add(
+        DistillationContractHistory(
+            contract_id="0xELECTION",
+            snapshot_ts=EARLIER_ISO,
+            yes_probability=0.005,
+            delta_pp_since_prior=0.0,
+            liquidity_usd=1_000_000.0,
+            calibration_state="calibrated",
+            ingested_at=EARLIER_ISO,
+        )
+    )
+    session.commit()
+
+    regime_label = {"realized_vol_5d": 0.1, "realized_vol_20d": 0.1}
+    with caplog.at_level(logging.WARNING, logger=integrity.__name__):
+        log_input_bundle_integrity_warnings(
+            session,
+            as_of=AS_OF,
+            regime_label=regime_label,
+            inputs=_inputs(sentiment=(_sentiment(),)),
+            news_digest=_digest(),
+        )
+    assert not _gap_records(caplog, "Gap 3")
+
+
 def test_gap3_resolved_contracts_excluded_no_warning(
     session: Session, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -446,7 +491,7 @@ def test_gap3_resolved_contracts_excluded_no_warning(
             contract_id="0xRESOLVED",
             platform="polymarket",
             description="x",
-            category="macro",
+            category="monetary_policy",
             resolution_date=past,
             resolution_outcome="yes",
             created_at="2026-01-01T00:00:00Z",

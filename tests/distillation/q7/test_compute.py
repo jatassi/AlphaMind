@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 import pytest
 
 from alphamind.distillation._calibration_core import CalibrationState
-from alphamind.distillation.output import OutputAudience, OutputBlock
+from alphamind.distillation.output import AnomalyFlag, OutputAudience, OutputBlock
 from alphamind.distillation.q7 import LeadLagPair
 from alphamind.distillation.q7._loaders import (
     LeadLagInputs,
@@ -60,6 +60,7 @@ from alphamind.distillation.q7.intermarket_regime_compute import (
     compute_intermarket_regime_pure,
 )
 from alphamind.distillation.q7.intra_sector_correlation_compute import (
+    apply_intra_sector_locus_aggregation,
     compute_intra_sector_correlation_pure,
 )
 from alphamind.distillation.q7.lead_lag_compute import (
@@ -461,6 +462,246 @@ class TestIntraSectorCorrelationCompute:
         )
         names = [flag.name for flag in block.anomaly_flags]
         assert any("A:B" in name for name in names), f"expected A:B divergence; got {names}"
+
+
+def _intra_sector_locus_returns(
+    *,
+    locus_ticker: str = "ALPHA",
+    partners: Sequence[str] = ("BETA", "GAMMA", "DELTA", "EPSILON"),
+) -> dict[str, tuple[float, ...]]:
+    """``locus_ticker`` is the per-sector divergence locus across ``partners``.
+
+    Mirrors the cross-universe ``_meta_locus_universe_returns`` shape for
+    the intra-sector divergence detector: every (locus, partner) pair
+    inverts in the short window while partner/partner pairs stay co-moving
+    in both windows. Yields ``len(partners)`` per-pair divergence flags,
+    all sharing the locus ticker as the structural source.
+    """
+    long_base = [0.01, -0.005, 0.008, -0.012, 0.006] * 8
+    short_base = [
+        0.01, -0.02, 0.015, 0.005, -0.01,
+        0.012, -0.018, 0.02, -0.005, 0.008,
+        -0.015, 0.01, -0.005, 0.012, -0.008,
+        0.005, -0.012, 0.018, -0.01, 0.005,
+    ]  # fmt: skip
+    returns: dict[str, tuple[float, ...]] = {
+        locus_ticker: tuple(long_base + [-x for x in short_base]),
+    }
+    for offset, partner in enumerate(partners, start=1):
+        long_partner = [r + 0.0001 * ((i + offset) % 3) for i, r in enumerate(long_base)]
+        short_partner = [x + 0.00005 * offset for x in short_base]
+        returns[partner] = tuple(long_partner + short_partner)
+    return returns
+
+
+class TestIntraSectorLocusAggregation:
+    """ALP-632: aggregate per-sector divergence pairs into per-ticker locus flags.
+
+    Extends ALP-543's cross-universe locus-aggregation pattern to the
+    per-sector divergence detector. The aggregation pass walks each
+    sector block's ``intra_sector_correlation_divergence:<row>:<col>``
+    flags, counts ticker occurrences, and rolls tickers reaching the
+    configured pair-count threshold into a
+    ``q7.correlation_locus.<ticker>`` block — same payload shape the
+    cross-universe path uses, so the brief renderer routes them via the
+    existing prefix dispatch without changes.
+    """
+
+    @staticmethod
+    def _sector_block(
+        *,
+        sector: str = "financials",
+        locus_ticker: str = "ALPHA",
+        partners: Sequence[str] = ("BETA", "GAMMA", "DELTA", "EPSILON"),
+    ) -> OutputBlock:
+        returns = _intra_sector_locus_returns(locus_ticker=locus_ticker, partners=partners)
+        return compute_intra_sector_correlation_pure(
+            sector=sector,
+            sector_tickers=tuple(returns),
+            long_returns_by_ticker=returns,
+            short_window_days=20,
+            long_window_days=60,
+            divergence_sigma=1.0,
+            as_of=_as_of(),
+        )
+
+    @staticmethod
+    def _locus_blocks(blocks: Sequence[OutputBlock]) -> list[OutputBlock]:
+        return [b for b in blocks if b.block_id.startswith("q7.correlation_locus.")]
+
+    @staticmethod
+    def _sector_blocks(blocks: Sequence[OutputBlock]) -> list[OutputBlock]:
+        return [b for b in blocks if b.block_id.startswith("q7.intra_sector_correlation.")]
+
+    @staticmethod
+    def _pair_flag_names(block: OutputBlock) -> set[str]:
+        return {
+            flag.name
+            for flag in block.anomaly_flags
+            if flag.name.startswith("intra_sector_correlation_divergence:")
+        }
+
+    def test_locus_block_emits_when_ticker_pair_count_meets_threshold(self) -> None:
+        sector_block = self._sector_block(
+            partners=("BETA", "GAMMA", "DELTA", "EPSILON"),
+        )
+        # Sanity: the fixture should produce >= 4 ALPHA pair flags pre-aggregation.
+        pre = self._pair_flag_names(sector_block)
+        assert sum(1 for n in pre if "ALPHA" in n) >= 4, pre
+
+        result = apply_intra_sector_locus_aggregation(
+            sector_blocks=(sector_block,),
+            pair_count_threshold=3,
+            as_of=_as_of(),
+        )
+        locus = self._locus_blocks(result)
+        assert locus, "expected an ALPHA locus block at threshold=3"
+        alpha = [b for b in locus if b.block_id == "q7.correlation_locus.ALPHA"]
+        assert alpha, [b.block_id for b in locus]
+        flag_names = {flag.name for block in alpha for flag in block.anomaly_flags}
+        assert "correlation_locus_flag:ALPHA" in flag_names
+
+    def test_per_pair_flags_suppressed_for_locus_ticker(self) -> None:
+        sector_block = self._sector_block(
+            partners=("BETA", "GAMMA", "DELTA", "EPSILON"),
+        )
+        result = apply_intra_sector_locus_aggregation(
+            sector_blocks=(sector_block,),
+            pair_count_threshold=3,
+            as_of=_as_of(),
+        )
+        sector_blocks_out = self._sector_blocks(result)
+        assert len(sector_blocks_out) == 1
+        residual_flags = self._pair_flag_names(sector_blocks_out[0])
+        assert not any("ALPHA" in n for n in residual_flags), (
+            f"ALPHA per-pair flags should be suppressed from the rollup; got {residual_flags}"
+        )
+
+        # Sanity: relaxed threshold preserves the per-pair flags.
+        relaxed = apply_intra_sector_locus_aggregation(
+            sector_blocks=(sector_block,),
+            pair_count_threshold=99,
+            as_of=_as_of(),
+        )
+        relaxed_flags = self._pair_flag_names(self._sector_blocks(relaxed)[0])
+        assert any("ALPHA" in n for n in relaxed_flags), (
+            "fixture should publish ALPHA per-pair flags when the locus threshold is unreachable"
+        )
+        assert self._locus_blocks(relaxed) == []
+
+    def test_locus_payload_carries_pair_count_max_sigma_and_partners(self) -> None:
+        sector_block = self._sector_block(
+            partners=("BETA", "GAMMA", "DELTA", "EPSILON"),
+        )
+        # Magnitudes from the unfiltered fixture — the max should survive.
+        pre = sector_block.anomaly_flags
+        alpha_magnitudes = [
+            float(flag.magnitude)
+            for flag in pre
+            if flag.name.startswith("intra_sector_correlation_divergence:") and "ALPHA" in flag.name
+        ]
+        assert alpha_magnitudes
+
+        result = apply_intra_sector_locus_aggregation(
+            sector_blocks=(sector_block,),
+            pair_count_threshold=3,
+            as_of=_as_of(),
+        )
+        alpha = next(b for b in result if b.block_id == "q7.correlation_locus.ALPHA")
+        payload = alpha.payload
+        assert payload["locus_ticker"] == "ALPHA"
+        assert payload["pair_count"] == len(alpha_magnitudes)
+        assert payload["max_deviation_sigma"] == pytest.approx(max(alpha_magnitudes))
+        assert "ALPHA" not in payload["partner_tickers"]
+        assert set(payload["partner_tickers"]) <= {"BETA", "GAMMA", "DELTA", "EPSILON"}
+
+    def test_locus_payload_groups_partners_by_sector_when_single_sector(self) -> None:
+        sector_block = self._sector_block(
+            sector="financials",
+            partners=("BETA", "GAMMA", "DELTA", "EPSILON"),
+        )
+        result = apply_intra_sector_locus_aggregation(
+            sector_blocks=(sector_block,),
+            pair_count_threshold=3,
+            as_of=_as_of(),
+        )
+        alpha = next(b for b in result if b.block_id == "q7.correlation_locus.ALPHA")
+        partners_by_sector = alpha.payload["partners_by_sector"]
+        assert set(partners_by_sector.keys()) == {"financials"}
+        assert sorted(partners_by_sector["financials"]) == sorted(alpha.payload["partner_tickers"])
+        assert alpha.payload["cross_sector_spread"] == "financials-only"
+
+    def test_residual_non_alpha_pairs_continue_to_publish_individually(self) -> None:
+        sector_block = self._sector_block(
+            partners=("BETA", "GAMMA", "DELTA", "EPSILON"),
+        )
+        # Inject a stray non-ALPHA divergence flag the locus pass must preserve.
+        injected = AnomalyFlag(
+            name="intra_sector_correlation_divergence:BETA:GAMMA",
+            magnitude=2.5,
+            severity="investigate_if_persists",
+        )
+        sector_block = OutputBlock(
+            block_id=sector_block.block_id,
+            audience=sector_block.audience,
+            freshness_ts=sector_block.freshness_ts,
+            calibration_state=sector_block.calibration_state,
+            bootstrap_reason=sector_block.bootstrap_reason,
+            payload=sector_block.payload,
+            anomaly_flags=(*sector_block.anomaly_flags, injected),
+            regime_context=sector_block.regime_context,
+        )
+        result = apply_intra_sector_locus_aggregation(
+            sector_blocks=(sector_block,),
+            pair_count_threshold=3,
+            as_of=_as_of(),
+        )
+        residual = self._pair_flag_names(self._sector_blocks(result)[0])
+        assert "intra_sector_correlation_divergence:BETA:GAMMA" in residual
+
+    def test_below_threshold_emits_no_locus_block(self) -> None:
+        sector_block = self._sector_block(partners=("BETA",))  # one pair only
+        result = apply_intra_sector_locus_aggregation(
+            sector_blocks=(sector_block,),
+            pair_count_threshold=3,
+            as_of=_as_of(),
+        )
+        assert self._locus_blocks(result) == []
+        # Sector block returned with its pair flags intact.
+        assert self._sector_blocks(result) == [sector_block]
+
+    def test_multiple_sectors_each_produce_independent_loci(self) -> None:
+        financials = self._sector_block(
+            sector="financials",
+            locus_ticker="MA",
+            partners=("BAC", "JPM", "C"),
+        )
+        tech = self._sector_block(
+            sector="tech",
+            locus_ticker="NVDA",
+            partners=("AAPL", "MSFT", "GOOGL"),
+        )
+        result = apply_intra_sector_locus_aggregation(
+            sector_blocks=(financials, tech),
+            pair_count_threshold=3,
+            as_of=_as_of(),
+        )
+        locus_ids = {b.block_id for b in self._locus_blocks(result)}
+        assert locus_ids == {
+            "q7.correlation_locus.MA",
+            "q7.correlation_locus.NVDA",
+        }
+        # Both filtered sector blocks survive.
+        sector_ids = {b.block_id for b in self._sector_blocks(result)}
+        assert sector_ids == {
+            "q7.intra_sector_correlation.financials",
+            "q7.intra_sector_correlation.tech",
+        }
+        # Each locus block reports its own sector.
+        ma = next(b for b in result if b.block_id == "q7.correlation_locus.MA")
+        nvda = next(b for b in result if b.block_id == "q7.correlation_locus.NVDA")
+        assert ma.payload["cross_sector_spread"] == "financials-only"
+        assert nvda.payload["cross_sector_spread"] == "tech-only"
 
 
 # ---------------------------------------------------------------------------

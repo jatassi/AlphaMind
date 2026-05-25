@@ -633,6 +633,85 @@ def test_operator_summary_keeps_distinct_reasons_for_same_module(tmp_path: Path)
     ]
 
 
+def test_operator_summary_counts_match_per_state_array_lengths(tmp_path: Path) -> None:
+    """ALP-631: ``summary`` counts equal the lengths of the per-state arrays.
+
+    Pre-fix the counts came from ``_aggregate_by_state`` (one tick per
+    ``OutputBlock``, i.e. per sector audience) while the arrays were deduped
+    on ``(module, reason)``, so any sector-replicated module/reason pair
+    drove the count above the array length. The operator-facing summary
+    must report the same shape as the lists it ships.
+    """
+    reason = "gap_fill_min_events: 0 < 30 (0 observations)"
+    accumulating_reason = "volume_baseline: 12 < 20"
+    blocks = (
+        # Three sector-replicas of the same unavailable module/reason — count
+        # of 3 vs array length of 1 was exactly the pre-fix divergence.
+        _block(
+            block_id="q1.gap",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason=reason,
+        ),
+        _block(
+            block_id="q1.gap",
+            audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
+            state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason=reason,
+        ),
+        _block(
+            block_id="q1.gap",
+            audience=frozenset({OutputAudience.SECTOR_ENERGY}),
+            state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason=reason,
+        ),
+        # Two sector-replicas of the same accumulating module/reason.
+        _block(
+            block_id="q1.volume_anomaly",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.ACCUMULATING,
+            bootstrap_reason=accumulating_reason,
+        ),
+        _block(
+            block_id="q1.volume_anomaly",
+            audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
+            state=CalibrationState.ACCUMULATING,
+            bootstrap_reason=accumulating_reason,
+        ),
+        # Two sector-replicas of a calibrated module — calibrated count
+        # must dedupe the same way to stay consistent.
+        _block(
+            block_id="q1.technicals",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.CALIBRATED,
+        ),
+        _block(
+            block_id="q1.technicals",
+            audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
+            state=CalibrationState.CALIBRATED,
+        ),
+        # A second distinct calibrated module — confirms calibrated dedupe
+        # keys on block_id, not on block identity.
+        _block(
+            block_id="q1.divergence_flags",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.CALIBRATED,
+        ),
+    )
+    outputs = _build_outputs(blocks=blocks)
+    path = write_operator_data_health_summary(
+        outputs=outputs, invocation_id="inv-id", archive_root=tmp_path
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["summary"]["unavailable"] == len(payload["unavailable"])
+    assert payload["summary"]["accumulating"] == len(payload["accumulating"])
+    assert payload["summary"]["unavailable"] == 1
+    assert payload["summary"]["accumulating"] == 1
+    # Calibrated has no per-state array; dedupe distinct module ids.
+    assert payload["summary"]["calibrated"] == 2
+
+
 def test_operator_summary_writes_to_archive_root_invocation_path(tmp_path: Path) -> None:
     """The operator summary lands at <archive_root>/invocations/<id>/data_calibration_state.json."""
     outputs = _build_outputs(blocks=())

@@ -194,6 +194,19 @@ Enum values and structural constraints trace back to these sources:
               "commands": { "minItems": 1 }
             }
           }
+        },
+        {
+          "if": { "properties": { "verdict": { "const": "override_with_corrective_action" } }, "required": ["verdict"] },
+          "then": {
+            "properties": {
+              "commands": {
+                "minItems": 1,
+                "items": { "properties": { "command_type": { "enum": ["close", "adjust", "cancel"] } } }
+              },
+              "concerns": { "minItems": 1 },
+              "modifications": { "maxItems": 0 }
+            }
+          }
         }
       ]
     },
