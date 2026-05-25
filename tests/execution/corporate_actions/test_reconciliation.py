@@ -1,12 +1,18 @@
-"""Tests for the post-Phase-1 reconciliation step (ALP-415 / story 04).
+"""Tests for the post-Phase-1 reconciliation step (ALP-415 / story 04; ALP-619).
 
 ``reconcile(handle, alpaca_positions, alpaca_account)`` compares local state
 to caller-supplied :class:`PositionSnapshot` / :class:`TradeAccountSnapshot`
 records (the post-Phase-1 view of Alpaca's authoritative state), emits one
 ``RECONCILIATION_ALERT`` activity-log entry per unexplained delta beyond the
 documented tolerance (1e-9 for quantities, 0.01 USD for cash), and returns
-the alert count. No auto-correction happens — local state is preserved as-is
-and the operator handles divergences out-of-band (deferred to ALP-123).
+the alert count.
+
+ALP-619 — for drift on an existing OPEN equity/options position
+(``share_count`` / ``contract_count``) and the singleton ``cash_ledger`` row
+(``current_cash_usd``), reconcile writes Alpaca's authoritative value back to
+local state in the same transaction AND emits a paired
+``RECONCILIATION_CORRECTION`` row capturing the prior/applied scalars.
+Alpaca-only orphans continue to alert-only.
 """
 
 from __future__ import annotations
@@ -377,17 +383,14 @@ async def test_reconcile_emits_alert_for_alpaca_only_position(
         assert '"alpaca_value":7.0' in rows[0].detail_json
 
 
-async def test_reconcile_does_not_mutate_local_state(
+async def test_reconcile_writes_back_equity_drift_and_emits_correction(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """Auto-correction is deferred to ALP-123; reconcile emits alerts but local
-    quantities and cash balances stay exactly as seeded."""
+    """ALP-619 — equity quantity drift: reconcile updates local share_count to
+    match Alpaca's qty AND emits a paired RECONCILIATION_CORRECTION row
+    alongside the existing RECONCILIATION_ALERT."""
     from alphamind.execution.corporate_actions.reconciliation import reconcile
     from alphamind.portfolio_state.records.positions import EquityPositionDetails
-    from alphamind.state.tables.cash_ledger import (
-        CASH_LEDGER_SINGLETON_ID,
-        CashLedgerRow,
-    )
     from alphamind.state.tables.positions import PositionRow
     from alphamind.state.tables.positions_codec import (
         row_to_record as position_row_to_record,
@@ -407,10 +410,8 @@ async def test_reconcile_does_not_mutate_local_state(
     ctx, handle = await open_handle(factory)
     await reconcile(
         handle,
-        # Both quantity AND cash diverge — even with multiple alerts, no
-        # mutation should happen.
         alpaca_positions=(_equity_position_snapshot(symbol="AAPL", qty=5.0),),
-        alpaca_account=_trade_account(cash=50_000.0),
+        alpaca_account=_trade_account(cash=100_000.0),
     )
     await ctx.__aexit__(None, None, None)
 
@@ -420,9 +421,291 @@ async def test_reconcile_does_not_mutate_local_state(
         ).scalar_one()
         pos = position_row_to_record(pos_row)
         assert isinstance(pos.details, EquityPositionDetails)
-        # Quantity unchanged — local state preserved.
-        assert pos.details.share_count == pytest.approx(10.0)
+        # share_count now matches Alpaca's authoritative value.
+        assert pos.details.share_count == pytest.approx(5.0)
 
+        # Alert continues to fire alongside the correction.
+        alert_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_ALERT.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(alert_rows) == 1
+        assert '"field_name":"share_count"' in alert_rows[0].detail_json
+
+        # Paired correction row captures prior/applied scalars.
+        correction_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_CORRECTION.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(correction_rows) == 1
+        assert correction_rows[0].position_id == "pos-1"
+        assert '"domain":"position"' in correction_rows[0].detail_json
+        assert '"field_name":"share_count"' in correction_rows[0].detail_json
+        assert '"prior_local_value":10.0' in correction_rows[0].detail_json
+        assert '"applied_alpaca_value":5.0' in correction_rows[0].detail_json
+
+
+async def test_reconcile_writes_back_options_drift_and_emits_correction(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-619 — options contract_count drift writes back the new count
+    AND emits a paired RECONCILIATION_CORRECTION row."""
+    from alphamind.execution.corporate_actions.reconciliation import reconcile
+    from alphamind.portfolio_state.records.positions import OptionsPositionDetails
+    from alphamind.state.tables.positions import PositionRow
+    from alphamind.state.tables.positions_codec import (
+        row_to_record as position_row_to_record,
+    )
+
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        make_open_options_position(contract_count=5.0),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    options_snapshot = PositionSnapshot(
+        symbol="AAPL",
+        asset_class="us_option",
+        qty=4.0,
+        avg_entry_price=price(2.50),
+        market_value=money(4.0 * 250.0),
+        cost_basis=money(4.0 * 250.0),
+        unrealized_pl=money(0.0),
+        unrealized_plpc=0.0,
+        current_price=price(2.50),
+        side="long",
+    )
+
+    ctx, handle = await open_handle(factory)
+    await reconcile(
+        handle,
+        alpaca_positions=(options_snapshot,),
+        alpaca_account=_trade_account(cash=100_000.0),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert isinstance(pos.details, OptionsPositionDetails)
+        assert pos.details.contract_count == pytest.approx(4.0)
+
+        correction_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_CORRECTION.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(correction_rows) == 1
+        assert '"field_name":"contract_count"' in correction_rows[0].detail_json
+        assert '"prior_local_value":5.0' in correction_rows[0].detail_json
+        assert '"applied_alpaca_value":4.0' in correction_rows[0].detail_json
+
+
+async def test_reconcile_writes_back_cash_drift_and_emits_correction(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-619 — manual Alpaca cash adjustment: drift in current_cash_usd
+    writes back the Alpaca value AND emits a paired correction row."""
+    from alphamind.execution.corporate_actions.reconciliation import reconcile
+    from alphamind.state.tables.cash_ledger import (
+        CASH_LEDGER_SINGLETON_ID,
+        CashLedgerRow,
+    )
+
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        make_open_equity_position(share_count=10.0),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    ctx, handle = await open_handle(factory)
+    await reconcile(
+        handle,
+        alpaca_positions=(_equity_position_snapshot(symbol="AAPL", qty=10.0),),
+        alpaca_account=_trade_account(cash=99_500.0),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
         cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
         assert cash_row is not None
-        assert cash_row.current_cash_usd == pytest.approx(100_000.0)
+        assert cash_row.current_cash_usd == pytest.approx(99_500.0)
+
+        correction_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_CORRECTION.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(correction_rows) == 1
+        assert '"domain":"cash"' in correction_rows[0].detail_json
+        assert '"field_name":"current_cash_usd"' in correction_rows[0].detail_json
+        assert '"prior_local_value":100000.0' in correction_rows[0].detail_json
+        assert '"applied_alpaca_value":99500.0' in correction_rows[0].detail_json
+        assert correction_rows[0].position_id is None
+
+
+async def test_reconcile_drift_to_zero_simulates_missed_close_fill(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-619 — stream-dropped close fill or missed assignment: local says
+    we still hold the position; Alpaca reports qty=0. Auto-correct collapses
+    share_count to 0 alongside an alert + correction trail."""
+    from alphamind.execution.corporate_actions.reconciliation import reconcile
+    from alphamind.portfolio_state.records.positions import EquityPositionDetails
+    from alphamind.state.tables.positions import PositionRow
+    from alphamind.state.tables.positions_codec import (
+        row_to_record as position_row_to_record,
+    )
+
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        make_open_equity_position(share_count=10.0),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    ctx, handle = await open_handle(factory)
+    await reconcile(
+        handle,
+        alpaca_positions=(),
+        alpaca_account=_trade_account(cash=100_000.0),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert isinstance(pos.details, EquityPositionDetails)
+        assert pos.details.share_count == pytest.approx(0.0)
+
+        alerts = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_ALERT.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        corrections = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_CORRECTION.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(alerts) == 1
+        assert len(corrections) == 1
+        assert '"applied_alpaca_value":0.0' in corrections[0].detail_json
+
+
+async def test_reconcile_orphan_stays_alert_only_no_correction(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-619 — Alpaca-only orphans continue to ALERT-only. No
+    RECONCILIATION_CORRECTION row, no synthetic local position row created."""
+    from alphamind.execution.corporate_actions.reconciliation import reconcile
+    from alphamind.state.tables.positions import PositionRow
+
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        make_open_equity_position(share_count=10.0),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    ctx, handle = await open_handle(factory)
+    await reconcile(
+        handle,
+        alpaca_positions=(
+            _equity_position_snapshot(symbol="AAPL", qty=10.0),
+            _equity_position_snapshot(symbol="ORPHAN_X", qty=7.0),
+        ),
+        alpaca_account=_trade_account(cash=100_000.0),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        alerts = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_ALERT.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(alerts) == 1
+        assert '"field_name":"alpaca_only_position"' in alerts[0].detail_json
+
+        corrections = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_CORRECTION.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert corrections == []
+
+        pos_rows = (await sess.execute(select(PositionRow))).scalars().all()
+        assert {row.position_id for row in pos_rows} == {"pos-1"}

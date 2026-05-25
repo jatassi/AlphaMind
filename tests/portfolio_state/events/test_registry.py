@@ -146,7 +146,10 @@ class TestReconciliationRegistry:
         from alphamind.portfolio_state.events import reconciliation
 
         keys = {entry[0] for entry in reconciliation._REGISTRY}
-        assert keys == {EventType.RECONCILIATION_ALERT}
+        assert keys == {
+            EventType.RECONCILIATION_ALERT,
+            EventType.RECONCILIATION_CORRECTION,
+        }
 
 
 class TestConfigurationRegistry:
