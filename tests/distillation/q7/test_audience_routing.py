@@ -206,6 +206,7 @@ class TestAudienceRouting:
             short_window_days=20,
             long_window_days=60,
             divergence_sigma=1.5,
+            correlation_locus_pair_count_threshold=3,
         )
         assert blocks
         for block in blocks:
