@@ -1053,13 +1053,13 @@ def test_position_without_thesis_renders_pending_marker() -> None:
     assert "Thesis: NONE — pending position" in out
 
 
-def test_position_without_bracket_renders_inactive_marker() -> None:
+def test_position_without_bracket_renders_none_marker() -> None:
     view = _make_strategist_view(positions=(_make_position_view(with_bracket=False),))
     out = assemble_input_bundle_normal(
         **_normal_kwargs(strategist_view=view),
         sector_label_display=_SECTOR_LABELS,
     )
-    assert "Bracket: not yet activated" in out
+    assert "Bracket: none" in out
 
 
 # ---------------------------------------------------------------------------
