@@ -82,6 +82,7 @@ from alphamind.portfolio_state.events.position_lifecycle import (
 )
 from alphamind.portfolio_state.events.reconciliation import (
     ReconciliationAlertDetail,
+    ReconciliationCorrectionDetail,
 )
 from alphamind.portfolio_state.events.risk_guardrail import (
     EmergencyInvocationRequestedDetail,
@@ -212,6 +213,7 @@ AnyDetailType = (
     | EnvelopeRejectionDetail
     | CorporateActionAppliedDetail
     | ReconciliationAlertDetail
+    | ReconciliationCorrectionDetail
     | DistillationConfigChangeDetail
 )
 
@@ -269,6 +271,7 @@ __all__ = [
     "PositionOpenedDetail",
     "PositionReducedDetail",
     "ReconciliationAlertDetail",
+    "ReconciliationCorrectionDetail",
     "RiskLimitApproachedDetail",
     "RiskParameterChangedDetail",
     "ThesisComponentAddedDetail",

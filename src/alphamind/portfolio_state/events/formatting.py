@@ -18,7 +18,10 @@ from typing import Any
 from alphamind.portfolio_state.events.bracket import BracketModifiedDetail
 from alphamind.portfolio_state.events.configuration import DistillationConfigChangeDetail
 from alphamind.portfolio_state.events.order_lifecycle import OrderModifiedDetail
-from alphamind.portfolio_state.events.reconciliation import ReconciliationAlertDetail
+from alphamind.portfolio_state.events.reconciliation import (
+    ReconciliationAlertDetail,
+    ReconciliationCorrectionDetail,
+)
 from alphamind.portfolio_state.events.risk_guardrail import (
     EmergencyInvocationRequestedDetail,
     GreeksRefreshFailedDetail,
@@ -108,6 +111,10 @@ def _render_reconciliation_alert(d: ReconciliationAlertDetail) -> str:
     )
 
 
+def _render_reconciliation_correction(d: ReconciliationCorrectionDetail) -> str:
+    return f"{d.domain} {d.field_name} corrected: {d.prior_local_value} → {d.applied_alpaca_value}"
+
+
 def _render_distillation_config_change(d: DistillationConfigChangeDetail) -> str:
     if not d.changes:
         return f"config reloaded with no key changes (new_hash={d.new_hash[:8]})"
@@ -125,5 +132,6 @@ _RENDERERS: dict[type, Callable[[Any], str]] = {
     GreeksRefreshFailedDetail: _render_greeks_refresh_failed,
     EmergencyInvocationRequestedDetail: _render_emergency_invocation_requested,
     ReconciliationAlertDetail: _render_reconciliation_alert,
+    ReconciliationCorrectionDetail: _render_reconciliation_correction,
     DistillationConfigChangeDetail: _render_distillation_config_change,
 }

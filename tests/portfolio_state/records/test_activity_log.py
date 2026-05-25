@@ -126,8 +126,8 @@ class TestEnumMembers:
     def test_event_type_is_str_enum(self) -> None:
         assert issubclass(EventType, StrEnum)
 
-    def test_event_type_has_exactly_43_members(self) -> None:
-        assert len(EventType) == 43
+    def test_event_type_has_exactly_44_members(self) -> None:
+        assert len(EventType) == 44
 
     def test_event_type_position_lifecycle_members(self) -> None:
         for name in ("POSITION_OPENED", "POSITION_CLOSED", "POSITION_ADDED", "POSITION_REDUCED"):
@@ -315,9 +315,9 @@ class TestMappingExhaustiveness:
 class TestAnyDetailTypeAlias:
     """AnyDetailType is exported and covers all detail-payload classes."""
 
-    def test_any_detail_type_has_43_members(self) -> None:
+    def test_any_detail_type_has_44_members(self) -> None:
         members = get_args(AnyDetailType)
-        assert len(members) == 43
+        assert len(members) == 44
 
     def test_any_detail_type_covers_all_detail_classes(self) -> None:
         members = set(get_args(AnyDetailType))

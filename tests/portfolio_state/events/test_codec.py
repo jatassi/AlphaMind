@@ -63,6 +63,7 @@ from alphamind.portfolio_state.events import (
     PositionOpenMechanism,
     PositionReducedDetail,
     ReconciliationAlertDetail,
+    ReconciliationCorrectionDetail,
     RiskLimitApproachedDetail,
     RiskParameterChangedDetail,
     ThesisComponentAddedDetail,
@@ -414,6 +415,15 @@ def _all_detail_instances() -> list[tuple[type, object]]:
                 local_value=100.0,
                 alpaca_value=99.5,
                 delta_description="local 100.0 vs Alpaca 99.5",
+            ),
+        ),
+        (
+            ReconciliationCorrectionDetail,
+            ReconciliationCorrectionDetail(
+                domain="position",
+                field_name="share_count",
+                prior_local_value=100.0,
+                applied_alpaca_value=99.5,
             ),
         ),
         (

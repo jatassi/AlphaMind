@@ -184,9 +184,16 @@ class Phase1Summary:
     """Outcome of one ``process_unprocessed_fills`` invocation.
 
     ``reconciliation_alerts`` counts the ``RECONCILIATION_ALERT`` activity-log
-    entries emitted by the post-merge reconciliation step (ALP-415). Local
-    state is preserved as-is — auto-correction is deferred to the continuous
-    monitor (ALP-123).
+    entries emitted by the post-merge reconciliation step (ALP-415).
+
+    ALP-619 — drift on an existing OPEN equity ``share_count`` and the
+    singleton ``cash_ledger.current_cash_usd`` is now auto-corrected in the
+    same Phase 1 transaction, with a paired ``RECONCILIATION_CORRECTION``
+    activity-log row capturing the prior/applied scalars. Options drift
+    and orphan positions still alert-only — see
+    ``corporate_actions/reconciliation.py`` for the per-domain gating.
+    Correction counts are not summarized here; the activity log is the
+    source of truth.
     """
 
     fills_processed: int
@@ -214,8 +221,12 @@ async def process_unprocessed_fills(
     on the ex-date; the ordering matches market reality and yields
     determinism. After all events apply, the reconciliation step compares
     local state to ``alpaca_positions`` / ``alpaca_account`` and emits one
-    ``RECONCILIATION_ALERT`` per unexplained delta. Auto-correction is
-    deferred to ALP-123.
+    ``RECONCILIATION_ALERT`` per unexplained delta. ALP-619 — for OPEN
+    equity ``share_count`` drift and ``cash_ledger.current_cash_usd``
+    drift, the same step writes Alpaca's value back to local state and
+    emits a paired ``RECONCILIATION_CORRECTION`` row. Options drift,
+    orphans, direction-flips, and broker-degraded snapshots are alert-only
+    (see ``corporate_actions/reconciliation.py``).
 
     Per-fill Reg T margin attribution (story 06a / ALP-428) is wedged into
     the merged-events loop: for every ``FillRecord`` event, snapshot all
