@@ -40,6 +40,7 @@ from alphamind.distillation.q3.flow_classification import (
     classify_index_vs_sector_flow,
 )
 from alphamind.distillation.q3.flow_classification_compute import (
+    PerContractSnapshotPair,
     compute_options_flow,
     compute_put_flow_intent,
 )
@@ -138,6 +139,66 @@ class FlowClassificationAssemblyInputs:
     sector_to_audience: Mapping[str, OutputAudience]
 
 
+def _ticker_calibration_state_for_flow(
+    pairs: tuple[PerContractSnapshotPair, ...],
+    ticker: str,
+) -> tuple[str, str | None]:
+    """Resolve the per-ticker ``calibration_state`` for ``q3.flow_classification``.
+
+    A ticker is UNAVAILABLE when no contract carries a today-snapshot with a
+    populated ``volume_today``: the compute would otherwise emit all-zero
+    flow buckets that are indistinguishable from a real quiet day. With at
+    least one today-snapshot the per-ticker label is CALIBRATED — zero
+    volumes there are real reads, not missing data.
+    """
+    has_today_snapshot = any(
+        p.today_snapshot is not None and p.today_snapshot.volume_today is not None for p in pairs
+    )
+    if has_today_snapshot:
+        return CalibrationState.CALIBRATED.value, None
+    return (
+        CalibrationState.UNAVAILABLE.value,
+        f"q3.flow_classification: no options snapshots for {ticker}",
+    )
+
+
+def _calibration_for_flow_classification(
+    payloads: Mapping[str, Mapping[str, Any]],
+) -> tuple[CalibrationState, str | None]:
+    """Roll up per-ticker flow-classification states into the sector block label.
+
+    Differs from :func:`_calibration_for_per_ticker`'s worst-wins fold:
+    a mix of live + missing tickers maps to ACCUMULATING (not UNAVAILABLE),
+    so the operator can still read the live tickers' signal while being
+    told which tickers are missing. All-missing maps to UNAVAILABLE.
+    """
+    unavailable: list[str] = []
+    has_calibrated = False
+    for ticker, payload in payloads.items():
+        state_value = payload.get("calibration_state")
+        if state_value is None or state_value == CalibrationState.CALIBRATED.value:
+            has_calibrated = True
+            continue
+        if state_value == CalibrationState.UNAVAILABLE.value:
+            unavailable.append(ticker)
+        else:
+            # ACCUMULATING on a per-ticker payload would already imply some
+            # signal; treat as live for the mix rule.
+            has_calibrated = True
+    if not unavailable:
+        return CalibrationState.CALIBRATED, None
+    missing_list = ", ".join(sorted(unavailable))
+    if not has_calibrated:
+        return (
+            CalibrationState.UNAVAILABLE,
+            f"q3.flow_classification: no options snapshots for {missing_list}",
+        )
+    return (
+        CalibrationState.ACCUMULATING,
+        f"q3.flow_classification: missing options snapshots for {missing_list}",
+    )
+
+
 def _calibration_for_per_ticker(
     payloads: Mapping[str, Mapping[str, Any]],
 ) -> tuple[CalibrationState, str | None]:
@@ -191,7 +252,7 @@ def assemble_q3_flow_classification_blocks(
         audience = inputs.sector_to_audience.get(sector)
         if audience is None:
             continue
-        state, reason = _calibration_for_per_ticker(per_ticker)
+        state, reason = _calibration_for_flow_classification(per_ticker)
         blocks.append(
             OutputBlock(
                 block_id="q3.flow_classification",
@@ -420,11 +481,16 @@ def _build_per_ticker_payload(
         inputs.put_flow_intent_inputs,
         protective_holding_pct_of_adv=_PROTECTIVE_HOLDING_PCT_OF_ADV,
     )
+    per_ticker_pairs = inputs.flow_classification_inputs.per_ticker_pairs
     per_ticker_payload: dict[str, Mapping[str, Any]] = {}
     for ticker in inputs.ticker_scope:
         flow = flow_by_ticker.get(ticker)
         if flow is None:
             continue
+        cal_state, cal_reason = _ticker_calibration_state_for_flow(
+            per_ticker_pairs.get(ticker, ()),
+            ticker,
+        )
         per_ticker_payload[ticker] = {
             "call_bto_volume": flow.call_bto_volume,
             "call_sto_volume": flow.call_sto_volume,
@@ -432,6 +498,8 @@ def _build_per_ticker_payload(
             "put_sto_volume": flow.put_sto_volume,
             "put_intent": intent_by_ticker.get(ticker, "speculative"),
             "attribution_method": flow.attribution_method,
+            "calibration_state": cal_state,
+            "bootstrap_reason": cal_reason,
         }
     return per_ticker_payload
 
