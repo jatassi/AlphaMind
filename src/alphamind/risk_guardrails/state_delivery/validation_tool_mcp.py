@@ -121,16 +121,25 @@ def build_validate_guardrail_mcp_server(
     initial_state: ValidationToolState,
     *,
     server_name: str = "alphamind_decision_validation",
+    include_batch_tool: bool = True,
 ) -> tuple[dict[str, McpSdkServerConfig], list[str]]:
     """Build a per-invocation SDK MCP server bound to *initial_state*.
 
     Returns ``(mcp_servers_dict, allowed_tool_names)`` ready for direct
     assignment to ``ClaudeAgentOptions.mcp_servers`` and
     ``ClaudeAgentOptions.allowed_tools``. The allowed-tools list contains
-    two names — ``mcp__<server_name>__validate_guardrail`` for one-off
-    proposals and ``mcp__<server_name>__validate_guardrail_batch`` for
-    coordinated multi-position remedies. Both close over the same
+    ``mcp__<server_name>__validate_guardrail`` for one-off proposals and,
+    when ``include_batch_tool`` is ``True``,
+    ``mcp__<server_name>__validate_guardrail_batch`` for coordinated
+    multi-position remedies. Both close over the same
     ``_ValidationStateCell`` so cumulative-impact tracking is shared.
+
+    ``include_batch_tool`` defaults to ``True`` — the batch tool is wired
+    for strategist and PM invocations. The analyst harness passes
+    ``include_batch_tool=False`` because the analyst prompt does not document
+    the batch tool and the agents.yaml ``tools`` allowlist for ``analyst``
+    does not include it; the agents.yaml allowlist is the authoritative
+    surface and the factory mirrors that for analyst-side composition.
 
     The factory captures *initial_state* in a ``_ValidationStateCell`` the
     tool callbacks read and write; each call's PASS result advances the cell
@@ -239,13 +248,12 @@ def build_validate_guardrail_mcp_server(
             "content": [{"type": "text", "text": _serialize_batch_validation_result(result)}],
         }
 
-    server = create_sdk_mcp_server(
-        name=server_name, tools=[_validate_guardrail, _validate_guardrail_batch]
-    )
-    allowed = [
-        f"mcp__{server_name}__validate_guardrail",
-        f"mcp__{server_name}__validate_guardrail_batch",
-    ]
+    tools_list = [_validate_guardrail]
+    allowed = [f"mcp__{server_name}__validate_guardrail"]
+    if include_batch_tool:
+        tools_list.append(_validate_guardrail_batch)
+        allowed.append(f"mcp__{server_name}__validate_guardrail_batch")
+    server = create_sdk_mcp_server(name=server_name, tools=tools_list)
     return {server_name: server}, allowed
 
 

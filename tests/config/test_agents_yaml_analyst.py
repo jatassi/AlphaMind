@@ -96,11 +96,13 @@ class TestAgentsYamlPortfolioManagerEntry:
         assert prompt_path.read_text().strip()
 
     def test_pm_tools_contract(self) -> None:
-        """`tools` matches the four-tool contract from the PM design doc.
+        """`tools` matches the five-tool contract from the PM design doc.
 
-        The portfolio manager uses exactly four tools:
+        The portfolio manager uses five tools:
         - `retrieve_brief`: source brief retrieval.
-        - `validate_guardrail`: pre-submission guardrail validation.
+        - `validate_guardrail`: pre-submission guardrail validation (single).
+        - `validate_guardrail_batch`: pre-submission guardrail validation for a
+          coordinated multi-position remediation package (ALP-625).
         - `get_thesis_components`: fetches thesis breakdown per instrument.
         - `submit_envelope`: submits the final order envelope.
         """
@@ -108,6 +110,7 @@ class TestAgentsYamlPortfolioManagerEntry:
         assert set(entry.tools) == {
             "retrieve_brief",
             "validate_guardrail",
+            "validate_guardrail_batch",
             "get_thesis_components",
             "submit_envelope",
         }

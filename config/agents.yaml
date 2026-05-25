@@ -56,7 +56,7 @@ agents:
     # mirroring the qualitative/adaptive ALP-288 drift; output dynamics are
     # similar across the JSON-Schema-mode agents.
     output_token_budget: 24000
-    tools: [retrieve_brief, validate_guardrail]
+    tools: [retrieve_brief, validate_guardrail, validate_guardrail_batch]
 
   # portfolio_manager budgets raised 2026-05-05 (ALP-321, operator directive).
   # Rationale:
@@ -85,7 +85,7 @@ agents:
     latency_budget_seconds: 900
     context_token_budget: 16000
     output_token_budget: 24000
-    tools: [retrieve_brief, validate_guardrail, get_thesis_components, submit_envelope]
+    tools: [retrieve_brief, validate_guardrail, validate_guardrail_batch, get_thesis_components, submit_envelope]
 
   # --- Analysis layer (Sonnet) ----------------------------------------------
 
