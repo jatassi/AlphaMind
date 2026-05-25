@@ -1038,6 +1038,82 @@ def test_open_short_under_shorts_disabled_still_rejected() -> None:
     assert "REC-OPEN-SHORT" not in output.delta_adjusted
 
 
+def test_adjust_on_held_option_under_options_disabled_passes_gate() -> None:
+    """ADJUST on a held OPTION position under ``options_enabled=False`` passes
+    the gate. The size/concentration rules still bound the resulting notional
+    in absolute terms; the gate carve-out only opens the action seam."""
+    existing = _existing_options_position(
+        position_id="POS-OPT-ADJ",
+        asset_type=AssetType.OPTION,
+        delta_adjusted_exposure_usd=2_250.0,
+    )
+    state = _snapshot(existing_positions={"POS-OPT-ADJ": existing})
+    proposal = ProposedDelta(
+        id="REC-ADJ-OPT",
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.OPTION,
+        notional_usd=money(1_800.0),
+        quantity=4.0,
+        option_legs=None,
+        action=Action.ADJUST,
+        existing_position_id="POS-OPT-ADJ",
+    )
+
+    output = evaluate_proposals(
+        state=state,
+        proposals=(proposal,),
+        config=_full_config(options_enabled=False),
+        market=_market(),
+    )
+
+    assert output.feature_disabled == ()
+    assert "REC-ADJ-OPT" in output.delta_adjusted
+
+
+def test_cancel_on_pending_short_under_shorts_disabled_passes_gate() -> None:
+    """CANCEL against a pending SHORT equity order under
+    ``short_selling_enabled=False`` passes the gate. The CANCEL is
+    exposure-neutral by definition; the carve-out lets the operator release
+    the reserved capital after the flag flip."""
+    pending = ExistingPosition(
+        position_id=PositionId("POS-SHORT-PEND"),
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=Direction.SHORT,
+        asset_type=AssetType.EQUITY,
+        notional_usd=2_000.0,
+        delta_adjusted_exposure_usd=-2_000.0,
+        current_greeks=None,
+        daily_borrow_cost_usd=0.10,
+        reserves_capital_usd=2_000.0,
+    )
+    state = _snapshot(existing_positions={"POS-SHORT-PEND": pending})
+    proposal = ProposedDelta(
+        id="REC-CANCEL-SHORT",
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=Direction.SHORT,
+        asset_type=AssetType.EQUITY,
+        notional_usd=money(2_000.0),
+        quantity=20.0,
+        option_legs=None,
+        action=Action.CANCEL,
+        existing_position_id="POS-SHORT-PEND",
+    )
+
+    output = evaluate_proposals(
+        state=state,
+        proposals=(proposal,),
+        config=_full_config(short_selling_enabled=False),
+        market=_market(),
+    )
+
+    assert output.feature_disabled == ()
+    assert "REC-CANCEL-SHORT" in output.delta_adjusted
+
+
 # ---------------------------------------------------------------------------
 # Input validation
 # ---------------------------------------------------------------------------

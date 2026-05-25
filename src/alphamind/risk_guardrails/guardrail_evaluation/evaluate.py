@@ -64,8 +64,11 @@ def evaluate_proposals(
     Orchestration:
       1. Validate cross-field invariants on inputs; raise ``LibraryInputError``
          on any failure (aggregated).
-      2. For each proposal, classify the feature gate. Feature-disabled
-         proposals are added to ``feature_disabled`` and skipped.
+      2. For each proposal whose action would create new disabled-class
+         exposure (``OPEN``/``ADD`` — see ``_gate_applies``), classify the
+         feature gate. Feature-disabled proposals are added to
+         ``feature_disabled`` and skipped. ``CLOSE``/``ADJUST``/``CANCEL``
+         pass through so operators can unwind after a flag flip (ALP-647).
       3. For each surviving proposal, compute its delta-adjusted exposure.
       4. Run the rule registry over the surviving proposals.
       5. Assemble ``LibraryOutput``.
@@ -121,12 +124,16 @@ def evaluate_proposals(
 
 
 def _gate_applies(proposal: ProposedDelta) -> bool:
-    """The feature gate only applies to proposals that would create or grow
-    disabled-class exposure. ``CLOSE`` / ``ADJUST`` / ``CANCEL`` against an
-    existing position pass through so operators can unwind after a flag flip
-    (ALP-647). The structural gate stays action-agnostic by contract; this
-    helper carries the entry-point policy that the gate's module docstring
-    defers to story 05.
+    """The feature gate only applies to proposals that *necessarily* create
+    new disabled-class exposure (``OPEN``/``ADD``). ``CLOSE``/``ADJUST``/
+    ``CANCEL`` against an existing position pass through so operators can
+    unwind after a flag flip (ALP-647); the size/concentration rules catch
+    over-limit growth in absolute terms regardless of the feature flag, so
+    an ``ADJUST`` that *raises* notional on a held disabled-class position
+    is still bounded by the standard limits. The structural gate stays
+    action-agnostic by contract; this helper carries the entry-point policy
+    deferred to by the module docstring of
+    ``alphamind.risk_guardrails.guardrail_evaluation.feature_gate``.
     """
     return proposal.action in (Action.OPEN, Action.ADD)
 
