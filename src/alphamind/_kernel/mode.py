@@ -102,9 +102,11 @@ class PipelineMode(StrEnum):
 
         Direct ``.value`` is wrong: ``PipelineMode.HALT.value == "halt"``, but
         the row column persists ``"halted"``. This adapter handles the row-
-        side translation. The ``invocations`` column type still admits a third
-        ``"defensive_posture"`` value for forward compatibility, but no
-        writer emits it today.
+        side translation. The ``invocations.active_mode`` CHECK constraint
+        (migration ``a4c1d2e3f4b5``) and the matching ``ActiveMode`` literal
+        in ``state/invocation_context/records.py`` still admit a third
+        ``"defensive_posture"`` value, but no writer emits it today; a
+        narrowed writer feeding a broader column type is covariant.
         """
         if self is PipelineMode.NORMAL:
             return "normal"
