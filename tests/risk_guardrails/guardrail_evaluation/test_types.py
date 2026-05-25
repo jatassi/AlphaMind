@@ -383,7 +383,7 @@ def test_public_api_surface_matches_documented_re_exports() -> None:
         "ProposalContribution",
         "RuleProjection",
         "LibraryOutput",
-        # IV-sourcing surface from story 02b
+        # IV-sourcing surface from story 02b + ALP-642 SQL provider
         "FixtureIvProvider",
         "IvLookupError",
         "IvLookupResult",
@@ -391,6 +391,7 @@ def test_public_api_surface_matches_documented_re_exports() -> None:
         "IvQuote",
         "IvSurfaceEntry",
         "RealizedVolEntry",
+        "SqlOptionsIvProvider",
         # Black-Scholes core (story 02a; bs_price added by ALP-422)
         "bs_greeks",
         "bs_price",

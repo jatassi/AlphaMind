@@ -125,10 +125,11 @@ class MapVolLookup:
     """Production ``VolLookup`` impl wrapping a ``Mapping[str, RealizedVolEntry]``.
 
     Sources the same per-underlying realized-vol map the breach-loop's
-    ``FixtureIvProvider`` consumes. Today the production map is empty
-    (constructed as ``FixtureIvProvider(surface={}, realized_vol={})`` in
-    ``__main__.py``), so every fill flows through the None-fallback path; the
-    real per-ticker realized-vol substrate is tracked by ALP-530.
+    ``SqlOptionsIvProvider`` (ALP-642) consumes as its fallback channel.
+    The shared map is populated from ``ticker_realized_vol`` (ALP-530) and
+    refreshed every 24h by ``refresh_realized_vol_map_in_place`` in
+    ``__main__.py``; entries are present for every open-position underlying
+    with a recent ALP-530 row.
     """
 
     def __init__(self, store: Mapping[str, RealizedVolEntry]) -> None:

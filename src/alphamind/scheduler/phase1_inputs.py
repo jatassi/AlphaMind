@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.venue import VenueConfig
@@ -62,9 +63,10 @@ from alphamind.execution.corporate_actions.types import (
 from alphamind.persistence.models import AssetUniverse, MacroObservations, OhlcvBars
 from alphamind.portfolio_state.records.positions import Direction
 from alphamind.risk_guardrails.guardrail_evaluation import (
-    FixtureIvProvider,
+    IvProvider,
     MarketInputs,
     RealizedVolEntry,
+    SqlOptionsIvProvider,
 )
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
@@ -261,7 +263,7 @@ def _build_market_inputs(
     universe_prices: Mapping[str, float],
     risk_free_rate: float,
     as_of: datetime,
-    realized_vol_map: dict[str, float],
+    iv_provider: IvProvider,
 ) -> MarketInputs:
     """Compose ``MarketInputs`` from universe + broker-position prices.
 
@@ -273,12 +275,11 @@ def _build_market_inputs(
     yet hold; without it the validation tool returns ``UNAVAILABLE`` /
     ``missing_market_price`` for any unheld candidate.
 
-    The IV provider's ``surface`` is empty (no production options-chain
-    producer yet); the ``realized_vol`` mapping is the per-underlying
-    trailing-30d scalar produced by ALP-530's distillation hook, wrapped at
-    this boundary into ``RealizedVolEntry`` records. Underlyings without a
-    row are absent from the mapping — the consumer's fallback chain emits
-    ``IvLookupError`` for those.
+    ``iv_provider`` is the caller-constructed IV-sourcing seam (ALP-642 —
+    production-side this is :class:`SqlOptionsIvProvider`, resolved against
+    ``options_contract_snapshots``). The provider's realized-vol fallback
+    map is owned by the caller (``gather_phase1_inputs`` for Phase 1) so
+    the same lifecycle that builds the price layers builds the IV layer.
     """
     # ALP-462 — ``pos.current_price`` is ``Price`` (Decimal) on the
     # PositionSnapshot boundary; cast at the legacy MarketInputs surface which
@@ -288,14 +289,10 @@ def _build_market_inputs(
     }
     # Held-position live quotes override universe EOD closes on overlap.
     underlying_prices: dict[str, float] = {**universe_prices, **position_prices}
-    realized_vol_entries = {
-        ticker: RealizedVolEntry(underlying=ticker, trailing_30d_realized_vol=vol)
-        for ticker, vol in realized_vol_map.items()
-    }
     return MarketInputs(
         underlying_prices=underlying_prices,
         risk_free_rate=risk_free_rate,
-        iv_provider=FixtureIvProvider(surface={}, realized_vol=realized_vol_entries),
+        iv_provider=iv_provider,
         as_of=as_of,
     )
 
@@ -306,6 +303,7 @@ async def gather_phase1_inputs(
     venue_config: VenueConfig,
     execution_mode: ExecutionMode,
     as_of: datetime,
+    sync_session_factory: sessionmaker[Session],
     account_queries_factory: _AccountQueriesFactory | None = None,
     ca_queries_factory: _CorporateActionsQueriesFactory | None = None,
 ) -> Phase1Inputs:
@@ -413,12 +411,24 @@ async def gather_phase1_inputs(
 
     universe_prices = await _read_active_universe_prices(handle.session, as_of=as_of)
 
+    # ALP-642 — wrap the per-underlying realized-vol scalars into the
+    # provider's RealizedVolEntry shape once, then hand the SQL-backed
+    # production provider down into _build_market_inputs.
+    realized_vol_entries: dict[str, RealizedVolEntry] = {
+        ticker: RealizedVolEntry(underlying=ticker, trailing_30d_realized_vol=vol)
+        for ticker, vol in realized_vol_map.items()
+    }
+    iv_provider = SqlOptionsIvProvider(
+        sync_session_factory=sync_session_factory,
+        realized_vol=realized_vol_entries,
+    )
+
     market_inputs = _build_market_inputs(
         positions=positions,
         universe_prices=universe_prices,
         risk_free_rate=risk_free_rate,
         as_of=as_of,
-        realized_vol_map=dict(realized_vol_map),
+        iv_provider=iv_provider,
     )
 
     return Phase1Inputs(

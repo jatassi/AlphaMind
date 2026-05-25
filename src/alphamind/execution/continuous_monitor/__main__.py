@@ -127,7 +127,7 @@ from alphamind.risk_guardrails.breach_behavior import (
     BreachBehaviorConfig,
     load_breach_behavior_config,
 )
-from alphamind.risk_guardrails.guardrail_evaluation import FixtureIvProvider, RealizedVolEntry
+from alphamind.risk_guardrails.guardrail_evaluation import RealizedVolEntry, SqlOptionsIvProvider
 from alphamind.risk_guardrails.regime_adaptation import load_config_fan
 from alphamind.scripts._common import load_distillation_config
 from alphamind.state.config import (
@@ -197,8 +197,9 @@ async def refresh_realized_vol_map_in_place(
     """Refresh ``shared_map`` from ``ticker_realized_vol`` in place.
 
     Both the harness ``MapVolLookup`` and the breach-loop
-    ``FixtureIvProvider`` hold the same dict reference; mutating
-    ``shared_map`` in place updates both consumers without re-construction.
+    ``SqlOptionsIvProvider`` (ALP-642) hold the same dict reference;
+    mutating ``shared_map`` in place updates both consumers without
+    re-construction.
 
     ``tickers`` restricts the fetch to a known underlying set (typically the
     monitor's open-position underlyings); pass ``None`` to fetch every
@@ -369,12 +370,12 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     calendar_cache = TradingCalendarCache(account_state_queries)
     supervisor = MonitorSupervisor(session=session, config=config)
     underlying_cache = register_underlying_stream_task(supervisor, repository=open_positions_reader)
-    # ALP-528/530 — one shared realized-vol dict feeds both the paper-mode
+    # ALP-528/530/642 — one shared realized-vol dict feeds both the paper-mode
     # enrichment wedge (via MapVolLookup) and the breach-loop's
-    # FixtureIvProvider. Pre-populate at startup so consumers see real
-    # values from the first invocation rather than an empty fallback path,
-    # and register a 24h refresh task so a multi-day monitor session does
-    # not drift on stale realized vol.
+    # SqlOptionsIvProvider (as its fallback channel). Pre-populate at startup
+    # so consumers see real values from the first invocation rather than an
+    # empty fallback path, and register a 24h refresh task so a multi-day
+    # monitor session does not drift on stale realized vol.
     realized_vol_map: dict[str, RealizedVolEntry] = {}
 
     def _open_position_underlyings() -> Sequence[str] | None:
@@ -593,10 +594,16 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     portfolio_state_config = load_portfolio_state_config(config_dir / "portfolio_state.yaml")
     # One IvProvider shared by the breach-loop evaluator and the cascade
     # dispatcher's re-projection so both observe identical IV values.
-    # ALP-530 — the realized_vol map is the same dict reference owned by
-    # ``_run_daemon`` and refreshed every 24h; in-place mutations propagate
-    # to this FixtureIvProvider without re-construction.
-    iv_provider = FixtureIvProvider(surface={}, realized_vol=realized_vol_map)
+    # ALP-642 — production-side adapter resolving exact-OCC hits against
+    # ``options_contract_snapshots`` written by the Polygon collector,
+    # with the realized-vol scalar as the fallback channel. ALP-530 — the
+    # realized_vol map is the same dict reference owned by ``_run_daemon``
+    # and refreshed every 24h; in-place mutations propagate to this
+    # provider without re-construction.
+    iv_provider = SqlOptionsIvProvider(
+        sync_session_factory=sync_session_factory,
+        realized_vol=realized_vol_map,
+    )
     # ALP-510 — one assembled-snapshot provider + translator shared across
     # the breach-loop snapshot provider and the dispatcher's context provider.
     assembled_snapshot_provider = make_assembled_snapshot_provider(

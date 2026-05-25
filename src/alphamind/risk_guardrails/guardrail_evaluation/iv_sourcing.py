@@ -1,4 +1,4 @@
-"""IV sourcing with realized-vol fallback (story 02b).
+"""IV sourcing with realized-vol fallback (story 02b; ALP-642 SQL provider).
 
 The library's Black-Scholes path consults this module for an implied-volatility
 estimate at a proposal's ``(strike, expiration, contract_type)``. The primary
@@ -7,11 +7,12 @@ source is the data pipeline's IV surface (production-side this is
 fallback is the underlying's trailing 30-day realized volatility, supplied as a
 per-underlying scalar from the data pipeline. The ``IvProvider`` Protocol (in
 ``types``) expresses the contract; ``FixtureIvProvider`` is the
-test-and-bootstrap implementation backed by inline data.
+test-and-bootstrap implementation backed by inline data, and
+``SqlOptionsIvProvider`` (ALP-642) is the production-side adapter that resolves
+surface hits by exact OCC contract symbol against
+``options_contract_snapshots``.
 
-The Polygon-backed production adapter lands when the options collector is
-built (per ``project-tracker.md`` § Backlog → Forward-trigger entries); both
-implementations conform to the same Protocol so the library's tests assert
+Both implementations conform to the same Protocol so the library's tests assert
 behaviour that holds in production.
 """
 
@@ -22,6 +23,10 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from itertools import pairwise
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
+from alphamind.persistence.models import OptionsContractSnapshots
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
     ContractType,
     IvLookupResult,
@@ -231,3 +236,150 @@ def _bracketing_expirations(
         if low <= target <= high:
             return low, high
     return None
+
+
+# ---------------------------------------------------------------------------
+# SqlOptionsIvProvider — production adapter (ALP-642)
+# ---------------------------------------------------------------------------
+
+
+def _polygon_options_contract_ticker(
+    *,
+    underlying: str,
+    strike: float,
+    expiration: date,
+    contract_type: ContractType,
+) -> str:
+    """Build the Polygon-format OCC contract ticker the collector writes.
+
+    Mirrors ``alphamind.portfolio_state.records.positions.occ_symbol_for_options``
+    but takes primitive fields so the guardrail library does not import the
+    position-records module. The format is
+    ``O:{UNDERLYING}{YYMMDD}{C|P}{strike_milli:08d}`` — the strike is
+    multiplied by 1000 and zero-padded to eight digits, rounded to avoid
+    binary-float drift on values like ``12.50`` (12500.000000001 → 12500).
+
+    Precondition: ``underlying`` must already be the canonical uppercase
+    ticker string the collector writes (e.g., ``"AAPL"``). The function
+    does not normalize — a lower/mixed-case input produces an OCC string
+    that will not match any Polygon-written row and silently falls
+    through to the realized-vol path. This matches the sibling
+    ``occ_symbol_for_options`` convention (caller normalizes); every
+    callsite the guardrail library exercises today (``ProposedDelta``,
+    ``ExistingPosition``) is already uppercase-by-construction.
+    """
+    expiry = expiration.strftime("%y%m%d")
+    cp = "C" if contract_type is ContractType.CALL else "P"
+    strike_milli = round(strike * 1000)
+    return f"O:{underlying}{expiry}{cp}{strike_milli:08d}"
+
+
+class SqlOptionsIvProvider:
+    """Production ``IvProvider`` backed by ``options_contract_snapshots``.
+
+    Resolves ``(underlying, strike, expiration, contract_type)`` to the
+    latest non-NULL ``implied_volatility`` row in the snapshots table,
+    keyed by the Polygon-format OCC contract ticker. On surface miss —
+    no snapshot row, or row exists but IV is NULL — falls back to the
+    per-underlying realized-vol scalar; raises ``IvLookupError`` only
+    when both surface and fallback are empty.
+
+    Sync-session-per-lookup so the synchronous ``IvProvider.lookup_iv``
+    Protocol holds in async contexts. The brief block on the asyncio loop
+    is well within the breach-loop and Phase-1 budgets at current table
+    cardinality — the per-call query is ``WHERE contract_ticker = ?
+    ORDER BY snapshot_ts DESC LIMIT 1`` against the PK
+    ``(snapshot_ts, contract_ticker)``; SQLite scans the leading prefix
+    of the PK index, which is acceptable today but is the natural seam
+    if a dedicated ``contract_ticker`` index is later added. The
+    pre-existing batched async reader in
+    ``execution/continuous_monitor/greeks_refresh/iv_provider.py``
+    is the per-tick optimization seam if N+1-style lookups become hot.
+    No interpolation across strikes/expirations — the production surface
+    is dense enough at common strikes that exact-match coverage beats
+    interpolation noise for the bulk of proposals; the realized-vol
+    fallback covers gaps with the same scalar the legacy fixture path
+    used.
+
+    ``as_of`` is intentionally discarded: the provider returns whatever
+    the latest snapshot is, irrespective of how stale it has become or
+    whether it postdates ``as_of``. This matches the sibling
+    ``fetch_iv_from_options_chains`` reader's contract and is correct for
+    live runs where ``as_of ~= now`` and the collector cron is healthy.
+    Two known limitations the surface does not detect: (a) a stalled
+    collector returns a stale IV labelled ``IvSource.SURFACE`` rather
+    than falling back, and (b) a replay invocation at a historical
+    ``as_of`` sees snapshots newer than that ``as_of``. A future
+    enhancement could filter ``snapshot_ts <= as_of`` and/or apply a
+    freshness ceiling; the current scope (ALP-642) preserves the
+    existing reader's "latest snapshot wins" semantics.
+
+    The ``realized_vol`` mapping is held by reference so the daemon's
+    24h in-place refresh in
+    ``execution/continuous_monitor/__main__.refresh_realized_vol_map_in_place``
+    propagates to the provider without re-construction.
+    """
+
+    def __init__(
+        self,
+        *,
+        sync_session_factory: sessionmaker[Session],
+        realized_vol: Mapping[str, RealizedVolEntry],
+    ) -> None:
+        self._sync_session_factory = sync_session_factory
+        self._realized_vol = realized_vol
+
+    def lookup_iv(
+        self,
+        *,
+        underlying: str,
+        strike: float,
+        expiration: date,
+        contract_type: ContractType,
+        as_of: datetime,
+    ) -> IvLookupResult:
+        del as_of  # production surface returns the latest snapshot regardless
+        fallback = _RealizedVolFallback(
+            store=self._realized_vol,
+            underlying=underlying,
+            strike=strike,
+            expiration=expiration,
+            contract_type=contract_type,
+        )
+        contract_ticker = _polygon_options_contract_ticker(
+            underlying=underlying,
+            strike=strike,
+            expiration=expiration,
+            contract_type=contract_type,
+        )
+        iv = self._read_latest_iv(contract_ticker)
+        if iv is None:
+            return fallback("realized_vol_fallback_no_snapshot")
+        return IvLookupResult(
+            implied_volatility=iv,
+            source=IvSource.SURFACE,
+            notes=None,
+        )
+
+    def _read_latest_iv(self, contract_ticker: str) -> float | None:
+        """Return the IV from the latest non-NULL snapshot row, or ``None``.
+
+        Matches the existing
+        ``execution.continuous_monitor.greeks_refresh.iv_provider.fetch_iv_from_options_chains``
+        contract: filter to non-NULL ``implied_volatility``, order by
+        ``snapshot_ts DESC``, take one.
+        """
+        stmt = (
+            select(OptionsContractSnapshots.implied_volatility)
+            .where(
+                OptionsContractSnapshots.contract_ticker == contract_ticker,
+                OptionsContractSnapshots.implied_volatility.is_not(None),
+            )
+            .order_by(OptionsContractSnapshots.snapshot_ts.desc())
+            .limit(1)
+        )
+        with self._sync_session_factory() as session:
+            value = session.execute(stmt).scalar_one_or_none()
+        if value is None:
+            return None
+        return float(value)

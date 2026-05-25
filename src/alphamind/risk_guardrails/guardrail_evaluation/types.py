@@ -110,11 +110,12 @@ class IvLookupResult:
 class IvProvider(Protocol):
     """The library's IV-sourcing contract.
 
-    Concrete implementations: ``FixtureIvProvider`` (test/bootstrap) and the
-    Polygon-backed production adapter that reads ``options_contract_snapshots``
-    when the options collector lands. ``lookup_iv`` is total — every successful
-    path returns an ``IvLookupResult`` with positive ``implied_volatility``;
-    the inability to produce one raises ``IvLookupError``.
+    Concrete implementations: ``FixtureIvProvider`` (test/bootstrap) and
+    ``SqlOptionsIvProvider`` (ALP-642 — the Polygon-backed production
+    adapter that reads ``options_contract_snapshots``). ``lookup_iv`` is
+    total — every successful path returns an ``IvLookupResult`` with
+    positive ``implied_volatility``; the inability to produce one raises
+    ``IvLookupError``.
     """
 
     def lookup_iv(

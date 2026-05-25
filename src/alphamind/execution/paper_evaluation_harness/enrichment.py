@@ -94,8 +94,10 @@ class VolLookup(Protocol):
     """Async accessor for per-underlying realized volatility (annualized).
 
     Production impl reads from the per-underlying realized-vol map shared
-    with the breach-loop's ``FixtureIvProvider``. Returns ``None`` when no
-    entry exists for the underlying — same fallback as ADV.
+    with the breach-loop's ``SqlOptionsIvProvider`` (ALP-642 — the same
+    map serves as that provider's surface-miss fallback channel). Returns
+    ``None`` when no entry exists for the underlying — same fallback as
+    ADV.
     """
 
     async def get_realized_volatility(self, underlying: str) -> float | None: ...

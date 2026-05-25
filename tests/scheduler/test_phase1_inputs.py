@@ -10,7 +10,7 @@ any broker-side failure degrades the bundle (returning no-op defaults +
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -18,6 +18,7 @@ import pytest
 from alpaca.data.enums import CorporateActionsType
 from alpaca.data.models.corporate_actions import CorporateAction
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind._kernel.money import money, price
 from alphamind.config.models.main import ExecutionMode
@@ -43,6 +44,7 @@ from alphamind.persistence.session import (
 from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
     MarketInputs,
+    SqlOptionsIvProvider,
 )
 from alphamind.scheduler.invocation import insert_invocation_record
 from alphamind.state.invocation_context.context import InvocationHandle
@@ -119,6 +121,26 @@ async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[Asyn
         yield factory
     finally:
         await async_engine.dispose()
+
+
+@pytest.fixture
+def sync_session_factory(
+    async_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> Iterator[sessionmaker[Session]]:
+    """Sync session factory bound to the same DB as ``async_factory`` (ALP-642).
+
+    ``SqlOptionsIvProvider`` reads ``options_contract_snapshots`` via a
+    sync session — depend on ``async_factory`` so the schema and the
+    process_lifetimes seed are in place before the sync engine opens.
+    """
+    del async_factory  # depends-on for ordering only
+    db_path = tmp_path / "alphamind.db"
+    sync_engine = make_engine(str(db_path))
+    try:
+        yield make_session_factory(sync_engine)
+    finally:
+        sync_engine.dispose()
 
 
 def _make_venue_config() -> VenueConfig:
@@ -394,7 +416,7 @@ class TestBuildMarketInputs:
             universe_prices={"AAPL": 999.0, "CSCO": 48.5},
             risk_free_rate=0.045,
             as_of=_NOW,
-            realized_vol_map={},
+            iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
         )
 
         assert dict(market.underlying_prices) == {"AAPL": 175.0, "CSCO": 48.5}
@@ -404,6 +426,7 @@ class TestGatherPhase1Inputs:
     async def test_returns_populated_bundle_on_happy_path(
         self,
         async_factory: async_sessionmaker[AsyncSession],
+        sync_session_factory: sessionmaker[Session],
         env_path: Path,
         archive_root: Path,
     ) -> None:
@@ -424,6 +447,7 @@ class TestGatherPhase1Inputs:
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
                 as_of=_NOW,
+                sync_session_factory=sync_session_factory,
                 account_queries_factory=lambda v, m: _StubQueries(
                     account=account, positions=positions
                 ),
@@ -442,6 +466,7 @@ class TestGatherPhase1Inputs:
     async def test_account_runtimeerror_degrades_bundle(
         self,
         async_factory: async_sessionmaker[AsyncSession],
+        sync_session_factory: sessionmaker[Session],
         env_path: Path,
         archive_root: Path,
     ) -> None:
@@ -469,6 +494,7 @@ class TestGatherPhase1Inputs:
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
                 as_of=_NOW,
+                sync_session_factory=sync_session_factory,
                 account_queries_factory=lambda v, m: _FailingQueries(),
                 ca_queries_factory=lambda v, m: _StubCorporateActionsQueries(),
             )
@@ -481,6 +507,7 @@ class TestGatherPhase1Inputs:
     async def test_factory_runtimeerror_degrades_alpaca_fields(
         self,
         async_factory: async_sessionmaker[AsyncSession],
+        sync_session_factory: sessionmaker[Session],
         env_path: Path,
         archive_root: Path,
     ) -> None:
@@ -503,6 +530,7 @@ class TestGatherPhase1Inputs:
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
                 as_of=_NOW,
+                sync_session_factory=sync_session_factory,
                 account_queries_factory=_failing_account_factory,
                 ca_queries_factory=lambda v, m: _StubCorporateActionsQueries(),
             )
@@ -516,6 +544,7 @@ class TestGatherPhase1Inputs:
     async def test_uses_position_current_prices_for_market_inputs(
         self,
         async_factory: async_sessionmaker[AsyncSession],
+        sync_session_factory: sessionmaker[Session],
         env_path: Path,
         archive_root: Path,
     ) -> None:
@@ -539,6 +568,7 @@ class TestGatherPhase1Inputs:
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
                 as_of=_NOW,
+                sync_session_factory=sync_session_factory,
                 account_queries_factory=lambda v, m: _StubQueries(
                     account=_make_account_snapshot(), positions=positions
                 ),
@@ -551,12 +581,13 @@ class TestGatherPhase1Inputs:
             "AAPL": 175.0,
             "MSFT": 410.0,
         }
-        assert isinstance(inputs.market_inputs.iv_provider, FixtureIvProvider)
+        assert isinstance(inputs.market_inputs.iv_provider, SqlOptionsIvProvider)
         assert inputs.market_inputs.as_of == _NOW
 
     async def test_market_inputs_iv_provider_populates_realized_vol_for_open_positions(
         self,
         async_factory: async_sessionmaker[AsyncSession],
+        sync_session_factory: sessionmaker[Session],
         env_path: Path,
         archive_root: Path,
     ) -> None:
@@ -564,7 +595,8 @@ class TestGatherPhase1Inputs:
         from ``ticker_realized_vol`` for every position underlying that has
         a row in the table. Underlyings without a row are absent from the
         mapping (the consumer's surface->fallback->error chain still
-        terminates correctly via the existing fixture surface)."""
+        terminates correctly via the SQL surface lookup + realized-vol
+        fallback)."""
         from alphamind.persistence.models import AssetUniverse, TickerRealizedVolRow
         from alphamind.scheduler import phase1_inputs as module
 
@@ -613,6 +645,7 @@ class TestGatherPhase1Inputs:
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
                 as_of=_NOW,
+                sync_session_factory=sync_session_factory,
                 account_queries_factory=lambda v, m: _StubQueries(
                     account=_make_account_snapshot(), positions=positions
                 ),
@@ -622,10 +655,10 @@ class TestGatherPhase1Inputs:
             await session.close()
 
         iv_provider = inputs.market_inputs.iv_provider
-        assert isinstance(iv_provider, FixtureIvProvider)
-        # Inspect the internal mapping. ``FixtureIvProvider`` doesn't expose
+        assert isinstance(iv_provider, SqlOptionsIvProvider)
+        # Inspect the internal mapping. ``SqlOptionsIvProvider`` doesn't expose
         # the realized_vol dict on its public surface; the seam below relies
-        # on the structural shape established in story 02b.
+        # on the structural shape established in story 02b / ALP-642.
         realized_vol_map = iv_provider._realized_vol
         assert "AAPL" in realized_vol_map
         assert realized_vol_map["AAPL"].underlying == "AAPL"
@@ -635,6 +668,7 @@ class TestGatherPhase1Inputs:
     async def test_market_inputs_covers_unheld_active_universe_ticker(
         self,
         async_factory: async_sessionmaker[AsyncSession],
+        sync_session_factory: sessionmaker[Session],
         env_path: Path,
         archive_root: Path,
     ) -> None:
@@ -673,6 +707,7 @@ class TestGatherPhase1Inputs:
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
                 as_of=_NOW,
+                sync_session_factory=sync_session_factory,
                 account_queries_factory=lambda v, m: _StubQueries(
                     account=_make_account_snapshot(), positions=positions
                 ),
@@ -689,6 +724,7 @@ class TestGatherPhase1Inputs:
     async def test_held_position_price_wins_over_eod_bar(
         self,
         async_factory: async_sessionmaker[AsyncSession],
+        sync_session_factory: sessionmaker[Session],
         env_path: Path,
         archive_root: Path,
     ) -> None:
@@ -717,6 +753,7 @@ class TestGatherPhase1Inputs:
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
                 as_of=_NOW,
+                sync_session_factory=sync_session_factory,
                 account_queries_factory=lambda v, m: _StubQueries(
                     account=_make_account_snapshot(), positions=positions
                 ),
