@@ -80,7 +80,7 @@ def test_no_function_local_imports_of_alphamind_inside_phase2() -> None:
     indented_alphamind_import = re.compile(r"^[ \t]+from alphamind\.")
     offenders: list[tuple[Path, int, str]] = []
     for py in PHASE2.glob("*.py"):
-        for lineno, raw in enumerate(py.read_text().splitlines(), start=1):
+        for lineno, raw in enumerate(py.read_text(encoding="utf-8").splitlines(), start=1):
             if indented_alphamind_import.match(raw):
                 offenders.append((py, lineno, raw))
     assert not offenders, "Function-local alphamind imports re-introduced in phase2/: " + ", ".join(

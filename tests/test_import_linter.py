@@ -33,15 +33,20 @@ ALP-459 (this story) tightens the scaffolding with five additional contracts:
 from __future__ import annotations
 
 import configparser
-import fcntl
 import re
 import subprocess
+import sys
 import tomllib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -59,16 +64,25 @@ _LINT_IMPORTS_LOCK = PROJECT_ROOT / ".pytest_cache" / "lint-imports.lock"
 def _lint_imports_lock() -> Iterator[None]:
     """Acquire an exclusive cross-worker lock around a ``lint-imports`` run.
 
-    Uses POSIX ``flock``; macOS and Linux (the supported developer/CI
-    platforms) both implement it. The lock file is created lazily.
+    POSIX uses ``fcntl.flock``; Windows uses ``msvcrt.locking`` on a single
+    byte (locking byte 0 of the file is sufficient as advisory serialization
+    between xdist workers). The lock file is created lazily.
     """
     _LINT_IMPORTS_LOCK.parent.mkdir(parents=True, exist_ok=True)
-    with _LINT_IMPORTS_LOCK.open("a") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    with _LINT_IMPORTS_LOCK.open("a+") as fh:
+        if sys.platform == "win32":
+            msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
 # Audit-finding labels (L1, L6, L9, L10, ...). Comments are lowered before

@@ -14,7 +14,7 @@ Register as `TaskCreate` entries up front.
 - **Always enter an isolated worktree before any code changes.** Use `EnterWorktree`; never edit from the primary checkout. The PR's branch name is the Linear `gitBranchName` from the issue. Never work on `main`.
 - **Implement in the main thread.** No `Agent` dispatch for the implementation. Only the post-PR `/review` is an explicit `Agent` dispatch.
 - **Drive the work with TDD** via `Skill("tdd")`: red → green → refactor. Each acceptance criterion that admits a programmatic test gets one.
-- **Run the full lint + test chain before opening the PR and again before merging:** `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports && uv run pytest -n auto`.
+- **Run the full lint chain before opening the PR and again before merging:** `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports`. **Do NOT run the full pytest suite locally** — per CLAUDE.md "Testing", CI (`.github/workflows/ci.yml`) is the authoritative full-suite gate on every PR. Use scoped pytest during implementation (`uv run pytest tests/<area>/ --testmon -n auto` or single test node-id) and rely on the CI run for the wave-spanning check.
 - **Linear status transitions.** `Todo` → `In Progress` on dispatch; `In Progress` → `Done` after PR merges. On blocker mid-implementation: `Blocked` + `blockedBy` link to the blocking issue.
 
 ## Pre-flight
@@ -100,7 +100,7 @@ Invoke `Skill("tdd")`: red → green → refactor.
 
 On blocker mid-implementation — schema gap, ambiguous spec, sibling-issue primitive missing or shaped differently than expected, test that won't pass without scope creep — **stop and surface**.
 
-### Lint + test chain
+### Lint + scoped-test chain
 
 After green:
 
@@ -109,12 +109,12 @@ uv run ruff check .
 uv run ruff format .
 uv run mypy
 uv run lint-imports
-uv run pytest --testmon -n auto
+uv run pytest tests/<issue-area>/ --testmon -n auto       # scoped — NOT the full suite
 ```
 
-`--testmon` is mandatory per CLAUDE.md; drop it only for the explicit pre-PR / pre-merge full-suite runs below, or when the change touches `conftest.py` / fixtures / collection hooks or non-Python files tests depend on.
+The pytest invocation is **scoped to the issue's tests** — typically the single test file or the immediate parent directory. Per CLAUDE.md "Testing", the full pytest suite is not run locally; CI (`.github/workflows/ci.yml`) runs it on every PR push and is the authoritative gate. Use `--testmon -n auto` to keep the scoped run fast.
 
-**Do not pipe `pytest` to `tail`** — the pipe's exit code is `tail`'s (always 0), masking failures. Use `uv run pytest --testmon -n auto; echo "exit=$?"` and read the summary line.
+**Do not pipe `pytest` to `tail`** — the pipe's exit code is `tail`'s (always 0), masking failures. Use `uv run pytest <scoped-path> --testmon -n auto; echo "exit=$?"` and read the summary line.
 
 **For audit / docs-only issues** where the deliverable is prose making factual claims about counts, structures, or edge classifications, verify each claim against the source after writing. The lint chain validates that the file still parses, not that the prose is correct — a false count or miscategorized edge will sail through ruff/mypy/lint-imports/pytest and survive into the PR. Walk every entity the prose enumerates (each `ignore_imports` line against its source-file site, each LOC count against `wc -l`, each "TYPE_CHECKING only" claim against the actual `if TYPE_CHECKING:` block).
 
@@ -144,8 +144,8 @@ gh pr create --head <feature-branch> --base main --title "<concise summary>" --b
 Closes <Linear issue URL>.
 
 ## Test plan
-- [ ] `uv run pytest -n auto` green on the feature branch
-- [ ] Linter chain clean
+- [ ] CI (`.github/workflows/ci.yml`) green on the PR — lint on Linux + full pytest on Windows
+- [ ] Local lint chain clean (`ruff check`, `ruff format --check`, `mypy`, `lint-imports`)
 - [ ] <issue ID> acceptance criteria all met
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
@@ -183,17 +183,40 @@ Merge the two finding lists — `/review` and `code-review` may flag overlapping
 
 Assess each finding with bias toward acceptance. Reject only with explicit reason. Apply directly on the feature branch.
 
-Re-run the lint + test chain:
+Re-run the lint chain plus scoped pytest:
 
 ```bash
-uv run ruff check . && uv run ruff format . && uv run mypy && uv run lint-imports && uv run pytest -n auto
+uv run ruff check . && uv run ruff format . && uv run mypy && uv run lint-imports
+uv run pytest tests/<issue-area>/ --testmon -n auto
 ```
+
+The pytest invocation stays scoped per CLAUDE.md "Testing"; the full-suite verification happens in CI when you push.
 
 Commit (`fix: address /review and code-review findings on <issue ID>`), push.
 
 ### 5. Land PR and clean local git state
 
-AlphaMind has no CI worth waiting on — merge as soon as the PR is open and the address-feedback push has landed.
+**Wait for CI green on the post-feedback push — and iterate until it IS green.** The address-feedback push triggered a fresh `ci` workflow run; that is the authoritative full-suite gate per CLAUDE.md "Testing". This is an iteration loop, not a one-shot wait. Watch the run **by ID** per CLAUDE.md "Watching CI on a PR" — `gh pr checks --watch` invoked right after `git push` exits early on the empty pre-registration window:
+
+```bash
+sleep 5
+RUN_ID=$(gh run list --branch <feature-branch> --workflow ci.yml --limit 1 --json databaseId -q '.[0].databaseId')
+gh run watch "$RUN_ID" --exit-status
+```
+
+1. Watch to completion.
+2. **If green:** proceed to merge.
+3. **If red:** read the failure log via `gh run view "$RUN_ID" --log-failed --job <job ID>` (the failed-job ID is printed by `gh run watch`). Diagnose. Fix on the feature branch. Commit with `fix: address CI <category> failure in <area>`. Push. Re-fetch `RUN_ID` and watch the fresh run.
+4. **Do not merge while CI is red on the latest pushed commit.** Do not declare the issue done. The implementation is not complete until CI is green on whatever commit will land at merge time.
+
+**Failure-class diagnosis:**
+
+- **Lint failure** — fix on the feature branch, commit, push, re-watch.
+- **Test failure on Windows that you can't reproduce locally** — Windows-specific (path separators, file-handle behavior, line endings, timezone-naive datetime drift, signal handling, `cp1252` default text encoding, missing env vars CI doesn't have, Unix-only stdlib modules like `fcntl`). Read the failing test's traceback from the CI log; reproduce locally if you can; fix; push; re-watch.
+- **Test failure that looks flaky** — re-run via `gh run rerun <run ID> --failed`. If it persists, treat as real (test-order dependence — bisect per CLAUDE.md "Testing"). Fix the offending test or production code, push, re-watch.
+- **Pre-existing failure orthogonal to this issue** — verify by checking the most recent push-to-main CI run on origin/main. If reproducible on `main`, surface to the operator, open a Linear "To-dos" issue with symptom + scope, and xfail/skip the test in this PR with `reason="ALP-<new-issue-id>: ..."` so this PR's CI goes green without masking the bug. Do NOT silently downgrade an in-scope failure to "pre-existing" — verify against main first. Do NOT xfail without an open tracking issue.
+
+Server-side branch protection is not enforced (CLAUDE.md "Branch policy") but the policy still holds: do not merge on red.
 
 **Sweep stale `main`-bearing worktrees before `gh pr merge`.** `git worktree list`, look for orphans checked out to `main` (typical naming: `.claude/worktrees/<random-name>`). Confirm `git -C <path> status --short` is clean, then `git worktree remove -f -f <path>`. The double `-f` overrides the Claude agent harness's lock.
 
@@ -245,7 +268,8 @@ A handful of sentences per section. Brevity beats completeness — the operator 
 ## Boundaries
 
 - Do not push to remote branches other than the feature branch until the PR merges.
-- Do not declare the issue `Done` without `uv run pytest --testmon -n auto` green (or `uv run pytest -n auto` without `--testmon` for the pre-PR / pre-merge final-verification runs), lint chain clean, every acceptance criterion verified, PR merged.
+- Do not push directly to `main`. Per CLAUDE.md "Branch policy", main is PR-only; the convention is not server-enforced but is treated as a hard rule.
+- Do not declare the issue `Done` without scoped `uv run pytest tests/<issue-area>/ --testmon -n auto` green, lint chain clean, every acceptance criterion verified, CI green on the PR, and the PR merged. The full pytest suite runs in CI — do NOT run it locally.
 - Do not modify the issue's description — only `state` and `blockedBy`.
 - Verify each completion-sequence task `completed` before reporting done.
 
@@ -268,6 +292,9 @@ Shape per entry:
 - Sequencing `/review` and `code-review` instead of running them concurrently.
 - Passing `--comment` to `code-review` during the pre-merge pass — it posts intermediate findings to the PR and short-circuits the consolidate-with-`/review` step.
 - Pushing partial address-feedback commits while `/review` is still running.
+- **Running the unscoped full pytest suite locally.** CLAUDE.md "Testing" forbids this by default — CI runs the full suite on PR. Per-implementation local pytest stays scoped to the issue's area.
+- **Merging the PR without waiting for CI green.** Server-side branch protection isn't enforced but the policy holds. The CI run is the authoritative full-suite gate; merging on red defeats the regime.
+- **Walking away from a red CI run.** The step is an iteration loop, not a one-shot wait. Failures from this issue's changes get fixed and re-pushed until CI is green on the latest commit. Pre-existing failures orthogonal to this issue get a Linear ticket + xfail with the ticket ID. There is no "merge red" path.
 - Mocking what you don't own.
 - Trusting your own self-report. Verify with `git log main..HEAD` and `git status`.
 - Acceptance criteria at the granularity of "the module works" — surface as underspecified before implementing.

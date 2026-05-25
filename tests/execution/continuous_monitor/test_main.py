@@ -50,8 +50,10 @@ def test_main_run_paper_starts_supervisor_and_returns_cleanly(
     with a paper-mode session and that the session-start line was emitted to
     the configured ``monitor.log``.
     """
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("USERPROFILE", raising=False)
+    monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
+    monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
 
     constructed: dict[str, object] = {}
 
@@ -78,8 +80,10 @@ def test_main_run_defaults_to_paper_mode(
     _silent_logger: None,
 ) -> None:
     """Omitting ``--mode`` selects paper."""
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("USERPROFILE", raising=False)
+    monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
+    monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
 
     async def _no_op_run(self: object) -> None:
         del self

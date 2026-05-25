@@ -37,11 +37,15 @@ If the parent isn't in `Done` status, **stop** — the feature is in flight, its
 
 ## Hard rules
 
-### 0. Local archives before archiving the sub-issues
+### 0a. Materialized archive files land on main via PR
+
+This skill produces new files under `docs/_archive/implementation/<layer>/<feature>/` when Phase 1.5 runs (`export_linear_issues.py`), plus optionally edited files when Phase 3 resolves drift. **Those file changes go through the PR flow per CLAUDE.md "Branch policy"** — do not push directly to `main`. CI (`.github/workflows/ci.yml`) skips runs for `docs/**`-only changes via `paths-ignore`, so the archive-only PR is cheap to merge: open it, squash-merge, done. If Phase 3 drift resolution edits anything outside `docs/` (e.g., a `src/` cleanup informed by the tiebreaker), the PR triggers full CI as usual.
+
+### 0b. Local archives before archiving the sub-issues
 
 The `## Shipped stories` index in the rolled-up parent body carries only titles + IDs. Every sub-issue's substantive content — the `Goal`, `Reading`, `Scope`, `Acceptance criteria`, `Verification` sections — lives only in the sub-issue body itself. The local archive at `docs/_archive/implementation/<layer>/<feature>/` is the in-repo canonical record of that content: it does not depend on Linear and travels with the codebase.
 
-Archived Linear issues stay recoverable indefinitely via Linear's archive view, so archiving (unlike a true delete) is not a point of no return. But do not rely on the archive view as the design record — **materialize the local archive first via Phase 1.5** whenever the directory is missing or sparse. The step is a single `export_linear_issues.py` invocation; skipping it leaves the feature's design content reachable only by un-archiving issues one at a time in the Linear UI.
+Archived Linear issues stay recoverable indefinitely via Linear's archive view, so archiving (unlike a true delete) is not a point of no return. But do not rely on the archive view as the design record — **materialize the local archive first via Phase 1.5** whenever the directory is missing or sparse. The step is a single `export_linear_issues.py` invocation; skipping it leaves the feature's design content reachable only by un-archiving issues one at a time in the Linear UI. The exported files are committed via a PR (see Hard rule 0a).
 
 ### 1. Body MUST start with a non-bullet paragraph
 
