@@ -297,17 +297,19 @@ When the triage list is empty, record that explicitly ("Pre-review triage: no ad
 
 ### 3. Wait for CI green on the PR — and iterate until it IS green
 
-The `ci` workflow runs on every PR push: lint chain on Linux, full pytest suite on Windows (matches production). It is the authoritative full-suite gate; this skill no longer runs the full suite locally. Watch the PR run:
+The `ci` workflow runs on every PR push: lint chain on Linux, full pytest suite on Windows (matches production). It is the authoritative full-suite gate; this skill no longer runs the full suite locally. Watch the run **by ID**, not by PR — per CLAUDE.md "Watching CI on a PR", `gh pr checks <PR> --watch` invoked immediately after a push exits early with "no checks reported" because the check hasn't registered yet:
 
 ```bash
-gh pr checks <PR number> --watch
+sleep 5
+RUN_ID=$(gh run list --branch <feature-branch> --workflow ci.yml --limit 1 --json databaseId -q '.[0].databaseId')
+gh run watch "$RUN_ID" --exit-status
 ```
 
-`gh pr checks --watch` polls until every check has a terminal state. **This step is not "wait once and proceed regardless" — it is an iteration loop.** Stay in the loop until CI is green:
+`gh run watch --exit-status` blocks until the run reaches a terminal state and propagates the run's pass/fail as the command's exit code (non-zero on failure). **This step is not "wait once and proceed regardless" — it is an iteration loop.** Stay in the loop until CI is green:
 
 1. Watch the run to completion.
 2. **If green:** proceed to /review (step 4).
-3. **If red:** read the failure log via `gh run view <run ID> --log-failed --job <job ID>`. Diagnose. Fix on the feature branch. Commit with a `fix(<feature>): address CI <category> failure in <area>` message. Push. Go back to step 1 — the push triggers a fresh CI run that you must watch to completion.
+3. **If red:** read the failure log via `gh run view "$RUN_ID" --log-failed --job <job ID>` (the failed-job ID is printed by `gh run watch`). Diagnose. Fix on the feature branch. Commit with a `fix(<feature>): address CI <category> failure in <area>` message. Push. Go back to step 1 — re-fetch the new `RUN_ID` after the push and watch the fresh run to completion.
 4. **Do not declare the post-completion sequence done while CI is red.** Do not advance to /review. Do not merge. Do not move on to the next feature. The orchestration is not complete until CI is green on the latest pushed commit.
 
 **Failure-class diagnosis:**
@@ -367,7 +369,7 @@ Edit the feature's bullet under "Ready for implementation": change `_in progress
 
 ### 7. Land PR and clean local git state
 
-- Confirm CI is still green on the PR (`gh pr checks <PR number>`) — completion-sequence step 3 waited for the initial run, but the address-feedback push (step 5) triggered a fresh CI run. Wait for that one to complete green before merging.
+- Confirm CI is still green on the PR — completion-sequence step 3 waited for the initial run, but the address-feedback push (step 5) triggered a fresh CI run. Watch it by ID per CLAUDE.md "Watching CI on a PR": `sleep 5 && gh run watch $(gh run list --branch <feature-branch> --workflow ci.yml --limit 1 --json databaseId -q '.[0].databaseId') --exit-status`. Iterate (fix → push → re-watch) until green.
 - **Before `gh pr merge`, sweep stale `main`-bearing worktrees.** Run `git worktree list` and look for orphan worktrees from prior sessions checked out to `main` (typical naming: `.claude/worktrees/<random-name>` with no `agent-` prefix). `gh pr merge` switches the local checkout to `main` to apply the merge and fails with `fatal: 'main' is already used by worktree at <path>` if a stale `main` worktree exists. Confirm the orphan's `git -C <path> status --short` is clean (no uncommitted work), then `git worktree remove -f -f <path>`. Diagnose only if the worktree has uncommitted work — rare for orphans, but possible if it represents the operator's in-progress side work.
 - Squash-merge the PR per CLAUDE.md "Git / GitHub Instructions" (`gh pr merge <PR number> --squash --delete-branch`).
 - Locally:

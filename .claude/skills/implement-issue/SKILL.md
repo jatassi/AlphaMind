@@ -196,15 +196,17 @@ Commit (`fix: address /review and code-review findings on <issue ID>`), push.
 
 ### 5. Land PR and clean local git state
 
-**Wait for CI green on the post-feedback push — and iterate until it IS green.** The address-feedback push triggered a fresh `ci` workflow run; that is the authoritative full-suite gate per CLAUDE.md "Testing". This is an iteration loop, not a one-shot wait. Watch:
+**Wait for CI green on the post-feedback push — and iterate until it IS green.** The address-feedback push triggered a fresh `ci` workflow run; that is the authoritative full-suite gate per CLAUDE.md "Testing". This is an iteration loop, not a one-shot wait. Watch the run **by ID** per CLAUDE.md "Watching CI on a PR" — `gh pr checks --watch` invoked right after `git push` exits early on the empty pre-registration window:
 
 ```bash
-gh pr checks <PR number> --watch
+sleep 5
+RUN_ID=$(gh run list --branch <feature-branch> --workflow ci.yml --limit 1 --json databaseId -q '.[0].databaseId')
+gh run watch "$RUN_ID" --exit-status
 ```
 
 1. Watch to completion.
 2. **If green:** proceed to merge.
-3. **If red:** read the failure log via `gh run view <run ID> --log-failed --job <job ID>`. Diagnose. Fix on the feature branch. Commit with `fix: address CI <category> failure in <area>`. Push. Go back to step 1 — the push triggers a fresh CI run that you must watch to completion.
+3. **If red:** read the failure log via `gh run view "$RUN_ID" --log-failed --job <job ID>` (the failed-job ID is printed by `gh run watch`). Diagnose. Fix on the feature branch. Commit with `fix: address CI <category> failure in <area>`. Push. Re-fetch `RUN_ID` and watch the fresh run.
 4. **Do not merge while CI is red on the latest pushed commit.** Do not declare the issue done. The implementation is not complete until CI is green on whatever commit will land at merge time.
 
 **Failure-class diagnosis:**

@@ -40,6 +40,30 @@ Branch protection is not currently enforced server-side (the repo is on GitHub F
 
 Squash-merge every PR (see "Git / GitHub Instructions" below). The CI workflow uses `paths-ignore` for `**.md`, `docs/**`, `.archive/**`, `.claude/**`, and `audit-*.html` — pure docs/tooling PRs skip the test run and can merge as soon as you open them. Any change touching `src/`, `tests/`, `config/`, `prompts/`, `scripts/`, `pyproject.toml`, `uv.lock`, `.importlinter`, `alembic.ini`, or `.github/workflows/**` triggers the full CI run.
 
+### Watching CI on a PR
+
+**Do NOT invoke `gh pr checks <PR> --watch` immediately after `git push`.** GitHub takes 3–8 seconds to register the new workflow run as a check on the PR, and `--watch` interprets the empty pre-registration window as "no checks → exit." The watch exits with status 0 reporting "no checks reported on the '<branch>' branch" and the iterate-until-green loop falsely believes CI is done.
+
+The reliable pattern is to **fetch the run ID directly and watch it by ID** — `gh run watch` blocks until the run reaches a terminal state, with no pre-registration race:
+
+```bash
+# After git push, give the run a moment to register, then watch it by ID.
+sleep 5
+RUN_ID=$(gh run list --branch <feature-branch> --workflow ci.yml --limit 1 --json databaseId -q '.[0].databaseId')
+gh run watch "$RUN_ID" --exit-status     # --exit-status returns non-zero on failure
+```
+
+`--exit-status` is critical for the iterate-until-green loop: it makes the watch propagate the run's pass/fail as the command's exit code, so a shell pipeline like `gh run watch "$RUN_ID" --exit-status && gh pr merge ...` short-circuits correctly on failure.
+
+If you must use `gh pr checks --watch` (e.g., because multiple workflows gate the PR and you want their joint status), guard against the pre-registration race with a poll-until-checks-appear preamble:
+
+```bash
+until [ "$(gh pr checks <PR> --json status -q 'length' 2>/dev/null)" -gt 0 ]; do sleep 2; done
+gh pr checks <PR> --watch
+```
+
+On a failed run, fetch logs via `gh run view <RUN_ID> --log-failed --job <JOB_ID>` (the failed-job ID is printed by `gh run watch`). `--log-failed` filters to just the failing job's output so you don't have to scroll through gigabytes of passing-test noise.
+
 ## Spawning Subagents
 
 - For mechanical changes, use Sonnet
