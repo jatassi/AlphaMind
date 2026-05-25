@@ -17,7 +17,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import Symbol
-from alphamind.distillation.baselines import refresh_ticker_baselines
+from alphamind.distillation.baselines import _stdev_from_m2, refresh_ticker_baselines
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -638,13 +638,11 @@ class TestRefreshTickerBaselinesWelfordNumerics:
     def test_stdev_from_m2_clamps_negative_m2_to_zero(self) -> None:
         """Tiny negative ``m2`` from roundoff yields stdev ``0.0``, not a raise.
 
-        Direct regression for the prod traceback at
-        ``baselines.py:191`` — ``(-1e-15) ** 0.5`` returns a ``complex`` and
-        the ``float(...)`` cast raises ``TypeError``. The helper must clamp
-        the variance to zero before the square root.
+        Direct regression for the prod traceback in ``_stdev_from_m2`` —
+        ``(-1e-15) ** 0.5`` returns a ``complex`` and the ``float(...)``
+        cast raises ``TypeError``. The helper must clamp the variance to
+        zero before the square root.
         """
-        from alphamind.distillation.baselines import _stdev_from_m2
-
         assert _stdev_from_m2(n=1, m2=-1e-15) == 0.0
         assert _stdev_from_m2(n=20, m2=-1e-12) == 0.0
 
