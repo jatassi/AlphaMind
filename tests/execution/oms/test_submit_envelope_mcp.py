@@ -1149,6 +1149,46 @@ async def test_layer_1_parse_failure_captured_in_failed_submission_log() -> None
 
 
 @pytest.mark.asyncio
+async def test_layer_1_rejects_short_equity_open_command() -> None:
+    """ALP-644: a SHORT equity OPEN command surfaces an envelope-level
+    rejection at Layer-1 — the OpenCommand Pydantic validator catches the
+    unsupported direction before Layer-2/3 ever runs, so the broker never
+    sees a sell-side equity entry that would later crash Phase 1's
+    ``_apply_fill_to_equity_position`` on the SELL_TO_OPEN fill."""
+    from alphamind.decision.portfolio_manager.submit_envelope import get_failed_submission_log
+
+    get_state, server, _ = _build_state_and_server()
+
+    # Build a fully-shaped LONG-equity envelope, then flip the embedded OPEN
+    # command's instrument direction to SHORT — exercises the validator from
+    # the wire-format edge rather than from a pre-validated Pydantic object.
+    envelope_dict = _make_analyst_envelope().model_dump(mode="json")
+    envelope_dict["commands"][0]["instrument"]["direction"] = "short"
+
+    text, is_error = await _invoke_mcp_tool(server, "submit_envelope", envelope_dict)
+    assert not is_error, text
+
+    payload = json.loads(text)
+    assert payload["envelope_id"] == "ENV-REC-1"
+    assert len(payload["submission_results"]) == 1
+    result = payload["submission_results"][0]
+    assert result["status"] == "rejected"
+    assert result["acknowledgment"] is None
+    rejection = result["rejection_payload"]
+    assert rejection["rules_breached"][0]["rule"] == "schema_invariant"
+    suggested = rejection["suggested_modification"].lower()
+    assert "short" in suggested and "equity" in suggested
+
+    # Layer-1 failure surface — captured in failed_submission_log, NOT in
+    # the parsed submission_log; cumulative validation state untouched.
+    failed_log = get_failed_submission_log(get_state())
+    assert len(failed_log) == 1
+    assert "short" in failed_log[0].validation_error_repr.lower()
+    assert len(get_state().submission_log) == 0
+    assert len(get_state().validation_state.accumulated_deltas) == 0
+
+
+@pytest.mark.asyncio
 async def test_layer_1_failure_uses_fallback_envelope_id_when_missing() -> None:
     """When the raw payload omits ``envelope_id`` entirely, the rejection and
     the failed_submission_log both fall back to ``ENV-REC-INVALID`` so the
