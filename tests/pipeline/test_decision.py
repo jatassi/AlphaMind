@@ -187,6 +187,16 @@ def _pipeline_inputs_from_fixture(
         dependency_risk_flag_min_position_count=2,
         abandoned_window_lookback_invocations=1,
     )
+    from alphamind.state.config import StatePersistenceConfig
+
+    state_persistence_config = StatePersistenceConfig.model_validate(
+        {
+            "pm_decision_log_sliding_window_invocations": 3,
+            "snapshot_read_timeout_seconds": 5.0,
+            "pip_freeze_snapshot_root": "/tmp/test-pipeline-decision",
+            "invocation_provenance_root": "/tmp/test-pipeline-decision",
+        }
+    )
 
     return {
         "assembled_snapshot": assembled,
@@ -205,6 +215,7 @@ def _pipeline_inputs_from_fixture(
         "library_market": library_market,
         "profile_feature_flags": feature_flags,
         "state_delivery_config": state_delivery_config,
+        "state_persistence_config": state_persistence_config,
         "options_enabled": False,
         "short_selling_enabled": False,
         "active_sectors": frozenset(active_sectors),

@@ -78,6 +78,7 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationT
 from alphamind.risk_guardrails.state_delivery.validation_tool_mcp import (
     build_validate_guardrail_mcp_server,
 )
+from alphamind.state.config import StatePersistenceConfig
 
 __all__ = [
     "ContextOverflowFailure",
@@ -349,6 +350,7 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
     sector_resolver: Callable[[str], str],
     library_config: LibraryConfig,
     library_market: MarketInputs,
+    state_persistence_config: StatePersistenceConfig,
     broker_dispatch: BrokerDispatch | None = None,
 ) -> tuple[dict[str, Any], list[str], Callable[[], SubmitEnvelopeState]]:
     """Compose the four MCP servers and merge their allowed-tool lists.
@@ -380,6 +382,7 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
         sector_resolver=sector_resolver,
         library_config=library_config,
         library_market=library_market,
+        state_persistence_config=state_persistence_config,
         broker_dispatch=broker_dispatch,
     )
     merged_servers: dict[str, Any] = {
@@ -571,6 +574,7 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
     sector_resolver: Callable[[str], str],
     library_config: LibraryConfig,
     library_market: MarketInputs,
+    state_persistence_config: StatePersistenceConfig,
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     broker_dispatch: BrokerDispatch | None = None,
@@ -660,6 +664,7 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
         sector_resolver=sector_resolver,
         library_config=library_config,
         library_market=library_market,
+        state_persistence_config=state_persistence_config,
         broker_dispatch=broker_dispatch,
     )
     prompt_text = await _load_prompt(agent_config.prompt)

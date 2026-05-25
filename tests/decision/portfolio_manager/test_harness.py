@@ -105,6 +105,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     PortfolioStateSnapshot,
 )
 from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationToolState
+from alphamind.state.config import StatePersistenceConfig
 
 # ---------------------------------------------------------------------------
 # Shared fixtures and helpers
@@ -502,9 +503,21 @@ def _invoke_kwargs(
         "sector_resolver": _sector_resolver,
         "library_config": library_config,
         "library_market": library_market,
+        "state_persistence_config": _state_persistence_config(),
         "archive_root": archive_root,
         "sdk_query_fn": sdk_query_fn,
     }
+
+
+def _state_persistence_config() -> StatePersistenceConfig:
+    return StatePersistenceConfig.model_validate(
+        {
+            "pm_decision_log_sliding_window_invocations": 3,
+            "snapshot_read_timeout_seconds": 5.0,
+            "pip_freeze_snapshot_root": "/tmp/test-pm-harness",
+            "invocation_provenance_root": "/tmp/test-pm-harness",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

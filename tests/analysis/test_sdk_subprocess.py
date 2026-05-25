@@ -40,6 +40,7 @@ from alphamind.analysis._harness_core import (
     TimeoutFailure,
 )
 from alphamind.analysis._shared import TokensUsed
+from alphamind.state.config import StatePersistenceConfig
 
 # ---------------------------------------------------------------------------
 # Common fakes (module-level so pickle.dumps can locate them by qualified name)
@@ -355,6 +356,14 @@ def test_pm_wrapper_raises_on_sdk_failure() -> None:
                 sector_resolver=MagicMock(),
                 library_config=MagicMock(),
                 library_market=MagicMock(),
+                state_persistence_config=StatePersistenceConfig.model_validate(
+                    {
+                        "pm_decision_log_sliding_window_invocations": 1,
+                        "snapshot_read_timeout_seconds": 1.0,
+                        "pip_freeze_snapshot_root": "/tmp/test",
+                        "invocation_provenance_root": "/tmp/test",
+                    }
+                ),
             )
         )
 

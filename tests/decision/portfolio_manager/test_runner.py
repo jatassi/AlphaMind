@@ -89,6 +89,7 @@ from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
     CrossConstraintImpact,
 )
+from alphamind.state.config import StatePersistenceConfig
 
 # ---------------------------------------------------------------------------
 # Constants and shared fixtures
@@ -565,6 +566,7 @@ def _runner_kwargs(
         "invocation_id": "inv-pm-001",
         "timestamp": _AS_OF,
         "state_delivery_config": _state_delivery_config(),
+        "state_persistence_config": _state_persistence_config(),
         "options_enabled": False,
         "short_selling_enabled": False,
         "total_portfolio_value_usd": money(_PORTFOLIO_VALUE),
@@ -577,6 +579,17 @@ def _runner_kwargs(
         "agent_config": agent_config,
         "sdk_query_fn": sdk_query_fn,
     }
+
+
+def _state_persistence_config() -> StatePersistenceConfig:
+    return StatePersistenceConfig.model_validate(
+        {
+            "pm_decision_log_sliding_window_invocations": 3,
+            "snapshot_read_timeout_seconds": 5.0,
+            "pip_freeze_snapshot_root": "/tmp/test-pm-runner",
+            "invocation_provenance_root": "/tmp/test-pm-runner",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from alphamind.config.models.execution import ExecutionConfig
     from alphamind.execution.broker_adapter import AccountStateQueries
     from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
+    from alphamind.state.config import StatePersistenceConfig
 
 
 _SERVER_NAME = "alphamind_execution_oms_submit"
@@ -96,8 +97,8 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     sector_resolver: Callable[[str], str],
     library_config: LibraryConfig,
     library_market: MarketInputs,
+    state_persistence_config: StatePersistenceConfig,
     invocation_handle: Any | None = None,
-    state_persistence_config: Any | None = None,
     client: TradingClient | None = None,
     queries: AccountStateQueries | None = None,
     execution_config: ExecutionConfig | None = None,
@@ -133,7 +134,10 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     path (ALP-366) and persists Layer-1 parse failures as
     ``envelope_parse_failed`` activity log entries. Composition pipelines
     (ALP-310) inject the handle obtained from the surrounding
-    ``InvocationContext``.
+    ``InvocationContext``. ``state_persistence_config`` is forwarded
+    verbatim into every Phase-2 entrypoint so the engine's persistence
+    knobs (sliding-window size, snapshot timeout, provenance roots) all
+    resolve against the operator-supplied config (ALP-653).
 
     When ``client`` + ``queries`` + ``execution_config`` are supplied
     (broker-routing coordinated swap, story 03e / ALP-390), each accepted
@@ -205,8 +209,8 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     active_sectors: frozenset[str],
     halt_mode: bool,
     sector_resolver: Callable[[str], str],
+    state_persistence_config: StatePersistenceConfig,
     invocation_handle: Any | None = None,
-    state_persistence_config: Any | None = None,
     client: TradingClient | None = None,
     queries: AccountStateQueries | None = None,
     execution_config: ExecutionConfig | None = None,
