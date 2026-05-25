@@ -19,9 +19,6 @@ from alphamind.portfolio_state.aggregates.risk_budget import (
     RiskBudgetConsumption,
     RiskBudgetEntry,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.projection import (
-    MIN_RULE_WARNING_BAND_PCT,
-)
 from alphamind.risk_guardrails.guardrail_evaluation.rules import build_active_specs
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
     EscalationZones,
@@ -66,8 +63,8 @@ def build_risk_budget_consumption(
     * ``zone`` classifies via the per-rule escalation zones. Inverse rules
       (``spec.inverse=True``) mirror the projection engine's convention
       (``projection.py:_classify``) — FAIL below the floor, WARNING within
-      ``MIN_RULE_WARNING_BAND_PCT`` above the floor, NORMAL otherwise —
-      collapsed to three of the four ``RiskZone`` values
+      ``LibraryConfig.inverse_warning_band_pct`` above the floor, NORMAL
+      otherwise — collapsed to three of the four ``RiskZone`` values
       (NORMAL / WARNING / BLOCKED; CRITICAL is unused for inverse). A rule
       missing from ``config.escalation_zones`` raises ``KeyError``; both
       caller paths (scheduler and breach loop) build the config through
@@ -95,7 +92,12 @@ def build_risk_budget_consumption(
                     current, limit, inverse=spec.inverse, magnitude=spec.magnitude
                 ),
                 zone=_classify_zone(
-                    current, limit, zones, inverse=spec.inverse, magnitude=spec.magnitude
+                    current,
+                    limit,
+                    zones,
+                    inverse=spec.inverse,
+                    magnitude=spec.magnitude,
+                    inverse_warning_band_pct=config.inverse_warning_band_pct,
                 ),
                 unit=spec.unit,
                 cumulative_invocation_impact_value=0.0,
@@ -144,20 +146,22 @@ def _classify_zone(
     *,
     inverse: bool,
     magnitude: bool,
+    inverse_warning_band_pct: float,
 ) -> RiskZone:
     """Classify the rule's risk zone from current vs. limit.
 
     Cap rules (``inverse=False``) delegate to ``classify_consumption_zone``
     against the supplied escalation thresholds. Inverse rules mirror the
     projection engine's convention (``projection.py:_classify``): FAIL
-    (→ BLOCKED) below the floor, WARNING within ``MIN_RULE_WARNING_BAND_PCT``
-    above the floor, NORMAL otherwise. Magnitude rules (theta, vega) classify
-    on ``|current_value|`` — long-options portfolios carry negative theta by
-    construction, and the magnitude flag is precisely how the registry signals
-    "sign is incidental, magnitude is the constraint" (see
-    ``projection.py:143``). ``zones`` is required; the caller's subscript at
-    :func:`build_risk_budget_consumption` raises ``KeyError`` upstream when a
-    rule has no zones entry.
+    (→ BLOCKED) below the floor, WARNING within ``inverse_warning_band_pct``
+    above the floor, NORMAL otherwise. ``inverse_warning_band_pct`` is sourced
+    from ``LibraryConfig.inverse_warning_band_pct`` (ALP-646). Magnitude rules
+    (theta, vega) classify on ``|current_value|`` — long-options portfolios
+    carry negative theta by construction, and the magnitude flag is precisely
+    how the registry signals "sign is incidental, magnitude is the constraint"
+    (see ``projection.py:_classify``). ``zones`` is required; the caller's
+    subscript at :func:`build_risk_budget_consumption` raises ``KeyError``
+    upstream when a rule has no zones entry.
 
     Raises ``ValueError`` on ``limit_value <= 0``, or on negative
     ``current_value`` for non-magnitude rules (real data corruption the rest
@@ -171,7 +175,7 @@ def _classify_zone(
         msg = f"current_value must be >= 0; got {current_value}"
         raise ValueError(msg)
     if inverse:
-        warning_floor = limit_value * (1 + MIN_RULE_WARNING_BAND_PCT / 100.0)
+        warning_floor = limit_value * (1 + inverse_warning_band_pct / 100.0)
         if measured >= warning_floor:
             return RiskZone.NORMAL
         if measured >= limit_value:

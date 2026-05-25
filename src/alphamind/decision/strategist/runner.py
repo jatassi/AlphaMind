@@ -54,6 +54,7 @@ from alphamind.portfolio_state.records.positions import (
 from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
+    EscalationZones,
     FeatureFlagsView,
     LibraryConfig,
     MarketInputs,
@@ -263,6 +264,7 @@ async def run_strategist(  # noqa: PLR0913 — signature dictated by ALP-308 spe
         available_for_new_positions_usd=available_for_new_positions_usd,
         current_price_lookup=current_price_lookup,
         synthesizer_brief_text=synthesizer_brief_text,
+        position_zones=library_config.position_zones,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,
         prior_health_snapshots=prior_health_snapshots,
@@ -325,6 +327,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
     available_for_new_positions_usd: float,
     current_price_lookup: Callable[[str], float],
     synthesizer_brief_text: str,
+    position_zones: EscalationZones,
     sector_label_display: dict[str, str] | None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...],
     prior_health_snapshots: tuple[ThesisHealthSnapshot, ...],
@@ -351,6 +354,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
             current_price_lookup=current_price_lookup,
             synthesizer_brief_text=synthesizer_brief_text,
             tool_names=STRATEGIST_TOOL_NAMES,
+            position_zones=position_zones,
             sector_label_display=sector_label_display,
             regime_transition_breaches=regime_transition_breaches,
             prior_health_snapshots=prior_health_snapshots,
@@ -374,6 +378,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
         current_price_lookup=current_price_lookup,
         synthesizer_brief_text=synthesizer_brief_text,
         tool_names=STRATEGIST_TOOL_NAMES,
+        position_zones=position_zones,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,
         prior_health_snapshots=prior_health_snapshots,

@@ -63,6 +63,9 @@ def from_resolved_config(resolved: ResolvedConfig) -> LibraryConfig:
     * ``conservative_buffer_pct``: copied from
       ``resolved.execution.conservative_delta_buffer_pct``; must lie in
       ``[0, 100]`` or raises.
+    * ``position_zones`` / ``inverse_warning_band_pct``: copied from the
+      top-level ``guardrails.yaml`` block (ALP-646). The Pydantic schema
+      defaults them to ``{70, 85, 95}`` / ``20.0`` when YAML omits them.
     """
     buffer_pct = resolved.execution.conservative_delta_buffer_pct
     if not (0.0 <= buffer_pct <= 100.0):
@@ -92,6 +95,13 @@ def from_resolved_config(resolved: ResolvedConfig) -> LibraryConfig:
                 f"Active sector {sector!r} is missing from assets.sectors"
             )
 
+    pz = resolved.guardrails.position_zones
+    position_zones = EscalationZones(
+        warning=float(pz.warning),
+        critical=float(pz.critical),
+        hard_block=float(pz.hard_block),
+    )
+
     return LibraryConfig(
         effective_limits=MappingProxyType(dict(resolved.rule_values)),
         escalation_zones=MappingProxyType(escalation_zones),
@@ -103,4 +113,6 @@ def from_resolved_config(resolved: ResolvedConfig) -> LibraryConfig:
         active_regime=resolved.regime_label,
         active_profile=resolved.profile_label,
         conservative_buffer_pct=float(buffer_pct),
+        position_zones=position_zones,
+        inverse_warning_band_pct=float(resolved.guardrails.inverse_warning_band_pct),
     )

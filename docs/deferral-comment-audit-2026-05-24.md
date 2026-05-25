@@ -129,11 +129,10 @@ Triage convention: a finding is presumed **tracked** if the comment cites a Line
 - **src/alphamind/risk_guardrails/regime_adaptation/__init__.py:9-11** — `Module load order (types first) is load-bearing` — **Fragile module load order; innocuous refactor would break it**
 - **src/alphamind/risk_guardrails/regime_adaptation/inputs_assembly.py:64** — `richer per-rule metadata is the rules-and-limits feature's job and will land via a later integration`
 - **src/alphamind/risk_guardrails/breach_behavior/cascade.py:766** — `a strategy yields None and has no position-level side, so it is excluded from a directional-candidate set`
-- **src/alphamind/risk_guardrails/guardrail_evaluation/projection.py:20** — `operator-tunable later if proved wrong`
-- **src/alphamind/risk_guardrails/guardrail_evaluation/projection.py:40** — `Operator-tunable later if the band proves wrong`
 - **src/alphamind/risk_guardrails/rules_and_limits/registry.py:73** — `direct dataclass instantiation by future code`
 - **src/alphamind/risk_guardrails/state_delivery/validation_tool.py:84** — `_validate_cross_field_invariants enforces the direction is None ⇔ asset_type is STRATEGY invariant`
-- **src/alphamind/risk_guardrails/state_delivery/primitives.py:97** — `_ZONE_WARNING_THRESHOLD = 0.70` — **Hardcoded numeric anchor**
+
+(Retired by ALP-646: `projection.py:20`/`:40` "operator-tunable later" comments and `primitives.py:97` `_ZONE_WARNING_THRESHOLD` hardcoded anchor — both replaced by `LibraryConfig.inverse_warning_band_pct` / `LibraryConfig.position_zones` sourced from `config/guardrails.yaml`.)
 
 ### src/analysis
 
@@ -284,7 +283,7 @@ Items most likely to be real untracked deferrals or bug-risk patterns worth a ve
 
 1. **`risk_guardrails/iv_sourcing.py:12-15`** — Polygon options IV adapter "lands when the options collector is built." Is the collector built? If yes, why is the production adapter still missing? If no, what IV surface is production using?
 2. **`risk_guardrails/regime_adaptation/__init__.py:9-11`** — load-order-dependent import. An innocuous refactor that reorders imports would break it silently.
-3. **`risk_guardrails/state_delivery/primitives.py:97`** — `_ZONE_WARNING_THRESHOLD = 0.70` — hardcoded numeric anchor.
+3. ~~**`risk_guardrails/state_delivery/primitives.py:97`** — `_ZONE_WARNING_THRESHOLD = 0.70` — hardcoded numeric anchor.~~ Retired by ALP-646.
 4. **`_kernel/ids.py:14-15`** — Symbol/OccSymbol constructor deferred to story 05a; consumers may rely on a missing validator.
 5. **`scheduler/__main__.py:6-11`** — Empty task registry in daemon loop "until stories 04a / 04b register tasks." Are 04a / 04b shipped?
 6. **`scheduler/debug_e2e/seed.py:217-219` + `:263-268` + `broker.py:105-107`** — Three places reference net-credit strategy variants as unsupported. Real gap if the strategist proposes a net-credit strategy.

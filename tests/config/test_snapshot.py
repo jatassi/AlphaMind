@@ -158,11 +158,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     """
     resolved = _fixture_resolved()
     digest = compute_snapshot_hash(serialize_resolved_config(resolved))
-    # Pin updated 2026-05-25 (ALP-625): strategist + portfolio_manager tools
-    # allowlists in agents.yaml extended to include validate_guardrail_batch
-    # alongside validate_guardrail; the fixture's canonical bytes shifted by
-    # those two list changes.
-    expected = "adb504c060cdb6a66f8779d31a8d92f2e8a8daf1e02d19a6dfea587866f57d17"
+    # Pin updated 2026-05-25 (ALP-646): guardrails.yaml gained two top-level
+    # fields (``position_zones`` and ``inverse_warning_band_pct``) so the
+    # canonical bytes shifted; the YAML defaults preserve the historical
+    # behaviour but the serialised form now carries the extra keys.
+    expected = "05e46d0aca8e97cb62e064f80cd758eb6f7aa138b50a0953b236494d4561b906"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

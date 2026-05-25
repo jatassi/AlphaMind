@@ -16,8 +16,9 @@ general-purpose flags:
   reported against the absolute value.
 * ``inverse=True`` — the rule is a *minimum* (e.g., ``min_cash_reserve_pct``).
   Classification flips: below the floor is FAIL; close to the floor is
-  WARNING; well above is PASS. The warning band is a fixed 20% above the
-  floor (story-internal constant; operator-tunable later if proved wrong).
+  WARNING; well above is PASS. The WARNING band width is the
+  ``inverse_warning_band_pct`` argument — a percentage of the floor — read
+  from ``LibraryConfig.inverse_warning_band_pct`` (ALP-646).
 
 Rules with novel classification needs require either a new flag (rare,
 design-doc-driven) or a custom contribution function that pre-shapes the
@@ -31,12 +32,6 @@ from alphamind.risk_guardrails.guardrail_evaluation.types import (
     RuleProjection,
     Status,
 )
-
-# Inverse-rule warning band: WARNING when ``projected_after`` is within
-# ``MIN_RULE_WARNING_BAND_PCT`` above the floor. With a 10% min-cash floor,
-# projected ∈ [10%, 12%) is WARNING; >= 12% is PASS. Operator-tunable later if
-# the band proves wrong.
-MIN_RULE_WARNING_BAND_PCT: float = 20.0
 
 
 class ProjectionError(Exception):
@@ -59,6 +54,7 @@ def project_rule(  # noqa: PLR0913 — math primitive entry point; args mirror t
     magnitude: bool = False,
     inverse: bool = False,
     breaching_position_id: str | None = None,
+    inverse_warning_band_pct: float = 20.0,
 ) -> RuleProjection:
     """Pure per-rule projection.
 
@@ -84,9 +80,14 @@ def project_rule(  # noqa: PLR0913 — math primitive entry point; args mirror t
     * Inverse (``inverse=True``):
         ``projected_after < effective_limit`` → FAIL;
         ``effective_limit <= projected_after < effective_limit * (1 +
-        MIN_RULE_WARNING_BAND_PCT/100)`` → WARNING;
+        inverse_warning_band_pct/100)`` → WARNING;
         otherwise PASS. ``headroom_remaining = projected_after -
         effective_limit`` (positive when above the floor).
+        ``inverse_warning_band_pct`` is sourced from
+        ``LibraryConfig.inverse_warning_band_pct`` (ALP-646); the default
+        ``20.0`` matches the historical hardcoded band. The argument is
+        ignored on the standard and magnitude paths (``inverse=False``) — it
+        is consulted only when an inverse-rule classification is requested.
 
     Raises ``ProjectionError`` if ``effective_limit <= 0`` — the configuration
     semantic-self-test is supposed to block non-positive limits upstream; the
@@ -104,6 +105,7 @@ def project_rule(  # noqa: PLR0913 — math primitive entry point; args mirror t
         zones=zones,
         magnitude=magnitude,
         inverse=inverse,
+        inverse_warning_band_pct=inverse_warning_band_pct,
     )
 
     return RuleProjection(
@@ -126,10 +128,11 @@ def _classify(
     zones: EscalationZones,
     magnitude: bool,
     inverse: bool,
+    inverse_warning_band_pct: float,
 ) -> tuple[Status, float]:
     """Return (status, headroom_remaining) for the three classification paths."""
     if inverse:
-        warning_floor = effective_limit * (1 + MIN_RULE_WARNING_BAND_PCT / 100.0)
+        warning_floor = effective_limit * (1 + inverse_warning_band_pct / 100.0)
         if projected_after < effective_limit:
             status = Status.FAIL
         elif projected_after < warning_floor:

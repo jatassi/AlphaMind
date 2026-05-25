@@ -105,6 +105,7 @@ from alphamind.portfolio_state.snapshot import (
 )
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import HaltState
+from alphamind.risk_guardrails.guardrail_evaluation.types import EscalationZones
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
     CrossConstraintImpact,
@@ -153,6 +154,9 @@ _SECTOR_LABELS = {
 # ---------------------------------------------------------------------------
 # Fixture builders
 # ---------------------------------------------------------------------------
+
+
+_DEFAULT_POSITION_ZONES = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
 
 
 def _make_state_delivery_config() -> StateDeliveryConfig:
@@ -869,6 +873,7 @@ def _normal_kwargs(
         "available_for_new_positions_usd": _AVAILABLE_FOR_NEW_POSITIONS_USD,
         "cross_constraint_impact": _make_cross_constraint_impact(),
         "tool_names": _TOOL_NAMES,
+        "position_zones": _DEFAULT_POSITION_ZONES,
         "sector_label_display": _SECTOR_LABELS,
     }
 
