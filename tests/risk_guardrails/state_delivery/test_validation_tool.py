@@ -857,6 +857,36 @@ def test_failure_guidance_capital_includes_dollar_amounts(
     assert "Insufficient deployable capital" in result.failure_guidance
 
 
+def test_failure_guidance_position_max_size_does_not_degenerate_to_zero_pct(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for the ALP-624 post-mortem (inv-20260520T235728Z-047a54ce):
+    before the fix, the validator reported
+    ``current=5.0, limit=5.0, projected_after=5.0`` for every
+    ``position_max_size_pct`` failure (because the field carried the rule's
+    limit, not the actual max), and ``_reduction_pct`` degenerated to ~0%.
+
+    After the fix, the projection on a reduce of the only oversized position
+    looks like ``current=18.08, limit=5.0, projected_after=17.7`` (next-largest
+    still red) or ``current=18.08, limit=5.0, projected_after=4.0`` (only one
+    oversized). Either way ``_reduction_pct`` returns a meaningful percentage.
+    """
+    # Scenario A: closing 18.08% drops projected to 17.7 (next-largest), still
+    # over the 5.0% limit. _reduction_pct = (17.7 - 5.0) / 17.7 * 100 ≈ 72%.
+    proj_a = _fail_proj(
+        rule="position_max_size_pct",
+        current=18.08,
+        limit=5.0,
+        projected_after=17.7,
+        unit="% of portfolio",
+    )
+    _patch_library(monkeypatch, (proj_a,))
+    result = validate_guardrail(request=_equity_request(), state=_state())
+    assert result.failure_guidance is not None
+    assert "Reduce size by ~0%" not in result.failure_guidance
+    assert "~72%" in result.failure_guidance
+
+
 def test_failure_guidance_capital_pending_order_non_inverse(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
