@@ -18,6 +18,8 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
+
 from alphamind.distillation._calibration_core import CalibrationState
 from alphamind.distillation._severity_cap import (
     cap_anomaly_severity,
@@ -386,8 +388,78 @@ def test_q1_per_ticker_multi_ticker_block_caps_every_row() -> None:
     assert rows["NVDA"]["severity"] == "investigate_if_persists"
 
 
-def test_cap_preserves_block_when_payload_severity_already_matches_flag() -> None:
-    """Calibrated block with payload severity already at producer value: identity."""
-    block = _q1_volume_block(state=CalibrationState.CALIBRATED)
+def test_cap_preserves_block_when_payload_severity_already_matches_capped_value() -> None:
+    """Accumulating block whose per-ticker severity already equals the capped value: identity."""
+    flag = AnomalyFlag(name="volume_anomaly", magnitude=2.64, severity="investigate_if_persists")
+    payload = {
+        "per_ticker": {
+            "MSFT": {
+                "deviation_sigma": 2.645,
+                "severity": "investigate_if_persists",
+            },
+        },
+    }
+    block = _make_block(
+        state=CalibrationState.ACCUMULATING,
+        flags=(flag,),
+        bootstrap_reason="volume_baseline_days: 11 < 20",
+        block_id="q1.volume_anomaly",
+        payload=payload,
+    )
+
     capped = cap_block_severities(block, exempt_flag_names=frozenset())
+
     assert capped is block
+
+
+def test_cap_rejects_multi_flag_name_block_with_per_ticker_severity() -> None:
+    """Multi-distinct-flag-name + per-ticker severity is rejected, not silently passed.
+
+    The per-ticker row has no flag-name field, so the cap has no way to
+    pick the right post-cap severity when flags split across names. The
+    silent fall-through would silently regress to the ALP-627 bug; the
+    assertion surfaces the contract breach at first emission.
+    """
+    flags = (
+        AnomalyFlag(name="volume_anomaly", magnitude=2.64, severity="investigate_now"),
+        AnomalyFlag(name="some_other_flag", magnitude=1.0, severity="note_for_context"),
+    )
+    payload = {
+        "per_ticker": {
+            "MSFT": {"deviation_sigma": 2.645, "severity": "investigate_now"},
+        },
+    }
+    block = _make_block(
+        state=CalibrationState.ACCUMULATING,
+        flags=flags,
+        bootstrap_reason="volume_baseline_days: 11 < 20",
+        block_id="q1.volume_anomaly",
+        payload=payload,
+    )
+
+    with pytest.raises(AssertionError, match="single flag-name per block"):
+        cap_block_severities(block, exempt_flag_names=frozenset())
+
+
+def test_cap_allows_multi_flag_name_block_without_per_ticker_severity() -> None:
+    """Multi-distinct-flag-name is fine when no per-ticker row carries severity."""
+    flags = (
+        AnomalyFlag(name="volume_anomaly", magnitude=2.64, severity="investigate_now"),
+        AnomalyFlag(name="some_other_flag", magnitude=1.0, severity="note_for_context"),
+    )
+    payload = {"per_ticker": {"MSFT": {"deviation_sigma": 2.645}}}
+    block = _make_block(
+        state=CalibrationState.ACCUMULATING,
+        flags=flags,
+        bootstrap_reason="volume_baseline_days: 11 < 20",
+        block_id="hypothetical.multi_flag_block",
+        payload=payload,
+    )
+
+    capped = cap_block_severities(block, exempt_flag_names=frozenset())
+
+    # Flag severities still cap individually; payload is left untouched.
+    severities = {f.name: f.severity for f in capped.anomaly_flags}
+    assert severities["volume_anomaly"] == "investigate_if_persists"
+    assert severities["some_other_flag"] == "note_for_context"
+    assert capped.payload["per_ticker"]["MSFT"] == {"deviation_sigma": 2.645}

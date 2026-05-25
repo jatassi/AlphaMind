@@ -122,18 +122,17 @@ def cap_block_severities(
         else:
             new_flags.append(replace(flag, severity=capped_severity))
             flag_changed = True
-    new_payload, payload_changed = _cap_per_ticker_payload(block.payload, capped_severity_by_name)
+    new_payload, payload_changed = _cap_per_ticker_payload(
+        block.payload, block.block_id, capped_severity_by_name
+    )
     if not flag_changed and not payload_changed:
         return block
-    return replace(
-        block,
-        anomaly_flags=tuple(new_flags),
-        payload=new_payload if payload_changed else block.payload,
-    )
+    return replace(block, anomaly_flags=tuple(new_flags), payload=new_payload)
 
 
 def _cap_per_ticker_payload(
     payload: Mapping[str, Any],
+    block_id: str,
     capped_severity_by_name: Mapping[str, AnomalySeverity],
 ) -> tuple[Mapping[str, Any], bool]:
     """Return ``(new_payload, changed)`` with per-ticker severities capped.
@@ -141,16 +140,26 @@ def _cap_per_ticker_payload(
     Only ``payload["per_ticker"][ticker]["severity"]`` is rewritten. The
     target severity is the unique capped value from the block's flags —
     q1 anomaly blocks emit one flag-name per block (``volume_anomaly`` or
-    ``price_move_anomaly``), so the mapping is unambiguous. Blocks with
-    no per-ticker severity field or with multiple distinct flag-names
-    are passed through untouched; the latter currently doesn't occur in
-    production and would require a per-row flag-name to disambiguate.
+    ``price_move_anomaly``), so the mapping is unambiguous. A block whose
+    flags split across multiple distinct names while also baking severity
+    into the per-ticker payload would have no defined per-row mapping;
+    that combination doesn't occur in production today and is rejected
+    rather than silently regressing to the ALP-627 bug.
     """
     per_ticker = payload.get(_PER_TICKER_KEY)
     if not isinstance(per_ticker, Mapping):
         return payload, False
     distinct_severities = set(capped_severity_by_name.values())
     if len(distinct_severities) != 1:
+        if any(
+            isinstance(entry, Mapping) and _SEVERITY_KEY in entry for entry in per_ticker.values()
+        ):
+            raise AssertionError(
+                f"block {block_id!r}: per-ticker payload severity requires a single "
+                f"flag-name per block, but flags resolved to "
+                f"{sorted(capped_severity_by_name)} with severities "
+                f"{sorted(distinct_severities)}"
+            )
         return payload, False
     target_severity = next(iter(distinct_severities))
     new_per_ticker: dict[str, Any] = {}
