@@ -16,11 +16,9 @@ CLI subprocess context.
 from __future__ import annotations
 
 import asyncio
-import base64
 import dataclasses
 import json
 import os
-import pickle
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,7 +31,11 @@ from alphamind.analysis._harness_core import (
     SDKFailure,
     TimeoutFailure,
 )
-from alphamind.analysis._sdk_subprocess import _SqlIvProviderShim
+from alphamind.analysis._sdk_subprocess import (
+    _decode_pickle,
+    _encode_pickle,
+    _SqlIvProviderShim,
+)
 from alphamind.analysis._shared import Sector
 from alphamind.analysis.adaptive_research.harness import invoke_adaptive_researcher
 from alphamind.analysis.domain_researchers.harness import invoke_domain_researcher
@@ -259,16 +261,6 @@ async def _run_qualitative_researcher(payload: dict[str, Any]) -> dict[str, Any]
 # ---------------------------------------------------------------------------
 # ALP-650 helpers + dispatchers
 # ---------------------------------------------------------------------------
-
-
-def _decode_pickle(encoded: str) -> Any:
-    """Decode a base64-pickle string produced by the parent-side encoder."""
-    return pickle.loads(base64.b64decode(encoded.encode("ascii")))
-
-
-def _encode_pickle(obj: Any) -> str:
-    """Encode a Python object as base64-pickle for JSON transport back to parent."""
-    return base64.b64encode(pickle.dumps(obj)).decode("ascii")
 
 
 def _rehydrate_market_inputs(
@@ -514,7 +506,7 @@ async def main() -> int:
             "kind": "failure",
             "error_type": "SDKFailure",
             "error_msg": f"Unsupported agent kind in worker: {agent!r}",
-            "agent_name": payload.get("agent_name") or "unknown",
+            "agent_name": payload.get("agent") or "unknown",
             "invocation_id": payload.get("invocation_id") or "unknown",
         }
 

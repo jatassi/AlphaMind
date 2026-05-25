@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import dataclasses
 import json
 import logging
@@ -142,10 +143,7 @@ def _prepare_market_inputs_for_pickle(market_inputs: MarketInputs) -> MarketInpu
     in tests and the bootstrap path) pickle as-is.
     """
     if isinstance(market_inputs.iv_provider, SqlOptionsIvProvider):
-        # ``_realized_vol`` is the private attr; SqlOptionsIvProvider has no
-        # public accessor today, so access it directly. The shim is the only
-        # caller of this attribute outside the provider itself.
-        shim = _SqlIvProviderShim(realized_vol=market_inputs.iv_provider._realized_vol)
+        shim = _SqlIvProviderShim(realized_vol=market_inputs.iv_provider.realized_vol)
         return dataclasses.replace(market_inputs, iv_provider=shim)
     return market_inputs
 
@@ -239,7 +237,16 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
     analysis-pipeline ``TaskGroup``) would each spawn their own
     ``claude.exe`` in parallel — the 4-way concurrency the original
     in-process pipeline confirmed deterministically stalls.
+
+    Wall-clock guard: the worker is killed and an :class:`SDKFailure` is
+    raised if the subprocess exceeds ``latency_budget_seconds`` (from the
+    payload's ``agent_config``) plus a fixed slack window for spawn +
+    teardown. Without this guard, an SDK stall inside the worker — the
+    very failure mode the subprocess transport is meant to bound —
+    leaves the parent blocked indefinitely inside ``proc.communicate``,
+    holding the semaphore and wedging the whole pipeline.
     """
+    timeout_seconds = _timeout_seconds_from_payload(payload)
     async with _get_sdk_call_semaphore():
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
@@ -250,17 +257,65 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
             stderr=asyncio.subprocess.PIPE,
             env={**os.environ},  # propagate CLAUDE_CODE_OAUTH_TOKEN, DATABASE_PATH, etc.
         )
-        return await _drive_worker(proc, payload)
+        return await _drive_worker(proc, payload, timeout_seconds=timeout_seconds)
+
+
+# Slack on top of the harness's latency budget: covers Python interpreter
+# spawn (~0.5-1s on cold start), the worker's import-time cost (alphamind
+# is heavy), and process teardown. The harness's own timeout fires first
+# in normal operation; this only engages when the worker is wedged so
+# hard the harness's own clock can't trip it.
+_WORKER_SPAWN_TEARDOWN_SLACK_SECONDS: float = 30.0
+
+
+def _timeout_seconds_from_payload(payload: dict[str, Any]) -> float:
+    """Pull ``latency_budget_seconds`` out of the payload's ``agent_config``."""
+    agent_config = payload.get("agent_config", {})
+    budget = agent_config.get("latency_budget_seconds") if isinstance(agent_config, dict) else None
+    if not isinstance(budget, int | float) or budget <= 0:
+        # Defensive default — if a payload is missing the field (shouldn't happen
+        # in production, but keeps the guard from no-op'ing on a malformed call),
+        # fall back to the longest production budget so the timeout never fires
+        # spuriously.
+        budget = 1200.0
+    return float(budget) + _WORKER_SPAWN_TEARDOWN_SLACK_SECONDS
 
 
 async def _drive_worker(
-    proc: asyncio.subprocess.Process, payload: dict[str, Any]
+    proc: asyncio.subprocess.Process,
+    payload: dict[str, Any],
+    *,
+    timeout_seconds: float,
 ) -> dict[str, Any]:
-    """Stream the payload into *proc*, collect the result, raise on protocol violation."""
+    """Stream the payload into *proc*, collect the result, raise on protocol violation.
+
+    A wall-clock guard wraps ``proc.communicate``: if the worker exceeds
+    ``timeout_seconds`` we kill it and surface an :class:`SDKFailure` so
+    the orchestrator's fail-closed handler engages instead of the parent
+    blocking forever on a wedged subprocess.
+    """
     assert proc.stdin is not None
     assert proc.stdout is not None
     assert proc.stderr is not None
-    stdout_bytes, stderr_bytes = await proc.communicate(json.dumps(payload).encode("utf-8"))
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(json.dumps(payload).encode("utf-8")),
+            timeout=timeout_seconds,
+        )
+    except TimeoutError as exc:
+        # Best-effort kill — the harness's own internal timeout should have
+        # fired well before this; reaching this branch means the worker is
+        # stuck so hard its own clock didn't trip it (the back-to-back-stall
+        # failure mode this whole module exists to bound).
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        with contextlib.suppress(Exception):
+            await proc.wait()
+        raise SDKFailure(
+            f"SDK subprocess exceeded {timeout_seconds:.1f}s wall-clock budget; killed.",
+            agent_name=payload.get("agent", "unknown"),
+            invocation_id=payload.get("invocation_id", "unknown"),
+        ) from exc
     returncode = proc.returncode
 
     stderr_text = stderr_bytes.decode("utf-8", errors="replace")
@@ -274,7 +329,7 @@ async def _drive_worker(
         raise SDKFailure(
             f"SDK subprocess exited {returncode} with no result payload. "
             f"stderr: {stderr_text[:1000]}",
-            agent_name=payload.get("agent_name", "unknown"),
+            agent_name=payload.get("agent", "unknown"),
             invocation_id=payload.get("invocation_id", "unknown"),
         )
 
@@ -284,7 +339,7 @@ async def _drive_worker(
     if not output_lines:
         raise SDKFailure(
             f"SDK subprocess produced no stdout. stderr: {stderr_text[:1000]}",
-            agent_name=payload.get("agent_name", "unknown"),
+            agent_name=payload.get("agent", "unknown"),
             invocation_id=payload.get("invocation_id", "unknown"),
         )
 
@@ -293,7 +348,7 @@ async def _drive_worker(
     except json.JSONDecodeError as exc:
         raise SDKFailure(
             f"SDK subprocess emitted malformed JSON: {exc}. Last line: {output_lines[-1][:500]!r}",
-            agent_name=payload.get("agent_name", "unknown"),
+            agent_name=payload.get("agent", "unknown"),
             invocation_id=payload.get("invocation_id", "unknown"),
         ) from exc
     return parsed
@@ -396,7 +451,7 @@ async def invoke_synthesizer_in_subprocess(
     invocation_id: str,
     portfolio_reader: SynthesizerPortfolioStateReader,
     archive_root: Path | None = None,
-    sdk_query_fn: Any = None,  # noqa: ARG001 — signature parity; subprocess uses its own SDK call
+    sdk_query_fn: Any = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "synthesizer",
 ) -> SynthHarnessSuccess:
@@ -406,7 +461,27 @@ async def invoke_synthesizer_in_subprocess(
     implementation (``SnapshotBackedSynthesizerReader``) carries only a
     projected :class:`SynthesizerView` (data-only frozen dataclass) so it
     pickles cleanly without further preprocessing.
+
+    When ``sdk_query_fn`` is supplied, the wrapper bypasses the subprocess
+    transport entirely and routes to the in-process harness. This restores
+    the SDK-substitution test seam — runner tests that inject a stub SDK
+    (and that often build inputs containing local-function closures the
+    pickle transport cannot carry) continue to work unchanged.
     """
+    if sdk_query_fn is not None:
+        from alphamind.analysis.synthesizer.harness import invoke_synthesizer
+
+        return await invoke_synthesizer(
+            agent_config=agent_config,
+            user_message=user_message,
+            invocation_id=invocation_id,
+            portfolio_reader=portfolio_reader,
+            archive_root=archive_root,
+            sdk_query_fn=sdk_query_fn,
+            progress=progress,
+            phase=phase,
+        )
+
     payload = {
         "agent": "synthesizer",
         "agent_config": agent_config.model_dump(mode="json"),
@@ -483,7 +558,7 @@ async def invoke_analyst_in_subprocess(  # noqa: PLR0913 — signature parity wi
     retrieval_store: RetrievalStore,
     active_sectors: frozenset[str],
     archive_root: Path | None = None,
-    sdk_query_fn: Any = None,  # noqa: ARG001 — signature parity; subprocess uses its own SDK call
+    sdk_query_fn: Any = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "analyst",
 ) -> AnalystHarnessSuccess:
@@ -493,7 +568,29 @@ async def invoke_analyst_in_subprocess(  # noqa: PLR0913 — signature parity wi
     with :class:`_SqlIvProviderShim` before pickling when it is the
     session-bound ``SqlOptionsIvProvider``; the worker rebuilds a fresh
     provider against its own ``DATABASE_PATH`` session.
+
+    When ``sdk_query_fn`` is supplied, the wrapper bypasses the subprocess
+    transport entirely and routes to the in-process harness. This restores
+    the SDK-substitution test seam — runner tests that inject a stub SDK
+    (and that often build state containing local-function resolvers the
+    pickle transport cannot carry) continue to work unchanged.
     """
+    if sdk_query_fn is not None:
+        from alphamind.decision.analyst.harness import invoke_analyst
+
+        return await invoke_analyst(
+            agent_config=agent_config,
+            user_message=user_message,
+            invocation_id=invocation_id,
+            initial_validation_state=initial_validation_state,
+            retrieval_store=retrieval_store,
+            active_sectors=active_sectors,
+            archive_root=archive_root,
+            sdk_query_fn=sdk_query_fn,
+            progress=progress,
+            phase=phase,
+        )
+
     payload = {
         "agent": "analyst",
         "agent_config": agent_config.model_dump(mode="json"),
@@ -530,15 +627,34 @@ async def invoke_strategist_in_subprocess(  # noqa: PLR0913 — signature parity
     retrieval_store: RetrievalStore,
     active_sectors: frozenset[str],
     archive_root: Path | None = None,
-    sdk_query_fn: Any = None,  # noqa: ARG001 — signature parity; subprocess uses its own SDK call
+    sdk_query_fn: Any = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "strategist",
 ) -> StratHarnessSuccess:
     """Drop-in subprocess-isolated replacement for ``run_strategist_harness``.
 
     Same ``ValidationToolState`` pickle shim treatment as the analyst
-    wrapper.
+    wrapper. When ``sdk_query_fn`` is supplied, the wrapper bypasses the
+    subprocess transport and routes to the in-process harness so the
+    test seam is preserved.
     """
+    if sdk_query_fn is not None:
+        from alphamind.decision.strategist.harness import run_strategist_harness
+
+        return await run_strategist_harness(
+            user_message=user_message,
+            system_prompt=system_prompt,
+            invocation_id=invocation_id,
+            agent_config=agent_config,
+            validation_state=validation_state,
+            retrieval_store=retrieval_store,
+            active_sectors=active_sectors,
+            archive_root=archive_root,
+            sdk_query_fn=sdk_query_fn,
+            progress=progress,
+            phase=phase,
+        )
+
     payload = {
         "agent": "strategist",
         "agent_config": agent_config.model_dump(mode="json"),
@@ -583,8 +699,8 @@ async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature
     library_config: Any,  # LibraryConfig — frozen dataclass, picklable
     library_market: MarketInputs,
     archive_root: Path | None = None,
-    sdk_query_fn: Any = None,  # noqa: ARG001 — signature parity; subprocess uses its own SDK call
-    broker_dispatch: Any = None,  # not threaded through subprocess; worker passes None to invoke_pm
+    sdk_query_fn: Any = None,
+    broker_dispatch: Any = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "pm",
 ) -> PMHarnessSuccess:
@@ -597,8 +713,52 @@ async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature
     worker can safely pass ``broker_dispatch=None`` and the harness's
     lazy-import branch is never entered (no broker-config is wired in
     today's composition path).
+
+    A non-``None`` ``broker_dispatch`` raises ``NotImplementedError``:
+    threading a live broker callable across a pickle boundary is not
+    supported, and silently dropping it would mask broker-routing
+    regressions the day composition starts wiring it through. Callers
+    that need broker routing must either (a) reroute through the
+    in-process harness, or (b) extend the wrapper's transport.
+
+    When ``sdk_query_fn`` is supplied, the wrapper bypasses the subprocess
+    transport and routes to the in-process harness so the SDK-substitution
+    test seam is preserved.
     """
-    del broker_dispatch  # PM in-harness submit_envelope wrapping does not route to broker
+    if broker_dispatch is not None:
+        msg = (
+            "invoke_portfolio_manager_in_subprocess does not support a non-None "
+            "broker_dispatch; route through the in-process invoke_pm instead "
+            "(supply sdk_query_fn to take that path) or extend the wrapper's "
+            "transport to carry the callable."
+        )
+        raise NotImplementedError(msg)
+
+    if sdk_query_fn is not None:
+        from alphamind.decision.portfolio_manager.harness import invoke_pm
+
+        return await invoke_pm(
+            agent_config=agent_config,
+            user_message=user_message,
+            invocation_id=invocation_id,
+            initial_validation_state=initial_validation_state,
+            initial_submit_envelope_state=initial_submit_envelope_state,
+            retrieval_store=retrieval_store,
+            thesis_component_reader=thesis_component_reader,
+            pre_processor_bundle=pre_processor_bundle,
+            pm_view=pm_view,
+            active_sectors=active_sectors,
+            halt_mode=halt_mode,
+            sector_resolver=sector_resolver,
+            library_config=library_config,
+            library_market=library_market,
+            archive_root=archive_root,
+            sdk_query_fn=sdk_query_fn,
+            broker_dispatch=None,
+            progress=progress,
+            phase=phase,
+        )
+
     payload = {
         "agent": "portfolio_manager",
         "agent_config": agent_config.model_dump(mode="json"),

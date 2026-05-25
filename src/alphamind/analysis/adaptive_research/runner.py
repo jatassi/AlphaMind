@@ -212,11 +212,13 @@ async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; va
     raised by the harness propagates up unchanged.
     """
 
-    # ``session`` is bound by the parent so the loader (story 03a) can read
-    # anomaly inputs; the subprocess wrapper does not consume it because the
-    # worker opens its own ``DATABASE_PATH`` session (mirrors the qualitative
-    # researcher pattern).
-    del session  # consumed only by the loader path above; subprocess worker rebuilds its own
+    # ``session`` is retained on the public signature for caller-API stability
+    # (the in-process harness used to consume it). Post-ALP-650 the subprocess
+    # wrapper opens its own ``DATABASE_PATH`` session in the worker, so the
+    # parent-supplied session is unused on the production path. The in-tree
+    # callers (``pipeline/analysis.py``, ``tests/...``) still construct one,
+    # so removing the kwarg would be a breaking change.
+    del session  # unused after ALP-650 subprocess migration; kept for API stability
 
     async def _harness_fn(
         *,

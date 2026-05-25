@@ -575,18 +575,14 @@ def _build_price_provider(
 def _build_sector_resolver(resolved: ResolvedConfig) -> Callable[[str], str]:
     """Build a ticker→sector resolver from the resolved assets config.
 
-    Mirrors :func:`scheduler.orchestrator._build_sector_resolver`.
+    Thin re-export over :func:`alphamind.config.assets_views.build_sector_resolver`
+    so this module surfaces the same picklable :class:`SectorResolver`
+    instance (ALP-650) — important if the breach-loop substrate is ever
+    wired through a subprocess transport.
     """
-    ticker_to_sector: dict[str, str] = {}
-    if hasattr(resolved, "assets") and hasattr(resolved.assets, "sectors"):
-        for sector, tickers in resolved.assets.sectors.items():
-            for ticker in tickers:
-                ticker_to_sector[ticker] = sector
+    from alphamind.config.assets_views import build_sector_resolver
 
-    def _resolver(ticker: str) -> str:
-        return ticker_to_sector.get(ticker, "UNCLASSIFIED")
-
-    return _resolver
+    return build_sector_resolver(resolved)
 
 
 # ---------------------------------------------------------------------------
