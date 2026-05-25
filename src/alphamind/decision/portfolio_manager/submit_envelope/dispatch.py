@@ -93,7 +93,6 @@ async def _route_through_broker(
     client: TradingClient,
     queries: AccountStateQueries,
     execution_config: ExecutionConfig,
-    invocation_id: str,
     invocation_handle: Any | None = None,
     broker_dispatch: BrokerDispatch | None = None,
 ) -> tuple[
@@ -201,8 +200,6 @@ async def _route_through_broker(
         updated.append(_with_real_order_id(result, outcome.payload.alpaca_order_id))
         dispatches.append(outcome.payload)
 
-    # invocation_id retained on the signature for future provenance threading.
-    del invocation_id
     return tuple(updated), tuple(dispatches), tuple(abandoned)
 
 

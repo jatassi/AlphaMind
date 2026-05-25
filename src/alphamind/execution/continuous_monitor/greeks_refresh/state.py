@@ -91,18 +91,14 @@ def seed_last_refresh_states(
     positions: Iterable[PositionRecord],
     *,
     underlying_prices: Mapping[str, float],
-    now: datetime,
 ) -> dict[str, LastRefreshState]:
     """Build the initial ``{position_id: LastRefreshState}`` map from open positions.
 
     ``positions`` should be the option + strategy positions returned by the
     repository's open-positions reader; equity positions are silently
     skipped. ``underlying_prices`` is a snapshot of the
-    :class:`UnderlyingPriceCache` at seed time, keyed by ticker. ``now`` is
-    used only for module-internal logging contexts — the epoch anchor is
-    chosen so it does not flow through.
+    :class:`UnderlyingPriceCache` at seed time, keyed by ticker.
     """
-    del now  # reserved for future invariant-logging; not consumed here.
     states: dict[str, LastRefreshState] = {}
     for position in positions:
         ticker = _resolve_underlying_ticker(position)

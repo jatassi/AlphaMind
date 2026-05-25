@@ -4,9 +4,9 @@
 Alpaca CA activity into AlphaMind's state.  Internally it consults ``_HANDLERS``,
 a dict keyed on ``CorporateActionType`` with exactly one entry per enum member.
 
-The SPLIT handler is fully implemented; every other member raises
-``NotImplementedError`` with the standard message.  Stories 03a-03d replace
-those stubs with real implementations without touching this module.
+The SPLIT handler is fully implemented; remaining handlers are wired into
+``_HANDLERS`` here but their bodies vary in completeness (see each handler
+module for current status).
 """
 
 from __future__ import annotations

@@ -4,8 +4,8 @@ Maps ``alpaca.common.exceptions.APIError`` and network-level exceptions into
 the broker adapter's typed rejection taxonomy. The classifier is consumed by
 :func:`alphamind.execution.broker_adapter.retry.submit_with_retry` to decide
 whether to retry (transient) or re-raise (permanent), and by order-submission
-helpers (later stories) to translate permanent rejections into synchronous
-OMS rejections per ``broker-adapter.md § Order submission``.
+helpers to translate permanent rejections into synchronous OMS rejections per
+``broker-adapter.md § Order submission``.
 """
 
 from __future__ import annotations

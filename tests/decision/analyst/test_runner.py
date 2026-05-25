@@ -648,9 +648,8 @@ async def test_borrow_cost_resolver_propagates_to_validation_state(
     it into :func:`build_initial_validation_state` so the validation tool sees
     the right borrow-cost lookups for short-side proposals.
 
-    The strategist + PM consumers will rely on this contract once their work
-    trees land — locking it here prevents a silent drop during a future
-    runner refactor.
+    The strategist + PM consumers rely on this contract — locking it here
+    prevents a silent drop during a future runner refactor.
     """
     from alphamind.risk_guardrails.state_delivery import build_initial_validation_state
 

@@ -145,8 +145,8 @@ async def reconcile(
             ``EquityPositionDetails.ticker``; options positions are not
             auto-corrected (see module docstring).
         alpaca_account: Typed Alpaca account snapshot, or ``None`` when the
-            caller has not yet wired the account fetch (the pre-04 default).
-            When ``None`` the cash comparison is skipped.
+            caller has not wired the account fetch. When ``None`` the cash
+            comparison is skipped.
 
     Returns:
         Count of ``RECONCILIATION_ALERT`` entries emitted. Corrections are

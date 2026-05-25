@@ -45,15 +45,18 @@ from alphamind.risk_guardrails.regime_adaptation import RegimeAdaptationOutput
 
 
 async def _no_op_immediate_breach(_result: BreachLoopResult, _evaluation: RuleEvaluation) -> None:
-    """Story-04a callback placeholder — replaced when the cascade dispatcher lands."""
+    """Fallback default for ``on_immediate_breach`` — used when the caller does not
+    wire the cascade-dispatcher callback (e.g., tests)."""
 
 
 async def _no_op_emergency_input(_result: BreachLoopResult) -> None:
-    """Story-04b callback placeholder — replaced when the emergency trigger lands."""
+    """Fallback default for ``on_emergency_input`` — used when the caller does not
+    wire the emergency-invocation trigger (e.g., tests)."""
 
 
 async def _no_op_activity_log_sink(_entries: Iterable[ActivityLogEntry]) -> None:
-    """Persistence-side sink placeholder — replaced once activity-log writes wire up."""
+    """Fallback default for ``activity_log_sink`` — used when the caller does not
+    wire the persistence-side activity-log writer."""
 
 
 def register_breach_loop_task(  # noqa: PLR0913
@@ -78,9 +81,10 @@ def register_breach_loop_task(  # noqa: PLR0913
 ) -> None:
     """Register the ``breach_loop`` task on *supervisor*.
 
-    Story 04a / 04b override the two callback defaults once they ship. The
-    activity-log sink defaults to a no-op stub so the breach loop runs even
-    before the activity-log writer is wired up.
+    The supervisor wires the cascade-dispatcher and emergency-trigger
+    callbacks; the no-op defaults above keep the registration valid in tests
+    or any caller that omits them. The activity-log sink defaults to a no-op
+    stub so the breach loop runs even if the caller does not wire the writer.
     """
     resolved_immediate = on_immediate_breach or _no_op_immediate_breach
     resolved_emergency = on_emergency_input or _no_op_emergency_input

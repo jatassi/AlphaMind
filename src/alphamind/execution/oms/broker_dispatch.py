@@ -4,11 +4,11 @@ Dispatches each canonical :class:`OMSCommand` variant to the right
 ``submit_*`` function in
 :mod:`alphamind.execution.broker_adapter` and folds the result into a unified
 :class:`BrokerDispatchResult` shape the OMS persists onto the
-:class:`OrderRecord` produced by the Phase 2 write path. Replaces the
-synthetic-acknowledgment behavior of the engine-stub
+:class:`OrderRecord` produced by the Phase 2 write path. This module is the
+broker-routing landing site for the engine-stub
 (:mod:`alphamind.decision.portfolio_manager.submit_envelope` /
-:mod:`alphamind.execution.oms.submit_engine_envelope`) — per parent
-ALP-121 decision (C), broker routing was deferred and lands here.
+:mod:`alphamind.execution.oms.submit_engine_envelope`) per parent
+ALP-121 decision (C).
 
 Routing table — dispatched on (command_type, instrument.asset_type):
 

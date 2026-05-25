@@ -92,8 +92,9 @@ def collect_snapshots(
 
         # Commit per event so the SQLite writer lock is held only during the
         # brief INSERTs, not across the slow rate-limited HTTP cycle (Kalshi is
-        # capped at 30 req/min, so a full sweep can take ~5 min). Without this,
-        # other vendor collectors firing concurrently exhausted busy_timeout.
+        # capped at 30 req/min, so a full sweep can take ~5 min). Holding the
+        # writer lock across that full cycle would exhaust busy_timeout for
+        # any other vendor collector firing concurrently.
         for event in events:
             series_ticker: str = event.get("series_ticker", "")
             event_category: str = event.get("category", "") or ""

@@ -169,7 +169,6 @@ class TestSeedLastRefreshStates:
         states = seed_last_refresh_states(
             (position,),
             underlying_prices={"AAPL": 198.0},
-            now=datetime(2026, 5, 11, 14, 35, tzinfo=UTC),
         )
         state = states["pos-1"]
         assert state.position_id == "pos-1"
@@ -186,7 +185,6 @@ class TestSeedLastRefreshStates:
         states = seed_last_refresh_states(
             (position,),
             underlying_prices={"AAPL": 198.0},
-            now=now,
         )
         state = states["pos-2"]
         assert state.position_id == "pos-2"
@@ -210,7 +208,6 @@ class TestSeedLastRefreshStates:
         states = seed_last_refresh_states(
             (position,),
             underlying_prices={},
-            now=datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
         )
         assert states["pos-3"].underlying_price_at_last_refresh == 0.0
 
@@ -220,7 +217,6 @@ class TestSeedLastRefreshStates:
         states = seed_last_refresh_states(
             (position,),
             underlying_prices={"SPY": 500.0},
-            now=datetime(2026, 5, 11, 14, 35, tzinfo=UTC),
         )
         state = states["strat-1"]
         assert state.position_id == "strat-1"

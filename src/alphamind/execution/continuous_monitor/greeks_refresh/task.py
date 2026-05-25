@@ -269,9 +269,7 @@ def _select_due_positions(
     for position in positions:
         if position.position_id in states:
             continue
-        states.update(
-            seed_last_refresh_states((position,), underlying_prices=cache_snapshot, now=now)
-        )
+        states.update(seed_last_refresh_states((position,), underlying_prices=cache_snapshot))
 
     due: list[_DueEntry] = []
     for position in positions:

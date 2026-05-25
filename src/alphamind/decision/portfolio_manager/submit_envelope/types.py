@@ -45,11 +45,10 @@ class SubmitEnvelopeState:
     ``validation_state`` advances on every accepted command via
     ``with_accepted_proposal(delta)``; ``submission_log`` appends one entry per
     call that parsed to a :class:`PMEnvelope`; ``failed_submission_log``
-    appends one entry per Layer-1 (Pydantic) parse failure;
-    ``command_id_counter`` is not currently incremented (the synthetic ID
-    format derives ordinal from the envelope's command index and
-    ``attempt_seq`` from ``post_rejection`` modification count, both
-    deterministic from the envelope alone).
+    appends one entry per Layer-1 (Pydantic) parse failure. Synthetic
+    command_ids derive their ordinal from the envelope's command index and
+    ``attempt_seq`` from ``post_rejection`` modification count — both
+    deterministic from the envelope alone, so no counter cell is needed.
 
     ``invocation_id`` is required (non-empty) — it is interpolated into every
     synthetic command_id via :func:`alphamind.execution.oms.command_ids.derive_pm_command_id`;
@@ -61,7 +60,6 @@ class SubmitEnvelopeState:
     invocation_id: str
     submission_log: tuple[SubmissionLogEntry, ...] = ()
     failed_submission_log: tuple[FailedSubmissionEntry, ...] = ()
-    command_id_counter: int = 0
 
     def __post_init__(self) -> None:
         if not self.invocation_id:
