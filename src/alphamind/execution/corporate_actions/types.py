@@ -86,10 +86,12 @@ class PositionLookup:
 class AlpacaPositionLookup(Protocol):
     """Protocol for a callable that returns a live Alpaca position by symbol.
 
-    Equity-only handlers (SPLIT, cash dividends) receive ``None``; options /
-    strategy handlers call this to read post-adjustment Alpaca state.  Story 04
-    wires the real :class:`~alphamind.execution.broker_adapter.queries.AlpacaDataClient`
-    method; earlier stories pass ``None`` to the dispatch entry point.
+    Handlers consult this to project post-adjustment Alpaca state onto
+    options / strategy positions; the equity branch ignores the argument.
+    Story 04 wires the real
+    :class:`~alphamind.execution.broker_adapter.queries.AlpacaDataClient`
+    method; earlier stories pass ``None`` to the dispatch entry point when
+    the activity is known to be equity-only.
     """
 
     def get_position(self, symbol: str) -> PositionSnapshot | None:
