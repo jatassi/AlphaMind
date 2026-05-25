@@ -168,10 +168,15 @@ class CAMutationResult(NamedTuple):
     updated: PositionRecord
 
 
-def _audit_metrics(
+def audit_metrics(
     details: EquityPositionDetails | OptionsPositionDetails | StrategyPositionDetails,
 ) -> tuple[float, float]:
-    """Return ``(quantity, basis)`` for the audit-trail event payload."""
+    """Return ``(quantity, basis)`` for the audit-trail event payload.
+
+    For strategies the pair represents the first leg only — there is no
+    single ``(qty, basis)`` for a multi-leg payload, so leg 0 is used as a
+    representative sample.
+    """
     if isinstance(details, EquityPositionDetails):
         return details.share_count, details.average_cost_basis_per_share
     if isinstance(details, OptionsPositionDetails):
@@ -200,7 +205,7 @@ def apply_options_position_mutation(
     is raised.
     """
     details = position.details
-    pre_qty, pre_basis = _audit_metrics(details)
+    pre_qty, pre_basis = audit_metrics(details)
 
     if isinstance(details, EquityPositionDetails):
         new_details: EquityPositionDetails | OptionsPositionDetails | StrategyPositionDetails = (
@@ -229,7 +234,7 @@ def apply_options_position_mutation(
             msg = f"Unrecognized position details type: {type(details).__name__!r}"
             raise NotImplementedError(msg)
 
-    post_qty, post_basis = _audit_metrics(new_details)
+    post_qty, post_basis = audit_metrics(new_details)
     updated = dataclasses.replace(
         position, details=new_details, corporate_action_adjustment_needed=True
     )
@@ -283,7 +288,7 @@ def apply_ticker_only_mutation(
         msg = f"Unrecognized position details type: {type(details).__name__!r}"
         raise NotImplementedError(msg)
 
-    qty, basis = _audit_metrics(details)
+    qty, basis = audit_metrics(details)
     updated = dataclasses.replace(
         position, details=new_details, corporate_action_adjustment_needed=True
     )
@@ -337,6 +342,7 @@ __all__ = [
     "CAMutationResult",
     "apply_options_position_mutation",
     "apply_ticker_only_mutation",
+    "audit_metrics",
     "finalize_ca_handler",
     "load_position_for_ca",
 ]

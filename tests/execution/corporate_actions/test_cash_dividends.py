@@ -1159,9 +1159,18 @@ async def test_cash_dividend_long_on_options_position_credits_and_preserves_cont
 ) -> None:
     """Long cash dividend on an options position credits cash, flags adjustment,
     cancels the bracket, writes the dedup row, and leaves contract count + per-
-    contract premium unchanged."""
+    contract premium unchanged. Also asserts the ``CORPORATE_ACTION_APPLIED``
+    payload reads the audit-trail metrics from the options branch of
+    ``audit_metrics`` (contract count, per-contract premium) rather than
+    silently emitting zeros."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
     from alphamind.execution.corporate_actions.types import CorporateActionActivity
+    from alphamind.portfolio_state.events.corporate_action import (
+        CorporateActionAppliedDetail,
+    )
+    from alphamind.state.invocation_context.activity_log import (
+        activity_log_entry_from_row,
+    )
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -1230,6 +1239,20 @@ async def test_cash_dividend_long_on_options_position_credits_and_preserves_cont
         assert type_counts.get(EventType.CORPORATE_ACTION_APPLIED.value) == 1
         assert type_counts.get(EventType.BRACKET_CANCELLED_CORPORATE_ACTION.value) == 1
 
+        # The CORPORATE_ACTION_APPLIED payload must read the options branch of
+        # ``audit_metrics`` — contract count and per-contract premium — rather
+        # than silently emitting zeros (which would happen if the handler
+        # narrowed details to EquityPositionDetails and skipped the read).
+        applied_row = next(
+            r for r in log_rows if r.event_type == EventType.CORPORATE_ACTION_APPLIED.value
+        )
+        applied_detail = activity_log_entry_from_row(applied_row).detail
+        assert isinstance(applied_detail, CorporateActionAppliedDetail)
+        assert applied_detail.pre_action_quantity == pytest.approx(5.0)
+        assert applied_detail.post_action_quantity == pytest.approx(5.0)
+        assert float(applied_detail.pre_action_cost_basis) == pytest.approx(250.0)
+        assert float(applied_detail.post_action_cost_basis) == pytest.approx(250.0)
+
         ledger_rows = (
             (
                 await sess.execute(
@@ -1251,9 +1274,17 @@ async def test_cash_dividend_long_on_strategy_position_credits_and_preserves_leg
 ) -> None:
     """Long cash dividend on a multi-leg strategy position credits cash, flags
     adjustment, cancels the bracket, writes the dedup row, and leaves each
-    leg's contract count + per-contract premium unchanged."""
+    leg's contract count + per-contract premium unchanged. Also asserts the
+    ``CORPORATE_ACTION_APPLIED`` payload reads leg 0's metrics via
+    ``audit_metrics``."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
     from alphamind.execution.corporate_actions.types import CorporateActionActivity
+    from alphamind.portfolio_state.events.corporate_action import (
+        CorporateActionAppliedDetail,
+    )
+    from alphamind.state.invocation_context.activity_log import (
+        activity_log_entry_from_row,
+    )
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -1325,6 +1356,21 @@ async def test_cash_dividend_long_on_strategy_position_credits_and_preserves_leg
         assert type_counts.get(EventType.CASH_CREDITED.value) == 1
         assert type_counts.get(EventType.CORPORATE_ACTION_APPLIED.value) == 1
         assert type_counts.get(EventType.BRACKET_CANCELLED_CORPORATE_ACTION.value) == 1
+
+        # The CORPORATE_ACTION_APPLIED payload must read leg 0's metrics from
+        # the strategy branch of ``audit_metrics``. Leg 0 here is the long
+        # call (contract_count=5.0, premium=250.0); the short call's premium
+        # of 120.0 is intentionally not the surface (leg-0 is the
+        # representative sample, documented on ``audit_metrics``).
+        applied_row = next(
+            r for r in log_rows if r.event_type == EventType.CORPORATE_ACTION_APPLIED.value
+        )
+        applied_detail = activity_log_entry_from_row(applied_row).detail
+        assert isinstance(applied_detail, CorporateActionAppliedDetail)
+        assert applied_detail.pre_action_quantity == pytest.approx(5.0)
+        assert applied_detail.post_action_quantity == pytest.approx(5.0)
+        assert float(applied_detail.pre_action_cost_basis) == pytest.approx(250.0)
+        assert float(applied_detail.post_action_cost_basis) == pytest.approx(250.0)
 
         ledger_rows = (
             (
