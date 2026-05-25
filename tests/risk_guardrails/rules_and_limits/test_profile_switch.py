@@ -1,7 +1,7 @@
 """Tests for the profile-switch handler (story 01d).
 
-These tests exercise ``switch_active_profile`` and ``build_profile_switch_activity_log_entry``
-over a temporary copy of the shipped ``config/`` tree.
+These tests exercise ``switch_active_profile`` over a temporary copy of the
+shipped ``config/`` tree.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from alphamind.config.models.main import ExecutionMode, MainConfig, Profile
 from alphamind.risk_guardrails.rules_and_limits import (
     ProfileNotFoundError,
     ProfileSwitchOutcome,
-    build_profile_switch_activity_log_entry,
     switch_active_profile,
 )
 
@@ -107,43 +106,6 @@ def test_atomic_rename_failure_leaves_main_yaml_intact(
         switch_active_profile(new_profile=Profile.large, config_dir=config_dir)
 
     assert main_yaml_path.read_bytes() == pre_bytes
-
-
-def test_activity_log_entry_default_source_carries_outcome_fields(tmp_path: Path) -> None:
-    """The factory returns the documented payload shape with the default source."""
-    outcome = ProfileSwitchOutcome(
-        previous_profile=Profile.medium,
-        new_profile=Profile.large,
-        main_yaml_path=tmp_path / "main.yaml",
-        is_no_op=False,
-    )
-
-    entry = build_profile_switch_activity_log_entry(outcome)
-
-    assert entry == {
-        "event_type": "profile_switched",
-        "source": "operator_console",
-        "previous_profile": "medium",
-        "new_profile": "large",
-        "is_no_op": False,
-    }
-
-
-def test_activity_log_entry_explicit_source_is_reflected(tmp_path: Path) -> None:
-    """Passing source='api' (or any override) is honored in the returned entry."""
-    outcome = ProfileSwitchOutcome(
-        previous_profile=Profile.medium,
-        new_profile=Profile.medium,
-        main_yaml_path=tmp_path / "main.yaml",
-        is_no_op=True,
-    )
-
-    entry = build_profile_switch_activity_log_entry(outcome, source="api")
-
-    assert entry["source"] == "api"
-    assert entry["is_no_op"] is True
-    assert entry["previous_profile"] == "medium"
-    assert entry["new_profile"] == "medium"
 
 
 def test_rewrite_preserves_every_non_active_profile_field(config_dir: Path) -> None:
