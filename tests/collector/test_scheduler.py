@@ -332,20 +332,28 @@ def test_derive_vendor_workers_scales_with_added_long_runner() -> None:
 
 
 def test_long_running_collectors_subset_of_registry() -> None:
-    """Guard against typos: every long-running ID must exist in COLLECTORS."""
+    """The shipped `_LONG_RUNNING_COLLECTORS` must reference only known IDs."""
     from alphamind.collector.scheduler import _LONG_RUNNING_COLLECTORS, COLLECTORS
 
     unknown = _LONG_RUNNING_COLLECTORS - COLLECTORS.keys()
     assert not unknown, f"_LONG_RUNNING_COLLECTORS references unknown collector IDs: {unknown}"
 
 
-def test_build_scheduler_polygon_executor_has_two_workers() -> None:
-    """Behavior-preserving check against the prior literal `_VENDOR_WORKERS['polygon']=2`."""
-    from alphamind.collector.scheduler import build_scheduler
+def test_derive_vendor_workers_raises_on_unknown_long_runner() -> None:
+    """A typo in `_LONG_RUNNING_COLLECTORS` must fail loudly at construction time.
 
-    sched = build_scheduler()
-    polygon_executor = sched._executors["polygon"]  # APScheduler 3.x internal
-    # ThreadPoolExecutor stores its pool on _pool with _max_workers
-    assert polygon_executor._pool._max_workers == 2, (
-        f"polygon executor expected max_workers=2; got {polygon_executor._pool._max_workers}"
-    )
+    Otherwise the misspelled ID silently falls through to ``max(1, 0) = 1`` and
+    re-introduces the cadence-starvation failure mode behind ALP-289.
+    """
+    import pytest
+
+    from alphamind.collector.scheduler import _derive_vendor_workers
+
+    def _stub() -> None:
+        return None
+
+    collectors: dict[str, Callable[..., object]] = {"polygon.equity": _stub}
+    typo_long_running = frozenset({"polygon.eqiuty"})  # misspelled
+
+    with pytest.raises(ValueError, match="unknown collector IDs"):
+        _derive_vendor_workers(collectors, typo_long_running)

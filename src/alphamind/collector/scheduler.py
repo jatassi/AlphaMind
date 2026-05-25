@@ -150,7 +150,20 @@ def _derive_vendor_workers(
 
     A vendor with N long-running collectors gets ``max(1, N)`` workers; vendors
     with no long-runners stay at the serialise-by-default count of 1.
+
+    Raises
+    ------
+    ValueError
+        If ``long_running`` references an ID not in ``collectors``. A misspelled
+        long-runner ID would silently fall through to ``max(1, 0) = 1`` and
+        re-introduce the queue-starvation failure mode this helper exists to
+        prevent (ALP-289), so we fail loudly at scheduler-construction time.
     """
+    unknown = long_running - collectors.keys()
+    if unknown:
+        raise ValueError(
+            f"_LONG_RUNNING_COLLECTORS references unknown collector IDs: {sorted(unknown)}"
+        )
     long_counts: dict[str, int] = {}
     vendors: set[str] = set()
     for collector_id in collectors:
