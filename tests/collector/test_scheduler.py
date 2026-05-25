@@ -259,3 +259,93 @@ def test_mark_orphan_runs_returns_zero_when_no_orphans() -> None:
     sf = make_session_factory(engine)
 
     assert mark_orphan_runs(session_factory=sf) == 0
+
+
+# ---------------------------------------------------------------------------
+# Slice 9 — derive_vendor_workers scales with the long-running collector set
+# ---------------------------------------------------------------------------
+#
+# ALP-652: per-vendor max_workers is derived from the long-running collector
+# set, not a hand-tuned literal. The current live config has one long-runner
+# pair under `polygon` (equity + equity_offhrs, both 6-13 min `collect_universe_bars`
+# fires); every other vendor has no long-runners and stays at the default 1.
+
+
+def test_derive_vendor_workers_matches_live_registry() -> None:
+    """polygon=2 against today's 5-collector polygon set; every other vendor=1."""
+    from alphamind.collector.scheduler import (
+        _LONG_RUNNING_COLLECTORS,
+        COLLECTORS,
+        _derive_vendor_workers,
+    )
+
+    workers = _derive_vendor_workers(COLLECTORS, _LONG_RUNNING_COLLECTORS)
+
+    assert workers["polygon"] == 2, (
+        f"polygon should derive 2 workers (1 long-runner pair); got {workers['polygon']}"
+    )
+    for vendor in (
+        "fred",
+        "eia",
+        "bls",
+        "treasury",
+        "finnhub",
+        "marketaux",
+        "sec_edgar",
+        "polymarket",
+        "kalshi",
+        "finra",
+        "iborrowdesk",
+        "news",
+    ):
+        assert workers[vendor] == 1, (
+            f"vendor {vendor!r} has no long-runners, should derive 1 worker; got {workers[vendor]}"
+        )
+
+
+def test_derive_vendor_workers_scales_with_added_long_runner() -> None:
+    """Adding a sixth long-running polygon collector bumps the derived count to >=3."""
+    from alphamind.collector.scheduler import _derive_vendor_workers
+
+    def _stub() -> None:
+        return None
+
+    synthetic_collectors: dict[str, Callable[..., object]] = {
+        "polygon.equity": _stub,
+        "polygon.equity_offhrs": _stub,
+        "polygon.options": _stub,
+        "polygon.corporate_actions": _stub,
+        "polygon.reference": _stub,
+        "polygon.new_long_runner": _stub,  # hypothetical sixth, also long-running
+        "fred.macro": _stub,
+    }
+    synthetic_long_running = frozenset(
+        {"polygon.equity", "polygon.equity_offhrs", "polygon.new_long_runner"}
+    )
+
+    workers = _derive_vendor_workers(synthetic_collectors, synthetic_long_running)
+
+    assert workers["polygon"] >= 3, (
+        f"polygon with 3 long-runners should derive >=3 workers; got {workers['polygon']}"
+    )
+    assert workers["fred"] == 1
+
+
+def test_long_running_collectors_subset_of_registry() -> None:
+    """Guard against typos: every long-running ID must exist in COLLECTORS."""
+    from alphamind.collector.scheduler import _LONG_RUNNING_COLLECTORS, COLLECTORS
+
+    unknown = _LONG_RUNNING_COLLECTORS - COLLECTORS.keys()
+    assert not unknown, f"_LONG_RUNNING_COLLECTORS references unknown collector IDs: {unknown}"
+
+
+def test_build_scheduler_polygon_executor_has_two_workers() -> None:
+    """Behavior-preserving check against the prior literal `_VENDOR_WORKERS['polygon']=2`."""
+    from alphamind.collector.scheduler import build_scheduler
+
+    sched = build_scheduler()
+    polygon_executor = sched._executors["polygon"]  # APScheduler 3.x internal
+    # ThreadPoolExecutor stores its pool on _pool with _max_workers
+    assert polygon_executor._pool._max_workers == 2, (
+        f"polygon executor expected max_workers=2; got {polygon_executor._pool._max_workers}"
+    )

@@ -125,26 +125,41 @@ COLLECTORS: dict[str, Callable[..., object]] = {
     "news.clustering_premarket": _news_clustering_refresh,
 }
 
-# Per-vendor executor sizing. Default is 1 (serialise to respect rate limits).
-# polygon needs 2: polygon.equity holds the executor 6-13 min per market-hours
-# fire while polygon.options is supposed to fire every 30 min; with one worker
-# polygon.options gets misfired every cycle. polygon's 100/min API budget
-# easily absorbs two concurrent collectors.
-_VENDOR_WORKERS: dict[str, int] = {
-    "polygon": 2,
-    "fred": 1,
-    "eia": 1,
-    "bls": 1,
-    "treasury": 1,
-    "finnhub": 1,
-    "marketaux": 1,
-    "sec_edgar": 1,
-    "polymarket": 1,
-    "kalshi": 1,
-    "finra": 1,
-    "iborrowdesk": 1,
-    "news": 1,
-}
+# Long-running collectors hold the vendor's executor slot for multiple minutes
+# per fire. Without dedicated headroom, a peer collector firing on a shorter
+# cadence (e.g. polygon.options every 30 min) finds no idle worker, APScheduler
+# misfires, ``coalesce=True`` collapses the backlog, and the cadence quietly
+# breaches its SLO — the 2026-04-27 incident behind ALP-289. Per-vendor worker
+# counts are derived from this set at scheduler-construction time (see
+# ``_derive_vendor_workers``) so adding a long-runner scales the executor pool
+# at registration rather than requiring a follow-up literal bump. New polygon
+# collectors with multi-minute runtimes MUST be added here. (ALP-289, ALP-652.)
+_LONG_RUNNING_COLLECTORS: frozenset[str] = frozenset(
+    {
+        "polygon.equity",  # market-hours universe bars: 6-13 min per fire
+        "polygon.equity_offhrs",  # same ``collect_universe_bars`` runtime, off-hours window
+    }
+)
+
+
+def _derive_vendor_workers(
+    collectors: dict[str, Callable[..., object]],
+    long_running: frozenset[str],
+) -> dict[str, int]:
+    """Compute ``max_workers`` per vendor from the registered-collectors set.
+
+    A vendor with N long-running collectors gets ``max(1, N)`` workers; vendors
+    with no long-runners stay at the serialise-by-default count of 1.
+    """
+    long_counts: dict[str, int] = {}
+    vendors: set[str] = set()
+    for collector_id in collectors:
+        vendor = collector_id.split(".")[0]
+        vendors.add(vendor)
+        if collector_id in long_running:
+            long_counts[vendor] = long_counts.get(vendor, 0) + 1
+    return {vendor: max(1, long_counts.get(vendor, 0)) for vendor in vendors}
+
 
 _SCHEDULE_PATH = Path(__file__).parents[3] / "config" / "collector_schedule.yaml"
 
@@ -185,7 +200,8 @@ def _configure_logging() -> None:
 
 def build_scheduler() -> BlockingScheduler:
     """Construct a ``BlockingScheduler`` with a per-vendor executor."""
-    executors = {v: ThreadPoolExecutor(max_workers=w) for v, w in _VENDOR_WORKERS.items()}
+    workers = _derive_vendor_workers(COLLECTORS, _LONG_RUNNING_COLLECTORS)
+    executors = {v: ThreadPoolExecutor(max_workers=w) for v, w in workers.items()}
     return BlockingScheduler(executors=executors)
 
 
