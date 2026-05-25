@@ -56,9 +56,9 @@ Sector exposure breakdown (per position):
 
 Cross-constraint impact summary:
   If all pending proposals are approved as-sized:
-    Net long:    42.0% → 45.0% (within limit)
-    Gross:       78.0% → 81.0% (within limit)
-    Tech sector: 18.5% → 20.5% (within limit)
+    Net long:    42.0% → 45.0% (within limit, 15.0% headroom)
+    Gross:       78.0% → 81.0% (within limit, 39.0% headroom)
+    Tech sector: 18.5% → 20.5% (within limit, 4.5% headroom)
     Capital:     $5,000 → $3,500
 
 Guardrail validation tool available:

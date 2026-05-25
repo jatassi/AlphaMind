@@ -161,7 +161,21 @@ class PerRuleEntry(BaseModel):
     current: float = Field(description="Rule value before applying the combined set.")
     limit: float = Field(description="Rule limit under the active regime.")
     projected_after: float = Field(description="Rule value after applying the combined set.")
-    headroom_remaining: float = Field(description="limit - projected_after.")
+    headroom_remaining: float = Field(
+        description=(
+            "Direction-aware signed slack carried verbatim from the upstream "
+            "``RuleProjection.headroom_remaining``. Positive means compliant in "
+            "either direction; the magnitude is slack on PASS/WARNING or the "
+            "shortfall/overage on FAIL. For cap-style rules it is "
+            "``limit - measured`` (with ``measured = |projected_after|`` for "
+            "magnitude rules); for inverse (floor) rules it is "
+            "``projected_after - limit``. Downstream consumers must read this "
+            "field rather than recomputing from ``projected_after`` vs "
+            "``limit`` — direction- and escalation-blind arithmetic produces "
+            "wrong verdicts on inverse rules and hard-block-zone FAILs (see "
+            "ALP-622)."
+        ),
+    )
     unit: str
 
 
