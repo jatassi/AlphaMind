@@ -30,6 +30,7 @@ from collections.abc import Callable
 from typing import Any
 
 __all__ = [
+    "SectorResolver",
     "active_sectors_from_resolved",
     "build_sector_resolver",
     "sectors_config_from_assets",
@@ -56,6 +57,24 @@ def active_sectors_from_resolved(resolved: Any) -> set[str]:
     return set(resolved.assets.sectors.keys())
 
 
+class SectorResolver:
+    """Callable ticker→sector resolver backed by a static lookup dict.
+
+    Module-level class (not a closure) so pickle can serialize instances
+    across a subprocess boundary — the ``_sdk_subprocess`` wrappers pickle
+    ``ValidationToolState`` whose ``sector_resolver`` field carries one of
+    these instances.
+    """
+
+    __slots__ = ("ticker_to_sector",)
+
+    def __init__(self, ticker_to_sector: dict[str, str]) -> None:
+        self.ticker_to_sector = ticker_to_sector
+
+    def __call__(self, ticker: str) -> str:
+        return self.ticker_to_sector.get(ticker, "UNCLASSIFIED")
+
+
 def build_sector_resolver(resolved: Any) -> Callable[[str], str]:
     """Build a ticker→sector resolver from the resolved assets config.
 
@@ -74,10 +93,7 @@ def build_sector_resolver(resolved: Any) -> Callable[[str], str]:
             for ticker in tickers:
                 ticker_to_sector[ticker] = sector
 
-    def _resolver(ticker: str) -> str:
-        return ticker_to_sector.get(ticker, "UNCLASSIFIED")
-
-    return _resolver
+    return SectorResolver(ticker_to_sector)
 
 
 def ticker_scope_from_assets(resolved: Any) -> tuple[str, ...]:

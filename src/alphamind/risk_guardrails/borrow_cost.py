@@ -29,7 +29,7 @@ from alphamind.persistence.models import BorrowCostDaily
 # accrual divides by the trading-day count.
 _TRADING_DAYS_PER_YEAR = 252
 
-__all__ = ["build_borrow_cost_resolver", "daily_borrow_cost_usd"]
+__all__ = ["BorrowCostResolver", "build_borrow_cost_resolver", "daily_borrow_cost_usd"]
 
 
 def daily_borrow_cost_usd(*, notional_usd: float, annual_fee_pct: float) -> float:
@@ -40,6 +40,24 @@ def daily_borrow_cost_usd(*, notional_usd: float, annual_fee_pct: float) -> floa
     accrual is ``notional * (fee_pct / 100) / trading-days``.
     """
     return notional_usd * (annual_fee_pct / 100.0) / _TRADING_DAYS_PER_YEAR
+
+
+class BorrowCostResolver:
+    """Callable ticker→annualized-fee resolver backed by a static lookup dict.
+
+    Module-level class (not a closure) so pickle can serialize instances
+    across a subprocess boundary — the ``_sdk_subprocess`` wrappers pickle
+    ``ValidationToolState`` whose optional ``borrow_cost_resolver`` field
+    carries one of these instances.
+    """
+
+    __slots__ = ("latest_fee_pct",)
+
+    def __init__(self, latest_fee_pct: dict[str, float]) -> None:
+        self.latest_fee_pct = latest_fee_pct
+
+    def __call__(self, ticker: str) -> float | None:
+        return self.latest_fee_pct.get(ticker)
 
 
 def build_borrow_cost_resolver(session: Session) -> Callable[[str], float | None]:
@@ -78,8 +96,4 @@ def build_borrow_cost_resolver(session: Session) -> Callable[[str], float | None
     latest_fee_pct: dict[str, float] = {
         ticker: fee_pct for ticker, fee_pct in rows if fee_pct is not None
     }
-
-    def _resolve(ticker: str) -> float | None:
-        return latest_fee_pct.get(ticker)
-
-    return _resolve
+    return BorrowCostResolver(latest_fee_pct)

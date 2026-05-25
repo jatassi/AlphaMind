@@ -21,21 +21,35 @@ The parent reads stdout, reconstructs the typed result, and returns it
 from a typed error payload so the orchestrator's per-failure-class
 handling continues to work.
 
-Per-harness subprocess wrappers live next to this module
-(``invoke_domain_researcher_in_subprocess`` here for now; siblings
-added incrementally as the e2e gate reveals which harnesses need
-isolation).
+Per-harness subprocess wrappers live next to this module: seven in
+total (domain_researcher, qualitative_researcher, analyst, strategist,
+portfolio_manager, synthesizer, adaptive_researcher). ALP-650 added
+the latter five so every LLM harness's blast radius is bounded to a
+subprocess on the same back-to-back-stall failure mode the first two
+were added against.
+
+Heavy state objects (``ValidationToolState``, ``MarketInputs`` with a
+session-bound ``IvProvider``, ``SubmitEnvelopeState``) cross the
+subprocess boundary via base64-encoded pickle inside the JSON
+transport. A small set of pickle-time shims replace session-bound
+providers with data-only carriers; the worker rehydrates them against
+a fresh ``DATABASE_PATH`` session.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import dataclasses
 import json
 import logging
 import os
+import pickle
 import sys
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._harness_core import (
@@ -50,11 +64,44 @@ from alphamind.analysis.domain_researchers.harness import HarnessSuccess as DRHa
 from alphamind.analysis.domain_researchers.models import SectorBrief
 from alphamind.analysis.qualitative_research.harness import HarnessSuccess as QRHarnessSuccess
 from alphamind.analysis.qualitative_research.models import QualitativeBrief
-from alphamind.config.models.agents import BaseAgentConfig
+from alphamind.risk_guardrails.guardrail_evaluation import MarketInputs
+from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import (
+    RealizedVolEntry,
+    SqlOptionsIvProvider,
+)
+
+# Decision/analysis-layer harness HarnessSuccess types and the heavy state
+# Pydantic models are referenced only as type annotations in this module.
+# Importing them at module load time creates a circular import: each layer's
+# package ``__init__`` re-exports its runner, the runners now import the
+# subprocess wrappers from this module, and this module would re-enter the
+# runner via the harness import. Deferring them to TYPE_CHECKING breaks the
+# cycle without forcing every caller to know the heavyweight package
+# structure.
+if TYPE_CHECKING:
+    from alphamind.analysis.adaptive_research.harness import HarnessSuccess as ARHarnessSuccess
+    from alphamind.analysis.synthesizer.harness import HarnessSuccess as SynthHarnessSuccess
+    from alphamind.analysis.synthesizer.retrieval import RetrievalStore
+    from alphamind.config.models.agents import BaseAgentConfig
+    from alphamind.decision.analyst.harness import HarnessSuccess as AnalystHarnessSuccess
+    from alphamind.decision.portfolio_manager.harness import HarnessSuccess as PMHarnessSuccess
+    from alphamind.decision.portfolio_manager.submit_envelope.types import SubmitEnvelopeState
+    from alphamind.decision.strategist.harness import HarnessSuccess as StratHarnessSuccess
+    from alphamind.portfolio_state.consumers.portfolio_manager import (
+        PortfolioManagerThesisComponentReader,
+        PortfolioManagerView,
+    )
+    from alphamind.portfolio_state.consumers.synthesizer import SynthesizerPortfolioStateReader
+    from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationToolState
 
 __all__ = [
+    "invoke_adaptive_researcher_in_subprocess",
+    "invoke_analyst_in_subprocess",
     "invoke_domain_researcher_in_subprocess",
+    "invoke_portfolio_manager_in_subprocess",
     "invoke_qualitative_researcher_in_subprocess",
+    "invoke_strategist_in_subprocess",
+    "invoke_synthesizer_in_subprocess",
 ]
 
 logger = logging.getLogger(__name__)
@@ -63,6 +110,71 @@ logger = logging.getLogger(__name__)
 # module so the subprocess can import all of alphamind's harness machinery
 # the same way the parent does.
 _WORKER_MODULE = "alphamind.analysis._sdk_subprocess_worker"
+
+
+# ---------------------------------------------------------------------------
+# Pickle transport for heavy state
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _SqlIvProviderShim:
+    """Pickle-friendly stand-in for :class:`SqlOptionsIvProvider`.
+
+    Carries only the ``realized_vol`` mapping (the fallback table); the
+    worker reconstructs a real provider against its own fresh
+    ``DATABASE_PATH`` ``sessionmaker``. The instance never reaches
+    ``lookup_iv`` — it is swapped out during
+    :func:`rehydrate_market_inputs` before the harness call.
+    """
+
+    realized_vol: Mapping[str, RealizedVolEntry]
+
+    def lookup_iv(self, **_: Any) -> Any:  # pragma: no cover - never invoked
+        msg = "_SqlIvProviderShim must be rehydrated before lookup_iv is called"
+        raise RuntimeError(msg)
+
+
+def _prepare_market_inputs_for_pickle(market_inputs: MarketInputs) -> MarketInputs:
+    """Swap out a session-bound ``SqlOptionsIvProvider`` before pickling.
+
+    Other implementations (the fixture-only :class:`FixtureIvProvider` used
+    in tests and the bootstrap path) pickle as-is.
+    """
+    if isinstance(market_inputs.iv_provider, SqlOptionsIvProvider):
+        # ``_realized_vol`` is the private attr; SqlOptionsIvProvider has no
+        # public accessor today, so access it directly. The shim is the only
+        # caller of this attribute outside the provider itself.
+        shim = _SqlIvProviderShim(realized_vol=market_inputs.iv_provider._realized_vol)
+        return dataclasses.replace(market_inputs, iv_provider=shim)
+    return market_inputs
+
+
+def _prepare_validation_state_for_pickle(state: ValidationToolState) -> ValidationToolState:
+    """Swap out non-picklable inner fields before pickling ValidationToolState."""
+    return state.model_copy(
+        update={"library_market": _prepare_market_inputs_for_pickle(state.library_market)}
+    )
+
+
+def _prepare_submit_envelope_state_for_pickle(
+    state: SubmitEnvelopeState,
+) -> SubmitEnvelopeState:
+    """Swap out the nested validation_state's non-picklable inner fields."""
+    return dataclasses.replace(
+        state,
+        validation_state=_prepare_validation_state_for_pickle(state.validation_state),
+    )
+
+
+def _encode_pickle(obj: Any) -> str:
+    """Encode a Python object as base64-pickle for JSON transport."""
+    return base64.b64encode(pickle.dumps(obj)).decode("ascii")
+
+
+def _decode_pickle(encoded: str) -> Any:
+    """Decode a base64-pickle string produced by :func:`_encode_pickle`."""
+    return pickle.loads(base64.b64decode(encoded.encode("ascii")))
 
 
 def _extract_progress_jsonl_path(progress: ProgressEmitter) -> str | None:
@@ -270,3 +382,249 @@ async def invoke_qualitative_researcher_in_subprocess(
         tool_calls_used=result["tool_calls_used"],
         wall_clock_seconds=result["wall_clock_seconds"],
     )
+
+
+# ---------------------------------------------------------------------------
+# Synthesizer wrapper — added per ALP-650
+# ---------------------------------------------------------------------------
+
+
+async def invoke_synthesizer_in_subprocess(
+    *,
+    agent_config: BaseAgentConfig,
+    user_message: str,
+    invocation_id: str,
+    portfolio_reader: SynthesizerPortfolioStateReader,
+    archive_root: Path | None = None,
+    sdk_query_fn: Any = None,  # noqa: ARG001 — signature parity; subprocess uses its own SDK call
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "synthesizer",
+) -> SynthHarnessSuccess:
+    """Drop-in subprocess-isolated replacement for ``invoke_synthesizer``.
+
+    The ``portfolio_reader`` is pickled across the boundary; the production
+    implementation (``SnapshotBackedSynthesizerReader``) carries only a
+    projected :class:`SynthesizerView` (data-only frozen dataclass) so it
+    pickles cleanly without further preprocessing.
+    """
+    payload = {
+        "agent": "synthesizer",
+        "agent_config": agent_config.model_dump(mode="json"),
+        "user_message": user_message,
+        "invocation_id": invocation_id,
+        "portfolio_reader_pickle": _encode_pickle(portfolio_reader),
+        "archive_root": str(archive_root) if archive_root is not None else None,
+        "progress_jsonl_path": _extract_progress_jsonl_path(progress),
+        "phase": phase,
+    }
+    result = await _run_worker(payload)
+    if result["kind"] == "failure":
+        _raise_failure(result)
+    success: SynthHarnessSuccess = _decode_pickle(result["success_pickle"])
+    return success
+
+
+# ---------------------------------------------------------------------------
+# Adaptive researcher wrapper — added per ALP-650
+# ---------------------------------------------------------------------------
+
+
+async def invoke_adaptive_researcher_in_subprocess(  # noqa: PLR0913 — signature parity with ``invoke_adaptive_researcher``
+    *,
+    agent_config: BaseAgentConfig,
+    user_message: str,
+    invocation_id: str,
+    universe: frozenset[str],
+    sector_briefs: tuple[SectorBrief, ...],
+    qualitative_brief: QualitativeBrief,
+    correlation_regime_brief: Any,  # CorrelationRegimeBrief — typed Pydantic at the worker boundary
+    archive_root: Path | None = None,
+    sdk_query_fn: Any = None,  # noqa: ARG001 — signature parity; subprocess uses its own SDK call
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "adaptive",
+) -> ARHarnessSuccess:
+    """Drop-in subprocess-isolated replacement for ``invoke_adaptive_researcher``.
+
+    The worker opens its own ``DATABASE_PATH`` session (mirroring the
+    qualitative-researcher wrapper) so the harness's MCP-server wiring
+    works against the same DB the parent uses.
+    """
+    payload = {
+        "agent": "adaptive_researcher",
+        "agent_config": agent_config.model_dump(mode="json"),
+        "user_message": user_message,
+        "invocation_id": invocation_id,
+        "universe": sorted(universe),
+        "sector_briefs_pickle": _encode_pickle(sector_briefs),
+        "qualitative_brief_pickle": _encode_pickle(qualitative_brief),
+        "correlation_regime_brief_pickle": _encode_pickle(correlation_regime_brief),
+        "archive_root": str(archive_root) if archive_root is not None else None,
+        "progress_jsonl_path": _extract_progress_jsonl_path(progress),
+        "phase": phase,
+    }
+    result = await _run_worker(payload)
+    if result["kind"] == "failure":
+        _raise_failure(result)
+    success: ARHarnessSuccess = _decode_pickle(result["success_pickle"])
+    return success
+
+
+# ---------------------------------------------------------------------------
+# Analyst wrapper — added per ALP-650
+# ---------------------------------------------------------------------------
+
+
+async def invoke_analyst_in_subprocess(  # noqa: PLR0913 — signature parity with ``invoke_analyst``
+    *,
+    agent_config: BaseAgentConfig,
+    user_message: str,
+    invocation_id: str,
+    initial_validation_state: ValidationToolState,
+    retrieval_store: RetrievalStore,
+    active_sectors: frozenset[str],
+    archive_root: Path | None = None,
+    sdk_query_fn: Any = None,  # noqa: ARG001 — signature parity; subprocess uses its own SDK call
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "analyst",
+) -> AnalystHarnessSuccess:
+    """Drop-in subprocess-isolated replacement for ``invoke_analyst``.
+
+    ``initial_validation_state.library_market.iv_provider`` is replaced
+    with :class:`_SqlIvProviderShim` before pickling when it is the
+    session-bound ``SqlOptionsIvProvider``; the worker rebuilds a fresh
+    provider against its own ``DATABASE_PATH`` session.
+    """
+    payload = {
+        "agent": "analyst",
+        "agent_config": agent_config.model_dump(mode="json"),
+        "user_message": user_message,
+        "invocation_id": invocation_id,
+        "initial_validation_state_pickle": _encode_pickle(
+            _prepare_validation_state_for_pickle(initial_validation_state)
+        ),
+        "retrieval_store_pickle": _encode_pickle(retrieval_store),
+        "active_sectors": sorted(active_sectors),
+        "archive_root": str(archive_root) if archive_root is not None else None,
+        "progress_jsonl_path": _extract_progress_jsonl_path(progress),
+        "phase": phase,
+    }
+    result = await _run_worker(payload)
+    if result["kind"] == "failure":
+        _raise_failure(result)
+    success: AnalystHarnessSuccess = _decode_pickle(result["success_pickle"])
+    return success
+
+
+# ---------------------------------------------------------------------------
+# Strategist wrapper — added per ALP-650
+# ---------------------------------------------------------------------------
+
+
+async def invoke_strategist_in_subprocess(  # noqa: PLR0913 — signature parity with ``run_strategist_harness``
+    *,
+    user_message: str,
+    system_prompt: str,
+    invocation_id: str,
+    agent_config: BaseAgentConfig,
+    validation_state: ValidationToolState,
+    retrieval_store: RetrievalStore,
+    active_sectors: frozenset[str],
+    archive_root: Path | None = None,
+    sdk_query_fn: Any = None,  # noqa: ARG001 — signature parity; subprocess uses its own SDK call
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "strategist",
+) -> StratHarnessSuccess:
+    """Drop-in subprocess-isolated replacement for ``run_strategist_harness``.
+
+    Same ``ValidationToolState`` pickle shim treatment as the analyst
+    wrapper.
+    """
+    payload = {
+        "agent": "strategist",
+        "agent_config": agent_config.model_dump(mode="json"),
+        "user_message": user_message,
+        "system_prompt": system_prompt,
+        "invocation_id": invocation_id,
+        "validation_state_pickle": _encode_pickle(
+            _prepare_validation_state_for_pickle(validation_state)
+        ),
+        "retrieval_store_pickle": _encode_pickle(retrieval_store),
+        "active_sectors": sorted(active_sectors),
+        "archive_root": str(archive_root) if archive_root is not None else None,
+        "progress_jsonl_path": _extract_progress_jsonl_path(progress),
+        "phase": phase,
+    }
+    result = await _run_worker(payload)
+    if result["kind"] == "failure":
+        _raise_failure(result)
+    success: StratHarnessSuccess = _decode_pickle(result["success_pickle"])
+    return success
+
+
+# ---------------------------------------------------------------------------
+# Portfolio manager wrapper — added per ALP-650
+# ---------------------------------------------------------------------------
+
+
+async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature parity with ``invoke_pm``
+    *,
+    agent_config: BaseAgentConfig,
+    user_message: str,
+    invocation_id: str,
+    initial_validation_state: ValidationToolState,
+    initial_submit_envelope_state: SubmitEnvelopeState,
+    retrieval_store: RetrievalStore,
+    thesis_component_reader: PortfolioManagerThesisComponentReader,
+    pre_processor_bundle: Any,  # ProposalPreProcessorBundle — Pydantic, picklable
+    pm_view: PortfolioManagerView,
+    active_sectors: frozenset[str],
+    halt_mode: bool,
+    sector_resolver: Any,  # SectorResolver instance (callable class) — picklable
+    library_config: Any,  # LibraryConfig — frozen dataclass, picklable
+    library_market: MarketInputs,
+    archive_root: Path | None = None,
+    sdk_query_fn: Any = None,  # noqa: ARG001 — signature parity; subprocess uses its own SDK call
+    broker_dispatch: Any = None,  # not threaded through subprocess; worker passes None to invoke_pm
+    progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    phase: str = "pm",
+) -> PMHarnessSuccess:
+    """Drop-in subprocess-isolated replacement for ``invoke_pm``.
+
+    The PM harness today does not thread ``client``/``queries``/
+    ``execution_config`` into the submit_envelope wrapper — broker routing
+    is conditional on all three being supplied (``server._handle_submit_envelope``
+    L306). PM-side submission is therefore a pure validation+log path; the
+    worker can safely pass ``broker_dispatch=None`` and the harness's
+    lazy-import branch is never entered (no broker-config is wired in
+    today's composition path).
+    """
+    del broker_dispatch  # PM in-harness submit_envelope wrapping does not route to broker
+    payload = {
+        "agent": "portfolio_manager",
+        "agent_config": agent_config.model_dump(mode="json"),
+        "user_message": user_message,
+        "invocation_id": invocation_id,
+        "initial_validation_state_pickle": _encode_pickle(
+            _prepare_validation_state_for_pickle(initial_validation_state)
+        ),
+        "initial_submit_envelope_state_pickle": _encode_pickle(
+            _prepare_submit_envelope_state_for_pickle(initial_submit_envelope_state)
+        ),
+        "retrieval_store_pickle": _encode_pickle(retrieval_store),
+        "thesis_component_reader_pickle": _encode_pickle(thesis_component_reader),
+        "pre_processor_bundle_pickle": _encode_pickle(pre_processor_bundle),
+        "pm_view_pickle": _encode_pickle(pm_view),
+        "active_sectors": sorted(active_sectors),
+        "halt_mode": halt_mode,
+        "sector_resolver_pickle": _encode_pickle(sector_resolver),
+        "library_config_pickle": _encode_pickle(library_config),
+        "library_market_pickle": _encode_pickle(_prepare_market_inputs_for_pickle(library_market)),
+        "archive_root": str(archive_root) if archive_root is not None else None,
+        "progress_jsonl_path": _extract_progress_jsonl_path(progress),
+        "phase": phase,
+    }
+    result = await _run_worker(payload)
+    if result["kind"] == "failure":
+        _raise_failure(result)
+    success: PMHarnessSuccess = _decode_pickle(result["success_pickle"])
+    return success

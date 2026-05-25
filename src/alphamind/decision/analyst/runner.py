@@ -22,6 +22,7 @@ from typing import Any, Literal
 import yaml
 
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
+from alphamind.analysis._sdk_subprocess import invoke_analyst_in_subprocess
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import (
@@ -29,7 +30,10 @@ from alphamind.config.models.agents import (
     AgentsConfig,
     BaseAgentConfig,
 )
-from alphamind.decision.analyst.harness import HarnessSuccess, invoke_analyst
+from alphamind.decision.analyst.harness import (  # noqa: F401 — kept for tests that inject the in-process harness
+    HarnessSuccess,
+    invoke_analyst,
+)
 from alphamind.decision.analyst.input_bundle import (
     assemble_input_bundle_halt,
     assemble_input_bundle_normal,
@@ -208,7 +212,9 @@ async def run_analyst(  # noqa: PLR0913 — signature dictated by ALP-299 spec p
 
     # HarnessFailure propagates up unchanged — the runner does NOT catch and
     # degrade. The pipeline-level orchestrator handles fail-closed semantics.
-    harness_result: HarnessSuccess = await invoke_analyst(
+    # ALP-650: route through the subprocess wrapper so an SDK stall in the
+    # analyst's harness no longer wedges the parent pipeline.
+    harness_result: HarnessSuccess = await invoke_analyst_in_subprocess(
         agent_config=resolved_config,
         user_message=user_message,
         invocation_id=invocation_id,

@@ -16,8 +16,11 @@ CLI subprocess context.
 from __future__ import annotations
 
 import asyncio
+import base64
+import dataclasses
 import json
 import os
+import pickle
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,11 +33,20 @@ from alphamind.analysis._harness_core import (
     SDKFailure,
     TimeoutFailure,
 )
+from alphamind.analysis._sdk_subprocess import _SqlIvProviderShim
 from alphamind.analysis._shared import Sector
+from alphamind.analysis.adaptive_research.harness import invoke_adaptive_researcher
 from alphamind.analysis.domain_researchers.harness import invoke_domain_researcher
 from alphamind.analysis.qualitative_research.harness import invoke_qualitative_researcher
+from alphamind.analysis.synthesizer.harness import invoke_synthesizer
 from alphamind.config.models.agents import BaseAgentConfig
+from alphamind.decision.analyst.harness import invoke_analyst
+from alphamind.decision.portfolio_manager.harness import invoke_pm
+from alphamind.decision.strategist.harness import run_strategist_harness
 from alphamind.persistence.session import make_engine, make_session_factory
+from alphamind.risk_guardrails.guardrail_evaluation import MarketInputs
+from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import SqlOptionsIvProvider
+from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationToolState
 
 
 class _JsonlAppender:
@@ -244,6 +256,242 @@ async def _run_qualitative_researcher(payload: dict[str, Any]) -> dict[str, Any]
         engine.dispose()
 
 
+# ---------------------------------------------------------------------------
+# ALP-650 helpers + dispatchers
+# ---------------------------------------------------------------------------
+
+
+def _decode_pickle(encoded: str) -> Any:
+    """Decode a base64-pickle string produced by the parent-side encoder."""
+    return pickle.loads(base64.b64decode(encoded.encode("ascii")))
+
+
+def _encode_pickle(obj: Any) -> str:
+    """Encode a Python object as base64-pickle for JSON transport back to parent."""
+    return base64.b64encode(pickle.dumps(obj)).decode("ascii")
+
+
+def _rehydrate_market_inputs(
+    market_inputs: MarketInputs, *, sync_session_factory: Any
+) -> MarketInputs:
+    """Replace a :class:`_SqlIvProviderShim` with a real provider against *sync_session_factory*."""
+    if isinstance(market_inputs.iv_provider, _SqlIvProviderShim):
+        provider = SqlOptionsIvProvider(
+            sync_session_factory=sync_session_factory,
+            realized_vol=market_inputs.iv_provider.realized_vol,
+        )
+        return dataclasses.replace(market_inputs, iv_provider=provider)
+    return market_inputs
+
+
+def _rehydrate_validation_state(
+    state: ValidationToolState, *, sync_session_factory: Any
+) -> ValidationToolState:
+    """Replace the embedded shim provider with a fresh SqlOptionsIvProvider."""
+    return state.model_copy(
+        update={
+            "library_market": _rehydrate_market_inputs(
+                state.library_market, sync_session_factory=sync_session_factory
+            ),
+        },
+    )
+
+
+def _success_payload(harness_success: Any) -> dict[str, Any]:
+    """Wire-format envelope for a successful worker invocation."""
+    return {"kind": "success", "success_pickle": _encode_pickle(harness_success)}
+
+
+async def _run_synthesizer(payload: dict[str, Any]) -> dict[str, Any]:
+    agent_config = BaseAgentConfig.model_validate(payload["agent_config"])
+    progress = _resolve_progress(payload.get("progress_jsonl_path"))
+    archive_root_str = payload.get("archive_root")
+    archive_root = Path(archive_root_str) if archive_root_str else None
+    portfolio_reader = _decode_pickle(payload["portfolio_reader_pickle"])
+
+    try:
+        result = await invoke_synthesizer(
+            agent_config=agent_config,
+            user_message=payload["user_message"],
+            invocation_id=payload["invocation_id"],
+            portfolio_reader=portfolio_reader,
+            archive_root=archive_root,
+            progress=progress,
+            phase=payload.get("phase", "synthesizer"),
+        )
+    except (MalformedOutputFailure, ContextOverflowFailure, TimeoutFailure, SDKFailure) as exc:
+        return _failure_payload(exc)
+
+    return _success_payload(result)
+
+
+async def _run_adaptive_researcher(payload: dict[str, Any]) -> dict[str, Any]:
+    agent_config = BaseAgentConfig.model_validate(payload["agent_config"])
+    progress = _resolve_progress(payload.get("progress_jsonl_path"))
+    archive_root_str = payload.get("archive_root")
+    archive_root = Path(archive_root_str) if archive_root_str else None
+    universe = frozenset(payload["universe"])
+    sector_briefs = _decode_pickle(payload["sector_briefs_pickle"])
+    qualitative_brief = _decode_pickle(payload["qualitative_brief_pickle"])
+    correlation_regime_brief = _decode_pickle(payload["correlation_regime_brief_pickle"])
+
+    engine = make_engine()
+    session_factory = make_session_factory(engine)
+    session = session_factory()
+    try:
+        try:
+            result = await invoke_adaptive_researcher(
+                agent_config=agent_config,
+                user_message=payload["user_message"],
+                invocation_id=payload["invocation_id"],
+                session=session,
+                universe=universe,
+                sector_briefs=sector_briefs,
+                qualitative_brief=qualitative_brief,
+                correlation_regime_brief=correlation_regime_brief,
+                archive_root=archive_root,
+                progress=progress,
+                phase=payload.get("phase", "adaptive"),
+            )
+        except (MalformedOutputFailure, ContextOverflowFailure, TimeoutFailure, SDKFailure) as exc:
+            return _failure_payload(exc)
+        return _success_payload(result)
+    finally:
+        session.close()
+        engine.dispose()
+
+
+async def _run_analyst(payload: dict[str, Any]) -> dict[str, Any]:
+    agent_config = BaseAgentConfig.model_validate(payload["agent_config"])
+    progress = _resolve_progress(payload.get("progress_jsonl_path"))
+    archive_root_str = payload.get("archive_root")
+    archive_root = Path(archive_root_str) if archive_root_str else None
+    retrieval_store = _decode_pickle(payload["retrieval_store_pickle"])
+    active_sectors = frozenset(payload["active_sectors"])
+
+    engine = make_engine()
+    sync_session_factory = make_session_factory(engine)
+    try:
+        validation_state = _rehydrate_validation_state(
+            _decode_pickle(payload["initial_validation_state_pickle"]),
+            sync_session_factory=sync_session_factory,
+        )
+        try:
+            result = await invoke_analyst(
+                agent_config=agent_config,
+                user_message=payload["user_message"],
+                invocation_id=payload["invocation_id"],
+                initial_validation_state=validation_state,
+                retrieval_store=retrieval_store,
+                active_sectors=active_sectors,
+                archive_root=archive_root,
+                progress=progress,
+                phase=payload.get("phase", "analyst"),
+            )
+        except (MalformedOutputFailure, ContextOverflowFailure, TimeoutFailure, SDKFailure) as exc:
+            return _failure_payload(exc)
+        return _success_payload(result)
+    finally:
+        engine.dispose()
+
+
+async def _run_strategist(payload: dict[str, Any]) -> dict[str, Any]:
+    agent_config = BaseAgentConfig.model_validate(payload["agent_config"])
+    progress = _resolve_progress(payload.get("progress_jsonl_path"))
+    archive_root_str = payload.get("archive_root")
+    archive_root = Path(archive_root_str) if archive_root_str else None
+    retrieval_store = _decode_pickle(payload["retrieval_store_pickle"])
+    active_sectors = frozenset(payload["active_sectors"])
+
+    engine = make_engine()
+    sync_session_factory = make_session_factory(engine)
+    try:
+        validation_state = _rehydrate_validation_state(
+            _decode_pickle(payload["validation_state_pickle"]),
+            sync_session_factory=sync_session_factory,
+        )
+        try:
+            result = await run_strategist_harness(
+                user_message=payload["user_message"],
+                system_prompt=payload["system_prompt"],
+                invocation_id=payload["invocation_id"],
+                agent_config=agent_config,
+                validation_state=validation_state,
+                retrieval_store=retrieval_store,
+                active_sectors=active_sectors,
+                archive_root=archive_root,
+                progress=progress,
+                phase=payload.get("phase", "strategist"),
+            )
+        except (MalformedOutputFailure, ContextOverflowFailure, TimeoutFailure, SDKFailure) as exc:
+            return _failure_payload(exc)
+        return _success_payload(result)
+    finally:
+        engine.dispose()
+
+
+async def _run_portfolio_manager(payload: dict[str, Any]) -> dict[str, Any]:
+    agent_config = BaseAgentConfig.model_validate(payload["agent_config"])
+    progress = _resolve_progress(payload.get("progress_jsonl_path"))
+    archive_root_str = payload.get("archive_root")
+    archive_root = Path(archive_root_str) if archive_root_str else None
+    retrieval_store = _decode_pickle(payload["retrieval_store_pickle"])
+    thesis_component_reader = _decode_pickle(payload["thesis_component_reader_pickle"])
+    pre_processor_bundle = _decode_pickle(payload["pre_processor_bundle_pickle"])
+    pm_view = _decode_pickle(payload["pm_view_pickle"])
+    active_sectors = frozenset(payload["active_sectors"])
+    halt_mode = bool(payload["halt_mode"])
+    sector_resolver = _decode_pickle(payload["sector_resolver_pickle"])
+    library_config = _decode_pickle(payload["library_config_pickle"])
+
+    engine = make_engine()
+    sync_session_factory = make_session_factory(engine)
+    try:
+        validation_state = _rehydrate_validation_state(
+            _decode_pickle(payload["initial_validation_state_pickle"]),
+            sync_session_factory=sync_session_factory,
+        )
+        submit_envelope_state = _decode_pickle(payload["initial_submit_envelope_state_pickle"])
+        submit_envelope_state = dataclasses.replace(
+            submit_envelope_state,
+            validation_state=_rehydrate_validation_state(
+                submit_envelope_state.validation_state,
+                sync_session_factory=sync_session_factory,
+            ),
+        )
+        library_market = _rehydrate_market_inputs(
+            _decode_pickle(payload["library_market_pickle"]),
+            sync_session_factory=sync_session_factory,
+        )
+
+        try:
+            result = await invoke_pm(
+                agent_config=agent_config,
+                user_message=payload["user_message"],
+                invocation_id=payload["invocation_id"],
+                initial_validation_state=validation_state,
+                initial_submit_envelope_state=submit_envelope_state,
+                retrieval_store=retrieval_store,
+                thesis_component_reader=thesis_component_reader,
+                pre_processor_bundle=pre_processor_bundle,
+                pm_view=pm_view,
+                active_sectors=active_sectors,
+                halt_mode=halt_mode,
+                sector_resolver=sector_resolver,
+                library_config=library_config,
+                library_market=library_market,
+                archive_root=archive_root,
+                broker_dispatch=None,
+                progress=progress,
+                phase=payload.get("phase", "pm"),
+            )
+        except (MalformedOutputFailure, ContextOverflowFailure, TimeoutFailure, SDKFailure) as exc:
+            return _failure_payload(exc)
+        return _success_payload(result)
+    finally:
+        engine.dispose()
+
+
 async def main() -> int:
     payload = json.loads(sys.stdin.read())
     agent = payload["agent"]
@@ -251,6 +499,16 @@ async def main() -> int:
         result = await _run_domain_researcher(payload)
     elif agent == "qualitative_researcher":
         result = await _run_qualitative_researcher(payload)
+    elif agent == "synthesizer":
+        result = await _run_synthesizer(payload)
+    elif agent == "adaptive_researcher":
+        result = await _run_adaptive_researcher(payload)
+    elif agent == "analyst":
+        result = await _run_analyst(payload)
+    elif agent == "strategist":
+        result = await _run_strategist(payload)
+    elif agent == "portfolio_manager":
+        result = await _run_portfolio_manager(payload)
     else:
         result = {
             "kind": "failure",
