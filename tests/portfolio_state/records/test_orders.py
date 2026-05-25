@@ -15,6 +15,7 @@ from alphamind._kernel.ids import (
     OrderId,
     Symbol,
 )
+from alphamind._kernel.money import price
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
@@ -412,20 +413,20 @@ class TestPriceParametersCrossValidation:
         assert order.order_type == OrderType.MARKET
 
     def test_limit_with_limit_price_passes(self) -> None:
-        pp = PriceParameters(limit_price=150.0, stop_trigger_price=None)
+        pp = PriceParameters(limit_price=price("150.0"), stop_trigger_price=None)
         order = _make_order(order_type=OrderType.LIMIT, price_parameters=pp)
-        assert order.price_parameters.limit_price == 150.0
+        assert order.price_parameters.limit_price == price("150.0")
 
     def test_stop_with_stop_trigger_passes(self) -> None:
-        pp = PriceParameters(limit_price=None, stop_trigger_price=140.0)
+        pp = PriceParameters(limit_price=None, stop_trigger_price=price("140.0"))
         order = _make_order(order_type=OrderType.STOP, price_parameters=pp)
-        assert order.price_parameters.stop_trigger_price == 140.0
+        assert order.price_parameters.stop_trigger_price == price("140.0")
 
     def test_stop_limit_both_set_passes(self) -> None:
-        pp = PriceParameters(limit_price=149.0, stop_trigger_price=148.0)
+        pp = PriceParameters(limit_price=price("149.0"), stop_trigger_price=price("148.0"))
         order = _make_order(order_type=OrderType.STOP_LIMIT, price_parameters=pp)
-        assert order.price_parameters.limit_price == 149.0
-        assert order.price_parameters.stop_trigger_price == 148.0
+        assert order.price_parameters.limit_price == price("149.0")
+        assert order.price_parameters.stop_trigger_price == price("148.0")
 
     def test_limit_missing_limit_price_fails(self) -> None:
         pp = PriceParameters(limit_price=None, stop_trigger_price=None)
@@ -438,17 +439,17 @@ class TestPriceParametersCrossValidation:
             _make_order(order_type=OrderType.STOP, price_parameters=pp)
 
     def test_market_with_limit_price_fails(self) -> None:
-        pp = PriceParameters(limit_price=150.0, stop_trigger_price=None)
+        pp = PriceParameters(limit_price=price("150.0"), stop_trigger_price=None)
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_order(order_type=OrderType.MARKET, price_parameters=pp)
 
     def test_stop_limit_missing_limit_price_fails(self) -> None:
-        pp = PriceParameters(limit_price=None, stop_trigger_price=148.0)
+        pp = PriceParameters(limit_price=None, stop_trigger_price=price("148.0"))
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_order(order_type=OrderType.STOP_LIMIT, price_parameters=pp)
 
     def test_stop_limit_missing_stop_trigger_fails(self) -> None:
-        pp = PriceParameters(limit_price=149.0, stop_trigger_price=None)
+        pp = PriceParameters(limit_price=price("149.0"), stop_trigger_price=None)
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_order(order_type=OrderType.STOP_LIMIT, price_parameters=pp)
 

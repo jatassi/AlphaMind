@@ -1512,7 +1512,12 @@ def _make_pending_entry_order(
     order_type: OrderType = OrderType.LIMIT,
     status: OrderStatus = OrderStatus.PENDING,
 ) -> OrderRecord:
-    pp = PriceParameters(limit_price=limit_price, stop_trigger_price=stop_trigger_price)
+    pp = PriceParameters(
+        limit_price=price(str(limit_price)) if limit_price is not None else None,
+        stop_trigger_price=(
+            price(str(stop_trigger_price)) if stop_trigger_price is not None else None
+        ),
+    )
     quantity = filled_quantity + remaining_quantity
     return OrderRecord(
         order_id=OrderId(order_id),

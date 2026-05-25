@@ -654,10 +654,11 @@ def _render_pending_order_row(order: OrderRecord, current_price: float) -> str:
     age = f"{order.age_hours:.1f}h"
     limit_price = order.price_parameters.limit_price
     if limit_price is not None and limit_price > 0:
-        distance_pct = ((current_price - limit_price) / limit_price) * 100.0
+        limit_float = float(limit_price)
+        distance_pct = ((current_price - limit_float) / limit_float) * 100.0
         distance_str = _format_signed_pct(distance_pct)
         return (
-            f"    {order.order_id}: {role} @ ${limit_price:.2f}, "
+            f"    {order.order_id}: {role} @ ${limit_float:.2f}, "
             f"age {age}, distance {distance_str} from underlying"
         )
     return f"    {order.order_id}: {role}, age {age}"

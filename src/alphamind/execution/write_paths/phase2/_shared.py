@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -88,14 +87,6 @@ from alphamind.state.tables.orders_codec import (
 )
 
 
-def _price_to_float(value: Decimal | float | None) -> float | None:
-    """Cast Decimal-backed Price/Money to legacy float at the record boundary.
-
-    Retires when ALP-462's downstream record types migrate to Decimal/Money.
-    """
-    return None if value is None else float(value)
-
-
 def _instrument_ticker_key(
     instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
 ) -> str:
@@ -151,11 +142,11 @@ def _entry_price_parameters(entry_order: EntryOrder) -> PriceParameters:
     if entry_order.type == "market":
         return PriceParameters()
     if entry_order.type == "limit":
-        return PriceParameters(limit_price=_price_to_float(entry_order.limit_price))
+        return PriceParameters(limit_price=entry_order.limit_price)
     # stop_limit
     return PriceParameters(
-        limit_price=_price_to_float(entry_order.limit_price),
-        stop_trigger_price=_price_to_float(entry_order.stop_price),
+        limit_price=entry_order.limit_price,
+        stop_trigger_price=entry_order.stop_price,
     )
 
 

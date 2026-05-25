@@ -40,6 +40,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import price
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
@@ -333,7 +334,7 @@ class TestRoundTripCodec:
             order_id=OrderId("ord-partial"),
             position_id=PositionId("pos-1"),
             order_type=OrderType.LIMIT,
-            price_parameters=PriceParameters(limit_price=152.5, stop_trigger_price=None),
+            price_parameters=PriceParameters(limit_price=price("152.5"), stop_trigger_price=None),
             status=OrderStatus.PARTIALLY_FILLED,
             alpaca_order_id=AlpacaOrderId("alp-2"),
             alpaca_order_id_chain=("alp-1", "alp-2"),
@@ -355,6 +356,19 @@ class TestRoundTripCodec:
             remaining_quantity=0.0,
         )
         assert row_to_record(record_to_row(record)) == record
+
+    def test_price_parameters_decoder_accepts_legacy_float_json(self) -> None:
+        """Rows written by the pre-ALP-660 codec stored prices as JSON numbers.
+
+        ``_price_parameters_from_json`` normalises both shapes via ``price()`` so
+        production rows that pre-date this migration decode cleanly.
+        """
+        from alphamind.state.tables.orders_codec import _price_parameters_from_json
+
+        legacy_payload = '{"limit_price": 152.5, "stop_trigger_price": null}'
+        decoded = _price_parameters_from_json(legacy_payload)
+        assert decoded.limit_price == price("152.5")
+        assert decoded.stop_trigger_price is None
 
     def test_options_order_round_trips(self) -> None:
         """Spot-check: options order."""

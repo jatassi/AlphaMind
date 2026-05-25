@@ -38,6 +38,7 @@ from alpaca.trading.requests import (
 )
 
 from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol
+from alphamind._kernel.money import Price
 from alphamind.commands.command_models import (
     AddCommand,
     CloseCommand,
@@ -211,8 +212,7 @@ async def submit_options_close(
         symbol=occ_symbol,
         side=side,
         qty=qty,
-        # ALP-462 — Price → float at the Alpaca SDK boundary.
-        limit_price=float(command.limit_price) if command.limit_price is not None else None,
+        limit_price=command.limit_price,
         client_order_id=client_order_id,
     )
     return await _submit(client, request, execution, occ_symbol=occ_symbol)
@@ -269,7 +269,7 @@ def _build_close_request(
     symbol: str,
     side: OrderSide,
     qty: float,
-    limit_price: float | None,
+    limit_price: Price | None,
     client_order_id: str,
 ) -> OrderRequest:
     _validate_client_order_id(client_order_id)
@@ -287,7 +287,8 @@ def _build_close_request(
         if limit_price is None:
             msg = "CloseCommand order_type=limit requires limit_price"
             raise ValueError(msg)
-        return LimitOrderRequest(**common, limit_price=limit_price)
+        # Price → float at the Alpaca SDK boundary.
+        return LimitOrderRequest(**common, limit_price=float(limit_price))
     msg = f"unsupported CloseCommand.order_type for options: {order_type!r}"
     raise ValueError(msg)
 

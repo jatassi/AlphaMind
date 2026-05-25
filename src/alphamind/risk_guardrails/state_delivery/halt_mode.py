@@ -13,7 +13,7 @@ from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
 
-from alphamind._kernel.money import Money
+from alphamind._kernel.money import Money, Price
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.computations.exposure import SectorResolver
@@ -263,7 +263,7 @@ def _splice_banner_after_envelope_open(
 
 def _render_pending_orders_review_block(
     pending_orders: tuple[OrderRecord, ...],
-    current_price_lookup: Callable[[str], float],
+    current_price_lookup: Callable[[str], Price],
 ) -> str:
     """Render the PM's halt-mode ``Pending orders review:`` block."""
     rows: list[str] = [_PENDING_ORDERS_REVIEW_HEADER]
@@ -275,9 +275,12 @@ def _render_pending_orders_review_block(
     return "\n".join(rows)
 
 
+_HUNDRED = Decimal(100)
+
+
 def _render_pending_order_row(
     order: OrderRecord,
-    current_price_lookup: Callable[[str], float],
+    current_price_lookup: Callable[[str], Price],
 ) -> str:
     ticker = _resolve_order_ticker(order)
     try:
@@ -289,7 +292,7 @@ def _render_pending_order_row(
     if limit_price is None:
         msg = f"pending order {order.order_id!r} has no limit_price"
         raise ValueError(msg)
-    distance_pct = ((current_price - limit_price) / limit_price) * 100.0
+    distance_pct = ((current_price - limit_price) / limit_price) * _HUNDRED
     distance_sign = "+" if distance_pct >= 0 else "-"
     return (
         f"  {order.order_id}: {order.direction.value} {ticker} @ ${limit_price:.2f} "
@@ -371,10 +374,7 @@ def render_pm_header_halt_mode(  # noqa: PLR0913 — mirrors render_pm_header
     available_for_new_positions_usd: Money,
     cross_constraint_impact: CrossConstraintImpact,
     pending_orders: tuple[OrderRecord, ...],
-    # ALP-660 — current_price_lookup stays ``Callable[[str], float]`` until
-    # ``OrderRecord.PriceParameters.{limit_price, stop_trigger_price}`` migrate
-    # to ``Price``; migrating the callback alone would just move the float boundary.
-    current_price_lookup: Callable[[str], float],
+    current_price_lookup: Callable[[str], Price],
     position_zones: EscalationZones,
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),

@@ -27,6 +27,7 @@ from alphamind._kernel.ids import (
     AlpacaOrderId,
     ClientOrderId,
 )
+from alphamind._kernel.money import price
 from alphamind.execution.broker_adapter import (
     GatewaySubmissionFailed,
     PermanentRejection,
@@ -105,9 +106,9 @@ def _mock_alpaca_order(
 
 
 def test_replace_fields_is_frozen_dataclass() -> None:
-    fields = ReplaceFields(limit_price=100.0)
+    fields = ReplaceFields(limit_price=price("100.0"))
     with pytest.raises(FrozenInstanceError):
-        fields.limit_price = 200.0  # type: ignore[misc]
+        fields.limit_price = price("200.0")  # type: ignore[misc]
 
 
 def test_replace_fields_all_none_by_default() -> None:
@@ -128,13 +129,18 @@ def test_replace_fields_all_none_by_default() -> None:
 @pytest.mark.parametrize(
     "fields_kwargs",
     [
-        {"limit_price": 100.0},
-        {"stop_price": 95.0},
+        {"limit_price": price("100.0")},
+        {"stop_price": price("95.0")},
         {"qty": 10.0},
         {"trail_price": 5.0},
         {"trail_percent": 2.0},
         {"time_in_force": "day"},
-        {"limit_price": 100.0, "stop_price": 95.0, "qty": 10.0, "time_in_force": "gtc"},
+        {
+            "limit_price": price("100.0"),
+            "stop_price": price("95.0"),
+            "qty": 10.0,
+            "time_in_force": "gtc",
+        },
     ],
 )
 @pytest.mark.asyncio
@@ -201,7 +207,7 @@ async def test_submit_replace_us_option_simple_accepts_valid_fields() -> None:
     new_id = str(uuid4())
     client.replace_order_by_id.return_value = _mock_alpaca_order(new_id)
     execution = _make_execution_config()
-    fields = ReplaceFields(limit_price=5.0, qty=2.0)
+    fields = ReplaceFields(limit_price=price("5.0"), qty=2.0)
 
     result = await submit_replace(
         client=client,
@@ -230,8 +236,14 @@ async def test_submit_replace_mleg_rejects_non_mleg_fields(bad_field: str) -> No
     """mleg order rejects all fields except limit_price and qty."""
     client = _make_client()
     execution = _make_execution_config()
-    # Use a valid value for the field type
-    value: Any = "day" if bad_field == "time_in_force" else 2.0
+    # Use a valid value for the field type.
+    value: Any
+    if bad_field == "time_in_force":
+        value = "day"
+    elif bad_field == "stop_price":
+        value = price("2.0")
+    else:
+        value = 2.0
     fields = ReplaceFields(**{bad_field: value})
 
     with pytest.raises(ValueError, match=bad_field):
@@ -254,7 +266,7 @@ async def test_submit_replace_mleg_accepts_limit_price_and_qty() -> None:
     new_id = str(uuid4())
     client.replace_order_by_id.return_value = _mock_alpaca_order(new_id)
     execution = _make_execution_config()
-    fields = ReplaceFields(limit_price=850.0, qty=4.0)
+    fields = ReplaceFields(limit_price=price("850.0"), qty=4.0)
 
     result = await submit_replace(
         client=client,
@@ -283,7 +295,7 @@ async def test_submit_replace_mleg_with_only_limit_price_no_stop_in_request() ->
     new_id = str(uuid4())
     client.replace_order_by_id.return_value = _mock_alpaca_order(new_id)
     execution = _make_execution_config()
-    fields = ReplaceFields(limit_price=850.0)
+    fields = ReplaceFields(limit_price=price("850.0"))
 
     await submit_replace(
         client=client,
@@ -361,7 +373,7 @@ async def test_submit_replace_success_returns_submitted_replacement_ack() -> Non
         new_id, client_order_id=client_order_id, status="pending_new"
     )
     execution = _make_execution_config()
-    fields = ReplaceFields(limit_price=100.0)
+    fields = ReplaceFields(limit_price=price("100.0"))
 
     result = await submit_replace(
         client=client,
@@ -396,7 +408,7 @@ async def test_submit_replace_retry_exhaustion_returns_gateway_submission_failed
     client = _make_client()
     client.replace_order_by_id.side_effect = httpx.ConnectError("network down")
     execution = _make_execution_config()
-    fields = ReplaceFields(limit_price=100.0)
+    fields = ReplaceFields(limit_price=price("100.0"))
 
     # Patch asyncio.sleep to be instant and time.monotonic to advance past the window quickly
     fake_now = [1000.0]
@@ -444,7 +456,7 @@ async def test_submit_replace_permanent_rejection_reraises() -> None:
         422, "order is in pending_new status, cannot replace"
     )
     execution = _make_execution_config()
-    fields = ReplaceFields(limit_price=100.0)
+    fields = ReplaceFields(limit_price=price("100.0"))
 
     with pytest.raises(APIError) as exc_info:
         await submit_replace(
@@ -473,7 +485,7 @@ async def test_submit_replace_mleg_leg_mutation_422_reraises() -> None:
         422, "invalid legs[0]: cannot modify leg structure"
     )
     execution = _make_execution_config()
-    fields = ReplaceFields(limit_price=850.0)
+    fields = ReplaceFields(limit_price=price("850.0"))
 
     with pytest.raises(APIError) as exc_info:
         await submit_replace(
@@ -640,7 +652,7 @@ async def test_submit_replace_runs_sdk_call_on_worker_thread(
     client = _make_client()
     client.replace_order_by_id.side_effect = _capturing_replace
     execution = _make_execution_config()
-    fields = ReplaceFields(limit_price=100.0)
+    fields = ReplaceFields(limit_price=price("100.0"))
 
     result = await submit_replace(
         client=client,

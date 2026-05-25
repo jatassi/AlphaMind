@@ -43,7 +43,7 @@ from typing import Any, Literal
 
 from alphamind._kernel.exception_group import first_non_cancelled
 from alphamind._kernel.mode import PipelineMode
-from alphamind._kernel.money import Money, money, signed_money
+from alphamind._kernel.money import Money, Price, money, price, signed_money
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
 from alphamind.config.models.guardrails import ProgressiveTier
@@ -339,6 +339,10 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     analyst_mode = pipeline_mode.to_analyst_pipeline_mode()
     strategist_mode = pipeline_mode.to_strategist_pipeline_mode()
     current_price_lookup = _price_lookup_from_assembled(assembled)
+
+    def _strategist_price_lookup(ticker: str) -> float:
+        return float(current_price_lookup(ticker))
+
     progress.phase_start("analyst")
     progress.phase_start("strategist")
     try:
@@ -386,7 +390,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
                     sector_resolver=sector_resolver,
                     total_portfolio_value_usd=total_portfolio_value_usd,
                     available_for_new_positions_usd=available_capital_usd,
-                    current_price_lookup=current_price_lookup,
+                    current_price_lookup=_strategist_price_lookup,
                     profile_feature_flags=profile_feature_flags,
                     library_config=library_config,
                     library_market=library_market,
@@ -493,7 +497,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
 # ---------------------------------------------------------------------------
 
 
-def _price_lookup_from_assembled(assembled: AssembledSnapshot) -> Callable[[str], float]:
+def _price_lookup_from_assembled(assembled: AssembledSnapshot) -> Callable[[str], Price]:
     """Build a synchronous ticker→price lookup over the assembler-materialized
     ``price_map`` (ALP-407).
 
@@ -504,18 +508,19 @@ def _price_lookup_from_assembled(assembled: AssembledSnapshot) -> Callable[[str]
     parameter that is meaningless now that the assembler is the single
     source of truth on freshness.
 
-    The 0.0 fallback in the closure is unreachable in practice — every
-    ticker referenced by the snapshot's open and pending positions was
-    enumerated by the assembler and its quote is in ``price_map``, so the
-    agents only ever ask about held positions whose tickers are guaranteed
-    to be present. The strategist's input-bundle renderer raises
-    ``ValueError`` on a ``KeyError`` from this callable, so the fallback
-    exists only to satisfy the ``Callable[[str], float]`` signature
-    without requiring callers to handle ``KeyError``.
+    Raises ``KeyError`` for a ticker absent from ``price_map``. Every ticker
+    referenced by the snapshot's open and pending positions is enumerated by
+    the assembler, so callers only ever ask about held positions whose
+    quotes are guaranteed present — a miss indicates a bug upstream. Both
+    consumers (halt_mode and strategist input bundles) wrap the call in a
+    ``try/except KeyError`` that re-raises as ``ValueError`` with the
+    ticker; emitting ``KeyError`` here preserves that loud-failure contract.
     """
-    by_ticker = {ticker: quote.price_usd for ticker, quote in assembled.price_map.items()}
+    by_ticker: dict[str, Price] = {
+        ticker: price(quote.price_usd) for ticker, quote in assembled.price_map.items()
+    }
 
-    def _lookup(ticker: str) -> float:
-        return by_ticker.get(ticker, 0.0)
+    def _lookup(ticker: str) -> Price:
+        return by_ticker[ticker]
 
     return _lookup

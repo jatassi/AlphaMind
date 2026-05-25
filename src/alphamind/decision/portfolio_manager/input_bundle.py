@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 
-from alphamind._kernel.money import Money
+from alphamind._kernel.money import Money, Price
 from alphamind.decision._shared import direction_display
 from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
@@ -176,7 +176,7 @@ def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_pm_header_ha
     invocation_id: str,
     timestamp: datetime,
     pending_orders: tuple[OrderRecord, ...],
-    current_price_lookup: Callable[[str], float],
+    current_price_lookup: Callable[[str], Price],
     options_enabled: bool,
     short_selling_enabled: bool,
     active_sectors: tuple[str, ...],

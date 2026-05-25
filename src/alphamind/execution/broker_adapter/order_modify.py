@@ -23,6 +23,7 @@ from alpaca.trading.models import Order
 from alpaca.trading.requests import ReplaceOrderRequest
 
 from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId
+from alphamind._kernel.money import Price
 from alphamind.config.models.execution import ExecutionConfig
 from alphamind.execution.broker_adapter.errors import classify_alpaca_error
 from alphamind.execution.broker_adapter.retry import (
@@ -75,8 +76,8 @@ OrderClass = Literal["simple", "bracket", "oco", "oto", "mleg"]
 class ReplaceFields:
     """The intersection of OMS-modifiable fields and Alpaca-PATCHable fields."""
 
-    limit_price: float | None = None
-    stop_price: float | None = None
+    limit_price: Price | None = None
+    stop_price: Price | None = None
     qty: float | None = None
     trail_price: float | None = None  # equity-only
     trail_percent: float | None = None  # equity-only
@@ -192,8 +193,9 @@ def _build_replace_request(fields: ReplaceFields) -> ReplaceOrderRequest:
     return ReplaceOrderRequest(
         qty=int(fields.qty) if fields.qty is not None else None,
         time_in_force=tif,
-        limit_price=fields.limit_price,
-        stop_price=fields.stop_price,
+        # Price → float at the Alpaca SDK boundary.
+        limit_price=float(fields.limit_price) if fields.limit_price is not None else None,
+        stop_price=float(fields.stop_price) if fields.stop_price is not None else None,
         trail=trail,
     )
 

@@ -147,7 +147,7 @@ def _build_position_reservations(
         px = pp.limit_price if pp.limit_price is not None else pp.stop_trigger_price
         if px is None:
             continue
-        reservations[order.position_id] += px * order.remaining_quantity
+        reservations[order.position_id] += float(px) * order.remaining_quantity
     return dict(reservations)
 
 

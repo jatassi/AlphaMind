@@ -492,7 +492,7 @@ def _pending_protective_stop_order(
         direction=OrderDirection.SELL,
         order_type=OrderType.STOP,
         order_class=OrderClass.SIMPLE,
-        price_parameters=PriceParameters(stop_trigger_price=140.0),
+        price_parameters=PriceParameters(stop_trigger_price=price("140.0")),
         quantity=10.0,
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,

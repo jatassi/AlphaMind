@@ -16,7 +16,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
-from alphamind._kernel.money import money, price, signed_money
+from alphamind._kernel.money import Price, money, price, signed_money
 from alphamind._kernel.regime import (
     DrawdownTier,
     RegimeLabel,
@@ -498,7 +498,7 @@ def _make_pm_pending_order(
         instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
         direction=direction,
         order_type=OrderType.LIMIT,
-        price_parameters=PriceParameters(limit_price=limit_price),
+        price_parameters=PriceParameters(limit_price=price(str(limit_price))),
         quantity=quantity,
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
@@ -793,14 +793,14 @@ def _make_default_cross_constraint_impact() -> CrossConstraintImpact:
 
 def _make_pm_current_price_lookup(
     prices: dict[str, float] | None = None,
-) -> Callable[[str], float]:
+) -> Callable[[str], Price]:
     table = prices or {"NVDA": 110.0}
 
-    def _lookup(ticker: str) -> float:
+    def _lookup(ticker: str) -> Price:
         if ticker not in table:
             msg = f"price unavailable for {ticker!r}"
             raise KeyError(msg)
-        return table[ticker]
+        return price(str(table[ticker]))
 
     return _lookup
 

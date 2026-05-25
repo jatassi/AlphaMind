@@ -38,6 +38,7 @@ from alpaca.trading.requests import (
 )
 
 from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol
+from alphamind._kernel.money import Price
 from alphamind.commands.command_models import (
     AddCommand,
     CloseCommand,
@@ -255,7 +256,7 @@ def _build_request(
     legs: list[OptionLegRequest],
     qty: float,
     client_order_id: str,
-    limit_price: float | None,
+    limit_price: Price | None,
 ) -> MarketOrderRequest | LimitOrderRequest:
     """Construct a ``MarketOrderRequest`` (no limit) or ``LimitOrderRequest``
     (net debit/credit limit) wrapping the legs as an mleg."""
@@ -266,7 +267,8 @@ def _build_request(
             time_in_force=TimeInForce.DAY,
             client_order_id=client_order_id,
             legs=legs,
-            limit_price=limit_price,
+            # Price → float at the Alpaca SDK boundary.
+            limit_price=float(limit_price),
         )
     return MarketOrderRequest(
         qty=qty,
@@ -369,12 +371,7 @@ async def submit_mleg_open(
         legs=leg_requests,
         qty=command.position_size.quantity,
         client_order_id=client_order_id,
-        # ALP-462 — Price → float at the Alpaca SDK boundary.
-        limit_price=(
-            float(command.entry_order.limit_price)
-            if command.entry_order.limit_price is not None
-            else None
-        ),
+        limit_price=command.entry_order.limit_price,
     )
     return await _submit(
         client=client,
@@ -542,8 +539,7 @@ async def submit_mleg_close(
         legs=leg_requests,
         qty=qty,
         client_order_id=client_order_id,
-        # ALP-462 — Price → float at the Alpaca SDK boundary.
-        limit_price=float(command.limit_price) if command.limit_price is not None else None,
+        limit_price=command.limit_price,
     )
     return await _submit(
         client=client,
@@ -587,12 +583,7 @@ async def submit_mleg_add(
         legs=leg_requests,
         qty=command.additional_quantity,
         client_order_id=client_order_id,
-        # ALP-462 — Price → float at the Alpaca SDK boundary.
-        limit_price=(
-            float(command.entry_order.limit_price)
-            if command.entry_order.limit_price is not None
-            else None
-        ),
+        limit_price=command.entry_order.limit_price,
     )
     return await _submit(
         client=client,

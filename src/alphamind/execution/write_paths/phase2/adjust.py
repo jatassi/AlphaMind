@@ -32,7 +32,6 @@ from alphamind.execution.write_paths.phase2._shared import (
     _order_position_direction,
     _position_quantity,
     _position_ticker,
-    _price_to_float,
     _protective_roles_for_change_fields,
 )
 from alphamind.portfolio_state.events.activity_log import (
@@ -265,21 +264,21 @@ def _new_stop_level_to_order_shape(
         return (
             OrderRole.PRICE_STOP,
             OrderType.LIMIT,
-            PriceParameters(limit_price=_price_to_float(stop.limit_price)),
+            PriceParameters(limit_price=stop.limit_price),
         )
     if stop.order_type == "stop_limit":
         return (
             OrderRole.PRICE_STOP,
             OrderType.STOP_LIMIT,
             PriceParameters(
-                limit_price=_price_to_float(stop.limit_price),
-                stop_trigger_price=_price_to_float(stop.trigger_price),
+                limit_price=stop.limit_price,
+                stop_trigger_price=stop.trigger_price,
             ),
         )
     return (
         OrderRole.PRICE_STOP,
         OrderType.STOP,
-        PriceParameters(stop_trigger_price=_price_to_float(stop.trigger_price)),
+        PriceParameters(stop_trigger_price=stop.trigger_price),
     )
 
 
@@ -291,7 +290,7 @@ def _new_target_level_to_order_shape(
     return (
         OrderRole.TAKE_PROFIT,
         OrderType.LIMIT,
-        PriceParameters(limit_price=_price_to_float(tgt.price)),
+        PriceParameters(limit_price=tgt.price),
     )
 
 

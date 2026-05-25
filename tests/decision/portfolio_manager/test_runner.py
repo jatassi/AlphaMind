@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 
 from alphamind._kernel.ids import Symbol
-from alphamind._kernel.money import money
+from alphamind._kernel.money import Price, money, price
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -434,9 +434,9 @@ def _cross_constraint_impact() -> CrossConstraintImpact:
     )
 
 
-def _current_price_lookup(ticker: str) -> float:
-    prices = {"AAPL": 175.0, "NVDA": 862.0, "ABC": 100.0}
-    return prices[ticker]
+def _current_price_lookup(ticker: str) -> Price:
+    prices = {"AAPL": "175.0", "NVDA": "862.0", "ABC": "100.0"}
+    return price(prices[ticker])
 
 
 def _agent_config(*, latency: int = 30, output_budget: int = 4_000) -> BaseAgentConfig:
@@ -542,7 +542,7 @@ def _runner_kwargs(
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     halt_state: HaltState | None = None,
     pending_orders: tuple[Any, ...] = (),
-    current_price_lookup: Callable[[str], float] | None = None,
+    current_price_lookup: Callable[[str], Price] | None = None,
     agent_config: BaseAgentConfig | None = None,
     archive_root: Path | None = None,
     active_sectors: frozenset[str] = _DEFAULT_ACTIVE_SECTORS,

@@ -26,7 +26,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
-from alphamind._kernel.money import money, price, signed_money
+from alphamind._kernel.money import Price, money, price, signed_money
 from alphamind._kernel.regime import (
     DrawdownTier,
     RegimeLabel,
@@ -1033,7 +1033,7 @@ def _build_pending_order() -> OrderRecord:
         instrument_spec=spec,
         direction=OrderDirection.BUY,
         order_type=OrderType.LIMIT,
-        price_parameters=PriceParameters(limit_price=510.0, stop_trigger_price=None),
+        price_parameters=PriceParameters(limit_price=price("510.0"), stop_trigger_price=None),
         quantity=10.0,
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
@@ -1051,11 +1051,11 @@ def _build_pending_order() -> OrderRecord:
     )
 
 
-def _price_lookup(ticker: str) -> float:
-    prices = {"NVDA": 520.0}
+def _price_lookup(ticker: str) -> Price:
+    prices = {"NVDA": "520.0"}
     if ticker not in prices:
         raise KeyError(ticker)
-    return prices[ticker]
+    return price(prices[ticker])
 
 
 # ---------------------------------------------------------------------------

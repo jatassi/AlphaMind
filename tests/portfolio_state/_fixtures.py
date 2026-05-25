@@ -311,7 +311,9 @@ def _make_pending_equity_order(
         instrument_spec=spec,
         direction=OrderDirection.BUY,
         order_type=OrderType.LIMIT,
-        price_parameters=PriceParameters(limit_price=limit_price, stop_trigger_price=None),
+        price_parameters=PriceParameters(
+            limit_price=price(str(limit_price)), stop_trigger_price=None
+        ),
         quantity=quantity,
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,

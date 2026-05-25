@@ -28,7 +28,7 @@ from typing import Any, Literal
 
 import yaml
 
-from alphamind._kernel.money import Money
+from alphamind._kernel.money import Money, Price
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._sdk_subprocess import invoke_portfolio_manager_in_subprocess
 from alphamind.analysis._shared import TokensUsed
@@ -237,7 +237,7 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
     cross_constraint_impact: CrossConstraintImpact,
     halt_state: HaltState | None = None,
     pending_orders: tuple[OrderRecord, ...] = (),
-    current_price_lookup: Callable[[str], float] | None = None,
+    current_price_lookup: Callable[[str], Price] | None = None,
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
     active_regime_overrides: tuple[RegimeOverride, ...] = (),
@@ -403,7 +403,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
     invocation_id: str,
     timestamp: datetime,
     pending_orders: tuple[OrderRecord, ...],
-    current_price_lookup: Callable[[str], float] | None,
+    current_price_lookup: Callable[[str], Price] | None,
     options_enabled: bool,
     short_selling_enabled: bool,
     active_sectors_tuple: tuple[str, ...],
