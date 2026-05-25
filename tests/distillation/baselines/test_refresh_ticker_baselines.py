@@ -17,7 +17,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import Symbol
-from alphamind.distillation.baselines import refresh_ticker_baselines
+from alphamind.distillation.baselines import _stdev_from_m2, refresh_ticker_baselines
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -621,6 +621,79 @@ class TestRefreshTickerBaselinesWelfordIncremental:
         assert second["AAPL"].value["mean"] != first["AAPL"].value["mean"]
         # New window covers exactly 21 daily bars (offsets 14..34 inclusive).
         assert second["AAPL"].value["n_observations"] == 21
+
+
+class TestRefreshTickerBaselinesWelfordNumerics:
+    """Floating-point edge cases in the Welford rolling-window accumulator.
+
+    Variance is mathematically non-negative, but the evict step
+    (``m2 -= (value - new_mean) * (value - mean)``) can land at a tiny
+    negative due to floating-point cancellation when the true variance is
+    zero (constant window) or near zero. Without clamping, the population
+    stdev path ``(m2 / n) ** 0.5`` returns a ``complex`` for negative real
+    operands and the surrounding ``float(...)`` cast raises ``TypeError``,
+    crashing the distillation refresh.
+    """
+
+    def test_stdev_from_m2_clamps_negative_m2_to_zero(self) -> None:
+        """Tiny negative ``m2`` from roundoff yields stdev ``0.0``, not a raise.
+
+        Direct regression for the prod traceback in ``_stdev_from_m2`` —
+        ``(-1e-15) ** 0.5`` returns a ``complex`` and the ``float(...)``
+        cast raises ``TypeError``. The helper must clamp the variance to
+        zero before the square root.
+        """
+        assert _stdev_from_m2(n=1, m2=-1e-15) == 0.0
+        assert _stdev_from_m2(n=20, m2=-1e-12) == 0.0
+
+    def test_rolling_window_identical_values_returns_zero_stdev(self, session: Session) -> None:
+        """End-to-end refresh over a constant volume series returns stdev ``0.0``.
+
+        Reproduces the prod path: identical volume values flow through
+        ``_welford_extend`` and ``_welford_evict`` on a rolling daily
+        cadence. The variance is mathematically zero, but the evict
+        subtraction can drift negative — the refresh must tolerate that
+        without raising. Adds bars two days at a time so the incremental
+        path (rather than the full-recompute fallback) is exercised.
+        """
+        _add_ticker(session, "AAPL")
+        for day in range(1, 26):
+            _add_ohlcv(
+                session,
+                ticker=Symbol("AAPL"),
+                period_start=f"2026-04-{day:02d}T00:00:00Z",
+                volume=1_000_000,
+            )
+        session.commit()
+
+        first = refresh_ticker_baselines(
+            session,
+            kind="volume",
+            ticker_scope=("AAPL",),
+            as_of="2026-04-25T00:00:00Z",
+            window_days=VOLUME_WINDOW_DAYS,
+            min_observations=VOLUME_MIN_OBSERVATIONS,
+        )
+        assert first["AAPL"].value["stdev"] == 0.0
+
+        for day in (26, 27):
+            _add_ohlcv(
+                session,
+                ticker=Symbol("AAPL"),
+                period_start=f"2026-04-{day:02d}T00:00:00Z",
+                volume=1_000_000,
+            )
+        session.commit()
+
+        second = refresh_ticker_baselines(
+            session,
+            kind="volume",
+            ticker_scope=("AAPL",),
+            as_of="2026-04-27T00:00:00Z",
+            window_days=VOLUME_WINDOW_DAYS,
+            min_observations=VOLUME_MIN_OBSERVATIONS,
+        )
+        assert second["AAPL"].value["stdev"] == 0.0
 
 
 # ---------------------------------------------------------------------------
