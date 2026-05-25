@@ -17,10 +17,8 @@ multiplier at any grid position is computed by linear interpolation between
 those two endpoints; at ``grid_position = 0.0`` the multiplier is the midpoint
 of the two endpoints.
 
-Asset-class taxonomy is not v1 — ``high_cap_equity`` and ``small_cap_equity``
-are exposed on ``ShockParameters`` for future revisions, but v1 looks up only
-``per_symbol_overrides``, falling through directly to ``unmapped_default``
-when no per-symbol entry exists.
+Shock lookup consults ``per_symbol_overrides`` and falls through to
+``unmapped_default`` when no per-symbol entry exists.
 
 Pure module: no I/O, no clock reads, no global mutation. The only external
 calls are to the ``IvProvider`` supplied via ``MarketInputs`` (once per option
@@ -160,9 +158,7 @@ def _shock_pct_for_underlying(
     """Return the per-symbol shock percentage from ``config.shock_parameters``.
 
     Looks up ``per_symbol_overrides[symbol.upper()]`` and returns it if present;
-    otherwise returns ``unmapped_default``. Asset-class taxonomy is not v1 —
-    ``high_cap_equity`` and ``small_cap_equity`` are reserved for future
-    revisions and not consulted here.
+    otherwise returns ``unmapped_default``.
     """
     overrides = config.shock_parameters.per_symbol_overrides
     return overrides.get(symbol.upper(), config.shock_parameters.unmapped_default)

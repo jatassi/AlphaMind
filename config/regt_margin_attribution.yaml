@@ -29,12 +29,10 @@
 #   asymmetric support, switch to native +0.06/-0.08 for these symbols.
 #
 # House-conservatism layer:
-#   The asset-class defaults (`high_cap_equity: 0.15`, `small_cap_equity: 0.20`,
-#   `unmapped_default: 0.20`) sit ABOVE OCC's 15% equity baseline. They apply
-#   only when a symbol is not in `per_symbol_overrides` and its class is
-#   ambiguous from the ticker alone; raising the floor in those cases
-#   biases the PM number upward (regt_excess_over_pm downward — same safe
-#   direction as above).
+#   `unmapped_default: 0.20` sits ABOVE OCC's 15% equity baseline. It applies
+#   whenever a symbol is not in `per_symbol_overrides`, raising the floor for
+#   unmapped names and biasing the PM number upward (regt_excess_over_pm
+#   downward — same safe direction as above).
 #
 # Operator refresh contract:
 #   When OCC publishes a revision of the RBH/CPM User Guide, re-read § 4 of
@@ -59,12 +57,9 @@ iv_shock:
   worst_up_multiplier: 0.95
 
 shock_parameters:
-  # Asset-class defaults (house-conservatism layer above OCC's 15% equity baseline,
-  # applied only when symbol classification is ambiguous from ticker alone).
-  # All values in decimal form: 0.15 = ±15%, 0.20 = ±20%.
-  high_cap_equity: 0.15    # ±15% — OCC equities baseline
-  small_cap_equity: 0.20   # ±20% — house-conservatism above OCC's 15% equity baseline
-  unmapped_default: 0.20   # ±20% — house-conservatism fallback for unmapped symbols
+  # House-conservatism fallback for symbols not pinned by per_symbol_overrides.
+  # Decimal form: 0.20 = ±20%.
+  unmapped_default: 0.20   # ±20% — house-conservatism above OCC's 15% equity baseline
 
   per_symbol_overrides:
     # Mapped per OCC TIMS RBH/CPM User Guide v1.13, page 1, paragraph 4.
