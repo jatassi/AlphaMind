@@ -157,11 +157,37 @@ class TestParseArgsDebugE2E:
         )
         assert args.fresh_start is False
 
-    def test_fresh_start_without_debug_e2e_raises(self) -> None:
-        """``--fresh-start`` is only valid alongside ``--debug-e2e`` (ALP-618).
+    def test_fresh_start_without_debug_e2e_requires_once(self) -> None:
+        """``--fresh-start`` outside ``--debug-e2e`` triggers the prod
+        cold-start bootstrap (ALP-620) — a one-shot operation that
+        requires ``--once``. Daemon-mode ``--fresh-start`` is rejected so
+        the bootstrap does not silently re-run on every daemon tick.
+        """
+        with pytest.raises(SystemExit):
+            _parse_args(["run", "--fresh-start", "--mode", "paper"])
 
-        The flag selects between the two debug-e2e portfolio fixtures;
-        production daemons (no ``--debug-e2e``) have no fixture to swap.
+    def test_fresh_start_without_debug_e2e_with_once_is_allowed(self) -> None:
+        """``--fresh-start --once <rt> --reason <text>`` parses cleanly as
+        the production cold-start bootstrap (ALP-620)."""
+        args = _parse_args(
+            [
+                "run",
+                "--fresh-start",
+                "--once",
+                "pre_open",
+                "--reason",
+                "first-run bootstrap",
+            ]
+        )
+        assert args.fresh_start is True
+        assert args.debug_e2e is False
+        assert args.once == "pre_open"
+
+    def test_fresh_start_without_debug_e2e_rejects_mode_live(self) -> None:
+        """``--fresh-start --mode live`` is blocked at argparse parallel to
+        the ``--debug-e2e --mode live`` guard. Bootstrapping the local DB
+        against the LIVE Alpaca account on a typo is a one-keystroke
+        foot-gun; the runbook documents only the paper path.
         """
         with pytest.raises(SystemExit):
             _parse_args(
@@ -169,9 +195,11 @@ class TestParseArgsDebugE2E:
                     "run",
                     "--fresh-start",
                     "--once",
-                    "market_hours_rolling",
+                    "pre_open",
                     "--reason",
-                    "test",
+                    "first-run bootstrap",
+                    "--mode",
+                    "live",
                 ]
             )
 

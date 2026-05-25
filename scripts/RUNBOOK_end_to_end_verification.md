@@ -180,7 +180,8 @@ clean-slate `FRESH_START_PORTFOLIO` fixture so an operator can
 characterize the initial-state edge cases — analyst's OPEN
 recommendations, strategist's empty-input behavior, PM's dispatch of
 newly-opened positions through the log-only broker — synthetically,
-before the production-side `--fresh-start` (ALP-620) is wired.
+in advance of the production cold-start path described in the next
+section (ALP-620).
 
 ```bash
 set -a && source <(tr -d '\r' < .env) && set +a && \
@@ -209,6 +210,113 @@ Cost expectation is unchanged: same 9 SDK calls (3 domain researchers +
 qualitative + adaptive + synthesizer + analyst + strategist + PM)
 regardless of portfolio shape. The pipeline composition runs end-to-end
 either way; only the seeded state differs.
+
+## `--fresh-start` — production cold-start bootstrap (ALP-620)
+
+Without `--debug-e2e`, the `--fresh-start` flag carries different
+semantics: it is the one-time production bootstrap. On a freshly-reset
+Alpaca paper account the local DB has no `cash_ledger` row and no
+`drawdown_state` row; downstream consumers (the strategist's portfolio
+bundle, the breach evaluator's HWM check, the synthesizer's exposure
+summary) read empty results and produce malformed output. The flag
+fetches Alpaca's reported cash and writes both singletons before the
+first invocation runs.
+
+**When to use.** Exactly once, before the daemon is started for the
+first time against a fresh paper or live account. After this bootstrap,
+the daemon takes over and the reconciliation auto-correct path (ALP-619)
+keeps `cash_ledger.current_cash_usd` aligned with Alpaca on every
+subsequent invocation.
+
+**Prerequisites.**
+
+1. Alpaca paper account has been reset to its starting cash and holds
+   zero positions (confirm via the Alpaca dashboard).
+2. The local DB at the configured `DATABASE_PATH` has no `cash_ledger`
+   row. On a fresh install of AlphaMind this is the default state; a
+   prior `--fresh-start` invocation will populate the row and the next
+   one will hard-fail.
+3. `.env` is sourced so the Alpaca paper credentials are available to
+   the broker adapter (`ALPACA_PAPER_KEY` / `ALPACA_PAPER_SECRET`).
+
+**Invocation.**
+
+```bash
+set -a && source <(tr -d '\r' < .env) && set +a && \
+    uv run python -m alphamind.scheduler run \
+        --fresh-start \
+        --once pre_open \
+        --reason "first-run bootstrap"
+```
+
+The bootstrap commits the two singleton rows in their own transaction;
+the same process then runs one `pre_open` invocation through to Phase 2
+so the operator immediately sees the pipeline complete against the
+freshly-bootstrapped state. After it returns, start the daemon
+normally (no `--fresh-start`).
+
+**Hard-fail paths.** The flag refuses to run when:
+
+- Alpaca reports any open positions. The error names the offending
+  symbol(s). Reset the Alpaca account first, or — if the positions are
+  intentional — populate both singletons by hand (see the recovery
+  section below) and rely on ALP-619's reconciliation auto-correct path
+  to take it from there.
+- `cash_ledger` already has a row. The error includes the existing
+  `current_cash_usd`. ALP-619 handles drift on existing rows; a
+  re-bootstrap is never the correct path once the singleton is
+  populated.
+- `drawdown_state` already has a row. The error includes the existing
+  `equity_high_water_mark_usd`. Same recovery as above.
+
+`FreshStartPreconditionError` exits the CLI with code 2 (distinct from
+the generic scheduler-error code 1) and prints the message verbatim to
+stderr — no traceback. Operators can match on the prefix
+`--fresh-start:` to filter precondition failures from scheduler crashes.
+
+**Mode restriction.** `--fresh-start` (production bootstrap) is blocked
+against `--mode live` at argparse — only `--mode paper` (the default)
+is accepted. Operators who genuinely need a live-mode bootstrap must
+edit the guard; the runbook does not document that path.
+
+**Recovery if the first invocation fails.** The bootstrap commits the
+two singleton rows in their own transaction *before* the first
+invocation runs. If the invocation itself fails (Phase 1 error, missing
+collector data, transient external dependency), the singletons remain
+committed and a retry of `--fresh-start` will hard-fail. Recovery
+options, in order of preference:
+
+1. **Re-run without `--fresh-start`.** The singletons are already
+   populated correctly; the bootstrap step is no longer needed. Drop
+   the flag:
+   ```bash
+   uv run python -m alphamind.scheduler run \
+       --once pre_open \
+       --reason "retry after bootstrap"
+   ```
+2. **Wipe the singletons and re-bootstrap** (only if the persisted
+   values are wrong, e.g., the Alpaca fetch returned a transient
+   zero-cash mid-reset). Connect to the prod DB on the prod machine
+   (the dev Mac SMB mount is read-only — see operator memory) and:
+   ```sql
+   DELETE FROM drawdown_state;
+   DELETE FROM cash_ledger;
+   ```
+   Then re-run `--fresh-start --once pre_open --reason ...`.
+
+**Verification.** After the command returns, confirm against the DB:
+
+```bash
+uv run python -c "
+import sqlite3, os
+db = sqlite3.connect(os.environ['DATABASE_PATH'])
+print(db.execute('SELECT current_cash_usd FROM cash_ledger').fetchone())
+print(db.execute('SELECT equity_high_water_mark_usd FROM drawdown_state').fetchone())
+"
+```
+
+Both values should match Alpaca's reported cash on the freshly-reset
+account to the cent.
 
 ## Monitoring progress mid-run
 
