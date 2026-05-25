@@ -28,6 +28,7 @@ from typing import Any, Literal
 import yaml
 
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
+from alphamind.analysis._sdk_subprocess import invoke_strategist_in_subprocess
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import (
@@ -35,7 +36,7 @@ from alphamind.config.models.agents import (
     AgentsConfig,
     BaseAgentConfig,
 )
-from alphamind.decision.strategist.harness import (
+from alphamind.decision.strategist.harness import (  # noqa: F401 — kept for tests that inject the in-process harness
     HarnessSuccess,
     run_strategist_harness,
 )
@@ -270,7 +271,9 @@ async def run_strategist(  # noqa: PLR0913 — signature dictated by ALP-308 spe
 
     # HarnessFailure propagates up unchanged — the runner does NOT catch and
     # degrade. The pipeline-level orchestrator handles fail-closed semantics.
-    harness_result: HarnessSuccess = await run_strategist_harness(
+    # ALP-650: route through the subprocess wrapper so an SDK stall in the
+    # strategist's harness no longer wedges the parent pipeline.
+    harness_result: HarnessSuccess = await invoke_strategist_in_subprocess(
         user_message=user_message,
         system_prompt=system_prompt,
         invocation_id=invocation_id,

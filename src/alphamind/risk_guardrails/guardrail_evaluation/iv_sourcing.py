@@ -329,6 +329,16 @@ class SqlOptionsIvProvider:
         self._sync_session_factory = sync_session_factory
         self._realized_vol = realized_vol
 
+    @property
+    def realized_vol(self) -> Mapping[str, RealizedVolEntry]:
+        """Public read-only view of the realized-vol fallback mapping.
+
+        Exposed for the subprocess-isolation transport (ALP-650): the
+        parent-side ``_SqlIvProviderShim`` extracts this mapping so the
+        worker can reconstruct the provider against its own session.
+        """
+        return self._realized_vol
+
     def lookup_iv(
         self,
         *,
