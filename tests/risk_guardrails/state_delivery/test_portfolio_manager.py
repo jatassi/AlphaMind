@@ -802,7 +802,7 @@ def test_render_pm_header_escalation_zone_fail_renders_breach_marker() -> None:
     rendered = _render_with_single_rule(rule)
     assert "[BREACH]" in rendered
     assert "(within limit," not in rendered
-    assert "    Net long: 57.2% → 57.2% [BREACH] in hard-block zone (2.8% headroom)" in rendered
+    assert "    Net long: 57.2% → 57.2% [BREACH] in hard-block zone, 2.8% headroom" in rendered
 
 
 def test_render_pm_header_at_limit_fail_renders_breach_marker() -> None:

@@ -921,6 +921,50 @@ def test_render_pm_header_halt_mode_missing_price_raises_value_error() -> None:
         )
 
 
+def test_render_pm_header_halt_mode_cross_constraint_status_aware_breach_marker() -> None:
+    # ALP-622 regression: halt-mode renderer must consume the pre-processor's
+    # authoritative status, not recompute from `projected_after vs limit`.
+    # Escalation-zone FAIL renders with a [BREACH] marker even though the
+    # projection is numerically inside the limit.
+    view = _make_pm_view()
+    impact = CrossConstraintImpact(
+        per_rule=(
+            CrossConstraintImpactPerRule(
+                rule_id="net_long_pct",
+                rule_label="Net long",
+                current=57.2,
+                projected_after=57.2,
+                limit=60.0,
+                unit="% of portfolio",
+                status="FAIL",
+                headroom_remaining=2.8,
+            ),
+        ),
+        flagged_rule_ids=("net_long_pct",),
+        available_capital_before_usd=300_000.0,
+        available_capital_after_usd=300_000.0,
+    )
+    rendered = render_pm_header_halt_mode(
+        halt_state=_make_halt_state(),
+        pm_view=view,
+        invocation_id="inv-001",
+        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
+        options_enabled=False,
+        short_selling_enabled=False,
+        active_sectors=("tech", "semis"),
+        config=_make_state_delivery_config(),
+        sector_label_display=_MICRO_SECTOR_LABELS,
+        sector_resolver=_make_pm_sector_resolver(),
+        total_portfolio_value_usd=500_000.0,
+        available_for_new_positions_usd=300_000.0,
+        cross_constraint_impact=impact,
+        pending_orders=(),
+        current_price_lookup=_make_pm_current_price_lookup(),
+    )
+    assert "[BREACH] in hard-block zone, 2.8% headroom" in rendered
+    assert "(within limit" not in rendered
+
+
 def test_render_pm_header_halt_mode_cross_constraint_empty_emits_no_pending_line() -> None:
     view = _make_pm_view()
     empty_impact = CrossConstraintImpact(

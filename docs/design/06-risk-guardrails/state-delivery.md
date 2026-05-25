@@ -215,11 +215,22 @@ Sector exposure breakdown (per position):
 
 Cross-constraint impact summary:
   If all pending proposals are approved as-sized:
-    Sector tech: 18.3% → 22.1% (within limit)
-    Net long:    42.0% → 48.5% (within limit)
-    Gross:       78.0% → 84.5% (within limit)
+    Sector tech: 18.3% → 22.1% (within limit, 2.9% headroom)
+    Net long:    42.0% → 48.5% (within limit, 11.5% headroom)
+    Gross:       78.0% → 84.5% (within limit, 35.5% headroom)
     Capital:     ${available} → ${remaining}
   [Flagged constraints: any rule that would enter WARNING or CRITICAL zone]
+
+  Verdict markers come from the pre-processor's authoritative `status`
+  field plus the signed `headroom_remaining` value; the renderer is a thin
+  formatter and never recomputes from `projected_after` vs `limit` (which
+  would be direction-blind for floor rules like `min_cash_reserve_pct` and
+  escalation-blind for rules numerically under the cap but inside the
+  hard-block zone — see ALP-622). The four marker shapes are:
+    PASS:    (within limit, N% headroom)
+    WARNING: [⚠ WARNING] within limit, N% headroom
+    FAIL (over the limit):           [BREACH] would breach by N%
+    FAIL (in hard-block escalation): [BREACH] in hard-block zone, N% headroom
 
 Guardrail validation tool available:
   Call validate_guardrail(instrument, direction, size) to check any proposed modification.

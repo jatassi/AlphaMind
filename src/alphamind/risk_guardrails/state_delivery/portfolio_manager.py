@@ -280,10 +280,10 @@ def format_rule_status_marker(rule: CrossConstraintImpactPerRule) -> str:
     # FAIL — either over the limit (negative headroom) or numerically
     # under but inside the hard-block escalation zone (non-negative
     # headroom). Render both with a [BREACH] marker so the agent cannot
-    # miss it; the magnitude distinguishes which case.
+    # miss it; the trailing prose distinguishes which case.
     if rule.headroom_remaining < 0:
         return f"[BREACH] would breach by {headroom_text}"
-    return f"[BREACH] in hard-block zone ({headroom_text} headroom)"
+    return f"[BREACH] in hard-block zone, {headroom_text} headroom"
 
 
 def _render_cross_constraint_impact_block(impact: CrossConstraintImpact) -> str:
