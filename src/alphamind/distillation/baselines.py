@@ -691,19 +691,20 @@ def _upsert_pair_lag(
 def refresh_pair_lag(
     session: Session,
     *,
-    pair_scope: Sequence[tuple[str, str]],
+    pair_scope: Sequence[tuple[str, str, int]],
     as_of: str,
     window_days: int,
     min_events: int,
-    max_lag_days: int,
 ) -> dict[tuple[str, str], CalibratedValue]:
     """Refresh per-pair lead-lag timing estimates.
 
-    For each ``(lead_ticker, lag_ticker)`` in ``pair_scope``:
+    For each ``(lead_ticker, lag_ticker, max_lag_days)`` in ``pair_scope``:
 
     1. Read the lead and lag close series over ``[as_of - window_days, as_of]``.
     2. Compute day-over-day returns and find the integer lag in
        ``1..max_lag_days`` maximizing the lead-vs-lag-shifted correlation.
+       ``max_lag_days`` is per-pair — each pair searches against its own
+       configured ceiling rather than a shared scalar bound.
     3. Tag ``calibrated`` when the aligned-bar count meets ``min_events``;
        otherwise ``bootstrap``.
     4. UPSERT a row keyed ``(lead, lag, as_of)``.
@@ -713,7 +714,7 @@ def refresh_pair_lag(
     range_start = _window_start(as_of=as_of, window_days=window_days)
     out: dict[tuple[str, str], CalibratedValue] = {}
     with _refresh_transaction(session):
-        for lead, lag in pair_scope:
+        for lead, lag, max_lag_days in pair_scope:
             lead_series = _select_daily_closes(
                 session, ticker=lead, range_start=range_start, range_end=as_of
             )

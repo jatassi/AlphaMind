@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from itertools import pairwise
 
 from sqlalchemy import select
@@ -52,6 +52,7 @@ from alphamind.distillation.q7.intermarket_regime_compute import (
     VIX_SERIES,
     VIX_SOURCE,
     XLE_TICKER,
+    IntermarketRegimeInputs,
     compute_intermarket_regime_pure,
 )
 from alphamind.distillation.q7.intra_sector_correlation_compute import (
@@ -140,10 +141,17 @@ def _select_close_series(
     ticker: str,
     range_start: str,
     range_end: str,
-) -> list[float]:
-    """Return ascending daily-bar adj_close values for ``ticker`` in the window."""
+) -> list[tuple[date, float]]:
+    """Return ascending ``(date, adj_close)`` pairs for ``ticker`` in the window.
+
+    ``OhlcvBars.period_start`` is stored as a UTC ISO datetime string; the
+    Polygon collector writes ``+00:00`` form, the FRED-day-bar paths write
+    the trailing ``Z`` form. :func:`datetime.fromisoformat` handles both
+    on Python 3.11+. Only the calendar date is loadbearing for pairing
+    with macro series, so the parsed datetime is reduced to its date.
+    """
     stmt = (
-        select(OhlcvBars.adj_close)
+        select(OhlcvBars.period_start, OhlcvBars.adj_close)
         .where(
             OhlcvBars.ticker == ticker,
             OhlcvBars.timeframe == "1d",
@@ -152,7 +160,9 @@ def _select_close_series(
         )
         .order_by(OhlcvBars.period_start)
     )
-    return [float(v) for v in session.execute(stmt).scalars().all()]
+    return [
+        (datetime.fromisoformat(str(ts)).date(), float(v)) for ts, v in session.execute(stmt).all()
+    ]
 
 
 def _select_macro_series(
@@ -162,10 +172,10 @@ def _select_macro_series(
     series_id: str,
     range_start_date: str,
     range_end_date: str,
-) -> list[float]:
-    """Return ascending non-null macro values in a date window."""
+) -> list[tuple[date, float]]:
+    """Return ascending ``(date, value)`` pairs for a non-null macro series."""
     stmt = (
-        select(MacroObservations.value)
+        select(MacroObservations.observation_date, MacroObservations.value)
         .where(
             MacroObservations.source == source,
             MacroObservations.series_id == series_id,
@@ -175,7 +185,39 @@ def _select_macro_series(
         )
         .order_by(MacroObservations.observation_date)
     )
-    return [float(v) for v in session.execute(stmt).scalars().all() if v is not None]
+    return [
+        (date.fromisoformat(str(d)), float(v))
+        for d, v in session.execute(stmt).all()
+        if v is not None
+    ]
+
+
+def _values_only(dated_series: Sequence[tuple[date, float]]) -> list[float]:
+    """Strip dates from a dated series for callers that don't need the join."""
+    return [value for _, value in dated_series]
+
+
+def _inner_join_on_date(
+    left: Sequence[tuple[date, float]],
+    right: Sequence[tuple[date, float]],
+) -> tuple[list[float], list[float]]:
+    """Inner-join two dated value series on common calendar dates.
+
+    Returns ``(left_values, right_values)`` in ascending-date order, each of
+    length equal to the intersection of dates. The two outputs are
+    position-aligned: ``left_values[i]`` and ``right_values[i]`` share the
+    same calendar date.
+    """
+    right_by_date = {d: v for d, v in right}
+    left_values: list[float] = []
+    right_values: list[float] = []
+    for d, v in left:
+        partner = right_by_date.get(d)
+        if partner is None:
+            continue
+        left_values.append(v)
+        right_values.append(partner)
+    return left_values, right_values
 
 
 def _resolve_universe_tickers(session: Session) -> list[str]:
@@ -319,8 +361,8 @@ def _select_recent_returns_window(
 ) -> list[float]:
     """Return ``window_days`` ascending day-over-day percentage returns up to ``as_of``."""
     range_start, range_end = _window_bounds(as_of=as_of, window_days=window_days)
-    closes = _select_close_series(
-        session, ticker=ticker, range_start=range_start, range_end=range_end
+    closes = _values_only(
+        _select_close_series(session, ticker=ticker, range_start=range_start, range_end=range_end)
     )
     out: list[float] = []
     for prior, later in pairwise(closes):
@@ -350,8 +392,10 @@ def _load_intra_sector_blocks(
         sector_tickers = tuple(sector_roster[sector])
         long_returns: dict[str, tuple[float, ...]] = {}
         for ticker in sector_tickers:
-            closes = _select_close_series(
-                session, ticker=ticker, range_start=long_start, range_end=range_end
+            closes = _values_only(
+                _select_close_series(
+                    session, ticker=ticker, range_start=long_start, range_end=range_end
+                )
             )
             long_returns[ticker] = tuple(_log_returns_from_closes(closes))
         block = compute_intra_sector_correlation_pure(
@@ -383,8 +427,8 @@ def _load_cross_sector_blocks(
     short_closes: dict[str, tuple[float, ...]] = {}
     long_closes: dict[str, tuple[float, ...]] = {}
     for etf in all_etfs:
-        long_series = _select_close_series(
-            session, ticker=etf, range_start=long_start, range_end=range_end
+        long_series = _values_only(
+            _select_close_series(session, ticker=etf, range_start=long_start, range_end=range_end)
         )
         long_closes[etf] = tuple(long_series)
         short_closes[etf] = tuple(long_series[-short_window_days:])
@@ -410,15 +454,19 @@ def _load_breadth_blocks(
     range_start, range_end = _window_bounds(as_of=as_of, window_days=long_window)
     closes_by_ticker: dict[str, tuple[float, ...]] = {
         ticker: tuple(
-            _select_close_series(
-                session, ticker=ticker, range_start=range_start, range_end=range_end
+            _values_only(
+                _select_close_series(
+                    session, ticker=ticker, range_start=range_start, range_end=range_end
+                )
             )
         )
         for ticker in ticker_scope
     }
     broad_market_closes = tuple(
-        _select_close_series(
-            session, ticker=SPY_TICKER, range_start=range_start, range_end=range_end
+        _values_only(
+            _select_close_series(
+                session, ticker=SPY_TICKER, range_start=range_start, range_end=range_end
+            )
         )
     )
     block = compute_breadth_internals_pure(
@@ -438,65 +486,49 @@ def _load_intermarket_blocks(
     window_days: int,
     short_window_days: int,
 ) -> tuple[OutputBlock, ...]:
-    """Read SPY/TLT/GLD/XLE closes + macro series for the intermarket block."""
+    """Read intermarket closes + macros, date-join per pair, run pure compute.
+
+    Each of the four pairs handed to :class:`IntermarketRegimeInputs` is
+    inner-joined on its own calendar intersection (ALP-629) — SPY pairs
+    with TLT on the NYSE intersection and with VIX on the NYSE-vs-FRED
+    intersection separately, so a 1-day FRED publication lag or interior
+    null day can't shift one leg's positional slice relative to the other.
+    """
     range_start, range_end = _window_bounds(as_of=as_of, window_days=window_days)
     range_start_date = (as_of - timedelta(days=window_days)).strftime("%Y-%m-%d")
     range_end_date = as_of.strftime("%Y-%m-%d")
-    closes_by_ticker = {
-        SPY_TICKER: tuple(
-            _select_close_series(
-                session, ticker=SPY_TICKER, range_start=range_start, range_end=range_end
-            )
-        ),
-        TLT_TICKER: tuple(
-            _select_close_series(
-                session, ticker=TLT_TICKER, range_start=range_start, range_end=range_end
-            )
-        ),
-        GLD_TICKER: tuple(
-            _select_close_series(
-                session, ticker=GLD_TICKER, range_start=range_start, range_end=range_end
-            )
-        ),
-        XLE_TICKER: tuple(
-            _select_close_series(
-                session, ticker=XLE_TICKER, range_start=range_start, range_end=range_end
-            )
-        ),
-    }
-    macros_by_series = {
-        REAL_YIELD_SERIES: tuple(
-            _select_macro_series(
-                session,
-                source=REAL_YIELD_SOURCE,
-                series_id=REAL_YIELD_SERIES,
-                range_start_date=range_start_date,
-                range_end_date=range_end_date,
-            )
-        ),
-        VIX_SERIES: tuple(
-            _select_macro_series(
-                session,
-                source=VIX_SOURCE,
-                series_id=VIX_SERIES,
-                range_start_date=range_start_date,
-                range_end_date=range_end_date,
-            )
-        ),
-        OIL_SERIES: tuple(
-            _select_macro_series(
-                session,
-                source=OIL_SOURCE,
-                series_id=OIL_SERIES,
-                range_start_date=range_start_date,
-                range_end_date=range_end_date,
-            )
-        ),
-    }
+
+    def _closes(ticker: str) -> list[tuple[date, float]]:
+        return _select_close_series(
+            session, ticker=ticker, range_start=range_start, range_end=range_end
+        )
+
+    def _macro(source: str, series_id: str) -> list[tuple[date, float]]:
+        return _select_macro_series(
+            session,
+            source=source,
+            series_id=series_id,
+            range_start_date=range_start_date,
+            range_end_date=range_end_date,
+        )
+
+    spy_dated = _closes(SPY_TICKER)
+    tlt_dated = _closes(TLT_TICKER)
+    gld_dated = _closes(GLD_TICKER)
+    xle_dated = _closes(XLE_TICKER)
+    real_yields_dated = _macro(REAL_YIELD_SOURCE, REAL_YIELD_SERIES)
+    vix_dated = _macro(VIX_SOURCE, VIX_SERIES)
+    oil_dated = _macro(OIL_SOURCE, OIL_SERIES)
+
+    inputs = IntermarketRegimeInputs(
+        spy_tlt=_inner_join_on_date(spy_dated, tlt_dated),
+        gld_real_yields=_inner_join_on_date(gld_dated, real_yields_dated),
+        oil_xle_beta=_inner_join_on_date(xle_dated, oil_dated),
+        vix_spy=_inner_join_on_date(spy_dated, vix_dated),
+    )
     return tuple(
         compute_intermarket_regime_pure(
-            closes_by_ticker=closes_by_ticker,
-            macros_by_series=macros_by_series,
+            inputs=inputs,
             window_days=window_days,
             short_window_days=short_window_days,
             as_of=as_of,
@@ -559,8 +591,10 @@ def _load_correlation_regime_change_blocks(
     range_start, range_end = _window_bounds(as_of=as_of, window_days=params.long_window_days)
     long_returns: dict[str, tuple[float, ...]] = {}
     for ticker in universe_tickers:
-        closes = _select_close_series(
-            session, ticker=ticker, range_start=range_start, range_end=range_end
+        closes = _values_only(
+            _select_close_series(
+                session, ticker=ticker, range_start=range_start, range_end=range_end
+            )
         )
         long_returns[ticker] = tuple(_log_returns_from_closes(closes))
     qualifying_news = _qualifying_articles_present(
@@ -607,8 +641,10 @@ def compute_pair_correlations(
     range_start, range_end = _window_bounds(as_of=as_of, window_days=window_days)
     returns_by_ticker: dict[str, list[float]] = {}
     for ticker in ticker_scope:
-        closes = _select_close_series(
-            session, ticker=ticker, range_start=range_start, range_end=range_end
+        closes = _values_only(
+            _select_close_series(
+                session, ticker=ticker, range_start=range_start, range_end=range_end
+            )
         )
         returns_by_ticker[ticker] = _log_returns_from_closes(closes)
     matrix = _correlation_matrix(returns_by_ticker)
