@@ -133,7 +133,24 @@ class BasisSection(BaseModel):
 
 
 class ContributorEntry(BaseModel):
-    """Signed per-proposal attribution inside a breach entry."""
+    """Per-proposal attribution inside a breach entry.
+
+    Contribution semantics vary by rule type:
+
+    * **Sum-of-contributions rules** (the default — e.g., ``net_long_pct``,
+      ``sector_concentration_*``): signed contribution to ``projected_after``.
+      Positive when the proposal pushes the rule toward breach, negative
+      when it pulls the rule away. Summing contributions equals the rule's
+      delta from ``current``.
+    * **Holistic rules** (rules with a ``RuleSpec.project_after_batch``
+      projector — e.g., ``position_max_size_pct``): contribution is the
+      post-batch shape the proposal helped produce, not a signed delta.
+      For ``position_max_size_pct`` each proposal that shaped a position
+      tied at the post-batch maximum emits the same ``contribution =
+      post-batch max as % of portfolio``. Contributions for holistic
+      rules don't sum to ``projected_after`` and the sign does not encode
+      toward-vs-away-from-breach (ALP-636).
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -143,8 +160,10 @@ class ContributorEntry(BaseModel):
     )
     contribution: float = Field(
         description=(
-            "Signed contribution to the breaching rule's projected value. "
-            "Positive when the proposal pushes the rule toward breach."
+            "Per-proposal attribution. For sum-of-contributions rules: signed "
+            "contribution to projected_after, positive toward breach. For "
+            "holistic rules (e.g., position_max_size_pct): the post-batch "
+            "shape the proposal helped produce — see the class docstring."
         )
     )
 

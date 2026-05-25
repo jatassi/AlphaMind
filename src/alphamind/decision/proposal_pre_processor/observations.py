@@ -246,17 +246,33 @@ def _build_breach_entry(
 ) -> BreachEntry:
     """Compute signed contributors for one FAIL projection.
 
-    Looks up the matching ``RuleSpec`` and re-walks ``spec.contribute`` for
-    every proposal/dae pair. Zero contributions are dropped. ``overage`` is
-    positive for both standard caps and inverse floors.
+    Branches on ``spec.contributors_from_batch``:
+
+    * **Holistic rules** (callable set): delegate to the spec's batch-level
+      attribution. Walking ``spec.contribute`` per proposal is invalid here
+      because the corresponding ``contribute`` is a no-op marker — the
+      post-batch shape (e.g., the new max position) is what drives the breach
+      (ALP-636). Used today by ``position_max_size_pct``.
+    * **Sum-of-contributions rules** (callable absent): walk ``spec.contribute``
+      for every proposal/DAE pair and drop zero contributions, the same as
+      before.
+
+    ``overage`` is positive for both standard caps and inverse floors.
     """
     spec = spec_lookup[projection.rule]
-    contributors = tuple(
-        ContributorEntry(proposal_id=proposal.id, contribution=contribution)
-        for proposal, dae in proposals_with_dae
-        for contribution in (spec.contribute(proposal, dae, snapshot, config),)
-        if contribution != 0.0
-    )
+    if spec.contributors_from_batch is not None:
+        contributors = tuple(
+            ContributorEntry(proposal_id=pc.proposal_id, contribution=pc.contribution)
+            for pc in spec.contributors_from_batch(proposals_with_dae, snapshot, config)
+            if pc.contribution != 0.0
+        )
+    else:
+        contributors = tuple(
+            ContributorEntry(proposal_id=proposal.id, contribution=contribution)
+            for proposal, dae in proposals_with_dae
+            for contribution in (spec.contribute(proposal, dae, snapshot, config),)
+            if contribution != 0.0
+        )
 
     overage = (
         projection.limit - projection.projected_after

@@ -46,9 +46,14 @@ from alphamind.decision.proposal_pre_processor.translator import (
     translate_recommendation_to_proposed_delta,
 )
 from alphamind.decision.strategist.models import (
+    AddParameters,
     CloseParameters,
     ExposureImpact,
     PositionAssessment,
+)
+from alphamind.decision.strategist.models import EntryOrder as StrategistEntryOrder
+from alphamind.decision.strategist.models import (
+    GuardrailValidationResult as StrategistGuardrailValidationResult,
 )
 from alphamind.risk_guardrails.guardrail_evaluation import (
     AssetType,
@@ -812,3 +817,289 @@ def test_contributor_attribution_matches_rule_spec_contribute() -> None:
     breach = breaches_by_rule["net_long_pct"]
     actual = {c.proposal_id: c.contribution for c in breach.contributors}
     assert actual == expected
+
+
+# ===========================================================================
+# AC (ALP-636): Holistic rules (project_after_batch) surface contributors
+# ===========================================================================
+
+
+def _add_assessment(
+    *,
+    sa_id: str = "SA-1",
+    position_id: str = "POS-1",
+    additional_quantity: float,
+    additional_dollar_value: float,
+    underlying: str = "AAPL",
+    sector: str = "tech",
+) -> PositionAssessment:
+    """Strategist add-action assessment that grows an existing equity position."""
+    return PositionAssessment(
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol(underlying),
+        sector=sector,  # type: ignore[arg-type]
+        thesis_status="on-track",
+        recommended_action="add",
+        action_parameters=AddParameters(
+            action="add",
+            additional_quantity=additional_quantity,
+            additional_dollar_value=money(additional_dollar_value),
+            entry_order=StrategistEntryOrder(type="market"),
+        ),
+        exposure_impact=ExposureImpact(
+            sector_delta_adjusted_change=signed_money(additional_dollar_value),
+            net_directional_impact=signed_money(additional_dollar_value),
+        ),
+        guardrail_validation_result=StrategistGuardrailValidationResult(
+            overall="PASS", per_rule=(), checked_at=_NOW
+        ),
+        add_conviction_justification="conviction strengthened",
+        status_rationale="Conviction grew",
+        action_rationale="Add to size",
+    )
+
+
+def test_position_max_size_breach_from_open_records_proposal_as_contributor() -> None:
+    """An OPEN that creates a position above ``position_max_size_pct`` records
+    the OPEN proposal as a contributor whose ``contribution`` equals the post-batch
+    max position size (as % of portfolio).
+
+    Snapshot: ``position_max_size_pct=3.0`` with the synthesized POS-SYNTH at 3%.
+    Rec: OPEN $12k = 12% of $100k portfolio → post-batch max = 12% > 10% limit → FAIL.
+    Expected contributor: REC-1 at contribution≈12.0 (the post-batch max).
+    """
+    snap = _snapshot(
+        net_long_pct=3.0,
+        gross_pct=3.0,
+        sector_exposure_pct={"tech": 3.0, "semis": 0.0, "financials": 0.0, "energy": 0.0},
+        position_max_size_pct=3.0,
+    )
+    # Bump net_long / sector limits so the only FAIL is position_max_size_pct.
+    config = _full_config(net_long_limit=80.0)
+    market = _market()
+    rec = _equity_recommendation(rec_id="REC-1", quantity=80.0, dollar_value=12_000.0)
+
+    result = compute_combined_set_impact(
+        recommendations=(rec,),
+        non_hold_position_assessments=(),
+        snapshot=snap,
+        library_config=config,
+        market=market,
+        snapshot_timestamp=_NOW,
+        strategist_holds_excluded_count=0,
+    )
+
+    breaches_by_rule = {b.rule: b for b in result.breaches}
+    assert "position_max_size_pct" in breaches_by_rule, (
+        f"expected position_max_size_pct breach; got rules: {list(breaches_by_rule)}"
+    )
+    breach = breaches_by_rule["position_max_size_pct"]
+    assert breach.contributors, "holistic-rule breach must surface contributors"
+    by_id = {c.proposal_id: c.contribution for c in breach.contributors}
+    assert "REC-1" in by_id, f"REC-1 missing from contributors: {by_id}"
+    # Contribution equals the post-batch max size as % of portfolio: 12k / 100k = 12.0.
+    assert abs(by_id["REC-1"] - 12.0) < 1e-6
+
+    # Per-rule entry should report the same projected_after.
+    per_rule_by_rule = {p.rule: p for p in result.per_rule}
+    pmsp = per_rule_by_rule["position_max_size_pct"]
+    assert pmsp.status == "FAIL"
+    assert abs(pmsp.projected_after - 12.0) < 1e-6
+
+
+def test_position_max_size_breach_from_add_records_proposal_as_contributor() -> None:
+    """A strategist ADD that pushes an existing position above the limit records the
+    SA proposal as a contributor with the post-batch position size.
+
+    Existing POS-1 at $8k (8% of $100k). ADD adds $5k → post-batch POS-1 = 13% > 10% → FAIL.
+    Expected contributor: SA-1 at contribution≈13.0.
+    """
+    existing = _existing_long_equity(
+        position_id=PositionId("POS-1"),
+        underlying=Symbol("AAPL"),
+        notional_usd=8_000.0,
+        quantity=53.0,
+    )
+    snap = _snapshot(
+        net_long_pct=8.0,
+        gross_pct=8.0,
+        sector_exposure_pct={"tech": 8.0, "semis": 0.0, "financials": 0.0, "energy": 0.0},
+        position_max_size_pct=8.0,
+        existing_positions={"POS-1": existing},
+    )
+    config = _full_config(net_long_limit=80.0)
+    market = _market()
+    add = _add_assessment(
+        sa_id="SA-1", position_id="POS-1", additional_quantity=33.0, additional_dollar_value=5_000.0
+    )
+
+    result = compute_combined_set_impact(
+        recommendations=(),
+        non_hold_position_assessments=(add,),
+        snapshot=snap,
+        library_config=config,
+        market=market,
+        snapshot_timestamp=_NOW,
+        strategist_holds_excluded_count=0,
+    )
+
+    breaches_by_rule = {b.rule: b for b in result.breaches}
+    assert "position_max_size_pct" in breaches_by_rule
+    breach = breaches_by_rule["position_max_size_pct"]
+    by_id = {c.proposal_id: c.contribution for c in breach.contributors}
+    assert "SA-1" in by_id
+    assert abs(by_id["SA-1"] - 13.0) < 1e-6
+
+
+def test_position_max_size_breach_with_no_touching_proposal_has_empty_contributors() -> None:
+    """A pre-existing position above the limit that no proposal touches yields no
+    contributors — the breach is from the existing book, not the batch.
+
+    Existing POS-1 at $12k (12% of $100k) — already breaching 10% limit. One unrelated
+    OPEN of $3k (3%) on a different underlying. POS-1 remains the post-batch max at 12%.
+    Contributors should be empty: the OPEN didn't shape the max.
+    """
+    existing = _existing_long_equity(
+        position_id=PositionId("POS-1"),
+        underlying=Symbol("AAPL"),
+        notional_usd=12_000.0,
+        quantity=80.0,
+    )
+    snap = _snapshot(
+        net_long_pct=12.0,
+        gross_pct=12.0,
+        sector_exposure_pct={"tech": 12.0, "semis": 0.0, "financials": 0.0, "energy": 0.0},
+        position_max_size_pct=12.0,
+        existing_positions={"POS-1": existing},
+    )
+    config = _full_config(net_long_limit=80.0)
+    market = _market()
+    unrelated_rec = _equity_recommendation(
+        rec_id="REC-1",
+        underlying=Symbol("NVDA"),
+        sector="semis",
+        quantity=20.0,
+        dollar_value=3_000.0,
+    )
+
+    result = compute_combined_set_impact(
+        recommendations=(unrelated_rec,),
+        non_hold_position_assessments=(),
+        snapshot=snap,
+        library_config=config,
+        market=market,
+        snapshot_timestamp=_NOW,
+        strategist_holds_excluded_count=0,
+    )
+
+    breaches_by_rule = {b.rule: b for b in result.breaches}
+    assert "position_max_size_pct" in breaches_by_rule
+    breach = breaches_by_rule["position_max_size_pct"]
+    # POS-1 is still the post-batch max; the unrelated OPEN did not shape it,
+    # so no proposal IDs surface as contributors.
+    assert breach.contributors == ()
+
+
+def test_position_max_size_breach_close_partial_records_close_as_contributor() -> None:
+    """A CLOSE that reduces an existing-max position but doesn't bring it below the
+    limit records the close as a contributor with the post-batch max size.
+
+    Existing POS-1 at $20k (20% of $100k portfolio). CLOSE reduces by $5k → POS-1 = $15k = 15%.
+    Limit 10%: still FAIL. Contributor: SA-1 at contribution≈15.0.
+    """
+    existing = _existing_long_equity(
+        position_id=PositionId("POS-1"),
+        underlying=Symbol("AAPL"),
+        notional_usd=20_000.0,
+        quantity=133.0,
+    )
+    snap = _snapshot(
+        net_long_pct=20.0,
+        gross_pct=20.0,
+        sector_exposure_pct={"tech": 20.0, "semis": 0.0, "financials": 0.0, "energy": 0.0},
+        position_max_size_pct=20.0,
+        existing_positions={"POS-1": existing},
+    )
+    config = _full_config(net_long_limit=80.0)
+    market = _market()
+    # Partial close: quantity=33 shares at ~150 spot is ~$5k notional.
+    partial_close = PositionAssessment(
+        assessment_id=RecommendationId("SA-1"),
+        position_id=PositionId("POS-1"),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        thesis_status="on-track",
+        recommended_action="close",
+        action_parameters=CloseParameters(
+            action="close",
+            quantity=33.0,
+            order_type="market",
+            close_rationale_type="risk_management",
+        ),
+        exposure_impact=ExposureImpact(
+            sector_delta_adjusted_change=signed_money(-5_000.0),
+            net_directional_impact=signed_money(-5_000.0),
+        ),
+        status_rationale="trim",
+        action_rationale="trim",
+    )
+
+    result = compute_combined_set_impact(
+        recommendations=(),
+        non_hold_position_assessments=(partial_close,),
+        snapshot=snap,
+        library_config=config,
+        market=market,
+        snapshot_timestamp=_NOW,
+        strategist_holds_excluded_count=0,
+    )
+
+    breaches_by_rule = {b.rule: b for b in result.breaches}
+    assert "position_max_size_pct" in breaches_by_rule
+    breach = breaches_by_rule["position_max_size_pct"]
+    by_id = {c.proposal_id: c.contribution for c in breach.contributors}
+    assert "SA-1" in by_id
+    # Translator pro-rates the close: notional_closed = (33/133) * 20_000 →
+    # POS-1 remaining = 20_000 * (1 - 33/133) = 20_000 * 100/133 → 15.037594...%.
+    expected_pct = 20_000.0 * (100.0 / 133.0) / 100_000.0 * 100.0
+    assert abs(by_id["SA-1"] - expected_pct) < 1e-6
+
+
+def test_holistic_contributors_pattern_falls_back_for_non_holistic_rules() -> None:
+    """Non-holistic rules (no ``project_after_batch``) keep using the existing
+    ``spec.contribute`` walk. Ensures the new mechanism is additive only.
+
+    Reuses the existing net_long_pct breach scenario and asserts the contributor
+    value still equals ``spec.contribute(...)`` exactly (not the post-batch
+    projected value).
+    """
+    snap = _snapshot(
+        net_long_pct=30.0,
+        gross_pct=30.0,
+        sector_exposure_pct={"tech": 30.0, "semis": 0.0, "financials": 0.0, "energy": 0.0},
+    )
+    config = _full_config(net_long_limit=40.0)
+    market = _market()
+    rec = _equity_recommendation(quantity=100.0, dollar_value=15_000.0)
+
+    result = compute_combined_set_impact(
+        recommendations=(rec,),
+        non_hold_position_assessments=(),
+        snapshot=snap,
+        library_config=config,
+        market=market,
+        snapshot_timestamp=_NOW,
+        strategist_holds_excluded_count=0,
+    )
+
+    breaches_by_rule = {b.rule: b for b in result.breaches}
+    assert "net_long_pct" in breaches_by_rule
+    breach = breaches_by_rule["net_long_pct"]
+    # net_long_pct is contribution-decomposable: contribution ≈ 15% (signed positive)
+    # — NOT the post-batch projected value (45%).
+    by_id = {c.proposal_id: c.contribution for c in breach.contributors}
+    assert "REC-1" in by_id
+    assert abs(by_id["REC-1"] - 15.0) < 0.5

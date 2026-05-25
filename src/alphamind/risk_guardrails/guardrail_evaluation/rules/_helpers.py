@@ -20,6 +20,7 @@ from alphamind.risk_guardrails.guardrail_evaluation.types import (
     ExistingPosition,
     LibraryConfig,
     PortfolioStateSnapshot,
+    ProposalContribution,
     ProposedDelta,
 )
 
@@ -47,6 +48,12 @@ class RuleSpec:
       (e.g., ``position_max_size_pct`` must simulate the post-batch position
       book to find the new max, which is not decomposable per-proposal when
       multiple positions are closed in one batch — ALP-621).
+    * ``contributors_from_batch`` — optional holistic contributor projector.
+      Returns the per-proposal attribution that the proposal pre-processor's
+      breach-entry construction surfaces. When set, the pre-processor uses
+      it instead of walking ``spec.contribute(...)`` per proposal. Required
+      whenever ``project_after_batch`` is set, since the corresponding
+      ``contribute`` is a no-op marker (see ALP-636).
     * ``effective_limit_key`` — key into ``LibraryConfig.effective_limits``;
       usually equals ``rule_id``, but the per-sector concentration specs use a
       shared key (``sector_concentration_pct``).
@@ -85,6 +92,17 @@ class RuleSpec:
         ]
         | None
     ) = None
+    contributors_from_batch: (
+        Callable[
+            [
+                Sequence[tuple[ProposedDelta, DeltaAdjustedExposure]],
+                PortfolioStateSnapshot,
+                LibraryConfig,
+            ],
+            tuple[ProposalContribution, ...],
+        ]
+        | None
+    ) = None
     requires_options: bool = False
     requires_shorts: bool = False
     magnitude: bool = False
@@ -92,6 +110,19 @@ class RuleSpec:
     read_breaching_position_id: (
         Callable[[PortfolioStateSnapshot, LibraryConfig], str | None] | None
     ) = None
+
+    def __post_init__(self) -> None:
+        # Holistic-rule pairing: a rule that bypasses ``contribute`` via
+        # ``project_after_batch`` must also provide ``contributors_from_batch``
+        # for the proposal pre-processor — otherwise ``_build_breach_entry``
+        # falls back to walking the no-op ``contribute`` and silently emits
+        # empty contributors (ALP-636).
+        if self.project_after_batch is not None and self.contributors_from_batch is None:
+            raise ValueError(
+                f"RuleSpec(rule_id={self.rule_id!r}): project_after_batch is set "
+                "but contributors_from_batch is missing; holistic rules must "
+                "provide both (see ALP-636)"
+            )
 
 
 def existing_position(
