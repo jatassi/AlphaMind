@@ -541,6 +541,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
             venue_config=venue_config,
             execution_mode=execution_mode,
             as_of=now,
+            sync_session_factory=context.sync_session_factory,
             account_queries_factory=_account_queries_factory_from_debug_e2e(context),
             ca_queries_factory=_ca_queries_factory_from_debug_e2e(context),
         )

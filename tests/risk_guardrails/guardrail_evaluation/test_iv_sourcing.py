@@ -1,19 +1,34 @@
-"""Tests for the IV-sourcing layer (story 02b).
+"""Tests for the IV-sourcing layer (story 02b; ALP-642 SQL provider).
 
 The library's primary IV source is the data pipeline's IV surface (modelled in
 tests by ``IvSurfaceEntry``); when no surface entry covers the requested
 strike/expiration, the lookup falls back to the underlying's trailing 30-day
 realized volatility (``RealizedVolEntry``). The tests construct fixture data
 inline and exercise every branch of the surface→fallback→error chain.
+
+ALP-642 — the production-side ``SqlOptionsIvProvider`` adapter has its own
+test class at the bottom of this file; it shares the same surface→fallback→error
+contract but resolves surface hits against ``options_contract_snapshots`` rows
+keyed by the Polygon-format OCC contract ticker.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, date, datetime
 
 import pytest
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind._kernel.ids import Symbol
+from alphamind.persistence.models import (
+    AssetUniverse,
+    Base,
+    OptionsContracts,
+    OptionsContractSnapshots,
+)
+from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.risk_guardrails.guardrail_evaluation import (
     ContractType,
     FixtureIvProvider,
@@ -24,6 +39,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     IvSource,
     IvSurfaceEntry,
     RealizedVolEntry,
+    SqlOptionsIvProvider,
 )
 
 # ---------------------------------------------------------------------------
@@ -333,3 +349,377 @@ def test_fixture_iv_provider_satisfies_protocol() -> None:
     """``FixtureIvProvider`` is structurally compatible with ``IvProvider``."""
     provider: IvProvider = FixtureIvProvider(surface={}, realized_vol={})
     assert provider is not None
+
+
+# ---------------------------------------------------------------------------
+# SqlOptionsIvProvider (ALP-642) — production-side reader against
+# options_contract_snapshots, falling back to RealizedVolEntry on miss.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def sql_engine() -> Iterator[Engine]:
+    eng = make_engine(":memory:")
+    Base.metadata.create_all(eng)
+    yield eng
+    eng.dispose()
+
+
+@pytest.fixture()
+def sql_session_factory(sql_engine: Engine) -> sessionmaker[Session]:
+    return make_session_factory(sql_engine)
+
+
+def _add_underlying(session: Session, ticker: str) -> None:
+    session.add(
+        AssetUniverse(
+            asset_id=f"asset-{ticker.lower()}",
+            ticker=ticker,
+            full_name=f"{ticker} Holdings",
+            asset_class="equity",
+            asset_role="universe",
+            exchange="NASDAQ",
+            is_active=1,
+            added_date="2020-01-01",
+            last_updated="2026-04-26T00:00:00Z",
+        )
+    )
+    session.flush()
+
+
+def _add_options_contract(session: Session, *, contract_ticker: str, underlying: str) -> None:
+    # FK to asset_universe.ticker — add the underlying row first if it is not
+    # already in the session.
+    existing = session.get(AssetUniverse, f"asset-{underlying.lower()}")
+    if existing is None:
+        _add_underlying(session, underlying)
+    session.add(
+        OptionsContracts(
+            contract_ticker=contract_ticker,
+            underlying_ticker=underlying,
+            expiration_date="2026-06-19",
+            strike_price=100.0,
+            contract_type="call",
+            first_seen_at="2026-04-01T00:00:00Z",
+            last_seen_at="2026-04-26T00:00:00Z",
+            source="polygon",
+        )
+    )
+    session.flush()
+
+
+def _add_options_snapshot(
+    session: Session,
+    *,
+    contract_ticker: str,
+    underlying: str,
+    snapshot_ts: str,
+    implied_volatility: float | None,
+) -> None:
+    session.add(
+        OptionsContractSnapshots(
+            snapshot_ts=snapshot_ts,
+            contract_ticker=contract_ticker,
+            underlying_ticker=underlying,
+            open_interest=200,
+            volume_today=100,
+            last_price=1.50,
+            bid=1.45,
+            ask=1.55,
+            implied_volatility=implied_volatility,
+            delta=0.5,
+            gamma=0.05,
+            theta=-0.02,
+            vega=0.10,
+            rho=0.01,
+            underlying_price=100.0,
+            source="polygon",
+            ingested_at=snapshot_ts,
+        )
+    )
+
+
+class TestSqlOptionsIvProvider:
+    """End-to-end behavioural tests against an in-memory SQLite database."""
+
+    def test_returns_surface_hit_when_snapshot_exists(
+        self, sql_session_factory: sessionmaker[Session]
+    ) -> None:
+        """A snapshot row for the requested ``(underlying, strike, expiration,
+        contract_type)`` is returned as ``IvSource.SURFACE`` with the stored IV
+        verbatim and ``notes=None`` (exact-OCC lookup — no interpolation)."""
+        contract = "O:AAPL260619C00100000"
+        with sql_session_factory() as session:
+            _add_options_contract(session, contract_ticker=contract, underlying="AAPL")
+            _add_options_snapshot(
+                session,
+                contract_ticker=contract,
+                underlying="AAPL",
+                snapshot_ts="2026-05-15T15:00:00+00:00",
+                implied_volatility=0.42,
+            )
+            session.commit()
+
+        provider = SqlOptionsIvProvider(
+            sync_session_factory=sql_session_factory,
+            realized_vol={},
+        )
+
+        result = provider.lookup_iv(
+            underlying=Symbol("AAPL"),
+            strike=100.0,
+            expiration=date(2026, 6, 19),
+            contract_type=ContractType.CALL,
+            as_of=_AS_OF,
+        )
+
+        assert result == IvLookupResult(
+            implied_volatility=0.42,
+            source=IvSource.SURFACE,
+            notes=None,
+        )
+
+    def test_returns_latest_snapshot_when_multiple_rows_exist(
+        self, sql_session_factory: sessionmaker[Session]
+    ) -> None:
+        """When the collector has written multiple snapshots for the same
+        contract, the provider returns the row with the largest ``snapshot_ts``
+        (a freshly-snapshotted IV beats an older one)."""
+        contract = "O:AAPL260619C00100000"
+        with sql_session_factory() as session:
+            _add_options_contract(session, contract_ticker=contract, underlying="AAPL")
+            _add_options_snapshot(
+                session,
+                contract_ticker=contract,
+                underlying="AAPL",
+                snapshot_ts="2026-05-10T15:00:00+00:00",
+                implied_volatility=0.25,
+            )
+            _add_options_snapshot(
+                session,
+                contract_ticker=contract,
+                underlying="AAPL",
+                snapshot_ts="2026-05-15T15:00:00+00:00",
+                implied_volatility=0.42,
+            )
+            session.commit()
+
+        provider = SqlOptionsIvProvider(
+            sync_session_factory=sql_session_factory,
+            realized_vol={},
+        )
+
+        result = provider.lookup_iv(
+            underlying=Symbol("AAPL"),
+            strike=100.0,
+            expiration=date(2026, 6, 19),
+            contract_type=ContractType.CALL,
+            as_of=_AS_OF,
+        )
+
+        assert result.implied_volatility == pytest.approx(0.42)
+        assert result.source is IvSource.SURFACE
+
+    def test_resolves_put_via_p_in_occ_symbol(
+        self, sql_session_factory: sessionmaker[Session]
+    ) -> None:
+        """The OCC symbol the provider builds carries ``P`` for ``ContractType.PUT``;
+        a put-side snapshot does not satisfy a call-side request."""
+        put_contract = "O:AAPL260619P00100000"
+        with sql_session_factory() as session:
+            _add_options_contract(session, contract_ticker=put_contract, underlying="AAPL")
+            _add_options_snapshot(
+                session,
+                contract_ticker=put_contract,
+                underlying="AAPL",
+                snapshot_ts="2026-05-15T15:00:00+00:00",
+                implied_volatility=0.55,
+            )
+            session.commit()
+
+        provider = SqlOptionsIvProvider(
+            sync_session_factory=sql_session_factory,
+            realized_vol={
+                "AAPL": RealizedVolEntry(underlying=Symbol("AAPL"), trailing_30d_realized_vol=0.20),
+            },
+        )
+
+        # Put-side request hits the surface.
+        put_result = provider.lookup_iv(
+            underlying=Symbol("AAPL"),
+            strike=100.0,
+            expiration=date(2026, 6, 19),
+            contract_type=ContractType.PUT,
+            as_of=_AS_OF,
+        )
+        assert put_result.source is IvSource.SURFACE
+        assert put_result.implied_volatility == pytest.approx(0.55)
+
+        # Call-side request for the same strike/expiration misses → fallback.
+        call_result = provider.lookup_iv(
+            underlying=Symbol("AAPL"),
+            strike=100.0,
+            expiration=date(2026, 6, 19),
+            contract_type=ContractType.CALL,
+            as_of=_AS_OF,
+        )
+        assert call_result.source is IvSource.REALIZED_VOL_FALLBACK
+        assert call_result.implied_volatility == pytest.approx(0.20)
+
+    def test_encodes_fractional_strike_in_thousandths(
+        self, sql_session_factory: sessionmaker[Session]
+    ) -> None:
+        """A strike like ``12.50`` becomes ``00012500`` in the OCC symbol —
+        avoids binary-float drift that would otherwise miss the snapshot."""
+        contract = "O:AAPL260619C00012500"
+        with sql_session_factory() as session:
+            _add_options_contract(session, contract_ticker=contract, underlying="AAPL")
+            _add_options_snapshot(
+                session,
+                contract_ticker=contract,
+                underlying="AAPL",
+                snapshot_ts="2026-05-15T15:00:00+00:00",
+                implied_volatility=0.60,
+            )
+            session.commit()
+
+        provider = SqlOptionsIvProvider(
+            sync_session_factory=sql_session_factory,
+            realized_vol={},
+        )
+
+        result = provider.lookup_iv(
+            underlying=Symbol("AAPL"),
+            strike=12.50,
+            expiration=date(2026, 6, 19),
+            contract_type=ContractType.CALL,
+            as_of=_AS_OF,
+        )
+        assert result.source is IvSource.SURFACE
+        assert result.implied_volatility == pytest.approx(0.60)
+
+    def test_falls_back_to_realized_vol_when_no_snapshot_row(
+        self, sql_session_factory: sessionmaker[Session]
+    ) -> None:
+        """Absent a snapshot row for the contract, the provider returns the
+        per-underlying realized-vol scalar with the fallback note."""
+        provider = SqlOptionsIvProvider(
+            sync_session_factory=sql_session_factory,
+            realized_vol={
+                "AAPL": RealizedVolEntry(underlying=Symbol("AAPL"), trailing_30d_realized_vol=0.27),
+            },
+        )
+
+        result = provider.lookup_iv(
+            underlying=Symbol("AAPL"),
+            strike=100.0,
+            expiration=date(2026, 6, 19),
+            contract_type=ContractType.CALL,
+            as_of=_AS_OF,
+        )
+
+        assert result.source is IvSource.REALIZED_VOL_FALLBACK
+        assert result.implied_volatility == pytest.approx(0.27)
+        assert result.notes is not None
+        assert result.notes.startswith("realized_vol_fallback")
+
+    def test_falls_back_when_snapshot_row_exists_but_iv_is_null(
+        self, sql_session_factory: sessionmaker[Session]
+    ) -> None:
+        """A snapshot row whose ``implied_volatility`` is NULL is treated as a
+        miss — the IV filter on the query excludes it, falling through to the
+        realized-vol path. Mirrors the existing fetch_iv_from_options_chains
+        reader's contract."""
+        contract = "O:AAPL260619C00100000"
+        with sql_session_factory() as session:
+            _add_options_contract(session, contract_ticker=contract, underlying="AAPL")
+            _add_options_snapshot(
+                session,
+                contract_ticker=contract,
+                underlying="AAPL",
+                snapshot_ts="2026-05-15T15:00:00+00:00",
+                implied_volatility=None,
+            )
+            session.commit()
+
+        provider = SqlOptionsIvProvider(
+            sync_session_factory=sql_session_factory,
+            realized_vol={
+                "AAPL": RealizedVolEntry(underlying=Symbol("AAPL"), trailing_30d_realized_vol=0.27),
+            },
+        )
+
+        result = provider.lookup_iv(
+            underlying=Symbol("AAPL"),
+            strike=100.0,
+            expiration=date(2026, 6, 19),
+            contract_type=ContractType.CALL,
+            as_of=_AS_OF,
+        )
+        assert result.source is IvSource.REALIZED_VOL_FALLBACK
+        assert result.implied_volatility == pytest.approx(0.27)
+
+    def test_raises_when_neither_snapshot_nor_realized_vol_available(
+        self, sql_session_factory: sessionmaker[Session]
+    ) -> None:
+        """When the surface misses AND the realized-vol map has no entry, the
+        provider raises ``IvLookupError`` naming the request — same terminal
+        behaviour as ``FixtureIvProvider``."""
+        provider = SqlOptionsIvProvider(
+            sync_session_factory=sql_session_factory,
+            realized_vol={},
+        )
+
+        with pytest.raises(IvLookupError, match="AAPL"):
+            provider.lookup_iv(
+                underlying=Symbol("AAPL"),
+                strike=100.0,
+                expiration=date(2026, 6, 19),
+                contract_type=ContractType.CALL,
+                as_of=_AS_OF,
+            )
+
+    def test_realized_vol_mapping_is_consulted_by_reference(
+        self, sql_session_factory: sessionmaker[Session]
+    ) -> None:
+        """The continuous-monitor daemon refreshes ``realized_vol`` in place
+        every 24h (see continuous_monitor/__main__.py); the provider must
+        observe later mutations, not freeze the construction-time snapshot."""
+        shared: dict[str, RealizedVolEntry] = {}
+        provider = SqlOptionsIvProvider(
+            sync_session_factory=sql_session_factory,
+            realized_vol=shared,
+        )
+
+        # Initially no fallback → IvLookupError.
+        with pytest.raises(IvLookupError):
+            provider.lookup_iv(
+                underlying=Symbol("AAPL"),
+                strike=100.0,
+                expiration=date(2026, 6, 19),
+                contract_type=ContractType.CALL,
+                as_of=_AS_OF,
+            )
+
+        # Mutate in place — refresh adds an entry mid-daemon-lifetime.
+        shared["AAPL"] = RealizedVolEntry(underlying=Symbol("AAPL"), trailing_30d_realized_vol=0.31)
+
+        result = provider.lookup_iv(
+            underlying=Symbol("AAPL"),
+            strike=100.0,
+            expiration=date(2026, 6, 19),
+            contract_type=ContractType.CALL,
+            as_of=_AS_OF,
+        )
+        assert result.source is IvSource.REALIZED_VOL_FALLBACK
+        assert result.implied_volatility == pytest.approx(0.31)
+
+    def test_satisfies_iv_provider_protocol(
+        self, sql_session_factory: sessionmaker[Session]
+    ) -> None:
+        """``SqlOptionsIvProvider`` is structurally compatible with ``IvProvider``."""
+        provider: IvProvider = SqlOptionsIvProvider(
+            sync_session_factory=sql_session_factory,
+            realized_vol={},
+        )
+        assert provider is not None

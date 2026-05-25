@@ -28,6 +28,7 @@ from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import (
     IvQuote,
     IvSurfaceEntry,
     RealizedVolEntry,
+    SqlOptionsIvProvider,
 )
 from alphamind.risk_guardrails.guardrail_evaluation.projection import (
     ProjectionError,
@@ -116,6 +117,7 @@ __all__ = [
     "RealizedVolEntry",
     "RuleProjection",
     "RuleSpec",
+    "SqlOptionsIvProvider",
     "Status",
     "bs_greeks",
     "bs_price",

@@ -127,7 +127,7 @@ from alphamind.risk_guardrails.breach_behavior import (
     BreachBehaviorConfig,
     load_breach_behavior_config,
 )
-from alphamind.risk_guardrails.guardrail_evaluation import FixtureIvProvider, RealizedVolEntry
+from alphamind.risk_guardrails.guardrail_evaluation import RealizedVolEntry, SqlOptionsIvProvider
 from alphamind.risk_guardrails.regime_adaptation import load_config_fan
 from alphamind.scripts._common import load_distillation_config
 from alphamind.state.config import (
@@ -593,10 +593,16 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     portfolio_state_config = load_portfolio_state_config(config_dir / "portfolio_state.yaml")
     # One IvProvider shared by the breach-loop evaluator and the cascade
     # dispatcher's re-projection so both observe identical IV values.
-    # ALP-530 — the realized_vol map is the same dict reference owned by
-    # ``_run_daemon`` and refreshed every 24h; in-place mutations propagate
-    # to this FixtureIvProvider without re-construction.
-    iv_provider = FixtureIvProvider(surface={}, realized_vol=realized_vol_map)
+    # ALP-642 — production-side adapter resolving exact-OCC hits against
+    # ``options_contract_snapshots`` written by the Polygon collector,
+    # with the realized-vol scalar as the fallback channel. ALP-530 — the
+    # realized_vol map is the same dict reference owned by ``_run_daemon``
+    # and refreshed every 24h; in-place mutations propagate to this
+    # provider without re-construction.
+    iv_provider = SqlOptionsIvProvider(
+        sync_session_factory=sync_session_factory,
+        realized_vol=realized_vol_map,
+    )
     # ALP-510 — one assembled-snapshot provider + translator shared across
     # the breach-loop snapshot provider and the dispatcher's context provider.
     assembled_snapshot_provider = make_assembled_snapshot_provider(
