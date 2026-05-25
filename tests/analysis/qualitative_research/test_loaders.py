@@ -132,7 +132,7 @@ def _add_contract(
     *,
     platform: str = "Polymarket",
     description: str = "FOMC rate hold",
-    category: str = "macro",
+    category: str = "monetary_policy",
     resolution_date: str | None = "2026-06-01",
 ) -> None:
     session.add(
@@ -1485,7 +1485,11 @@ class TestLoadPredictionMarketSnapshot:
 
     def test_snapshot_fields_present(self, session: Session) -> None:
         _add_contract(
-            session, "c3", platform="Kalshi", description="Fed rate hold", category="macro"
+            session,
+            "c3",
+            platform="Kalshi",
+            description="Fed rate hold",
+            category="monetary_policy",
         )
         ts = (AS_OF - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         _add_snapshot(session, "c3", ts, yes_probability=0.72, volume_24h_usd=80_000.0)
@@ -1498,7 +1502,7 @@ class TestLoadPredictionMarketSnapshot:
         assert snap.contract_id == "c3"
         assert snap.description == "Fed rate hold"
         assert snap.platform == "Kalshi"
-        assert snap.category == "macro"
+        assert snap.category == "monetary_policy"
         assert snap.current_probability == pytest.approx(0.72)
         assert isinstance(snap.delta_since_prior_pp, float)
         assert isinstance(snap.volume_24h_usd, (float, type(None)))
@@ -1912,6 +1916,148 @@ class TestPredictionMarketStalenessFilters:
         result = load_prediction_market_snapshot(session, as_of=self._AS_OF_LATE)
         assert len(result) == 1
         assert result[0].is_stale_low_signal is False
+
+
+# ---------------------------------------------------------------------------
+# 5c. load_prediction_market_snapshot — ALP-633 brief curation
+# ---------------------------------------------------------------------------
+
+
+class TestPredictionMarketBriefCuration:
+    """ALP-633: the QR loader returns only contracts that pass the same
+    curation rule the synthesizer brief applies — delta-anomalous OR
+    category in :data:`MACRO_RELEVANCE_CATEGORIES`. Non-anomalous longshots
+    in election/conflict/china_policy are suppressed so synth and QR see
+    consistent prediction-market detail.
+    """
+
+    _AS_OF = datetime(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
+    _ISO = "2026-05-17T00:00:00Z"
+
+    def test_anomalous_election_contract_emitted(self, session: Session) -> None:
+        """Above-threshold delta passes curation even when category is
+        outside the macro-relevance allowlist."""
+        _add_contract(
+            session,
+            "c-anom-election",
+            description="Will candidate X win the 2028 nomination?",
+            category="election",
+            resolution_date="2028-11-30T00:00:00Z",
+        )
+        _add_snapshot(
+            session, "c-anom-election", self._ISO, yes_probability=0.20, volume_24h_usd=200_000.0
+        )
+        _add_contract_history(
+            session, "c-anom-election", self._ISO, yes_probability=0.20, delta_pp_since_prior=15.0
+        )
+        session.commit()
+        result = load_prediction_market_snapshot(session, as_of=self._AS_OF)
+        assert len(result) == 1
+        assert result[0].contract_id == "c-anom-election"
+        assert result[0].meets_threshold_flag is True
+
+    def test_non_anomalous_monetary_policy_contract_emitted(self, session: Session) -> None:
+        """``monetary_policy`` contracts pass curation regardless of delta —
+        the level is itself a tradeable input vs. quant 6b."""
+        _add_contract(
+            session,
+            "c-fomc",
+            description="FOMC rate hold in June",
+            category="monetary_policy",
+        )
+        _add_snapshot(session, "c-fomc", self._ISO, yes_probability=0.65, volume_24h_usd=300_000.0)
+        _add_contract_history(
+            session, "c-fomc", self._ISO, yes_probability=0.65, delta_pp_since_prior=1.0
+        )
+        session.commit()
+        result = load_prediction_market_snapshot(session, as_of=self._AS_OF)
+        assert len(result) == 1
+        assert result[0].contract_id == "c-fomc"
+
+    def test_non_anomalous_opec_contract_emitted(self, session: Session) -> None:
+        """``opec`` contracts pass curation regardless of delta — the level
+        is cross-referenced against quant 8a crude futures."""
+        _add_contract(
+            session,
+            "c-opec",
+            description="OPEC+ holds production quotas",
+            category="opec",
+        )
+        _add_snapshot(session, "c-opec", self._ISO, yes_probability=0.40, volume_24h_usd=80_000.0)
+        _add_contract_history(
+            session, "c-opec", self._ISO, yes_probability=0.40, delta_pp_since_prior=2.0
+        )
+        session.commit()
+        result = load_prediction_market_snapshot(session, as_of=self._AS_OF)
+        assert len(result) == 1
+        assert result[0].contract_id == "c-opec"
+
+    def test_non_anomalous_election_longshot_suppressed(self, session: Session) -> None:
+        """The bug case: a non-anomalous 2028-presidential longshot floods
+        the brief pre-fix; post-fix it's filtered out at the loader."""
+        _add_contract(
+            session,
+            "c-flat-election",
+            description="Will Sarah Huckabee Sanders win the 2028 nomination?",
+            category="election",
+            resolution_date="2028-11-30T00:00:00Z",
+        )
+        _add_snapshot(
+            session, "c-flat-election", self._ISO, yes_probability=0.0075, volume_24h_usd=36_790.0
+        )
+        _add_contract_history(
+            session,
+            "c-flat-election",
+            self._ISO,
+            yes_probability=0.0075,
+            delta_pp_since_prior=0.0,
+        )
+        session.commit()
+        result = load_prediction_market_snapshot(session, as_of=self._AS_OF)
+        assert result == ()
+
+    def test_curation_exclusion_logged(
+        self, session: Session, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The loader logs the count of contracts excluded by brief
+        curation, separate from the past-dated exclusion log line."""
+        _add_contract(
+            session,
+            "c-noise-1",
+            description="Will candidate A win the 2028 nomination?",
+            category="election",
+            resolution_date="2028-11-30T00:00:00Z",
+        )
+        _add_contract(
+            session,
+            "c-noise-2",
+            description="Will candidate B win the 2028 nomination?",
+            category="election",
+            resolution_date="2028-11-30T00:00:00Z",
+        )
+        _add_contract(
+            session,
+            "c-keep-fomc",
+            description="FOMC rate hold in June",
+            category="monetary_policy",
+        )
+        for cid in ("c-noise-1", "c-noise-2", "c-keep-fomc"):
+            _add_snapshot(session, cid, self._ISO, yes_probability=0.5, volume_24h_usd=100_000.0)
+            _add_contract_history(
+                session, cid, self._ISO, yes_probability=0.5, delta_pp_since_prior=1.0
+            )
+        session.commit()
+
+        with caplog.at_level(
+            logging.INFO, logger="alphamind.analysis.qualitative_research.loaders"
+        ):
+            result = load_prediction_market_snapshot(session, as_of=self._AS_OF)
+
+        assert {snap.contract_id for snap in result} == {"c-keep-fomc"}
+        assert any(
+            "failing brief curation" in rec.getMessage() and "2" in rec.getMessage()
+            for rec in caplog.records
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -294,7 +294,7 @@ class TestPredictionMarketDeltas:
             },
             metadata={
                 "POLY-1": ContractMetadataRow(
-                    platform="polymarket", description="FOMC rate hold", category="rates"
+                    platform="polymarket", description="FOMC rate hold", category="monetary_policy"
                 ),
             },
             volume_liquidity={"POLY-1": (50_000.0, 100_000.0)},
@@ -338,6 +338,13 @@ class TestPredictionMarketDeltas:
                     snapshot_ts="2026-05-15T16:00:00Z",
                 ),
             },
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket",
+                    description="FOMC rate hold",
+                    category="monetary_policy",
+                ),
+            },
             volume_liquidity={"POLY-1": (5_000.0, 50_000.0)},
         )
         blocks = compute_prediction_market_delta_blocks(
@@ -370,10 +377,10 @@ class TestPredictionMarketDeltas:
             },
             metadata={
                 "POLY-1": ContractMetadataRow(
-                    platform="polymarket", description="FOMC rate hold", category="rates"
+                    platform="polymarket", description="FOMC rate hold", category="monetary_policy"
                 ),
                 "KAL-1": ContractMetadataRow(
-                    platform="kalshi", description="FOMC rate hold", category="rates"
+                    platform="kalshi", description="FOMC rate hold", category="monetary_policy"
                 ),
             },
             volume_liquidity={"POLY-1": (50_000.0, 100_000.0), "KAL-1": (60_000.0, 300_000.0)},
@@ -409,10 +416,10 @@ class TestPredictionMarketDeltas:
             },
             metadata={
                 "POLY-1": ContractMetadataRow(
-                    platform="polymarket", description="FOMC rate hold", category="rates"
+                    platform="polymarket", description="FOMC rate hold", category="monetary_policy"
                 ),
                 "KAL-1": ContractMetadataRow(
-                    platform="kalshi", description="FOMC rate hold", category="rates"
+                    platform="kalshi", description="FOMC rate hold", category="monetary_policy"
                 ),
             },
             volume_liquidity={"POLY-1": (50_000.0, 0.0), "KAL-1": (60_000.0, 0.0)},
@@ -433,7 +440,8 @@ class TestPredictionMarketDeltas:
         """A question text referencing a date before ``as_of`` carries
         ``is_question_past_dated=True`` in the per-contract payload (ALP-578)
         — the synthesizer's downstream consumers see the contract tagged
-        rather than excluded."""
+        rather than excluded. Uses a macro-relevance category so the
+        contract survives ALP-633 brief curation despite the flat delta."""
         inputs = _pm_inputs(
             current={
                 "POLY-1": ContractCurrentStateRow(
@@ -445,8 +453,8 @@ class TestPredictionMarketDeltas:
             metadata={
                 "POLY-1": ContractMetadataRow(
                     platform="polymarket",
-                    description="Iran closes its airspace by May 6?",
-                    category="conflict",
+                    description="Will FOMC cut rates by May 6?",
+                    category="monetary_policy",
                     resolution_date=date(2026, 5, 31),
                 ),
             },
@@ -472,7 +480,7 @@ class TestPredictionMarketDeltas:
                 "POLY-1": ContractMetadataRow(
                     platform="polymarket",
                     description="Will the FOMC cut rates by December 15?",
-                    category="rates",
+                    category="monetary_policy",
                     resolution_date=date(2026, 12, 31),
                 ),
             },
@@ -506,6 +514,13 @@ class TestPredictionMarketDeltas:
                     ),
                 ),
             },
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket",
+                    description="FOMC rate hold",
+                    category="monetary_policy",
+                ),
+            },
             volume_liquidity={"POLY-1": (10.0, 200.0)},
         )
         blocks = compute_prediction_market_delta_blocks(
@@ -528,6 +543,13 @@ class TestPredictionMarketDeltas:
                 "POLY-1": (
                     ContractHistoryEntry(snapshot_ts="2026-05-10T00:00:00Z", yes_probability=0.7),
                     ContractHistoryEntry(snapshot_ts="2026-05-15T00:00:00Z", yes_probability=0.7),
+                ),
+            },
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket",
+                    description="FOMC rate hold",
+                    category="monetary_policy",
                 ),
             },
             volume_liquidity={"POLY-1": (500_000.0, 100_000.0)},
@@ -585,8 +607,8 @@ class TestPredictionMarketDeltas:
             metadata={
                 "POLY-1": ContractMetadataRow(
                     platform="polymarket",
-                    description="Iran closes its airspace by May 6?",
-                    category="conflict",
+                    description="Will FOMC cut rates by May 6?",
+                    category="monetary_policy",
                     resolution_date=date(2026, 5, 31),
                 ),
             },
@@ -599,3 +621,276 @@ class TestPredictionMarketDeltas:
         assert "is_question_past_dated: True" in rendered
         assert "is_stale_low_signal: True" in rendered
         assert "low_liquidity: True" in rendered
+
+    def test_anomalous_contract_emitted_regardless_of_category(self) -> None:
+        """ALP-633 (a): a delta-anomalous contract is emitted into the brief
+        payload even when its category is outside the macro-relevance
+        allowlist — the anomaly itself is the signal."""
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.20,
+                    delta_pp_since_prior=12.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+            },
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket",
+                    description="Will Sarah Huckabee Sanders win the 2028 nomination?",
+                    category="election",
+                ),
+            },
+            volume_liquidity={"POLY-1": (50_000.0, 100_000.0)},
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        assert len(blocks) == 1
+        assert "POLY-1" in blocks[0].payload["per_contract"]
+        assert blocks[0].payload["per_contract"]["POLY-1"]["category"] == "election"
+
+    def test_non_anomalous_monetary_policy_contract_emitted(self) -> None:
+        """ALP-633 (b): a non-anomalous ``monetary_policy`` contract is
+        emitted because the level itself is tradeable (qualitative.md §3a —
+        cross-referenced against quant 6b fed funds futures)."""
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.65,
+                    delta_pp_since_prior=1.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+            },
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket",
+                    description="FOMC rate hold in June",
+                    category="monetary_policy",
+                ),
+            },
+            volume_liquidity={"POLY-1": (200_000.0, 500_000.0)},
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        assert len(blocks) == 1
+        assert "POLY-1" in blocks[0].payload["per_contract"]
+
+    def test_non_anomalous_opec_contract_emitted(self) -> None:
+        """ALP-633 (b): a non-anomalous ``opec`` contract is emitted
+        because OPEC production decisions are cross-referenced against
+        quant 8a crude futures (qualitative.md §3c)."""
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.40,
+                    delta_pp_since_prior=2.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+            },
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket",
+                    description="OPEC+ holds quotas at next meeting",
+                    category="opec",
+                ),
+            },
+            volume_liquidity={"POLY-1": (50_000.0, 80_000.0)},
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        assert len(blocks) == 1
+        assert "POLY-1" in blocks[0].payload["per_contract"]
+
+    def test_non_anomalous_election_longshot_suppressed(self) -> None:
+        """ALP-633 (c): a non-anomalous ``election`` longshot is curated
+        out of the brief — the level carries no tradeable information and
+        flooded the synthesizer's input pre-ALP-633."""
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.0075,
+                    delta_pp_since_prior=0.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+            },
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket",
+                    description="Will Ted Cruz win the 2028 Republican nomination?",
+                    category="election",
+                ),
+            },
+            volume_liquidity={"POLY-1": (36_790.0, 1_633_000.0)},
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        assert blocks == []
+
+    def test_anomaly_flags_enumerate_pre_curation_universe(self) -> None:
+        """ALP-633 (d): ``anomaly_flags`` reports every delta-anomalous
+        contract independent of brief curation. A mixed-universe with one
+        anomalous election + one non-anomalous election lands the
+        anomalous row in both ``per_contract`` and ``anomaly_flags`` while
+        the non-anomalous sibling is suppressed everywhere."""
+        inputs = _pm_inputs(
+            current={
+                "POLY-ANOM": ContractCurrentStateRow(
+                    yes_probability=0.30,
+                    delta_pp_since_prior=15.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+                "POLY-FLAT": ContractCurrentStateRow(
+                    yes_probability=0.005,
+                    delta_pp_since_prior=0.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+            },
+            metadata={
+                "POLY-ANOM": ContractMetadataRow(
+                    platform="polymarket",
+                    description="Will Hunter Biden win the 2028 nomination?",
+                    category="election",
+                ),
+                "POLY-FLAT": ContractMetadataRow(
+                    platform="polymarket",
+                    description="Will Sarah Huckabee Sanders win the 2028 nomination?",
+                    category="election",
+                ),
+            },
+            volume_liquidity={
+                "POLY-ANOM": (50_000.0, 100_000.0),
+                "POLY-FLAT": (36_790.0, 1_633_000.0),
+            },
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        delta_block = next(b for b in blocks if b.block_id == "qual.prediction_market_delta")
+        assert set(delta_block.payload["per_contract"]) == {"POLY-ANOM"}
+        assert [flag.name for flag in delta_block.anomaly_flags] == ["prediction_market_delta"]
+        assert delta_block.anomaly_flags[0].magnitude == pytest.approx(15.0)
+
+    def test_normalized_block_suppressed_when_no_constituent_passes_curation(self) -> None:
+        """ALP-633: a cross-platform group of non-anomalous longshots in a
+        non-allowlisted category produces no normalized block — otherwise
+        the sibling block would re-introduce the noise the delta block
+        just dropped."""
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.005,
+                    delta_pp_since_prior=0.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+                "KAL-1": ContractCurrentStateRow(
+                    yes_probability=0.006,
+                    delta_pp_since_prior=0.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+            },
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket",
+                    description="Will Ted Cruz win 2028 nomination",
+                    category="election",
+                ),
+                "KAL-1": ContractMetadataRow(
+                    platform="kalshi",
+                    description="Will Ted Cruz win 2028 nomination",
+                    category="election",
+                ),
+            },
+            volume_liquidity={
+                "POLY-1": (40_000.0, 100_000.0),
+                "KAL-1": (35_000.0, 100_000.0),
+            },
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        assert blocks == []
+
+    def test_normalized_block_emitted_when_any_constituent_passes_curation(self) -> None:
+        """An anomalous constituent in a cross-platform group keeps the
+        normalized block emission — the group is signal-bearing even if
+        the other constituent is below threshold."""
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.55,
+                    delta_pp_since_prior=12.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+                "KAL-1": ContractCurrentStateRow(
+                    yes_probability=0.50,
+                    delta_pp_since_prior=2.0,
+                    snapshot_ts="2026-05-15T16:00:00Z",
+                ),
+            },
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket",
+                    description="Will Ted Cruz win 2028 nomination",
+                    category="election",
+                ),
+                "KAL-1": ContractMetadataRow(
+                    platform="kalshi",
+                    description="Will Ted Cruz win 2028 nomination",
+                    category="election",
+                ),
+            },
+            volume_liquidity={
+                "POLY-1": (50_000.0, 100_000.0),
+                "KAL-1": (60_000.0, 200_000.0),
+            },
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        assert {block.block_id for block in blocks} == {
+            "qual.prediction_market_delta",
+            "qual.prediction_market_normalized",
+        }
+
+    def test_trailing_history_trimmed_to_three_most_recent_entries(self) -> None:
+        """ALP-633: the emitted ``trailing_history`` carries at most the
+        last three entries. The full series dominated the brief's byte
+        budget at one contract per row pre-fix."""
+        full_history = tuple(
+            ContractHistoryEntry(
+                snapshot_ts=f"2026-05-{day:02d}T00:00:00Z", yes_probability=0.50 + 0.01 * day
+            )
+            for day in range(1, 11)
+        )
+        inputs = _pm_inputs(
+            current={
+                "POLY-1": ContractCurrentStateRow(
+                    yes_probability=0.60,
+                    delta_pp_since_prior=10.0,
+                    snapshot_ts="2026-05-10T00:00:00Z",
+                ),
+            },
+            history={"POLY-1": full_history},
+            metadata={
+                "POLY-1": ContractMetadataRow(
+                    platform="polymarket",
+                    description="Will FOMC cut rates by June 15?",
+                    category="monetary_policy",
+                ),
+            },
+            volume_liquidity={"POLY-1": (100_000.0, 200_000.0)},
+        )
+        blocks = compute_prediction_market_delta_blocks(
+            inputs, delta_pp_threshold=5.0, low_liquidity_volume_min_usd=10_000.0
+        )
+        history_tuple = blocks[0].payload["per_contract"]["POLY-1"]["trailing_history"]
+        assert len(history_tuple) == 3
+        assert [ts for ts, _ in history_tuple] == [
+            "2026-05-08T00:00:00Z",
+            "2026-05-09T00:00:00Z",
+            "2026-05-10T00:00:00Z",
+        ]

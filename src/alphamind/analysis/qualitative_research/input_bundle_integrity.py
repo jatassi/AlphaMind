@@ -12,8 +12,14 @@ The four gaps:
   (the empty-bar-window signature; legitimate near-zero is unaffected).
 - Gap 2: ``sentiment_aggregates`` empty while a non-trivial number of
   calibrated sentiment baselines exist at or before ``as_of``.
-- Gap 3: ``prediction_markets`` empty while at least one unresolved contract
-  has ``distillation_contract_history`` at or before ``as_of``.
+- Gap 3: ``prediction_markets`` empty while at least one unresolved
+  *macro-relevance* contract (category in
+  :data:`MACRO_RELEVANCE_CATEGORIES`) has
+  ``distillation_contract_history`` at or before ``as_of``. Macro-relevance
+  contracts pass brief curation unconditionally (ALP-633), so an empty
+  bundle in their presence still points at an assembler drop. Empty
+  bundles with no macro-relevance contracts in scope are legitimate
+  post-curation outcomes and do not fire the warn.
 - Gap 4: a news-digest entry's labeled ticker (within the high-profile
   alias map) is absent from the headline while a *different* high-profile
   ticker IS referenced — ticker-misattribution drift.
@@ -43,6 +49,9 @@ from sqlalchemy.orm import Session
 from alphamind.analysis.qualitative_research.loaders import QualitativeInputs
 from alphamind.analysis.qualitative_research.news_digest import DigestEntry, NewsDigest
 from alphamind.analysis.tools._envelope import format_iso
+from alphamind.distillation.qualitative.prediction_market_deltas_compute import (
+    MACRO_RELEVANCE_CATEGORIES,
+)
 from alphamind.persistence.models import (
     DistillationContractHistory,
     DistillationTickerBaseline,
@@ -180,13 +189,16 @@ def _warn_gap3_prediction_market_block_drop(
 ) -> None:
     if inputs.prediction_markets:
         return
-    contracts_with_history = _count_unresolved_contracts_with_history(session, as_of_iso=as_of_iso)
-    if contracts_with_history > 0:
+    macro_contracts = _count_unresolved_macro_relevance_contracts_with_history(
+        session, as_of_iso=as_of_iso
+    )
+    if macro_contracts > 0:
         logger.warning(
             "input-bundle integrity (ALP-492 Gap 3): prediction_markets empty "
-            "but %d unresolved contracts have history at or before %s — the "
-            "assembler may be dropping the block",
-            contracts_with_history,
+            "but %d unresolved macro-relevance contract(s) (%s) have history at "
+            "or before %s — the assembler may be dropping the block",
+            macro_contracts,
+            sorted(MACRO_RELEVANCE_CATEGORIES),
             as_of_iso,
         )
 
@@ -274,13 +286,21 @@ def _count_calibrated_sentiment_baselines(session: Session, *, as_of_iso: str) -
     return int(result or 0)
 
 
-def _count_unresolved_contracts_with_history(session: Session, *, as_of_iso: str) -> int:
-    """Distinct contracts whose ``resolution_date`` has not passed and which
-    have ``distillation_contract_history`` at or before ``as_of_iso``.
+def _count_unresolved_macro_relevance_contracts_with_history(
+    session: Session, *, as_of_iso: str
+) -> int:
+    """Distinct macro-relevance contracts with unexpired resolution dates
+    and ``distillation_contract_history`` at or before ``as_of_iso``.
 
-    Mirrors the ``resolution_date IS NULL OR resolution_date > as_of`` filter
-    used by :func:`alphamind.distillation.contract_scope.resolve_prediction_market_scope`
-    so the WARN aligns with the loader's notion of "contract scope is non-empty".
+    Macro-relevance categories (:data:`MACRO_RELEVANCE_CATEGORIES`) pass
+    brief curation unconditionally — a non-empty count here paired with an
+    empty bundle indicates the assembler is dropping macro rows that
+    should always make it through. Non-macro contracts (election,
+    china_policy, conflict) only surface on delta-anomaly, so their
+    absence from an empty bundle isn't a regression signal (ALP-633).
+
+    The ``resolution_date IS NULL OR resolution_date > as_of`` shape
+    mirrors :func:`alphamind.distillation.contract_scope.resolve_prediction_market_scope`.
     """
     result = session.execute(
         select(func.count(func.distinct(DistillationContractHistory.contract_id)))
@@ -290,6 +310,7 @@ def _count_unresolved_contracts_with_history(session: Session, *, as_of_iso: str
         )
         .where(
             DistillationContractHistory.snapshot_ts <= as_of_iso,
+            PredictionMarketContracts.category.in_(tuple(sorted(MACRO_RELEVANCE_CATEGORIES))),
             or_(
                 PredictionMarketContracts.resolution_date.is_(None),
                 PredictionMarketContracts.resolution_date > as_of_iso,

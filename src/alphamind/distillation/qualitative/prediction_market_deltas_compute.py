@@ -81,6 +81,33 @@ the no-magic-numbers audit.
 """
 
 
+MACRO_RELEVANCE_CATEGORIES: frozenset[str] = frozenset({"monetary_policy", "opec"})
+"""Categories with a direct quant-block cross-reference whose *level* is
+itself a tradeable input regardless of delta.
+
+Restricted to qualitative.md §3a (FOMC monetary policy ↔ quant 6b fed
+funds futures) and §3c (OPEC production decisions ↔ quant 8a crude oil
+futures) — these are the categories the brief consumers compare against
+a specific quant block to detect divergence, so a flat level is still
+load-bearing. The §3b regulatory/political categories (antitrust, trade,
+financial_regulation) are qualitatively tradeable but lack a
+single-quant-block divergence target, so they're gated on delta-anomaly
+under ALP-633. ``election``, ``china_policy``, and ``conflict`` are
+likewise step-function categories that only earn a brief slot when
+``delta_anomaly`` fires.
+"""
+
+
+_TRAILING_HISTORY_TRIM_N: int = 3
+"""Trailing-history entries retained per emitted contract in the brief.
+
+The full 14-element history dominated the brief's byte budget at one
+contract per row; downstream consumers don't need more than a handful of
+points to read trajectory, and ``distillation_contract_history`` still
+carries the full series for direct retrieval (ALP-633).
+"""
+
+
 # ---------------------------------------------------------------------------
 # Frozen inputs
 # ---------------------------------------------------------------------------
@@ -180,8 +207,22 @@ def _build_per_contract_payload(
         "low_liquidity": low_liquidity,
         "is_question_past_dated": is_question_past_dated,
         "is_stale_low_signal": is_stale_low_signal,
-        "trailing_history": tuple((entry.snapshot_ts, entry.yes_probability) for entry in history),
+        "trailing_history": tuple(
+            (entry.snapshot_ts, entry.yes_probability)
+            for entry in history[-_TRAILING_HISTORY_TRIM_N:]
+        ),
     }
+
+
+def _passes_brief_curation(entry: Mapping[str, Any]) -> bool:
+    """Return whether ``entry`` belongs in the brief-facing per-contract payload.
+
+    The brief is signal-bearing prose; ALP-633 curates out non-anomalous
+    contracts outside :data:`MACRO_RELEVANCE_CATEGORIES` so the synthesizer
+    isn't flooded with low-probability longshots whose flat level carries
+    no tradeable information.
+    """
+    return entry["delta_anomaly"] or entry["category"] in MACRO_RELEVANCE_CATEGORIES
 
 
 # ---------------------------------------------------------------------------
@@ -276,21 +317,28 @@ def compute_prediction_market_delta_blocks(
         if entry is not None:
             per_contract[contract_id] = entry
 
-    blocks: list[OutputBlock] = []
-    if per_contract:
-        sorted_contract_ids = sorted(per_contract)
-        delta_payload = {
-            contract_id: per_contract[contract_id] for contract_id in sorted_contract_ids
-        }
-        delta_flags = tuple(
-            AnomalyFlag(
-                name="prediction_market_delta",
-                magnitude=abs(per_contract[contract_id]["delta_pp_since_prior"]),
-                severity="investigate_now",
-            )
-            for contract_id in sorted_contract_ids
-            if per_contract[contract_id]["delta_anomaly"]
+    sorted_contract_ids = sorted(per_contract)
+    # Flags enumerate every delta_anomaly contract in the *full* per_contract
+    # universe — independent of brief-payload curation, so anomalies in
+    # non-allowlisted categories stay visible to the orchestrator's anomaly
+    # consumers even if their per-contract row is excluded from the brief.
+    delta_flags = tuple(
+        AnomalyFlag(
+            name="prediction_market_delta",
+            magnitude=abs(per_contract[contract_id]["delta_pp_since_prior"]),
+            severity="investigate_now",
         )
+        for contract_id in sorted_contract_ids
+        if per_contract[contract_id]["delta_anomaly"]
+    )
+    delta_payload = {
+        contract_id: per_contract[contract_id]
+        for contract_id in sorted_contract_ids
+        if _passes_brief_curation(per_contract[contract_id])
+    }
+
+    blocks: list[OutputBlock] = []
+    if delta_payload:
         blocks.append(
             OutputBlock(
                 block_id="qual.prediction_market_delta",
@@ -307,6 +355,13 @@ def compute_prediction_market_delta_blocks(
     matches = _group_cross_platform_matches(per_contract)
     normalized_groups: dict[str, dict[str, Any]] = {}
     for members in matches:
+        # ALP-633: a normalized group only earns a brief slot if at least one
+        # constituent passes brief curation. Without this gate the sibling
+        # ``qual.prediction_market_normalized`` block re-introduces the
+        # low-signal pairs the delta block just dropped (e.g. an election
+        # longshot listed on both Polymarket and Kalshi).
+        if not any(_passes_brief_curation(per_contract[cid]) for cid in members):
+            continue
         normalized = _normalize_cross_platform(members=members, per_contract=per_contract)
         if normalized is None:
             continue
@@ -331,6 +386,7 @@ def compute_prediction_market_delta_blocks(
 
 
 __all__ = [
+    "MACRO_RELEVANCE_CATEGORIES",
     "PredictionMarketDeltasInputs",
     "compute_prediction_market_delta_blocks",
 ]
