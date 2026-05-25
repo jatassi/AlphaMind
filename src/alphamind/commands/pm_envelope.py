@@ -88,7 +88,12 @@ __all__ = [
 
 SourceProvenance = Literal["pm_analyst", "pm_strategist"]
 RecommendationType = Literal["new_entry", "position_assessment", "pending_order_assessment"]
-Verdict = Literal["approve", "approve_with_modification", "reject"]
+Verdict = Literal[
+    "approve",
+    "approve_with_modification",
+    "reject",
+    "override_with_corrective_action",
+]
 AdjustmentCategory = Literal[
     "risk_reduction",
     "conviction_disagreement",
@@ -204,6 +209,9 @@ class ConcernRecord(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+_OVERRIDE_CORRECTIVE_COMMAND_TYPES: frozenset[str] = frozenset({"close", "adjust", "cancel"})
+
+
 def _validate_verdict_invariants(
     verdict: Verdict,
     commands: tuple[Any, ...],
@@ -226,6 +234,36 @@ def _validate_verdict_invariants(
             raise ValueError("verdict=approve_with_modification requires at least one modification")
         if len(commands) < 1:
             raise ValueError("verdict=approve_with_modification requires at least one command")
+    elif verdict == "override_with_corrective_action":
+        # PM-authored override of a strategist HOLD-with-disagreement. The
+        # verdict carries both the disagreement (concerns) and the corrective
+        # action (PM-authored commands). The override authors new commands
+        # rather than modifying existing ones — use ``approve_with_modification``
+        # for parameter tweaks. Embedded commands must be CLOSE / ADJUST /
+        # CANCEL — an override is a *corrective* action against an existing
+        # exposure; new-entry OPEN / ADD is not appropriate here.
+        if len(commands) < 1:
+            raise ValueError(
+                "verdict=override_with_corrective_action requires at least one command"
+            )
+        if len(concerns) < 1:
+            raise ValueError(
+                "verdict=override_with_corrective_action requires at least one concern"
+            )
+        if len(modifications) != 0:
+            raise ValueError(
+                "verdict=override_with_corrective_action requires empty modifications "
+                "(the override authors new commands; use approve_with_modification for "
+                "parameter tweaks on an existing command)"
+            )
+        for command in commands:
+            command_type = getattr(command, "command_type", None)
+            if command_type not in _OVERRIDE_CORRECTIVE_COMMAND_TYPES:
+                raise ValueError(
+                    "verdict=override_with_corrective_action embedded commands must be "
+                    "CLOSE / ADJUST / CANCEL (the override is a corrective action; "
+                    f"new-entry OPEN / ADD is forbidden); got command_type={command_type!r}"
+                )
 
 
 class PMAnalystEnvelope(BaseModel):
@@ -317,6 +355,7 @@ class VerdictSummary(BaseModel):
     approve: int = Field(ge=0)
     approve_with_modification: int = Field(ge=0)
     reject: int = Field(ge=0)
+    override_with_corrective_action: int = Field(default=0, ge=0)
 
 
 class PMCompletionRecord(BaseModel):
@@ -340,6 +379,7 @@ class PMCompletionRecord(BaseModel):
             self.verdict_summary.approve
             + self.verdict_summary.approve_with_modification
             + self.verdict_summary.reject
+            + self.verdict_summary.override_with_corrective_action
         )
         if total != self.envelopes_submitted:
             raise ValueError(

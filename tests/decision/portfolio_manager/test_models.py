@@ -405,6 +405,168 @@ class TestVerdictInvariants:
 
 
 # ---------------------------------------------------------------------------
+# 2b. override_with_corrective_action verdict-conditional invariants (ALP-626)
+# ---------------------------------------------------------------------------
+
+
+def _adjust_command_basic() -> AdjustCommand:
+    from alphamind.commands.command_models import NewStopLevel
+
+    return AdjustCommand(
+        command_type="adjust",
+        position_id=PositionId("POS-NVDA-001"),
+        adjustment_rationale="Tighten stop ahead of catalyst.",
+        new_stop_level=NewStopLevel(trigger_price=price(100.0), order_type="market"),
+    )
+
+
+def _cancel_command_basic() -> CancelCommand:
+    return CancelCommand(
+        command_type="cancel",
+        order_id="ORD-1",
+        cancel_reason="stale",
+    )
+
+
+class TestOverrideWithCorrectiveActionVerdictInvariants:
+    """Parse-time invariants for the override_with_corrective_action verdict — ALP-626.
+
+    The verdict represents a PM-authored corrective package overriding a
+    strategist HOLD-with-disagreement; carries both the disagreement
+    (concerns + optional anti-pattern) and the corrective commands
+    (CLOSE / ADJUST / CANCEL — never OPEN / ADD).
+    """
+
+    def test_override_with_close_command_constructs(self) -> None:
+        envelope = _make_strategist_envelope(
+            verdict="override_with_corrective_action",
+            modifications=(),
+            commands=(_close_command_basic(),),
+            concerns=(
+                ConcernRecord(
+                    source="action_status_alignment",
+                    summary="Hold inappropriate given size breach.",
+                ),
+            ),
+        )
+        assert envelope.verdict == "override_with_corrective_action"
+        assert len(envelope.commands) == 1
+        assert len(envelope.concerns) == 1
+        assert envelope.modifications == ()
+
+    def test_override_with_adjust_command_constructs(self) -> None:
+        envelope = _make_strategist_envelope(
+            verdict="override_with_corrective_action",
+            modifications=(),
+            commands=(_adjust_command_basic(),),
+            concerns=(ConcernRecord(source="other", summary="Override needed."),),
+        )
+        assert envelope.verdict == "override_with_corrective_action"
+
+    def test_override_with_cancel_command_constructs(self) -> None:
+        envelope = _make_strategist_envelope(
+            envelope_id="ENV-SA-ORD-1",
+            source_recommendation_id="SA-ORD-1",
+            recommendation_type="pending_order_assessment",
+            verdict="override_with_corrective_action",
+            modifications=(),
+            commands=(_cancel_command_basic(),),
+            concerns=(ConcernRecord(source="other", summary="Cancel stale order."),),
+        )
+        assert envelope.verdict == "override_with_corrective_action"
+
+    def test_override_without_commands_rejected(self) -> None:
+        with pytest.raises(
+            (ValueError, TypeError),
+            match=r"(?i)override_with_corrective_action.*command",
+        ):
+            _make_strategist_envelope(
+                verdict="override_with_corrective_action",
+                modifications=(),
+                commands=(),
+                concerns=(ConcernRecord(source="other", summary="x"),),
+            )
+
+    def test_override_without_concerns_rejected(self) -> None:
+        with pytest.raises(
+            (ValueError, TypeError),
+            match=r"(?i)override_with_corrective_action.*concern",
+        ):
+            _make_strategist_envelope(
+                verdict="override_with_corrective_action",
+                modifications=(),
+                commands=(_close_command_basic(),),
+                concerns=(),
+            )
+
+    def test_override_with_modifications_rejected(self) -> None:
+        with pytest.raises(
+            (ValueError, TypeError),
+            match=r"(?i)override_with_corrective_action.*modification",
+        ):
+            _make_strategist_envelope(
+                verdict="override_with_corrective_action",
+                modifications=(
+                    ModificationRecord(
+                        phase="pre_submission",
+                        field_changed="position_size.quantity",
+                        original_value=10,
+                        approved_value=8,
+                        adjustment_category="risk_reduction",
+                        rationale="Trim.",
+                    ),
+                ),
+                commands=(_close_command_basic(),),
+                concerns=(ConcernRecord(source="other", summary="x"),),
+            )
+
+    def test_override_with_open_command_rejected(self) -> None:
+        with pytest.raises(
+            (ValueError, TypeError),
+            match=r"(?i)override_with_corrective_action.*(open|corrective)",
+        ):
+            _make_strategist_envelope(
+                verdict="override_with_corrective_action",
+                modifications=(),
+                commands=(_open_command_basic(),),
+                concerns=(ConcernRecord(source="other", summary="x"),),
+            )
+
+    def test_override_with_add_command_rejected(self) -> None:
+        add_cmd = AddCommand(
+            command_type="add",
+            position_id=PositionId("POS-NVDA-001"),
+            additional_quantity=5.0,
+            additional_dollar_value=money(5_000.0),
+            entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+            thesis_addition_component=ThesisComponent(
+                component_type="entry_rationale",
+                linked_leg="add",
+                instrument_reference="NVDA",
+                narrative="Add.",
+                key_assumptions=("Setup intact.",),
+            ),
+            bracket_adjustment=None,
+        )
+        with pytest.raises(
+            (ValueError, TypeError),
+            match=r"(?i)override_with_corrective_action.*(add|corrective)",
+        ):
+            _make_strategist_envelope(
+                verdict="override_with_corrective_action",
+                modifications=(),
+                commands=(add_cmd,),
+                concerns=(ConcernRecord(source="other", summary="x"),),
+            )
+
+    def test_verdict_literal_includes_override(self) -> None:
+        """The shared Verdict literal includes override_with_corrective_action."""
+        from alphamind.commands.pm_envelope import Verdict
+
+        assert "override_with_corrective_action" in get_args(Verdict)
+
+
+# ---------------------------------------------------------------------------
 # 3. Modification-record invariants (adjustment_category ↔ phase)
 # ---------------------------------------------------------------------------
 
@@ -860,7 +1022,12 @@ class TestPMEnvelopeSchemaParity:
         defs = _collect_pydantic_defs(schema)
         pyd_enum = set(defs["PMAnalystEnvelope"]["properties"]["verdict"]["enum"])
         assert design_enum == pyd_enum
-        assert design_enum == {"approve", "approve_with_modification", "reject"}
+        assert design_enum == {
+            "approve",
+            "approve_with_modification",
+            "reject",
+            "override_with_corrective_action",
+        }
 
     def test_source_provenance_enum_matches(self) -> None:
         design = _load_design_doc_schema()
