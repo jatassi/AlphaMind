@@ -202,7 +202,12 @@ def test_example_envelope_round_trips_through_pm_envelope() -> None:
     # verdict / concerns / rationale_narrative must have parsed at the top
     # level (not nested under evaluation), and modifications must carry the
     # required ``phase`` field.
-    assert envelope.verdict in {"approve", "approve_with_modification", "reject"}
+    assert envelope.verdict in {
+        "approve",
+        "approve_with_modification",
+        "reject",
+        "override_with_corrective_action",
+    }
     assert envelope.rationale_narrative
     assert envelope.source_provenance == "pm_analyst"
     assert envelope.modifications, (
@@ -234,6 +239,7 @@ def test_example_output_validates_as_completion_record() -> None:
         record.verdict_summary.approve
         + record.verdict_summary.approve_with_modification
         + record.verdict_summary.reject
+        + record.verdict_summary.override_with_corrective_action
     )
     assert total == record.envelopes_submitted
 
@@ -251,6 +257,30 @@ def test_canonical_antipattern_strings_present() -> None:
         f"Canonical anti-pattern strings absent from prompts/decision/pm.md: "
         f"{missing}.  Add each name verbatim — the feedback loop aggregates "
         f"on these exact strings via the `anti_patterns_identified` field."
+    )
+
+
+def test_prompt_documents_override_with_corrective_action_verdict() -> None:
+    """The PM prompt names override_with_corrective_action, states its choice
+    rule, contrasts it with the three other verdicts, and references the
+    batch-validation procedural note — ALP-626.
+    """
+    content = _read_prompt()
+    # The new verdict's literal name must appear.
+    assert "override_with_corrective_action" in content, (
+        "prompts/decision/pm.md must name the override_with_corrective_action "
+        "verdict so the PM knows when to author a corrective package."
+    )
+    # The three contrasting verdicts must appear close enough to the override
+    # mention to verify the contrast rubric is present (each is in the
+    # verdict-choice rules block).
+    for verdict in ("approve", "approve_with_modification", "reject"):
+        assert verdict in content
+    # The batch-validation procedural note must reference validate_guardrail_batch.
+    assert "validate_guardrail_batch" in content, (
+        "prompts/decision/pm.md must reference validate_guardrail_batch as the "
+        "procedural step for validating a coordinated corrective package before "
+        "submitting an override_with_corrective_action envelope."
     )
 
 
