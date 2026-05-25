@@ -717,7 +717,6 @@ async def test_reconcile_short_equity_drift_uses_unsigned_magnitude(
 
     from alphamind.portfolio_state.records.positions import (
         Direction,
-        EquityPositionDetails,
         LocateStatus,
     )
 

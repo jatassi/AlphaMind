@@ -161,9 +161,54 @@ Argparse surface:
   invocation.
 - `--reason TEXT` (default `verify_debug_e2e`) — free-form reason recorded
   on the invocation row.
+- `--fresh-start` (default off) — swap the managed `SYNTHETIC_PORTFOLIO`
+  fixture (8 positions / 8 theses / $24,440 cash) for the clean-slate
+  `FRESH_START_PORTFOLIO` fixture (0 positions / 0 theses / $100,000
+  cash). Forwards to the scheduler subprocess and reparameterizes the
+  `synthetic_portfolio` check (ALP-618). See the subsection below.
 
 `check_no_alpaca` scans the captured subprocess stderr stream directly — no
 separate `--pipeline-log` flag is needed.
+
+## `--fresh-start` — clean-slate portfolio (ALP-618)
+
+The default fixture (`SYNTHETIC_PORTFOLIO`) only exercises the
+managed-portfolio code path: every analyst run sees 8 pre-existing
+positions, every strategist run has 8 theses to assess, and the cash
+ledger sits at $24,440. The `--fresh-start` flag flips to the
+clean-slate `FRESH_START_PORTFOLIO` fixture so an operator can
+characterize the initial-state edge cases — analyst's OPEN
+recommendations, strategist's empty-input behavior, PM's dispatch of
+newly-opened positions through the log-only broker — synthetically,
+before the production-side `--fresh-start` (ALP-620) is wired.
+
+```bash
+set -a && source <(tr -d '\r' < .env) && set +a && \
+    uv run python scripts/verify_debug_e2e.py \
+        --archive-root .archive/verify-debug-e2e \
+        --fresh-start
+```
+
+What to watch for in the archive after a green run:
+
+- **Analyst** — `decision/analyst/sdk_response.json` (or the equivalent
+  per-agent diagnostics under `<archive>/invocations/<id>/decision/analyst/`)
+  should carry OPEN recommendations sized against the $100,000 cash
+  budget. The analyst is the "new trade opportunities" agent; with no
+  pre-existing positions to manage, it has the full book to fill.
+- **Strategist** — becomes a no-op with zero position assessments. The
+  `agent_response` still fires (the SDK call is unconditional) but the
+  output content is empty/trivial; the assessor has nothing to assess.
+- **PM** — dispatches the analyst's recommendations through the
+  log-only broker; expect `agent_response.tool_calls` reflecting the
+  OPEN command pipeline.
+- **`synthetic_portfolio` check** — reports
+  `positions=0, theses=0, cash_ledger.current_cash_usd=100000.0`.
+
+Cost expectation is unchanged: same 9 SDK calls (3 domain researchers +
+qualitative + adaptive + synthesizer + analyst + strategist + PM)
+regardless of portfolio shape. The pipeline composition runs end-to-end
+either way; only the seeded state differs.
 
 ## Monitoring progress mid-run
 

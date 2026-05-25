@@ -901,6 +901,88 @@ def test_check_synthetic_portfolio_visibility_fails_on_wrong_cash(
     assert "cash" in result.message.lower()
 
 
+def _seed_empty_portfolio(session: Session, *, current_cash_usd: float = 100_000.0) -> None:
+    """Insert just the singleton ``cash_ledger`` row — no positions, no theses (ALP-618).
+
+    Models the fresh-start seeder's post-state: ``positions`` / ``theses`` /
+    ``thesis_components`` are wiped clean, only the singleton cash + drawdown
+    rows remain.
+    """
+    from decimal import Decimal
+
+    from alphamind.state.tables import CashLedgerRow
+    from alphamind.state.tables.cash_ledger import CASH_LEDGER_SINGLETON_ID
+
+    cash = Decimal(str(current_cash_usd))
+    zero = Decimal(0)
+    session.add(
+        CashLedgerRow(
+            id=CASH_LEDGER_SINGLETON_ID,
+            current_cash_usd=cash,
+            settled_cash_usd=cash,
+            reserved_capital_usd=zero,
+            available_buying_power_usd=cash,
+            margin_held_usd=zero,
+            unsettled_proceeds_json="[]",
+            last_updated_at="2026-05-16T12:00:00Z",
+        )
+    )
+    session.commit()
+
+
+def test_check_synthetic_portfolio_visibility_passes_for_fresh_start(
+    verify_module: ModuleType, engine: Engine, session: Session
+) -> None:
+    """PASS for the fresh-start fixture: 0 / 0 / $100,000 (ALP-618).
+
+    The verify harness builds a ``PortfolioExpectations(0, 0, 100_000.0)``
+    when ``--fresh-start`` is set; the same shape parametrized into the
+    check must validate the corresponding seeded DB.
+    """
+    _seed_empty_portfolio(session)
+
+    result = verify_module.check_synthetic_portfolio_visibility(
+        engine, expected=verify_module.FRESH_START_EXPECTATIONS
+    )
+    assert result.passed is True, result.message
+    assert "positions=0" in result.message
+    assert "theses=0" in result.message
+    assert "100000.0" in result.message
+
+
+def test_check_synthetic_portfolio_visibility_fresh_start_rejects_synthetic_db(
+    verify_module: ModuleType, engine: Engine, session: Session
+) -> None:
+    """A managed-portfolio DB FAILS the fresh-start expectations (ALP-618).
+
+    Cross-shape check — if the operator passes ``--fresh-start`` against
+    a DB seeded with ``SYNTHETIC_PORTFOLIO``, the check must FAIL on the
+    positions count mismatch (8 ≠ 0).
+    """
+    _seed_synthetic_portfolio(session)
+
+    result = verify_module.check_synthetic_portfolio_visibility(
+        engine, expected=verify_module.FRESH_START_EXPECTATIONS
+    )
+    assert result.passed is False
+    assert "positions" in result.message.lower()
+
+
+def test_check_synthetic_portfolio_visibility_synthetic_rejects_fresh_start_db(
+    verify_module: ModuleType, engine: Engine, session: Session
+) -> None:
+    """A fresh-start DB FAILS the default (synthetic) expectations (ALP-618).
+
+    Symmetric cross-shape check — a verify run without ``--fresh-start``
+    against a clean-slate DB must FAIL on the positions count mismatch.
+    """
+    _seed_empty_portfolio(session)
+
+    result = verify_module.check_synthetic_portfolio_visibility(engine)
+    assert result.passed is False
+    assert "positions" in result.message.lower()
+
+
 # ---------------------------------------------------------------------------
 # check_no_alpaca
 # ---------------------------------------------------------------------------
@@ -1074,6 +1156,75 @@ def test_drive_debug_e2e_subprocess_propagates_archive_root_to_cli(
     assert captured["cmd"][archive_idx + 1] == str(tmp_path / "archive")
 
 
+def test_drive_debug_e2e_subprocess_propagates_fresh_start_to_cli(
+    verify_module: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``--fresh-start`` on the verify CLI forwards to the scheduler subprocess (ALP-618).
+
+    Without forwarding, the verify harness would assert the fresh-start
+    fixture against a DB the CLI seeded with the synthetic fixture — a
+    silent false-failure mode.
+    """
+    captured: dict[str, Any] = {}
+
+    def _stub_run(cmd: list[str], **_kwargs: Any) -> Any:
+        captured["cmd"] = cmd
+
+        class _Completed:
+            returncode = 0
+            stdout = '{"invocation_id": "iid"}'
+            stderr = ""
+
+        return _Completed()
+
+    monkeypatch.setattr(verify_module.subprocess, "run", _stub_run)
+
+    args = verify_module._parse_args(
+        [
+            "--archive-root",
+            str(tmp_path / "archive"),
+            "--db-path",
+            str(tmp_path / "alphamind-debug-e2e.db"),
+            "--fresh-start",
+        ]
+    )
+    result, _output = verify_module._drive_debug_e2e_subprocess(args)
+
+    assert result.passed is True
+    assert "--fresh-start" in captured["cmd"]
+
+
+def test_drive_debug_e2e_subprocess_omits_fresh_start_when_not_set(
+    verify_module: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without ``--fresh-start`` on verify, the CLI doesn't receive it either."""
+    captured: dict[str, Any] = {}
+
+    def _stub_run(cmd: list[str], **_kwargs: Any) -> Any:
+        captured["cmd"] = cmd
+
+        class _Completed:
+            returncode = 0
+            stdout = '{"invocation_id": "iid"}'
+            stderr = ""
+
+        return _Completed()
+
+    monkeypatch.setattr(verify_module.subprocess, "run", _stub_run)
+
+    args = verify_module._parse_args(
+        [
+            "--archive-root",
+            str(tmp_path / "archive"),
+            "--db-path",
+            str(tmp_path / "alphamind-debug-e2e.db"),
+        ]
+    )
+    verify_module._drive_debug_e2e_subprocess(args)
+
+    assert "--fresh-start" not in captured["cmd"]
+
+
 def test_drive_debug_e2e_subprocess_captures_stdout_and_stderr(
     verify_module: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1108,6 +1259,113 @@ def test_drive_debug_e2e_subprocess_captures_stdout_and_stderr(
     assert output is not None
     assert output.stdout == '{"invocation_id": "iid"}'
     assert output.stderr == "some captured stderr text\n"
+
+
+# ---------------------------------------------------------------------------
+# main() — selector polarity for fresh-start vs synthetic expectations
+# ---------------------------------------------------------------------------
+
+
+def _stub_main_dependencies(
+    verify_module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    stdout_payload: str = '{"invocation_id": "inv-test", "staleness_flag": false, '
+    '"trigger_source": "debug_e2e_cli", "commands_submitted": 0}',
+) -> dict[str, Any]:
+    """Stub the IO/check layer so ``main()`` runs end-to-end in-process.
+
+    Captures the ``expected`` kwarg threaded into
+    :func:`check_synthetic_portfolio_visibility` so a polarity flip in
+    the selector ternary at ``main()`` fails loudly (ALP-618).
+    """
+    captured: dict[str, Any] = {}
+
+    def _stub_run(_cmd: list[str], **_kwargs: Any) -> Any:
+        class _Completed:
+            returncode = 0
+            stdout = stdout_payload
+            stderr = ""
+
+        return _Completed()
+
+    monkeypatch.setattr(verify_module.subprocess, "run", _stub_run)
+
+    def _passing_archive(*, archive_root: Path, invocation_id: str) -> Any:
+        # main() reads progress_path.is_file() directly before dispatching
+        # to check_jsonl_ordering, so the stub must touch the JSONL file
+        # (otherwise the missing-file branch fires and the monkey-patched
+        # ordering check never runs).
+        inv_dir = archive_root / "invocations" / invocation_id
+        inv_dir.mkdir(parents=True, exist_ok=True)
+        (inv_dir / "progress.jsonl").touch()
+        return verify_module.CheckResult(label="archive_directory", passed=True, message="stub")
+
+    monkeypatch.setattr(verify_module, "check_archive_directory", _passing_archive)
+    monkeypatch.setattr(
+        verify_module,
+        "check_jsonl_ordering",
+        lambda _path: verify_module.CheckResult(
+            label="jsonl_ordering", passed=True, message="stub"
+        ),
+    )
+
+    def _capturing_visibility(_engine: Any, *, expected: Any) -> Any:
+        captured["expected"] = expected
+        return verify_module.CheckResult(label="synthetic_portfolio", passed=True, message="stub")
+
+    monkeypatch.setattr(
+        verify_module, "check_synthetic_portfolio_visibility", _capturing_visibility
+    )
+
+    # Pre-flight auth: ensure CLAUDE_CODE_OAUTH_TOKEN is set so check_auth passes.
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "stub-token")
+    return captured
+
+
+def test_main_threads_synthetic_expectations_by_default(
+    verify_module: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without ``--fresh-start``, ``main()`` selects ``SYNTHETIC_EXPECTATIONS`` (ALP-618).
+
+    Locks the selector polarity at the ``main()`` ternary — a swapped
+    branch would still pass every direct ``check_synthetic_portfolio_visibility``
+    test (they pass ``expected`` explicitly), so this is the only seam that
+    pins the runtime selector.
+    """
+    captured = _stub_main_dependencies(verify_module, monkeypatch)
+
+    exit_code = verify_module.main(
+        [
+            "--archive-root",
+            str(tmp_path / "archive"),
+            "--db-path",
+            str(tmp_path / "alphamind-debug-e2e.db"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["expected"] is verify_module.SYNTHETIC_EXPECTATIONS
+
+
+def test_main_threads_fresh_start_expectations_when_flag_set(
+    verify_module: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With ``--fresh-start``, ``main()`` selects ``FRESH_START_EXPECTATIONS`` (ALP-618)."""
+    captured = _stub_main_dependencies(verify_module, monkeypatch)
+
+    exit_code = verify_module.main(
+        [
+            "--archive-root",
+            str(tmp_path / "archive"),
+            "--db-path",
+            str(tmp_path / "alphamind-debug-e2e.db"),
+            "--fresh-start",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["expected"] is verify_module.FRESH_START_EXPECTATIONS
 
 
 # ---------------------------------------------------------------------------

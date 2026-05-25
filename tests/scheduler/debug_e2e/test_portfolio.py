@@ -18,6 +18,7 @@ from alphamind.portfolio_state.records.positions import (
     OptionContractType,
 )
 from alphamind.scheduler.debug_e2e.portfolio import (
+    FRESH_START_PORTFOLIO,
     SYNTHETIC_PORTFOLIO,
     SyntheticEquity,
     SyntheticOption,
@@ -221,3 +222,30 @@ class TestImmutability:
     def test_synthetic_portfolio_constant_is_immutable(self) -> None:
         with pytest.raises(dataclasses.FrozenInstanceError):
             SYNTHETIC_PORTFOLIO.starting_cash_usd = Decimal(0)  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# (f) FRESH_START_PORTFOLIO — clean-slate fixture (ALP-618)
+# ---------------------------------------------------------------------------
+
+
+class TestFreshStartPortfolio:
+    def test_has_zero_positions(self) -> None:
+        assert FRESH_START_PORTFOLIO.positions == ()
+
+    def test_has_zero_theses(self) -> None:
+        assert FRESH_START_PORTFOLIO.theses == ()
+
+    def test_starting_cash_usd_is_one_hundred_thousand(self) -> None:
+        assert FRESH_START_PORTFOLIO.starting_cash_usd == Decimal(100_000)
+
+    def test_starting_cash_usd_is_decimal(self) -> None:
+        """Money discipline — ``Decimal`` not ``float`` (cf. SYNTHETIC_PORTFOLIO)."""
+        assert isinstance(FRESH_START_PORTFOLIO.starting_cash_usd, Decimal)
+
+    def test_is_a_synthetic_portfolio_instance(self) -> None:
+        assert isinstance(FRESH_START_PORTFOLIO, SyntheticPortfolio)
+
+    def test_constant_is_immutable(self) -> None:
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            FRESH_START_PORTFOLIO.starting_cash_usd = Decimal(0)  # type: ignore[misc]

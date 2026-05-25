@@ -1,14 +1,19 @@
-"""Synthetic portfolio fixture for ``--debug-e2e`` mode (story 02b / ALP-498).
+"""Synthetic portfolio fixtures for ``--debug-e2e`` mode (story 02b / ALP-498).
 
 Pure data — six frozen-slot dataclasses (``SyntheticEquity``,
 ``SyntheticOption``, ``SyntheticStrategyLeg``, ``SyntheticStrategy``,
 ``SyntheticThesis``, ``SyntheticPortfolio``), a ``SyntheticPosition`` union
-type alias over the three instrument shapes, and a single module-level
-``SYNTHETIC_PORTFOLIO`` constant matching the canonical literal in the
-debug-e2e design doc § 4.
+type alias over the three instrument shapes, and two module-level
+fixtures the CLI selects between:
 
-The portfolio is a frozen module constant (not a function returning a fresh
-instance) — value identity matters because the same constant flows through
+* :data:`SYNTHETIC_PORTFOLIO` — 8 positions / 8 theses / $24,440 cash; the
+  managed-portfolio fixture matching the debug-e2e design doc § 4.
+* :data:`FRESH_START_PORTFOLIO` — empty positions / empty theses /
+  $100,000 cash; exercises the analyst's OPEN-recommendation path and the
+  cash-only initial-state edge cases (ALP-618).
+
+Both fixtures are frozen module constants (not functions returning fresh
+instances) — value identity matters because the same constant flows through
 the ``configure_debug_e2e`` seam and into the seeder, the log-only broker,
 and any downstream tests that assert against fixture values.
 """
@@ -26,6 +31,7 @@ from alphamind.portfolio_state.records.positions import (
 )
 
 __all__ = [
+    "FRESH_START_PORTFOLIO",
     "SYNTHETIC_PORTFOLIO",
     "SyntheticEquity",
     "SyntheticOption",
@@ -294,4 +300,15 @@ SYNTHETIC_PORTFOLIO = SyntheticPortfolio(
         ),
     ),
     starting_cash_usd=Decimal(24440),
+)
+
+
+# ---------------------------------------------------------------------------
+# Clean-slate fixture — empty book, $100k cash (ALP-618).
+# ---------------------------------------------------------------------------
+
+FRESH_START_PORTFOLIO = SyntheticPortfolio(
+    positions=(),
+    theses=(),
+    starting_cash_usd=Decimal(100_000),
 )

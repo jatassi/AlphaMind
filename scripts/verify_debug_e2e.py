@@ -22,8 +22,9 @@ driving a real subprocess:
   pre-invocation ``seed`` event lands under
   ``<archive>/invocations/_pre_invocation/progress.jsonl`` and is
   intentionally NOT inspected here.
-* :func:`check_synthetic_portfolio_visibility` — 8 positions, 8 theses,
-  cash ledger seeded at $24,440.
+* :func:`check_synthetic_portfolio_visibility` — positions + theses
+  counts and cash-ledger balance match the seeded fixture (8 / 8 /
+  $24,440 by default; 0 / 0 / $100,000 with ``--fresh-start``).
 * :func:`check_no_alpaca` — captured subprocess stderr carries no
   ``alpaca-py`` indicators.
 * :func:`check_invocation_summary` — subprocess stdout JSON carries
@@ -67,7 +68,10 @@ from alphamind.config.models.run_types import RunType
 from alphamind.scripts._stdio import configure_utf8_stdio
 
 __all__ = [
+    "FRESH_START_EXPECTATIONS",
+    "SYNTHETIC_EXPECTATIONS",
     "CheckResult",
+    "PortfolioExpectations",
     "check_archive_directory",
     "check_auth",
     "check_invocation_summary",
@@ -494,11 +498,41 @@ def _check_sdk_call_pairs(events: list[dict[str, object]]) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-_EXPECTED_CASH_USD = 24_440.0
+@dataclass(frozen=True, slots=True)
+class PortfolioExpectations:
+    """Expected positions / theses / cash-ledger shape for one fixture.
+
+    Two literals satisfy this contract: the managed
+    :data:`SYNTHETIC_PORTFOLIO` expectations (8 / 8 / $24,440) and the
+    clean-slate :data:`FRESH_START_PORTFOLIO` expectations (0 / 0 /
+    $100,000). The verify harness selects between them via the
+    ``--fresh-start`` flag and passes the chosen expectations to
+    :func:`check_synthetic_portfolio_visibility` (ALP-618).
+
+    ``cash_usd`` is typed ``float`` on purpose — :class:`SyntheticPortfolio`
+    keeps ``starting_cash_usd`` as ``Decimal`` for money-discipline at the
+    seeder, but the verify check reads ``cash_ledger.current_cash_usd`` via
+    SQLite (``float(cash_rows[0][0])``) and compares against this field;
+    keeping both ends of the comparison ``float`` avoids a spurious
+    ``Decimal``/``float`` cross-type compare and matches the SQLite round-trip.
+    The two literal expectations are exactly representable in IEEE-754.
+    """
+
+    positions: int
+    theses: int
+    cash_usd: float
 
 
-def check_synthetic_portfolio_visibility(engine: Engine) -> CheckResult:
-    """Assert the seeded debug DB carries the synthetic-portfolio shape."""
+SYNTHETIC_EXPECTATIONS = PortfolioExpectations(positions=8, theses=8, cash_usd=24_440.0)
+FRESH_START_EXPECTATIONS = PortfolioExpectations(positions=0, theses=0, cash_usd=100_000.0)
+
+
+def check_synthetic_portfolio_visibility(
+    engine: Engine,
+    *,
+    expected: PortfolioExpectations = SYNTHETIC_EXPECTATIONS,
+) -> CheckResult:
+    """Assert the seeded debug DB carries the expected fixture shape."""
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
     missing_tables = [t for t in ("positions", "theses", "cash_ledger") if t not in existing_tables]
@@ -514,17 +548,17 @@ def check_synthetic_portfolio_visibility(engine: Engine) -> CheckResult:
         theses_count = conn.execute(text("SELECT COUNT(*) FROM theses")).scalar_one()
         cash_rows = conn.execute(text("SELECT current_cash_usd FROM cash_ledger")).all()
 
-    if positions_count != 8:
+    if positions_count != expected.positions:
         return CheckResult(
             label="synthetic_portfolio",
             passed=False,
-            message=f"positions count expected 8, got {positions_count}",
+            message=f"positions count expected {expected.positions}, got {positions_count}",
         )
-    if theses_count != 8:
+    if theses_count != expected.theses:
         return CheckResult(
             label="synthetic_portfolio",
             passed=False,
-            message=f"theses count expected 8, got {theses_count}",
+            message=f"theses count expected {expected.theses}, got {theses_count}",
         )
     if len(cash_rows) != 1:
         return CheckResult(
@@ -533,18 +567,21 @@ def check_synthetic_portfolio_visibility(engine: Engine) -> CheckResult:
             message=f"cash_ledger row count expected 1, got {len(cash_rows)}",
         )
     cash_value = float(cash_rows[0][0])
-    if cash_value != _EXPECTED_CASH_USD:
+    if cash_value != expected.cash_usd:
         return CheckResult(
             label="synthetic_portfolio",
             passed=False,
             message=(
-                f"cash_ledger.current_cash_usd expected {_EXPECTED_CASH_USD}, got {cash_value}"
+                f"cash_ledger.current_cash_usd expected {expected.cash_usd}, got {cash_value}"
             ),
         )
     return CheckResult(
         label="synthetic_portfolio",
         passed=True,
-        message=(f"positions=8, theses=8, cash_ledger.current_cash_usd={cash_value}"),
+        message=(
+            f"positions={positions_count}, theses={theses_count}, "
+            f"cash_ledger.current_cash_usd={cash_value}"
+        ),
     )
 
 
@@ -700,6 +737,17 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default="verify_debug_e2e",
         help="Free-form reason recorded on the invocation row.",
     )
+    parser.add_argument(
+        "--fresh-start",
+        action="store_true",
+        help=(
+            "Verify the clean-slate FRESH_START_PORTFOLIO fixture "
+            "(0 positions / 0 theses / $100,000 cash) instead of the "
+            "managed SYNTHETIC_PORTFOLIO fixture (8 / 8 / $24,440). "
+            "Forwards to the scheduler subprocess and parameterizes the "
+            "synthetic-portfolio visibility check (ALP-618)."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -742,6 +790,8 @@ def _drive_debug_e2e_subprocess(
         "--reason",
         args.reason,
     ]
+    if args.fresh_start:
+        cmd.append("--fresh-start")
     env = os.environ.copy()
     env["DATABASE_PATH"] = str(args.db_path)
     try:
@@ -851,9 +901,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
         )
 
+    expected = FRESH_START_EXPECTATIONS if args.fresh_start else SYNTHETIC_EXPECTATIONS
     engine = create_engine(f"sqlite:///{args.db_path}")
     try:
-        _emit(results, check_synthetic_portfolio_visibility(engine))
+        _emit(results, check_synthetic_portfolio_visibility(engine, expected=expected))
     finally:
         engine.dispose()
 
