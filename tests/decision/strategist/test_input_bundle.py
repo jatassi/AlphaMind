@@ -1472,7 +1472,8 @@ def test_portfolio_state_section_renders_aggregate_block() -> None:
 
 def test_aggregate_pnl_block_names_populated_metrics() -> None:
     """When the four feedback-loop metrics are populated, the Aggregate
-    block surfaces their numeric values to the strategist."""
+    block surfaces their numeric values to the strategist with the
+    formatting precision the renderer commits to."""
     # _make_pnl() carries win_rate_pct=55.0, profit_factor=1.4,
     # average_win_size_usd=$200, average_loss_size_usd=$150.
     out = assemble_input_bundle_normal(
@@ -1480,10 +1481,13 @@ def test_aggregate_pnl_block_names_populated_metrics() -> None:
         sector_label_display=_SECTOR_LABELS,
     )
     aggregate_section = out[out.index("=== PORTFOLIO STATE ===") :]
-    assert "win rate: 55" in aggregate_section
-    assert "profit factor: 1.4" in aggregate_section
-    assert "avg win:" in aggregate_section and "$200" in aggregate_section
-    assert "avg loss:" in aggregate_section and "$150" in aggregate_section
+    # Trade stats lives on its own line under Portfolio P/L — lock the
+    # two-line layout so a regression to a single-line concat is caught.
+    assert "\n  Trade stats:" in aggregate_section
+    assert "win rate: 55.0%" in aggregate_section
+    assert "profit factor: 1.40" in aggregate_section
+    assert "avg win: $200" in aggregate_section
+    assert "avg loss: $150" in aggregate_section
 
 
 def test_aggregate_pnl_block_frames_deferred_metrics_explicitly() -> None:
@@ -1528,6 +1532,8 @@ def test_aggregate_pnl_block_frames_deferred_metrics_explicitly() -> None:
         sector_label_display=_SECTOR_LABELS,
     )
     aggregate_section = out[out.index("=== PORTFOLIO STATE ===") :]
+    # Lock the two-line layout (Portfolio P/L + Trade stats) here too.
+    assert "\n  Trade stats:" in aggregate_section
     assert "win rate: not yet computed" in aggregate_section
     assert "avg win: not yet computed" in aggregate_section
     assert "avg loss: not yet computed" in aggregate_section

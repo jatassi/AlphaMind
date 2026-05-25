@@ -139,7 +139,7 @@ Triage convention: a finding is presumed **tracked** if the comment cites a Line
 - **src/alphamind/analysis/tools/__init__.py:100** — `Transcript analysis is not yet available (Tier 2 deferred)`
 - **src/alphamind/analysis/tools/earnings_commentary.py:6** — `Tier 2 fields (transcript_available, transcript_analysis) are stub-shaped`
 - **src/alphamind/analysis/tools/earnings_commentary.py:12** — `Tier 2 not yet built`
-- **src/alphamind/analysis/tools/earnings_commentary.py:272** — `deferred: populates when analyst-rating ingestion lands`
+- ~~**src/alphamind/analysis/tools/earnings_commentary.py:272** — `deferred: populates when analyst-rating ingestion lands`~~ (Retired by ALP-654: producer now emits a `NotCollected` sentinel so the LLM-facing JSON distinguishes "no rating changes since reporting" from "data not collected".)
 - **src/alphamind/analysis/_sdk_subprocess.py:25** — `here for now; siblings added incrementally`
 
 ### src/portfolio_state
