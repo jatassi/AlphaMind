@@ -19,7 +19,6 @@ def test_pipeline_mode_members_and_values() -> None:
     assert tuple(member.value for member in PipelineMode) == (
         "normal",
         "halt",
-        "defensive_posture",
     )
 
 
@@ -103,19 +102,14 @@ def test_to_active_mode_literal_halt() -> None:
     """``PipelineMode.HALT`` maps to ``"halted"`` for the row's ``active_mode`` column.
 
     Mirrors the pre-refactor :func:`_mode_to_active_mode_literal` contract:
-    the row's ``active_mode`` accepts ``"normal" | "defensive_posture" |
-    "halted"``; ``Mode.halt`` (value ``"halt"``) is translated to ``"halted"``
-    so direct ``.value`` is wrong.
+    ``Mode.halt`` (value ``"halt"``) is translated to ``"halted"`` so direct
+    ``.value`` is wrong. The writer narrows to ``"normal" | "halted"``; the
+    row column type still admits ``"defensive_posture"`` but no writer emits
+    it today.
     """
     from alphamind._kernel.mode import PipelineMode
 
     assert PipelineMode.HALT.to_active_mode_literal() == "halted"
-
-
-def test_to_active_mode_literal_defensive_posture() -> None:
-    from alphamind._kernel.mode import PipelineMode
-
-    assert PipelineMode.DEFENSIVE_POSTURE.to_active_mode_literal() == "defensive_posture"
 
 
 def test_from_config_mode_normal() -> None:
