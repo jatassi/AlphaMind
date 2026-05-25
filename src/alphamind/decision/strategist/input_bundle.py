@@ -539,7 +539,7 @@ def _risk_reward_at_current(
 
 def _render_bracket_block(bracket: BracketRecord | None) -> str:
     if bracket is None:
-        return "  Bracket: not yet activated"
+        return "  Bracket: none"
     lines: list[str] = ["  Bracket:"]
     target_leg = _find_leg(bracket, BracketLegType.TAKE_PROFIT)
     stop_leg = _find_leg(bracket, BracketLegType.PRICE_STOP)
