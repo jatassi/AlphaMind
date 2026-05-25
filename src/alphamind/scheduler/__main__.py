@@ -95,6 +95,16 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         ),
     )
     run_p.add_argument(
+        "--fresh-start",
+        action="store_true",
+        help=(
+            "Use the clean-slate FRESH_START_PORTFOLIO ($100k cash, zero "
+            "positions, zero theses) instead of the managed-portfolio "
+            "SYNTHETIC_PORTFOLIO fixture. Exercises the analyst's "
+            "OPEN-recommendation path. Only valid with --debug-e2e (ALP-618)."
+        ),
+    )
+    run_p.add_argument(
         "--archive-root",
         type=Path,
         default=None,
@@ -121,6 +131,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             parser.error("--debug-e2e requires --once <run_type> --reason <text>")
     if args.subcommand == "run" and args.archive_root is not None and not args.debug_e2e:
         parser.error("--archive-root is only valid with --debug-e2e")
+    if args.subcommand == "run" and args.fresh_start and not args.debug_e2e:
+        parser.error("--fresh-start is only valid with --debug-e2e")
     return args
 
 
@@ -217,9 +229,13 @@ async def _run_debug_e2e(args: argparse.Namespace) -> None:
     debug_e2e_portfolio = importlib.import_module("alphamind.scheduler.debug_e2e.portfolio")
     configure_debug_e2e = debug_e2e_settings.configure_debug_e2e
     wipe_and_seed = debug_e2e_seed.wipe_and_seed
-    synthetic_portfolio = debug_e2e_portfolio.SYNTHETIC_PORTFOLIO
+    portfolio = (
+        debug_e2e_portfolio.FRESH_START_PORTFOLIO
+        if args.fresh_start
+        else debug_e2e_portfolio.SYNTHETIC_PORTFOLIO
+    )
 
-    debug_settings = configure_debug_e2e(archive_root=archive_root)
+    debug_settings = configure_debug_e2e(archive_root=archive_root, portfolio=portfolio)
     venue_config = _load_venue_config(_CONFIG_DIR)
     execution_mode = ExecutionMode.paper
     now = datetime.now(UTC)
@@ -248,7 +264,7 @@ async def _run_debug_e2e(args: argparse.Namespace) -> None:
                     session=session,
                     now=now,
                     db_path=resolved_db_path,
-                    portfolio=synthetic_portfolio,
+                    portfolio=portfolio,
                 )
         except RuntimeError:
             # Surface the refusing path before the outermost

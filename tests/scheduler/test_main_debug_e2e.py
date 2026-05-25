@@ -128,6 +128,53 @@ class TestParseArgsDebugE2E:
                 ]
             )
 
+    def test_fresh_start_flag_parsed_with_debug_e2e(self) -> None:
+        """``--fresh-start`` alongside ``--debug-e2e`` parses to ``True`` (ALP-618)."""
+        args = _parse_args(
+            [
+                "run",
+                "--debug-e2e",
+                "--fresh-start",
+                "--once",
+                "market_hours_rolling",
+                "--reason",
+                "test",
+            ]
+        )
+        assert args.fresh_start is True
+
+    def test_fresh_start_default_is_false(self) -> None:
+        """Omitting ``--fresh-start`` leaves ``args.fresh_start`` at ``False``."""
+        args = _parse_args(
+            [
+                "run",
+                "--debug-e2e",
+                "--once",
+                "market_hours_rolling",
+                "--reason",
+                "test",
+            ]
+        )
+        assert args.fresh_start is False
+
+    def test_fresh_start_without_debug_e2e_raises(self) -> None:
+        """``--fresh-start`` is only valid alongside ``--debug-e2e`` (ALP-618).
+
+        The flag selects between the two debug-e2e portfolio fixtures;
+        production daemons (no ``--debug-e2e``) have no fixture to swap.
+        """
+        with pytest.raises(SystemExit):
+            _parse_args(
+                [
+                    "run",
+                    "--fresh-start",
+                    "--once",
+                    "market_hours_rolling",
+                    "--reason",
+                    "test",
+                ]
+            )
+
 
 # ---------------------------------------------------------------------------
 # Execution shape — _run_debug_e2e (acceptance criterion 4)
@@ -240,7 +287,6 @@ def _patch_debug_e2e_heavy_setup(monkeypatch: pytest.MonkeyPatch) -> dict[str, A
         LogOnlyAccountStateQueries,
         LogOnlyCorporateActionsQueries,
     )
-    from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
     from tests.scheduler.test_progress import RecordingProgressEmitter
 
     shared_recorder = RecordingProgressEmitter()
@@ -268,10 +314,11 @@ def _patch_debug_e2e_heavy_setup(monkeypatch: pytest.MonkeyPatch) -> dict[str, A
 
     monkeypatch.setattr(seed_module, "wipe_and_seed", _stub_wipe_and_seed)
 
-    def _stub_configure_debug_e2e(*, archive_root: Any) -> Any:
+    def _stub_configure_debug_e2e(*, archive_root: Any, portfolio: Any) -> Any:
         captured["configure_debug_e2e_archive_root"] = archive_root
+        captured["configure_debug_e2e_portfolio"] = portfolio
         return settings_module.DebugE2ESettings(
-            account_queries=LogOnlyAccountStateQueries(SYNTHETIC_PORTFOLIO),
+            account_queries=LogOnlyAccountStateQueries(portfolio),
             ca_queries=LogOnlyCorporateActionsQueries(),
             emitter_factory=lambda _invocation_id: shared_recorder,
         )
@@ -507,3 +554,54 @@ class TestRunDebugE2E:
         assert captured["configure_debug_e2e_archive_root"] == override
         assert captured["run_invocation_kwargs"]["context"].archive_root == override
         assert override.is_dir()
+
+    async def test_default_portfolio_is_synthetic(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Without ``--fresh-start``, the managed ``SYNTHETIC_PORTFOLIO`` is used (ALP-618)."""
+        from alphamind.scheduler.__main__ import _run_debug_e2e
+        from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
+
+        captured = _patch_debug_e2e_heavy_setup(monkeypatch)
+        args = _parse_args(
+            [
+                "run",
+                "--debug-e2e",
+                "--once",
+                "market_hours_rolling",
+                "--reason",
+                "smoke",
+            ]
+        )
+        await _run_debug_e2e(args)
+
+        # Both seams (configure_debug_e2e + wipe_and_seed) must see the same
+        # portfolio so the broker stand-in projects what the seeder wrote.
+        assert captured["configure_debug_e2e_portfolio"] is SYNTHETIC_PORTFOLIO
+        assert captured["wipe_seed_calls"][0]["portfolio"] is SYNTHETIC_PORTFOLIO
+
+    async def test_fresh_start_threads_fresh_start_portfolio(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``--fresh-start`` swaps in ``FRESH_START_PORTFOLIO`` at both seams (ALP-618)."""
+        from alphamind.scheduler.__main__ import _run_debug_e2e
+        from alphamind.scheduler.debug_e2e.portfolio import FRESH_START_PORTFOLIO
+
+        captured = _patch_debug_e2e_heavy_setup(monkeypatch)
+        args = _parse_args(
+            [
+                "run",
+                "--debug-e2e",
+                "--fresh-start",
+                "--once",
+                "market_hours_rolling",
+                "--reason",
+                "smoke",
+            ]
+        )
+        await _run_debug_e2e(args)
+
+        assert captured["configure_debug_e2e_portfolio"] is FRESH_START_PORTFOLIO
+        assert captured["wipe_seed_calls"][0]["portfolio"] is FRESH_START_PORTFOLIO

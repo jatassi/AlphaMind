@@ -67,31 +67,59 @@ def test_debug_e2e_settings_has_three_named_fields() -> None:
 
 def test_configure_debug_e2e_returns_debug_e2e_settings(tmp_path: Path) -> None:
     """``configure_debug_e2e`` returns a :class:`DebugE2ESettings` instance."""
+    from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
     from alphamind.scheduler.debug_e2e.settings import (
         DebugE2ESettings,
         configure_debug_e2e,
     )
 
-    settings = configure_debug_e2e(archive_root=tmp_path)
+    settings = configure_debug_e2e(archive_root=tmp_path, portfolio=SYNTHETIC_PORTFOLIO)
     assert isinstance(settings, DebugE2ESettings)
 
 
 def test_configure_debug_e2e_wires_log_only_account_queries(tmp_path: Path) -> None:
     """The bundle carries a :class:`LogOnlyAccountStateQueries` instance."""
     from alphamind.scheduler.debug_e2e.broker import LogOnlyAccountStateQueries
+    from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
     from alphamind.scheduler.debug_e2e.settings import configure_debug_e2e
 
-    settings = configure_debug_e2e(archive_root=tmp_path)
+    settings = configure_debug_e2e(archive_root=tmp_path, portfolio=SYNTHETIC_PORTFOLIO)
     assert isinstance(settings.account_queries, LogOnlyAccountStateQueries)
 
 
 def test_configure_debug_e2e_wires_log_only_ca_queries(tmp_path: Path) -> None:
     """The bundle carries a :class:`LogOnlyCorporateActionsQueries` instance."""
     from alphamind.scheduler.debug_e2e.broker import LogOnlyCorporateActionsQueries
+    from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
     from alphamind.scheduler.debug_e2e.settings import configure_debug_e2e
 
-    settings = configure_debug_e2e(archive_root=tmp_path)
+    settings = configure_debug_e2e(archive_root=tmp_path, portfolio=SYNTHETIC_PORTFOLIO)
     assert isinstance(settings.ca_queries, LogOnlyCorporateActionsQueries)
+
+
+def test_configure_debug_e2e_threads_fresh_start_portfolio_to_broker(
+    tmp_path: Path,
+) -> None:
+    """The ``portfolio`` kwarg flows into the broker stand-in (ALP-618).
+
+    ``LogOnlyAccountStateQueries.get_account()`` projects the held
+    portfolio's ``starting_cash_usd`` into the
+    :class:`TradeAccountSnapshot`'s ``cash`` field, and ``get_positions()``
+    returns one snapshot per position. The fresh-start fixture has zero
+    positions and $100k cash; verifying both flow through proves the
+    portfolio is threaded — not just the synthetic default.
+    """
+    from decimal import Decimal
+
+    from alphamind.scheduler.debug_e2e.portfolio import FRESH_START_PORTFOLIO
+    from alphamind.scheduler.debug_e2e.settings import configure_debug_e2e
+
+    settings = configure_debug_e2e(archive_root=tmp_path, portfolio=FRESH_START_PORTFOLIO)
+
+    account = settings.account_queries.get_account()
+    assert account.cash == Decimal(100_000)
+    positions = settings.account_queries.get_positions()
+    assert positions == ()
 
 
 def test_emitter_factory_returns_jsonl_emitter_under_invocation_id(
@@ -104,9 +132,10 @@ def test_emitter_factory_returns_jsonl_emitter_under_invocation_id(
     to it produces a single JSONL record on disk at the expected path.
     """
     from alphamind.scheduler.debug_e2e.jsonl_emitter import JsonlProgressEmitter
+    from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
     from alphamind.scheduler.debug_e2e.settings import configure_debug_e2e
 
-    settings = configure_debug_e2e(archive_root=tmp_path)
+    settings = configure_debug_e2e(archive_root=tmp_path, portfolio=SYNTHETIC_PORTFOLIO)
     emitter = settings.emitter_factory("inv-test")
 
     assert isinstance(emitter, JsonlProgressEmitter)

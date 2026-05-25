@@ -36,7 +36,10 @@ from alphamind.portfolio_state.computations.positions import (
 )
 from alphamind.portfolio_state.pricing import PriceQuote, PriceSource
 from alphamind.portfolio_state.records.positions import StrategyPositionDetails
-from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
+from alphamind.scheduler.debug_e2e.portfolio import (
+    FRESH_START_PORTFOLIO,
+    SYNTHETIC_PORTFOLIO,
+)
 from alphamind.scheduler.debug_e2e.seed import wipe_and_seed
 from alphamind.state.tables import (
     DrawdownStateRow,
@@ -213,6 +216,43 @@ class TestSeederPostStateInvariants:
                     f"strategy {row.position_id} leg {leg['leg_id']} has "
                     f"premium_paid_per_contract={premium}; pricing layer rejects price_usd<=0"
                 )
+
+    async def test_fresh_start_portfolio_yields_empty_positions_theses_and_100k_cash(
+        self,
+        migrated_factory: tuple[Path, async_sessionmaker[AsyncSession]],
+    ) -> None:
+        """``FRESH_START_PORTFOLIO`` seeds zero positions / zero theses / $100k cash (ALP-618).
+
+        Mirrors the verify-harness's ``synthetic_portfolio`` check with
+        ``--fresh-start``: positions/theses tables empty after the wipe,
+        cash-ledger singleton at $100,000, drawdown HWM at $100,000.
+        Without this seam any future change that silently dropped the
+        empty-portfolio branch (e.g., requiring ``len(positions) > 0``)
+        would only surface during a real verify run.
+        """
+        from alphamind.state.tables import CashLedgerRow
+
+        db_path, factory = migrated_factory
+        async with factory() as session:
+            await wipe_and_seed(
+                session=session,
+                now=_NOW,
+                db_path=str(db_path),
+                portfolio=FRESH_START_PORTFOLIO,
+            )
+
+        async with factory() as session:
+            positions = (await session.execute(select(PositionRow))).scalars().all()
+            theses = (await session.execute(select(ThesisRow))).scalars().all()
+            cash_rows = (await session.execute(select(CashLedgerRow))).scalars().all()
+            drawdown_row = await session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)
+
+        assert positions == []
+        assert theses == []
+        assert len(cash_rows) == 1
+        assert float(cash_rows[0].current_cash_usd) == 100_000.0
+        assert drawdown_row is not None
+        assert drawdown_row.equity_high_water_mark_usd == 100_000.0
 
     async def test_strategy_position_marks_to_cost_basis_at_seed_time(
         self,
