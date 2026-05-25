@@ -22,11 +22,11 @@ Alert the user before disabling the linter or any rule in any form — including
 **Narrow, scoped pytest is fine and encouraged** while implementing or debugging. Run only the tests directly relevant to the file or area you are changing:
 
 ```bash
-uv run pytest tests/<sub-path>/ --testmon -n auto       # scoped run
+uv run pytest tests/<sub-path>/ -n auto                 # scoped run
 uv run pytest tests/path/to/test_thing.py::test_case    # single test
 ```
 
-Use `--testmon -n auto` on scoped runs to keep them fast. Scope tightly — single file, single directory, single test node-id. Treat the local pytest invocation as a TDD red-green loop or a targeted regression check, not as a release gate.
+Use `-n auto` on scoped runs to keep them fast. Scope tightly — single file, single directory, single test node-id. Treat the local pytest invocation as a TDD red-green loop or a targeted regression check, not as a release gate.
 
 **The full suite (`uv run pytest -n auto`) runs locally ONLY when the operator explicitly asks for it** — e.g., "run the full suite", "do a full pytest before pushing", "I want to see all tests pass locally". Otherwise push the branch, let CI run it, and act on the CI result. Subagent dispatch prompts, skill files, story acceptance criteria, and PR test plans must NOT include unscoped `uv run pytest` invocations; the CI run is the singular full-suite check.
 
