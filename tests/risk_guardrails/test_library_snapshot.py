@@ -551,12 +551,46 @@ def test_gross_pct_passthrough() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 5 — position_max_size_pct reads the rule_id and raises on absence
+# Test 5 — position_max_size_pct is the actual max position size across
+# open_positions + pending_positions, not the rule's limit value (ALP-624).
 # ---------------------------------------------------------------------------
 
 
-def test_position_max_size_pct_reads_rule() -> None:
-    """AC: position_max_size_pct matches the rule entry; ValueError if absent."""
+def test_position_max_size_pct_actual_max_across_positions() -> None:
+    """AC (ALP-624): position_max_size_pct is the actual maximum position size
+    (as % of portfolio value) across open_positions + pending_positions — NOT
+    the rule's limit value.
+
+    Scenario from the post-mortem (inv-20260520T235728Z-047a54ce): a JPM
+    position sized at 18.08% of portfolio with a 5.0% rule limit must produce
+    state.position_max_size_pct == 18.08 (the actual max), not 5.0.
+    """
+    # JPM at 18.08% of an $100,000 portfolio → market value 18_080
+    # plus cash of 81_920 → portfolio_value 100_000.
+    jpm = _make_equity_position_view(
+        "POS-JPM",
+        "JPM",
+        Direction.LONG,
+        share_count=100.0,
+        market_value_usd=18_080.0,
+        notional_usd=18_080.0,
+        delta_adjusted_usd=18_080.0,
+        position_weight_pct=18.08,
+    )
+    cash_ledger = CashLedger(
+        current_cash_usd=81_920.0,
+        settled_cash_usd=81_920.0,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=81_920.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=81.92,
+        true_deployable_capital_usd=81_920.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
+    )
+    # Rule limit 5.0%; the actual-max field must be 18.08 (NOT 5.0).
     params = ActiveRiskParameterSet(
         regime_label=RegimeLabel.NORMAL,
         transition_state=RegimeTransitionState.STABLE,
@@ -566,21 +600,115 @@ def test_position_max_size_pct_reads_rule() -> None:
             ActiveRiskParameterEntry(
                 rule_id="position_max_size_pct",
                 rule_label="Max position size",
-                value=4.2,
+                value=5.0,
                 unit="%",
                 regime_multiplier_applied=1.0,
-                base_value=4.2,
+                base_value=5.0,
             ),
         ),
         active_overlays=(),
     )
-    snapshot = _make_pydantic_snapshot(active_risk_parameters=params)
+    snapshot = _make_pydantic_snapshot(
+        open_positions=[jpm],
+        cash_ledger=cash_ledger,
+        active_risk_parameters=params,
+    )
     lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
-    assert lib.position_max_size_pct == pytest.approx(4.2)
+    assert lib.position_max_size_pct == pytest.approx(18.08)
 
 
-def test_position_max_size_pct_missing_raises() -> None:
-    """AC: ValueError raised when position_max_size_pct rule is absent."""
+def test_position_max_size_pct_empty_book_is_zero() -> None:
+    """AC (ALP-624): an empty book (no open + no pending positions) produces
+    position_max_size_pct == 0.0, not None."""
+    snapshot = _make_pydantic_snapshot()
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+    assert lib.position_max_size_pct == 0.0
+
+
+def test_position_max_size_pct_includes_pending_positions() -> None:
+    """AC (ALP-624): pending positions count toward the actual-max
+    computation, not just open positions."""
+    pending = _make_equity_position_view(
+        "POS-PENDING-NVDA",
+        "NVDA",
+        Direction.LONG,
+        share_count=10.0,
+        market_value_usd=15_000.0,
+        notional_usd=15_000.0,
+        delta_adjusted_usd=15_000.0,
+        position_weight_pct=15.0,
+        status=PositionStatus.PENDING,
+        execution_history=(),
+    )
+    snapshot = _make_pydantic_snapshot(pending_positions=[pending])
+    # portfolio_value = 15_000 + 80_000 (default cash) = 95_000
+    # 15_000 / 95_000 * 100 = 15.789...
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+    assert lib.position_max_size_pct == pytest.approx(15_000.0 / 95_000.0 * 100.0)
+
+
+def test_position_max_size_pct_takes_max_of_short_and_long_by_abs() -> None:
+    """AC (ALP-624): the max is over |current_market_value| so a SHORT with
+    larger absolute notional outranks a smaller LONG."""
+    aapl_long = _make_equity_position_view(
+        "POS-AAPL",
+        "AAPL",
+        Direction.LONG,
+        share_count=50.0,
+        market_value_usd=5_000.0,
+        notional_usd=5_000.0,
+        delta_adjusted_usd=5_000.0,
+        position_weight_pct=5.0,
+    )
+    # SHORT fixture treats market_value_usd as a magnitude (the existing
+    # _make_equity_position_view helper does the same — see other SHORT
+    # tests). The translator's abs() in the actual-max derivation handles
+    # both the production signed convention and this magnitude convention.
+    xom_short = _make_equity_position_view(
+        "POS-XOM",
+        "XOM",
+        Direction.SHORT,
+        share_count=120.0,
+        market_value_usd=12_000.0,
+        notional_usd=12_000.0,
+        delta_adjusted_usd=-12_000.0,
+        position_weight_pct=12.0,
+    )
+    snapshot = _make_pydantic_snapshot(open_positions=[aapl_long, xom_short])
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+    # portfolio_value (per fixture convention) = 5_000 + 12_000 + 80_000 = 97_000
+    # max |market_value| / portfolio_value * 100 = 12_000 / 97_000 * 100
+    expected = 12_000.0 / 97_000.0 * 100.0
+    assert lib.position_max_size_pct == pytest.approx(expected)
+
+
+def test_position_max_size_pct_zero_portfolio_value_guarded() -> None:
+    """AC (ALP-624): when portfolio_value_usd is 0 the field is 0.0
+    (no division-by-zero)."""
+    # No positions, zero cash → portfolio_value_usd = 0
+    empty_cash = CashLedger(
+        current_cash_usd=0.0,
+        settled_cash_usd=0.0,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=0.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
+    )
+    snapshot = _make_pydantic_snapshot(cash_ledger=empty_cash)
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+    assert lib.position_max_size_pct == 0.0
+
+
+def test_position_max_size_pct_missing_rule_still_raises() -> None:
+    """AC (ALP-624): the field is now derived from positions, but the
+    translator still requires the position_max_size_pct rule to be present
+    in active_risk_parameters (the rule's effective_limit_key lookup still
+    flows through this registry — see the story scope note)."""
     params = ActiveRiskParameterSet(
         regime_label=RegimeLabel.NORMAL,
         transition_state=RegimeTransitionState.STABLE,
@@ -1184,7 +1312,10 @@ def test_full_normal_scenario() -> None:
     assert lib.portfolio_value_usd == pytest.approx(expected_pv)
     assert lib.cash_usd == pytest.approx(70_000.0)
     assert lib.reserved_for_pending_orders_usd == pytest.approx(1_000.0)
-    assert lib.position_max_size_pct == pytest.approx(5.0)
+    # ALP-624: position_max_size_pct is the actual maximum position size, not
+    # the rule's limit value. AAPL at 17_500 is the largest position; with
+    # portfolio_value 93_900 that is 17_500/93_900*100 ≈ 18.638%.
+    assert lib.position_max_size_pct == pytest.approx(17_500.0 / expected_pv * 100.0)
 
     # Directional
     assert lib.net_long_pct >= 0.0

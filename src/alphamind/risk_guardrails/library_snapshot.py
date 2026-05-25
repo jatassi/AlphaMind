@@ -241,7 +241,12 @@ def to_library_snapshot(
         snapshot.open_positions
     )
 
-    # position_max_size_pct: read from active_risk_parameters by rule_id
+    # position_max_size_pct: the actual maximum position size (% of portfolio
+    # value) across open_positions + pending_positions — NOT the rule's limit
+    # value (ALP-624). The rule's limit lookup still flows through
+    # ``LibraryConfig.effective_limits`` keyed by ``effective_limit_key`` at
+    # ``RuleSpec`` resolution time; the snapshot translator still requires the
+    # rule registration to be present so the registry can build the spec.
     _rule = next(
         (
             e
@@ -256,7 +261,6 @@ def to_library_snapshot(
             "the translator cannot construct LibrarySnapshot without it"
         )
         raise ValueError(msg)
-    position_max_size_pct = _rule.value
 
     position_reservations = _build_position_reservations(snapshot.pending_orders)
 
@@ -269,6 +273,20 @@ def to_library_snapshot(
     # internal-positions Decimal arithmetic that protects against drift is
     # asserted at the PortfolioPnL accumulator (see computations/pnl.py).
     portfolio_value_usd = cash_usd + sum(float(p.current_market_value_usd) for p in all_positions)
+
+    # ALP-624 — actual-max derivation. Uses gross market value (the explicit
+    # formula in the story); delta-adjusted notional for options/strategies is
+    # an accepted approximation since the assembler doesn't pre-aggregate a
+    # per-position "max size" metric in delta-adjusted units. Mirrors the
+    # ``_breach_magnitude`` and ``compute_position_weight_pct`` guards: zero
+    # portfolio value returns 0.0 (no division-by-zero).
+    if portfolio_value_usd > 0.0 and all_positions:
+        position_max_size_pct = max(
+            abs(float(p.current_market_value_usd)) / portfolio_value_usd * 100.0
+            for p in all_positions
+        )
+    else:
+        position_max_size_pct = 0.0
 
     options_delta_pct = 0.0
     portfolio_theta_pct_per_day = 0.0

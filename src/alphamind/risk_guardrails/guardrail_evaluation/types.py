@@ -222,6 +222,15 @@ class PortfolioStateSnapshot:
     to compute exposures (that lives in the portfolio-state ingestion layer
     per ``portfolio-state.md`` § 4c). All percentages are of portfolio.
 
+    ``position_max_size_pct`` is the actual maximum position size as a percent
+    of portfolio value across ``open_positions + pending_positions`` (ALP-624)
+    — NOT the rule's limit value. The rule's limit lives in
+    ``LibraryConfig.effective_limits`` keyed by the rule's
+    ``effective_limit_key`` (``"position_max_size_pct"``); the projection
+    engine reads ``state.position_max_size_pct`` as the current value and the
+    limit from the config to derive the breach status. ``0.0`` when the book
+    holds no positions.
+
     ``single_short_max_position_id`` carries the ``position_id`` of the short
     whose ``position_weight_pct`` equals ``single_short_max_pct``; the
     ``single_short_max_pct`` rule's projection routes this id into the
