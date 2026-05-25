@@ -3,10 +3,9 @@
 The breach loop's run-forever entry point consumes a fan of injected
 factories: ``snapshot_provider``, ``regime_provider``,
 ``library_config_factory``, the dispatcher's per-tick ``context_provider``,
-and ``submit_envelope``. The parent work tree (ALP-123) shipped no-op
-stubs so the supervisor could register the task; this module replaces
-each stub with substrate backed by the existing SQL + config + OMS
-plumbing.
+and ``submit_envelope``. This module builds the production substrate the
+supervisor binds into the breach-loop registration — SQL + config + OMS-backed
+implementations of those factories, replacing the no-op stubs in ``wiring.py``.
 
 Each helper is a thin closure builder — the actual primitives
 (:class:`SqlPortfolioStateRepository`, :func:`assemble_snapshot`,

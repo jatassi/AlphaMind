@@ -1,11 +1,11 @@
 """``MonitorSession`` — frozen handle for one monitor-process lifetime (story 01).
 
-A ``MonitorSession`` is threaded through every task the supervisor registers in
-later stories: the fill-stream consumer, the underlying-price stream, the
-greeks-refresh loop, the breach-evaluation loop, the engine-envelope cascade
-dispatcher, the emergency-invocation trigger, and the options bracket-stop
-firing path. The session carries the per-process identity used in activity-log
-provenance and log lines.
+A ``MonitorSession`` is threaded through every task the supervisor registers:
+the fill-stream consumer, the underlying-price stream, the greeks-refresh
+loop, the breach-evaluation loop, the engine-envelope cascade dispatcher, the
+emergency-invocation trigger, and the options bracket-stop firing path. The
+session carries the per-process identity used in activity-log provenance and
+log lines.
 
 Session-id shape ``mon-YYYYMMDDTHHMMSSZ-XXXXXXXX`` mirrors the collector's
 ``coll-...`` and pipeline scheduler's ``plt-...`` conventions; the 8-hex random

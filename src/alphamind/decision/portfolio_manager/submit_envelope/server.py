@@ -310,7 +310,6 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
             client=client,
             queries=queries,
             execution_config=execution_config,
-            invocation_id=state.invocation_id,
             invocation_handle=invocation_handle,
             broker_dispatch=broker_dispatch,
         )

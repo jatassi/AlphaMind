@@ -6,9 +6,9 @@ have been consumed under a published portfolio-margin model. The PM-equivalent
 side uses the OCC TIMS RBH/CPM User Guide (the methodology FINRA Rule 4210(g)
 points to) as its versioned, publicly-citable reference.
 
-This package provides the configuration skeleton (story 01a). Later stories
-add the class-group composition, stress revaluation, aggregator, per-fill
-orchestrator, and Phase 1 wedge modules.
+This package exports the configuration skeleton, class-group composition,
+stress revaluation, per-fill aggregator, orchestrator, and Phase 1 wedge
+helpers — the full Reg T margin attribution surface.
 """
 
 from __future__ import annotations

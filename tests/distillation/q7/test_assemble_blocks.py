@@ -1,8 +1,7 @@
 """Tests for ``q7_cross_asset.assemble_q7_blocks`` — story 14a follow-up.
 
-Cover the top-level entry point that lets the orchestrator drop its
-``_placeholder_blocks("q7")`` stub. Acceptance criteria mirror the
-dispatch checklist:
+Cover the top-level entry point the orchestrator dispatches to for the q7
+slice. Acceptance criteria mirror the dispatch checklist:
 
 - Returns a list of ``OutputBlock`` instances.
 - Audience routing per story 08d: cross-asset

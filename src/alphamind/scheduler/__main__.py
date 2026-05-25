@@ -2,13 +2,13 @@
 
 Subcommands
 -----------
-run                      Long-running daemon (NSSM service target).
-run --once <run_type>    One-shot manual invocation (story 05 verify
-                         script + operator dry-runs). Story 03b wires
-                         the ``--once`` branch into the orchestrator
-                         (``run_invocation``); the daemon-loop body
-                         remains the empty registry shipped in story 01
-                         until stories 04a / 04b register tasks.
+run                      Long-running daemon (NSSM service target). Registers
+                         the APScheduler driver (04a) and emergency-invocation
+                         receiver (04b) on the :class:`PipelineSupervisor`;
+                         see ``_run_daemon`` below.
+run --once <run_type>    One-shot manual invocation, used by the verify
+                         script and operator dry-runs. Routes through the
+                         orchestrator's ``run_invocation`` entry point.
 """
 
 from __future__ import annotations
