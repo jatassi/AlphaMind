@@ -337,32 +337,6 @@ async def test_open_market_order_constructs_market_order_request() -> None:
     assert req.client_order_id == _CLIENT_ORDER_ID_INV
 
 
-@pytest.mark.asyncio
-async def test_open_market_order_short_direction_uses_sell_side() -> None:
-    """Long direction → BUY, short direction → SELL."""
-    captured: list[Any] = []
-    fake_order = _make_fake_order(order_class=OrderClass.BRACKET)
-
-    def fake_submit(request: Any) -> Any:
-        captured.append(request)
-        return fake_order
-
-    client = MagicMock()
-    client.submit_order = fake_submit
-    execution = _make_execution_config()
-
-    cmd = _make_open_command(direction="short", entry_type="market")
-    await submit_equity_open(
-        cmd,
-        client=client,
-        execution=execution,
-        client_order_id=_CLIENT_ORDER_ID_INV,
-    )
-
-    req = captured[0]
-    assert req.side == OrderSide.SELL
-
-
 # ---------------------------------------------------------------------------
 # RED → GREEN cycle 4: limit order → LimitOrderRequest
 # ---------------------------------------------------------------------------

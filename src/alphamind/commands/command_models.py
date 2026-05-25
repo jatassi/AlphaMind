@@ -484,6 +484,28 @@ class OpenCommand(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_equity_direction(self) -> OpenCommand:
+        # ALP-644: SHORT equity entry has no Phase 1 write-path support
+        # (_apply_fill_to_equity_position raises NotImplementedError on a
+        # sell-side PENDING fill — there is no SHORT entry-fill helper, no
+        # borrow-cost field on EquityPositionDetails, and no cover-to-close
+        # P/L sign handling). Rejecting at the OMS command boundary turns the
+        # would-be silent broker submit → fill → Phase 1 hard-crash into a
+        # structured ValidationError the LLM sees at envelope time. Single-leg
+        # short options remain allowed because the options write path treats
+        # SELL_TO_OPEN as first-class. Retire this guard when the option-A
+        # SHORT-equity write path (borrow modeling + SHORT entry/exit math) lands.
+        if isinstance(self.instrument, EquityInstrument) and self.instrument.direction == "short":
+            raise ValueError(
+                "OpenCommand does not support SHORT equity entry: the Phase 1 "
+                "write path has no SHORT entry-fill helper and EquityPositionDetails "
+                "carries no borrow-cost field. Use a single-leg short option or a "
+                "net-credit options strategy to express a bearish view on the "
+                "underlying."
+            )
+        return self
+
 
 class CloseCommand(BaseModel):
     """CLOSE command — exit a held position."""

@@ -434,6 +434,51 @@ class TestOpenCommand:
                 thesis=_thesis(),
             )
 
+    def test_rejects_short_equity_instrument(self) -> None:
+        # ALP-644: short equity entry is not supported by Phase 1 write paths
+        # (no borrow-cost modeling on EquityPositionDetails, and
+        # _apply_fill_to_equity_position raises NotImplementedError on a
+        # sell-side PENDING fill). Reject upstream at the OMS command boundary
+        # so the LLM sees a structured ValidationError rather than a Phase 1
+        # hard-crash after the broker fills the order.
+        short_equity = EquityInstrument(
+            asset_type="equity", ticker=Symbol("AAPL"), direction="short"
+        )
+        with pytest.raises((ValueError, TypeError)) as exc_info:
+            OpenCommand(
+                command_type="open",
+                instrument=short_equity,
+                entry_order=_entry_order_market(),
+                position_size=_position_size(),
+                target=_target_absolute(),
+                invalidation_legs=(_price_leg(),),
+                thesis=_thesis(),
+            )
+        msg = str(exc_info.value)
+        assert "short" in msg.lower() and "equity" in msg.lower()
+
+    def test_allows_short_option_instrument(self) -> None:
+        # The short-equity restriction must not regress single-leg short options,
+        # which Phase 1 already supports as first-class (SELL_TO_OPEN routes to
+        # _apply_options_entry_fill unconditionally).
+        short_option = OptionInstrument(
+            asset_type="option",
+            underlying=Symbol("AAPL"),
+            strike=price(150.0),
+            expiration="2026-06-19",
+            contract_type="call",
+            direction="short",
+        )
+        OpenCommand(
+            command_type="open",
+            instrument=short_option,
+            entry_order=_entry_order_market(),
+            position_size=_position_size(),
+            target=_target_absolute(),
+            invalidation_legs=(_price_leg(),),
+            thesis=_thesis(),
+        )
+
 
 class TestCloseCommand:
     def test_constructs_happy_path(self) -> None:
