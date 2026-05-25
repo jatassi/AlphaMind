@@ -156,6 +156,32 @@ def _build_position_reservations(
 # ---------------------------------------------------------------------------
 
 
+def _compute_position_max_size_pct(
+    all_positions: Sequence[PositionView], portfolio_value_usd: float
+) -> float:
+    """Return the largest position size (% of portfolio value) across all
+    positions, or ``0.0`` when the book is empty or portfolio value is zero
+    (ALP-624 / ALP-621).
+
+    Basis is **underlying notional exposure** (``notional_exposure_usd``), not
+    gross market value. For options/strategy positions the two differ by
+    orders of magnitude — an options position's ``current_market_value_usd``
+    is premium paid (e.g., $1k for 5 long calls), while
+    ``notional_exposure_usd`` is the underlying exposure (e.g., $50k for the
+    same 5 calls). The rule's projection math operates on proposal/position
+    notional (see ``_position_max_size_project_after_batch``), so the
+    read-current must use the same basis or the actual current and
+    projected-after values disagree by the option leverage ratio (ALP-621
+    Finding 2). Mirrors ``compute_position_weight_pct``'s abs() and
+    zero-portfolio guards.
+    """
+    if portfolio_value_usd <= 0.0 or not all_positions:
+        return 0.0
+    return max(
+        abs(float(p.notional_exposure_usd)) / portfolio_value_usd * 100.0 for p in all_positions
+    )
+
+
 def _select_single_short_max(
     open_positions: Sequence[PositionView],
 ) -> tuple[float, str | None]:
@@ -241,7 +267,12 @@ def to_library_snapshot(
         snapshot.open_positions
     )
 
-    # position_max_size_pct: read from active_risk_parameters by rule_id
+    # position_max_size_pct: the actual maximum position size (% of portfolio
+    # value) across open_positions + pending_positions — NOT the rule's limit
+    # value (ALP-624). The rule's limit lookup still flows through
+    # ``LibraryConfig.effective_limits`` keyed by ``effective_limit_key`` at
+    # ``RuleSpec`` resolution time; the snapshot translator still requires the
+    # rule registration to be present so the registry can build the spec.
     _rule = next(
         (
             e
@@ -256,7 +287,6 @@ def to_library_snapshot(
             "the translator cannot construct LibrarySnapshot without it"
         )
         raise ValueError(msg)
-    position_max_size_pct = _rule.value
 
     position_reservations = _build_position_reservations(snapshot.pending_orders)
 
@@ -269,6 +299,8 @@ def to_library_snapshot(
     # internal-positions Decimal arithmetic that protects against drift is
     # asserted at the PortfolioPnL accumulator (see computations/pnl.py).
     portfolio_value_usd = cash_usd + sum(float(p.current_market_value_usd) for p in all_positions)
+
+    position_max_size_pct = _compute_position_max_size_pct(all_positions, portfolio_value_usd)
 
     options_delta_pct = 0.0
     portfolio_theta_pct_per_day = 0.0

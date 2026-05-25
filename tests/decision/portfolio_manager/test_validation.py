@@ -689,6 +689,168 @@ class TestVerdictConditionalInvariants:
 
 
 # ---------------------------------------------------------------------------
+# Layer-2 (b'): override_with_corrective_action defense-in-depth — ALP-626
+# ---------------------------------------------------------------------------
+
+
+class TestOverrideWithCorrectiveActionLayer2Invariants:
+    """Layer-2 defense-in-depth restate of the override verdict invariants.
+
+    Mirrors :class:`TestOverrideWithCorrectiveActionVerdictInvariants` in
+    test_models.py but bypasses Pydantic's model validator via
+    ``model_construct`` to confirm the PM validator catches every invariant
+    independently.
+    """
+
+    def test_override_with_close_command_passes(self) -> None:
+        envelope = _make_strategist_envelope(
+            verdict="override_with_corrective_action",
+            modifications=(),
+            commands=(_close_command(),),
+            concerns=(
+                ConcernRecord(
+                    source="action_status_alignment",
+                    summary="Hold inappropriate; coordinated reduce needed.",
+                ),
+            ),
+        )
+        result = _validate(envelope)
+        assert result.is_valid
+
+    def test_override_with_empty_commands_fails(self) -> None:
+        envelope = PMStrategistEnvelope.model_construct(
+            envelope_id=EnvelopeId("ENV-SA-1"),
+            invocation_id="inv-2026-05-05",
+            source_provenance="pm_strategist",
+            source_recommendation_id="SA-1",
+            recommendation_type="position_assessment",
+            position_id=PositionId("POS-NVDA-001"),
+            verdict="override_with_corrective_action",
+            evaluation=_position_eval_all_pass(),
+            modifications=(),
+            concerns=(ConcernRecord(source="other", summary="x"),),
+            rationale_narrative="Override needed.",
+            anti_patterns_identified=None,
+            commands=(),
+        )
+        result = _validate(envelope)
+        assert not result.is_valid
+        assert any("commands" in err.field_path for err in result.errors)
+        assert any(err.criterion == "verdict_conditional_invariant" for err in result.errors)
+
+    def test_override_with_empty_concerns_fails(self) -> None:
+        envelope = PMStrategistEnvelope.model_construct(
+            envelope_id=EnvelopeId("ENV-SA-1"),
+            invocation_id="inv-2026-05-05",
+            source_provenance="pm_strategist",
+            source_recommendation_id="SA-1",
+            recommendation_type="position_assessment",
+            position_id=PositionId("POS-NVDA-001"),
+            verdict="override_with_corrective_action",
+            evaluation=_position_eval_all_pass(),
+            modifications=(),
+            concerns=(),
+            rationale_narrative="Override needed.",
+            anti_patterns_identified=None,
+            commands=(_close_command(),),
+        )
+        result = _validate(envelope)
+        assert not result.is_valid
+        assert any("concerns" in err.field_path for err in result.errors)
+        assert any(err.criterion == "verdict_conditional_invariant" for err in result.errors)
+
+    def test_override_with_modifications_fails(self) -> None:
+        envelope = PMStrategistEnvelope.model_construct(
+            envelope_id=EnvelopeId("ENV-SA-1"),
+            invocation_id="inv-2026-05-05",
+            source_provenance="pm_strategist",
+            source_recommendation_id="SA-1",
+            recommendation_type="position_assessment",
+            position_id=PositionId("POS-NVDA-001"),
+            verdict="override_with_corrective_action",
+            evaluation=_position_eval_all_pass(),
+            modifications=(
+                ModificationRecord(
+                    phase="pre_submission",
+                    field_changed="position_size.quantity",
+                    original_value=10,
+                    approved_value=8,
+                    adjustment_category="risk_reduction",
+                    rationale="Trim.",
+                ),
+            ),
+            concerns=(ConcernRecord(source="other", summary="x"),),
+            rationale_narrative="Override needed.",
+            anti_patterns_identified=None,
+            commands=(_close_command(),),
+        )
+        result = _validate(envelope)
+        assert not result.is_valid
+        assert any("modifications" in err.field_path for err in result.errors)
+        assert any(err.criterion == "verdict_conditional_invariant" for err in result.errors)
+
+    def test_override_with_open_command_fails(self) -> None:
+        envelope = PMStrategistEnvelope.model_construct(
+            envelope_id=EnvelopeId("ENV-SA-1"),
+            invocation_id="inv-2026-05-05",
+            source_provenance="pm_strategist",
+            source_recommendation_id="SA-1",
+            recommendation_type="position_assessment",
+            position_id=PositionId("POS-NVDA-001"),
+            verdict="override_with_corrective_action",
+            evaluation=_position_eval_all_pass(),
+            modifications=(),
+            concerns=(ConcernRecord(source="other", summary="x"),),
+            rationale_narrative="Override needed.",
+            anti_patterns_identified=None,
+            commands=(_open_command(),),
+        )
+        result = _validate(envelope)
+        assert not result.is_valid
+        assert any("commands[0]" in err.field_path for err in result.errors)
+        assert any(err.criterion == "verdict_conditional_invariant" for err in result.errors)
+
+    def test_override_with_add_command_fails(self) -> None:
+        envelope = PMStrategistEnvelope.model_construct(
+            envelope_id=EnvelopeId("ENV-SA-1"),
+            invocation_id="inv-2026-05-05",
+            source_provenance="pm_strategist",
+            source_recommendation_id="SA-1",
+            recommendation_type="position_assessment",
+            position_id=PositionId("POS-NVDA-001"),
+            verdict="override_with_corrective_action",
+            evaluation=_position_eval_all_pass(),
+            modifications=(),
+            concerns=(ConcernRecord(source="other", summary="x"),),
+            rationale_narrative="Override needed.",
+            anti_patterns_identified=None,
+            commands=(_add_command(),),
+        )
+        result = _validate(envelope)
+        assert not result.is_valid
+        assert any("commands[0]" in err.field_path for err in result.errors)
+        assert any(err.criterion == "verdict_conditional_invariant" for err in result.errors)
+
+    def test_override_in_halt_mode_with_close_passes(self) -> None:
+        """Halt-mode constraint (g) passes by construction for the override
+        verdict — embedded commands are CLOSE / ADJUST / CANCEL only, which
+        is the halt-mode allowed set."""
+        envelope = _make_strategist_envelope(
+            verdict="override_with_corrective_action",
+            modifications=(),
+            commands=(_close_command(),),
+            concerns=(
+                ConcernRecord(
+                    source="action_status_alignment",
+                    summary="Override needed in halt mode.",
+                ),
+            ),
+        )
+        result = _validate(envelope, halt_mode=True)
+        assert result.is_valid
+
+
+# ---------------------------------------------------------------------------
 # Layer-2 (c): evaluation criterion-set ↔ source_provenance
 # ---------------------------------------------------------------------------
 

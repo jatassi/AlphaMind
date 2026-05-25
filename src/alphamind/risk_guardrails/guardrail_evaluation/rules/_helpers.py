@@ -10,7 +10,7 @@ category modules into deferred imports.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
@@ -26,7 +26,7 @@ from alphamind.risk_guardrails.guardrail_evaluation.types import (
 
 @dataclass(frozen=True, slots=True)
 class RuleSpec:
-    """Per-rule data + two function references.
+    """Per-rule data + function references for the projection engine.
 
     Fields:
 
@@ -35,6 +35,18 @@ class RuleSpec:
     * ``unit`` — display string for ``RuleProjection.unit``.
     * ``read_current`` — pulls the rule's current value from the snapshot.
     * ``contribute`` — per-proposal contribution (signed, in the rule's units).
+      Required for every rule. When ``project_after_batch`` is also set, the
+      projection engine bypasses ``contribute`` and uses the batch projector
+      directly; the rule still provides a ``contribute`` callable so the type
+      stays uniform across the registry.
+    * ``project_after_batch`` — optional holistic batch projector. When set,
+      the projection engine calls it with the full proposals tuple and uses
+      its return value as ``projected_after`` directly, bypassing the
+      ``current + sum(contribute(...))`` model. Use for rules whose
+      post-batch value is not a simple sum of per-proposal contributions
+      (e.g., ``position_max_size_pct`` must simulate the post-batch position
+      book to find the new max, which is not decomposable per-proposal when
+      multiple positions are closed in one batch — ALP-621).
     * ``effective_limit_key`` — key into ``LibraryConfig.effective_limits``;
       usually equals ``rule_id``, but the per-sector concentration specs use a
       shared key (``sector_concentration_pct``).
@@ -62,6 +74,17 @@ class RuleSpec:
         float,
     ]
     effective_limit_key: str
+    project_after_batch: (
+        Callable[
+            [
+                Sequence[tuple[ProposedDelta, DeltaAdjustedExposure]],
+                PortfolioStateSnapshot,
+                LibraryConfig,
+            ],
+            float,
+        ]
+        | None
+    ) = None
     requires_options: bool = False
     requires_shorts: bool = False
     magnitude: bool = False

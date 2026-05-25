@@ -254,8 +254,13 @@ def _build_mcp_wiring(
     assignment to ``ClaudeAgentOptions.mcp_servers`` and
     ``ClaudeAgentOptions.allowed_tools``.
     """
+    # The analyst's prompt does not document the batch tool — and the
+    # agents.yaml `tools` allowlist for `analyst` does not include
+    # `validate_guardrail_batch` (the batch tool is strategist/PM-scoped per
+    # ALP-625's parent feature). Opt out of the batch tool here so the
+    # analyst's MCP surface matches the agents.yaml authoritative list.
     validation_servers, validation_tools = build_validate_guardrail_mcp_server(
-        initial_validation_state
+        initial_validation_state, include_batch_tool=False
     )
     retrieval_servers, retrieval_tools = build_retrieve_brief_mcp_server(retrieval_store)
     return (

@@ -509,9 +509,11 @@ async def test_options_wires_two_mcp_servers_and_json_schema(
     assert "alphamind_decision_validation" in options.mcp_servers
     assert "alphamind_synthesizer_retrieval" in options.mcp_servers
 
-    # allowed_tools merges both servers' wire-form names.
+    # allowed_tools merges both servers' wire-form names — the validation
+    # MCP exposes both the single-call and batch tools (ALP-625).
     expected_allowed = {
         "mcp__alphamind_decision_validation__validate_guardrail",
+        "mcp__alphamind_decision_validation__validate_guardrail_batch",
         "mcp__alphamind_synthesizer_retrieval__retrieve_brief",
     }
     assert set(options.allowed_tools) == expected_allowed

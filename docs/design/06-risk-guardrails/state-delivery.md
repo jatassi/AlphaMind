@@ -414,6 +414,48 @@ The analyst and strategist consume `unavailable_reason` directly in their reason
 
 **Resolver-coverage gap:** On UNAVAILABLE, output includes guidance explaining that the ticker is outside validation-infrastructure coverage this cycle — an infrastructure gap, not a guardrail breach — so the agent does not treat a coverage gap as a thesis disqualification.
 
+### Batch validation (`validate_guardrail_batch`)
+
+The batch sibling of `validate_guardrail` projects a coordinated package of proposals as one transaction. It exists for multi-position remediation: a portfolio-scoped breach (`position_max_size_pct`, `sector_concentration_pct`, `net_long_pct`, `net_short_pct`, `gross_exposure_pct`, options-greeks rules) often cannot be cured by reducing one position at a time — the rule stays red until *all* offending positions are reduced, so each individual proposal returns `FAIL` when validated alone via `validate_guardrail`. The batch tool projects the package as a unit and reports both per-proposal and aggregate outcomes.
+
+**Input contract**
+
+```
+validate_guardrail_batch(
+  proposals: [<validate_guardrail input shape>, ...]
+)
+```
+
+Per-proposal entries follow the single-call input shape verbatim. The array's order is significant: each proposal is projected with the prior in-batch PASSes credited.
+
+**Output contract**
+
+```
+{
+  per_proposal: [
+    <validate_guardrail output shape>,  // overall, per_rule, delta_adjusted_exposure,
+    ...                                  // greeks, cumulative_impact_note,
+  ],                                     // failure_guidance, unavailable_reason,
+                                         // proposal_index_in_invocation
+  overall: "PASS" | "FAIL" | "UNAVAILABLE",
+  cumulative_impact_note: "This is proposal #N in this invocation. ..."
+}
+```
+
+The batch envelope's `cumulative_impact_note` reflects the cell's state at batch entry — i.e., proposals already credited by prior calls in the invocation, not the proposals threaded inside this batch (those are reflected by each per-proposal entry's own `cumulative_impact_note`).
+
+**Aggregate semantics**
+
+`overall` is the worst-of across per-proposal entries: `PASS` only when every per-proposal is `PASS`; otherwise `FAIL` > `UNAVAILABLE` > `PASS`. Any `FAIL` dominates any `UNAVAILABLE`; any `UNAVAILABLE` dominates remaining `PASS`es.
+
+**State-advancement semantics**
+
+All-or-nothing on aggregate PASS. On aggregate `PASS`, cumulative-impact tracking advances by one delta per proposal in the package (one `with_accepted_proposal` per proposal — same pattern as a per-call `validate_guardrail` PASS). On aggregate `FAIL` or `UNAVAILABLE`, the cell is unchanged — no partial application of the PASSed prefix.
+
+**Choice rule (agent-facing)**
+
+Call `validate_guardrail` for any one-off proposal. Call `validate_guardrail_batch` for any coordinated multi-position remediation whose proposals would each FAIL standalone because a portfolio-scoped rule stays red until every offending position is reduced. The same FAIL-or-UNAVAILABLE constraint applies: do not emit a coordinated remediation package whose `BatchValidationResult.overall` is FAIL or UNAVAILABLE — revise the package or escalate.
+
 ---
 
 ## Portfolio state ingestion payload

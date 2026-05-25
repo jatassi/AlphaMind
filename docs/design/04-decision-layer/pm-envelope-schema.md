@@ -82,7 +82,7 @@ Enum values and structural constraints trace back to these sources:
     },
     "verdict": {
       "type": "string",
-      "enum": ["approve", "approve_with_modification", "reject"]
+      "enum": ["approve", "approve_with_modification", "reject", "override_with_corrective_action"]
     },
     "evaluation": {
       "description": "Per-criterion pass/fail assessment. Shape depends on source_provenance — five keys for pm_analyst, four keys for pm_strategist.",
@@ -192,6 +192,19 @@ Enum values and structural constraints trace back to these sources:
               "commands": { "minItems": 1 }
             }
           }
+        },
+        {
+          "if": { "properties": { "verdict": { "const": "override_with_corrective_action" } }, "required": ["verdict"] },
+          "then": {
+            "properties": {
+              "commands": {
+                "minItems": 1,
+                "items": { "properties": { "command_type": { "enum": ["close", "adjust", "cancel"] } } }
+              },
+              "concerns": { "minItems": 1 },
+              "modifications": { "maxItems": 0 }
+            }
+          }
         }
       ]
     },
@@ -242,6 +255,19 @@ Enum values and structural constraints trace back to these sources:
             "properties": {
               "modifications": { "minItems": 1 },
               "commands": { "minItems": 1 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "verdict": { "const": "override_with_corrective_action" } }, "required": ["verdict"] },
+          "then": {
+            "properties": {
+              "commands": {
+                "minItems": 1,
+                "items": { "properties": { "command_type": { "enum": ["close", "adjust", "cancel"] } } }
+              },
+              "concerns": { "minItems": 1 },
+              "modifications": { "maxItems": 0 }
             }
           }
         }
@@ -398,6 +424,17 @@ Enforced by the OMS command intake layer rather than the schema:
 - **Anti-pattern names match the canonical strings used across the system.** The `anti_patterns_identified` enum is the single authoritative list aggregated on by the feedback loop. Drift between strategist self-identification, PM detection, and this schema would silently fragment the aggregation surface.
 
 - **Rejection envelopes populate at least one `concerns` entry.** Schema-enforced via `concerns: { minItems: 1 }` in the `verdict == reject` conditional of both per-provenance branches. The feedback loop's "what proposals does the PM reject and why" depends on every rejection carrying its failure structure; an `"other"`-source `concern_record` accommodates rejections not captured by a named criterion.
+
+---
+
+## Verdict semantics
+
+The four `verdict` values and their per-verdict invariants (schema-enforced via the `allOf` conditionals on each per-provenance branch):
+
+- **`approve`** — strategist or analyst action is right as-proposed. `modifications` must be empty; `commands` may be empty (e.g., approving a strategist `hold`) or carry the proposed action's command(s).
+- **`approve_with_modification`** — strategist or analyst action is right but at least one parameter needs adjustment. `modifications` must have at least one record; `commands` must have at least one command (the strategist's or analyst's command with the PM-approved parameter values mirrored in).
+- **`reject`** — strategist or analyst action is wrong AND no PM-authored corrective action is appropriate. `commands` must be empty; `modifications` must be empty; `concerns` must have at least one entry (the disagreement, aggregated on by the feedback loop).
+- **`override_with_corrective_action`** — strategist's action is wrong (typically a HOLD that should have been a reduce) AND PM-authored corrective commands are appropriate; no original strategist command exists to modify. The PM authors a coordinated remediation package. `commands` must have at least one command and every embedded command must be `close`, `adjust`, or `cancel` (the override is a *corrective* action against an existing exposure; new-entry `open` / `add` belongs in `approve_with_modification` on an analyst proposal, not in an override on a strategist HOLD). `concerns` must have at least one entry (the disagreement against the strategist's proposed action). `modifications` must be empty (the override authors new commands rather than modifying existing strategist commands — use `approve_with_modification` for parameter tweaks on a strategist-authored action). The classic case: the strategist correctly identifies that an at-risk position in size-breach should be reduced, but cannot validate a standalone reduce because sibling oversized positions keep a portfolio-scoped rule red; the PM authors the coordinated reduce package (validated via `validate_guardrail_batch`) and submits the override.
 
 ---
 

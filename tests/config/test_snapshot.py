@@ -158,11 +158,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     """
     resolved = _fixture_resolved()
     digest = compute_snapshot_hash(serialize_resolved_config(resolved))
-    # Pin updated 2026-05-21: qualitative_researcher.latency_budget_seconds
-    # 360→600 and synthesizer.latency_budget_seconds 540→900 (e2e-verified
-    # too-tight extended-thinking budgets); the fixture's canonical bytes
-    # shifted by those two value changes.
-    expected = "34de80a3343fb8255831e1e8408f515e63dc7ee6773d3b3fc7ebc51f1c944640"
+    # Pin updated 2026-05-25 (ALP-625): strategist + portfolio_manager tools
+    # allowlists in agents.yaml extended to include validate_guardrail_batch
+    # alongside validate_guardrail; the fixture's canonical bytes shifted by
+    # those two list changes.
+    expected = "adb504c060cdb6a66f8779d31a8d92f2e8a8daf1e02d19a6dfea587866f57d17"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

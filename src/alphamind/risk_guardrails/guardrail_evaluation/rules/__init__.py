@@ -15,6 +15,7 @@ is cleaner with ``RuleSpec`` than with class subclassing.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 
 from alphamind.risk_guardrails.guardrail_evaluation.projection import project_rule
@@ -82,18 +83,27 @@ def project_all(
     """Run the registry's projection over every active rule.
 
     For each spec returned by ``build_active_specs``: read ``current`` from
-    the snapshot; collect each proposal's contribution; call ``project_rule``
-    with the spec's ``unit``, the effective limit, and the rule's escalation
-    zones. Returns the per-rule projections in registry order.
+    the snapshot; compute ``projected_after`` either via the spec's holistic
+    ``project_after_batch`` projector (when set — used for rules whose
+    post-batch value is not decomposable per-proposal, e.g.,
+    ``position_max_size_pct``; ALP-621) or by summing per-proposal
+    contributions onto ``current`` (the default contribution-decomposable
+    path). Call ``project_rule`` with the resulting ``projected_after``, the
+    spec's ``unit``, the effective limit, and the rule's escalation zones.
+    Returns the per-rule projections in registry order.
     """
     proposals = tuple(proposals_with_dae)
     specs = build_active_specs(config)
     projections = []
     for spec in specs:
         current = spec.read_current(state, config)
-        contributions = [
-            spec.contribute(proposal, dae, state, config) for proposal, dae in proposals
-        ]
+        if spec.project_after_batch is not None:
+            projected_after = spec.project_after_batch(proposals, state, config)
+        else:
+            contributions = [
+                spec.contribute(proposal, dae, state, config) for proposal, dae in proposals
+            ]
+            projected_after = current + math.fsum(contributions)
         breaching_position_id = (
             spec.read_breaching_position_id(state, config)
             if spec.read_breaching_position_id is not None
@@ -103,7 +113,7 @@ def project_all(
             project_rule(
                 rule_id=spec.rule_id,
                 current=current,
-                contributions=contributions,
+                projected_after=projected_after,
                 effective_limit=config.effective_limits[spec.effective_limit_key],
                 zones=config.escalation_zones[spec.effective_limit_key],
                 unit=spec.unit,

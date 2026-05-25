@@ -117,7 +117,31 @@ def _snapshot(
             "energy": 3.0,
         }
     if existing_positions is None:
-        existing_positions = {}
+        # ALP-621: ``position_max_size_pct`` projection now simulates the
+        # post-batch position book. A snapshot with a non-zero
+        # ``position_max_size_pct`` but empty ``existing_positions`` is
+        # internally inconsistent; synthesize one position sized to that pct
+        # so the holistic projector finds the same max the scalar field
+        # reports. Tests that need a specific book pass ``existing_positions``
+        # explicitly.
+        if position_max_size_pct > 0.0 and portfolio_value_usd > 0.0:
+            synth_notional = position_max_size_pct / 100.0 * portfolio_value_usd
+            existing_positions = {
+                "POS-SYNTH": ExistingPosition(
+                    position_id=PositionId("POS-SYNTH"),
+                    underlying=Symbol("AAPL"),
+                    sector="tech",
+                    direction=Direction.LONG,
+                    asset_type=AssetType.EQUITY,
+                    notional_usd=synth_notional,
+                    delta_adjusted_exposure_usd=synth_notional,
+                    current_greeks=None,
+                    daily_borrow_cost_usd=None,
+                    reserves_capital_usd=0.0,
+                )
+            }
+        else:
+            existing_positions = {}
     return PortfolioStateSnapshot(
         portfolio_value_usd=portfolio_value_usd,
         cash_usd=cash_usd,

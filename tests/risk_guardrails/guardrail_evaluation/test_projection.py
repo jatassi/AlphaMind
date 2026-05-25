@@ -1,10 +1,13 @@
 """Tests for the projection engine (story 04).
 
 The projection engine is a uniform ``project_rule(...)`` that turns
-``(rule_id, current, contributions, effective_limit, zones, unit)`` into a
+``(rule_id, current, projected_after, effective_limit, zones, unit)`` into a
 canonical ``RuleProjection`` with the right ``Status``. The engine has zero
 rule-specific knowledge; status classification, headroom math, and unit
-propagation are uniform.
+propagation are uniform. ``projected_after`` is supplied by the caller —
+either as ``current + sum(per_proposal_contributions)`` (the default
+contribution-decomposable path the rule registry takes) or as the return
+value of a rule's holistic ``project_after_batch`` projector (ALP-621).
 """
 
 from __future__ import annotations
@@ -37,7 +40,7 @@ def test_project_rule_pass_below_warning_zone() -> None:
     result = project_rule(
         rule_id="net_long_pct",
         current=5.0,
-        contributions=[2.0],
+        projected_after=7.0,
         effective_limit=20.0,
         zones=_DEFAULT_ZONES,
         unit=_PCT_UNIT,
@@ -52,7 +55,7 @@ def test_project_rule_warning_within_warning_band() -> None:
     result = project_rule(
         rule_id="net_long_pct",
         current=10.0,
-        contributions=[5.0],
+        projected_after=15.0,
         effective_limit=20.0,
         zones=_DEFAULT_ZONES,
         unit=_PCT_UNIT,
@@ -67,7 +70,7 @@ def test_project_rule_fail_at_or_above_hard_block() -> None:
     result = project_rule(
         rule_id="net_long_pct",
         current=18.0,
-        contributions=[5.0],
+        projected_after=23.0,
         effective_limit=20.0,
         zones=_DEFAULT_ZONES,
         unit=_PCT_UNIT,
@@ -90,7 +93,7 @@ def test_project_rule_zero_limit_raises_projection_error() -> None:
         project_rule(
             rule_id="net_long_pct",
             current=0.0,
-            contributions=[1.0],
+            projected_after=1.0,
             effective_limit=0.0,
             zones=_DEFAULT_ZONES,
             unit=_PCT_UNIT,
@@ -103,7 +106,7 @@ def test_project_rule_negative_limit_raises_projection_error() -> None:
         project_rule(
             rule_id="net_long_pct",
             current=0.0,
-            contributions=[1.0],
+            projected_after=1.0,
             effective_limit=-5.0,
             zones=_DEFAULT_ZONES,
             unit=_PCT_UNIT,
@@ -120,7 +123,7 @@ def test_project_rule_magnitude_uses_absolute_projected_after() -> None:
     result = project_rule(
         rule_id="portfolio_theta_pct_per_day",
         current=-0.10,
-        contributions=[-0.05],
+        projected_after=-0.15,
         effective_limit=0.15,
         zones=_DEFAULT_ZONES,
         unit="% of portfolio per day",
@@ -136,7 +139,7 @@ def test_project_rule_magnitude_headroom_against_absolute() -> None:
     result = project_rule(
         rule_id="portfolio_theta_pct_per_day",
         current=-0.10,
-        contributions=[-0.03],
+        projected_after=-0.13,
         effective_limit=0.15,
         zones=_DEFAULT_ZONES,
         unit="% of portfolio per day",
@@ -157,7 +160,7 @@ def test_project_rule_inverse_below_floor_is_fail() -> None:
     result = project_rule(
         rule_id="min_cash_reserve_pct",
         current=12.0,
-        contributions=[-3.0],
+        projected_after=9.0,
         effective_limit=10.0,
         zones=_DEFAULT_ZONES,
         unit="% of portfolio",
@@ -173,7 +176,7 @@ def test_project_rule_inverse_within_warning_band_is_warning() -> None:
     result = project_rule(
         rule_id="min_cash_reserve_pct",
         current=15.0,
-        contributions=[-4.5],
+        projected_after=10.5,
         effective_limit=10.0,
         zones=_DEFAULT_ZONES,
         unit="% of portfolio",
@@ -189,7 +192,7 @@ def test_project_rule_inverse_well_above_floor_is_pass() -> None:
     result = project_rule(
         rule_id="min_cash_reserve_pct",
         current=20.0,
-        contributions=[-5.0],
+        projected_after=15.0,
         effective_limit=10.0,
         zones=_DEFAULT_ZONES,
         unit="% of portfolio",
@@ -210,7 +213,7 @@ def test_project_rule_negative_consumption_classifies_as_pass() -> None:
     result = project_rule(
         rule_id="net_long_pct",
         current=-10.0,
-        contributions=[-5.0],
+        projected_after=-15.0,
         effective_limit=60.0,
         zones=_DEFAULT_ZONES,
         unit="% of portfolio (delta-adjusted)",
@@ -229,7 +232,7 @@ def test_project_rule_returns_canonical_rule_projection_shape() -> None:
     result = project_rule(
         rule_id="my_rule",
         current=5.0,
-        contributions=[2.0, 3.0],
+        projected_after=10.0,
         effective_limit=20.0,
         zones=_DEFAULT_ZONES,
         unit="USD/day",
@@ -250,7 +253,7 @@ def test_project_rule_default_inverse_is_false() -> None:
     result = project_rule(
         rule_id="net_long_pct",
         current=5.0,
-        contributions=[2.0],
+        projected_after=7.0,
         effective_limit=20.0,
         zones=_DEFAULT_ZONES,
         unit=_PCT_UNIT,
@@ -264,7 +267,7 @@ def test_project_rule_inverse_true_flag_propagates_to_projection() -> None:
     result = project_rule(
         rule_id="min_cash_reserve_pct",
         current=15.0,
-        contributions=[-3.0],
+        projected_after=12.0,
         effective_limit=10.0,
         zones=_DEFAULT_ZONES,
         unit="% of portfolio",
@@ -278,7 +281,7 @@ def test_project_rule_is_pure() -> None:
     a = project_rule(
         rule_id="net_long_pct",
         current=10.0,
-        contributions=[5.0],
+        projected_after=15.0,
         effective_limit=20.0,
         zones=_DEFAULT_ZONES,
         unit=_PCT_UNIT,
@@ -286,7 +289,7 @@ def test_project_rule_is_pure() -> None:
     b = project_rule(
         rule_id="net_long_pct",
         current=10.0,
-        contributions=[5.0],
+        projected_after=15.0,
         effective_limit=20.0,
         zones=_DEFAULT_ZONES,
         unit=_PCT_UNIT,

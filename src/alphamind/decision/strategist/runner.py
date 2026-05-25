@@ -87,9 +87,14 @@ _AGENTS_YAML = _REPO_ROOT / "config" / "agents.yaml"
 # Wire-form names rendered into the strategist's input bundle's
 # ``=== AVAILABLE TOOLS ===`` section. The harness's two MCP factories
 # (``build_validate_guardrail_mcp_server`` and ``build_retrieve_brief_mcp_server``)
-# emit these same names as their allowed-tools lists.
+# emit these same names as their allowed-tools lists. The validation factory
+# exposes both the single-call and batch validators when
+# ``include_batch_tool=True`` (default for strategist and PM); both must
+# appear here so the per-invocation tool reminder lists every callable the
+# allowed-tools list permits (ALP-621 Finding 7).
 STRATEGIST_TOOL_NAMES: tuple[str, ...] = (
     "mcp__alphamind_decision_validation__validate_guardrail",
+    "mcp__alphamind_decision_validation__validate_guardrail_batch",
     "mcp__alphamind_synthesizer_retrieval__retrieve_brief",
 )
 

@@ -46,17 +46,19 @@ def test_strategist_prompt_path_exists() -> None:
 
 
 def test_strategist_tools_contract() -> None:
-    """`tools` matches the two-tool contract from the strategist design doc.
+    """`tools` matches the three-tool contract from the strategist design doc.
 
-    The strategist uses exactly two tools:
+    The strategist uses three tools:
     - `retrieve_brief`: accepts a reference ID and returns the corresponding
       section from the original research brief (strategist.md § Source brief
       retrieval).
     - `validate_guardrail`: accepts proposed instrument, direction, and size;
       computes delta-adjusted exposure; returns per-rule pass/fail with
       headroom (strategist.md § Pre-submission guardrail validation).
-    Both tools are used in both primary and full-system modes per parent Issue
-    decision (I).
+    - `validate_guardrail_batch`: the batch sibling used to validate a
+      coordinated multi-position remediation as one transaction (ALP-625).
+    All three tools are used in both primary and full-system modes per parent
+    Issue decision (I).
     """
     entry = _load_strategist_entry()
-    assert entry.tools == ["retrieve_brief", "validate_guardrail"]
+    assert entry.tools == ["retrieve_brief", "validate_guardrail", "validate_guardrail_batch"]

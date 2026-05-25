@@ -26,9 +26,6 @@ inputs to one of the existing flag combinations.
 
 from __future__ import annotations
 
-import math
-from collections.abc import Iterable
-
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
     EscalationZones,
     RuleProjection,
@@ -55,7 +52,7 @@ def project_rule(  # noqa: PLR0913 — math primitive entry point; args mirror t
     *,
     rule_id: str,
     current: float,
-    contributions: Iterable[float],
+    projected_after: float,
     effective_limit: float,
     zones: EscalationZones,
     unit: str,
@@ -65,10 +62,13 @@ def project_rule(  # noqa: PLR0913 — math primitive entry point; args mirror t
 ) -> RuleProjection:
     """Pure per-rule projection.
 
-    ``projected_after = current + sum(contributions)``. The contributions
-    flow through unchanged from the rule-contribution registry — signed for
-    theta/vega/net-long, absolute for gross/sector, etc., per each rule's
-    contribution function.
+    ``projected_after`` is supplied by the caller — either as
+    ``current + sum(per_proposal_contributions)`` (the default path the rule
+    registry takes for every contribution-decomposable rule) or as the return
+    value of a rule's holistic ``project_after_batch`` projector (used by
+    rules whose post-batch value cannot be expressed as a sum of per-proposal
+    contributions — e.g., ``position_max_size_pct`` simulates the post-batch
+    position book to find the new max; ALP-621).
 
     Status classification depends on the flags:
 
@@ -98,7 +98,6 @@ def project_rule(  # noqa: PLR0913 — math primitive entry point; args mirror t
             f"effective_limit must be > 0 for rule {rule_id!r}; got {effective_limit}"
         )
 
-    projected_after = current + math.fsum(contributions)
     status, headroom_remaining = _classify(
         projected_after=projected_after,
         effective_limit=effective_limit,

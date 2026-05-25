@@ -35,6 +35,7 @@ from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
 )
 from alphamind.risk_guardrails.state_delivery.strategist import render_strategist_header
 from alphamind.risk_guardrails.state_delivery.validation_tool import (
+    BatchValidationResult,
     ProjectedDelta,
     ValidationAction,
     ValidationInstrument,
@@ -46,6 +47,7 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import (
     ValidationToolState,
     ValidationUnavailableReason,
     validate_guardrail,
+    validate_guardrail_batch,
 )
 from alphamind.risk_guardrails.state_delivery.validation_tool_mcp import (
     build_initial_validation_state,
@@ -53,6 +55,7 @@ from alphamind.risk_guardrails.state_delivery.validation_tool_mcp import (
 )
 
 __all__ = [
+    "BatchValidationResult",
     "CorrelationState",
     "CrossConstraintImpact",
     "CrossConstraintImpactPerRule",
@@ -84,4 +87,5 @@ __all__ = [
     "render_strategist_header",
     "render_strategist_header_halt_mode",
     "validate_guardrail",
+    "validate_guardrail_batch",
 ]

@@ -182,6 +182,30 @@ def _snapshot(
 ) -> PortfolioStateSnapshot:
     if sector_exposure_pct is None:
         sector_exposure_pct = {"tech": 15.0, "semis": 0.0, "financials": 0.0, "energy": 0.0}
+    if existing_positions is None:
+        # ALP-621: the position_max_size_pct rule projects from the simulated
+        # post-batch book. Synthesize a position consistent with the scalar
+        # field so the rule's projected_after matches current when no
+        # proposals modify it. Tests that need a specific book pass
+        # existing_positions explicitly.
+        if position_max_size_pct > 0.0 and portfolio_value_usd > 0.0:
+            synth_notional = position_max_size_pct / 100.0 * portfolio_value_usd
+            existing_positions = {
+                "POS-SYNTH": ExistingPosition(
+                    position_id=PositionId("POS-SYNTH"),
+                    underlying=Symbol("AAPL"),
+                    sector="tech",
+                    direction=Direction.LONG,
+                    asset_type=AssetType.EQUITY,
+                    notional_usd=synth_notional,
+                    delta_adjusted_exposure_usd=synth_notional,
+                    current_greeks=None,
+                    daily_borrow_cost_usd=None,
+                    reserves_capital_usd=0.0,
+                )
+            }
+        else:
+            existing_positions = {}
     return PortfolioStateSnapshot(
         portfolio_value_usd=portfolio_value_usd,
         cash_usd=cash_usd,
@@ -197,7 +221,7 @@ def _snapshot(
         single_short_max_pct=0.0,
         daily_borrow_cost_pct=0.0,
         position_max_size_pct=position_max_size_pct,
-        existing_positions=MappingProxyType(existing_positions or {}),
+        existing_positions=MappingProxyType(existing_positions),
     )
 
 

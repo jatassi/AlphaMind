@@ -76,7 +76,11 @@ _DEFENSIVE_EVENT_TYPES: frozenset[EventType] = frozenset(
 )
 
 _REMEDIATING_PM_VERDICTS: frozenset[PMVerdict] = frozenset(
-    {PMVerdict.APPROVE, PMVerdict.APPROVE_WITH_MODIFICATION}
+    {
+        PMVerdict.APPROVE,
+        PMVerdict.APPROVE_WITH_MODIFICATION,
+        PMVerdict.OVERRIDE_WITH_CORRECTIVE_ACTION,
+    }
 )
 
 
