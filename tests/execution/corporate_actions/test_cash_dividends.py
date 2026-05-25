@@ -17,7 +17,7 @@ shared post-conditions every cash-dividend handler must satisfy:
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -70,9 +70,14 @@ from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
     LocateStatus,
+    OptionContractType,
+    OptionGreeks,
+    OptionsPositionDetails,
     PositionFill,
     PositionRecord,
     PositionStatus,
+    StrategyLeg,
+    StrategyPositionDetails,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -246,6 +251,115 @@ def _make_open_position(
         bracket_id=BracketId(bracket_id) if bracket_id else None,
         status=PositionStatus.OPEN,
         direction=direction,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+
+
+def _make_open_options_position(
+    *,
+    position_id: str = "pos-1",
+    thesis_id: str | None = "thesis-1",
+    bracket_id: str | None = "brk-1",
+    underlying_ticker: str = "AAPL",
+    strike: float = 150.0,
+    contract_count: float = 5.0,
+    contract_multiplier: float = 100.0,
+    premium_paid_per_contract: float = 250.0,
+) -> PositionRecord:
+    details = OptionsPositionDetails(
+        underlying_ticker=Symbol(underlying_ticker),
+        strike_price=strike,
+        expiration_date=date(2026, 9, 18),
+        contract_type=OptionContractType.CALL,
+        contract_count=contract_count,
+        contract_multiplier=contract_multiplier,
+        premium_paid_per_contract=premium_paid_per_contract,
+        greeks=OptionGreeks(delta=0.45, gamma=0.02, theta=-0.05, vega=0.10),
+    )
+    history = (
+        PositionFill(
+            fill_timestamp=_NOW - timedelta(hours=2),
+            fill_price=price(premium_paid_per_contract / contract_multiplier),
+            fill_quantity=contract_count,
+            slippage=signed_money(0.0),
+            fees=money(0.0),
+        ),
+    )
+    return PositionRecord(
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id) if thesis_id else None,
+        bracket_id=BracketId(bracket_id) if bracket_id else None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_NOW - timedelta(hours=2),
+        details=details,
+        execution_history=history,
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+
+
+def _make_open_strategy_position(
+    *,
+    position_id: str = "pos-1",
+    thesis_id: str | None = "thesis-1",
+    bracket_id: str | None = "brk-1",
+    underlying_ticker: str = "AAPL",
+) -> PositionRecord:
+    def _leg_options(strike: float, premium: float) -> OptionsPositionDetails:
+        return OptionsPositionDetails(
+            underlying_ticker=Symbol(underlying_ticker),
+            strike_price=strike,
+            expiration_date=date(2026, 9, 18),
+            contract_type=OptionContractType.CALL,
+            contract_count=5.0,
+            contract_multiplier=100.0,
+            premium_paid_per_contract=premium,
+            greeks=OptionGreeks(delta=0.45, gamma=0.02, theta=-0.05, vega=0.10),
+        )
+
+    leg_a = StrategyLeg(
+        leg_id="leg-long",
+        direction=Direction.LONG,
+        options=_leg_options(strike=150.0, premium=250.0),
+    )
+    leg_b = StrategyLeg(
+        leg_id="leg-short",
+        direction=Direction.SHORT,
+        options=_leg_options(strike=160.0, premium=120.0),
+    )
+    details = StrategyPositionDetails(
+        strategy_type_label="vertical-call-spread",
+        legs=(leg_a, leg_b),
+        net_premium_usd=650.0,
+        max_profit_usd=4350.0,
+        max_loss_usd=650.0,
+        breakeven_levels=(151.30,),
+        strategy_greeks=OptionGreeks(delta=0.20, gamma=0.01, theta=-0.02, vega=0.05),
+    )
+    history = (
+        PositionFill(
+            fill_timestamp=_NOW - timedelta(hours=2),
+            fill_price=price(1.30),
+            fill_quantity=5.0,
+            slippage=signed_money(0.0),
+            fees=money(0.0),
+        ),
+    )
+    return PositionRecord(
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id) if thesis_id else None,
+        bracket_id=BracketId(bracket_id) if bracket_id else None,
+        status=PositionStatus.OPEN,
+        direction=None,
         entry_timestamp=_NOW - timedelta(hours=2),
         details=details,
         execution_history=history,
@@ -1033,3 +1147,242 @@ async def test_zero_amount_cash_dividend_does_not_emit_cash_entry(
         cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
         assert cash_row is not None
         assert cash_row.current_cash_usd == pytest.approx(_INITIAL_CASH)
+
+
+# ---------------------------------------------------------------------------
+# Options + strategy positions (ALP-638)
+# ---------------------------------------------------------------------------
+
+
+async def test_cash_dividend_long_on_options_position_credits_and_preserves_contracts(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """Long cash dividend on an options position credits cash, flags adjustment,
+    cancels the bracket, writes the dedup row, and leaves contract count + per-
+    contract premium unchanged. Also asserts the ``CORPORATE_ACTION_APPLIED``
+    payload reads the audit-trail metrics from the options branch of
+    ``audit_metrics`` (contract count, per-contract premium) rather than
+    silently emitting zeros."""
+    from alphamind.execution.corporate_actions import integrate_ca_activity
+    from alphamind.execution.corporate_actions.types import CorporateActionActivity
+    from alphamind.portfolio_state.events.corporate_action import (
+        CorporateActionAppliedDetail,
+    )
+    from alphamind.state.invocation_context.activity_log import (
+        activity_log_entry_from_row,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position_cluster(
+        factory,
+        _make_open_options_position(contract_count=5.0, premium_paid_per_contract=250.0),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_active_bracket(),
+    )
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+
+    ca = CorporateActionActivity(
+        alpaca_activity_id="ca-cash-div-long-opt-1",
+        action_type=CorporateActionType.CASH_DIVIDEND_LONG,
+        ticker=Symbol("AAPL"),
+        new_ticker=None,
+        ratio_or_amount=0.50,
+        position_id=PositionId("pos-1"),
+        signed_cash_impact_usd=2.50,
+        transaction_time=_NOW - timedelta(minutes=5),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await integrate_ca_activity(handle, ca, alpaca_position_lookup=None)
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cash_row = (
+            await sess.execute(
+                select(CashLedgerRow).where(CashLedgerRow.id == CASH_LEDGER_SINGLETON_ID)
+            )
+        ).scalar_one()
+        assert cash_row.current_cash_usd == pytest.approx(_INITIAL_CASH + 2.50)
+
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert isinstance(pos.details, OptionsPositionDetails)
+        assert pos.details.contract_count == pytest.approx(5.0)
+        assert pos.details.premium_paid_per_contract == pytest.approx(250.0)
+        assert pos.corporate_action_adjustment_needed is True
+
+        bracket_row = (
+            await sess.execute(select(BracketRow).where(BracketRow.bracket_id == "brk-1"))
+        ).scalar_one()
+        assert bracket_row.status == BracketStatus.DISSOLVED.value
+
+        log_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.invocation_id == handle.invocation_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        type_counts: dict[str, int] = {}
+        for row in log_rows:
+            type_counts[row.event_type] = type_counts.get(row.event_type, 0) + 1
+        assert type_counts.get(EventType.CASH_CREDITED.value) == 1
+        assert type_counts.get(EventType.CORPORATE_ACTION_APPLIED.value) == 1
+        assert type_counts.get(EventType.BRACKET_CANCELLED_CORPORATE_ACTION.value) == 1
+
+        # The CORPORATE_ACTION_APPLIED payload must read the options branch of
+        # ``audit_metrics`` — contract count and per-contract premium — rather
+        # than silently emitting zeros (which would happen if the handler
+        # narrowed details to EquityPositionDetails and skipped the read).
+        applied_row = next(
+            r for r in log_rows if r.event_type == EventType.CORPORATE_ACTION_APPLIED.value
+        )
+        applied_detail = activity_log_entry_from_row(applied_row).detail
+        assert isinstance(applied_detail, CorporateActionAppliedDetail)
+        assert applied_detail.pre_action_quantity == pytest.approx(5.0)
+        assert applied_detail.post_action_quantity == pytest.approx(5.0)
+        assert float(applied_detail.pre_action_cost_basis) == pytest.approx(250.0)
+        assert float(applied_detail.post_action_cost_basis) == pytest.approx(250.0)
+
+        ledger_rows = (
+            (
+                await sess.execute(
+                    select(CorporateActionIntegrationLedgerRow).where(
+                        CorporateActionIntegrationLedgerRow.alpaca_activity_id
+                        == "ca-cash-div-long-opt-1"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(ledger_rows) == 1
+        assert ledger_rows[0].processing_status == CorporateActionLedgerStatus.PROCESSED.value
+
+
+async def test_cash_dividend_long_on_strategy_position_credits_and_preserves_legs(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """Long cash dividend on a multi-leg strategy position credits cash, flags
+    adjustment, cancels the bracket, writes the dedup row, and leaves each
+    leg's contract count + per-contract premium unchanged. Also asserts the
+    ``CORPORATE_ACTION_APPLIED`` payload reads leg 0's metrics via
+    ``audit_metrics``."""
+    from alphamind.execution.corporate_actions import integrate_ca_activity
+    from alphamind.execution.corporate_actions.types import CorporateActionActivity
+    from alphamind.portfolio_state.events.corporate_action import (
+        CorporateActionAppliedDetail,
+    )
+    from alphamind.state.invocation_context.activity_log import (
+        activity_log_entry_from_row,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position_cluster(
+        factory,
+        _make_open_strategy_position(),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_active_bracket(),
+    )
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+
+    ca = CorporateActionActivity(
+        alpaca_activity_id="ca-cash-div-long-strat-1",
+        action_type=CorporateActionType.CASH_DIVIDEND_LONG,
+        ticker=Symbol("AAPL"),
+        new_ticker=None,
+        ratio_or_amount=0.50,
+        position_id=PositionId("pos-1"),
+        signed_cash_impact_usd=2.50,
+        transaction_time=_NOW - timedelta(minutes=5),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await integrate_ca_activity(handle, ca, alpaca_position_lookup=None)
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cash_row = (
+            await sess.execute(
+                select(CashLedgerRow).where(CashLedgerRow.id == CASH_LEDGER_SINGLETON_ID)
+            )
+        ).scalar_one()
+        assert cash_row.current_cash_usd == pytest.approx(_INITIAL_CASH + 2.50)
+
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert isinstance(pos.details, StrategyPositionDetails)
+        # Each leg's contract count and per-contract premium unchanged across
+        # a cash dividend; only the adjustment flag flips.
+        assert pos.details.legs[0].options.contract_count == pytest.approx(5.0)
+        assert pos.details.legs[0].options.premium_paid_per_contract == pytest.approx(250.0)
+        assert pos.details.legs[1].options.contract_count == pytest.approx(5.0)
+        assert pos.details.legs[1].options.premium_paid_per_contract == pytest.approx(120.0)
+        assert pos.corporate_action_adjustment_needed is True
+
+        bracket_row = (
+            await sess.execute(select(BracketRow).where(BracketRow.bracket_id == "brk-1"))
+        ).scalar_one()
+        assert bracket_row.status == BracketStatus.DISSOLVED.value
+
+        log_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.invocation_id == handle.invocation_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        type_counts: dict[str, int] = {}
+        for row in log_rows:
+            type_counts[row.event_type] = type_counts.get(row.event_type, 0) + 1
+        assert type_counts.get(EventType.CASH_CREDITED.value) == 1
+        assert type_counts.get(EventType.CORPORATE_ACTION_APPLIED.value) == 1
+        assert type_counts.get(EventType.BRACKET_CANCELLED_CORPORATE_ACTION.value) == 1
+
+        # The CORPORATE_ACTION_APPLIED payload must read leg 0's metrics from
+        # the strategy branch of ``audit_metrics``. Leg 0 here is the long
+        # call (contract_count=5.0, premium=250.0); the short call's premium
+        # of 120.0 is intentionally not the surface (leg-0 is the
+        # representative sample, documented on ``audit_metrics``).
+        applied_row = next(
+            r for r in log_rows if r.event_type == EventType.CORPORATE_ACTION_APPLIED.value
+        )
+        applied_detail = activity_log_entry_from_row(applied_row).detail
+        assert isinstance(applied_detail, CorporateActionAppliedDetail)
+        assert applied_detail.pre_action_quantity == pytest.approx(5.0)
+        assert applied_detail.post_action_quantity == pytest.approx(5.0)
+        assert float(applied_detail.pre_action_cost_basis) == pytest.approx(250.0)
+        assert float(applied_detail.post_action_cost_basis) == pytest.approx(250.0)
+
+        ledger_rows = (
+            (
+                await sess.execute(
+                    select(CorporateActionIntegrationLedgerRow).where(
+                        CorporateActionIntegrationLedgerRow.alpaca_activity_id
+                        == "ca-cash-div-long-strat-1"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(ledger_rows) == 1
+        assert ledger_rows[0].processing_status == CorporateActionLedgerStatus.PROCESSED.value
