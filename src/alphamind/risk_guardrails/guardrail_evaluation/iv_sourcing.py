@@ -258,6 +258,15 @@ def _polygon_options_contract_ticker(
     ``O:{UNDERLYING}{YYMMDD}{C|P}{strike_milli:08d}`` — the strike is
     multiplied by 1000 and zero-padded to eight digits, rounded to avoid
     binary-float drift on values like ``12.50`` (12500.000000001 → 12500).
+
+    Precondition: ``underlying`` must already be the canonical uppercase
+    ticker string the collector writes (e.g., ``"AAPL"``). The function
+    does not normalize — a lower/mixed-case input produces an OCC string
+    that will not match any Polygon-written row and silently falls
+    through to the realized-vol path. This matches the sibling
+    ``occ_symbol_for_options`` convention (caller normalizes); every
+    callsite the guardrail library exercises today (``ProposedDelta``,
+    ``ExistingPosition``) is already uppercase-by-construction.
     """
     expiry = expiration.strftime("%y%m%d")
     cp = "C" if contract_type is ContractType.CALL else "P"
@@ -276,14 +285,34 @@ class SqlOptionsIvProvider:
     when both surface and fallback are empty.
 
     Sync-session-per-lookup so the synchronous ``IvProvider.lookup_iv``
-    Protocol holds in async contexts. SQLite reads on the indexed
-    ``contract_ticker`` PK return in microseconds; the brief block on
-    the asyncio loop is well within the breach-loop and Phase-1 budgets.
+    Protocol holds in async contexts. The brief block on the asyncio loop
+    is well within the breach-loop and Phase-1 budgets at current table
+    cardinality — the per-call query is ``WHERE contract_ticker = ?
+    ORDER BY snapshot_ts DESC LIMIT 1`` against the PK
+    ``(snapshot_ts, contract_ticker)``; SQLite scans the leading prefix
+    of the PK index, which is acceptable today but is the natural seam
+    if a dedicated ``contract_ticker`` index is later added. The
+    pre-existing batched async reader in
+    ``execution/continuous_monitor/greeks_refresh/iv_provider.py``
+    is the per-tick optimization seam if N+1-style lookups become hot.
     No interpolation across strikes/expirations — the production surface
     is dense enough at common strikes that exact-match coverage beats
     interpolation noise for the bulk of proposals; the realized-vol
     fallback covers gaps with the same scalar the legacy fixture path
     used.
+
+    ``as_of`` is intentionally discarded: the provider returns whatever
+    the latest snapshot is, irrespective of how stale it has become or
+    whether it postdates ``as_of``. This matches the sibling
+    ``fetch_iv_from_options_chains`` reader's contract and is correct for
+    live runs where ``as_of ~= now`` and the collector cron is healthy.
+    Two known limitations the surface does not detect: (a) a stalled
+    collector returns a stale IV labelled ``IvSource.SURFACE`` rather
+    than falling back, and (b) a replay invocation at a historical
+    ``as_of`` sees snapshots newer than that ``as_of``. A future
+    enhancement could filter ``snapshot_ts <= as_of`` and/or apply a
+    freshness ceiling; the current scope (ALP-642) preserves the
+    existing reader's "latest snapshot wins" semantics.
 
     The ``realized_vol`` mapping is held by reference so the daemon's
     24h in-place refresh in

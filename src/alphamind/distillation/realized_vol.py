@@ -1,8 +1,12 @@
 """Per-ticker realized-vol substrate (ALP-530).
 
 Stands up the missing producer that supplies a per-underlying scalar
-realized volatility to the IV-fallback consumer (``FixtureIvProvider``
-in ``risk_guardrails/guardrail_evaluation/iv_sourcing.py``).
+realized volatility to the IV-fallback consumer (``IvProvider``
+implementations in ``risk_guardrails/guardrail_evaluation/iv_sourcing.py``
+— both the ``FixtureIvProvider`` for tests/bootstrap and the
+production-side ``SqlOptionsIvProvider`` (ALP-642) that reads
+``options_contract_snapshots`` for surface hits and falls through here
+on miss).
 
 Three deliverables share this module:
 

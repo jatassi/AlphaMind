@@ -197,8 +197,9 @@ async def refresh_realized_vol_map_in_place(
     """Refresh ``shared_map`` from ``ticker_realized_vol`` in place.
 
     Both the harness ``MapVolLookup`` and the breach-loop
-    ``FixtureIvProvider`` hold the same dict reference; mutating
-    ``shared_map`` in place updates both consumers without re-construction.
+    ``SqlOptionsIvProvider`` (ALP-642) hold the same dict reference;
+    mutating ``shared_map`` in place updates both consumers without
+    re-construction.
 
     ``tickers`` restricts the fetch to a known underlying set (typically the
     monitor's open-position underlyings); pass ``None`` to fetch every
@@ -369,12 +370,12 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     calendar_cache = TradingCalendarCache(account_state_queries)
     supervisor = MonitorSupervisor(session=session, config=config)
     underlying_cache = register_underlying_stream_task(supervisor, repository=open_positions_reader)
-    # ALP-528/530 — one shared realized-vol dict feeds both the paper-mode
+    # ALP-528/530/642 — one shared realized-vol dict feeds both the paper-mode
     # enrichment wedge (via MapVolLookup) and the breach-loop's
-    # FixtureIvProvider. Pre-populate at startup so consumers see real
-    # values from the first invocation rather than an empty fallback path,
-    # and register a 24h refresh task so a multi-day monitor session does
-    # not drift on stale realized vol.
+    # SqlOptionsIvProvider (as its fallback channel). Pre-populate at startup
+    # so consumers see real values from the first invocation rather than an
+    # empty fallback path, and register a 24h refresh task so a multi-day
+    # monitor session does not drift on stale realized vol.
     realized_vol_map: dict[str, RealizedVolEntry] = {}
 
     def _open_position_underlyings() -> Sequence[str] | None:
