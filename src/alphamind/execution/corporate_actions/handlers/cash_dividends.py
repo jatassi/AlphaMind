@@ -21,7 +21,6 @@ from alphamind.portfolio_state.events.activity_log import (
     CashCreditReason,
     CashDebitReason,
 )
-from alphamind.portfolio_state.records.positions import EquityPositionDetails
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
@@ -31,6 +30,7 @@ from alphamind.state.tables.positions_codec import (
 )
 
 from ..types import AlpacaPositionLookup, CorporateActionActivity
+from ._handler_base import audit_metrics
 from ._shared import (
     _apply_signed_cash_movement,
     _cancel_bracket_for_corporate_action,
@@ -61,16 +61,14 @@ async def _apply_cash_dividend(
         )
         raise ValueError(msg)
     position = position_row_to_record(pos_row)
-    details = position.details
-    if not isinstance(details, EquityPositionDetails):
-        msg = (
-            f"cash dividend handler currently supports equity positions only; "
-            f"got {details.instrument_type!r}"
-        )
-        raise NotImplementedError(msg)
-
-    pre_qty = details.share_count
-    pre_basis = details.average_cost_basis_per_share
+    # Cash dividends leave quantity and basis unchanged for every instrument
+    # type per corporate-actions.md § action matrix — only the cash impact and
+    # the adjustment flag move. ``audit_metrics`` returns the audit-trail
+    # scalar pair for equity (shares/basis), options (contracts/premium), or
+    # strategies (leg-0 contracts/premium as a representative sample); since
+    # post-values equal pre-values for cash dividends, the same pair feeds
+    # both halves of the ``CORPORATE_ACTION_APPLIED`` payload below.
+    pre_qty, pre_basis = audit_metrics(position.details)
 
     await _apply_signed_cash_movement(
         handle,
