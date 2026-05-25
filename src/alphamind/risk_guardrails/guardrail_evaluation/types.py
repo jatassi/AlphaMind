@@ -405,6 +405,25 @@ class DeltaAdjustedExposure:
 
 
 @dataclass(frozen=True, slots=True)
+class ProposalContribution:
+    """One proposal's signed attribution toward a rule's projected value.
+
+    Returned by ``RuleSpec.contributors_from_batch`` for holistic rules
+    whose contributors cannot be derived by walking per-proposal
+    ``spec.contribute(...)`` (ALP-636). The proposal pre-processor wraps
+    each entry into a schema-side ``ContributorEntry``.
+
+    ``contribution`` semantics match the schema's contributor field: signed,
+    in the rule's units, positive when the proposal pushes the rule toward
+    breach. For ``position_max_size_pct`` it is the post-batch size of the
+    position the proposal shaped, as % of portfolio.
+    """
+
+    proposal_id: str
+    contribution: float
+
+
+@dataclass(frozen=True, slots=True)
 class FeatureDisabledRejection:
     """A proposal filtered by the feature-flag gate before the projection layer
     saw it.

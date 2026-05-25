@@ -380,6 +380,7 @@ def test_public_api_surface_matches_documented_re_exports() -> None:
         # Boundary outputs
         "DeltaAdjustedExposure",
         "FeatureDisabledRejection",
+        "ProposalContribution",
         "RuleProjection",
         "LibraryOutput",
         # IV-sourcing surface from story 02b

@@ -21,12 +21,18 @@ position). The rule uses an ``project_after_batch`` holistic projector that
 simulates the post-batch position book and computes the new max directly;
 its ``contribute`` is a no-op marker that the projection engine never reads.
 See ALP-621 for the bug this prevents.
+
+Holistic rules also need a non-trivial contributor surface: walking
+``spec.contribute`` per proposal yields the no-op zero (ALP-636). The
+``contributors_from_batch`` callable on this spec returns the proposals that
+shape the post-batch max position, each tagged with the post-batch max size.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 from alphamind.risk_guardrails.guardrail_evaluation.rules._helpers import (
     RuleSpec,
@@ -38,6 +44,7 @@ from alphamind.risk_guardrails.guardrail_evaluation.types import (
     DeltaAdjustedExposure,
     LibraryConfig,
     PortfolioStateSnapshot,
+    ProposalContribution,
     ProposedDelta,
 )
 
@@ -70,6 +77,20 @@ def _position_max_size_no_op_contribute(
     return 0.0
 
 
+@dataclass(slots=True)
+class _SimulatedPosition:
+    """One post-batch position's state during the position_max_size_pct simulation.
+
+    ``notional_usd`` is the absolute USD notional after every proposal in the
+    batch has been applied. ``proposal_ids`` collects the IDs of proposals that
+    touched this position (OPEN/ADD/ADJUST/CLOSE); used by
+    ``contributors_from_batch`` to attribute the post-batch max.
+    """
+
+    notional_usd: float
+    proposal_ids: list[str] = field(default_factory=list)
+
+
 def _position_max_size_project_after_batch(
     proposals: Sequence[tuple[ProposedDelta, DeltaAdjustedExposure]],
     state: PortfolioStateSnapshot,
@@ -97,19 +118,57 @@ def _position_max_size_project_after_batch(
     if portfolio_value_usd <= 0.0:
         return state.position_max_size_pct
 
-    post_batch_notionals = _simulate_post_batch_book(proposals, state)
-    if not post_batch_notionals:
+    post_batch_positions = _simulate_post_batch_book(proposals, state)
+    if not post_batch_positions:
         return 0.0
 
-    max_notional = max(post_batch_notionals)
+    max_notional = max(p.notional_usd for p in post_batch_positions)
     return max_notional / portfolio_value_usd * 100.0
+
+
+def _position_max_size_contributors_from_batch(
+    proposals: Sequence[tuple[ProposedDelta, DeltaAdjustedExposure]],
+    state: PortfolioStateSnapshot,
+    config: LibraryConfig,
+) -> tuple[ProposalContribution, ...]:
+    """Attribute the post-batch ``position_max_size_pct`` to the proposals that shaped it.
+
+    Walks the same simulation as ``_position_max_size_project_after_batch`` but
+    tracks which proposals touched each post-batch position. For each proposal
+    that shaped a position at the post-batch maximum, emits one
+    :class:`ProposalContribution` with ``contribution`` equal to the post-batch
+    max size as % of portfolio. A pre-existing position over the limit that no
+    proposal touched yields no contributors — the breach is from the existing
+    book, not the batch.
+
+    Same zero/empty-book guards as the projector.
+    """
+    portfolio_value_usd = state.portfolio_value_usd
+    if portfolio_value_usd <= 0.0:
+        return ()
+
+    post_batch_positions = _simulate_post_batch_book(proposals, state)
+    if not post_batch_positions:
+        return ()
+
+    max_notional = max(p.notional_usd for p in post_batch_positions)
+    if max_notional <= 0.0:
+        return ()
+    max_pct = max_notional / portfolio_value_usd * 100.0
+
+    return tuple(
+        ProposalContribution(proposal_id=pid, contribution=max_pct)
+        for position in post_batch_positions
+        if position.notional_usd == max_notional
+        for pid in position.proposal_ids
+    )
 
 
 def _simulate_post_batch_book(
     proposals: Sequence[tuple[ProposedDelta, DeltaAdjustedExposure]],
     state: PortfolioStateSnapshot,
-) -> list[float]:
-    """Return the list of post-batch position notionals (absolute USD).
+) -> list[_SimulatedPosition]:
+    """Return the list of post-batch positions (notional + shaping proposals).
 
     Simulation rules (mirror the DAE pipeline's action semantics):
 
@@ -125,13 +184,17 @@ def _simulate_post_batch_book(
       existing position's notional.
     * **CANCEL**: no effect on open-position notional.
 
+    Each position records the proposal IDs that touched it so the
+    contributor projector can attribute the post-batch max.
+
     Proposals whose ``existing_position_id`` doesn't resolve are skipped
     defensively — validation should have caught them upstream.
     """
-    existing_book: dict[str, float] = {
-        pid: abs(ep.notional_usd) for pid, ep in state.existing_positions.items()
+    existing_book: dict[str, _SimulatedPosition] = {
+        pid: _SimulatedPosition(notional_usd=abs(ep.notional_usd))
+        for pid, ep in state.existing_positions.items()
     }
-    opens: list[float] = []
+    opens: list[_SimulatedPosition] = []
     for proposal, _dae in proposals:
         _apply_proposal_to_book(proposal, existing_book, opens)
     return [*existing_book.values(), *opens]
@@ -139,8 +202,8 @@ def _simulate_post_batch_book(
 
 def _apply_proposal_to_book(
     proposal: ProposedDelta,
-    existing_book: dict[str, float],
-    opens: list[float],
+    existing_book: dict[str, _SimulatedPosition],
+    opens: list[_SimulatedPosition],
 ) -> None:
     """Apply one proposal's effect to the simulated post-batch book.
 
@@ -149,7 +212,12 @@ def _apply_proposal_to_book(
     """
     action = proposal.action
     if action is Action.OPEN:
-        opens.append(abs(float(proposal.notional_usd)))
+        opens.append(
+            _SimulatedPosition(
+                notional_usd=abs(float(proposal.notional_usd)),
+                proposal_ids=[proposal.id],
+            )
+        )
         return
     if action is Action.CANCEL:
         return
@@ -165,16 +233,20 @@ def _apply_proposal_to_book(
         )
         return
     proposal_notional = abs(float(proposal.notional_usd))
+    position = existing_book[pos_id]
     if action is Action.CLOSE:
-        remaining = existing_book[pos_id] - proposal_notional
+        remaining = position.notional_usd - proposal_notional
         if remaining <= 0.0:
             del existing_book[pos_id]
         else:
-            existing_book[pos_id] = remaining
+            position.notional_usd = remaining
+            position.proposal_ids.append(proposal.id)
     elif action is Action.ADJUST:
-        existing_book[pos_id] = proposal_notional
+        position.notional_usd = proposal_notional
+        position.proposal_ids.append(proposal.id)
     elif action is Action.ADD:
-        existing_book[pos_id] += proposal_notional
+        position.notional_usd += proposal_notional
+        position.proposal_ids.append(proposal.id)
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +369,7 @@ def exposure_specs() -> tuple[RuleSpec, ...]:
             read_current=_position_max_size_read_current,
             contribute=_position_max_size_no_op_contribute,
             project_after_batch=_position_max_size_project_after_batch,
+            contributors_from_batch=_position_max_size_contributors_from_batch,
             effective_limit_key="position_max_size_pct",
         ),
         RuleSpec(
