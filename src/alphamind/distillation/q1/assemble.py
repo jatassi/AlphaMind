@@ -581,6 +581,7 @@ def _trend_state_payload_for_ticker(
 
 def _compute_trend_state_per_ticker(
     *,
+    tickers: Sequence[str],
     bars_by_ticker: Mapping[str, Sequence[DailyBarRow]],
     baselines_atr: Mapping[str, TickerBaselineRow | None],
 ) -> tuple[dict[str, dict[str, Any]], CalibrationState, str | None]:
@@ -588,9 +589,11 @@ def _compute_trend_state_per_ticker(
 
     The per-ticker payload omits any ticker whose ATR baseline carries
     :attr:`CalibrationState.UNAVAILABLE` (ALP-630). The block-level state
-    is then derived from :func:`_block_state_from_baselines` — the same
-    path :func:`_build_indicator_group_blocks` uses for ``q1.technicals``
-    — so the header still reports the UNAVAILABLE state with a concrete
+    is then derived from :func:`_block_state_from_baselines` over the same
+    ``tickers`` :func:`_build_indicator_group_blocks` passes to the
+    ``q1.technicals`` path, so both blocks pick the same first-UNAVAILABLE
+    ticker for their header reason and the symmetry is structural rather
+    than coincidental. The header always reports a concrete
     ``baseline calibration_state=unavailable for {ticker}`` reason rather
     than the ``reason: None`` leak surfaced by the post-mortem.
     """
@@ -612,7 +615,7 @@ def _compute_trend_state_per_ticker(
             accumulating_reason = ticker_reason
 
     baseline_state, baseline_reason = _block_state_from_baselines(
-        tickers=tuple(sorted(bars_by_ticker)),
+        tickers=tickers,
         baselines=baselines_atr,
     )
     if baseline_state is CalibrationState.UNAVAILABLE:
@@ -980,6 +983,7 @@ def _build_indicator_group_blocks(
         )
 
     trend_payload, trend_state, trend_reason = _compute_trend_state_per_ticker(
+        tickers=ctx.tickers,
         bars_by_ticker=ctx.bars_by_ticker,
         baselines_atr=ctx.baselines_atr,
     )

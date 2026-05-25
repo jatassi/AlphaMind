@@ -36,14 +36,19 @@ _BAR_DAYS: int = 240
 
 
 def _build_bars(ticker: str, *, base_price: float = 100.0) -> list[DailyBarRow]:
-    """Return a deterministic ascending price series for ``ticker``."""
+    """Return a deterministic ascending price series for ``ticker``.
+
+    The ``period_start`` strings are monotonic sequential ordinals — compute
+    never parses them, only attaches them to the row, so a unique-but-opaque
+    label is enough.
+    """
     bars: list[DailyBarRow] = []
     for d in range(1, _BAR_DAYS + 1):
         close = base_price + d * 0.5
         bars.append(
             DailyBarRow(
                 ticker=ticker,
-                period_start=f"2026-{1 + d // 30:02d}-{1 + d % 28:02d}T00:00:00Z",
+                period_start=f"day-{d:04d}",
                 adj_open=close,
                 adj_high=close + 1.0,
                 adj_low=close - 1.0,
@@ -140,6 +145,7 @@ def test_compute_trend_state_per_ticker_skips_unavailable_ticker_and_keeps_block
         "COP": _calibrated_atr_baseline("COP"),
     }
     payload, block_state, block_reason = _compute_trend_state_per_ticker(
+        tickers=("APA", "COP", "CTRA"),
         bars_by_ticker=bars_by_ticker,
         baselines_atr=baselines_atr,
     )
@@ -169,6 +175,7 @@ def test_compute_trend_state_per_ticker_no_zero_default_ema_in_payload() -> None
         "CTRA": _unavailable_atr_baseline("CTRA"),
     }
     payload, _, _ = _compute_trend_state_per_ticker(
+        tickers=("APA", "CTRA"),
         bars_by_ticker=bars_by_ticker,
         baselines_atr=baselines_atr,
     )
@@ -230,12 +237,25 @@ def test_compute_technicals_per_ticker_skips_when_baseline_missing() -> None:
 
 
 def test_gap_trend_state_technicals_all_skip_unavailable_ticker() -> None:
-    """Parity: under the same UNAVAILABLE fixture all three modules omit the ticker.
+    """Observable parity under the production UNAVAILABLE fixture (AC4 c).
 
-    The fixture mirrors the observed e2e shape from
-    ``inv-20260520T235728Z-047a54ce`` — CTRA's baseline calibration_state is
-    ``unavailable`` and the other energy tickers are calibrated. Each module
-    must skip CTRA from its ``per_ticker`` payload.
+    Under the production fixture shape — CTRA's ATR baseline is
+    ``unavailable`` AND CTRA has no resolved/pending gap-fill events — all
+    three modules omit CTRA from ``per_ticker``. The three skip mechanisms
+    are deliberately distinct:
+
+    * ``q1.trend_state`` and ``q1.technicals`` (ALP-630): the new
+      ``_baseline_calibration_state(...) is UNAVAILABLE`` gate at the top
+      of each per-ticker compute function.
+    * ``q1.gap`` (pre-existing): the ``history_entry is None`` guard at
+      :func:`_compute_gap_per_ticker`. In production an
+      ``unavailable``-baseline ticker reliably co-occurs with an empty
+      ``gap_fill_event`` history (both shaped by the same upstream
+      collector outage), so the observable parity holds — but ``gap``
+      has no baseline-state-aware gate of its own. If a future change
+      gives an UNAVAILABLE ticker a non-empty gap-fill history, this
+      test will surface the divergence and ``gap`` will need its own
+      ALP-630-style fix.
     """
     tickers = ("APA", "COP", "CTRA")
     bars_by_ticker = {
@@ -249,10 +269,10 @@ def test_gap_trend_state_technicals_all_skip_unavailable_ticker() -> None:
         "CTRA": _unavailable_atr_baseline("CTRA"),
     }
     sector_per_ticker = _sectors_for(tickers)
-    # Gap-fill history present for the calibrated tickers; absent for CTRA so
-    # gap drops it via the existing ``history_entry is None`` guard. This
-    # matches the production shape where a newly-tracked / unavailable ticker
-    # has no resolved or pending gap events to seed gap-fill probability.
+    # CTRA's empty gap-fill history mirrors production: the same upstream
+    # collector outage that left CTRA's ATR baseline UNAVAILABLE also left
+    # gap-fill events un-populated, so ``_compute_gap_per_ticker`` drops the
+    # ticker via the existing ``history_entry is None`` guard.
     gap_history = {
         "APA": _calibrated_gap_history("APA"),
         "COP": _calibrated_gap_history("COP"),
@@ -265,6 +285,7 @@ def test_gap_trend_state_technicals_all_skip_unavailable_ticker() -> None:
         gap_fill_min_events=3,
     )
     trend_payload, _, _ = _compute_trend_state_per_ticker(
+        tickers=tickers,
         bars_by_ticker=bars_by_ticker,
         baselines_atr=baselines_atr,
     )
