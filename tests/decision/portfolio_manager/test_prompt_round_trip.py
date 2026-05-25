@@ -260,6 +260,81 @@ def test_canonical_antipattern_strings_present() -> None:
     )
 
 
+def _find_balanced_brace_end(body: str, brace_start: int) -> int:
+    """Walk JSON-aware balanced braces starting at ``brace_start`` and return end+1."""
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(brace_start, len(body)):
+        ch = body[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return -1
+
+
+def _iter_submit_envelope_payloads(body: str) -> list[dict[str, Any]]:
+    """Return every ``submit_envelope({...})`` payload literal embedded in ``body``."""
+    payloads: list[dict[str, Any]] = []
+    needle = "submit_envelope("
+    cursor = 0
+    while True:
+        idx = body.find(needle, cursor)
+        if idx < 0:
+            break
+        brace_start = body.find("{", idx + len(needle))
+        if brace_start < 0:
+            break
+        end = _find_balanced_brace_end(body, brace_start)
+        if end < 0:
+            break
+        payloads.append(dict(json.loads(body[brace_start:end])))
+        cursor = end
+    return payloads
+
+
+def test_pm_prompt_demonstrates_override_envelope() -> None:
+    """At least one ``<envelope>``-equivalent example in <example_output> demonstrates
+    the ``override_with_corrective_action`` verdict — Finding 2 of the Wave-2 audit.
+
+    Without a fully-authored override example, the verdict's wire shape (the four
+    invariants — embedded command type, empty modifications, non-empty concerns,
+    non-empty commands) is only documented in prose; the LLM has no concrete
+    template to mirror. The example block must contain an envelope payload
+    whose ``verdict == "override_with_corrective_action"``.
+    """
+    prompt = _read_prompt()
+    eo = _EXAMPLE_OUTPUT_RE.search(prompt)
+    assert eo is not None, "prompts/decision/pm.md is missing an <example_output> block."
+    body = eo.group(1)
+    payloads = _iter_submit_envelope_payloads(body)
+    override_envelopes = [
+        payload
+        for payload in payloads
+        if _ENVELOPE_ADAPTER.validate_python(payload).verdict == "override_with_corrective_action"
+    ]
+    assert override_envelopes, (
+        "<example_output> in prompts/decision/pm.md must contain at least one "
+        "`submit_envelope(...)` example whose verdict is "
+        "`override_with_corrective_action`. Without a concrete authoring example "
+        "the LLM has no template for the verdict's four invariants."
+    )
+
+
 def test_prompt_documents_override_with_corrective_action_verdict() -> None:
     """The PM prompt names override_with_corrective_action, states its choice
     rule, contrasts it with the three other verdicts, and references the

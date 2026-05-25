@@ -309,6 +309,47 @@ When you modify an exposure-changing parameter, the validated `delta_adjusted_ex
   })
   </tool_call>
 </example>
+
+<example>
+  <context>Strategist assessed POS-JPM-001 (in a multi-position size breach) and recommended HOLD with a signal-grounded `status_rationale` that correctly classified the position as `at-risk` (the analysis is right). The strategist could not validate a standalone reduce because sibling oversized financials positions keep `position_max_size_pct` red until the package is applied as a unit. The PM agrees with the diagnosis but the proposed HOLD action is structurally wrong: the breach demands a coordinated reduce, and the corrective commands require PM authorship (no existing strategist command to modify). Before submitting, the PM calls `validate_guardrail_batch` with the multi-position reduce package and receives aggregate `PASS`.</context>
+
+  <tool_call>
+  Example submit_envelope call — ENV-SA-2 (override_with_corrective_action, one CLOSE command). Demonstrates the verdict's full shape: at least one concern citing the structural-state disagreement, at least one corrective `close` / `adjust` / `cancel` command (never `open` / `add`), and empty `modifications`. The rationale narrative names the structural state (size breach) and references the batch-validation step.
+  submit_envelope({
+    "envelope_id": "ENV-SA-2",
+    "invocation_id": "inv-2026-04-23T14-30Z",
+    "source_provenance": "pm_strategist",
+    "source_recommendation_id": "SA-2",
+    "recommendation_type": "position_assessment",
+    "position_id": "POS-JPM-001",
+    "verdict": "override_with_corrective_action",
+    "evaluation": {
+      "status_classification_warrant": { "status": "pass" },
+      "action_status_alignment": { "status": "fail", "note": "Hold inappropriate given position_max_size_pct breach across financials." },
+      "action_specific_justification": { "status": "pass" },
+      "portfolio_coherence": { "status": "fail", "note": "Sibling oversized financials positions keep the rule red; coordinated reduce required." }
+    },
+    "modifications": [],
+    "concerns": [
+      {
+        "source": "action_status_alignment",
+        "summary": "Strategist's signal-grounded at-risk classification is correct, but HOLD ignores the active position_max_size_pct breach. A coordinated reduce across the financials cluster is required to cure the breach; no standalone reduce validates because sibling positions keep the portfolio-scoped rule red."
+      }
+    ],
+    "rationale_narrative": "Override of the strategist's HOLD on POS-JPM-001. Diagnosis is right (at-risk classification holds), action is wrong (structural state demands a coordinated reduce, not hold). Authored the corrective close as part of a multi-position reduce package and validated the package via `validate_guardrail_batch` — aggregate PASS confirmed position_max_size_pct cures when the full package applies. Submitting the JPM leg here; sibling envelopes carry the remaining legs.",
+    "commands": [
+      {
+        "command_type": "close",
+        "position_id": "POS-JPM-001",
+        "quantity": 40,
+        "order_type": "market",
+        "close_rationale_type": "risk_management",
+        "risk_management_subtype": "pm_directed"
+      }
+    ]
+  })
+  </tool_call>
+</example>
 </example_output>
 
 <constraints>
