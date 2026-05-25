@@ -780,9 +780,7 @@ class TestAtrRegimeLabelAndTag:
             ticker="AAPL", atr=1.8, atr_baseline=baseline
         )
         assert state is CalibrationState.UNAVAILABLE
-        assert reason is not None
-        assert "AAPL" in reason
-        assert "unavailable" in reason
+        assert reason == "atr_baseline calibration_state=unavailable for AAPL"
 
     def test_accumulating_baseline_returns_accumulating_with_observation_count(self) -> None:
         baseline = self._baseline(

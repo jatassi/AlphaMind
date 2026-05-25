@@ -690,6 +690,13 @@ def test_operator_summary_counts_match_per_state_array_lengths(tmp_path: Path) -
             audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
             state=CalibrationState.CALIBRATED,
         ),
+        # A second distinct calibrated module — confirms calibrated dedupe
+        # keys on block_id, not on block identity.
+        _block(
+            block_id="q1.divergence_flags",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.CALIBRATED,
+        ),
     )
     outputs = _build_outputs(blocks=blocks)
     path = write_operator_data_health_summary(
@@ -702,7 +709,7 @@ def test_operator_summary_counts_match_per_state_array_lengths(tmp_path: Path) -
     assert payload["summary"]["unavailable"] == 1
     assert payload["summary"]["accumulating"] == 1
     # Calibrated has no per-state array; dedupe distinct module ids.
-    assert payload["summary"]["calibrated"] == 1
+    assert payload["summary"]["calibrated"] == 2
 
 
 def test_operator_summary_writes_to_archive_root_invocation_path(tmp_path: Path) -> None:

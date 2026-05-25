@@ -248,8 +248,10 @@ def _operator_summary_payload(outputs: DistillationOutputs, invocation_id: str) 
 
     unavailable = _per_block(CalibrationState.UNAVAILABLE)
     accumulating = _per_block(CalibrationState.ACCUMULATING)
-    # Calibrated has no per-state array; dedupe on module id alone to match
-    # the operator-facing semantic that one module ↔ one summary count.
+    # Calibrated blocks carry no reason, so the (module, reason) dedupe
+    # key used for the non-calibrated arrays collapses to module-id alone
+    # here. The operator-facing semantic — one module ↔ one summary count
+    # — applies uniformly across all three states.
     calibrated_modules = {
         block.block_id
         for block in sorted_blocks
