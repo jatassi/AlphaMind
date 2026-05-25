@@ -326,7 +326,30 @@ def _render_aggregate_block(strategist_view: StrategistView) -> str:
 def _render_aggregate_pnl_line(pnl: PortfolioPnL) -> str:
     intraday = format_dollar(pnl.daily_total_pnl_usd)
     cumulative = format_dollar(pnl.cumulative_realized_pnl_usd)
-    return f"  Portfolio P/L: intraday {intraday}, cumulative realized {cumulative}"
+    # ALP-654 — name each feedback-loop metric explicitly. When the underlying
+    # value is None (deferred until the feedback-loop story populates a richer
+    # aggregation surface) the renderer emits "not yet computed" rather than
+    # silently omitting the metric, so the LLM can distinguish "we don't compute
+    # this" from "this metric doesn't apply".
+    win_rate = f"{pnl.win_rate_pct:.1f}%" if pnl.win_rate_pct is not None else "not yet computed"
+    profit_factor = (
+        f"{pnl.profit_factor:.2f}" if pnl.profit_factor is not None else "not yet computed"
+    )
+    avg_win = (
+        format_dollar(pnl.average_win_size_usd)
+        if pnl.average_win_size_usd is not None
+        else "not yet computed"
+    )
+    avg_loss = (
+        format_dollar(pnl.average_loss_size_usd)
+        if pnl.average_loss_size_usd is not None
+        else "not yet computed"
+    )
+    return (
+        f"  Portfolio P/L: intraday {intraday}, cumulative realized {cumulative}\n"
+        f"  Trade stats: win rate: {win_rate}; profit factor: {profit_factor}; "
+        f"avg win: {avg_win}; avg loss: {avg_loss}"
+    )
 
 
 def _render_aggregate_drawdown_line(drawdown: DrawdownState) -> str:

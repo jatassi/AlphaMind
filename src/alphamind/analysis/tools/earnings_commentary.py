@@ -37,6 +37,7 @@ __all__ = [
     "EarningsCommentaryInput",
     "EarningsCommentaryOutput",
     "EarningsResult",
+    "NotCollected",
     "PostEarningsActivity",
     "PriceReaction",
     "RatingChange",
@@ -44,6 +45,7 @@ __all__ = [
 ]
 
 _STALE_THRESHOLD_DAYS = 90
+_RATING_CHANGES_DEFERRED_REASON = "analyst-rating ingestion not yet shipped"
 
 
 # ---------------------------------------------------------------------------
@@ -79,10 +81,22 @@ class RatingChange(BaseModel, frozen=True):
     new_target: float | None
 
 
+class NotCollected(BaseModel, frozen=True):
+    """LLM-facing sentinel that distinguishes "data not yet collected" from
+    a factual empty value (ALP-654). When a field's source ingestion has
+    not shipped yet, the producer emits this instead of a default-shaped
+    empty so the agent can tell "we don't have this data" from "this data
+    exists and is empty".
+    """
+
+    status: Literal["not_collected"] = "not_collected"
+    reason: str
+
+
 class PostEarningsActivity(BaseModel, frozen=True):
     estimate_revisions_since: int
     revision_direction: Literal["up", "down", "mixed", "none"]
-    rating_changes_since: tuple[RatingChange, ...]
+    rating_changes_since: tuple[RatingChange, ...] | NotCollected
 
 
 class EarningsCommentaryOutput(ToolEnvelope, frozen=True):
@@ -117,7 +131,9 @@ def _zero_price_reaction() -> PriceReaction:
 
 def _zero_post_earnings() -> PostEarningsActivity:
     return PostEarningsActivity(
-        estimate_revisions_since=0, revision_direction="none", rating_changes_since=()
+        estimate_revisions_since=0,
+        revision_direction="none",
+        rating_changes_since=NotCollected(reason=_RATING_CHANGES_DEFERRED_REASON),
     )
 
 
@@ -266,10 +282,13 @@ def _build_post_earnings_activity(
     ).all()
 
     pairs = [(row.consensus_value, row.prior_consensus_value) for row in revision_rows]
+    # ``rating_changes_since`` is union[tuple[RatingChange, ...], NotCollected] —
+    # the deferred sentinel keeps the LLM-facing JSON honest about absent
+    # data until analyst-rating ingestion lands.
     return PostEarningsActivity(
         estimate_revisions_since=len(revision_rows),
         revision_direction=_revision_direction(pairs),
-        rating_changes_since=(),  # deferred: populates when analyst-rating ingestion lands
+        rating_changes_since=NotCollected(reason=_RATING_CHANGES_DEFERRED_REASON),
     )
 
 
