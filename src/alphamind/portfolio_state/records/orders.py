@@ -17,6 +17,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import Price
 from alphamind.portfolio_state.records.positions import InstrumentType, OptionContractType
 
 
@@ -194,8 +195,8 @@ InstrumentSpec = EquityInstrumentSpec | OptionsInstrumentSpec | StrategyInstrume
 class PriceParameters:
     """Price parameters for an order; cross-validation is enforced at OrderRecord level."""
 
-    limit_price: float | None = None
-    stop_trigger_price: float | None = None
+    limit_price: Price | None = None
+    stop_trigger_price: Price | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -14,7 +14,6 @@ from alphamind.execution.write_paths.phase2._shared import (
     _order_direction_for_close,
     _order_position_direction,
     _position_ticker,
-    _price_to_float,
 )
 from alphamind.portfolio_state.events.activity_log import EventSource
 from alphamind.portfolio_state.records.orders import (
@@ -108,7 +107,7 @@ async def _writeback_close(
 
     if command.order_type == "limit":
         order_type = OrderType.LIMIT
-        price_parameters = PriceParameters(limit_price=_price_to_float(command.limit_price))
+        price_parameters = PriceParameters(limit_price=command.limit_price)
     else:
         order_type = OrderType.MARKET
         price_parameters = PriceParameters()

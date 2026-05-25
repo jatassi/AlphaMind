@@ -1287,7 +1287,7 @@ async def _seed_pending_protective_order(
         direction=OrderDirection.SELL,
         order_type=OrderType.STOP,
         order_class=OrderClass.OTO,
-        price_parameters=PriceParameters(stop_trigger_price=140.0),
+        price_parameters=PriceParameters(stop_trigger_price=price("140.0")),
         quantity=10.0,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
@@ -1635,7 +1635,7 @@ async def test_cancel_command_releases_capital_from_order_notional(
         direction=OrderDirection.BUY,
         order_type=OrderType.LIMIT,
         order_class=OrderClass.BRACKET,
-        price_parameters=PriceParameters(limit_price=50.0),
+        price_parameters=PriceParameters(limit_price=price("50.0")),
         quantity=100.0,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
@@ -1720,7 +1720,7 @@ async def test_cancel_command_on_protective_leg_does_not_release_capital(
         direction=OrderDirection.SELL,
         order_type=OrderType.STOP,
         order_class=OrderClass.OTO,
-        price_parameters=PriceParameters(stop_trigger_price=140.0),
+        price_parameters=PriceParameters(stop_trigger_price=price("140.0")),
         quantity=10.0,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
@@ -1877,7 +1877,7 @@ async def test_adjust_command_cancels_old_protective_order_and_submits_new(
         direction=OrderDirection.SELL,
         order_type=OrderType.STOP,
         order_class=OrderClass.OTO,
-        price_parameters=PriceParameters(stop_trigger_price=140.0),
+        price_parameters=PriceParameters(stop_trigger_price=price("140.0")),
         quantity=10.0,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
@@ -2005,9 +2005,11 @@ async def test_adjust_stop_only_leaves_take_profit_leg_pending(
         )
 
     old_stop = _build(
-        "ord-old-stop", OrderRole.PRICE_STOP, PriceParameters(stop_trigger_price=140.0)
+        "ord-old-stop", OrderRole.PRICE_STOP, PriceParameters(stop_trigger_price=price("140.0"))
     )
-    old_target = _build("ord-old-target", OrderRole.TAKE_PROFIT, PriceParameters(limit_price=200.0))
+    old_target = _build(
+        "ord-old-target", OrderRole.TAKE_PROFIT, PriceParameters(limit_price=price("200.0"))
+    )
     await _seed_position_cluster(
         factory,
         _open_position(),
@@ -2405,7 +2407,7 @@ async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(
         direction=OrderDirection.BUY,
         order_type=OrderType.LIMIT,
         order_class=OrderClass.BRACKET,
-        price_parameters=PriceParameters(limit_price=100.0),
+        price_parameters=PriceParameters(limit_price=price("100.0")),
         quantity=10.0,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
@@ -2430,7 +2432,7 @@ async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(
         direction=OrderDirection.SELL,
         order_type=OrderType.STOP,
         order_class=OrderClass.OTO,
-        price_parameters=PriceParameters(stop_trigger_price=140.0),
+        price_parameters=PriceParameters(stop_trigger_price=price("140.0")),
         quantity=10.0,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,

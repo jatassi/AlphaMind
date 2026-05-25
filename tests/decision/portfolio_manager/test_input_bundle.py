@@ -13,7 +13,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
-from alphamind._kernel.money import money, price, signed_money
+from alphamind._kernel.money import Price, money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -577,7 +577,9 @@ def _make_pending_order(
         instrument_spec=spec,
         direction=OrderDirection.BUY_TO_OPEN,
         order_type=OrderType.LIMIT,
-        price_parameters=PriceParameters(limit_price=limit_price, stop_trigger_price=None),
+        price_parameters=PriceParameters(
+            limit_price=price(str(limit_price)), stop_trigger_price=None
+        ),
         quantity=10.0,
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
@@ -850,8 +852,8 @@ def _make_pre_processor_bundle() -> ProposalPreProcessorBundle:
     )
 
 
-def _current_price_lookup(ticker: str) -> float:
-    return {"NVDA": 820.0, "AAPL": 175.0, "AMD": 145.0}[ticker]
+def _current_price_lookup(ticker: str) -> Price:
+    return price({"NVDA": "820.0", "AAPL": "175.0", "AMD": "145.0"}[ticker])
 
 
 def _normal_kwargs(

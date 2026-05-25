@@ -25,6 +25,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import decimal_json_default, price
 from alphamind.portfolio_state.records.orders import (
     EquityInstrumentSpec,
     InstrumentSpec,
@@ -91,14 +92,19 @@ def _instrument_spec_from_dict(payload: dict[str, Any]) -> InstrumentSpec:
 
 
 def _price_parameters_to_json(pp: PriceParameters) -> str:
-    return json.dumps({"limit_price": pp.limit_price, "stop_trigger_price": pp.stop_trigger_price})
+    return json.dumps(
+        {"limit_price": pp.limit_price, "stop_trigger_price": pp.stop_trigger_price},
+        default=decimal_json_default,
+    )
 
 
 def _price_parameters_from_json(payload: str) -> PriceParameters:
     raw = json.loads(payload)
+    limit_raw = raw.get("limit_price")
+    stop_raw = raw.get("stop_trigger_price")
     return PriceParameters(
-        limit_price=raw.get("limit_price"),
-        stop_trigger_price=raw.get("stop_trigger_price"),
+        limit_price=price(limit_raw) if limit_raw is not None else None,
+        stop_trigger_price=price(stop_raw) if stop_raw is not None else None,
     )
 
 

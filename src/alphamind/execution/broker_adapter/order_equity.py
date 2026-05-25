@@ -33,6 +33,7 @@ from alpaca.trading.requests import (
 )
 
 from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId
+from alphamind._kernel.money import Price
 from alphamind.commands.command_models import (
     AddCommand,
     CloseCommand,
@@ -120,18 +121,8 @@ async def submit_equity_open(
             symbol=ticker,
             qty=qty,
             side=side,
-            # ALP-462 — Price → float at the Alpaca SDK boundary; alpaca-py
-            # accepts floats and round-trips with string-typed response fields.
-            limit_price=(
-                float(command.entry_order.limit_price)
-                if command.entry_order.limit_price is not None
-                else None
-            ),
-            stop_price=(
-                float(command.entry_order.stop_price)
-                if command.entry_order.stop_price is not None
-                else None
-            ),
+            limit_price=command.entry_order.limit_price,
+            stop_price=command.entry_order.stop_price,
             order_class=order_class,
             take_profit=take_profit,
             stop_loss=stop_loss,
@@ -166,17 +157,8 @@ async def submit_equity_add(
             symbol=symbol,
             qty=command.additional_quantity,
             side=side,
-            # ALP-462 — Price → float at the Alpaca SDK boundary.
-            limit_price=(
-                float(command.entry_order.limit_price)
-                if command.entry_order.limit_price is not None
-                else None
-            ),
-            stop_price=(
-                float(command.entry_order.stop_price)
-                if command.entry_order.stop_price is not None
-                else None
-            ),
+            limit_price=command.entry_order.limit_price,
+            stop_price=command.entry_order.stop_price,
             order_class=OrderClass.SIMPLE,
             take_profit=None,
             stop_loss=None,
@@ -210,13 +192,17 @@ async def submit_equity_close(
     qty = position_qty if command.quantity == "all" else float(command.quantity)
 
     if command.order_type == "limit":
+        if command.limit_price is None:
+            msg = "CloseCommand order_type=limit requires limit_price"
+            raise ValueError(msg)
         request: OrderRequest = LimitOrderRequest(
             symbol=symbol,
             qty=qty,
             side=side,
             time_in_force=TimeInForce.DAY,
             order_class=OrderClass.SIMPLE,
-            limit_price=command.limit_price,
+            # Price → float at the Alpaca SDK boundary.
+            limit_price=float(command.limit_price),
             client_order_id=client_order_id,
         )
     else:
@@ -298,8 +284,8 @@ class _EntryParams:
     symbol: str
     qty: float
     side: OrderSide
-    limit_price: float | None
-    stop_price: float | None
+    limit_price: Price | None
+    stop_price: Price | None
     order_class: OrderClass
     take_profit: TakeProfitRequest | None
     stop_loss: StopLossRequest | None
@@ -321,13 +307,16 @@ def _build_entry_request(params: _EntryParams) -> OrderRequest:
     if params.stop_loss is not None:
         common["stop_loss"] = params.stop_loss
 
+    # Price → float at the Alpaca SDK boundary.
+    limit_price_float = float(params.limit_price) if params.limit_price is not None else None
+    stop_price_float = float(params.stop_price) if params.stop_price is not None else None
     if params.entry_type == "market":
         return MarketOrderRequest(**common)
     if params.entry_type == "limit":
-        return LimitOrderRequest(limit_price=params.limit_price, **common)
+        return LimitOrderRequest(limit_price=limit_price_float, **common)
     if params.entry_type == "stop_limit":
         return StopLimitOrderRequest(
-            limit_price=params.limit_price, stop_price=params.stop_price, **common
+            limit_price=limit_price_float, stop_price=stop_price_float, **common
         )
     raise ValueError(f"Unsupported entry order type: {params.entry_type!r}")
 

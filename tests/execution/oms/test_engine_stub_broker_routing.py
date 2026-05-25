@@ -1510,8 +1510,16 @@ def _seed_pending_protective_orders(
         )
 
     rows = (
-        _build("ord-stop", OrderRole.PRICE_STOP, PriceParameters(stop_trigger_price=140.0)),
-        _build("ord-target", OrderRole.TAKE_PROFIT, PriceParameters(limit_price=200.0)),
+        _build(
+            "ord-stop",
+            OrderRole.PRICE_STOP,
+            PriceParameters(stop_trigger_price=price("140.0")),
+        ),
+        _build(
+            "ord-target",
+            OrderRole.TAKE_PROFIT,
+            PriceParameters(limit_price=price("200.0")),
+        ),
     )
 
     async def _seed() -> None:

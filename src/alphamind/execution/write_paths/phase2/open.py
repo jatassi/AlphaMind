@@ -37,7 +37,6 @@ from alphamind.execution.write_paths.phase2._shared import (
     _instrument_ticker_key,
     _order_direction_for_close,
     _order_position_direction,
-    _price_to_float,
     _reserve_capital,
 )
 from alphamind.portfolio_state.events.activity_log import (
@@ -340,7 +339,7 @@ def _build_take_profit_order(  # noqa: PLR0913 — distinct identifiers + sizing
         price_parameters = PriceParameters()
     else:
         order_type = OrderType.LIMIT
-        price_parameters = PriceParameters(limit_price=_price_to_float(target.price))
+        price_parameters = PriceParameters(limit_price=target.price)
     return _build_pending_order(
         order_id=order_id,
         position_id=position_id,
@@ -374,10 +373,10 @@ def _build_invalidation_leg_order(  # noqa: PLR0913 — leg construction threads
     """Build the persisted protective-leg order for a price/time invalidation leg."""
     persisted_order_type = _BRACKET_ORDER_TYPE_TO_PERSISTED[wire_leg.order_parameters.order_type]
     if isinstance(wire_leg, PriceLeg):
-        trigger_price = _price_to_float(wire_leg.condition.trigger_price)
+        trigger_price = wire_leg.condition.trigger_price
         if persisted_order_type == OrderType.STOP_LIMIT:
             price_parameters = PriceParameters(
-                limit_price=_price_to_float(wire_leg.order_parameters.limit_price),
+                limit_price=wire_leg.order_parameters.limit_price,
                 stop_trigger_price=trigger_price,
             )
         else:

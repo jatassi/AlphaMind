@@ -40,6 +40,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import price
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
@@ -333,7 +334,7 @@ class TestRoundTripCodec:
             order_id=OrderId("ord-partial"),
             position_id=PositionId("pos-1"),
             order_type=OrderType.LIMIT,
-            price_parameters=PriceParameters(limit_price=152.5, stop_trigger_price=None),
+            price_parameters=PriceParameters(limit_price=price("152.5"), stop_trigger_price=None),
             status=OrderStatus.PARTIALLY_FILLED,
             alpaca_order_id=AlpacaOrderId("alp-2"),
             alpaca_order_id_chain=("alp-1", "alp-2"),
