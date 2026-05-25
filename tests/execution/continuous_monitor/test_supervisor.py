@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
+import sys
 from datetime import UTC, datetime
 
 import pytest
@@ -140,6 +141,13 @@ class TestSupervisorRunPropagatesTaskException:
 
 
 class TestSupervisorSignalHandlers:
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason=(
+            "add_signal_handler is POSIX-only; Windows ProactorEventLoop uses "
+            "a different shutdown path"
+        ),
+    )
     async def test_run_installs_sigint_and_sigterm_handlers_during_run(self) -> None:
         loop = asyncio.get_running_loop()
         seen: dict[str, bool] = {"sigint": False, "sigterm": False}

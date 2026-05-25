@@ -37,8 +37,8 @@ class TestConfigurePipelineLogging:
         isolated_logger: logging.Logger,
     ) -> None:
         # Redirect $HOME so we don't touch the operator's real logs dir.
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.delenv("USERPROFILE", raising=False)
 
         configure_pipeline_logging()
 
@@ -71,8 +71,8 @@ class TestConfigurePipelineLogging:
         monkeypatch: pytest.MonkeyPatch,
         isolated_logger: logging.Logger,
     ) -> None:
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.delenv("USERPROFILE", raising=False)
 
         configure_pipeline_logging()
         configure_pipeline_logging()
@@ -86,8 +86,8 @@ class TestConfigurePipelineLogging:
         monkeypatch: pytest.MonkeyPatch,
         isolated_logger: logging.Logger,
     ) -> None:
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.delenv("USERPROFILE", raising=False)
         assert not (tmp_path / "AlphaMind" / "logs").exists()
 
         configure_pipeline_logging()
@@ -103,8 +103,8 @@ class TestConfigurePipelineLogging:
         # The named logger that receives the handler must be "alphamind" so
         # descendant loggers (collector, monitor, scheduler modules) propagate
         # into the same file handler.
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.delenv("USERPROFILE", raising=False)
         configure_pipeline_logging()
 
         assert any(

@@ -295,7 +295,7 @@ Anything else, fix now.
 
 When the triage list is empty, record that explicitly ("Pre-review triage: no addressable deferrals") and proceed to the drift-check.
 
-### 3. Wait for CI green on the PR
+### 3. Wait for CI green on the PR — and iterate until it IS green
 
 The `ci` workflow runs on every PR push: lint chain on Linux, full pytest suite on Windows (matches production). It is the authoritative full-suite gate; this skill no longer runs the full suite locally. Watch the PR run:
 
@@ -303,11 +303,19 @@ The `ci` workflow runs on every PR push: lint chain on Linux, full pytest suite 
 gh pr checks <PR number> --watch
 ```
 
-`gh pr checks --watch` polls until every check has a terminal state. When the `ci` workflow returns green, proceed to /review. If it fails:
+`gh pr checks --watch` polls until every check has a terminal state. **This step is not "wait once and proceed regardless" — it is an iteration loop.** Stay in the loop until CI is green:
 
-- **Lint failure** — the wave-end lint chain should have caught this; if it didn't, the failure is in a path the wave-end gate didn't fully cover. Read the CI log, fix on the feature branch, commit as `fix(<feature>): address CI lint failure in <area>`, push.
-- **Test failure on Windows that you can't reproduce locally** — the failure is platform-specific (path separators, file-handle behavior, line endings, timezone-naive datetime drift). Read the failing test's full traceback from the CI log. Reproduce by running the scoped pytest path locally if you can; if not, the fix is informed by reading the test and the production code under suspicion. Commit and push. Do not advance to /review on a failing CI run.
-- **Test failure that looks flaky** — re-run via `gh run rerun <run ID>`. If it persists, treat as a real failure (xdist flake from shared global state — bisect per CLAUDE.md "Testing" guidance on test-order dependence). Do not advance to /review on intermittent flakes; bisect the offending test.
+1. Watch the run to completion.
+2. **If green:** proceed to /review (step 4).
+3. **If red:** read the failure log via `gh run view <run ID> --log-failed --job <job ID>`. Diagnose. Fix on the feature branch. Commit with a `fix(<feature>): address CI <category> failure in <area>` message. Push. Go back to step 1 — the push triggers a fresh CI run that you must watch to completion.
+4. **Do not declare the post-completion sequence done while CI is red.** Do not advance to /review. Do not merge. Do not move on to the next feature. The orchestration is not complete until CI is green on the latest pushed commit.
+
+**Failure-class diagnosis:**
+
+- **Lint failure** — the wave-end lint chain should have caught this; if it didn't, the failure is in a path the wave-end gate didn't fully cover. Read the CI log, fix on the feature branch, commit as `fix(<feature>): address CI lint failure in <area>`, push. Re-watch.
+- **Test failure on Windows that you can't reproduce locally** — the failure is platform-specific (path separators, file-handle behavior, line endings, timezone-naive datetime drift, signal handling, `cp1252` default text encoding, missing env vars CI doesn't have, Unix-only stdlib modules like `fcntl`). Read the failing test's full traceback from the CI log. Reproduce by running the scoped pytest path locally if you can; if not, the fix is informed by reading the test and the production code under suspicion. Commit and push. Re-watch.
+- **Test failure that looks flaky** — re-run via `gh run rerun <run ID> --failed`. If it persists, treat as a real failure (xdist flake from shared global state — bisect per CLAUDE.md "Testing" guidance on test-order dependence). Bisect the offending test; fix; push; re-watch.
+- **Pre-existing failure orthogonal to this feature's work** — if the failure is in code/tests this feature didn't touch and is reproducible on `main` itself (verify by checking the most recent push-to-main CI run on origin/main), surface to the operator with the diagnosis. Open a Linear issue under "To-dos" describing the symptom + scope, and xfail (or skip-with-reason) the offending test in this PR with `reason="ALP-<new-issue-id>: ..."` so this PR's CI goes green without masking the real bug. Do NOT silently downgrade an in-scope failure to "pre-existing" — verify against main first. Do NOT xfail without an open tracking issue.
 
 Pair the wait with a final local lint sanity (cheap, catches anything that drifted between wave-end and now):
 
@@ -315,7 +323,7 @@ Pair the wait with a final local lint sanity (cheap, catches anything that drift
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports
 ```
 
-When CI is green and local lint is clean, proceed to /review.
+When CI is green on the latest pushed commit and local lint is clean, proceed to /review.
 
 ### 4. Spawn /review subagent
 
@@ -452,6 +460,7 @@ Surface blockers immediately, do not work around them:
 - **Do not exceed 6 concurrent active subagents.** Sub-wave instead.
 - **Do not let a subagent disable a linter rule without triage** per `feedback_lint_suppression_triage`. Re-dispatch if a subagent suppressed without warrant.
 - **Do not skip the post-completion sequence** even if the operator seems to want a fast wrap. The TaskCreate entries exist precisely to defeat that drift; verify each is `completed` before reporting done.
+- **Do not abandon the CI-watch loop while CI is red on the latest pushed commit.** The step is "wait for CI green and iterate until it IS" (completion-sequence step 3). Failures caused by this work tree's changes get fixed on the feature branch and re-pushed until the run goes green. Pre-existing failures orthogonal to this feature get a Linear ticket + xfail with the ticket ID. There is no "merge red" or "merge and fix later" path.
 
 ## Anti-patterns
 

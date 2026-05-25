@@ -196,13 +196,25 @@ Commit (`fix: address /review and code-review findings on <issue ID>`), push.
 
 ### 5. Land PR and clean local git state
 
-**Wait for CI green on the post-feedback push.** The address-feedback push triggered a fresh `ci` workflow run; that is the authoritative full-suite gate per CLAUDE.md "Testing". Watch it:
+**Wait for CI green on the post-feedback push — and iterate until it IS green.** The address-feedback push triggered a fresh `ci` workflow run; that is the authoritative full-suite gate per CLAUDE.md "Testing". This is an iteration loop, not a one-shot wait. Watch:
 
 ```bash
 gh pr checks <PR number> --watch
 ```
 
-When `ci` returns green, proceed to merge. On failure, read the CI log, fix on the feature branch, commit + push, and re-wait. Do not merge on a failing CI run — server-side branch protection is not enforced (CLAUDE.md "Branch policy") but the policy still holds.
+1. Watch to completion.
+2. **If green:** proceed to merge.
+3. **If red:** read the failure log via `gh run view <run ID> --log-failed --job <job ID>`. Diagnose. Fix on the feature branch. Commit with `fix: address CI <category> failure in <area>`. Push. Go back to step 1 — the push triggers a fresh CI run that you must watch to completion.
+4. **Do not merge while CI is red on the latest pushed commit.** Do not declare the issue done. The implementation is not complete until CI is green on whatever commit will land at merge time.
+
+**Failure-class diagnosis:**
+
+- **Lint failure** — fix on the feature branch, commit, push, re-watch.
+- **Test failure on Windows that you can't reproduce locally** — Windows-specific (path separators, file-handle behavior, line endings, timezone-naive datetime drift, signal handling, `cp1252` default text encoding, missing env vars CI doesn't have, Unix-only stdlib modules like `fcntl`). Read the failing test's traceback from the CI log; reproduce locally if you can; fix; push; re-watch.
+- **Test failure that looks flaky** — re-run via `gh run rerun <run ID> --failed`. If it persists, treat as real (test-order dependence — bisect per CLAUDE.md "Testing"). Fix the offending test or production code, push, re-watch.
+- **Pre-existing failure orthogonal to this issue** — verify by checking the most recent push-to-main CI run on origin/main. If reproducible on `main`, surface to the operator, open a Linear "To-dos" issue with symptom + scope, and xfail/skip the test in this PR with `reason="ALP-<new-issue-id>: ..."` so this PR's CI goes green without masking the bug. Do NOT silently downgrade an in-scope failure to "pre-existing" — verify against main first. Do NOT xfail without an open tracking issue.
+
+Server-side branch protection is not enforced (CLAUDE.md "Branch policy") but the policy still holds: do not merge on red.
 
 **Sweep stale `main`-bearing worktrees before `gh pr merge`.** `git worktree list`, look for orphans checked out to `main` (typical naming: `.claude/worktrees/<random-name>`). Confirm `git -C <path> status --short` is clean, then `git worktree remove -f -f <path>`. The double `-f` overrides the Claude agent harness's lock.
 
@@ -280,6 +292,7 @@ Shape per entry:
 - Pushing partial address-feedback commits while `/review` is still running.
 - **Running the unscoped full pytest suite locally.** CLAUDE.md "Testing" forbids this by default — CI runs the full suite on PR. Per-implementation local pytest stays scoped to the issue's area.
 - **Merging the PR without waiting for CI green.** Server-side branch protection isn't enforced but the policy holds. The CI run is the authoritative full-suite gate; merging on red defeats the regime.
+- **Walking away from a red CI run.** The step is an iteration loop, not a one-shot wait. Failures from this issue's changes get fixed and re-pushed until CI is green on the latest commit. Pre-existing failures orthogonal to this issue get a Linear ticket + xfail with the ticket ID. There is no "merge red" path.
 - Mocking what you don't own.
 - Trusting your own self-report. Verify with `git log main..HEAD` and `git status`.
 - Acceptance criteria at the granularity of "the module works" — surface as underspecified before implementing.
