@@ -88,15 +88,17 @@ Set `include_transcript_analysis: false` to skip the transcript pull when only n
   post_earnings_activity: {
     estimate_revisions_since: int,    // count of analyst estimate revisions since report
     revision_direction: str,          // "up" | "down" | "mixed" | "none"
-    rating_changes_since: [
-      {
-        analyst_firm: str,
-        prior_rating: str,
-        new_rating: str,
-        prior_target: float,
-        new_target: float
-      }
-    ]
+    rating_changes_since:             // ALP-654 — union: array when analyst-rating
+      [                               // ingestion lands, sentinel object until then
+        {
+          analyst_firm: str,
+          prior_rating: str,
+          new_rating: str,
+          prior_target: float,
+          new_target: float
+        }
+      ]
+      | { status: "not_collected", reason: str }
   },
 
   // --- Tier 2: present only when transcript has been ingested ---
@@ -134,7 +136,7 @@ Set `include_transcript_analysis: false` to skip the transcript pull when only n
 | `result` (EPS/revenue) | yfinance, Finnhub | HIGH | Tested 62/62 tickers ([api-key-checklist.md](../01-data-layer/api-key-checklist.md)) |
 | `price_reaction` | Polygon quote data (quant 1a) | HIGH | Cross-layer dependency: quantitative price data |
 | `post_earnings_activity.estimate_revisions_since` | yfinance `get_eps_revisions()` | HIGH | Tested |
-| `post_earnings_activity.rating_changes_since` | Finnhub + yfinance | MEDIUM | Finnhub free tier has limited historical depth |
+| `post_earnings_activity.rating_changes_since` | Finnhub + yfinance | MEDIUM | Finnhub free tier has limited historical depth. Field emits a `{status: "not_collected", reason: ...}` sentinel until analyst-rating ingestion ships (ALP-654) — distinct from the factual-empty `[]` case once it lands. |
 
 **Tier 2 data sources:**
 
