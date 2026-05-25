@@ -4,8 +4,8 @@ This story (02) lands the typed value objects every downstream story consumes;
 subsequent stories drop function modules into this package and add their own
 re-exports below.
 
-The historic load-order ``ImportError`` concern fka documented here is now
-mechanically foreclosed by the ``portfolio_state-not-risk_guardrails``
+The historic load-order ``ImportError`` concern formerly documented here is
+now mechanically foreclosed by the ``portfolio_state-not-risk_guardrails``
 forbidden contract in ``.importlinter`` (rationale: ALP-648). Any future
 edge from ``portfolio_state`` back into ``regime_adaptation`` breaks the
 lint chain before it can reach runtime.
