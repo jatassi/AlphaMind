@@ -754,6 +754,9 @@ async def test_split_strategy_applies_per_leg_projection(
     await integrate_ca_activity(handle, ca, alpaca_position_lookup=lookup)
     await ctx.__aexit__(None, None, None)
 
+    # _project_strategy_from_snapshot consults the lookup once per leg; the
+    # two-leg strategy fixture produces two calls keyed on the same underlying.
+    assert lookup.calls == ["AAPL", "AAPL"]
     async with factory() as sess:
         pos_row = (
             await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
@@ -764,6 +767,7 @@ async def test_split_strategy_applies_per_leg_projection(
             assert leg.options.contract_count == pytest.approx(20.0)
             assert leg.options.premium_paid_per_contract == pytest.approx(62.50)
             assert leg.options.greeks.refresh_failed is True
+        assert pos.details.strategy_greeks.refresh_failed is True
         assert pos.corporate_action_adjustment_needed is True
 
         log_rows = (
@@ -779,3 +783,42 @@ async def test_split_strategy_applies_per_leg_projection(
         )
         applied = [r for r in log_rows if r.event_type == EventType.CORPORATE_ACTION_APPLIED.value]
         assert len(applied) == 1
+
+
+async def test_split_on_options_without_lookup_raises_value_error(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A SPLIT on an options position with ``alpaca_position_lookup=None`` raises
+    ``ValueError`` from ``apply_options_position_mutation`` — the post-ALP-639
+    replacement for the old ``NotImplementedError`` from ``_require_equity_details``.
+    """
+    from alphamind.execution.corporate_actions import integrate_ca_activity
+    from alphamind.execution.corporate_actions.types import CorporateActionActivity
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position_cluster(
+        factory,
+        make_open_options_position(),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_active_bracket(),
+    )
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+
+    ca = CorporateActionActivity(
+        alpaca_activity_id="ca-split-opt-no-lookup",
+        action_type=CorporateActionType.SPLIT,
+        ticker=Symbol("AAPL"),
+        new_ticker=None,
+        ratio_or_amount=4.0,
+        position_id=PositionId("pos-1"),
+        signed_cash_impact_usd=0.0,
+        transaction_time=_NOW - timedelta(minutes=5),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    with pytest.raises(ValueError, match="AlpacaPositionLookup is required"):
+        await integrate_ca_activity(handle, ca, alpaca_position_lookup=None)
+    await ctx.__aexit__(None, None, None)
