@@ -6,6 +6,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.testmondata
 
 # Office lock files (LibreOffice / OpenOffice)
 .~lock.*#

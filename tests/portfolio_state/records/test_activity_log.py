@@ -10,8 +10,7 @@ import pytest
 
 from alphamind._kernel.ids import BracketId, OrderId, PositionId, Symbol, ThesisId
 from alphamind._kernel.money import money, price, signed_money
-from alphamind.portfolio_state.events.codec import decode_detail, encode_detail
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     EVENT_TYPE_TO_DETAIL_CLASS,
     EVENT_TYPE_TO_GROUP,
     ActivityLogEntry,
@@ -69,6 +68,7 @@ from alphamind.portfolio_state.records.activity_log import (
     ThesisResolvedDetail,
     ThesisStatusChangedDetail,
 )
+from alphamind.portfolio_state.events.codec import decode_detail, encode_detail
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1452,22 +1452,22 @@ class TestConfigurationEventEnumMembers:
     """The configuration-event enum additions are present (story 14a contract)."""
 
     def test_event_group_configuration_member_exists(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import EventGroup
+        from alphamind.portfolio_state.events.activity_log import EventGroup
 
         assert EventGroup.CONFIGURATION.value == "CONFIGURATION"
 
     def test_event_type_distillation_config_change_exists(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import EventType
+        from alphamind.portfolio_state.events.activity_log import EventType
 
         assert EventType.DISTILLATION_CONFIG_CHANGE.value == "DISTILLATION_CONFIG_CHANGE"
 
     def test_event_source_config_reload_exists(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import EventSource
+        from alphamind.portfolio_state.events.activity_log import EventSource
 
         assert EventSource.CONFIG_RELOAD.value == "CONFIG_RELOAD"
 
     def test_event_source_operator_console_exists(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import EventSource
+        from alphamind.portfolio_state.events.activity_log import EventSource
 
         assert EventSource.OPERATOR_CONSOLE.value == "OPERATOR_CONSOLE"
 
@@ -1476,7 +1476,7 @@ class TestDistillationConfigChange:
     """``DistillationConfigChange`` represents one entry in the ``changes`` array."""
 
     def test_round_trip_through_codec(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import DistillationConfigChange
+        from alphamind.portfolio_state.events.activity_log import DistillationConfigChange
 
         change = DistillationConfigChange(
             key_path="anomaly_detection.volume_anomaly_sigma",
@@ -1492,14 +1492,14 @@ class TestDistillationConfigChange:
     def test_is_frozen(self) -> None:
         from dataclasses import FrozenInstanceError
 
-        from alphamind.portfolio_state.records.activity_log import DistillationConfigChange
+        from alphamind.portfolio_state.events.activity_log import DistillationConfigChange
 
         change = DistillationConfigChange(key_path="x", old_value=1, new_value=2)
         with pytest.raises(FrozenInstanceError):
             change.key_path = "y"  # type: ignore[misc]
 
     def test_empty_key_path_raises(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import DistillationConfigChange
+        from alphamind.portfolio_state.events.activity_log import DistillationConfigChange
 
         with pytest.raises((ValueError, TypeError)):
             DistillationConfigChange(key_path="", old_value=1, new_value=2)
@@ -1521,7 +1521,7 @@ class TestDistillationConfigChangeDetail:
     """``DistillationConfigChangeDetail`` is the per-event-type detail payload."""
 
     def test_round_trip_through_codec(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             DistillationConfigChangeDetail,
         )
 
@@ -1537,7 +1537,7 @@ class TestDistillationConfigChangeDetail:
         assert rebuilt == detail
 
     def test_default_config_file(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             DistillationConfigChangeDetail,
         )
 
@@ -1550,7 +1550,7 @@ class TestDistillationConfigChangeDetail:
         assert detail.config_file == "config/distillation.yaml"
 
     def test_prior_hash_none_allowed(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             DistillationConfigChangeDetail,
         )
 
@@ -1565,7 +1565,7 @@ class TestDistillationConfigChangeDetail:
     def test_is_frozen(self) -> None:
         from dataclasses import FrozenInstanceError
 
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             DistillationConfigChangeDetail,
         )
 
@@ -1579,7 +1579,7 @@ class TestDistillationConfigChangeDetail:
             detail.git_sha = "deadbeef"  # type: ignore[misc]
 
     def test_empty_config_file_raises(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             DistillationConfigChangeDetail,
         )
 
@@ -1593,7 +1593,7 @@ class TestDistillationConfigChangeDetail:
             )
 
     def test_empty_new_hash_raises(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             DistillationConfigChangeDetail,
         )
 
@@ -1606,7 +1606,7 @@ class TestDistillationConfigChangeDetail:
             )
 
     def test_missing_new_hash_raises(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             DistillationConfigChangeDetail,
         )
 
@@ -1620,7 +1620,7 @@ class TestDistillationConfigChangeDetail:
             )
 
     def test_empty_git_sha_raises(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             DistillationConfigChangeDetail,
         )
 
@@ -1633,7 +1633,7 @@ class TestDistillationConfigChangeDetail:
             )
 
     def test_unsorted_changes_raises_naming_offending_pair(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             DistillationConfigChangeDetail,
         )
 
@@ -1652,7 +1652,7 @@ class TestDistillationConfigChangeDetail:
         assert "a.y" in msg
 
     def test_duplicate_key_path_raises(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             DistillationConfigChangeDetail,
         )
 
@@ -1668,7 +1668,7 @@ class TestDistillationConfigChangeDetail:
             )
 
     def test_non_string_key_path_rejected(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             DistillationConfigChange,
         )
 
@@ -1680,7 +1680,7 @@ class TestDistillationConfigChangeRegistration:
     """The new event type is wired into the catalog mappings."""
 
     def test_event_type_to_detail_class_lookup(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             EVENT_TYPE_TO_DETAIL_CLASS,
             DistillationConfigChangeDetail,
             EventType,
@@ -1692,7 +1692,7 @@ class TestDistillationConfigChangeRegistration:
         )
 
     def test_event_type_to_group_lookup(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             EVENT_TYPE_TO_GROUP,
             EventGroup,
             EventType,
@@ -1701,7 +1701,7 @@ class TestDistillationConfigChangeRegistration:
         assert EVENT_TYPE_TO_GROUP[EventType.DISTILLATION_CONFIG_CHANGE] == EventGroup.CONFIGURATION
 
     def test_any_detail_type_includes_distillation_detail(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             AnyDetailType,
             DistillationConfigChangeDetail,
         )
@@ -1709,7 +1709,7 @@ class TestDistillationConfigChangeRegistration:
         assert DistillationConfigChangeDetail in get_args(AnyDetailType)
 
     def test_activity_log_entry_accepts_distillation_config_change(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             ActivityLogEntry,
             DistillationConfigChangeDetail,
             EventGroup,
@@ -1738,7 +1738,7 @@ class TestDistillationConfigChangeRegistration:
         assert entry.event_type == EventType.DISTILLATION_CONFIG_CHANGE
 
     def test_activity_log_entry_rejects_wrong_group(self) -> None:
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             ActivityLogEntry,
             DistillationConfigChangeDetail,
             EventGroup,

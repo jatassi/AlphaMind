@@ -27,6 +27,7 @@ from alphamind.portfolio_state.records.orders import (
 )
 from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.risk_guardrails.breach_behavior import HaltState
+from alphamind.risk_guardrails.guardrail_evaluation.types import EscalationZones
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery.analyst import (
     _render_abandoned_openings_block,
@@ -206,6 +207,7 @@ def render_strategist_header_halt_mode(  # noqa: PLR0913 — mirrors render_stra
     sector_resolver: SectorResolver,
     total_portfolio_value_usd: Money,
     available_for_new_positions_usd: Money,
+    position_zones: EscalationZones,
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
 ) -> str:
@@ -229,6 +231,7 @@ def render_strategist_header_halt_mode(  # noqa: PLR0913 — mirrors render_stra
         sector_resolver=sector_resolver,
         total_portfolio_value_usd=total_portfolio_value_usd,
         available_for_new_positions_usd=available_for_new_positions_usd,
+        position_zones=position_zones,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,
     )
@@ -372,6 +375,7 @@ def render_pm_header_halt_mode(  # noqa: PLR0913 — mirrors render_pm_header
     # ``OrderRecord.PriceParameters.{limit_price, stop_trigger_price}`` migrate
     # to ``Price``; migrating the callback alone would just move the float boundary.
     current_price_lookup: Callable[[str], float],
+    position_zones: EscalationZones,
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
     active_regime_overrides: tuple[RegimeOverride, ...] = (),
@@ -450,6 +454,7 @@ def render_pm_header_halt_mode(  # noqa: PLR0913 — mirrors render_pm_header
         render_position_proximity_block(
             positions=pm_view.positions,
             active_risk_parameters=pm_view.active_risk_parameters,
+            position_zones=position_zones,
         )
     )
     blocks.append(

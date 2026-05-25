@@ -28,12 +28,12 @@ from alphamind.portfolio_state.consumers.strategist import (
     StrategistPositionView,
     StrategistView,
 )
-from alphamind.portfolio_state.events.formatting import render_activity_log_row
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventType,
     PMDecisionDetail,
 )
+from alphamind.portfolio_state.events.formatting import render_activity_log_row
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegType,
@@ -65,6 +65,7 @@ from alphamind.portfolio_state.snapshot import (
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
+from alphamind.risk_guardrails.guardrail_evaluation.types import EscalationZones
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery import (
     render_strategist_header,
@@ -133,6 +134,7 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_strategist
     current_price_lookup: Callable[[str], float],
     synthesizer_brief_text: str,
     tool_names: tuple[str, ...],
+    position_zones: EscalationZones,
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
     prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
@@ -154,6 +156,7 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_strategist
         sector_resolver=sector_resolver,
         total_portfolio_value_usd=total_portfolio_value_usd,
         available_for_new_positions_usd=available_for_new_positions_usd,
+        position_zones=position_zones,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,
     )
@@ -183,6 +186,7 @@ def assemble_input_bundle_defensive_posture(  # noqa: PLR0913 — mirrors render
     current_price_lookup: Callable[[str], float],
     synthesizer_brief_text: str,
     tool_names: tuple[str, ...],
+    position_zones: EscalationZones,
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
     prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
@@ -203,6 +207,7 @@ def assemble_input_bundle_defensive_posture(  # noqa: PLR0913 — mirrors render
         sector_resolver=sector_resolver,
         total_portfolio_value_usd=total_portfolio_value_usd,
         available_for_new_positions_usd=available_for_new_positions_usd,
+        position_zones=position_zones,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,
     )
@@ -534,7 +539,7 @@ def _risk_reward_at_current(
 
 def _render_bracket_block(bracket: BracketRecord | None) -> str:
     if bracket is None:
-        return "  Bracket: not yet activated"
+        return "  Bracket: none"
     lines: list[str] = ["  Bracket:"]
     target_leg = _find_leg(bracket, BracketLegType.TAKE_PROFIT)
     stop_leg = _find_leg(bracket, BracketLegType.PRICE_STOP)

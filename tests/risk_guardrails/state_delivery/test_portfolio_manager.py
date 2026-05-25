@@ -28,9 +28,10 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
+from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventGroup,
     EventSource,
@@ -47,13 +48,13 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     PositionStatus,
 )
-from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.snapshot import (
     DirectionalExposure,
     PortfolioPnL,
     SectorExposureEntry,
 )
 from alphamind.portfolio_state.views.positions import PositionView
+from alphamind.risk_guardrails.guardrail_evaluation.types import EscalationZones
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery import (
     CorrelationState,
@@ -68,6 +69,9 @@ from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 # ---------------------------------------------------------------------------
 # Fixture builders
 # ---------------------------------------------------------------------------
+
+
+_DEFAULT_POSITION_ZONES = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
 
 
 def _make_budget_entry(
@@ -380,6 +384,7 @@ def test_render_pm_header_returns_string_with_envelope_open_and_close() -> None:
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert isinstance(rendered, str)
     assert rendered.startswith("=== GUARDRAIL STATE (invocation inv-001, 2026-04-28T14:32:05Z) ===")
@@ -407,6 +412,7 @@ def test_render_pm_header_renders_regime_line_after_envelope() -> None:
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
     assert lines[1] == "Regime: normal [unchanged]"
@@ -433,6 +439,7 @@ def test_render_pm_header_renders_capital_block_after_blank() -> None:
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
     assert lines[2] == ""
@@ -462,6 +469,7 @@ def test_render_pm_header_renders_sector_and_directional_headroom_blocks() -> No
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Sector headroom (delta-adjusted):" in rendered
     assert "  Tech:  18.3% / 25.0% — room: 6.7% [NORMAL]" in rendered
@@ -508,6 +516,7 @@ def test_render_pm_header_renders_position_level_constraint_proximity_block() ->
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Position-level constraint proximity:" in rendered
     assert (
@@ -553,6 +562,7 @@ def test_render_pm_header_critical_from_size_not_positive_pnl() -> None:
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     proximity_line = next(
         line for line in rendered.splitlines() if line.lstrip().startswith("POS-NVDA-001:")
@@ -605,6 +615,7 @@ def test_render_pm_header_renders_sector_exposure_breakdown_per_position() -> No
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Sector exposure breakdown (per position):" in rendered
     assert "  Tech (18.3% / 25.0%):" in rendered
@@ -635,6 +646,7 @@ def test_render_pm_header_renders_cross_constraint_impact_empty_per_rule() -> No
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Cross-constraint impact summary:" in rendered
     assert "  No pending proposals; no projected impact." in rendered
@@ -692,6 +704,7 @@ def test_render_pm_header_renders_cross_constraint_impact_with_per_rule_lines() 
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Cross-constraint impact summary:" in rendered
     assert "  If all pending proposals are approved as-sized:" in rendered
@@ -735,6 +748,7 @@ def test_render_pm_header_cross_constraint_impact_breach_status() -> None:
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "    Sector tech: 18.3% → 27.5% [BREACH] would breach by 2.5%" in rendered
     assert "    Flagged: Sector tech" in rendered
@@ -762,6 +776,7 @@ def _render_with_single_rule(rule: CrossConstraintImpactPerRule) -> str:
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
 
 
@@ -879,6 +894,7 @@ def test_render_pm_header_renders_validation_tool_reminder_block_verbatim() -> N
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Guardrail validation tool available:" in rendered
     assert (
@@ -910,6 +926,7 @@ def test_render_pm_header_renders_drawdown_context_with_signed_daily_pnl_positiv
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Drawdown context:" in rendered
     assert "  Daily P/L:     +0.5% (NORMAL)" in rendered
@@ -938,6 +955,7 @@ def test_render_pm_header_drawdown_context_negative_daily_pnl() -> None:
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "  Daily P/L:     -1.2% (NORMAL)" in rendered
 
@@ -963,6 +981,7 @@ def test_render_pm_header_drawdown_context_zero_daily_pnl_signed_positive() -> N
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "  Daily P/L:     +0.0% (NORMAL)" in rendered
 
@@ -994,6 +1013,7 @@ def test_render_pm_header_drawdown_context_with_cumulative_tier() -> None:
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "  Cumulative:    8.5% from HWM (⚠ WARNING)" in rendered
     assert (
@@ -1033,6 +1053,7 @@ def test_render_pm_header_regime_transition_breaches_block_present_when_breaches
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         regime_transition_breaches=(breach,),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Regime-transition breaches" in rendered
     assert "POS-NVDA-001" in rendered
@@ -1061,6 +1082,7 @@ def test_render_pm_header_regime_transition_breaches_block_omitted_when_empty() 
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Regime-transition breaches" not in rendered
 
@@ -1136,6 +1158,7 @@ def test_render_pm_header_recent_engine_actions_block_none_when_changelog_empty(
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Recent engine-originated actions (since last invocation):" in rendered
     lines = rendered.splitlines()
@@ -1170,6 +1193,7 @@ def test_render_pm_header_recent_engine_actions_block_renders_close_and_trim_in_
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
     header_idx = lines.index("Recent engine-originated actions (since last invocation):")
@@ -1200,6 +1224,7 @@ def test_render_pm_header_active_regime_overrides_block_none_when_empty() -> Non
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Active regime overrides:" in rendered
     lines = rendered.splitlines()
@@ -1237,6 +1262,7 @@ def test_render_pm_header_active_regime_overrides_block_with_expiry_appends_suff
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         active_regime_overrides=(overlay,),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Active regime overrides:" in rendered
     assert (
@@ -1272,6 +1298,7 @@ def test_render_pm_header_active_regime_overrides_block_without_expiry_no_suffix
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         active_regime_overrides=(overlay,),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "  VIX spike — gross exposure -25%" in rendered
     assert "(expires" not in rendered
@@ -1317,6 +1344,7 @@ def test_render_pm_header_correlation_state_block_omitted_when_state_is_none() -
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         correlation_state=None,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Correlation state:" not in rendered
 
@@ -1360,6 +1388,7 @@ def test_render_pm_header_correlation_state_block_omitted_when_below_position_th
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         correlation_state=correlation,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Correlation state:" not in rendered
 
@@ -1394,6 +1423,7 @@ def test_render_pm_header_correlation_state_block_renders_when_threshold_met() -
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         correlation_state=correlation,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Correlation state:" in rendered
     assert "  Portfolio weighted avg correlation: 0.62 / 0.70 [⚠ WARNING]" in rendered
@@ -1422,6 +1452,7 @@ def test_render_pm_header_dependency_risk_flag_block_omitted_when_none_or_below_
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         dependency_risk_flag=None,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Dependency risk flag:" not in rendered_none
 
@@ -1457,6 +1488,7 @@ def test_render_pm_header_dependency_risk_flag_block_omitted_when_none_or_below_
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         dependency_risk_flag=flag,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Dependency risk flag:" not in rendered_below
 
@@ -1491,6 +1523,7 @@ def test_render_pm_header_dependency_risk_flag_block_renders_when_threshold_met(
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         dependency_risk_flag=flag,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Dependency risk flag:" in rendered
     assert "  Max catalyst-failure exposure: 18.0% / 25.0% [NORMAL]" in rendered
@@ -1534,6 +1567,7 @@ def test_render_pm_header_hard_blocks_uses_pm_specific_header_label() -> None:
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Hard blocks (do NOT issue commands violating):" in rendered
     assert "Hard blocks (do NOT recommend):" not in rendered
@@ -1596,6 +1630,7 @@ def test_render_pm_header_omits_hard_blocks_when_no_breaches_and_features_enable
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Hard blocks" not in rendered
     lines = rendered.splitlines()
@@ -1636,6 +1671,7 @@ def test_render_pm_header_raises_when_options_disabled_but_options_rule_present(
             total_portfolio_value_usd=money(500_000.0),
             available_for_new_positions_usd=money(300_000.0),
             cross_constraint_impact=impact,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
 
 
@@ -1672,6 +1708,7 @@ def test_render_pm_header_raises_when_short_selling_disabled_but_net_short_prese
             total_portfolio_value_usd=money(500_000.0),
             available_for_new_positions_usd=money(300_000.0),
             cross_constraint_impact=impact,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
 
 
@@ -1714,6 +1751,7 @@ def test_render_pm_header_raises_when_position_max_size_pct_missing() -> None:
             total_portfolio_value_usd=money(500_000.0),
             available_for_new_positions_usd=money(300_000.0),
             cross_constraint_impact=impact,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
 
 
@@ -1744,6 +1782,7 @@ def test_render_pm_header_raises_when_net_long_pct_missing_from_risk_budget() ->
             total_portfolio_value_usd=money(500_000.0),
             available_for_new_positions_usd=money(300_000.0),
             cross_constraint_impact=impact,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
 
 
@@ -1769,6 +1808,7 @@ def test_render_pm_header_raises_when_active_sector_missing_from_risk_budget() -
             total_portfolio_value_usd=money(500_000.0),
             available_for_new_positions_usd=money(300_000.0),
             cross_constraint_impact=impact,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
 
 
@@ -1808,6 +1848,7 @@ def test_render_pm_header_is_deterministic() -> None:
             total_portfolio_value_usd=money(500_000.0),
             available_for_new_positions_usd=money(300_000.0),
             cross_constraint_impact=impact,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
 
     assert _invoke() == _invoke()
@@ -1837,6 +1878,7 @@ def test_render_pm_header_micro_fixture_full_render() -> None:
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     expected = "\n".join(
         [
@@ -2032,6 +2074,7 @@ def test_render_pm_header_full_system_fixture_full_render() -> None:
         active_regime_overrides=(overlay,),
         correlation_state=correlation,
         dependency_risk_flag=dep,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     expected = "\n".join(
         [
@@ -2214,6 +2257,7 @@ def test_render_pm_header_has_no_double_blank_lines_and_no_trailing_blank() -> N
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
     for prev_line, next_line in pairwise(lines):

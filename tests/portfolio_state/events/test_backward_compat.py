@@ -88,16 +88,6 @@ class TestBackwardCompatReexport:
         )
         assert entry.event_type is EventType.POSITION_OPENED
 
-    def test_records_activity_log_shim_still_works(self) -> None:
-        """The deeper-legacy ``portfolio_state.records.activity_log`` shim is unaffected."""
-        from alphamind.portfolio_state.records.activity_log import (
-            EVENT_TYPE_TO_DETAIL_CLASS,
-            EventType,
-            PositionOpenedDetail,
-        )
-
-        assert EVENT_TYPE_TO_DETAIL_CLASS[EventType.POSITION_OPENED] is PositionOpenedDetail
-
 
 class TestDispatchDictDerivation:
     """The dispatch dicts derive from per-submodule registries (no hand-maintained dicts)."""

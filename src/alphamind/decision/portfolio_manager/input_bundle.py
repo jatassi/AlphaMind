@@ -26,11 +26,11 @@ from alphamind.decision._shared import direction_display
 from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
-from alphamind.portfolio_state.events.formatting import render_activity_log_row
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     PMDecisionDetail,
 )
+from alphamind.portfolio_state.events.formatting import render_activity_log_row
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegType,
@@ -54,6 +54,7 @@ from alphamind.portfolio_state.records.theses import (
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
+from alphamind.risk_guardrails.guardrail_evaluation.types import EscalationZones
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 from alphamind.risk_guardrails.state_delivery.halt_mode import render_pm_header_halt_mode
@@ -125,6 +126,7 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_pm_header
     available_for_new_positions_usd: Money,
     cross_constraint_impact: CrossConstraintImpact,
     tool_names: tuple[str, ...],
+    position_zones: EscalationZones,
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
     active_regime_overrides: tuple[RegimeOverride, ...] = (),
@@ -148,6 +150,7 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_pm_header
         total_portfolio_value_usd=total_portfolio_value_usd,
         available_for_new_positions_usd=available_for_new_positions_usd,
         cross_constraint_impact=cross_constraint_impact,
+        position_zones=position_zones,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,
         active_regime_overrides=active_regime_overrides,
@@ -183,6 +186,7 @@ def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_pm_header_ha
     available_for_new_positions_usd: Money,
     cross_constraint_impact: CrossConstraintImpact,
     tool_names: tuple[str, ...],
+    position_zones: EscalationZones,
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
     active_regime_overrides: tuple[RegimeOverride, ...] = (),
@@ -209,6 +213,7 @@ def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_pm_header_ha
         cross_constraint_impact=cross_constraint_impact,
         pending_orders=pending_orders,
         current_price_lookup=current_price_lookup,
+        position_zones=position_zones,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,
         active_regime_overrides=active_regime_overrides,

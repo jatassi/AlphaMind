@@ -41,7 +41,7 @@ from alphamind.portfolio_state.consumers.strategist import (
     StrategistPositionView,
     StrategistView,
 )
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     BracketModificationSource,
     BracketModifiedDetail,
@@ -105,6 +105,7 @@ from alphamind.portfolio_state.snapshot import (
 )
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import HaltState
+from alphamind.risk_guardrails.guardrail_evaluation.types import EscalationZones
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 
 # ---------------------------------------------------------------------------
@@ -141,6 +142,9 @@ _SECTOR_LABELS = {
 # ---------------------------------------------------------------------------
 # Fixture builders
 # ---------------------------------------------------------------------------
+
+
+_DEFAULT_POSITION_ZONES = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
 
 
 def _make_state_delivery_config() -> StateDeliveryConfig:
@@ -779,6 +783,7 @@ def _normal_kwargs(
         "current_price_lookup": _current_price_lookup,
         "synthesizer_brief_text": _SYNTHESIZER_BRIEF,
         "tool_names": _TOOL_NAMES,
+        "position_zones": _DEFAULT_POSITION_ZONES,
     }
 
 
@@ -1053,13 +1058,13 @@ def test_position_without_thesis_renders_pending_marker() -> None:
     assert "Thesis: NONE — pending position" in out
 
 
-def test_position_without_bracket_renders_inactive_marker() -> None:
+def test_position_without_bracket_renders_none_marker() -> None:
     view = _make_strategist_view(positions=(_make_position_view(with_bracket=False),))
     out = assemble_input_bundle_normal(
         **_normal_kwargs(strategist_view=view),
         sector_label_display=_SECTOR_LABELS,
     )
-    assert "Bracket: not yet activated" in out
+    assert "Bracket: none" in out
 
 
 # ---------------------------------------------------------------------------

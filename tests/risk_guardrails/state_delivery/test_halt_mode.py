@@ -32,6 +32,7 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
+from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.consumers.analyst import (
     AnalystAbandonedOpening,
@@ -45,7 +46,7 @@ from alphamind.portfolio_state.consumers.strategist import (
     StrategistPositionView,
     StrategistView,
 )
-from alphamind.portfolio_state.records.activity_log import ActivityLogEntry
+from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
 from alphamind.portfolio_state.records.orders import (
     EquityInstrumentSpec,
     OrderDirection,
@@ -65,7 +66,6 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     PositionStatus,
 )
-from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.snapshot import (
     DirectionalExposure,
     PortfolioPnL,
@@ -73,6 +73,7 @@ from alphamind.portfolio_state.snapshot import (
 )
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import HaltState
+from alphamind.risk_guardrails.guardrail_evaluation.types import EscalationZones
 from alphamind.risk_guardrails.state_delivery import (
     CrossConstraintImpact,
     CrossConstraintImpactPerRule,
@@ -87,6 +88,9 @@ from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 # ---------------------------------------------------------------------------
 # Shared fixture builders
 # ---------------------------------------------------------------------------
+
+
+_DEFAULT_POSITION_ZONES = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
 
 
 def _make_state_delivery_config() -> StateDeliveryConfig:
@@ -712,6 +716,7 @@ def test_render_strategist_header_halt_mode_full_fixture() -> None:
         sector_resolver=_make_strategist_sector_resolver(),
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     expected = "\n".join(
         [
@@ -840,6 +845,7 @@ def test_render_pm_header_halt_mode_full_fixture() -> None:
         cross_constraint_impact=_make_default_cross_constraint_impact(),
         pending_orders=pending_orders,
         current_price_lookup=_make_pm_current_price_lookup(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
     # Banner is three lines after envelope-open.
@@ -886,6 +892,7 @@ def test_render_pm_header_halt_mode_pending_orders_empty_renders_none() -> None:
         cross_constraint_impact=_make_default_cross_constraint_impact(),
         pending_orders=(),
         current_price_lookup=_make_pm_current_price_lookup(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
     pending_idx = lines.index("Pending orders review:")
@@ -918,6 +925,7 @@ def test_render_pm_header_halt_mode_missing_price_raises_value_error() -> None:
             cross_constraint_impact=_make_default_cross_constraint_impact(),
             pending_orders=pending_orders,
             current_price_lookup=_make_pm_current_price_lookup(),
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
 
 
@@ -960,6 +968,7 @@ def test_render_pm_header_halt_mode_cross_constraint_status_aware_breach_marker(
         cross_constraint_impact=impact,
         pending_orders=(),
         current_price_lookup=_make_pm_current_price_lookup(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "[BREACH] in hard-block zone, 2.8% headroom" in rendered
     assert "(within limit" not in rendered
@@ -989,6 +998,7 @@ def test_render_pm_header_halt_mode_cross_constraint_empty_emits_no_pending_line
         cross_constraint_impact=empty_impact,
         pending_orders=(),
         current_price_lookup=_make_pm_current_price_lookup(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
     cci_idx = lines.index("Cross-constraint impact summary:")
@@ -1057,6 +1067,7 @@ def test_render_pm_header_halt_mode_hard_blocks_no_breaches_synthesizes_block() 
         cross_constraint_impact=_make_default_cross_constraint_impact(),
         pending_orders=(),
         current_price_lookup=_make_pm_current_price_lookup(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
     hb_idx = lines.index("Hard blocks (do NOT issue commands violating):")
@@ -1083,6 +1094,7 @@ def test_render_pm_header_halt_mode_hard_blocks_breaches_present_appends_action_
         cross_constraint_impact=_make_default_cross_constraint_impact(),
         pending_orders=(),
         current_price_lookup=_make_pm_current_price_lookup(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
     hb_idx = lines.index("Hard blocks (do NOT issue commands violating):")
@@ -1148,6 +1160,7 @@ def test_render_pm_header_halt_mode_hard_blocks_disabled_features_then_action_li
         cross_constraint_impact=_make_default_cross_constraint_impact(),
         pending_orders=(),
         current_price_lookup=_make_pm_current_price_lookup(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
     hb_idx = lines.index("Hard blocks (do NOT issue commands violating):")
@@ -1155,6 +1168,68 @@ def test_render_pm_header_halt_mode_hard_blocks_disabled_features_then_action_li
     assert lines[hb_idx + 2] == "  Short selling: DISABLED for this portfolio"
     assert lines[hb_idx + 3] == "  OPEN: BLOCKED (halt mode)"
     assert lines[hb_idx + 4] == "  ADD: BLOCKED (halt mode)"
+
+
+def test_render_strategist_header_halt_mode_threads_tuned_position_zones() -> None:
+    """ALP-646: halt-mode strategist renderer honours non-default position_zones.
+
+    Guards against a regression where a future refactor drops the
+    ``position_zones=position_zones`` kwarg from the halt-mode call into
+    ``render_position_proximity_block``; every existing halt-mode test uses the
+    canonical {70, 85, 95} band, so a missing thread-through would silently
+    fall back to "still correct by coincidence".
+    """
+    pos = _wrap_position(
+        _make_equity_position(position_id="POS-NVDA-001", position_weight_pct=1.75)
+    )
+    rendered = render_strategist_header_halt_mode(
+        halt_state=_make_halt_state(),
+        strategist_view=_make_strategist_view(positions=(pos,)),
+        invocation_id="inv-001",
+        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
+        options_enabled=False,
+        short_selling_enabled=False,
+        active_sectors=("tech", "semis"),
+        config=_make_state_delivery_config(),
+        sector_label_display=_MICRO_SECTOR_LABELS,
+        sector_resolver=_make_strategist_sector_resolver(),
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
+        # 1.75% weight against 5% per-position max → 35% consumption — NORMAL
+        # under the default 70/85/95 band, WARNING once warning drops to 30.
+        position_zones=EscalationZones(warning=30.0, critical=85.0, hard_block=95.0),
+    )
+    assert "WARNING" in rendered
+
+
+def test_render_pm_header_halt_mode_threads_tuned_position_zones() -> None:
+    """ALP-646: halt-mode PM renderer honours non-default position_zones.
+
+    Same regression guard as the strategist halt-mode test above.
+    """
+    pos = _wrap_position(
+        _make_equity_position(position_id="POS-NVDA-001", position_weight_pct=1.75)
+    )
+    pm_view = _make_pm_view(positions=(pos,))
+    rendered = render_pm_header_halt_mode(
+        halt_state=_make_halt_state(),
+        pm_view=pm_view,
+        invocation_id="inv-001",
+        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
+        options_enabled=False,
+        short_selling_enabled=False,
+        active_sectors=("tech", "semis"),
+        config=_make_state_delivery_config(),
+        sector_label_display=_MICRO_SECTOR_LABELS,
+        sector_resolver=_make_pm_sector_resolver(),
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
+        cross_constraint_impact=_make_default_cross_constraint_impact(),
+        pending_orders=(),
+        current_price_lookup=_make_pm_current_price_lookup(),
+        position_zones=EscalationZones(warning=30.0, critical=85.0, hard_block=95.0),
+    )
+    assert "WARNING" in rendered
 
 
 def test_render_strategist_header_halt_mode_preserves_other_blocks() -> None:
@@ -1179,11 +1254,15 @@ def test_render_strategist_header_halt_mode_preserves_other_blocks() -> None:
         "sector_resolver": _make_strategist_sector_resolver(),
         "total_portfolio_value_usd": money(500_000.0),
         "available_for_new_positions_usd": money(300_000.0),
+        "position_zones": _DEFAULT_POSITION_ZONES,
     }
     halt_rendered = render_strategist_header_halt_mode(
-        halt_state=_make_halt_state(), **common_kwargs
+        halt_state=_make_halt_state(),
+        **common_kwargs,
     )
-    normal_rendered = render_strategist_header(**common_kwargs)
+    normal_rendered = render_strategist_header(
+        **common_kwargs,
+    )
     halt_lines = halt_rendered.splitlines()
     # Drop the banner+mode lines (positions 1, 2).
     halt_after_banner = [halt_lines[0], *halt_lines[3:]]
@@ -1239,6 +1318,7 @@ def test_halt_mode_wrappers_are_deterministic(render_call: str) -> None:
             "sector_resolver": _make_strategist_sector_resolver(),
             "total_portfolio_value_usd": money(500_000.0),
             "available_for_new_positions_usd": money(300_000.0),
+            "position_zones": _DEFAULT_POSITION_ZONES,
         }
         first = render_strategist_header_halt_mode(**kwargs_s)
         second = render_strategist_header_halt_mode(**kwargs_s)
@@ -1260,6 +1340,7 @@ def test_halt_mode_wrappers_are_deterministic(render_call: str) -> None:
             "cross_constraint_impact": _make_default_cross_constraint_impact(),
             "pending_orders": (),
             "current_price_lookup": _make_pm_current_price_lookup(),
+            "position_zones": _DEFAULT_POSITION_ZONES,
         }
         first = render_pm_header_halt_mode(**kwargs_p)
         second = render_pm_header_halt_mode(**kwargs_p)
@@ -1306,6 +1387,7 @@ def test_halt_mode_wrappers_have_no_double_blank_or_trailing_blank(render_call: 
             sector_resolver=_make_strategist_sector_resolver(),
             total_portfolio_value_usd=money(500_000.0),
             available_for_new_positions_usd=money(300_000.0),
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
     else:
         rendered = render_pm_header_halt_mode(
@@ -1324,6 +1406,7 @@ def test_halt_mode_wrappers_have_no_double_blank_or_trailing_blank(render_call: 
             cross_constraint_impact=_make_default_cross_constraint_impact(),
             pending_orders=(),
             current_price_lookup=_make_pm_current_price_lookup(),
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
     lines = rendered.splitlines()
     for prev, nxt in pairwise(lines):
@@ -1354,6 +1437,7 @@ def test_halt_mode_banner_renders_halt_state_pcts_not_pm_view_drawdown() -> None
         cross_constraint_impact=_make_default_cross_constraint_impact(),
         pending_orders=(),
         current_price_lookup=_make_pm_current_price_lookup(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "** HALT MODE ACTIVE — daily drawdown 100.0% / 100.0% **" in rendered
 
@@ -1379,5 +1463,6 @@ def test_halt_mode_banner_renders_when_only_cumulative_active() -> None:
         sector_resolver=_make_strategist_sector_resolver(),
         total_portfolio_value_usd=money(500_000.0),
         available_for_new_positions_usd=money(300_000.0),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "** HALT MODE ACTIVE — daily drawdown 0.0% / 2.5% **" in rendered

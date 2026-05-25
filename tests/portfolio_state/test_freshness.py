@@ -234,7 +234,7 @@ def _make_snapshot(
     phase1_committed_at: datetime = _PHASE1_AT,
     snapshot_assembled_at: datetime = _NOW,
 ) -> PortfolioStateSnapshot:
-    from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
+    from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 
     return PortfolioStateSnapshot(
         invocation_id="inv-test",

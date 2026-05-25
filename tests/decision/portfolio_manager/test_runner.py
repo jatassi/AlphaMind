@@ -63,12 +63,12 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
+from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     PortfolioManagerThesisComponentReader,
     PortfolioManagerView,
 )
 from alphamind.portfolio_state.records.theses import ThesisComponent
-from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.snapshot import (
     DirectionalExposure,
     PortfolioPnL,
@@ -740,9 +740,21 @@ async def test_runner_constructs_state_cells_per_invocation(
     async def _capturing_invoke_pm(**kwargs: Any) -> Any:
         captured_validation.append(kwargs["initial_validation_state"])
         captured_submit_envelope.append(kwargs["initial_submit_envelope_state"])
+        # The subprocess wrapper passes ``broker_dispatch`` to ``invoke_pm`` but
+        # the wrapper raises ``NotImplementedError`` on non-None broker_dispatch
+        # before reaching the in-process branch; force-None here so this
+        # capturing fake mirrors the in-process call shape exactly.
+        kwargs.setdefault("broker_dispatch", None)
         return await real_invoke_pm(**kwargs)
 
-    monkeypatch.setattr(runner_module, "invoke_pm", _capturing_invoke_pm)
+    # Post-ALP-650 the runner calls ``invoke_portfolio_manager_in_subprocess``;
+    # patch the wrapper symbol on the runner module so this fake intercepts the
+    # call. The ``sdk_query_fn=stub`` argument routes the wrapper to its
+    # in-process branch (so the live SDK is never spawned), but the wrapper
+    # itself must still be patched to capture the state-cells.
+    monkeypatch.setattr(
+        runner_module, "invoke_portfolio_manager_in_subprocess", _capturing_invoke_pm
+    )
 
     stub = _make_stub_query(
         [_make_sdk_response(_completion_payload()), _make_sdk_response(_completion_payload())]
@@ -868,7 +880,10 @@ async def test_runner_returns_pmresult_with_submission_log(
             submission_log=sentinel_log,
         )
 
-    monkeypatch.setattr(runner_module, "invoke_pm", _fake_invoke_pm)
+    # Post-ALP-650 the runner calls ``invoke_portfolio_manager_in_subprocess``;
+    # the patch targets that symbol on the runner module so this fake replaces
+    # the wrapper entirely (no subprocess spawn, no pickle attempt).
+    monkeypatch.setattr(runner_module, "invoke_portfolio_manager_in_subprocess", _fake_invoke_pm)
 
     result = await run_portfolio_manager(
         **_runner_kwargs(

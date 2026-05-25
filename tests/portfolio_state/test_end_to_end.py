@@ -22,6 +22,7 @@ import pytest
 
 from alphamind._kernel.money import money, signed_money
 from alphamind.portfolio_state import PortfolioStateConfig
+from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.consumers.analyst import project_analyst_view
@@ -34,7 +35,6 @@ from alphamind.portfolio_state.pricing import (
     StubCurrentPriceProvider,
     StubOptionPriceProvider,
 )
-from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.repository import (
     RepositoryConsistencyError,
     RepositoryFixture,

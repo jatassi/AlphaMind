@@ -19,6 +19,7 @@ from alphamind.portfolio_state.records.positions import (
     Direction,
     InstrumentType,
 )
+from alphamind.risk_guardrails.guardrail_evaluation.types import EscalationZones
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 from alphamind.risk_guardrails.state_delivery.primitives import (
@@ -98,6 +99,7 @@ def render_strategist_header(  # noqa: PLR0913 — signature dictated by story 0
     sector_resolver: SectorResolver,
     total_portfolio_value_usd: Money,
     available_for_new_positions_usd: Money,
+    position_zones: EscalationZones,
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
 ) -> str:
@@ -171,6 +173,7 @@ def render_strategist_header(  # noqa: PLR0913 — signature dictated by story 0
         render_position_proximity_block(
             positions=strategist_view.positions,
             active_risk_parameters=active_risk_parameters,
+            position_zones=position_zones,
         )
     )
     blocks.append(

@@ -23,6 +23,7 @@ from typing import Any
 import yaml
 
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
+from alphamind.analysis._sdk_subprocess import invoke_synthesizer_in_subprocess
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.adaptive_research.models import AdaptiveBrief
 from alphamind.analysis.domain_researchers.models import SectorBrief
@@ -33,7 +34,7 @@ from alphamind.analysis.synthesizer.adapters import (
     qualitative_brief_to_bundle,
     sector_brief_to_bundle,
 )
-from alphamind.analysis.synthesizer.harness import (
+from alphamind.analysis.synthesizer.harness import (  # noqa: F401 — kept for tests that inject the in-process harness
     HarnessSuccess,
     invoke_synthesizer,
 )
@@ -246,7 +247,7 @@ async def run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 sp
         portfolio_reader: SynthesizerPortfolioStateReader,
         archive_root: Path | None,
     ) -> HarnessSuccess:
-        return await invoke_synthesizer(
+        return await invoke_synthesizer_in_subprocess(
             agent_config=agent_config,
             user_message=user_message,
             invocation_id=invocation_id,

@@ -30,6 +30,7 @@ import yaml
 
 from alphamind._kernel.money import Money
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
+from alphamind.analysis._sdk_subprocess import invoke_portfolio_manager_in_subprocess
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.commands.pm_envelope import PMCompletionRecord
@@ -40,7 +41,7 @@ from alphamind.config.models.agents import (
     AgentsConfig,
     BaseAgentConfig,
 )
-from alphamind.decision.portfolio_manager.harness import (
+from alphamind.decision.portfolio_manager.harness import (  # noqa: F401 — kept for tests that inject the in-process harness
     HarnessSuccess,
     invoke_pm,
 )
@@ -66,6 +67,7 @@ from alphamind.portfolio_state.records.positions import (
 from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
+    EscalationZones,
     FeatureFlagsView,
     LibraryConfig,
     MarketInputs,
@@ -325,6 +327,7 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
         total_portfolio_value_usd=total_portfolio_value_usd,
         available_for_new_positions_usd=available_for_new_positions_usd,
         cross_constraint_impact=cross_constraint_impact,
+        position_zones=library_config.position_zones,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,
         active_regime_overrides=active_regime_overrides,
@@ -342,7 +345,13 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
 
     # HarnessFailure propagates up unchanged — the runner does NOT catch and
     # degrade. The pipeline-level orchestrator handles fail-closed semantics.
-    harness_result: HarnessSuccess = await invoke_pm(
+    # ALP-650: route through the subprocess wrapper so an SDK stall in the
+    # PM's harness no longer wedges the parent pipeline. ``broker_dispatch``
+    # is intentionally not threaded — today's composition path runs PM
+    # validation without broker routing (server.py gates broker dispatch on
+    # ``client/queries/execution_config`` being non-None, which the harness
+    # never threads through).
+    harness_result: HarnessSuccess = await invoke_portfolio_manager_in_subprocess(
         agent_config=resolved_config,
         user_message=user_message,
         invocation_id=invocation_id,
@@ -403,6 +412,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
     total_portfolio_value_usd: Money,
     available_for_new_positions_usd: Money,
     cross_constraint_impact: CrossConstraintImpact,
+    position_zones: EscalationZones,
     sector_label_display: dict[str, str] | None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...],
     active_regime_overrides: tuple[RegimeOverride, ...],
@@ -432,6 +442,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
             available_for_new_positions_usd=available_for_new_positions_usd,
             cross_constraint_impact=cross_constraint_impact,
             tool_names=PM_TOOL_NAMES,
+            position_zones=position_zones,
             sector_label_display=sector_label_display,
             regime_transition_breaches=regime_transition_breaches,
             active_regime_overrides=active_regime_overrides,
@@ -462,6 +473,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
         available_for_new_positions_usd=available_for_new_positions_usd,
         cross_constraint_impact=cross_constraint_impact,
         tool_names=PM_TOOL_NAMES,
+        position_zones=position_zones,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,
         active_regime_overrides=active_regime_overrides,

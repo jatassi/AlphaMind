@@ -101,7 +101,5 @@ jobs:
         run: uv sync
 
       - name: pytest
-        # CI runs the FULL suite without --testmon. testmon's selection is a
-        # local-dev optimization; CI must execute every test against the
-        # integration tip on every PR. -n auto allocates one worker per core.
+        # -n auto allocates one worker per core.
         run: uv run pytest -n auto

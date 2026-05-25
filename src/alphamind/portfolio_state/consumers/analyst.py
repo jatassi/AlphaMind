@@ -14,7 +14,7 @@ from alphamind.portfolio_state.consumers.synthesizer import (
     _project_theses,
     _ticker_from_position,
 )
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     CommandAbandonedDetail,
     EventType,
 )

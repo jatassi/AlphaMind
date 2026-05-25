@@ -25,6 +25,21 @@ from alphamind._kernel.regime import (
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
+from alphamind.portfolio_state.aggregates.thesis_quality import (
+    AlphaBetaDecomposition,
+    AttributionDimension,
+    ConvictionCalibrationEntry,
+    ConvictionSizingDeviation,
+    InvalidationTimingClass,
+    InvalidationTimingStat,
+    PerformanceAttributionEntry,
+    ResolutionWindowCounts,
+    SignalHitRate,
+    SignalToThesisConversion,
+    ThesisDurationStat,
+    ThesisQualityAggregate,
+    TrailingWindow,
+)
 from alphamind.portfolio_state.consumers.analyst import AnalystAbandonedOpening
 from alphamind.portfolio_state.consumers.strategist import (
     BetweenInvocationClosure,
@@ -32,7 +47,7 @@ from alphamind.portfolio_state.consumers.strategist import (
     StrategistPositionView,
     project_strategist_view,
 )
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     CommandAbandonedDetail,
     EventGroup,
@@ -77,21 +92,6 @@ from alphamind.portfolio_state.records.theses import (
     ThesisComponentType,
     ThesisRecord,
     ThesisRecordStatus,
-)
-from alphamind.portfolio_state.records.thesis_quality import (
-    AlphaBetaDecomposition,
-    AttributionDimension,
-    ConvictionCalibrationEntry,
-    ConvictionSizingDeviation,
-    InvalidationTimingClass,
-    InvalidationTimingStat,
-    PerformanceAttributionEntry,
-    ResolutionWindowCounts,
-    SignalHitRate,
-    SignalToThesisConversion,
-    ThesisDurationStat,
-    ThesisQualityAggregate,
-    TrailingWindow,
 )
 from alphamind.portfolio_state.snapshot import (
     DirectionalExposure,

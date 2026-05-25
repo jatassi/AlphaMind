@@ -28,6 +28,7 @@ from alphamind.portfolio_state.records.positions import (
     StrategyPositionDetails,
 )
 from alphamind.portfolio_state.views.positions import PositionView
+from alphamind.risk_guardrails.guardrail_evaluation.types import EscalationZones
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 
 # ---------------------------------------------------------------------------
@@ -94,11 +95,6 @@ _SECTOR_BREAKDOWN_HEADER = "Sector exposure breakdown (per position):"
 _REGIME_TRANSITION_BREACHES_HEADER = "Regime-transition breaches (if any):"
 _NONE_LINE = "  None"
 _UNCLASSIFIED_GROUP_LABEL = "Unclassified"
-
-# Position-zone classification thresholds (ratio of current_value / limit).
-_ZONE_WARNING_THRESHOLD = 0.70
-_ZONE_CRITICAL_THRESHOLD = 0.85
-_ZONE_BLOCKED_THRESHOLD = 0.95
 
 
 def format_dollar(value: Money | Decimal) -> str:
@@ -390,33 +386,50 @@ def make_sector_label_resolver(
 # ---------------------------------------------------------------------------
 
 
-def _classify_position_zone(value: float, limit: float) -> RiskZone:
+def _classify_position_zone(value: float, limit: float, zones: EscalationZones) -> RiskZone:
+    """Zone of a position's size vs. its per-position-size limit.
+
+    The caller supplies ``zones`` from ``LibraryConfig.position_zones`` so the
+    band stays traceable to ``config/guardrails.yaml`` (ALP-646). ``zones``
+    fields are percentages of the limit (``warning=70`` ⇒ classify WARNING at
+    70% consumption); the comparison is ``value / limit * 100`` against each
+    threshold.
+    """
     if limit <= 0:
         return RiskZone.NORMAL
-    ratio = value / limit
-    if ratio >= _ZONE_BLOCKED_THRESHOLD:
+    consumption_pct = value / limit * 100.0
+    if consumption_pct >= zones.hard_block:
         return RiskZone.BLOCKED
-    if ratio >= _ZONE_CRITICAL_THRESHOLD:
+    if consumption_pct >= zones.critical:
         return RiskZone.CRITICAL
-    if ratio >= _ZONE_WARNING_THRESHOLD:
+    if consumption_pct >= zones.warning:
         return RiskZone.WARNING
     return RiskZone.NORMAL
 
 
-def _classify_loss_zone(pnl_pct: float, max_loss_pct: float | None) -> RiskZone:
+def _classify_loss_zone(
+    pnl_pct: float, max_loss_pct: float | None, zones: EscalationZones
+) -> RiskZone:
     """Zone of a position's signed P/L vs. its max-loss floor (``-max_loss_pct``).
 
     Positive P/L yields a non-positive ratio against the negative floor and
     stays NORMAL. CRITICAL is the worst loss-zone level — BLOCKED is reserved
     for size-cap breaches where the operator action is "no more sizing", not
-    "close the position".
+    "close the position". ``zones.hard_block`` is intentionally unused: a
+    position approaching its max-loss never "blocks" further sizing — that
+    decision lives on the size axis.
+
+    ``zones`` is sourced from ``LibraryConfig.position_zones`` so the band
+    stays traceable to ``config/guardrails.yaml`` (ALP-646); fields are
+    percentages of the floor (``critical=85`` ⇒ classify CRITICAL at 85% of
+    the way to the max-loss floor).
     """
     if max_loss_pct is None or max_loss_pct <= 0:
         return RiskZone.NORMAL
-    loss_progress = -pnl_pct / max_loss_pct
-    if loss_progress >= _ZONE_CRITICAL_THRESHOLD:
+    loss_progress_pct = -pnl_pct / max_loss_pct * 100.0
+    if loss_progress_pct >= zones.critical:
         return RiskZone.CRITICAL
-    if loss_progress >= _ZONE_WARNING_THRESHOLD:
+    if loss_progress_pct >= zones.warning:
         return RiskZone.WARNING
     return RiskZone.NORMAL
 
@@ -477,6 +490,7 @@ def _render_proximity_row(
     per_position_max_pct: float,
     max_loss_equity: float | None,
     max_loss_options: float | None,
+    position_zones: EscalationZones,
 ) -> str:
     pos = view.position
     padded_id = f"{pos.position_id}:".ljust(id_width + 1)
@@ -487,8 +501,10 @@ def _render_proximity_row(
     max_loss = _max_loss_for_position(pos, max_loss_equity, max_loss_options)
     if max_loss is not None:
         suffix = f" (max loss: -{max_loss:.1f}%)"
-    size_zone = _classify_position_zone(pos.position_weight_pct, per_position_max_pct)
-    loss_zone = _classify_loss_zone(pos.unrealized_pnl_pct, max_loss)
+    size_zone = _classify_position_zone(
+        pos.position_weight_pct, per_position_max_pct, position_zones
+    )
+    loss_zone = _classify_loss_zone(pos.unrealized_pnl_pct, max_loss, position_zones)
     zone_tag = _render_proximity_zone_tag(size_zone, loss_zone)
     return (
         f"  {padded_id} {weight}% of portfolio (max {max_pct}%) "
@@ -500,6 +516,7 @@ def render_position_proximity_block(
     *,
     positions: tuple[StrategistPositionView, ...],
     active_risk_parameters: ActiveRiskParameterSet,
+    position_zones: EscalationZones,
 ) -> str:
     """Render the per-position constraint proximity block.
 
@@ -510,6 +527,10 @@ def render_position_proximity_block(
     zones. The tag names its driver(s) — ``[⚠ WARNING: size]`` /
     ``[🔴 CRITICAL: loss]`` / ``[🔴 CRITICAL: size+loss]`` — so a reader can
     tell whether the flag came from position sizing or an approaching max-loss.
+
+    *position_zones* is sourced from ``LibraryConfig.position_zones``
+    (ALP-646); the renderer no longer carries hardcoded warning / critical /
+    blocked thresholds.
     """
     rows: list[str] = [_POSITION_PROXIMITY_HEADER]
     if not positions:
@@ -529,6 +550,7 @@ def render_position_proximity_block(
                 per_position_max_pct=per_position_max_pct,
                 max_loss_equity=max_loss_equity,
                 max_loss_options=max_loss_options,
+                position_zones=position_zones,
             )
         )
     return "\n".join(rows)

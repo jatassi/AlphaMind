@@ -26,8 +26,9 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
+from alphamind.analysis._sdk_subprocess import invoke_adaptive_researcher_in_subprocess
 from alphamind.analysis._shared import TokensUsed
-from alphamind.analysis.adaptive_research.harness import (
+from alphamind.analysis.adaptive_research.harness import (  # noqa: F401 — kept for tests that inject the in-process harness
     HarnessSuccess,
     invoke_adaptive_researcher,
 )
@@ -202,12 +203,22 @@ async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; va
     Wires production defaults: ``anomaly_assembler`` is
     :func:`assemble_adaptive_anomaly_inputs`; ``bundle_assembler`` is
     :func:`assemble_input_bundle`; ``harness_fn`` is
-    :func:`invoke_adaptive_researcher` bound to ``session`` and the
-    upstream-brief context required by the validator.
+    :func:`invoke_adaptive_researcher_in_subprocess` (the subprocess-
+    isolated wrapper added in ALP-650 — the worker opens its own
+    ``DATABASE_PATH`` session rather than receiving one across the
+    process boundary).
 
     Any :class:`~alphamind.analysis.adaptive_research.harness.HarnessFailure`
     raised by the harness propagates up unchanged.
     """
+
+    # ``session`` is retained on the public signature for caller-API stability
+    # (the in-process harness used to consume it). Post-ALP-650 the subprocess
+    # wrapper opens its own ``DATABASE_PATH`` session in the worker, so the
+    # parent-supplied session is unused on the production path. The in-tree
+    # callers (``pipeline/analysis.py``, ``tests/...``) still construct one,
+    # so removing the kwarg would be a breaking change.
+    del session  # unused after ALP-650 subprocess migration; kept for API stability
 
     async def _harness_fn(
         *,
@@ -220,11 +231,10 @@ async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; va
         correlation_regime_brief: CorrelationRegimeBrief,
         archive_root: Path | None,
     ) -> HarnessSuccess:
-        return await invoke_adaptive_researcher(
+        return await invoke_adaptive_researcher_in_subprocess(
             agent_config=agent_config,
             user_message=user_message,
             invocation_id=invocation_id,
-            session=session,
             universe=universe,
             sector_briefs=sector_briefs,
             qualitative_brief=qualitative_brief,

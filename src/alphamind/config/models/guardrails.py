@@ -72,11 +72,33 @@ class EmergencyInvocation(BaseModel):
     triggers: list[str | dict[str, Any]] = Field(min_length=1)
 
 
+# Schema-level default for the top-level ``position_zones`` block. Mirrored —
+# with float typing — by ``_DEFAULT_POSITION_ZONES`` in
+# ``alphamind.risk_guardrails.guardrail_evaluation.types``; the two constants
+# must stay numerically aligned so dataclass fixtures and YAML-loaded configs
+# exercise the same band. The Pydantic shape uses ``int`` fields, the
+# dataclass shape uses ``float``; ``from_resolved_config`` widens int → float
+# at the adapter boundary.
+_DEFAULT_POSITION_ZONES = EscalationZones(warning=70, critical=85, hard_block=95)
+
+
 class GuardrailsConfig(BaseModel):
+    """Top-level guardrails registry.
+
+    ``position_zones`` and ``inverse_warning_band_pct`` are library-wide
+    classification knobs read by the projection engine and the position-zone
+    renderer (ALP-646). Defaults match the historical hardcoded behaviour, so
+    existing fixtures that omit them keep working; the shipped
+    ``config/guardrails.yaml`` carries them explicitly so operators can see the
+    band they are tuning.
+    """
+
     model_config = ConfigDict(frozen=True)
 
     rules: list[RuleEntry] = Field(min_length=1)
     emergency_invocation: EmergencyInvocation
+    position_zones: EscalationZones = _DEFAULT_POSITION_ZONES
+    inverse_warning_band_pct: float = Field(default=20.0, ge=0.0)
 
     @model_validator(mode="after")
     def rule_ids_unique(self) -> "GuardrailsConfig":
@@ -104,6 +126,13 @@ class GuardrailsConfig(BaseModel):
                     f"warning < critical < hard_block, got "
                     f"{zones.warning}/{zones.critical}/{zones.hard_block}"
                 )
+        pz = self.position_zones
+        if not (pz.warning < pz.critical < pz.hard_block):
+            raise ValueError(
+                f"Top-level position_zones must satisfy "
+                f"warning < critical < hard_block, got "
+                f"{pz.warning}/{pz.critical}/{pz.hard_block}"
+            )
         return self
 
     @model_validator(mode="after")

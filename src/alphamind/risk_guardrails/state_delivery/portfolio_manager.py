@@ -12,7 +12,7 @@ from alphamind._kernel.money import Money
 from alphamind._kernel.regime import RiskZone
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventSource,
     EventType,
@@ -21,6 +21,7 @@ from alphamind.portfolio_state.records.activity_log import (
 )
 from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.risk_guardrails.breach_behavior.types import DrawdownTier
+from alphamind.risk_guardrails.guardrail_evaluation.types import EscalationZones
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 from alphamind.risk_guardrails.state_delivery.primitives import (
@@ -142,6 +143,7 @@ def render_pm_header(  # noqa: PLR0913 — keyword-only signature dictated by st
     total_portfolio_value_usd: Money,
     available_for_new_positions_usd: Money,
     cross_constraint_impact: CrossConstraintImpact,
+    position_zones: EscalationZones,
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
     active_regime_overrides: tuple[RegimeOverride, ...] = (),
@@ -206,6 +208,7 @@ def render_pm_header(  # noqa: PLR0913 — keyword-only signature dictated by st
         render_position_proximity_block(
             positions=pm_view.positions,
             active_risk_parameters=pm_view.active_risk_parameters,
+            position_zones=position_zones,
         )
     )
     blocks.append(

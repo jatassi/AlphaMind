@@ -43,6 +43,7 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
+from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.consumers.analyst import (
     AnalystAbandonedOpening,
@@ -56,7 +57,7 @@ from alphamind.portfolio_state.consumers.strategist import (
     StrategistPositionView,
     StrategistView,
 )
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventGroup,
     EventSource,
@@ -86,7 +87,6 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     PositionStatus,
 )
-from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.snapshot import DirectionalExposure, PortfolioPnL
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import (
@@ -155,6 +155,9 @@ _FULL_SECTOR_LABELS = {
 # ---------------------------------------------------------------------------
 # Helper: line-by-line comparison
 # ---------------------------------------------------------------------------
+
+
+_DEFAULT_POSITION_ZONES = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
 
 
 def _assert_lines_equal(actual: str, expected: str) -> None:
@@ -972,6 +975,7 @@ def _render_normal_strategist_header(
         total_portfolio_value_usd=money(_TOTAL_PORTFOLIO_VALUE_USD),
         available_for_new_positions_usd=money(_AVAILABLE_FOR_NEW_POSITIONS_USD),
         regime_transition_breaches=regime_transition_breaches,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
 
 
@@ -1001,6 +1005,7 @@ def _render_normal_pm_header(
         correlation_state=correlation_state,
         dependency_risk_flag=dependency_risk_flag,
         regime_transition_breaches=regime_transition_breaches,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
 
 
@@ -1505,6 +1510,7 @@ class TestHaltModeWrappers:
             sector_resolver=_build_sector_resolver(),
             total_portfolio_value_usd=money(_TOTAL_PORTFOLIO_VALUE_USD),
             available_for_new_positions_usd=money(_AVAILABLE_FOR_NEW_POSITIONS_USD),
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
         assert "** HALT MODE ACTIVE — daily drawdown 2.6% / 2.5% **" in rendered
         assert (
@@ -1534,6 +1540,7 @@ class TestHaltModeWrappers:
             cross_constraint_impact=_build_cross_constraint_impact(),
             pending_orders=(_build_pending_order(),),
             current_price_lookup=_price_lookup,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
         # Banner has three lines
         assert "** HALT MODE ACTIVE — daily drawdown 2.6% / 2.5% **" in rendered
@@ -1565,6 +1572,7 @@ class TestHaltModeWrappers:
             cross_constraint_impact=_build_cross_constraint_impact(),
             pending_orders=(),
             current_price_lookup=_price_lookup,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
         # Pending-orders-review block has the None line
         lines = rendered.splitlines()
@@ -1621,6 +1629,7 @@ class TestEmergencyWrapper:
             cross_constraint_impact=_build_cross_constraint_impact(),
             pending_orders=(_build_pending_order(),),
             current_price_lookup=_price_lookup,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
         context = EmergencyContext(
             trigger=EmergencyTrigger.MULTI_RULE_BREACH,
@@ -1870,6 +1879,7 @@ class TestComposition:
             cross_constraint_impact=_build_cross_constraint_impact(),
             pending_orders=(_build_pending_order(),),
             current_price_lookup=_price_lookup,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
         context = EmergencyContext(
             trigger=EmergencyTrigger.DAILY_DRAWDOWN_VELOCITY,

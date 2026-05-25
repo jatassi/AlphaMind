@@ -39,26 +39,20 @@ class PipelineMode(StrEnum):
     """Canonical pipeline-mode vocabulary.
 
     Member values match the wire vocabulary the row-layer and decision-layer
-    consumers persist or render. ``NORMAL`` and ``HALT`` are the two
-    runtime-resolvable values produced by the resolver's mode-resolution path
-    today; ``DEFENSIVE_POSTURE`` is reserved for the operator-pinning
-    mechanism a future story lands (parent issue ``ALP-431`` § Notes for the
-    orchestrator — surfacing condition iv) and is unreachable from the
-    current ``Mode`` enum.
+    consumers persist or render. ``NORMAL`` and ``HALT`` are the two values
+    the resolver produces from the config-layer
+    :class:`alphamind.config.models.modes.Mode`.
     """
 
     NORMAL = "normal"
     HALT = "halt"
-    DEFENSIVE_POSTURE = "defensive_posture"
 
     def to_analyst_pipeline_mode(self) -> Literal["normal", "watchlist"]:
         """Translate to the analyst runner's mode literal.
 
         Mirrors the pre-refactor dispatch table
         ``{"normal": "normal", "halt": "watchlist"}`` from
-        ``pipeline/decision.py``. ``DEFENSIVE_POSTURE`` is unreachable from
-        the current decision-pipeline mode input (``Literal["normal",
-        "halt"]``) and raises ``ValueError`` if it ever surfaces.
+        ``pipeline/decision.py``.
         """
         if self is PipelineMode.NORMAL:
             return "normal"
@@ -75,9 +69,7 @@ class PipelineMode(StrEnum):
 
         Mirrors the pre-refactor dispatch table
         ``{"normal": "normal", "halt": "defensive_posture"}`` from
-        ``pipeline/decision.py``. ``DEFENSIVE_POSTURE`` is unreachable from
-        the current decision-pipeline mode input (``Literal["normal",
-        "halt"]``) and raises ``ValueError`` if it ever surfaces.
+        ``pipeline/decision.py``.
         """
         if self is PipelineMode.NORMAL:
             return "normal"
@@ -93,12 +85,7 @@ class PipelineMode(StrEnum):
         """Translate to the decision-pipeline ``mode`` literal.
 
         ``run_decision_pipeline`` takes ``mode: Literal["normal", "halt"]``;
-        the orchestrator must narrow ``PipelineMode`` (which carries the
-        broader vocabulary) before threading the value through. The current
-        runner does not handle ``DEFENSIVE_POSTURE``; if a future story
-        widens the decision-pipeline contract, this method updates in lock-
-        step with the new ``Literal`` return type and ``mypy --strict`` flags
-        every caller that does not adapt.
+        the orchestrator narrows ``PipelineMode`` to that literal here.
         """
         if self is PipelineMode.NORMAL:
             return "normal"
@@ -110,23 +97,24 @@ class PipelineMode(StrEnum):
         )
         raise ValueError(msg)
 
-    def to_active_mode_literal(self) -> Literal["normal", "defensive_posture", "halted"]:
+    def to_active_mode_literal(self) -> Literal["normal", "halted"]:
         """Translate to the row-layer ``active_mode`` literal.
 
-        The ``invocations`` table's ``active_mode`` column accepts
-        ``"normal" | "defensive_posture" | "halted"``. Direct ``.value`` is
-        wrong: ``PipelineMode.HALT.value == "halt"``, but the column accepts
-        ``"halted"``. This adapter handles the row-side translation.
+        Direct ``.value`` is wrong: ``PipelineMode.HALT.value == "halt"``, but
+        the row column persists ``"halted"``. This adapter handles the row-
+        side translation. The ``invocations.active_mode`` CHECK constraint
+        (migration ``a4c1d2e3f4b5``) and the matching ``ActiveMode`` literal
+        in ``state/invocation_context/records.py`` still admit a third
+        ``"defensive_posture"`` value, but no writer emits it today; a
+        narrowed writer feeding a broader column type is covariant.
         """
         if self is PipelineMode.NORMAL:
             return "normal"
         if self is PipelineMode.HALT:
             return "halted"
-        if self is PipelineMode.DEFENSIVE_POSTURE:
-            return "defensive_posture"
         msg = (
             f"PipelineMode.{self.name} has no active-mode literal mapping; "
-            "the row column accepts only 'normal' | 'defensive_posture' | 'halted'"
+            "this writer emits only 'normal' | 'halted'"
         )
         raise ValueError(msg)
 
