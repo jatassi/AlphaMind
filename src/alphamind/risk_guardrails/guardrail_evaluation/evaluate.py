@@ -89,10 +89,11 @@ def evaluate_proposals(
     rejections: list[FeatureDisabledRejection] = []
     proposals_with_dae: list[tuple[ProposedDelta, DeltaAdjustedExposure]] = []
     for proposal in proposals:
-        rejection = classify_feature_gate(proposal, config)
-        if rejection is not None:
-            rejections.append(rejection)
-            continue
+        if _gate_applies(proposal):
+            rejection = classify_feature_gate(proposal, config)
+            if rejection is not None:
+                rejections.append(rejection)
+                continue
         dae = compute_delta_adjusted_exposure(
             proposal=proposal,
             market=market,
@@ -112,6 +113,22 @@ def evaluate_proposals(
         delta_adjusted=MappingProxyType({p.id: dae for p, dae in proposals_with_dae}),
         feature_disabled=tuple(rejections),
     )
+
+
+# ---------------------------------------------------------------------------
+# Feature-gate policy
+# ---------------------------------------------------------------------------
+
+
+def _gate_applies(proposal: ProposedDelta) -> bool:
+    """The feature gate only applies to proposals that would create or grow
+    disabled-class exposure. ``CLOSE`` / ``ADJUST`` / ``CANCEL`` against an
+    existing position pass through so operators can unwind after a flag flip
+    (ALP-647). The structural gate stays action-agnostic by contract; this
+    helper carries the entry-point policy that the gate's module docstring
+    defers to story 05.
+    """
+    return proposal.action in (Action.OPEN, Action.ADD)
 
 
 # ---------------------------------------------------------------------------

@@ -922,6 +922,123 @@ def test_all_options_proposals_under_micro_profile_only_in_feature_disabled() ->
 
 
 # ---------------------------------------------------------------------------
+# Feature-disabled CLOSE / ADJUST / CANCEL carve-out (ALP-647)
+#
+# The library's feature gate is structural (asset_type + direction); the
+# entry point owns the *policy* that operators must be able to unwind
+# disabled-class exposure through the same library that's policing them.
+# OPEN/ADD on a disabled class is still rejected; CLOSE/ADJUST/CANCEL pass
+# through so the regular rules can project the unwind.
+# ---------------------------------------------------------------------------
+
+
+def test_close_on_held_option_under_options_disabled_passes_gate() -> None:
+    """``options_enabled=False`` with a CLOSE against a held OPTION position
+    must let the proposal through — operators need to unwind. The proposal
+    lands in ``delta_adjusted`` and ``feature_disabled`` stays empty."""
+    existing = _existing_options_position(
+        position_id="POS-OPT",
+        asset_type=AssetType.OPTION,
+        delta_adjusted_exposure_usd=2_250.0,
+    )
+    state = _snapshot(existing_positions={"POS-OPT": existing})
+    proposal = _close_proposal(
+        proposal_id="REC-CLOSE-OPT",
+        asset_type=AssetType.OPTION,
+        existing_position_id="POS-OPT",
+    )
+
+    output = evaluate_proposals(
+        state=state,
+        proposals=(proposal,),
+        config=_full_config(options_enabled=False),
+        market=_market(),
+    )
+
+    assert output.feature_disabled == ()
+    assert "REC-CLOSE-OPT" in output.delta_adjusted
+
+
+def test_open_on_option_under_options_disabled_still_rejected() -> None:
+    """The carve-out is action-scoped: an OPEN of an options proposal under
+    ``options_enabled=False`` is still rejected — the operator can unwind but
+    cannot create new disabled-class exposure."""
+    proposal = _option(proposal_id="REC-OPEN-OPT", direction=Direction.LONG, quantity=1.0)
+
+    output = evaluate_proposals(
+        state=_snapshot(),
+        proposals=(proposal,),
+        config=_full_config(options_enabled=False),
+        market=_market(),
+    )
+
+    assert {r.proposal_id for r in output.feature_disabled} == {"REC-OPEN-OPT"}
+    assert "REC-OPEN-OPT" not in output.delta_adjusted
+
+
+def test_close_on_held_short_under_shorts_disabled_passes_gate() -> None:
+    """``short_selling_enabled=False`` with a CLOSE against a held SHORT equity
+    position must let the proposal through. Same unwind-policy mirror of the
+    options carve-out."""
+    existing = ExistingPosition(
+        position_id=PositionId("POS-SHORT"),
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=Direction.SHORT,
+        asset_type=AssetType.EQUITY,
+        notional_usd=2_000.0,
+        delta_adjusted_exposure_usd=-2_000.0,
+        current_greeks=None,
+        daily_borrow_cost_usd=0.10,
+        reserves_capital_usd=0.0,
+    )
+    state = _snapshot(existing_positions={"POS-SHORT": existing})
+    proposal = ProposedDelta(
+        id="REC-CLOSE-SHORT",
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=Direction.SHORT,
+        asset_type=AssetType.EQUITY,
+        notional_usd=money(2_000.0),
+        quantity=20.0,
+        option_legs=None,
+        action=Action.CLOSE,
+        existing_position_id="POS-SHORT",
+    )
+
+    output = evaluate_proposals(
+        state=state,
+        proposals=(proposal,),
+        config=_full_config(short_selling_enabled=False),
+        market=_market(),
+    )
+
+    assert output.feature_disabled == ()
+    assert "REC-CLOSE-SHORT" in output.delta_adjusted
+
+
+def test_open_short_under_shorts_disabled_still_rejected() -> None:
+    """OPEN of a SHORT equity under ``short_selling_enabled=False`` is still
+    rejected — mirror of the options OPEN-still-rejected test."""
+    proposal = _equity(
+        proposal_id="REC-OPEN-SHORT",
+        direction=Direction.SHORT,
+        notional_usd=2_000.0,
+        daily_borrow_cost_usd=0.10,
+    )
+
+    output = evaluate_proposals(
+        state=_snapshot(),
+        proposals=(proposal,),
+        config=_full_config(short_selling_enabled=False),
+        market=_market(),
+    )
+
+    assert {r.proposal_id for r in output.feature_disabled} == {"REC-OPEN-SHORT"}
+    assert "REC-OPEN-SHORT" not in output.delta_adjusted
+
+
+# ---------------------------------------------------------------------------
 # Input validation
 # ---------------------------------------------------------------------------
 
