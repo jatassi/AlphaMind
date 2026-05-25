@@ -410,6 +410,15 @@ ignore_imports =
 
 # ``portfolio_state`` must not reach upward into ``risk_guardrails``.
 # Boundary translators live on the consumer side (python-architecture §B3).
+#
+# ALP-648 — this contract also forecloses the load-order ``ImportError``
+# scenario formerly documented in prose on the
+# ``risk_guardrails/regime_adaptation`` and ``risk_guardrails/breach_behavior``
+# package docstrings: a function-module under either subpackage could in
+# principle have triggered a circular re-entry by transitively reaching
+# back into ``portfolio_state`` while the subpackage was still mid-load.
+# That class of cycle cannot form while this contract holds, regardless of
+# the re-export order inside either ``__init__.py``.
 [importlinter:contract:portfolio_state-not-risk_guardrails]
 name = portfolio_state/ has no upward imports of risk_guardrails/
 type = forbidden

@@ -4,11 +4,11 @@ Public surface: configuration knobs, canonical typed value objects, and (in
 later stories) the primitives that compose them. Re-exports below give every
 downstream consumer a single import path.
 
-Module load order (``types`` first) is load-bearing: ``types.py`` is the
-canonical home for ``DrawdownTier``, which ``portfolio_state.records.capital``
-re-exports. Loading any function-module first would put us mid-load on
-``breach_behavior`` while capital tries to resolve ``DrawdownTier`` and trigger
-an ``ImportError``.
+The historic load-order ``ImportError`` concern formerly documented here is
+now mechanically foreclosed by the ``portfolio_state-not-risk_guardrails``
+forbidden contract in ``.importlinter`` (rationale: ALP-648). Any future
+edge from ``portfolio_state`` back into ``breach_behavior`` breaks the lint
+chain before it can reach runtime.
 """
 
 from alphamind.risk_guardrails.breach_behavior.cascade import (
