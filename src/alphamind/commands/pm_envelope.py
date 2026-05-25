@@ -371,7 +371,7 @@ class VerdictSummary(BaseModel):
     approve: int = Field(ge=0)
     approve_with_modification: int = Field(ge=0)
     reject: int = Field(ge=0)
-    override_with_corrective_action: int = Field(default=0, ge=0)
+    override_with_corrective_action: int = Field(ge=0)
 
 
 class PMCompletionRecord(BaseModel):

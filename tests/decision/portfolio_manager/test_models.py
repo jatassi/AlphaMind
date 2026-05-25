@@ -770,7 +770,9 @@ class TestPMCompletionRecord:
             invocation_id=InvocationId("inv-2026-05-05"),
             timestamp=_NOW,
             envelopes_submitted=3,
-            verdict_summary=VerdictSummary(approve=2, approve_with_modification=1, reject=0),
+            verdict_summary=VerdictSummary(
+                approve=2, approve_with_modification=1, reject=0, override_with_corrective_action=0
+            ),
         )
         assert record.envelopes_submitted == 3
 
@@ -779,7 +781,9 @@ class TestPMCompletionRecord:
             invocation_id=InvocationId("inv-1"),
             timestamp=_NOW,
             envelopes_submitted=0,
-            verdict_summary=VerdictSummary(approve=0, approve_with_modification=0, reject=0),
+            verdict_summary=VerdictSummary(
+                approve=0, approve_with_modification=0, reject=0, override_with_corrective_action=0
+            ),
         )
         assert record.envelopes_submitted == 0
 
@@ -789,12 +793,79 @@ class TestPMCompletionRecord:
                 invocation_id=InvocationId("inv-1"),
                 timestamp=_NOW,
                 envelopes_submitted=3,
-                verdict_summary=VerdictSummary(approve=1, approve_with_modification=1, reject=0),
+                verdict_summary=VerdictSummary(
+                    approve=1,
+                    approve_with_modification=1,
+                    reject=0,
+                    override_with_corrective_action=0,
+                ),
+            )
+
+    def test_sum_mismatch_with_override_rejected(self) -> None:
+        """Mismatch detection extends to the override_with_corrective_action count."""
+        with pytest.raises((ValueError, TypeError), match=r"(?i)sum"):
+            PMCompletionRecord(
+                invocation_id=InvocationId("inv-1"),
+                timestamp=_NOW,
+                envelopes_submitted=3,
+                verdict_summary=VerdictSummary(
+                    approve=1,
+                    approve_with_modification=1,
+                    reject=0,
+                    override_with_corrective_action=0,
+                ),
             )
 
     def test_negative_count_rejected(self) -> None:
         with pytest.raises((ValueError, TypeError)):
-            VerdictSummary(approve=-1, approve_with_modification=0, reject=0)
+            VerdictSummary(
+                approve=-1,
+                approve_with_modification=0,
+                reject=0,
+                override_with_corrective_action=0,
+            )
+
+    def test_verdict_summary_requires_override_field(self) -> None:
+        """VerdictSummary requires override_with_corrective_action like the other counts.
+
+        ALP-626 added the fourth verdict; the sentinel field is now required (no
+        default) so a missing key surfaces as a parse error rather than silently
+        defaulting to 0.
+        """
+        with pytest.raises((ValueError, TypeError), match=r"(?i)override_with_corrective_action"):
+            VerdictSummary(approve=0, approve_with_modification=0, reject=0)  # type: ignore[call-arg]
+
+    def test_verdict_summary_with_overrides_passes_sum(self) -> None:
+        """A sentinel with override counts that sum to ``envelopes_submitted`` parses.
+
+        Positive case for finding 19: ``override_with_corrective_action`` is a
+        first-class contributor to the verdict_summary sum invariant.
+        """
+        record = PMCompletionRecord(
+            invocation_id=InvocationId("inv-override"),
+            timestamp=_NOW,
+            envelopes_submitted=2,
+            verdict_summary=VerdictSummary(
+                approve=0,
+                approve_with_modification=0,
+                reject=0,
+                override_with_corrective_action=2,
+            ),
+        )
+        assert record.verdict_summary.override_with_corrective_action == 2
+        # Sum-mismatch detection extends to overrides.
+        with pytest.raises((ValueError, TypeError), match=r"(?i)sum"):
+            PMCompletionRecord(
+                invocation_id=InvocationId("inv-override"),
+                timestamp=_NOW,
+                envelopes_submitted=1,
+                verdict_summary=VerdictSummary(
+                    approve=0,
+                    approve_with_modification=0,
+                    reject=0,
+                    override_with_corrective_action=2,
+                ),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1237,7 +1308,9 @@ class TestFrozen:
             invocation_id=InvocationId("inv-1"),
             timestamp=_NOW,
             envelopes_submitted=0,
-            verdict_summary=VerdictSummary(approve=0, approve_with_modification=0, reject=0),
+            verdict_summary=VerdictSummary(
+                approve=0, approve_with_modification=0, reject=0, override_with_corrective_action=0
+            ),
         )
         with pytest.raises((ValueError, TypeError)):
             record.invocation_id = InvocationId("inv-2")

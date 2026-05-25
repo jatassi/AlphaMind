@@ -125,7 +125,7 @@ Top-level shape:
 - `invocation_id` (string) — verbatim from the guardrail header.
 - `timestamp` (ISO 8601) — when you finalized the invocation (after the last envelope's submission resolved).
 - `envelopes_submitted` (integer) — total number of envelopes you submitted via `submit_envelope`. Includes rejection envelopes (which carry zero commands) and post-rejection re-submissions of the same envelope (count the envelope once per finalized state, not per `submit_envelope` call).
-- `verdict_summary` (object) — keys `approve`, `approve_with_modification`, `reject`; values are non-negative integer counts. The sum equals `envelopes_submitted`.
+- `verdict_summary` (object) — keys `approve`, `approve_with_modification`, `reject`, `override_with_corrective_action`; values are non-negative integer counts. The sum equals `envelopes_submitted`.
 
 Do not emit envelopes in the structured output; envelopes flow through `submit_envelope` calls. Do not emit prose before or after the structured-output JSON; the harness reads only the structured payload.
 
@@ -267,7 +267,8 @@ When you modify an exposure-changing parameter, the validated `delta_adjusted_ex
   "verdict_summary": {
     "approve": 0,
     "approve_with_modification": 1,
-    "reject": 2
+    "reject": 2,
+    "override_with_corrective_action": 0
   }
 }
   </output>
