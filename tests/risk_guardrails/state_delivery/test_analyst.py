@@ -8,6 +8,7 @@ from itertools import pairwise
 import pytest
 
 from alphamind._kernel.ids import PositionId, Symbol
+from alphamind._kernel.money import money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -102,9 +103,9 @@ def _make_available_capital(
     per_position_pct: float = 5.0,
 ) -> AnalystAvailableCapital:
     return AnalystAvailableCapital(
-        available_for_new_positions_usd=available_usd,
+        available_for_new_positions_usd=money(available_usd),
         available_for_new_positions_pct=available_pct,
-        per_position_max_size_usd=per_position_usd,
+        per_position_max_size_usd=money(per_position_usd),
         per_position_max_size_pct=per_position_pct,
     )
 

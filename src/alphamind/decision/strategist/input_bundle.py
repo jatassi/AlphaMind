@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 
+from alphamind._kernel.money import Money
 from alphamind.decision._shared import direction_display
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.computations.activity_log import filter_by_event_type
@@ -128,8 +129,8 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_strategist
     active_sectors: tuple[str, ...],
     state_delivery_config: StateDeliveryConfig,
     sector_resolver: SectorResolver,
-    total_portfolio_value_usd: float,
-    available_for_new_positions_usd: float,
+    total_portfolio_value_usd: Money,
+    available_for_new_positions_usd: Money,
     current_price_lookup: Callable[[str], float],
     synthesizer_brief_text: str,
     tool_names: tuple[str, ...],
@@ -180,8 +181,8 @@ def assemble_input_bundle_defensive_posture(  # noqa: PLR0913 — mirrors render
     active_sectors: tuple[str, ...],
     state_delivery_config: StateDeliveryConfig,
     sector_resolver: SectorResolver,
-    total_portfolio_value_usd: float,
-    available_for_new_positions_usd: float,
+    total_portfolio_value_usd: Money,
+    available_for_new_positions_usd: Money,
     current_price_lookup: Callable[[str], float],
     synthesizer_brief_text: str,
     tool_names: tuple[str, ...],
@@ -323,9 +324,8 @@ def _render_aggregate_block(strategist_view: StrategistView) -> str:
 
 
 def _render_aggregate_pnl_line(pnl: PortfolioPnL) -> str:
-    # ALP-462 — Money → float at the legacy format_dollar surface.
-    intraday = format_dollar(float(pnl.daily_total_pnl_usd))
-    cumulative = format_dollar(float(pnl.cumulative_realized_pnl_usd))
+    intraday = format_dollar(pnl.daily_total_pnl_usd)
+    cumulative = format_dollar(pnl.cumulative_realized_pnl_usd)
     # ALP-654 — name each feedback-loop metric explicitly. When the underlying
     # value is None (deferred until the feedback-loop story populates a richer
     # aggregation surface) the renderer emits "not yet computed" rather than
@@ -336,12 +336,12 @@ def _render_aggregate_pnl_line(pnl: PortfolioPnL) -> str:
         f"{pnl.profit_factor:.2f}" if pnl.profit_factor is not None else "not yet computed"
     )
     avg_win = (
-        format_dollar(float(pnl.average_win_size_usd))
+        format_dollar(pnl.average_win_size_usd)
         if pnl.average_win_size_usd is not None
         else "not yet computed"
     )
     avg_loss = (
-        format_dollar(float(pnl.average_loss_size_usd))
+        format_dollar(pnl.average_loss_size_usd)
         if pnl.average_loss_size_usd is not None
         else "not yet computed"
     )
@@ -365,16 +365,11 @@ def _render_aggregate_drawdown_line(drawdown: DrawdownState) -> str:
 
 
 def _render_directional_lines(directional: DirectionalExposure) -> str:
-    # ALP-462 — Money → float at the legacy format_dollar surface.
     net = format_dollar(
-        float(
-            directional.total_long_delta_adjusted_usd - directional.total_short_delta_adjusted_usd
-        )
+        directional.total_long_delta_adjusted_usd - directional.total_short_delta_adjusted_usd
     )
     gross = format_dollar(
-        float(
-            directional.total_long_delta_adjusted_usd + directional.total_short_delta_adjusted_usd
-        )
+        directional.total_long_delta_adjusted_usd + directional.total_short_delta_adjusted_usd
     )
     net_pct = format_pct(directional.net_directional_pct_of_portfolio)
     gross_pct = format_pct(directional.gross_pct_of_portfolio)
@@ -461,7 +456,7 @@ def _render_underlying_line(pos: PositionView, ticker: str) -> str:
 
 
 def _render_size_line(pos: PositionView) -> str:
-    market_value = format_dollar(float(pos.current_market_value_usd))
+    market_value = format_dollar(pos.current_market_value_usd)
     weight = format_pct(pos.position_weight_pct)
     details = pos.details
     if isinstance(details, EquityPositionDetails):
@@ -474,7 +469,7 @@ def _render_size_line(pos: PositionView) -> str:
 
 
 def _render_pnl_line(pos: PositionView, *, reconciliation_flagged: bool) -> str:
-    pnl_abs = _format_signed_dollar(float(pos.unrealized_pnl_usd))
+    pnl_abs = _format_signed_dollar(pos.unrealized_pnl_usd)
     pnl_pct = _format_signed_pct(pos.unrealized_pnl_pct)
     line = f"  P/L:           {pnl_abs} since open ({pnl_pct})"
     if reconciliation_flagged:
@@ -717,10 +712,9 @@ def _render_pm_decision_row(entry: ActivityLogEntry) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _format_signed_dollar(value: float) -> str:
+def _format_signed_dollar(value: Money) -> str:
     if value >= 0:
         return f"+{format_dollar(value)}"
-    # format_dollar already prefixes negatives with -$
     return format_dollar(value)
 
 

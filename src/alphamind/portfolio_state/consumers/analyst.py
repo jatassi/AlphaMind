@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 
+from alphamind._kernel.money import Money
 from alphamind.portfolio_state.computations.activity_log import filter_by_event_type
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.consumers.synthesizer import (
@@ -54,11 +56,16 @@ class AnalystHeldPosition:
 
 @dataclass(frozen=True, slots=True)
 class AnalystAvailableCapital:
-    """Capital availability summary for the analyst."""
+    """Capital availability summary for the analyst.
 
-    available_for_new_positions_usd: float
+    USD fields are typed :class:`Money` so the state-delivery renderer
+    (``render_capital_block``) consumes Decimal natively without an
+    intermediate float boundary cast (ALP-657).
+    """
+
+    available_for_new_positions_usd: Money
     available_for_new_positions_pct: float
-    per_position_max_size_usd: float
+    per_position_max_size_usd: Money
     per_position_max_size_pct: float
 
 
@@ -120,11 +127,13 @@ def _project_held_positions(
 def _project_available_capital(
     snapshot: PortfolioStateSnapshot,
     per_position_size_rule_id: str,
-    total_portfolio_value_usd: float,
+    total_portfolio_value_usd: Money,
+    available_capital_usd: Money,
 ) -> AnalystAvailableCapital:
-    deployable = snapshot.cash_ledger.true_deployable_capital_usd
     available_pct = (
-        (deployable / total_portfolio_value_usd * 100.0) if total_portfolio_value_usd > 0 else 0.0
+        float((available_capital_usd / total_portfolio_value_usd) * Decimal(100))
+        if total_portfolio_value_usd > 0
+        else 0.0
     )
     rule_entry = next(
         (
@@ -136,12 +145,12 @@ def _project_available_capital(
     )
     per_position_pct = rule_entry.value if rule_entry is not None else 0.0
     per_position_usd = (
-        (per_position_pct / 100.0 * total_portfolio_value_usd)
+        Money(total_portfolio_value_usd * Decimal(str(per_position_pct)) / Decimal(100))
         if total_portfolio_value_usd > 0
-        else 0.0
+        else Money(Decimal(0))
     )
     return AnalystAvailableCapital(
-        available_for_new_positions_usd=deployable,
+        available_for_new_positions_usd=available_capital_usd,
         available_for_new_positions_pct=available_pct,
         per_position_max_size_usd=per_position_usd,
         per_position_max_size_pct=per_position_pct,
@@ -184,14 +193,27 @@ def project_analyst_view(
     *,
     sector_resolver: SectorResolver,
     per_position_size_rule_id: str,
-    total_portfolio_value_usd: float,
+    total_portfolio_value_usd: Money,
+    available_capital_usd: Money,
 ) -> AnalystView:
-    """Project a PortfolioStateSnapshot into the analyst's typed view."""
+    """Project a PortfolioStateSnapshot into the analyst's typed view.
+
+    *available_capital_usd* is passed in (rather than re-read from
+    ``snapshot.cash_ledger.true_deployable_capital_usd``) so the pipeline
+    boundary cast happens once — see ``pipeline.decision.run_decision_pipeline``
+    where the same Decimal value also flows into the strategist runner, the
+    PM runner, and the cross-constraint impact derivation. The value is
+    typed :class:`Money` (Decimal) and may be negative during settlement-cycle
+    compression (wrapped via :func:`signed_money` at the pipeline boundary).
+    """
     return AnalystView(
         held_positions=_project_held_positions(snapshot, sector_resolver),
         active_thesis_summaries=_project_theses(snapshot),
         available_capital=_project_available_capital(
-            snapshot, per_position_size_rule_id, total_portfolio_value_usd
+            snapshot,
+            per_position_size_rule_id,
+            total_portfolio_value_usd,
+            available_capital_usd,
         ),
         pending_orders=snapshot.pending_orders,
         abandoned_openings=_project_abandoned_openings(snapshot),

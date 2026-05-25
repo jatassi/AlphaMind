@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
+from decimal import Decimal
 
+from alphamind._kernel.money import Money
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.computations.exposure import SectorResolver
@@ -203,8 +205,8 @@ def render_strategist_header_halt_mode(  # noqa: PLR0913 — mirrors render_stra
     active_sectors: tuple[str, ...],
     config: StateDeliveryConfig,
     sector_resolver: SectorResolver,
-    total_portfolio_value_usd: float,
-    available_for_new_positions_usd: float,
+    total_portfolio_value_usd: Money,
+    available_for_new_positions_usd: Money,
     position_zones: EscalationZones,
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
@@ -365,10 +367,13 @@ def render_pm_header_halt_mode(  # noqa: PLR0913 — mirrors render_pm_header
     active_sectors: tuple[str, ...],
     config: StateDeliveryConfig,
     sector_resolver: Callable[[PositionRecord], str | None],
-    total_portfolio_value_usd: float,
-    available_for_new_positions_usd: float,
+    total_portfolio_value_usd: Money,
+    available_for_new_positions_usd: Money,
     cross_constraint_impact: CrossConstraintImpact,
     pending_orders: tuple[OrderRecord, ...],
+    # ALP-660 — current_price_lookup stays ``Callable[[str], float]`` until
+    # ``OrderRecord.PriceParameters.{limit_price, stop_trigger_price}`` migrate
+    # to ``Price``; migrating the callback alone would just move the float boundary.
     current_price_lookup: Callable[[str], float],
     position_zones: EscalationZones,
     sector_label_display: dict[str, str] | None = None,
@@ -396,11 +401,15 @@ def render_pm_header_halt_mode(  # noqa: PLR0913 — mirrors render_pm_header
         pm_view.active_risk_parameters, POSITION_MAX_SIZE_RULE_ID
     ).value
     available_pct = (
-        (available_for_new_positions_usd / total_portfolio_value_usd) * 100.0
-        if total_portfolio_value_usd
+        float((available_for_new_positions_usd / total_portfolio_value_usd) * Decimal(100))
+        if total_portfolio_value_usd > 0
         else 0.0
     )
-    per_position_max_usd = total_portfolio_value_usd * per_position_max_pct / 100.0
+    per_position_max_usd = (
+        Money(total_portfolio_value_usd * Decimal(str(per_position_max_pct)) / Decimal(100))
+        if total_portfolio_value_usd > 0
+        else Money(Decimal(0))
+    )
     regime_display = regime_label_display(pm_view.active_risk_parameters.regime_label)
     sector_entries = resolve_sector_entries(pm_view.risk_budget, active_sectors)
     sector_label_resolver = make_sector_label_resolver(sector_label_display)
