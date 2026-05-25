@@ -312,6 +312,25 @@ class PMAnalystEnvelope(BaseModel):
         return _recommendation_id_constructor(value)
 
     @model_validator(mode="after")
+    def _reject_override_verdict_on_analyst(self) -> PMAnalystEnvelope:
+        """The override verdict is strategist-only — parent ALP-621 decision (B).
+
+        ``override_with_corrective_action`` is fundamentally a strategist-HOLD
+        override: the PM authors corrective commands against an existing
+        exposure when the strategist's signal-grounded analysis arrived at the
+        wrong structural action. An analyst envelope wraps a new-entry
+        ``REC-N`` proposal; there is no existing exposure to override, so the
+        verdict is semantically meaningless here. Use ``reject`` when the
+        new-entry recommendation is wrong.
+        """
+        if self.verdict == "override_with_corrective_action":
+            raise ValueError(
+                "override_with_corrective_action is valid only on PM-strategist envelopes; "
+                "analyst envelopes use reject when the new-entry recommendation is wrong"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_invariants(self) -> PMAnalystEnvelope:
         _validate_verdict_invariants(self.verdict, self.commands, self.modifications, self.concerns)
         return self

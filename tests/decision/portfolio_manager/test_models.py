@@ -567,6 +567,26 @@ class TestOverrideWithCorrectiveActionVerdictInvariants:
 
         assert "override_with_corrective_action" in get_args(Verdict)
 
+    def test_analyst_envelope_override_verdict_rejected(self) -> None:
+        """``override_with_corrective_action`` is strategist-only — ALP-621 decision (B).
+
+        An analyst envelope wraps a new-entry ``REC-N`` proposal; there is no
+        existing exposure to override, so the verdict is semantically
+        meaningless. The Pydantic model validator on PMAnalystEnvelope must
+        reject the verdict at parse time with a message that points to the
+        correct fallback (``reject``).
+        """
+        with pytest.raises(
+            (ValueError, TypeError),
+            match=r"(?i)override_with_corrective_action.*strategist",
+        ):
+            _make_analyst_envelope(
+                verdict="override_with_corrective_action",
+                modifications=(),
+                commands=(_close_command_basic(),),
+                concerns=(ConcernRecord(source="other", summary="x"),),
+            )
+
 
 # ---------------------------------------------------------------------------
 # 3. Modification-record invariants (adjustment_category ↔ phase)
