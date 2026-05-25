@@ -25,6 +25,7 @@ See ALP-621 for the bug this prevents.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 
 from alphamind.risk_guardrails.guardrail_evaluation.rules._helpers import (
@@ -39,6 +40,8 @@ from alphamind.risk_guardrails.guardrail_evaluation.types import (
     PortfolioStateSnapshot,
     ProposedDelta,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # position_max_size_pct
@@ -153,6 +156,13 @@ def _apply_proposal_to_book(
     pos_id = proposal.existing_position_id
     if pos_id is None or pos_id not in existing_book:
         # Defensive — validation should have caught it upstream.
+        logger.warning(
+            "position_max_size_pct projector skipping proposal id=%r action=%s: "
+            "existing_position_id=%r is unresolved in the post-batch book",
+            proposal.id,
+            proposal.action.name,
+            pos_id,
+        )
         return
     proposal_notional = abs(float(proposal.notional_usd))
     if action is Action.CLOSE:
