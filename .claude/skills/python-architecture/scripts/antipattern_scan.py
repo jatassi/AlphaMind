@@ -145,7 +145,8 @@ def scan_pydantic_internal(tree: ast.AST, source: str, path: str, abs_path: str)
     # Match against path *components*, not substrings — otherwise hints like
     # "io" false-positive on directory names like "sessions" or "fixtures".
     # If any directory in the file's path is a known boundary location, skip.
-    parts = abs_path.lower().split("/")
+    # Normalise backslashes so the split works on Windows where str(Path) uses '\'.
+    parts = abs_path.lower().replace("\\", "/").split("/")
     if any(p in BOUNDARY_DIRS for p in parts[:-1]):
         return findings
     # Look for class X(BaseModel) or class X(pydantic.BaseModel)
@@ -329,9 +330,15 @@ def scan_third_party_patch(source: str, path: str) -> list[dict]:
 
 # ---------- L25: print() in non-CLI code ----------
 def scan_print(tree: ast.AST, source: str, path: str) -> list[dict]:
-    """Flag print() calls. Heuristic: skip files under cli/ and __main__.py."""
+    """Flag print() calls. Heuristic: skip files under cli/ or scripts/ and __main__.py."""
     findings: list[dict] = []
-    if "/cli/" in path or path.endswith("__main__.py") or "/scripts/" in path:
+    # Match directory *components* (not substrings) so the check works for both
+    # top-level dirs (`cli/foo.py`) and nested dirs (`distillation/cli/foo.py`).
+    # Normalise backslashes so Windows-style relative paths (`cli\\foo.py`) are
+    # handled identically. The prior `"/cli/" in path` substring check missed
+    # both top-level dirs (no leading slash in `rel`) and Windows paths.
+    parts = path.replace("\\", "/").split("/")
+    if "cli" in parts[:-1] or "scripts" in parts[:-1] or parts[-1] == "__main__.py":
         return findings
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print":
