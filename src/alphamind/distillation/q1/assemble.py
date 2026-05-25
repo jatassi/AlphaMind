@@ -198,10 +198,19 @@ def _group_tickers_by_audience(
 
 def _compute_technicals_per_ticker(
     bars_by_ticker: Mapping[str, Sequence[DailyBarRow]],
+    baselines_atr: Mapping[str, TickerBaselineRow | None],
 ) -> dict[str, dict[str, Any]]:
-    """Compute the per-ticker technicals payload for every ticker with sufficient bars."""
+    """Compute the per-ticker technicals payload for every ticker with sufficient bars.
+
+    A ticker whose ATR baseline carries :attr:`CalibrationState.UNAVAILABLE`
+    is skipped (ALP-630). The block header already reports the unavailable
+    state via :func:`_block_state_from_baselines`; emitting the per-ticker
+    row anyway would undo the gating contract from ALP-540.
+    """
     out: dict[str, dict[str, Any]] = {}
     for ticker in sorted(bars_by_ticker):
+        if _baseline_calibration_state(baselines_atr.get(ticker)) is CalibrationState.UNAVAILABLE:
+            continue
         bars = bars_by_ticker[ticker]
         closes = [b.adj_close for b in bars]
         highs = [b.adj_high for b in bars]
@@ -509,11 +518,24 @@ def _trend_state_payload_for_ticker(
     bars: Sequence[DailyBarRow],
     atr_baseline: TickerBaselineRow | None,
 ) -> tuple[dict[str, Any], CalibrationState, str | None] | None:
-    """Per-ticker trend-state payload + per-ticker calibration-state tag."""
+    """Per-ticker trend-state payload + per-ticker calibration-state tag.
+
+    Returns ``None`` when the bar window is too short OR when the ATR
+    baseline is :attr:`CalibrationState.UNAVAILABLE` (ALP-630). The
+    UNAVAILABLE skip prevents a row whose ATR-dependent EMA cells would
+    zero-default (``ema_20=0``, ``ema_20_slope=0``, ``ema_50_slope=0``,
+    ``distance_from_ema_20_in_atr=0``) from masquerading as a live read
+    while the surrounding block header says ``unavailable``. The block-
+    level reason is recomputed from baselines in
+    :func:`_compute_trend_state_per_ticker`, so dropping the row here
+    does not lose operator-facing context.
+    """
     closes = [b.adj_close for b in bars]
     highs = [b.adj_high for b in bars]
     lows = [b.adj_low for b in bars]
     if len(closes) < _ADX_PERIOD * _RETURN_MIN_LEN + _BASE_ONE:
+        return None
+    if _baseline_calibration_state(atr_baseline) is CalibrationState.UNAVAILABLE:
         return None
 
     adx = compute_adx(highs, lows, closes, period=_ADX_PERIOD)
@@ -546,8 +568,8 @@ def _trend_state_payload_for_ticker(
         "volatility_regime": vol_regime,
         "atr_regime": atr_regime_label,
     }
-    if atr_state is CalibrationState.UNAVAILABLE:
-        return payload, CalibrationState.UNAVAILABLE, atr_reason
+    # ``atr_state`` is guaranteed CALIBRATED or ACCUMULATING — the
+    # UNAVAILABLE branch returned ``None`` above.
     if ema.bootstrap_reason is not None or atr_state is CalibrationState.ACCUMULATING:
         return (
             payload,
@@ -562,10 +584,19 @@ def _compute_trend_state_per_ticker(
     bars_by_ticker: Mapping[str, Sequence[DailyBarRow]],
     baselines_atr: Mapping[str, TickerBaselineRow | None],
 ) -> tuple[dict[str, dict[str, Any]], CalibrationState, str | None]:
-    """Per-ticker trend-state payload keyed off EMA pairs and the ATR-baseline tag."""
+    """Per-ticker trend-state payload keyed off EMA pairs and the ATR-baseline tag.
+
+    The per-ticker payload omits any ticker whose ATR baseline carries
+    :attr:`CalibrationState.UNAVAILABLE` (ALP-630). The block-level state
+    is then derived from :func:`_block_state_from_baselines` — the same
+    path :func:`_build_indicator_group_blocks` uses for ``q1.technicals``
+    — so the header still reports the UNAVAILABLE state with a concrete
+    ``baseline calibration_state=unavailable for {ticker}`` reason rather
+    than the ``reason: None`` leak surfaced by the post-mortem.
+    """
     out: dict[str, dict[str, Any]] = {}
-    block_state = CalibrationState.CALIBRATED
-    block_reason: str | None = None
+    accumulating_reason: str | None = None
+    has_accumulating = False
     for ticker in sorted(bars_by_ticker):
         result = _trend_state_payload_for_ticker(
             ticker=ticker,
@@ -576,19 +607,21 @@ def _compute_trend_state_per_ticker(
             continue
         payload, ticker_state, ticker_reason = result
         out[ticker] = payload
-        if (
-            ticker_state is CalibrationState.UNAVAILABLE
-            and block_state is not CalibrationState.UNAVAILABLE
-        ):
-            block_state = CalibrationState.UNAVAILABLE
-            block_reason = ticker_reason
-        elif (
-            ticker_state is CalibrationState.ACCUMULATING
-            and block_state is CalibrationState.CALIBRATED
-        ):
-            block_state = CalibrationState.ACCUMULATING
-            block_reason = ticker_reason
-    return out, block_state, block_reason
+        if ticker_state is CalibrationState.ACCUMULATING and not has_accumulating:
+            has_accumulating = True
+            accumulating_reason = ticker_reason
+
+    baseline_state, baseline_reason = _block_state_from_baselines(
+        tickers=tuple(sorted(bars_by_ticker)),
+        baselines=baselines_atr,
+    )
+    if baseline_state is CalibrationState.UNAVAILABLE:
+        return out, CalibrationState.UNAVAILABLE, baseline_reason
+    if has_accumulating:
+        return out, CalibrationState.ACCUMULATING, accumulating_reason
+    if baseline_state is CalibrationState.ACCUMULATING:
+        return out, CalibrationState.ACCUMULATING, baseline_reason
+    return out, CalibrationState.CALIBRATED, None
 
 
 def _compute_divergence_per_ticker(
@@ -872,7 +905,7 @@ def _build_indicator_group_blocks(
     """Build the six per-audience indicator-group blocks."""
     blocks: list[OutputBlock] = []
 
-    technicals = _compute_technicals_per_ticker(ctx.bars_by_ticker)
+    technicals = _compute_technicals_per_ticker(ctx.bars_by_ticker, ctx.baselines_atr)
     if technicals:
         tech_state, tech_reason = _block_state_from_baselines(
             tickers=ctx.tickers,
