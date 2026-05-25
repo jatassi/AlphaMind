@@ -1892,9 +1892,7 @@ def test_validate_guardrail_batch_standalone_fail_becomes_cumulative_pass() -> N
     result = validate_guardrail_batch(requests=(close_req, open_req), state=state)
     # Surface which rules drove a FAIL, if any, to make debugging easy.
     assert result.per_proposal[0].overall == "PASS", result.per_proposal[0].failure_guidance
-    failed_rules = [
-        p.rule for p in result.per_proposal[1].per_rule if p.status is Status.FAIL
-    ]
+    failed_rules = [p.rule for p in result.per_proposal[1].per_rule if p.status is Status.FAIL]
     assert result.per_proposal[1].overall == "PASS", (
         f"Failed rules on 2nd proposal: {failed_rules}; "
         f"guidance: {result.per_proposal[1].failure_guidance}"

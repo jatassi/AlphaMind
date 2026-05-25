@@ -633,9 +633,7 @@ async def test_batch_empty_proposals_returns_pass_and_does_not_advance_cell() ->
     mcp_servers, _ = build_validate_guardrail_mcp_server(state)
     server = mcp_servers["alphamind_decision_validation"]["instance"]
 
-    text, is_error = await _invoke_mcp_tool(
-        server, "validate_guardrail_batch", _batch_args([])
-    )
+    text, is_error = await _invoke_mcp_tool(server, "validate_guardrail_batch", _batch_args([]))
     assert not is_error
     payload = json.loads(text)
     assert payload["overall"] == "PASS"
@@ -664,9 +662,7 @@ async def test_batch_all_pass_advances_cell_one_delta_per_proposal() -> None:
     state = _make_state(
         config=cfg,
         market=MarketInputs(
-            underlying_prices=MappingProxyType(
-                {u: _SPOT for u in ("AAPL", "NVDA", "ABC", "JPM")}
-            ),
+            underlying_prices=MappingProxyType({u: _SPOT for u in ("AAPL", "NVDA", "ABC", "JPM")}),
             risk_free_rate=_RISK_FREE_RATE,
             iv_provider=_atm_provider("AAPL"),
             as_of=_AS_OF,
@@ -709,7 +705,9 @@ async def test_batch_all_pass_advances_cell_one_delta_per_proposal() -> None:
 
     # A subsequent single-call should report itself as proposal #3
     # (two batch proposals advanced the cell).
-    text2, _ = await _invoke_mcp_tool(server, "validate_guardrail", _equity_open_args(ticker="NVDA"))
+    text2, _ = await _invoke_mcp_tool(
+        server, "validate_guardrail", _equity_open_args(ticker="NVDA")
+    )
     p2 = json.loads(text2)
     assert p2["proposal_index_in_invocation"] == 3
 
@@ -741,7 +739,9 @@ async def test_batch_aggregate_fail_does_not_advance_cell() -> None:
 
     # Subsequent single-call should see itself as proposal #1 — the batch
     # FAIL did NOT advance the cell.
-    text2, _ = await _invoke_mcp_tool(server, "validate_guardrail", _equity_open_args(ticker="NVDA"))
+    text2, _ = await _invoke_mcp_tool(
+        server, "validate_guardrail", _equity_open_args(ticker="NVDA")
+    )
     p2 = json.loads(text2)
     assert p2["proposal_index_in_invocation"] == 1
 
@@ -773,7 +773,9 @@ async def test_batch_aggregate_unavailable_does_not_advance_cell() -> None:
     assert overalls == ["PASS", "UNAVAILABLE"]
     assert payload["per_proposal"][1]["unavailable_reason"] == "missing_market_price"
 
-    text2, _ = await _invoke_mcp_tool(server, "validate_guardrail", _equity_open_args(ticker="NVDA"))
+    text2, _ = await _invoke_mcp_tool(
+        server, "validate_guardrail", _equity_open_args(ticker="NVDA")
+    )
     p2 = json.loads(text2)
     assert p2["proposal_index_in_invocation"] == 1
 
@@ -793,9 +795,7 @@ async def test_batch_shares_state_cell_with_single_call() -> None:
 
     base = _make_state(
         market=MarketInputs(
-            underlying_prices=MappingProxyType(
-                {u: _SPOT for u in ("AAPL", "NVDA", "ABC", "JPM")}
-            ),
+            underlying_prices=MappingProxyType({u: _SPOT for u in ("AAPL", "NVDA", "ABC", "JPM")}),
             risk_free_rate=_RISK_FREE_RATE,
             iv_provider=_atm_provider("AAPL"),
             as_of=_AS_OF,
@@ -817,7 +817,9 @@ async def test_batch_shares_state_cell_with_single_call() -> None:
     server = mcp_servers["alphamind_decision_validation"]["instance"]
 
     # First, a single-call PASS advances the cell to next-index=2.
-    text1, _ = await _invoke_mcp_tool(server, "validate_guardrail", _equity_open_args(ticker="AAPL"))
+    text1, _ = await _invoke_mcp_tool(
+        server, "validate_guardrail", _equity_open_args(ticker="AAPL")
+    )
     assert json.loads(text1)["overall"] == "PASS"
 
     # The batch tool's per-proposal entries should reflect the prior call —

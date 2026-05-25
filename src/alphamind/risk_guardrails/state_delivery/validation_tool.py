@@ -594,9 +594,7 @@ def _build_projected_delta_from(
         greeks=result.greeks,
         proposal_index=result.proposal_index_in_invocation,
         reserves_capital=request.reserves_capital,
-        existing_position_id=_lookup_existing_position(
-            request, snapshot=state.starting_snapshot
-        ),
+        existing_position_id=_lookup_existing_position(request, snapshot=state.starting_snapshot),
     )
 
 

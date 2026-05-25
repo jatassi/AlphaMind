@@ -180,9 +180,7 @@ def build_validate_guardrail_mcp_server(
 
         if result.overall == "PASS":
             cell.state = cell.state.with_accepted_proposal(
-                _build_projected_delta_from(
-                    request=request, result=result, state=cell.state
-                )
+                _build_projected_delta_from(request=request, result=result, state=cell.state)
             )
 
         return {
@@ -212,8 +210,7 @@ def build_validate_guardrail_mcp_server(
                     {
                         "type": "text",
                         "text": (
-                            "Invalid validate_guardrail_batch request:\n"
-                            "proposals: must be an array"
+                            "Invalid validate_guardrail_batch request:\nproposals: must be an array"
                         ),
                     }
                 ],
