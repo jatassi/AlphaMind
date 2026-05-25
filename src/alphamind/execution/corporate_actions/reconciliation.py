@@ -1,4 +1,4 @@
-"""Post-Phase-1 reconciliation step (ALP-415 / story 04; ALP-619 auto-correct).
+"""Post-Phase-1 reconciliation step (ALP-415 / story 04; ALP-619 / ALP-637 auto-correct).
 
 After all fills + CA activities are integrated, :func:`reconcile` compares
 local state to Alpaca's authoritative ``GET /v2/positions`` /
@@ -11,15 +11,24 @@ Tolerances:
 
 * ``_QTY_EPSILON`` (1e-9) for position quantities — mirrors the
   ``phase1`` write-path's existing constant. Same threshold gates alert
-  emission AND auto-correction (ALP-619).
+  emission AND auto-correction.
 * ``_CASH_EPSILON`` (0.01 USD) for cash-balance comparisons.
 
-Auto-correction (ALP-619). For drift on an existing OPEN equity position
-(``share_count``) and the singleton ``cash_ledger`` row
-(``current_cash_usd``), reconcile writes Alpaca's authoritative value back
-to local state in the same transaction AND emits a paired
-``RECONCILIATION_CORRECTION`` entry capturing the prior local value, the
-applied Alpaca value, the field, and the domain.
+Auto-correction. For drift on an existing OPEN equity position
+(``share_count``), OPEN options position (``contract_count``), and the
+singleton ``cash_ledger`` row (``current_cash_usd``), reconcile writes
+Alpaca's authoritative value back to local state in the same transaction
+AND emits a paired ``RECONCILIATION_CORRECTION`` entry capturing the prior
+local value, the applied Alpaca value, the field, and the domain.
+
+Position-matching keys:
+
+* Equity — local ``EquityPositionDetails.ticker`` matches Alpaca's
+  ``PositionSnapshot.symbol`` (both bare underlying for ``us_equity``).
+* Options — local ``OptionsPositionDetails`` matches Alpaca's snapshot by
+  the bare OCC contract symbol (e.g. ``"AAPL250620C00200000"``) built via
+  :func:`_alpaca_occ_symbol`. Multiple held contracts on the same
+  underlying reconcile independently (ALP-637).
 
 Alpaca's ``PositionSnapshot.qty`` is signed (negative for shorts; ``side``
 carries the boolean direction). Local ``EquityPositionDetails.share_count``
@@ -29,22 +38,18 @@ Reconcile compares unsigned magnitudes and writes back ``abs(alpaca.qty)``
 on drift. When ``alpaca.side`` disagrees with ``record.direction``, the
 delta is surfaced as a direction-flip ALERT only — no auto-correct, since a
 flipped side is semantically a different position (stop-out, assignment, or
-broker error) that warrants operator review.
+broker error) that warrants operator review. Direction-flip handling for
+options is not implemented — Alpaca options always carry ``side="long"``
+since short options behave as covered/cash-secured writes at the broker
+layer and are represented locally via ``StrategyPositionDetails`` legs that
+this reconciler skips.
 
-Scope narrowed in ALP-619:
+Scope narrows:
 
-* Equity-only auto-correct. Options positions still emit ALERTs through
-  the same comparator but skip the writeback — Alpaca returns each options
-  contract under its OCC symbol (e.g. ``"AAPL250620C00200000"``) while the
-  local options record carries ``underlying_ticker`` (e.g. ``"AAPL"``), so
-  the existing ALERT comparator is structurally broken for real Alpaca
-  options snapshots and writeback would zero out every options
-  ``contract_count`` on every invocation. The OCC-matching fix is a
-  follow-up.
-* OPEN-only auto-correct. PENDING positions carry ``share_count=0`` by the
-  status-rule invariant; comparing against an Alpaca-side missing entry
-  produces no drift in practice, but we exclude PENDING from the writeback
-  unconditionally as a defensive narrow.
+* OPEN-only auto-correct. PENDING positions carry ``share_count`` /
+  ``contract_count`` = 0 by the status-rule invariant; comparing against
+  an Alpaca-side missing entry produces no drift in practice, but we
+  exclude PENDING from the writeback unconditionally as a defensive narrow.
 * Positive-evidence gate. When ``alpaca_positions=()`` the caller could
   mean either "Alpaca holds zero positions" or "positions fetch degraded"
   — we can't disambiguate from inside reconcile. The writeback is skipped
@@ -86,6 +91,7 @@ from alphamind.portfolio_state.events.activity_log import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
+    OptionContractType,
     OptionsPositionDetails,
     PositionStatus,
 )
@@ -116,15 +122,32 @@ _QTY_EPSILON = 1e-9
 _CASH_EPSILON = 0.01
 
 # Position statuses the reconciler sweeps. Auto-correct narrows further to
-# OPEN-only in the equity branch (PENDING by invariant has share_count=0,
-# so no drift fires; the narrow is defensive against future invariant
-# changes).
+# OPEN-only in both equity and options branches (PENDING by invariant has
+# share_count / contract_count == 0, so no drift fires; the narrow is
+# defensive against future invariant changes).
 _LIVE_STATUSES = (PositionStatus.OPEN.value, PositionStatus.PENDING.value)
 
 
 def _direction_from_side(side: str) -> Direction:
     """Map Alpaca's ``side`` literal to the local ``Direction`` enum."""
     return Direction.LONG if side == "long" else Direction.SHORT
+
+
+def _alpaca_occ_symbol(details: OptionsPositionDetails) -> str:
+    """Build the bare OCC contract symbol Alpaca returns for an options position.
+
+    Alpaca's ``GET /v2/positions`` keys ``asset_class="us_option"`` entries by
+    the compact OCC symbol (e.g. ``"AAPL250620C00200000"``), with no Polygon
+    ``O:`` prefix and no space-padding on the underlying root. This differs
+    from :func:`occ_symbol_for_options` in ``portfolio_state.records.positions``,
+    which prepends ``O:`` for the Polygon options table; that form is the
+    canonical key for greeks/price lookups but not for Alpaca position
+    matching.
+    """
+    expiry = details.expiration_date.strftime("%y%m%d")
+    cp = "C" if details.contract_type is OptionContractType.CALL else "P"
+    strike_milli = round(details.strike_price * 1000)
+    return f"{details.underlying_ticker}{expiry}{cp}{strike_milli:08d}"
 
 
 async def reconcile(
@@ -192,13 +215,15 @@ async def reconcile(
                 autocorrect=autocorrect_positions and record.status == PositionStatus.OPEN,
             )
         elif isinstance(details, OptionsPositionDetails):
-            matched_symbols.add(details.underlying_ticker)
+            occ_symbol = _alpaca_occ_symbol(details)
+            matched_symbols.add(occ_symbol)
             alert_count += await _reconcile_options(
                 handle,
                 position_row=position_row,
-                underlying_ticker=details.underlying_ticker,
+                occ_symbol=occ_symbol,
                 local_count=details.contract_count,
-                alpaca=alpaca_by_symbol.get(details.underlying_ticker),
+                alpaca=alpaca_by_symbol.get(occ_symbol),
+                autocorrect=autocorrect_positions and record.status == PositionStatus.OPEN,
             )
         # Strategy positions are intentionally not reconciled at this layer:
         # Alpaca reports each leg as its own row keyed by OCC symbol, and the
@@ -322,18 +347,22 @@ async def _reconcile_options(
     handle: InvocationHandle,
     *,
     position_row: PositionRow,
-    underlying_ticker: str,
+    occ_symbol: str,
     local_count: float,
     alpaca: PositionSnapshot | None,
+    autocorrect: bool,
 ) -> int:
-    """Emit one alert on options ``contract_count`` drift; never auto-correct.
+    """Emit alert and (optionally) auto-correct ``contract_count`` on drift.
 
     Alpaca's options positions are keyed by OCC contract symbol (e.g.
-    ``"AAPL250620C00200000"``), not the underlying ticker. Until the
-    OCC-matching fix lands (follow-up issue), the alert here may fire
-    spuriously for any held options position, and auto-correction would
-    silently zero out every ``contract_count`` on every invocation. Skip
-    writeback unconditionally.
+    ``"AAPL250620C00200000"``) — the caller builds the matching key via
+    :func:`_alpaca_occ_symbol` and looks the snapshot up by it, so multiple
+    held contracts on the same underlying reconcile independently.
+
+    Mirrors the equity write-back path: on quantity drift, alert, then write
+    Alpaca's ``abs(qty)`` back into ``contract_count`` and emit a paired
+    ``RECONCILIATION_CORRECTION``. The caller gates ``autocorrect`` on
+    OPEN-only + positive Alpaca evidence (ALP-619 invariants).
     """
     alpaca_qty = abs(alpaca.qty) if alpaca is not None else 0.0
     if abs(local_count - alpaca_qty) <= _QTY_EPSILON:
@@ -346,9 +375,19 @@ async def _reconcile_options(
         local_value=local_count,
         alpaca_value=alpaca_qty,
         delta_description=(
-            f"{underlying_ticker}: local contract_count={local_count} vs Alpaca qty={alpaca_qty}"
+            f"{occ_symbol}: local contract_count={local_count} vs Alpaca qty={alpaca_qty}"
         ),
     )
+    if autocorrect:
+        _rewrite_options_contract_count(position_row, new_contract_count=alpaca_qty)
+        await _emit_correction(
+            handle,
+            position_id=position_row.position_id,
+            domain="position",
+            field_name="contract_count",
+            prior_local_value=local_count,
+            applied_alpaca_value=alpaca_qty,
+        )
     return 1
 
 
@@ -424,6 +463,25 @@ def _rewrite_equity_share_count(row: PositionRow, *, new_share_count: float) -> 
         )
         raise TypeError(msg)
     new_details = dataclasses.replace(record.details, share_count=new_share_count)
+    new_record = dataclasses.replace(record, details=new_details)
+    row.details_json = position_record_to_row(new_record).details_json
+
+
+def _rewrite_options_contract_count(row: PositionRow, *, new_contract_count: float) -> None:
+    """Update ``contract_count`` in ``row.details_json`` via the codec.
+
+    Mirrors :func:`_rewrite_equity_share_count` for the options payload —
+    same round-trip discipline so the codec stays the single source of truth
+    for JSON layout.
+    """
+    record = position_row_to_record(row)
+    if not isinstance(record.details, OptionsPositionDetails):
+        msg = (
+            f"_rewrite_options_contract_count: expected OptionsPositionDetails, "
+            f"got {type(record.details).__name__} for position_id={row.position_id!r}"
+        )
+        raise TypeError(msg)
+    new_details = dataclasses.replace(record.details, contract_count=new_contract_count)
     new_record = dataclasses.replace(record, details=new_details)
     row.details_json = position_record_to_row(new_record).details_json
 
