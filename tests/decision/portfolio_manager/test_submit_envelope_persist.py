@@ -120,6 +120,24 @@ def test_persist_module_has_no_stub_state_persistence_config() -> None:
     assert "_stub_state_persistence_config" not in persist_module.__all__
 
 
+def test_state_persistence_config_roundtrips_through_subprocess_payload_serialization() -> None:
+    """The subprocess path encodes the config as JSON in the worker payload
+    (``model_dump(mode="json")``) and the worker rehydrates it via
+    ``model_validate``. A field that doesn't survive this roundtrip would
+    silently land production on a value-altered config — pin field equality
+    so any future schema addition that breaks roundtrip fidelity surfaces here.
+    """
+    import json
+
+    cfg = _config()
+    # Mirror exactly what the parent process sends and the worker reads
+    # (``_sdk_subprocess.py`` line ~781 and ``_sdk_subprocess_worker.py`` line ~439).
+    serialized = json.dumps(cfg.model_dump(mode="json"))
+    rehydrated = StatePersistenceConfig.model_validate(json.loads(serialized))
+
+    assert rehydrated == cfg
+
+
 @pytest.mark.asyncio
 async def test_runner_forwards_state_persistence_config_to_subprocess_wrapper(
     monkeypatch: pytest.MonkeyPatch,
