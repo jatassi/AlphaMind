@@ -424,6 +424,39 @@ class TestClassification:
         detail = report.per_invocation[0]
         assert detail.classification == Classification.DROVE_REMEDIATING_ACTION
 
+    def test_override_classifies_as_remediating(self, session: Session) -> None:
+        """An OVERRIDE_WITH_CORRECTIVE_ACTION PM decision plus a defensive
+        activity-log event classifies as DROVE_REMEDIATING_ACTION — Wave-2
+        finding 15 (parent ALP-621/ALP-626).
+
+        ``_REMEDIATING_PM_VERDICTS`` already includes OVERRIDE_WITH_CORRECTIVE_ACTION;
+        the classification path treats it as a remediating verdict on par with
+        APPROVE / APPROVE_WITH_MODIFICATION. This test pins the behavior so a
+        future verdict-set change cannot silently demote overrides.
+        """
+        start_at = _NOW - timedelta(days=5)
+        _add_invocation(session, invocation_id="inv-1", start_at=start_at)
+        session.flush()
+        _add_pm_decision(
+            session,
+            invocation_id="inv-1",
+            timestamp=start_at + timedelta(seconds=10),
+            entry_id="pm-1",
+            verdict=PMVerdict.OVERRIDE_WITH_CORRECTIVE_ACTION,
+        )
+        _add_position_closed(
+            session,
+            invocation_id="inv-1",
+            timestamp=start_at + timedelta(seconds=20),
+            entry_id="close-1",
+        )
+        session.commit()
+
+        report = compute_emergency_invocation_report(session=session, now=_NOW, window_days=90)
+        detail = report.per_invocation[0]
+        assert detail.classification == Classification.DROVE_REMEDIATING_ACTION
+        assert detail.action_command_count == 1
+
     def test_only_rejections_classifies_as_produced_no_op(self, session: Session) -> None:
         start_at = _NOW - timedelta(days=5)
         _add_invocation(session, invocation_id="inv-1", start_at=start_at)
