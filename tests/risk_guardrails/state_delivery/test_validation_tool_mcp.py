@@ -283,7 +283,7 @@ def _option_open_args(
 
 def test_factory_returns_server_and_allowed_tools() -> None:
     """build_validate_guardrail_mcp_server returns (mcp_servers, allowed_tools)
-    with one tool name under the default server name."""
+    with both tool names under the default server name."""
     state = _make_state()
     mcp_servers, allowed_tools = build_validate_guardrail_mcp_server(state)
 
@@ -294,6 +294,7 @@ def test_factory_returns_server_and_allowed_tools() -> None:
 
     assert allowed_tools == [
         "mcp__alphamind_decision_validation__validate_guardrail",
+        "mcp__alphamind_decision_validation__validate_guardrail_batch",
     ]
 
 
@@ -597,3 +598,259 @@ def test_package_re_exports_factory_and_helper() -> None:
     assert hasattr(pkg, "build_initial_validation_state")
     assert "build_validate_guardrail_mcp_server" in pkg.__all__
     assert "build_initial_validation_state" in pkg.__all__
+
+
+# ---------------------------------------------------------------------------
+# 10. validate_guardrail_batch MCP tool — story 01b (ALP-625)
+# ---------------------------------------------------------------------------
+
+
+def _batch_args(proposals: list[dict[str, Any]]) -> dict[str, Any]:
+    """Shape the batch tool's input dict."""
+    return {"proposals": proposals}
+
+
+def test_factory_returns_both_tool_names() -> None:
+    """build_validate_guardrail_mcp_server returns an allowed-tool list with
+    both the single-call and batch tool names; both close over the same
+    state cell."""
+    state = _make_state()
+    _, allowed_tools = build_validate_guardrail_mcp_server(state)
+    assert allowed_tools == [
+        "mcp__alphamind_decision_validation__validate_guardrail",
+        "mcp__alphamind_decision_validation__validate_guardrail_batch",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_batch_empty_proposals_returns_pass_and_does_not_advance_cell() -> None:
+    """An empty-batch call returns aggregate PASS and an empty per_proposal
+    list; the cell is not advanced — a subsequent single-call still sees
+    itself as proposal #1."""
+    import json
+
+    state = _make_state()
+    mcp_servers, _ = build_validate_guardrail_mcp_server(state)
+    server = mcp_servers["alphamind_decision_validation"]["instance"]
+
+    text, is_error = await _invoke_mcp_tool(
+        server, "validate_guardrail_batch", _batch_args([])
+    )
+    assert not is_error
+    payload = json.loads(text)
+    assert payload["overall"] == "PASS"
+    assert payload["per_proposal"] == []
+    assert "cumulative_impact_note" in payload
+    assert "checked_at" in payload
+
+    text2, _ = await _invoke_mcp_tool(server, "validate_guardrail", _equity_open_args())
+    p2 = json.loads(text2)
+    assert p2["proposal_index_in_invocation"] == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_all_pass_advances_cell_one_delta_per_proposal() -> None:
+    """When all per-proposal entries PASS, the wrapper advances the cell once
+    per proposal — a subsequent single-call sees its index as N+1 where N
+    equals the batch size."""
+    import json
+
+    # Per-sector sector resolver + extra ticker in the market so two equity
+    # OPENs in distinct sectors both pass without breaching sector concentration.
+    def per_sector(ticker: str) -> str:
+        return {"AAPL": "tech", "JPM": "financials"}.get(ticker, "tech")
+
+    cfg = _config()
+    state = _make_state(
+        config=cfg,
+        market=MarketInputs(
+            underlying_prices=MappingProxyType(
+                {u: _SPOT for u in ("AAPL", "NVDA", "ABC", "JPM")}
+            ),
+            risk_free_rate=_RISK_FREE_RATE,
+            iv_provider=_atm_provider("AAPL"),
+            as_of=_AS_OF,
+        ),
+    )
+    # Override sector_resolver via a fresh state build.
+    from alphamind.risk_guardrails.state_delivery.validation_tool import (
+        ValidationToolState,
+    )
+
+    state = ValidationToolState(
+        invocation_id=state.invocation_id,
+        starting_snapshot=state.starting_snapshot,
+        starting_risk_budget=state.starting_risk_budget,
+        starting_active_risk_parameters=state.starting_active_risk_parameters,
+        profile_feature_flags=state.profile_feature_flags,
+        library_config=state.library_config,
+        library_market=state.library_market,
+        sector_resolver=per_sector,
+        accumulated_deltas=(),
+    )
+
+    mcp_servers, _ = build_validate_guardrail_mcp_server(state)
+    server = mcp_servers["alphamind_decision_validation"]["instance"]
+
+    text, is_error = await _invoke_mcp_tool(
+        server,
+        "validate_guardrail_batch",
+        _batch_args(
+            [
+                _equity_open_args(ticker="AAPL"),
+                _equity_open_args(ticker="JPM"),
+            ]
+        ),
+    )
+    assert not is_error
+    payload = json.loads(text)
+    assert payload["overall"] == "PASS"
+    assert len(payload["per_proposal"]) == 2
+
+    # A subsequent single-call should report itself as proposal #3
+    # (two batch proposals advanced the cell).
+    text2, _ = await _invoke_mcp_tool(server, "validate_guardrail", _equity_open_args(ticker="NVDA"))
+    p2 = json.loads(text2)
+    assert p2["proposal_index_in_invocation"] == 3
+
+
+@pytest.mark.asyncio
+async def test_batch_aggregate_fail_does_not_advance_cell() -> None:
+    """A batch where the aggregate is FAIL leaves the cell unchanged — no
+    partial advancement of the PASSed prefix."""
+    import json
+
+    # First proposal PASSes; second FAILs because options are disabled. The
+    # batch wrapper must NOT advance the cell by the first proposal.
+    state = _make_state(config=_config(options_enabled=False))
+    mcp_servers, _ = build_validate_guardrail_mcp_server(state)
+    server = mcp_servers["alphamind_decision_validation"]["instance"]
+
+    text, _ = await _invoke_mcp_tool(
+        server,
+        "validate_guardrail_batch",
+        _batch_args(
+            [
+                _equity_open_args(ticker="AAPL"),
+                _option_open_args(ticker="AAPL"),
+            ]
+        ),
+    )
+    payload = json.loads(text)
+    assert payload["overall"] == "FAIL"
+
+    # Subsequent single-call should see itself as proposal #1 — the batch
+    # FAIL did NOT advance the cell.
+    text2, _ = await _invoke_mcp_tool(server, "validate_guardrail", _equity_open_args(ticker="NVDA"))
+    p2 = json.loads(text2)
+    assert p2["proposal_index_in_invocation"] == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_aggregate_unavailable_does_not_advance_cell() -> None:
+    """A batch containing an UNAVAILABLE per-proposal entry produces aggregate
+    UNAVAILABLE; the cell is not advanced; the per-proposal entries surface the
+    gap on the right requests."""
+    import json
+
+    state = _make_state()  # market: AAPL/NVDA/ABC
+    mcp_servers, _ = build_validate_guardrail_mcp_server(state)
+    server = mcp_servers["alphamind_decision_validation"]["instance"]
+
+    text, _ = await _invoke_mcp_tool(
+        server,
+        "validate_guardrail_batch",
+        _batch_args(
+            [
+                _equity_open_args(ticker="AAPL"),
+                _equity_open_args(ticker="CSCO"),  # outside market -> UNAVAILABLE
+            ]
+        ),
+    )
+    payload = json.loads(text)
+    assert payload["overall"] == "UNAVAILABLE"
+    overalls = [p["overall"] for p in payload["per_proposal"]]
+    assert overalls == ["PASS", "UNAVAILABLE"]
+    assert payload["per_proposal"][1]["unavailable_reason"] == "missing_market_price"
+
+    text2, _ = await _invoke_mcp_tool(server, "validate_guardrail", _equity_open_args(ticker="NVDA"))
+    p2 = json.loads(text2)
+    assert p2["proposal_index_in_invocation"] == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_shares_state_cell_with_single_call() -> None:
+    """Both tools close over the same state cell — a prior single-call PASS
+    is visible in the batch tool's per-proposal cumulative_impact_note."""
+    import json
+
+    def per_sector(ticker: str) -> str:
+        return {"AAPL": "tech", "JPM": "financials"}.get(ticker, "tech")
+
+    from alphamind.risk_guardrails.state_delivery.validation_tool import (
+        ValidationToolState,
+    )
+
+    base = _make_state(
+        market=MarketInputs(
+            underlying_prices=MappingProxyType(
+                {u: _SPOT for u in ("AAPL", "NVDA", "ABC", "JPM")}
+            ),
+            risk_free_rate=_RISK_FREE_RATE,
+            iv_provider=_atm_provider("AAPL"),
+            as_of=_AS_OF,
+        ),
+    )
+    state = ValidationToolState(
+        invocation_id=base.invocation_id,
+        starting_snapshot=base.starting_snapshot,
+        starting_risk_budget=base.starting_risk_budget,
+        starting_active_risk_parameters=base.starting_active_risk_parameters,
+        profile_feature_flags=base.profile_feature_flags,
+        library_config=base.library_config,
+        library_market=base.library_market,
+        sector_resolver=per_sector,
+        accumulated_deltas=(),
+    )
+
+    mcp_servers, _ = build_validate_guardrail_mcp_server(state)
+    server = mcp_servers["alphamind_decision_validation"]["instance"]
+
+    # First, a single-call PASS advances the cell to next-index=2.
+    text1, _ = await _invoke_mcp_tool(server, "validate_guardrail", _equity_open_args(ticker="AAPL"))
+    assert json.loads(text1)["overall"] == "PASS"
+
+    # The batch tool's per-proposal entries should reflect the prior call —
+    # the first batch proposal is proposal #2.
+    text2, _ = await _invoke_mcp_tool(
+        server,
+        "validate_guardrail_batch",
+        _batch_args([_equity_open_args(ticker="JPM")]),
+    )
+    payload = json.loads(text2)
+    assert payload["per_proposal"][0]["proposal_index_in_invocation"] == 2
+
+
+@pytest.mark.asyncio
+async def test_batch_bad_input_returns_is_error_with_field_paths() -> None:
+    """An invalid per-proposal entry (e.g. options missing strike) is rejected
+    by Pydantic; the handler surfaces it as is_error=True."""
+    state = _make_state()
+    mcp_servers, _ = build_validate_guardrail_mcp_server(state)
+    server = mcp_servers["alphamind_decision_validation"]["instance"]
+
+    bad_proposal = {
+        "instrument": {
+            "ticker": "AAPL",
+            "asset_type": "options",
+            "direction": "long",
+            # missing strike/expiration/contract_type
+        },
+        "size": {"quantity": 1, "dollar_value": 100.0, "premium_at_risk_usd": 100.0},
+        "action": "OPEN",
+    }
+    text, is_error = await _invoke_mcp_tool(
+        server, "validate_guardrail_batch", _batch_args([bad_proposal])
+    )
+    assert is_error
+    assert "OPTIONS asset_type requires" in text or "strike" in text

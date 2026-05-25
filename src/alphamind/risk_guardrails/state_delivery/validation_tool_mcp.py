@@ -32,11 +32,13 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     PortfolioStateSnapshot,
 )
 from alphamind.risk_guardrails.state_delivery.validation_tool import (
-    ProjectedDelta,
+    BatchValidationResult,
     ValidationRequest,
     ValidationResult,
     ValidationToolState,
+    _build_projected_delta_from,
     validate_guardrail,
+    validate_guardrail_batch,
 )
 
 __all__ = [
@@ -85,6 +87,24 @@ _VALIDATE_GUARDRAIL_INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
+_VALIDATE_GUARDRAIL_BATCH_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["proposals"],
+    "properties": {
+        "proposals": {
+            "type": "array",
+            "items": _VALIDATE_GUARDRAIL_INPUT_SCHEMA,
+            "description": (
+                "Ordered list of single-proposal validation requests. Each "
+                "item follows the validate_guardrail input schema. Proposals "
+                "are projected in order with prior-PASS impact threaded into "
+                "subsequent projections."
+            ),
+        }
+    },
+}
+
+
 @dataclass
 class _ValidationStateCell:
     """Mutable container for ValidationToolState, captured by the MCP closure.
@@ -107,12 +127,19 @@ def build_validate_guardrail_mcp_server(
     Returns ``(mcp_servers_dict, allowed_tool_names)`` ready for direct
     assignment to ``ClaudeAgentOptions.mcp_servers`` and
     ``ClaudeAgentOptions.allowed_tools``. The allowed-tools list contains
-    the single name ``mcp__<server_name>__validate_guardrail``.
+    two names — ``mcp__<server_name>__validate_guardrail`` for one-off
+    proposals and ``mcp__<server_name>__validate_guardrail_batch`` for
+    coordinated multi-position remedies. Both close over the same
+    ``_ValidationStateCell`` so cumulative-impact tracking is shared.
 
     The factory captures *initial_state* in a ``_ValidationStateCell`` the
-    tool callback reads and writes; each call's PASS result advances the cell
+    tool callbacks read and write; each call's PASS result advances the cell
     via ``state.with_accepted_proposal(delta)`` so subsequent calls within
-    this invocation see cumulative-impact tracking.
+    this invocation see cumulative-impact tracking. For the batch tool, an
+    aggregate-PASS result advances the cell once per per-proposal entry (one
+    ``replace`` per proposal — same pattern as the single-call wrapper); an
+    aggregate-FAIL or aggregate-UNAVAILABLE leaves the cell unchanged (no
+    partial advancement).
     """
     cell = _ValidationStateCell(state=initial_state)
 
@@ -123,7 +150,11 @@ def build_validate_guardrail_mcp_server(
             "returns per-rule pass/fail with current and projected-after headroom. "
             "overall is PASS, FAIL (a guardrail would breach), or UNAVAILABLE (the "
             "ticker is outside validation-infrastructure coverage this cycle — an "
-            "infrastructure gap, not a breach; unavailable_reason names the gap)."
+            "infrastructure gap, not a breach; unavailable_reason names the gap). "
+            "Use this for one-off proposals; for a coordinated multi-position "
+            "package where each proposal would FAIL standalone because a "
+            "portfolio-scoped rule stays red until all reductions are applied, "
+            "use validate_guardrail_batch instead."
         ),
         _VALIDATE_GUARDRAIL_INPUT_SCHEMA,
     )
@@ -140,16 +171,8 @@ def build_validate_guardrail_mcp_server(
 
         if result.overall == "PASS":
             cell.state = cell.state.with_accepted_proposal(
-                ProjectedDelta(
-                    instrument=request.instrument,
-                    size=request.size,
-                    action=request.action,
-                    sector=cell.state.sector_resolver(request.instrument.ticker),
-                    delta_adjusted_exposure=result.delta_adjusted_exposure,
-                    greeks=result.greeks,
-                    proposal_index=result.proposal_index_in_invocation,
-                    reserves_capital=request.reserves_capital,
-                    existing_position_id=None,
+                _build_projected_delta_from(
+                    request=request, result=result, state=cell.state
                 )
             )
 
@@ -157,8 +180,72 @@ def build_validate_guardrail_mcp_server(
             "content": [{"type": "text", "text": _serialize_validation_result(result)}],
         }
 
-    server = create_sdk_mcp_server(name=server_name, tools=[_validate_guardrail])
-    allowed = [f"mcp__{server_name}__validate_guardrail"]
+    @tool(
+        "validate_guardrail_batch",
+        (
+            "Validate a coordinated package of proposals as one transaction; "
+            "returns per-proposal pass/fail plus a worst-of aggregate (FAIL > "
+            "UNAVAILABLE > PASS). Use for multi-position remediation where each "
+            "proposal would FAIL standalone because a portfolio-scoped rule "
+            "stays red until all offending positions are reduced, but the "
+            "cumulative package brings the rule back inside its limit. On "
+            "aggregate PASS the cumulative-impact cell advances by one delta "
+            "per proposal; on FAIL or UNAVAILABLE the cell is unchanged (no "
+            "partial advancement). Input is {proposals: [<single-call shape>, ...]}."
+        ),
+        _VALIDATE_GUARDRAIL_BATCH_INPUT_SCHEMA,
+    )
+    async def _validate_guardrail_batch(args: dict[str, Any]) -> dict[str, Any]:
+        raw_proposals = args.get("proposals", [])
+        if not isinstance(raw_proposals, list):
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Invalid validate_guardrail_batch request:\n"
+                            "proposals: must be an array"
+                        ),
+                    }
+                ],
+                "is_error": True,
+            }
+        try:
+            requests = tuple(
+                ValidationRequest.model_validate(_coerce_enum_case(p)) for p in raw_proposals
+            )
+        except ValidationError as exc:
+            return {
+                "content": [{"type": "text", "text": _format_request_validation_error(exc)}],
+                "is_error": True,
+            }
+
+        result = validate_guardrail_batch(requests=requests, state=cell.state)
+
+        if result.overall == "PASS":
+            # Advance the cell once per per-proposal entry — one with_accepted_proposal
+            # call per proposal, preserving the per-call replace pattern the single-call
+            # wrapper uses. Threaded state propagates through each iteration's sector
+            # lookup so a per-proposal cumulative_impact_note in the batch result
+            # remains internally consistent with the cell after the batch.
+            for request, per_proposal in zip(requests, result.per_proposal, strict=True):
+                cell.state = cell.state.with_accepted_proposal(
+                    _build_projected_delta_from(
+                        request=request, result=per_proposal, state=cell.state
+                    )
+                )
+
+        return {
+            "content": [{"type": "text", "text": _serialize_batch_validation_result(result)}],
+        }
+
+    server = create_sdk_mcp_server(
+        name=server_name, tools=[_validate_guardrail, _validate_guardrail_batch]
+    )
+    allowed = [
+        f"mcp__{server_name}__validate_guardrail",
+        f"mcp__{server_name}__validate_guardrail_batch",
+    ]
     return {server_name: server}, allowed
 
 
@@ -267,6 +354,20 @@ def _serialize_validation_result(result: ValidationResult) -> str:
     The analyst, strategist, and PM schemas mirror the tool's output with the
     addition of ``checked_at`` — emitted here at serialization time so the
     invocation runtime, not the deterministic library, owns the wall clock.
+    """
+    payload = result.model_dump(mode="json")
+    payload["checked_at"] = datetime.now(UTC).isoformat()
+    return json.dumps(payload)
+
+
+def _serialize_batch_validation_result(result: BatchValidationResult) -> str:
+    """JSON-serialise *result* with a UTC ``checked_at`` timestamp.
+
+    Mirrors :func:`_serialize_validation_result` — emits the batch envelope
+    plus a top-level ``checked_at`` so consumers see a single wall-clock
+    stamp for the whole batch decision. Per-proposal entries carry the same
+    fields as a single-call ``ValidationResult`` (sans ``checked_at`` — the
+    batch's stamp is authoritative).
     """
     payload = result.model_dump(mode="json")
     payload["checked_at"] = datetime.now(UTC).isoformat()
