@@ -87,6 +87,9 @@ _VALIDATE_GUARDRAIL_INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
+_BATCH_PROPOSALS_MAX = 25
+
+
 _VALIDATE_GUARDRAIL_BATCH_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "required": ["proposals"],
@@ -94,11 +97,13 @@ _VALIDATE_GUARDRAIL_BATCH_INPUT_SCHEMA: dict[str, Any] = {
         "proposals": {
             "type": "array",
             "items": _VALIDATE_GUARDRAIL_INPUT_SCHEMA,
+            "maxItems": _BATCH_PROPOSALS_MAX,
             "description": (
                 "Ordered list of single-proposal validation requests. Each "
                 "item follows the validate_guardrail input schema. Proposals "
                 "are projected in order with prior-PASS impact threaded into "
-                "subsequent projections."
+                "subsequent projections. At most "
+                f"{_BATCH_PROPOSALS_MAX} entries per call."
             ),
         }
     },
