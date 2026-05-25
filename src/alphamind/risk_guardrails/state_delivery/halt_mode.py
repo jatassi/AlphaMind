@@ -398,11 +398,13 @@ def render_pm_header_halt_mode(  # noqa: PLR0913 — mirrors render_pm_header
     ).value
     available_pct = (
         float((available_for_new_positions_usd / total_portfolio_value_usd) * Decimal(100))
-        if total_portfolio_value_usd
+        if total_portfolio_value_usd > 0
         else 0.0
     )
-    per_position_max_usd = Money(
-        total_portfolio_value_usd * Decimal(str(per_position_max_pct)) / Decimal(100)
+    per_position_max_usd = (
+        Money(total_portfolio_value_usd * Decimal(str(per_position_max_pct)) / Decimal(100))
+        if total_portfolio_value_usd > 0
+        else Money(Decimal(0))
     )
     regime_display = regime_label_display(pm_view.active_risk_parameters.regime_label)
     sector_entries = resolve_sector_entries(pm_view.risk_budget, active_sectors)

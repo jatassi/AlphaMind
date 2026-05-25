@@ -43,7 +43,7 @@ from typing import Any, Literal
 
 from alphamind._kernel.exception_group import first_non_cancelled
 from alphamind._kernel.mode import PipelineMode
-from alphamind._kernel.money import Money, money
+from alphamind._kernel.money import Money, money, signed_money
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
 from alphamind.config.models.guardrails import ProgressiveTier
@@ -309,27 +309,35 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     risk_budget = build_risk_budget_consumption(library_snapshot, library_config)
     pydantic_snapshot = dataclasses.replace(pydantic_snapshot, risk_budget=risk_budget)
 
-    # 4. Project per-consumer views.
+    # 4. ALP-657 — wrap production-aggregation floats into ``Money`` once at the
+    # pipeline boundary so every downstream consumer (analyst projection,
+    # strategist runner, PM runner, cross-constraint impact derivation) reads
+    # the same Decimal-typed value. Closes the state-delivery rendering gap
+    # ALP-462 deferred. ``true_deployable_capital_usd`` is documented to
+    # legitimately go negative during settlement-cycle compression
+    # (see ``compute_true_deployable_capital_usd`` + test_deployable_capital_negative_allowed),
+    # so it must wrap via ``signed_money`` — ``money`` would raise on negatives.
+    total_portfolio_value_usd = money(str(library_snapshot.portfolio_value_usd))
+    available_capital_usd = signed_money(
+        str(pydantic_snapshot.cash_ledger.true_deployable_capital_usd)
+    )
+
+    # 5. Project per-consumer views.
     analyst_view = project_analyst_view(
         pydantic_snapshot,
         sector_resolver=adapt_ticker_sector_resolver(sector_resolver),
         per_position_size_rule_id="position_max_size_pct",
-        total_portfolio_value_usd=library_snapshot.portfolio_value_usd,
+        total_portfolio_value_usd=total_portfolio_value_usd,
+        available_capital_usd=available_capital_usd,
     )
     strategist_view = project_strategist_view(pydantic_snapshot)
     pm_view = project_portfolio_manager_view(pydantic_snapshot)
     thesis_component_reader = SnapshotBackedThesisComponentReader(pydantic_snapshot)
 
-    # 5. Run analyst + strategist in parallel — fail-closed via TaskGroup.
+    # 6. Run analyst + strategist in parallel — fail-closed via TaskGroup.
     pipeline_mode = PipelineMode(mode)
     analyst_mode = pipeline_mode.to_analyst_pipeline_mode()
     strategist_mode = pipeline_mode.to_strategist_pipeline_mode()
-    # ALP-657 — wrap production-aggregation floats into ``Money`` once at the
-    # pipeline boundary so every downstream consumer (strategist runner, PM
-    # runner, cross-constraint impact derivation) reads the same Decimal-typed
-    # value. Closes the state-delivery rendering gap ALP-462 deferred.
-    total_portfolio_value_usd = money(str(library_snapshot.portfolio_value_usd))
-    available_capital_usd = money(str(pydantic_snapshot.cash_ledger.true_deployable_capital_usd))
     current_price_lookup = _price_lookup_from_assembled(assembled)
     progress.phase_start("analyst")
     progress.phase_start("strategist")
@@ -410,7 +418,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     progress.phase_done("analyst")
     progress.phase_done("strategist")
 
-    # 6. Run proposal pre-processor — pure (no I/O, no clock reads).
+    # 7. Run proposal pre-processor — pure (no I/O, no clock reads).
     progress.phase_start("pre_processor")
     pre_processor_bundle = run_proposal_pre_processor(
         analyst_output=analyst_result.output,
@@ -423,7 +431,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     )
     progress.phase_done("pre_processor")
 
-    # 7. Build PM cross-constraint impact and run portfolio manager.
+    # 8. Build PM cross-constraint impact and run portfolio manager.
     cross_constraint_impact = _derive_cross_constraint_impact(
         combined_set_impact=pre_processor_bundle.aggregate_observations.combined_set_impact,
         available_capital_usd=available_capital_usd,
