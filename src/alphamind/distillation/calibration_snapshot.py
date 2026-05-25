@@ -226,7 +226,6 @@ def _operator_summary_payload(outputs: DistillationOutputs, invocation_id: str) 
     and the reason text already encodes the ``observations < required``
     delta for accumulating series.
     """
-    counts = _aggregate_by_state(outputs.all_blocks)
     sorted_blocks = sorted(outputs.all_blocks, key=lambda b: b.block_id)
 
     def _per_block(state: CalibrationState) -> list[dict[str, str]]:
@@ -247,17 +246,29 @@ def _operator_summary_payload(outputs: DistillationOutputs, invocation_id: str) 
             out.append({"module": block.block_id, "reason": reason})
         return out
 
+    unavailable = _per_block(CalibrationState.UNAVAILABLE)
+    accumulating = _per_block(CalibrationState.ACCUMULATING)
+    # Calibrated blocks carry no reason, so the (module, reason) dedupe
+    # key used for the non-calibrated arrays collapses to module-id alone
+    # here. The operator-facing semantic — one module ↔ one summary count
+    # — applies uniformly across all three states.
+    calibrated_modules = {
+        block.block_id
+        for block in sorted_blocks
+        if block.calibration_state is CalibrationState.CALIBRATED
+    }
+
     return {
         "schema_version": OPERATOR_SUMMARY_SCHEMA_VERSION,
         "invocation_id": invocation_id,
         "as_of": _format_as_of(outputs.as_of),
         "summary": {
-            CalibrationState.CALIBRATED.value: counts[CalibrationState.CALIBRATED.value],
-            CalibrationState.ACCUMULATING.value: counts[CalibrationState.ACCUMULATING.value],
-            CalibrationState.UNAVAILABLE.value: counts[CalibrationState.UNAVAILABLE.value],
+            CalibrationState.CALIBRATED.value: len(calibrated_modules),
+            CalibrationState.ACCUMULATING.value: len(accumulating),
+            CalibrationState.UNAVAILABLE.value: len(unavailable),
         },
-        "unavailable": _per_block(CalibrationState.UNAVAILABLE),
-        "accumulating": _per_block(CalibrationState.ACCUMULATING),
+        "unavailable": unavailable,
+        "accumulating": accumulating,
     }
 
 
