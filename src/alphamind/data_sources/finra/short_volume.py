@@ -56,6 +56,7 @@ logger = logging.getLogger(__name__)
 _MARKET = "cnms"
 _SOURCE = "finra"
 _ET = zoneinfo.ZoneInfo("America/New_York")
+_XNYS = exchange_calendars.get_calendar("XNYS")
 _PUBLICATION_HOUR_ET = 18  # FINRA publishes by 6 PM ET on the trade date.
 
 
@@ -102,7 +103,7 @@ def _post_sla(trade_date: date, now_utc: datetime) -> bool:
     so the 404 is correct silent behavior regardless of how far in the past
     the date is.
     """
-    if not exchange_calendars.get_calendar("XNYS").is_session(pd.Timestamp(trade_date)):
+    if not _XNYS.is_session(pd.Timestamp(trade_date)):
         return False
     now_et = now_utc.astimezone(_ET)
     today_et = now_et.date()
@@ -115,24 +116,16 @@ def _cdn_path(trade_date: date) -> str:
     return f"/equity/regsho/daily/CNMSshvol{trade_date.strftime('%Y%m%d')}.txt"
 
 
-def _is_weekend(d: date) -> bool:
-    return d.weekday() >= 5  # Saturday=5, Sunday=6
-
-
 def _trading_days(start: date, end: date) -> list[date]:
-    """Return weekdays between *start* and *end* inclusive.
+    """Return XNYS trading sessions between *start* and *end* inclusive.
 
-    A simple weekday filter — FINRA does not publish on US market holidays but
-    also does not publish on weekends.  For holiday handling, the 404 on the
-    file is silently swallowed.
+    Filters both weekends and US market holidays via ``exchange_calendars``,
+    so the caller never fetches FINRA on a non-publication day.
     """
-    result = []
-    current = start
-    while current <= end:
-        if not _is_weekend(current):
-            result.append(current)
-        current += timedelta(days=1)
-    return result
+    if start > end:
+        return []
+    sessions = _XNYS.sessions_in_range(pd.Timestamp(start), pd.Timestamp(end))
+    return [s.date() for s in sessions]
 
 
 def _parse_file(text: str, universe: set[str], ingested_at: str) -> list[dict[str, Any]]:
@@ -198,7 +191,8 @@ def collect_short_volume(
     _repo:
         ``track_run`` repository override for testing.
     _now:
-        Override for "now" used to evaluate the publication SLA.  Test-only.
+        Override for "now" used for the default trade-date window and to
+        evaluate the publication SLA.  Test-only.
     """
     if client is None:
         client = FinraClient()
@@ -206,7 +200,7 @@ def collect_short_volume(
         session_factory = default_session_factory()
 
     now_utc = _now if _now is not None else datetime.now(UTC)
-    today = now_utc.date()
+    today = now_utc.astimezone(_ET).date()
     start = since if since is not None else today - timedelta(days=1)
     end = until if until is not None else today
 

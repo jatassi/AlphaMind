@@ -56,6 +56,7 @@ logger = logging.getLogger(__name__)
 
 _SOURCE = "finra"
 _ET = zoneinfo.ZoneInfo("America/New_York")
+_XNYS = exchange_calendars.get_calendar("XNYS")
 _PUBLICATION_LAG_DAYS = 10  # FINRA publishes ~7-10 days after settlement.
 
 
@@ -104,7 +105,7 @@ def _post_sla(settlement_date: date, now_utc: datetime) -> bool:
     for a holiday-dated settlement date, so the 404 is correct silent
     behavior regardless of how far in the past it is.
     """
-    if not exchange_calendars.get_calendar("XNYS").is_session(pd.Timestamp(settlement_date)):
+    if not _XNYS.is_session(pd.Timestamp(settlement_date)):
         return False
     today_et = now_utc.astimezone(_ET).date()
     return settlement_date <= today_et - timedelta(days=_PUBLICATION_LAG_DAYS)
@@ -222,6 +223,8 @@ def collect_short_interest(
         ``track_run`` repository override for testing.
     _now:
         Override for "now" used to evaluate the publication SLA.  Test-only.
+        (Unlike short_volume, the settlement-date window comes from the caller
+        — ``_now`` only affects SLA classification here.)
     """
     if client is None:
         client = FinraClient()
