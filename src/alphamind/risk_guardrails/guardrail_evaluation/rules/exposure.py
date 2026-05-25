@@ -55,11 +55,7 @@ def _next_largest_position_size_pct(
     """
     if state.portfolio_value_usd <= 0.0:
         return 0.0
-    others = [
-        ep
-        for pid, ep in state.existing_positions.items()
-        if pid != excluded_position_id
-    ]
+    others = [ep for pid, ep in state.existing_positions.items() if pid != excluded_position_id]
     if not others:
         return 0.0
     return max(abs(ep.notional_usd) for ep in others) / state.portfolio_value_usd * 100.0
@@ -80,8 +76,8 @@ def _position_max_size_contribute(
     Action-by-action semantics (ALP-624):
 
     * **OPEN / ADD** — ``max(0, proposal_size_pct - current_max)``. When the
-      new (or grown) position would exceed the current max, the delta lifts the
-      rule's max to the new size; otherwise 0.
+      new (or grown) position would exceed the current max, the delta lifts
+      the rule's max to the new size; otherwise 0.
     * **CLOSE** — if the proposal targets the current-max position, the
       contribution is ``next_largest_pct - current_max_pct`` (a non-positive
       number that drops ``projected_after`` to the next-largest position's
@@ -91,59 +87,69 @@ def _position_max_size_contribute(
       so the function stays total.
     * **ADJUST** — depends on whether the adjustment shrinks or grows the
       current-max position. If the proposal targets the current-max:
-      ``proposal.notional_usd < existing.notional_usd`` (shrink) behaves like
-      CLOSE-down-to-new-size capped by ``next_largest`` (the rule's max becomes
-      ``max(new_size_pct, next_largest_pct)``); ``proposal.notional_usd >
-      existing.notional_usd`` (grow) behaves like ADD on top of the current
-      max (``new_size_pct - current_max`` when positive). An ADJUST on a
-      non-max position only lifts the max when its post-adjust size exceeds
-      the current max.
+      shrink behaves like CLOSE-down-to-new-size capped by ``next_largest``
+      (the rule's max becomes ``max(new_size_pct, next_largest_pct)``); grow
+      behaves like ADD on top of the current max. ADJUST on a non-max
+      position only lifts the max when its post-adjust size exceeds the
+      current max. The DAE pipeline returns ``signed_notional_usd=0`` for
+      ADJUST (exposure-neutral by definition), so the contribution is
+      derived from ``proposal.notional_usd``.
     * **CANCEL** — 0 (cancel releases reserved capital but doesn't change
       open-position notional).
     """
-    if proposal.action in (Action.OPEN, Action.ADD):
+    action = proposal.action
+    if action in (Action.OPEN, Action.ADD):
         proposal_size_pct = abs(dae.signed_notional_usd) / state.portfolio_value_usd * 100.0
         return max(0.0, proposal_size_pct - state.position_max_size_pct)
-
-    if proposal.action is Action.CANCEL:
-        return 0.0
-
-    existing = existing_position(proposal, state)
-    if existing is None:
-        return 0.0
-
-    current_max_pct = state.position_max_size_pct
-    existing_size_pct = abs(existing.notional_usd) / state.portfolio_value_usd * 100.0
-    is_current_max = _is_current_max_position(existing_size_pct, current_max_pct)
-
-    if proposal.action is Action.CLOSE:
-        if not is_current_max:
-            return 0.0
-        next_largest_pct = _next_largest_position_size_pct(state, existing.position_id)
-        return next_largest_pct - current_max_pct
-
-    if proposal.action is Action.ADJUST:
-        return _adjust_contribution(
-            proposal=proposal,
-            existing=existing,
-            state=state,
-            existing_size_pct=existing_size_pct,
-            current_max_pct=current_max_pct,
-            is_current_max=is_current_max,
-        )
-
+    if action in (Action.CLOSE, Action.ADJUST):
+        return _position_max_size_existing_contribution(proposal, state)
+    # CANCEL and any unmodeled action
     return 0.0
 
 
-def _is_current_max_position(existing_size_pct: float, current_max_pct: float) -> bool:
-    """Return whether the existing position matches the current-max bucket.
+def _position_max_size_existing_contribution(
+    proposal: ProposedDelta, state: PortfolioStateSnapshot
+) -> float:
+    """Dispatch CLOSE/ADJUST to the per-action helper after resolving the
+    target position. Returns 0 when the position id is unresolved or absent
+    (defensive — should not happen post-validation, but keeps the contribution
+    function total)."""
+    existing = existing_position(proposal, state)
+    if existing is None:
+        return 0.0
+    current_max_pct = state.position_max_size_pct
+    existing_size_pct = abs(existing.notional_usd) / state.portfolio_value_usd * 100.0
+    is_current_max = abs(existing_size_pct - current_max_pct) <= 1e-9
+    if proposal.action is Action.CLOSE:
+        return _close_contribution(
+            existing=existing,
+            state=state,
+            current_max_pct=current_max_pct,
+            is_current_max=is_current_max,
+        )
+    # ADJUST
+    return _adjust_contribution(
+        proposal=proposal,
+        existing=existing,
+        state=state,
+        current_max_pct=current_max_pct,
+        is_current_max=is_current_max,
+    )
 
-    Float-tolerant comparison — the snapshot's ``position_max_size_pct`` was
-    derived from the same ``|notional| / portfolio_value * 100`` formula, but
-    intermediate float arithmetic can drift by ~1e-12; an exact ``==`` would
-    misclassify the current-max position as non-max on rare inputs.
-    """
-    return abs(existing_size_pct - current_max_pct) <= 1e-9
+
+def _close_contribution(
+    *,
+    existing: ExistingPosition,
+    state: PortfolioStateSnapshot,
+    current_max_pct: float,
+    is_current_max: bool,
+) -> float:
+    """CLOSE contribution: drop to next-largest when closing the current-max,
+    else 0."""
+    if not is_current_max:
+        return 0.0
+    next_largest_pct = _next_largest_position_size_pct(state, existing.position_id)
+    return next_largest_pct - current_max_pct
 
 
 def _adjust_contribution(
@@ -151,26 +157,16 @@ def _adjust_contribution(
     proposal: ProposedDelta,
     existing: ExistingPosition,
     state: PortfolioStateSnapshot,
-    existing_size_pct: float,
     current_max_pct: float,
     is_current_max: bool,
 ) -> float:
-    """ADJUST contribution to ``position_max_size_pct``.
-
-    The DAE pipeline returns ``signed_notional_usd=0`` for ADJUST (it is
-    exposure-neutral by definition in the DAE math), so this helper derives
-    the post-adjust size directly from ``proposal.notional_usd`` against
-    ``existing.notional_usd``.
-    """
+    """ADJUST contribution. The post-adjust size derives from
+    ``proposal.notional_usd``; ``dae.signed_notional_usd`` is 0 for ADJUST."""
     new_size_pct = abs(float(proposal.notional_usd)) / state.portfolio_value_usd * 100.0
     if is_current_max:
-        # Shrink or grow: the rule's max becomes either the new size or the
-        # next-largest position, whichever is larger.
         next_largest_pct = _next_largest_position_size_pct(state, existing.position_id)
         new_max_pct = max(new_size_pct, next_largest_pct)
         return new_max_pct - current_max_pct
-    # Adjust on a non-max position only lifts the max when its post-adjust
-    # size exceeds the current max.
     return max(0.0, new_size_pct - current_max_pct)
 
 

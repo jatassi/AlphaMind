@@ -239,9 +239,7 @@ def test_position_max_size_contribute_close_of_current_max_drops_to_next_largest
             direction=Direction.LONG,
             notional_usd=notional,
         )
-        for i, notional in enumerate(
-            [18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1
-        )
+        for i, notional in enumerate([18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1)
     }
     state = _snapshot(
         position_max_size_pct=18.1,
@@ -269,9 +267,7 @@ def test_position_max_size_contribute_close_of_non_max_is_zero() -> None:
             direction=Direction.LONG,
             notional_usd=notional,
         )
-        for i, notional in enumerate(
-            [18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1
-        )
+        for i, notional in enumerate([18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1)
     }
     state = _snapshot(
         position_max_size_pct=18.1,
@@ -397,9 +393,7 @@ def test_position_max_size_contribute_adjust_shrink_current_max() -> None:
             direction=Direction.LONG,
             notional_usd=notional,
         )
-        for i, notional in enumerate(
-            [18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1
-        )
+        for i, notional in enumerate([18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1)
     }
     state = _snapshot(
         position_max_size_pct=18.1,
@@ -429,9 +423,7 @@ def test_position_max_size_contribute_adjust_grow_current_max() -> None:
             direction=Direction.LONG,
             notional_usd=notional,
         )
-        for i, notional in enumerate(
-            [18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1
-        )
+        for i, notional in enumerate([18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1)
     }
     state = _snapshot(
         position_max_size_pct=18.1,
@@ -458,9 +450,7 @@ def test_position_max_size_contribute_adjust_non_max_below_max_is_zero() -> None
             direction=Direction.LONG,
             notional_usd=notional,
         )
-        for i, notional in enumerate(
-            [18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1
-        )
+        for i, notional in enumerate([18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1)
     }
     state = _snapshot(
         position_max_size_pct=18.1,
@@ -487,9 +477,7 @@ def test_position_max_size_contribute_adjust_non_max_above_max_lifts_max() -> No
             direction=Direction.LONG,
             notional_usd=notional,
         )
-        for i, notional in enumerate(
-            [18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1
-        )
+        for i, notional in enumerate([18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1)
     }
     state = _snapshot(
         position_max_size_pct=18.1,

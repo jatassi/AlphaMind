@@ -156,6 +156,26 @@ def _build_position_reservations(
 # ---------------------------------------------------------------------------
 
 
+def _compute_position_max_size_pct(
+    all_positions: Sequence[PositionView], portfolio_value_usd: float
+) -> float:
+    """Return the largest position size (% of portfolio value) across all
+    positions, or ``0.0`` when the book is empty or portfolio value is zero
+    (ALP-624).
+
+    Uses gross market value — the explicit formula in the story. Delta-adjusted
+    notional for options / strategies is an accepted approximation since the
+    assembler doesn't pre-aggregate a per-position "max size" metric in
+    delta-adjusted units. Mirrors ``compute_position_weight_pct``'s abs() and
+    zero-portfolio guards.
+    """
+    if portfolio_value_usd <= 0.0 or not all_positions:
+        return 0.0
+    return max(
+        abs(float(p.current_market_value_usd)) / portfolio_value_usd * 100.0 for p in all_positions
+    )
+
+
 def _select_single_short_max(
     open_positions: Sequence[PositionView],
 ) -> tuple[float, str | None]:
@@ -274,19 +294,7 @@ def to_library_snapshot(
     # asserted at the PortfolioPnL accumulator (see computations/pnl.py).
     portfolio_value_usd = cash_usd + sum(float(p.current_market_value_usd) for p in all_positions)
 
-    # ALP-624 — actual-max derivation. Uses gross market value (the explicit
-    # formula in the story); delta-adjusted notional for options/strategies is
-    # an accepted approximation since the assembler doesn't pre-aggregate a
-    # per-position "max size" metric in delta-adjusted units. Mirrors the
-    # ``_breach_magnitude`` and ``compute_position_weight_pct`` guards: zero
-    # portfolio value returns 0.0 (no division-by-zero).
-    if portfolio_value_usd > 0.0 and all_positions:
-        position_max_size_pct = max(
-            abs(float(p.current_market_value_usd)) / portfolio_value_usd * 100.0
-            for p in all_positions
-        )
-    else:
-        position_max_size_pct = 0.0
+    position_max_size_pct = _compute_position_max_size_pct(all_positions, portfolio_value_usd)
 
     options_delta_pct = 0.0
     portfolio_theta_pct_per_day = 0.0
