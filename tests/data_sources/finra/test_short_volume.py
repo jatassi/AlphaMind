@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
@@ -135,22 +135,80 @@ class TestCollectShortVolume:
         with session_factory() as sess:
             assert sess.query(ShortVolumeDaily).count() == 1
 
-    def test_404_treated_as_not_yet_published(self, session_factory: sessionmaker[Session]) -> None:
-        """A 404 on a future-dated file is silently skipped — no rows, no error."""
+    def test_404_pre_sla_silent(self, session_factory: sessionmaker[Session]) -> None:
+        """A 404 before FINRA's 6pm-ET SLA is silently skipped — no rows, no error_summary."""
         from alphamind.data_sources.finra.short_volume import collect_short_volume
 
         client = FakeFinraAPI()  # all paths → 404
+        repo = FakeRunRepo()
+        # 9am ET on the trade date — file not due until 6pm ET.
+        now_pre_sla = datetime(2026, 1, 23, 14, 0, tzinfo=UTC)
 
         collect_short_volume(
             since=_TRADE_DATE,
             until=_TRADE_DATE,
             client=client,
             session_factory=session_factory,
-            _repo=FakeRunRepo(),
+            _repo=repo,
+            _now=now_pre_sla,
         )
 
         with session_factory() as sess:
             assert sess.query(ShortVolumeDaily).count() == 0
+        assert repo.latest()["status"] == "success"
+        assert repo.latest()["error_summary"] is None
+
+    def test_404_past_sla_records_error_summary(
+        self, session_factory: sessionmaker[Session]
+    ) -> None:
+        """A 404 after the publication SLA records a post-SLA marker in error_summary."""
+        from alphamind.data_sources.finra.short_volume import collect_short_volume
+
+        client = FakeFinraAPI()  # all paths → 404
+        repo = FakeRunRepo()
+        # Four months past the trade date — well past the 6pm-ET-same-day SLA.
+        now_past_sla = datetime(2026, 5, 25, 12, 0, tzinfo=UTC)
+
+        collect_short_volume(
+            since=_TRADE_DATE,
+            until=_TRADE_DATE,
+            client=client,
+            session_factory=session_factory,
+            _repo=repo,
+            _now=now_past_sla,
+        )
+
+        with session_factory() as sess:
+            assert sess.query(ShortVolumeDaily).count() == 0
+        latest = repo.latest()
+        assert latest["status"] == "success"
+        assert latest["error_summary"] is not None
+        assert _TRADE_DATE_ISO in latest["error_summary"]
+        assert "past sla" in latest["error_summary"].lower()
+
+    def test_404_on_us_market_holiday_not_flagged_post_sla(
+        self, session_factory: sessionmaker[Session]
+    ) -> None:
+        """A 404 on a US market holiday is silently skipped — FINRA does not publish."""
+        from alphamind.data_sources.finra.short_volume import collect_short_volume
+
+        # 2026-01-19 is Martin Luther King Jr. Day — a US market holiday and a Monday.
+        mlk_day = date(2026, 1, 19)
+        client = FakeFinraAPI()  # all paths → 404
+        repo = FakeRunRepo()
+        now_past_sla = datetime(2026, 5, 25, 12, 0, tzinfo=UTC)
+
+        collect_short_volume(
+            since=mlk_day,
+            until=mlk_day,
+            client=client,
+            session_factory=session_factory,
+            _repo=repo,
+            _now=now_past_sla,
+        )
+
+        assert repo.latest()["status"] == "success"
+        assert repo.latest()["error_summary"] is None
 
     def test_on_failure_collection_runs_records_failed(
         self, session_factory: sessionmaker[Session]
