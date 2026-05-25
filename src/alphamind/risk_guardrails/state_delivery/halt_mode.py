@@ -43,6 +43,7 @@ from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
     _render_drawdown_context_block,
     _render_recent_engine_actions_block,
     _render_validation_tool_reminder_block,
+    format_rule_status_marker,
 )
 from alphamind.risk_guardrails.state_delivery.primitives import (
     GROSS_RULE_ID,
@@ -318,11 +319,7 @@ def _render_halt_mode_cross_constraint_block(
         label_cell = f"{rule.rule_label}:".ljust(label_width + 1)
         current = format_pct(rule.current)
         projected = format_pct(rule.projected_after)
-        if rule.projected_after <= rule.limit:
-            status = "(within limit)"
-        else:
-            overage = rule.projected_after - rule.limit
-            status = f"(would breach by {format_pct(overage)}%)"
+        status = format_rule_status_marker(rule)
         rows.append(f"  {label_cell} {current}% → {projected}% {status}")
     return "\n".join(rows)
 

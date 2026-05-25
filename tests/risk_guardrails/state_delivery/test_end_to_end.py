@@ -877,6 +877,8 @@ def _build_cross_constraint_impact() -> CrossConstraintImpact:
                 projected_after=45.0,
                 limit=60.0,
                 unit="% of portfolio",
+                status="PASS",
+                headroom_remaining=15.0,
             ),
             CrossConstraintImpactPerRule(
                 rule_id="gross_exposure_pct",
@@ -885,6 +887,8 @@ def _build_cross_constraint_impact() -> CrossConstraintImpact:
                 projected_after=81.0,
                 limit=120.0,
                 unit="% of portfolio",
+                status="PASS",
+                headroom_remaining=39.0,
             ),
             CrossConstraintImpactPerRule(
                 rule_id="sector_concentration_tech",
@@ -893,6 +897,8 @@ def _build_cross_constraint_impact() -> CrossConstraintImpact:
                 projected_after=20.5,
                 limit=25.0,
                 unit="% of portfolio",
+                status="PASS",
+                headroom_remaining=4.5,
             ),
         ),
         flagged_rule_ids=(),

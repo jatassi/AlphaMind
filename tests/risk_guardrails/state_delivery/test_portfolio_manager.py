@@ -651,6 +651,8 @@ def test_render_pm_header_renders_cross_constraint_impact_with_per_rule_lines() 
                 projected_after=22.1,
                 limit=25.0,
                 unit="% of portfolio (delta-adjusted)",
+                status="PASS",
+                headroom_remaining=2.9,
             ),
             CrossConstraintImpactPerRule(
                 rule_id="net_long_pct",
@@ -659,6 +661,8 @@ def test_render_pm_header_renders_cross_constraint_impact_with_per_rule_lines() 
                 projected_after=48.5,
                 limit=60.0,
                 unit="% of portfolio",
+                status="PASS",
+                headroom_remaining=11.5,
             ),
             CrossConstraintImpactPerRule(
                 rule_id="gross_exposure_pct",
@@ -667,6 +671,8 @@ def test_render_pm_header_renders_cross_constraint_impact_with_per_rule_lines() 
                 projected_after=84.5,
                 limit=120.0,
                 unit="% of portfolio",
+                status="PASS",
+                headroom_remaining=35.5,
             ),
         ),
         flagged_rule_ids=(),
@@ -689,9 +695,9 @@ def test_render_pm_header_renders_cross_constraint_impact_with_per_rule_lines() 
     )
     assert "Cross-constraint impact summary:" in rendered
     assert "  If all pending proposals are approved as-sized:" in rendered
-    assert "    Sector tech: 18.3% → 22.1% (within limit)" in rendered
-    assert "    Net long:    42.0% → 48.5% (within limit)" in rendered
-    assert "    Gross:       78.0% → 84.5% (within limit)" in rendered
+    assert "    Sector tech: 18.3% → 22.1% (within limit, 2.9% headroom)" in rendered
+    assert "    Net long:    42.0% → 48.5% (within limit, 11.5% headroom)" in rendered
+    assert "    Gross:       78.0% → 84.5% (within limit, 35.5% headroom)" in rendered
     assert "    Capital:     $300,000 → $240,000" in rendered
     # No flagged-suffix line.
     assert "Flagged" not in rendered
@@ -708,6 +714,8 @@ def test_render_pm_header_cross_constraint_impact_breach_status() -> None:
                 projected_after=27.5,
                 limit=25.0,
                 unit="% of portfolio (delta-adjusted)",
+                status="FAIL",
+                headroom_remaining=-2.5,
             ),
         ),
         flagged_rule_ids=("sector_concentration_tech",),
@@ -728,8 +736,126 @@ def test_render_pm_header_cross_constraint_impact_breach_status() -> None:
         available_for_new_positions_usd=300_000.0,
         cross_constraint_impact=impact,
     )
-    assert "    Sector tech: 18.3% → 27.5% (would breach by 2.5%)" in rendered
+    assert "    Sector tech: 18.3% → 27.5% [BREACH] would breach by 2.5%" in rendered
     assert "    Flagged: Sector tech" in rendered
+
+
+def _render_with_single_rule(rule: CrossConstraintImpactPerRule) -> str:
+    """Render the PM header with one cross-constraint rule fixture."""
+    view = _make_pm_view()
+    impact = CrossConstraintImpact(
+        per_rule=(rule,),
+        flagged_rule_ids=(),
+        available_capital_before_usd=300_000.0,
+        available_capital_after_usd=240_000.0,
+    )
+    return render_pm_header(
+        pm_view=view,
+        invocation_id="inv-001",
+        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
+        options_enabled=False,
+        short_selling_enabled=False,
+        active_sectors=("tech", "semis"),
+        config=_make_state_delivery_config(),
+        sector_label_display=_MICRO_SECTOR_LABELS,
+        sector_resolver=_sector_resolver,
+        total_portfolio_value_usd=500_000.0,
+        available_for_new_positions_usd=300_000.0,
+        cross_constraint_impact=impact,
+    )
+
+
+def test_render_pm_header_inverse_rule_pass_reads_status_not_arithmetic() -> None:
+    # ALP-622 regression: inverse-rule (floor) with projected ABOVE the floor
+    # is PASS — the legacy "projected_after <= limit" arithmetic inverted it.
+    # min_cash_reserve_pct at 27.1% vs 10.0% floor renders as compliant with
+    # 17.1% headroom, not as a 17.1% breach.
+    rule = CrossConstraintImpactPerRule(
+        rule_id="min_cash_reserve_pct",
+        rule_label="Min cash reserve",
+        current=27.1,
+        projected_after=27.1,
+        limit=10.0,
+        unit="% of portfolio",
+        status="PASS",
+        headroom_remaining=17.1,
+    )
+    rendered = _render_with_single_rule(rule)
+    assert "    Min cash reserve: 27.1% → 27.1% (within limit, 17.1% headroom)" in rendered
+    assert "would breach" not in rendered
+
+
+def test_render_pm_header_escalation_zone_fail_renders_breach_marker() -> None:
+    # ALP-622 regression: a cap-style rule numerically under its limit but
+    # inside the hard-block escalation zone must render a breach marker —
+    # net_long_pct at 57.2% / 60.0% with pre-processor status=FAIL.
+    rule = CrossConstraintImpactPerRule(
+        rule_id="net_long_pct",
+        rule_label="Net long",
+        current=57.2,
+        projected_after=57.2,
+        limit=60.0,
+        unit="% of portfolio",
+        status="FAIL",
+        headroom_remaining=2.8,
+    )
+    rendered = _render_with_single_rule(rule)
+    assert "[BREACH]" in rendered
+    assert "(within limit," not in rendered
+    assert "    Net long: 57.2% → 57.2% [BREACH] in hard-block zone (2.8% headroom)" in rendered
+
+
+def test_render_pm_header_at_limit_fail_renders_breach_marker() -> None:
+    # ALP-622 regression: position_max_size_pct at 5.0% vs 5.0% with status=FAIL
+    # must render a breach marker (legacy arithmetic rendered it as
+    # `(within limit)` because projected_after == limit).
+    rule = CrossConstraintImpactPerRule(
+        rule_id="position_max_size_pct",
+        rule_label="Position max size",
+        current=5.0,
+        projected_after=5.0,
+        limit=5.0,
+        unit="% of portfolio",
+        status="FAIL",
+        headroom_remaining=0.0,
+    )
+    rendered = _render_with_single_rule(rule)
+    assert "[BREACH]" in rendered
+    assert "(within limit," not in rendered
+
+
+def test_render_pm_header_warning_status_renders_distinct_marker() -> None:
+    rule = CrossConstraintImpactPerRule(
+        rule_id="gross_exposure_pct",
+        rule_label="Gross",
+        current=100.0,
+        projected_after=105.0,
+        limit=120.0,
+        unit="% of portfolio",
+        status="WARNING",
+        headroom_remaining=15.0,
+    )
+    rendered = _render_with_single_rule(rule)
+    assert "⚠ WARNING" in rendered
+    assert "[BREACH]" not in rendered
+    assert "(within limit," not in rendered
+    assert "    Gross:   100.0% → 105.0% [⚠ WARNING] within limit, 15.0% headroom" in rendered
+
+
+def test_render_pm_header_inverse_rule_fail_renders_shortfall() -> None:
+    # Inverse rule below its floor — projected_after < limit, headroom < 0.
+    rule = CrossConstraintImpactPerRule(
+        rule_id="min_cash_reserve_pct",
+        rule_label="Min cash reserve",
+        current=12.0,
+        projected_after=7.5,
+        limit=10.0,
+        unit="% of portfolio",
+        status="FAIL",
+        headroom_remaining=-2.5,
+    )
+    rendered = _render_with_single_rule(rule)
+    assert "[BREACH] would breach by 2.5%" in rendered
 
 
 def test_render_pm_header_renders_validation_tool_reminder_block_verbatim() -> None:
@@ -1657,6 +1783,8 @@ def test_render_pm_header_is_deterministic() -> None:
                 projected_after=22.1,
                 limit=25.0,
                 unit="% of portfolio",
+                status="PASS",
+                headroom_remaining=2.9,
             ),
         ),
         flagged_rule_ids=(),
@@ -1837,6 +1965,8 @@ def test_render_pm_header_full_system_fixture_full_render() -> None:
                 projected_after=22.1,
                 limit=25.0,
                 unit="% of portfolio (delta-adjusted)",
+                status="PASS",
+                headroom_remaining=2.9,
             ),
             CrossConstraintImpactPerRule(
                 rule_id="net_long_pct",
@@ -1845,6 +1975,8 @@ def test_render_pm_header_full_system_fixture_full_render() -> None:
                 projected_after=48.5,
                 limit=60.0,
                 unit="% of portfolio",
+                status="PASS",
+                headroom_remaining=11.5,
             ),
             CrossConstraintImpactPerRule(
                 rule_id="gross_exposure_pct",
@@ -1853,6 +1985,8 @@ def test_render_pm_header_full_system_fixture_full_render() -> None:
                 projected_after=84.5,
                 limit=120.0,
                 unit="% of portfolio",
+                status="PASS",
+                headroom_remaining=35.5,
             ),
         ),
         flagged_rule_ids=(),
@@ -1934,9 +2068,9 @@ def test_render_pm_header_full_system_fixture_full_render() -> None:
             "",
             "Cross-constraint impact summary:",
             "  If all pending proposals are approved as-sized:",
-            "    Sector tech: 18.3% → 22.1% (within limit)",
-            "    Net long:    42.0% → 48.5% (within limit)",
-            "    Gross:       78.0% → 84.5% (within limit)",
+            "    Sector tech: 18.3% → 22.1% (within limit, 2.9% headroom)",
+            "    Net long:    42.0% → 48.5% (within limit, 11.5% headroom)",
+            "    Gross:       78.0% → 84.5% (within limit, 35.5% headroom)",
             "    Capital:     $300,000 → $240,000",
             "",
             "Guardrail validation tool available:",
@@ -1995,6 +2129,8 @@ def test_cross_constraint_impact_per_rule_is_frozen_slotted_dataclass() -> None:
         projected_after=45.0,
         limit=60.0,
         unit="% of portfolio",
+        status="PASS",
+        headroom_remaining=15.0,
     )
     assert dataclasses.is_dataclass(rule)
     assert hasattr(CrossConstraintImpactPerRule, "__slots__")

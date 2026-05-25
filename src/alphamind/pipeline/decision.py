@@ -167,6 +167,8 @@ def _derive_cross_constraint_impact(
             projected_after=entry.projected_after,
             limit=entry.limit,
             unit=entry.unit,
+            status=entry.status,
+            headroom_remaining=entry.headroom_remaining,
         )
         for entry in combined_set_impact.per_rule
     )

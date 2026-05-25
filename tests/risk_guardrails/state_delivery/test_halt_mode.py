@@ -776,6 +776,8 @@ def _make_default_cross_constraint_impact() -> CrossConstraintImpact:
                 projected_after=39.0,
                 limit=60.0,
                 unit="% of portfolio",
+                status="PASS",
+                headroom_remaining=21.0,
             ),
         ),
         flagged_rule_ids=(),

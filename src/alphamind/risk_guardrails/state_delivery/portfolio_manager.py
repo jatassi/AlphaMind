@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from alphamind._kernel.regime import RiskZone
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
@@ -58,9 +59,21 @@ _PM_HARD_BLOCKS_HEADER = "Hard blocks (do NOT issue commands violating):"
 _DAILY_DRAWDOWN_RULE_ID = "daily_drawdown_pct"
 
 
+RuleStatus = Literal["PASS", "WARNING", "FAIL"]
+
+
 @dataclass(frozen=True, slots=True)
 class CrossConstraintImpactPerRule:
-    """One per-rule projection inside a :class:`CrossConstraintImpact`."""
+    """One per-rule projection inside a :class:`CrossConstraintImpact`.
+
+    ``status`` and ``headroom_remaining`` mirror the upstream pre-processor's
+    authoritative verdict (``PerRuleEntry.status`` /
+    ``PerRuleEntry.headroom_remaining``); the renderer formats them rather
+    than recomputing from ``projected_after`` vs ``limit``. ``headroom_remaining``
+    is direction-aware — for a cap-style rule it is ``limit - measured``; for an
+    inverse (floor) rule it is ``projected_after - limit``. Positive in both
+    directions means compliant, with the magnitude being slack.
+    """
 
     rule_id: str
     rule_label: str
@@ -68,6 +81,8 @@ class CrossConstraintImpactPerRule:
     projected_after: float
     limit: float
     unit: str
+    status: RuleStatus
+    headroom_remaining: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +262,30 @@ _CROSS_CONSTRAINT_HEADER = "Cross-constraint impact summary:"
 _CAPITAL_LABEL = "Capital"
 
 
+def format_rule_status_marker(rule: CrossConstraintImpactPerRule) -> str:
+    """Render the trailing parenthetical verdict for one cross-constraint rule.
+
+    Reads the pre-processor's authoritative ``status`` plus the signed
+    ``headroom_remaining`` value. The renderer never recomputes from
+    ``projected_after`` vs ``limit`` — that arithmetic is direction-blind
+    (inverse rules are floors, so ``projected_after <= limit`` is a breach,
+    not compliance) and escalation-blind (a rule numerically under its cap
+    can still be FAIL because consumption is inside the hard-block zone).
+    """
+    headroom_text = f"{format_pct(abs(rule.headroom_remaining))}%"
+    if rule.status == "PASS":
+        return f"(within limit, {headroom_text} headroom)"
+    if rule.status == "WARNING":
+        return f"[⚠ WARNING] within limit, {headroom_text} headroom"
+    # FAIL — either over the limit (negative headroom) or numerically
+    # under but inside the hard-block escalation zone (non-negative
+    # headroom). Render both with a [BREACH] marker so the agent cannot
+    # miss it; the magnitude distinguishes which case.
+    if rule.headroom_remaining < 0:
+        return f"[BREACH] would breach by {headroom_text}"
+    return f"[BREACH] in hard-block zone ({headroom_text} headroom)"
+
+
 def _render_cross_constraint_impact_block(impact: CrossConstraintImpact) -> str:
     if not impact.per_rule:
         return f"{_CROSS_CONSTRAINT_HEADER}\n  No pending proposals; no projected impact."
@@ -262,11 +301,7 @@ def _render_cross_constraint_impact_block(impact: CrossConstraintImpact) -> str:
         label_cell = f"{rule.rule_label}:".ljust(label_width + 1)
         current = format_pct(rule.current)
         projected = format_pct(rule.projected_after)
-        if rule.projected_after <= rule.limit:
-            status = "(within limit)"
-        else:
-            overage = rule.projected_after - rule.limit
-            status = f"(would breach by {format_pct(overage)}%)"
+        status = format_rule_status_marker(rule)
         rows.append(f"    {label_cell} {current}% → {projected}% {status}")
     capital_cell = f"{_CAPITAL_LABEL}:".ljust(label_width + 1)
     before = format_dollar(impact.available_capital_before_usd)
