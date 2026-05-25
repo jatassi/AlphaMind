@@ -15,8 +15,18 @@ Publication schedule:
     (``0 10 * * tue``) polls weekly and exits cleanly when no new file exists.
 
 404 handling:
-    A 404 means the file is not yet published.  Silently skipped — the cron
-    will retry next week.
+    A 404 is interpreted against the publication SLA:
+
+    * **Pre-SLA** — the settlement date is within the last 10 calendar days.
+      Treated as "file not yet published" and silently skipped; the weekly
+      cron retries next week.
+    * **Post-SLA** — the settlement date is more than 10 calendar days in the
+      past.  The file *should* be available; a 404 indicates a CDN outage or
+      a URL-pattern break.  The skipped date is recorded in
+      ``collection_runs.error_summary`` so freshness checks can distinguish
+      this from the normal pre-publication poll.  The run still completes
+      ``success`` so a single missing back-date does not mark the whole
+      window failed.
 """
 
 from __future__ import annotations
@@ -24,10 +34,13 @@ from __future__ import annotations
 import csv
 import io
 import logging
-from datetime import UTC, datetime, timedelta
+import zoneinfo
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+import exchange_calendars
 import httpx
+import pandas as pd
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from alphamind.data_sources._common import (
@@ -42,6 +55,59 @@ from alphamind.persistence.models import ShortInterestSnapshot
 logger = logging.getLogger(__name__)
 
 _SOURCE = "finra"
+_ET = zoneinfo.ZoneInfo("America/New_York")
+_PUBLICATION_LAG_DAYS = 10  # FINRA publishes ~7-10 days after settlement.
+
+
+def _persist_rows(rows: list[dict[str, Any]], session_factory: Any) -> int:
+    """UPSERT *rows* into ``short_interest_snapshots``. Returns the new-row count."""
+    new_rows = 0
+    with session_factory() as sess:
+        for row in rows:
+            stmt = sqlite_insert(ShortInterestSnapshot).values(**row)
+            stmt = stmt.on_conflict_do_nothing(index_elements=["settlement_date", "ticker"])
+            result = sess.execute(stmt)
+            if result.rowcount > 0:
+                new_rows += 1
+        sess.commit()
+    return new_rows
+
+
+def _classify_404(settlement_iso: str, now_utc: datetime) -> bool:
+    """Return ``True`` when a 404 for *settlement_iso* is a post-SLA outage.
+
+    Side effect: emits a WARNING or DEBUG log line describing the
+    classification, so callers don't duplicate the logging.
+    """
+    settlement = date.fromisoformat(settlement_iso)
+    if _post_sla(settlement, now_utc):
+        logger.warning(
+            "FINRA short interest: 404 past SLA for %s - CDN outage suspected.",
+            settlement_iso,
+        )
+        return True
+    logger.debug(
+        "FINRA short interest: no file for %s (404 - pre-SLA).",
+        settlement_iso,
+    )
+    return False
+
+
+def _post_sla(settlement_date: date, now_utc: datetime) -> bool:
+    """Return ``True`` when FINRA's publication SLA for *settlement_date* has passed.
+
+    Past-SLA means: more than 10 calendar days have elapsed since settlement,
+    so the file should already be available.  A 404 represents a CDN outage
+    rather than a normal pre-publication poll.
+
+    US market holidays return ``False`` — FINRA does not produce a snapshot
+    for a holiday-dated settlement date, so the 404 is correct silent
+    behavior regardless of how far in the past it is.
+    """
+    if not exchange_calendars.get_calendar("XNYS").is_session(pd.Timestamp(settlement_date)):
+        return False
+    today_et = now_utc.astimezone(_ET).date()
+    return settlement_date <= today_et - timedelta(days=_PUBLICATION_LAG_DAYS)
 
 
 def _cdn_path(settlement_date_iso: str) -> str:
@@ -128,13 +194,20 @@ def collect_short_interest(
     client: FinraAPI | None = None,
     session_factory: Any = None,
     _repo: Any = None,
+    _now: datetime | None = None,
 ) -> None:
     """
     Collect FINRA short interest for the provided *settlement_dates*.
 
-    For each date, attempts to download the corresponding CDN file.  A 404 is
-    treated as "not yet published" and silently skipped.  Successfully parsed
-    rows are UPSERTed into ``short_interest_snapshots``.
+    For each date, attempts to download the corresponding CDN file and UPSERT
+    parsed rows into ``short_interest_snapshots``.
+
+    A 404 is branched against FINRA's ~7-10 day publication lag:
+
+    * Pre-SLA (settlement within last 10 calendar days) — silent skip.
+    * Post-SLA (settlement more than 10 calendar days ago) — date recorded on
+      ``run.error_summary`` so freshness checks see the gap.  The run still
+      completes ``success``.
 
     Parameters
     ----------
@@ -147,6 +220,8 @@ def collect_short_interest(
         SQLAlchemy session factory.  Defaults to the production DB.
     _repo:
         ``track_run`` repository override for testing.
+    _now:
+        Override for "now" used to evaluate the publication SLA.  Test-only.
     """
     if client is None:
         client = FinraClient()
@@ -155,6 +230,8 @@ def collect_short_interest(
     if settlement_dates is None:
         settlement_dates = _biweekly_settlement_dates(months=6)
 
+    now_utc = _now if _now is not None else datetime.now(UTC)
+
     universe = set(
         active_universe_tickers(session_factory=session_factory, include_benchmarks=False)
     )
@@ -162,6 +239,7 @@ def collect_short_interest(
 
     with track_run("finra.short_interest", _repo=_repo) as run:
         rows_written = 0
+        post_sla_misses: list[str] = []
 
         for sd in settlement_dates:
             path = _cdn_path(sd)
@@ -169,26 +247,21 @@ def collect_short_interest(
                 text = client.get(path)
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 404:
-                    logger.debug(
-                        "FINRA short interest: no file for %s (404 — not yet published).", sd
-                    )
+                    if _classify_404(sd, now_utc):
+                        post_sla_misses.append(sd)
                     continue
                 raise
 
             parsed = _parse_csv(text, universe, ingested_at)
-            if not parsed:
-                continue
-
-            with session_factory() as sess:
-                for row in parsed:
-                    stmt = sqlite_insert(ShortInterestSnapshot).values(**row)
-                    stmt = stmt.on_conflict_do_nothing(index_elements=["settlement_date", "ticker"])
-                    result = sess.execute(stmt)
-                    if result.rowcount > 0:
-                        rows_written += 1
-                sess.commit()
+            if parsed:
+                rows_written += _persist_rows(parsed, session_factory)
 
         run.rows_written = rows_written
+        if post_sla_misses:
+            run.error_summary = (
+                f"finra cdn 404 past sla for {len(post_sla_misses)} date(s): "
+                f"{','.join(post_sla_misses)}"
+            )
 
 
 def bootstrap_short_interest(

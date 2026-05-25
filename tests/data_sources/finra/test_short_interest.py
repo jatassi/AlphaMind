@@ -3,6 +3,7 @@ through FakeFinraAPI."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -178,21 +179,77 @@ class TestCollectShortInterest:
         with session_factory() as sess:
             assert sess.query(ShortInterestSnapshot).count() == 1
 
-    def test_404_treated_as_not_yet_published(self, session_factory: sessionmaker[Session]) -> None:
-        """A 404 on a settlement-date file is silently skipped — no rows, no error."""
+    def test_404_pre_sla_silent(self, session_factory: sessionmaker[Session]) -> None:
+        """A 404 within the 10-day publication lag is silently skipped — no error_summary."""
         from alphamind.data_sources.finra.short_interest import collect_short_interest
 
         client = FakeFinraAPI()  # all paths → 404
+        repo = FakeRunRepo()
+        # Five days after settlement — inside FINRA's ~7-10 day publication lag.
+        now_pre_sla = datetime(2026, 1, 20, 15, 0, tzinfo=UTC)
 
         collect_short_interest(
             settlement_dates=[_SETTLEMENT_DATE],
             client=client,
             session_factory=session_factory,
-            _repo=FakeRunRepo(),
+            _repo=repo,
+            _now=now_pre_sla,
         )
 
         with session_factory() as sess:
             assert sess.query(ShortInterestSnapshot).count() == 0
+        assert repo.latest()["status"] == "success"
+        assert repo.latest()["error_summary"] is None
+
+    def test_404_past_sla_records_error_summary(
+        self, session_factory: sessionmaker[Session]
+    ) -> None:
+        """A 404 more than 10 calendar days past settlement records a post-SLA marker."""
+        from alphamind.data_sources.finra.short_interest import collect_short_interest
+
+        client = FakeFinraAPI()  # all paths → 404
+        repo = FakeRunRepo()
+        # Four months past settlement — well outside the ~7-10 day publication lag.
+        now_past_sla = datetime(2026, 5, 25, 15, 0, tzinfo=UTC)
+
+        collect_short_interest(
+            settlement_dates=[_SETTLEMENT_DATE],
+            client=client,
+            session_factory=session_factory,
+            _repo=repo,
+            _now=now_past_sla,
+        )
+
+        with session_factory() as sess:
+            assert sess.query(ShortInterestSnapshot).count() == 0
+        latest = repo.latest()
+        assert latest["status"] == "success"
+        assert latest["error_summary"] is not None
+        assert _SETTLEMENT_DATE in latest["error_summary"]
+        assert "past sla" in latest["error_summary"].lower()
+
+    def test_404_on_us_market_holiday_not_flagged_post_sla(
+        self, session_factory: sessionmaker[Session]
+    ) -> None:
+        """A 404 on a US-market-holiday settlement date is silently skipped."""
+        from alphamind.data_sources.finra.short_interest import collect_short_interest
+
+        # 2026-01-19 is Martin Luther King Jr. Day — a US market holiday.
+        mlk_iso = "2026-01-19"
+        client = FakeFinraAPI()  # all paths → 404
+        repo = FakeRunRepo()
+        now_past_sla = datetime(2026, 5, 25, 15, 0, tzinfo=UTC)
+
+        collect_short_interest(
+            settlement_dates=[mlk_iso],
+            client=client,
+            session_factory=session_factory,
+            _repo=repo,
+            _now=now_past_sla,
+        )
+
+        assert repo.latest()["status"] == "success"
+        assert repo.latest()["error_summary"] is None
 
     def test_on_failure_collection_runs_records_failed(
         self, session_factory: sessionmaker[Session]
