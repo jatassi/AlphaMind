@@ -454,6 +454,46 @@ def test_position_max_size_project_after_batch_close_unresolved_id_is_no_op() ->
     assert projected_after == pytest.approx(8.0)
 
 
+def test_apply_proposal_to_book_logs_warning_on_unresolved_position(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """ALP-621 follow-up: the defensive no-op for an unresolved
+    existing_position_id emits a WARNING so the silent skip becomes
+    observable. The early-return behavior itself is unchanged — covered by
+    ``test_position_max_size_project_after_batch_close_unresolved_id_is_no_op``.
+    """
+    config = _config()
+    existings = {
+        "POS-1": _existing(position_id="POS-1", direction=Direction.LONG, notional_usd=8_000.0),
+    }
+    state = _snapshot(
+        position_max_size_pct=8.0,
+        portfolio_value_usd=100_000.0,
+        existing_positions=existings,
+    )
+    spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
+    assert spec.project_after_batch is not None
+    proposals = [
+        (
+            _proposal(
+                action=Action.CLOSE, notional_usd=5_000.0, existing_position_id="POS-UNKNOWN"
+            ),
+            _dae(signed_notional_usd=-5_000.0),
+        )
+    ]
+    with caplog.at_level(
+        "WARNING", logger="alphamind.risk_guardrails.guardrail_evaluation.rules.exposure"
+    ):
+        spec.project_after_batch(proposals, state, config)
+    matches = [r for r in caplog.records if "POS-UNKNOWN" in r.getMessage()]
+    assert matches, f"expected a warning naming POS-UNKNOWN; got {caplog.records!r}"
+    record = matches[0]
+    assert record.levelname == "WARNING"
+    message = record.getMessage()
+    assert "CLOSE" in message
+    assert "unresolved" in message.lower()
+
+
 def test_position_max_size_project_after_batch_cancel_does_not_change_book() -> None:
     """ALP-621: CANCEL releases reserved capital but doesn't change
     open-position notional. Post-batch max equals existing max."""

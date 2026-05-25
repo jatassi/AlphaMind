@@ -336,7 +336,9 @@ def _make_decision_result() -> Any:
             invocation_id=InvocationId("inv-progress-test"),
             timestamp=_NOW,
             envelopes_submitted=0,
-            verdict_summary=VerdictSummary(approve=0, approve_with_modification=0, reject=0),
+            verdict_summary=VerdictSummary(
+                approve=0, approve_with_modification=0, reject=0, override_with_corrective_action=0
+            ),
         ),
         submission_log=(),
         retry_count=0,

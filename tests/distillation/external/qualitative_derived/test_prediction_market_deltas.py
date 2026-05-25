@@ -306,9 +306,7 @@ class TestPredictionMarketTrailingHistory:
         assert timestamps == sorted(timestamps)
         assert "2026-03-01T00:00:00Z" not in timestamps
 
-    def test_history_trimmed_to_last_three_when_window_holds_more(
-        self, session: Session
-    ) -> None:
+    def test_history_trimmed_to_last_three_when_window_holds_more(self, session: Session) -> None:
         """ALP-633: when more than three in-window rows exist, the brief
         payload's ``trailing_history`` tuple keeps only the three most
         recent so the per-contract row stays compact."""

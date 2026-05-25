@@ -480,6 +480,7 @@ def _make_pm_result() -> PMResult:
                 approve=0,
                 approve_with_modification=0,
                 reject=0,
+                override_with_corrective_action=0,
             ),
         ),
         submission_log=(),

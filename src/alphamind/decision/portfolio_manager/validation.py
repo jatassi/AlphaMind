@@ -42,6 +42,7 @@ from alphamind.commands.command_models import (
     StrategyInstrument,
 )
 from alphamind.commands.pm_envelope import (
+    OVERRIDE_CORRECTIVE_COMMAND_TYPES,
     AddCommand,
     AntiPattern,
     CloseCommand,
@@ -163,7 +164,7 @@ def _check_override_with_corrective_action_invariants(
             criterion="verdict_conditional_invariant",
         )
     for i, command in enumerate(envelope.commands):
-        if command.command_type not in ("close", "adjust", "cancel"):
+        if command.command_type not in OVERRIDE_CORRECTIVE_COMMAND_TYPES:
             yield ValidationError(
                 field_path=f"commands[{i}].command_type",
                 message=(
@@ -205,7 +206,25 @@ def _check_verdict_conditional_invariants(envelope: PMEnvelope) -> Iterable[Vali
     parse; this restates them as defense-in-depth, surfacing finer
     field-level error messages and protecting against ``model_construct``
     parse-bypass paths.
+
+    The ``override_with_corrective_action`` verdict is rejected upfront on
+    :class:`PMAnalystEnvelope` (per parent ALP-621 decision (B) — the
+    verdict is strategist-only). The Pydantic model validator catches this
+    on parse; the Layer-2 restate here protects the ``model_construct``
+    parse-bypass path.
     """
+    if envelope.verdict == "override_with_corrective_action" and isinstance(
+        envelope, PMAnalystEnvelope
+    ):
+        yield ValidationError(
+            field_path="verdict",
+            message=(
+                "override_with_corrective_action is valid only on PM-strategist envelopes; "
+                "analyst envelopes use reject when the new-entry recommendation is wrong"
+            ),
+            criterion="verdict_conditional_invariant",
+        )
+        return
     if envelope.verdict == "reject":
         yield from _check_reject_invariants(envelope)
     elif envelope.verdict == "approve":

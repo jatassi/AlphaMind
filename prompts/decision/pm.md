@@ -125,7 +125,7 @@ Top-level shape:
 - `invocation_id` (string) — verbatim from the guardrail header.
 - `timestamp` (ISO 8601) — when you finalized the invocation (after the last envelope's submission resolved).
 - `envelopes_submitted` (integer) — total number of envelopes you submitted via `submit_envelope`. Includes rejection envelopes (which carry zero commands) and post-rejection re-submissions of the same envelope (count the envelope once per finalized state, not per `submit_envelope` call).
-- `verdict_summary` (object) — keys `approve`, `approve_with_modification`, `reject`; values are non-negative integer counts. The sum equals `envelopes_submitted`.
+- `verdict_summary` (object) — keys `approve`, `approve_with_modification`, `reject`, `override_with_corrective_action`; values are non-negative integer counts. The sum equals `envelopes_submitted`.
 
 Do not emit envelopes in the structured output; envelopes flow through `submit_envelope` calls. Do not emit prose before or after the structured-output JSON; the harness reads only the structured payload.
 
@@ -142,7 +142,7 @@ Each envelope:
   - `approve` — strategist or analyst action is right as-proposed. Empty `modifications`; `commands` mirror the upstream proposal.
   - `approve_with_modification` — strategist or analyst action is right but at least one parameter needs adjustment (e.g., reduce size on a proposed OPEN). The original command exists; the modification tweaks it. At least one `modifications` entry; at least one command.
   - `reject` — strategist or analyst action is wrong AND no PM-authored corrective action is appropriate (e.g., the strategist proposed an action that should have been HOLD; the PM rejects without authoring). Empty `commands`; empty `modifications`; at least one `concerns` entry.
-  - `override_with_corrective_action` — strategist's action is wrong AND PM-authored corrective commands are appropriate. No original strategist command to modify; the PM authors a coordinated remediation. Use when the strategist's analysis is signal-grounded but the proposed action (typically HOLD) is structurally wrong given the portfolio's state, *and* the corrective action requires authorship rather than parameter modification of an existing command. The classic case: the strategist correctly identifies that an at-risk position in size-breach should be reduced, but cannot validate a standalone reduce because sibling oversized positions keep the portfolio-scoped rule red. The PM authors the corrective reduce package (validated via `validate_guardrail_batch` — one call with the full package — before submission) and submits the override. At least one command; at least one `concerns` entry (the disagreement); empty `modifications`; every embedded command must be `close` / `adjust` / `cancel` (no new-entry `open` / `add` — the override is a corrective action against existing exposure). An override whose `validate_guardrail_batch` returns aggregate `FAIL` or `UNAVAILABLE` must not be submitted.
+  - `override_with_corrective_action` — strategist's action is wrong AND PM-authored corrective commands are appropriate. No original strategist command to modify; the PM authors a coordinated remediation. Use when the strategist's analysis is signal-grounded but the proposed action (typically HOLD) is structurally wrong given the portfolio's state, *and* the corrective action requires authorship rather than parameter modification of an existing command. The classic case: the strategist correctly identifies that an at-risk position in size-breach should be reduced, but cannot validate a standalone reduce because sibling oversized positions keep the portfolio-scoped rule red. The PM authors the corrective reduce package (validated via `validate_guardrail_batch` — one call with the full package — before submission) and submits the override. The corrective package may be issued as one override envelope carrying N `close`/`adjust`/`cancel` commands OR as N override envelopes each carrying one command (one per affected position) — both shapes are valid; pick the form that aligns with how the proposals arrived (one envelope per strategist `SA-N` source recommendation is the common case). At least one command per envelope; at least one `concerns` entry (the disagreement); empty `modifications`; every embedded command must be `close` / `adjust` / `cancel` (no new-entry `open` / `add` — the override is a corrective action against existing exposure). An override whose `validate_guardrail_batch` returns aggregate `FAIL` or `UNAVAILABLE` must not be submitted.
 - `evaluation` (object) — per-criterion `CriterionAssessment` records keyed by criterion name. Each value is an object with `status` (`"pass"` | `"fail"`) and an optional `note` (short string; full reasoning lives in `rationale_narrative`). Required keys per `source_provenance`:
   - `pm_analyst`: `falsifiability`, `sizing_proportionality`, `portfolio_coherence`, `timing_plausibility`, `counterargument_consideration`.
   - `pm_strategist`: `status_classification_warrant`, `action_status_alignment`, `action_specific_justification`, `portfolio_coherence`.
@@ -267,7 +267,8 @@ When you modify an exposure-changing parameter, the validated `delta_adjusted_ex
   "verdict_summary": {
     "approve": 0,
     "approve_with_modification": 1,
-    "reject": 2
+    "reject": 2,
+    "override_with_corrective_action": 0
   }
 }
   </output>
@@ -300,6 +301,47 @@ When you modify an exposure-changing parameter, the validated `delta_adjusted_ex
         "command_type": "close",
         "position_id": "POS-AAPL-001",
         "quantity": 30,
+        "order_type": "market",
+        "close_rationale_type": "risk_management",
+        "risk_management_subtype": "pm_directed"
+      }
+    ]
+  })
+  </tool_call>
+</example>
+
+<example>
+  <context>Strategist assessed POS-JPM-001 (in a multi-position size breach) and recommended HOLD with a signal-grounded `status_rationale` that correctly classified the position as `at-risk` (the analysis is right). The strategist could not validate a standalone reduce because sibling oversized financials positions keep `position_max_size_pct` red until the package is applied as a unit. The PM agrees with the diagnosis but the proposed HOLD action is structurally wrong: the breach demands a coordinated reduce, and the corrective commands require PM authorship (no existing strategist command to modify). Before submitting, the PM calls `validate_guardrail_batch` with the multi-position reduce package and receives aggregate `PASS`.</context>
+
+  <tool_call>
+  Example submit_envelope call — ENV-SA-2 (override_with_corrective_action, one CLOSE command). Demonstrates the verdict's full shape: at least one concern citing the structural-state disagreement, at least one corrective `close` / `adjust` / `cancel` command (never `open` / `add`), and empty `modifications`. The rationale narrative names the structural state (size breach) and references the batch-validation step.
+  submit_envelope({
+    "envelope_id": "ENV-SA-2",
+    "invocation_id": "inv-2026-04-23T14-30Z",
+    "source_provenance": "pm_strategist",
+    "source_recommendation_id": "SA-2",
+    "recommendation_type": "position_assessment",
+    "position_id": "POS-JPM-001",
+    "verdict": "override_with_corrective_action",
+    "evaluation": {
+      "status_classification_warrant": { "status": "pass" },
+      "action_status_alignment": { "status": "fail", "note": "Hold inappropriate given position_max_size_pct breach across financials." },
+      "action_specific_justification": { "status": "pass" },
+      "portfolio_coherence": { "status": "fail", "note": "Sibling oversized financials positions keep the rule red; coordinated reduce required." }
+    },
+    "modifications": [],
+    "concerns": [
+      {
+        "source": "action_status_alignment",
+        "summary": "Strategist's signal-grounded at-risk classification is correct, but HOLD ignores the active position_max_size_pct breach. A coordinated reduce across the financials cluster is required to cure the breach; no standalone reduce validates because sibling positions keep the portfolio-scoped rule red."
+      }
+    ],
+    "rationale_narrative": "Override of the strategist's HOLD on POS-JPM-001. Diagnosis is right (at-risk classification holds), action is wrong (structural state demands a coordinated reduce, not hold). Authored the corrective close as part of a multi-position reduce package and validated the package via `validate_guardrail_batch` — aggregate PASS confirmed position_max_size_pct cures when the full package applies. Submitting the JPM leg here; sibling envelopes carry the remaining legs.",
+    "commands": [
+      {
+        "command_type": "close",
+        "position_id": "POS-JPM-001",
+        "quantity": 40,
         "order_type": "market",
         "close_rationale_type": "risk_management",
         "risk_management_subtype": "pm_directed"

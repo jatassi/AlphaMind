@@ -1728,7 +1728,7 @@ def test_validate_guardrail_batch_empty_requests_returns_pass() -> None:
     """An empty batch returns aggregate PASS with no per-proposal entries and
     a cumulative-impact note reflecting the (empty) state.accumulated_deltas."""
     state = _state()
-    result = validate_guardrail_batch(requests=(), state=state)
+    result = validate_guardrail_batch(proposals=(), state=state)
 
     assert isinstance(result, BatchValidationResult)
     assert result.overall == "PASS"
@@ -1759,7 +1759,7 @@ def test_validate_guardrail_batch_all_pass_individually_returns_pass() -> None:
         market=_market(underlyings=("AAPL", "NVDA", "ABC", "JPM")),
     )
 
-    result = validate_guardrail_batch(requests=(req1, req2), state=state)
+    result = validate_guardrail_batch(proposals=(req1, req2), state=state)
 
     assert result.overall == "PASS"
     assert len(result.per_proposal) == 2
@@ -1799,7 +1799,7 @@ def test_validate_guardrail_batch_threads_prior_pass_into_subsequent_projection(
     req1 = _equity_request(ticker=Symbol("AAPL"), dollar_value=12_000.0)
     req2 = _equity_request(ticker=Symbol("NVDA"), dollar_value=12_000.0)
 
-    result = validate_guardrail_batch(requests=(req1, req2), state=state)
+    result = validate_guardrail_batch(proposals=(req1, req2), state=state)
 
     assert result.per_proposal[0].overall == "PASS"
     assert result.per_proposal[1].overall == "FAIL"
@@ -1818,7 +1818,7 @@ def test_validate_guardrail_batch_aggregate_worst_of_fail_dominates_unavailable(
     req_fail = _option_request(ticker=Symbol("AAPL"))
     req_unavail = _equity_request(ticker=Symbol("CSCO"))
 
-    result = validate_guardrail_batch(requests=(req_fail, req_unavail), state=state)
+    result = validate_guardrail_batch(proposals=(req_fail, req_unavail), state=state)
 
     assert result.per_proposal[0].overall == "FAIL"
     assert result.per_proposal[1].overall == "UNAVAILABLE"
@@ -1832,7 +1832,7 @@ def test_validate_guardrail_batch_aggregate_unavailable_when_no_fails() -> None:
     req_pass = _equity_request(ticker=Symbol("AAPL"))
     req_unavail = _equity_request(ticker=Symbol("CSCO"))  # not in market
 
-    result = validate_guardrail_batch(requests=(req_pass, req_unavail), state=state)
+    result = validate_guardrail_batch(proposals=(req_pass, req_unavail), state=state)
 
     assert result.per_proposal[0].overall == "PASS"
     assert result.per_proposal[1].overall == "UNAVAILABLE"
@@ -1846,7 +1846,7 @@ def test_validate_guardrail_batch_does_not_mutate_input_state() -> None:
     req2 = _equity_request(ticker=Symbol("NVDA"))
 
     before = state.accumulated_deltas
-    result = validate_guardrail_batch(requests=(req1, req2), state=state)
+    result = validate_guardrail_batch(proposals=(req1, req2), state=state)
     after = state.accumulated_deltas
 
     assert before == ()
@@ -1919,7 +1919,7 @@ def test_validate_guardrail_batch_standalone_fail_becomes_cumulative_pass() -> N
     assert standalone.overall == "FAIL"
 
     # Batch: close + open together aggregates PASS.
-    result = validate_guardrail_batch(requests=(close_req, open_req), state=state)
+    result = validate_guardrail_batch(proposals=(close_req, open_req), state=state)
     # Surface which rules drove a FAIL, if any, to make debugging easy.
     assert result.per_proposal[0].overall == "PASS", result.per_proposal[0].failure_guidance
     failed_rules = [p.rule for p in result.per_proposal[1].per_rule if p.status is Status.FAIL]
@@ -1931,15 +1931,15 @@ def test_validate_guardrail_batch_standalone_fail_becomes_cumulative_pass() -> N
 
 
 def test_validate_guardrail_batch_deterministic_replay() -> None:
-    """Same (requests, state) inputs produce equal BatchValidationResults."""
+    """Same (proposals, state) inputs produce equal BatchValidationResults."""
     state = _state()
-    requests = (
+    proposals = (
         _equity_request(ticker=Symbol("AAPL")),
         _equity_request(ticker=Symbol("NVDA")),
     )
 
-    a = validate_guardrail_batch(requests=requests, state=state)
-    b = validate_guardrail_batch(requests=requests, state=state)
+    a = validate_guardrail_batch(proposals=proposals, state=state)
+    b = validate_guardrail_batch(proposals=proposals, state=state)
     assert a == b
 
 

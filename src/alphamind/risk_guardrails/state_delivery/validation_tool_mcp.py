@@ -87,6 +87,9 @@ _VALIDATE_GUARDRAIL_INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
+_BATCH_PROPOSALS_MAX = 25
+
+
 _VALIDATE_GUARDRAIL_BATCH_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "required": ["proposals"],
@@ -94,11 +97,13 @@ _VALIDATE_GUARDRAIL_BATCH_INPUT_SCHEMA: dict[str, Any] = {
         "proposals": {
             "type": "array",
             "items": _VALIDATE_GUARDRAIL_INPUT_SCHEMA,
+            "maxItems": _BATCH_PROPOSALS_MAX,
             "description": (
                 "Ordered list of single-proposal validation requests. Each "
                 "item follows the validate_guardrail input schema. Proposals "
                 "are projected in order with prior-PASS impact threaded into "
-                "subsequent projections."
+                "subsequent projections. At most "
+                f"{_BATCH_PROPOSALS_MAX} entries per call."
             ),
         }
     },
@@ -217,7 +222,7 @@ def build_validate_guardrail_mcp_server(
                 "is_error": True,
             }
         try:
-            requests = tuple(
+            proposals = tuple(
                 ValidationRequest.model_validate(_coerce_enum_case(p)) for p in raw_proposals
             )
         except ValidationError as exc:
@@ -226,7 +231,7 @@ def build_validate_guardrail_mcp_server(
                 "is_error": True,
             }
 
-        result = validate_guardrail_batch(requests=requests, state=cell.state)
+        result = validate_guardrail_batch(proposals=proposals, state=cell.state)
 
         if result.overall == "PASS":
             # Advance the cell once per per-proposal entry — one with_accepted_proposal
@@ -234,10 +239,10 @@ def build_validate_guardrail_mcp_server(
             # wrapper uses. Threaded state propagates through each iteration's sector
             # lookup so a per-proposal cumulative_impact_note in the batch result
             # remains internally consistent with the cell after the batch.
-            for request, per_proposal in zip(requests, result.per_proposal, strict=True):
+            for proposal, per_proposal in zip(proposals, result.per_proposal, strict=True):
                 cell.state = cell.state.with_accepted_proposal(
                     _build_projected_delta_from(
-                        request=request, result=per_proposal, state=cell.state
+                        request=proposal, result=per_proposal, state=cell.state
                     )
                 )
 

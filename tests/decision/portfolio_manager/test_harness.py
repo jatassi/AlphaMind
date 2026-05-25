@@ -394,6 +394,7 @@ def _completion_payload(
     approve: int = 1,
     approve_with_modification: int = 0,
     reject: int = 0,
+    override_with_corrective_action: int = 0,
 ) -> dict[str, Any]:
     """Minimal valid PMCompletionRecord payload."""
     return {
@@ -404,6 +405,7 @@ def _completion_payload(
             "approve": approve,
             "approve_with_modification": approve_with_modification,
             "reject": reject,
+            "override_with_corrective_action": override_with_corrective_action,
         },
     }
 

@@ -153,6 +153,7 @@ Enum values and structural constraints trace back to these sources:
 
     "pm_analyst_envelope": {
       "type": "object",
+      "description": "PM envelope wrapping an analyst new-entry proposal. The override_with_corrective_action verdict is strategist-only — an analyst envelope wraps a REC-N new-entry proposal where there is no existing exposure to override; use reject when the new-entry recommendation is wrong.",
       "properties": {
         "envelope_id": { "pattern": "^ENV-REC-[0-9]+$" },
         "source_provenance": { "const": "pm_analyst" },
@@ -162,7 +163,8 @@ Enum values and structural constraints trace back to these sources:
         },
         "recommendation_type": { "const": "new_entry" },
         "evaluation": { "$ref": "#/$defs/thesis_quality_evaluation" },
-        "position_id": false
+        "position_id": false,
+        "verdict": { "enum": ["approve", "approve_with_modification", "reject"] }
       },
       "required": ["envelope_id", "source_provenance", "source_recommendation_id", "recommendation_type", "evaluation"],
       "allOf": [

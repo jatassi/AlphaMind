@@ -849,6 +849,151 @@ class TestOverrideWithCorrectiveActionLayer2Invariants:
         result = _validate(envelope, halt_mode=True)
         assert result.is_valid
 
+    def test_override_with_adjust_command_passes(self) -> None:
+        """Positive case for ADJUST in the override package — Wave-2 finding 7.
+
+        ``adjust`` is one of the three allowed corrective command types (close,
+        adjust, cancel); the Layer-2 validator must accept it when the rest of
+        the envelope shape is correct.
+        """
+        from alphamind._kernel.money import price as _price
+        from alphamind.commands.command_models import AdjustCommand, NewStopLevel
+
+        adjust_cmd = AdjustCommand(
+            command_type="adjust",
+            position_id=PositionId("POS-NVDA-001"),
+            adjustment_rationale="Tighten stop as part of coordinated reduce.",
+            new_stop_level=NewStopLevel(trigger_price=_price(100.0), order_type="market"),
+        )
+        envelope = _make_strategist_envelope(
+            verdict="override_with_corrective_action",
+            modifications=(),
+            commands=(adjust_cmd,),
+            concerns=(
+                ConcernRecord(
+                    source="action_status_alignment",
+                    summary="Coordinated adjust needed.",
+                ),
+            ),
+        )
+        result = _validate(envelope)
+        assert result.is_valid
+
+    def test_override_with_cancel_command_passes(self) -> None:
+        """Positive case for CANCEL in the override package — Wave-2 finding 7."""
+        from alphamind._kernel.ids import OrderId
+        from alphamind.commands.command_models import CancelCommand
+
+        cancel_cmd = CancelCommand(
+            command_type="cancel",
+            order_id=OrderId("ORD-1"),
+            cancel_reason="stale",
+        )
+        envelope = _make_strategist_envelope(
+            envelope_id="ENV-SA-ORD-1",
+            source_recommendation_id="SA-ORD-1",
+            recommendation_type="pending_order_assessment",
+            verdict="override_with_corrective_action",
+            modifications=(),
+            commands=(cancel_cmd,),
+            concerns=(
+                ConcernRecord(
+                    source="action_status_alignment",
+                    summary="Cancel stale pending order.",
+                ),
+            ),
+        )
+        result = _validate(envelope)
+        assert result.is_valid
+
+    def test_override_in_halt_mode_with_adjust_passes(self) -> None:
+        """Halt-mode + override + ADJUST — Wave-2 finding 8.
+
+        Halt-mode allows CLOSE / ADJUST / CANCEL; ADJUST in an override package
+        must pass the halt-mode check by construction.
+        """
+        from alphamind._kernel.money import price as _price
+        from alphamind.commands.command_models import AdjustCommand, NewStopLevel
+
+        adjust_cmd = AdjustCommand(
+            command_type="adjust",
+            position_id=PositionId("POS-NVDA-001"),
+            adjustment_rationale="Tighten stop ahead of halt-mode close.",
+            new_stop_level=NewStopLevel(trigger_price=_price(100.0), order_type="market"),
+        )
+        envelope = _make_strategist_envelope(
+            verdict="override_with_corrective_action",
+            modifications=(),
+            commands=(adjust_cmd,),
+            concerns=(
+                ConcernRecord(
+                    source="action_status_alignment",
+                    summary="Override needed in halt mode.",
+                ),
+            ),
+        )
+        result = _validate(envelope, halt_mode=True)
+        assert result.is_valid
+
+    def test_override_in_halt_mode_with_cancel_passes(self) -> None:
+        """Halt-mode + override + CANCEL — Wave-2 finding 8."""
+        from alphamind._kernel.ids import OrderId
+        from alphamind.commands.command_models import CancelCommand
+
+        cancel_cmd = CancelCommand(
+            command_type="cancel",
+            order_id=OrderId("ORD-1"),
+            cancel_reason="stale",
+        )
+        envelope = _make_strategist_envelope(
+            envelope_id="ENV-SA-ORD-1",
+            source_recommendation_id="SA-ORD-1",
+            recommendation_type="pending_order_assessment",
+            verdict="override_with_corrective_action",
+            modifications=(),
+            commands=(cancel_cmd,),
+            concerns=(
+                ConcernRecord(
+                    source="action_status_alignment",
+                    summary="Cancel stale order in halt mode.",
+                ),
+            ),
+        )
+        result = _validate(envelope, halt_mode=True)
+        assert result.is_valid
+
+    def test_analyst_envelope_override_verdict_layer2_rejected(self) -> None:
+        """Layer-2 defense-in-depth: an analyst envelope with the override verdict
+        is rejected even when built via ``model_construct`` to bypass the
+        Pydantic model validator — Wave-2 finding 3, parent ALP-621 decision (B).
+
+        The override verdict is strategist-only; an analyst envelope wraps a
+        new-entry REC-N proposal with no existing exposure to override. The
+        Layer-2 validator restates the gate as defense-in-depth so the
+        ``model_construct`` parse-bypass path cannot smuggle an analyst
+        override past the engine's submission check.
+        """
+        envelope = PMAnalystEnvelope.model_construct(
+            envelope_id=EnvelopeId("ENV-REC-1"),
+            invocation_id="inv-2026-05-05",
+            source_provenance="pm_analyst",
+            source_recommendation_id="REC-1",
+            recommendation_type="new_entry",
+            verdict="override_with_corrective_action",
+            evaluation=_thesis_eval_all_pass(),
+            modifications=(),
+            concerns=(ConcernRecord(source="other", summary="x"),),
+            rationale_narrative="Override on analyst envelope is invalid.",
+            anti_patterns_identified=None,
+            commands=(_close_command(),),
+        )
+        result = _validate(envelope)
+        assert not result.is_valid
+        assert any(
+            err.criterion == "verdict_conditional_invariant" and "strategist" in err.message.lower()
+            for err in result.errors
+        )
+
 
 # ---------------------------------------------------------------------------
 # Layer-2 (c): evaluation criterion-set ↔ source_provenance

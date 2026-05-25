@@ -291,6 +291,11 @@ class BatchValidationResult(BaseModel):
     credited by prior single-call or batch calls in the invocation, not the
     proposals threaded inside this batch (those are reflected by each
     per-proposal entry's own ``cumulative_impact_note``).
+
+    Per-proposal ``proposal_index_in_invocation`` values reflect the
+    projection's threaded state inside the batch, not the post-batch cell
+    state; on aggregate FAIL or UNAVAILABLE the cell does not advance and
+    these indices are not committed.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -517,10 +522,10 @@ def validate_guardrail(
 
 def validate_guardrail_batch(
     *,
-    requests: tuple[ValidationRequest, ...],
+    proposals: tuple[ValidationRequest, ...],
     state: ValidationToolState,
 ) -> BatchValidationResult:
-    """Project *requests* as one coordinated package, threading PASSes in-batch.
+    """Project *proposals* as one coordinated package, threading PASSes in-batch.
 
     The batch tool exists so a strategist or PM can validate a multi-position
     remediation as a single transaction: each individual proposal may FAIL
@@ -531,24 +536,24 @@ def validate_guardrail_batch(
 
     Semantics:
 
-    * Empty ``requests``: returns aggregate ``PASS`` with empty
+    * Empty ``proposals``: returns aggregate ``PASS`` with empty
       ``per_proposal``. ``cumulative_impact_note`` reflects the input
       ``state.accumulated_deltas``.
-    * Non-empty: each request is projected in order against a state threaded
+    * Non-empty: each proposal is projected in order against a state threaded
       with the prior in-batch PASSes (a PASSed proposal is appended to the
-      threaded state's ``accumulated_deltas`` so the next request's projection
+      threaded state's ``accumulated_deltas`` so the next proposal's projection
       sees its impact). A FAIL or UNAVAILABLE per-proposal does NOT thread —
       only PASSes contribute to subsequent headroom.
     * Aggregate ``overall``: ``PASS`` iff every per-proposal is ``PASS``;
       otherwise the worst-of (``FAIL`` > ``UNAVAILABLE`` > ``PASS``).
 
-    Purity contract: same ``(requests, state)`` produces an equal
+    Purity contract: same ``(proposals, state)`` produces an equal
     ``BatchValidationResult``. The function does NOT advance the input
     ``state`` — state advancement on aggregate PASS lives in the MCP wrapper.
     """
     cumulative_impact_note = _format_cumulative_impact_note(state)
 
-    if not requests:
+    if not proposals:
         return BatchValidationResult(
             per_proposal=(),
             overall="PASS",
@@ -557,12 +562,12 @@ def validate_guardrail_batch(
 
     per_proposal: list[ValidationResult] = []
     threaded_state = state
-    for request in requests:
-        result = validate_guardrail(request=request, state=threaded_state)
+    for proposal in proposals:
+        result = validate_guardrail(request=proposal, state=threaded_state)
         per_proposal.append(result)
         if result.overall == "PASS":
             threaded_state = threaded_state.with_accepted_proposal(
-                _build_projected_delta_from(request=request, result=result, state=threaded_state)
+                _build_projected_delta_from(request=proposal, result=result, state=threaded_state)
             )
 
     return BatchValidationResult(

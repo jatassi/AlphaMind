@@ -2585,6 +2585,64 @@ async def test_multi_command_envelope_emits_single_pm_decision(
     assert tuple(detail["resulting_command_ids"]) == tuple(r.command_id for r in results)
 
 
+async def test_persist_envelope_outcome_override_verdict(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """An ``override_with_corrective_action`` strategist envelope writes a
+    PM_DECISION activity-log entry whose detail.verdict maps to
+    ``PMVerdict.OVERRIDE_WITH_CORRECTIVE_ACTION`` — Wave-2 finding 16.
+
+    Pins the wire-literal → PMVerdict mapping in
+    ``alphamind.execution.write_paths.phase2._VERDICT_TO_PM_VERDICT`` so a
+    future verdict-set change cannot silently drop the override mapping and
+    cause Phase-2 persistence to fall back to the default (or fail).
+    """
+    from alphamind.commands.pm_envelope import ConcernRecord
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+    from alphamind.portfolio_state.events.types import PMVerdict
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
+
+    envelope = PMStrategistEnvelope(
+        envelope_id=EnvelopeId("ENV-SA-1"),
+        invocation_id=InvocationId(_INV_ID),
+        source_provenance="pm_strategist",
+        source_recommendation_id=RecommendationId("SA-1"),
+        recommendation_type="position_assessment",
+        position_id=PositionId("POS-NVDA-001"),
+        verdict="override_with_corrective_action",
+        evaluation=_all_pass_position_eval(),
+        modifications=(),
+        concerns=(
+            ConcernRecord(
+                source="action_status_alignment",
+                summary="Hold inappropriate given size breach; coordinated reduce required.",
+            ),
+        ),
+        rationale_narrative="Override the strategist HOLD with a corrective close.",
+        anti_patterns_identified=None,
+        commands=(_close_command(position_id="POS-NVDA-001"),),
+    )
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    pm_rows = [r for r in rows if r.event_type == EventType.PM_DECISION.value]
+    assert len(pm_rows) == 1
+    detail = json.loads(pm_rows[0].detail_json)
+    assert detail["verdict"] == PMVerdict.OVERRIDE_WITH_CORRECTIVE_ACTION.value
+
+
 async def test_command_abandoned_emission_survives_per_command_rollback(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:

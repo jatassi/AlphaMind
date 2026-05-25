@@ -856,3 +856,26 @@ async def test_batch_bad_input_returns_is_error_with_field_paths() -> None:
     )
     assert is_error
     assert "OPTIONS asset_type requires" in text or "strike" in text
+
+
+@pytest.mark.asyncio
+async def test_batch_schema_rejects_oversized_proposals() -> None:
+    """A batch with more than the documented per-call cap (25 entries) is
+    rejected as is_error=True. The schema advertises ``maxItems: 25`` and
+    the MCP SDK enforces the bound at tool dispatch — an oversized payload
+    surfaces as a structured input error before the handler runs, so the
+    tool never executes unbounded work on an over-large batch."""
+    state = _make_state()
+    mcp_servers, _ = build_validate_guardrail_mcp_server(state)
+    server = mcp_servers["alphamind_decision_validation"]["instance"]
+
+    oversized = [_equity_open_args(ticker="AAPL") for _ in range(26)]
+    text, is_error = await _invoke_mcp_tool(
+        server, "validate_guardrail_batch", _batch_args(oversized)
+    )
+    assert is_error
+    # SDK schema validator surfaces an "Input validation error" / "too long"
+    # message — the canonical error surface for any schema-violating payload
+    # (mirrors how the missing-required-fields case surfaces).
+    assert "Input validation error" in text
+    assert "too long" in text
