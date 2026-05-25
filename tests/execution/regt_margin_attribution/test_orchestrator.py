@@ -67,8 +67,6 @@ def _config(
         pm_model_version=pm_model_version,
         shock_parameters=ShockParameters(
             per_symbol_overrides=dict(per_symbol_overrides or {}),
-            high_cap_equity=0.15,
-            small_cap_equity=0.20,
             unmapped_default=0.20,
         ),
         iv_shock=IvShockMultipliers(

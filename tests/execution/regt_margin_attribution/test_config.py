@@ -53,8 +53,6 @@ def _minimal_yaml_payload() -> dict[str, Any]:
             "worst_up_multiplier": 0.95,
         },
         "shock_parameters": {
-            "high_cap_equity": 0.15,
-            "small_cap_equity": 0.20,
             "unmapped_default": 0.20,
             "per_symbol_overrides": {
                 "SPY": 0.15,
@@ -81,8 +79,6 @@ def test_config_round_trips_minimal_yaml(tmp_path: pathlib.Path) -> None:
     assert cfg.risk_free_rate_annual == pytest.approx(0.0425)
     assert cfg.iv_shock.worst_down_multiplier == pytest.approx(1.20)
     assert cfg.iv_shock.worst_up_multiplier == pytest.approx(0.95)
-    assert cfg.shock_parameters.high_cap_equity == pytest.approx(0.15)
-    assert cfg.shock_parameters.small_cap_equity == pytest.approx(0.20)
     assert cfg.shock_parameters.unmapped_default == pytest.approx(0.20)
     assert cfg.shock_parameters.per_symbol_overrides["SPY"] == pytest.approx(0.15)
 
@@ -102,8 +98,6 @@ def test_config_rejects_non_finite_risk_free_rate(tmp_path: pathlib.Path) -> Non
         "  worst_down_multiplier: 1.20\n"
         "  worst_up_multiplier: 0.95\n"
         "shock_parameters:\n"
-        "  high_cap_equity: 0.15\n"
-        "  small_cap_equity: 0.20\n"
         "  unmapped_default: 0.20\n"
         "  per_symbol_overrides:\n"
         "    SPY: 0.15\n",
@@ -145,12 +139,50 @@ def test_config_rejects_shock_outside_unit_interval(tmp_path: pathlib.Path) -> N
     from alphamind.execution.regt_margin_attribution import load_regt_margin_attribution_config
 
     payload = _minimal_yaml_payload()
-    payload["shock_parameters"]["high_cap_equity"] = 1.5
+    payload["shock_parameters"]["unmapped_default"] = 1.5
     yaml_file = tmp_path / "regt.yaml"
     yaml_file.write_text(yaml.safe_dump(payload), encoding="utf-8")
 
     with pytest.raises((ValueError, TypeError)):
         load_regt_margin_attribution_config(yaml_file)
+
+
+def test_config_rejects_stale_asset_class_taxonomy_keys(tmp_path: pathlib.Path) -> None:
+    """Yaml carrying the retired ``high_cap_equity`` / ``small_cap_equity`` keys fails to load.
+
+    Per ALP-645: those fields were removed from ``ShockParameters`` because the
+    v1 shock lookup never consulted them. ``extra="forbid"`` on the model
+    surfaces operator config drift loudly at load time rather than silently
+    no-op'ing.
+    """
+    from alphamind.execution.regt_margin_attribution import load_regt_margin_attribution_config
+
+    payload = _minimal_yaml_payload()
+    payload["shock_parameters"]["high_cap_equity"] = 0.15
+    yaml_file = tmp_path / "regt.yaml"
+    yaml_file.write_text(yaml.safe_dump(payload), encoding="utf-8")
+
+    with pytest.raises((ValueError, TypeError)):
+        load_regt_margin_attribution_config(yaml_file)
+
+
+def test_config_loads_without_asset_class_taxonomy_keys(tmp_path: pathlib.Path) -> None:
+    """Yaml omitting the retired ``high_cap_equity`` / ``small_cap_equity`` keys loads.
+
+    Per ALP-645: ``ShockParameters`` requires only ``per_symbol_overrides`` and
+    ``unmapped_default``; the v1 shock lookup never consulted asset-class
+    taxonomy fields.
+    """
+    from alphamind.execution.regt_margin_attribution import load_regt_margin_attribution_config
+
+    payload = _minimal_yaml_payload()
+    yaml_file = tmp_path / "regt.yaml"
+    yaml_file.write_text(yaml.safe_dump(payload), encoding="utf-8")
+
+    cfg = load_regt_margin_attribution_config(yaml_file)
+
+    assert cfg.shock_parameters.unmapped_default == pytest.approx(0.20)
+    assert "SPY" in cfg.shock_parameters.per_symbol_overrides
 
 
 def test_config_normalises_per_symbol_override_keys_to_uppercase(tmp_path: pathlib.Path) -> None:

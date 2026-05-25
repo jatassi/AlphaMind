@@ -65,8 +65,6 @@ Triage convention: a finding is presumed **tracked** if the comment cites a Line
 - **src/alphamind/execution/paper_evaluation_harness/spread.py:37-41** — `constants are model parameters (not operator knobs) per the parent decision E and the harness's calibrated-not-pessimistic principle` — Hardcoded calibration constants
 - **src/alphamind/execution/paper_evaluation_harness/harness.py:59** — `caller persists no estimate when None returned due to missing data` — Intentional graceful skip path
 - **src/alphamind/execution/regt_margin_attribution/__init__.py:9** — `This package provides the configuration skeleton (story 01a). Later stories...`
-- **src/alphamind/execution/regt_margin_attribution/pm_stress.py:21** — `are exposed on ShockParameters for future revisions, but v1 looks up only`
-- **src/alphamind/execution/regt_margin_attribution/pm_stress.py:164** — `high_cap_equity and small_cap_equity are reserved for future`
 - **src/alphamind/execution/write_paths/phase1.py:255** — `currently unused; the signature is forward-shaped`
 - **src/alphamind/execution/write_paths/phase1.py:384** — `future revisions can extend this with price-plausibility and order-existence checks`
 - **src/alphamind/execution/write_paths/phase1.py:588** — `raise NotImplementedError(msg)` — Defensive — verify unhandled variants can't occur
