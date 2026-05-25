@@ -429,8 +429,8 @@ def _cross_constraint_impact() -> CrossConstraintImpact:
     return CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=_AVAILABLE_FOR_NEW_POSITIONS_USD,
-        available_capital_after_usd=_AVAILABLE_FOR_NEW_POSITIONS_USD,
+        available_capital_before_usd=money(_AVAILABLE_FOR_NEW_POSITIONS_USD),
+        available_capital_after_usd=money(_AVAILABLE_FOR_NEW_POSITIONS_USD),
     )
 
 
@@ -567,8 +567,8 @@ def _runner_kwargs(
         "state_delivery_config": _state_delivery_config(),
         "options_enabled": False,
         "short_selling_enabled": False,
-        "total_portfolio_value_usd": _PORTFOLIO_VALUE,
-        "available_for_new_positions_usd": _AVAILABLE_FOR_NEW_POSITIONS_USD,
+        "total_portfolio_value_usd": money(_PORTFOLIO_VALUE),
+        "available_for_new_positions_usd": money(_AVAILABLE_FOR_NEW_POSITIONS_USD),
         "cross_constraint_impact": _cross_constraint_impact(),
         "halt_state": halt_state,
         "pending_orders": pending_orders,

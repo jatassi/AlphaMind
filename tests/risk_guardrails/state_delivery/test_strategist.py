@@ -512,8 +512,8 @@ def test_render_strategist_header_returns_string_starting_with_envelope_open() -
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert isinstance(rendered, str)
@@ -675,8 +675,8 @@ def test_render_strategist_header_full_system_profile_full_fixture() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_FULL_SECTOR_LABELS,
         sector_resolver=_make_full_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         regime_transition_breaches=breaches,
         position_zones=_DEFAULT_POSITION_ZONES,
     )
@@ -800,8 +800,8 @@ def test_render_strategist_header_micro_profile_full_fixture() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
     expected = "\n".join(
@@ -875,8 +875,8 @@ def test_render_strategist_header_renders_none_for_empty_positions() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
@@ -932,8 +932,8 @@ def test_render_strategist_header_renders_cumulative_tier_line(
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
     expected_line = f"  Cumulative tier: {expected_label} — {expected_restrictions}"
@@ -975,8 +975,8 @@ def test_render_strategist_header_groups_unclassified_position_at_end() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
@@ -1022,8 +1022,8 @@ def test_render_strategist_header_emits_zone_tag_per_threshold(
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
     proximity_line = next(
@@ -1054,8 +1054,8 @@ def test_render_strategist_header_critical_from_size_not_positive_pnl() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
     proximity_line = next(
@@ -1083,8 +1083,8 @@ def test_render_strategist_header_reads_intraday_for_daily_and_current_for_cumul
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
@@ -1110,8 +1110,8 @@ def test_render_strategist_header_omits_regime_transition_block_when_empty() -> 
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         regime_transition_breaches=(),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
@@ -1144,8 +1144,8 @@ def test_render_strategist_header_renders_per_position_max_size_breach_row() -> 
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         regime_transition_breaches=(breach,),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
@@ -1177,8 +1177,8 @@ def test_render_strategist_header_renders_aggregate_breach_row() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         regime_transition_breaches=(breach,),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
@@ -1210,8 +1210,8 @@ def test_render_strategist_header_renders_per_position_non_max_size_with_label_s
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         regime_transition_breaches=(breach,),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
@@ -1253,8 +1253,8 @@ def test_render_strategist_header_renders_mixed_breach_rows_in_order() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         regime_transition_breaches=(per_pos, aggregate),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
@@ -1298,8 +1298,8 @@ def test_render_strategist_header_is_deterministic() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_FULL_SECTOR_LABELS,
         sector_resolver=_make_full_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         regime_transition_breaches=breaches,
         position_zones=_DEFAULT_POSITION_ZONES,
     )
@@ -1337,8 +1337,8 @@ def test_render_strategist_header_raises_when_options_disabled_but_options_rule_
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_micro_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
             position_zones=_DEFAULT_POSITION_ZONES,
         )
 
@@ -1369,8 +1369,8 @@ def test_render_strategist_header_raises_when_short_selling_disabled_but_net_sho
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_micro_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
             position_zones=_DEFAULT_POSITION_ZONES,
         )
 
@@ -1395,8 +1395,8 @@ def test_render_strategist_header_raises_when_options_disabled_but_options_posit
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_micro_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
             position_zones=_DEFAULT_POSITION_ZONES,
         )
 
@@ -1430,8 +1430,8 @@ def test_render_strategist_header_raises_when_risk_budget_rule_missing(rule_id: 
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_micro_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
             position_zones=_DEFAULT_POSITION_ZONES,
         )
 
@@ -1468,8 +1468,8 @@ def test_render_strategist_header_raises_when_active_parameter_missing(
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_micro_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
             position_zones=_DEFAULT_POSITION_ZONES,
         )
 
@@ -1502,8 +1502,8 @@ def test_render_strategist_header_renders_position_action_against_position_id(
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert (
@@ -1532,8 +1532,8 @@ def test_render_strategist_header_renders_cancel_action_against_order_id() -> No
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert (
@@ -1563,8 +1563,8 @@ def test_render_strategist_header_raises_when_position_action_missing_position_i
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_micro_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
             position_zones=_DEFAULT_POSITION_ZONES,
         )
 
@@ -1590,8 +1590,8 @@ def test_render_strategist_header_raises_when_cancel_action_missing_order_id() -
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_micro_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
             position_zones=_DEFAULT_POSITION_ZONES,
         )
 
@@ -1618,8 +1618,8 @@ def test_render_strategist_header_has_no_double_blank_lines() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_FULL_SECTOR_LABELS,
         sector_resolver=_make_full_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
     for prev, nxt in pairwise(rendered.splitlines()):
@@ -1638,8 +1638,8 @@ def test_render_strategist_header_has_no_trailing_blank_line() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert not rendered.endswith("\n")

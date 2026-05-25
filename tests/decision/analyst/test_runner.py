@@ -20,6 +20,7 @@ import pytest
 import yaml
 
 from alphamind._kernel.ids import InvocationId, Symbol
+from alphamind._kernel.money import money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -247,9 +248,9 @@ def _analyst_view() -> AnalystView:
         held_positions=(),
         active_thesis_summaries=(),
         available_capital=AnalystAvailableCapital(
-            available_for_new_positions_usd=70_000.0,
+            available_for_new_positions_usd=money(70_000.0),
             available_for_new_positions_pct=70.0,
-            per_position_max_size_usd=5_000.0,
+            per_position_max_size_usd=money(5_000.0),
             per_position_max_size_pct=5.0,
         ),
         pending_orders=(),

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from alphamind._kernel.ids import PositionId, Symbol
+from alphamind._kernel.money import money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -111,9 +112,9 @@ def _make_state_delivery_config() -> StateDeliveryConfig:
 
 def _make_available_capital() -> AnalystAvailableCapital:
     return AnalystAvailableCapital(
-        available_for_new_positions_usd=300_000.0,
+        available_for_new_positions_usd=money(300_000.0),
         available_for_new_positions_pct=60.0,
-        per_position_max_size_usd=25_000.0,
+        per_position_max_size_usd=money(25_000.0),
         per_position_max_size_pct=5.0,
     )
 

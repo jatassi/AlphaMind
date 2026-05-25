@@ -117,7 +117,8 @@ _T2 = datetime(2025, 1, 1, 10, 2, 0, tzinfo=UTC)
 _INV_ID = "inv-analyst-001"
 _ANALYST_AGENT = "analyst"
 _PER_POSITION_RULE_ID = POSITION_MAX_SIZE_RULE_ID
-_TOTAL_PORTFOLIO_VALUE = 100000.0
+_TOTAL_PORTFOLIO_VALUE = money(100000.0)
+_AVAILABLE_CAPITAL_USD = signed_money(44000.0)
 
 
 # ---------------------------------------------------------------------------
@@ -682,13 +683,13 @@ class TestAnalystValueObjects:
 
     def test_available_capital_frozen(self) -> None:
         ac = AnalystAvailableCapital(
-            available_for_new_positions_usd=44000.0,
+            available_for_new_positions_usd=money(44000.0),
             available_for_new_positions_pct=44.0,
-            per_position_max_size_usd=5000.0,
+            per_position_max_size_usd=money(5000.0),
             per_position_max_size_pct=5.0,
         )
         with pytest.raises(FrozenInstanceError):
-            ac.available_for_new_positions_usd = 0.0  # type: ignore[misc]
+            ac.available_for_new_positions_usd = money(0)  # type: ignore[misc]
 
     def test_abandoned_opening_frozen(self) -> None:
         ao = AnalystAbandonedOpening(
@@ -708,9 +709,9 @@ class TestAnalystValueObjects:
             held_positions=(),
             active_thesis_summaries=(),
             available_capital=AnalystAvailableCapital(
-                available_for_new_positions_usd=0.0,
+                available_for_new_positions_usd=money(0.0),
                 available_for_new_positions_pct=0.0,
-                per_position_max_size_usd=0.0,
+                per_position_max_size_usd=money(0.0),
                 per_position_max_size_pct=0.0,
             ),
             pending_orders=(),
@@ -734,6 +735,7 @@ class TestProjectAnalystViewHappyPath:
             sector_resolver=_simple_sector_resolver(),
             per_position_size_rule_id=_PER_POSITION_RULE_ID,
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+            available_capital_usd=_AVAILABLE_CAPITAL_USD,
         )
         pos = next(p for p in view.held_positions if p.ticker == "AAPL")
         assert pos.position_id == "POS-001"
@@ -753,6 +755,7 @@ class TestProjectAnalystViewHappyPath:
             sector_resolver=_simple_sector_resolver(),
             per_position_size_rule_id=_PER_POSITION_RULE_ID,
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+            available_capital_usd=_AVAILABLE_CAPITAL_USD,
         )
         pos = next(p for p in view.held_positions if p.ticker == "AAPL")
         assert pos.direction == Direction.LONG
@@ -776,6 +779,7 @@ class TestProjectAnalystViewHappyPath:
             sector_resolver=_simple_sector_resolver(),
             per_position_size_rule_id=_PER_POSITION_RULE_ID,
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+            available_capital_usd=_AVAILABLE_CAPITAL_USD,
         )
         pos = next(p for p in view.held_positions if p.position_id == "POS-STRAT")
         assert pos.direction is None
@@ -789,6 +793,7 @@ class TestProjectAnalystViewHappyPath:
             sector_resolver=_simple_sector_resolver(),
             per_position_size_rule_id=_PER_POSITION_RULE_ID,
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+            available_capital_usd=_AVAILABLE_CAPITAL_USD,
         )
         assert view.available_capital.available_for_new_positions_usd == 44000.0
         assert view.available_capital.available_for_new_positions_pct == pytest.approx(44.0)
@@ -800,6 +805,7 @@ class TestProjectAnalystViewHappyPath:
             sector_resolver=_simple_sector_resolver(),
             per_position_size_rule_id=_PER_POSITION_RULE_ID,
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+            available_capital_usd=_AVAILABLE_CAPITAL_USD,
         )
         assert len(view.pending_orders) == 1
         assert view.pending_orders[0].order_id == "ORD-001"
@@ -811,6 +817,7 @@ class TestProjectAnalystViewHappyPath:
             sector_resolver=_simple_sector_resolver(),
             per_position_size_rule_id=_PER_POSITION_RULE_ID,
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+            available_capital_usd=_AVAILABLE_CAPITAL_USD,
         )
         assert len(view.active_thesis_summaries) == 1
         assert isinstance(view.active_thesis_summaries[0], SynthesizerThesisSummary)
@@ -828,6 +835,7 @@ class TestProjectAnalystViewHappyPath:
             sector_resolver=_simple_sector_resolver(),
             per_position_size_rule_id=_PER_POSITION_RULE_ID,
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+            available_capital_usd=_AVAILABLE_CAPITAL_USD,
         )
         assert len(view.abandoned_openings) == 1
         assert view.abandoned_openings[0].envelope_id == "env-abn-001"
@@ -840,6 +848,7 @@ class TestProjectAnalystViewHappyPath:
             sector_resolver=_simple_sector_resolver(),
             per_position_size_rule_id=_PER_POSITION_RULE_ID,
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+            available_capital_usd=_AVAILABLE_CAPITAL_USD,
         )
         assert view.abandoned_openings == ()
 
@@ -856,6 +865,7 @@ class TestProjectAnalystViewEmpty:
             sector_resolver=_simple_sector_resolver(),
             per_position_size_rule_id=_PER_POSITION_RULE_ID,
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+            available_capital_usd=_AVAILABLE_CAPITAL_USD,
         )
         assert view.held_positions == ()
         assert view.pending_orders == ()
@@ -868,6 +878,7 @@ class TestProjectAnalystViewEmpty:
             sector_resolver=_simple_sector_resolver(),
             per_position_size_rule_id=_PER_POSITION_RULE_ID,
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+            available_capital_usd=_AVAILABLE_CAPITAL_USD,
         )
         assert view.available_capital.available_for_new_positions_usd == 44000.0
 
@@ -889,6 +900,7 @@ class TestAnalystViewMatchesStrategist:
             sector_resolver=_simple_sector_resolver(),
             per_position_size_rule_id=_PER_POSITION_RULE_ID,
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+            available_capital_usd=_AVAILABLE_CAPITAL_USD,
         )
         assert view.available_capital.per_position_max_size_pct == pytest.approx(5.0)
         assert view.available_capital.per_position_max_size_usd == pytest.approx(5000.0)
@@ -904,6 +916,7 @@ class TestAnalystViewMatchesStrategist:
             sector_resolver=_simple_sector_resolver(),
             per_position_size_rule_id=_PER_POSITION_RULE_ID,
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+            available_capital_usd=_AVAILABLE_CAPITAL_USD,
         )
         position_ids = {p.position_id for p in view.held_positions}
         assert position_ids == {"POS-001", "POS-002", "POS-PEND"}
@@ -918,11 +931,13 @@ class TestProjectAnalystViewDeterminism:
             sector_resolver=sector_resolver,
             per_position_size_rule_id=_PER_POSITION_RULE_ID,
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+            available_capital_usd=_AVAILABLE_CAPITAL_USD,
         )
         view2 = project_analyst_view(
             snapshot,
             sector_resolver=sector_resolver,
             per_position_size_rule_id=_PER_POSITION_RULE_ID,
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+            available_capital_usd=_AVAILABLE_CAPITAL_USD,
         )
         assert view1 == view2

@@ -787,8 +787,8 @@ def _make_cross_constraint_impact() -> CrossConstraintImpact:
             ),
         ),
         flagged_rule_ids=(),
-        available_capital_before_usd=200_000.0,
-        available_capital_after_usd=180_000.0,
+        available_capital_before_usd=money(200_000.0),
+        available_capital_after_usd=money(180_000.0),
     )
 
 
@@ -871,8 +871,8 @@ def _normal_kwargs(
         "active_sectors": ("tech", "semis", "financials", "energy"),
         "state_delivery_config": _make_state_delivery_config(),
         "sector_resolver": _sector_resolver,
-        "total_portfolio_value_usd": _TOTAL_PORTFOLIO_VALUE_USD,
-        "available_for_new_positions_usd": _AVAILABLE_FOR_NEW_POSITIONS_USD,
+        "total_portfolio_value_usd": money(_TOTAL_PORTFOLIO_VALUE_USD),
+        "available_for_new_positions_usd": money(_AVAILABLE_FOR_NEW_POSITIONS_USD),
         "cross_constraint_impact": _make_cross_constraint_impact(),
         "tool_names": _TOOL_NAMES,
         "position_zones": _DEFAULT_POSITION_ZONES,

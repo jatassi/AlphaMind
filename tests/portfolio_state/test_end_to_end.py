@@ -20,6 +20,7 @@ from typing import NoReturn
 
 import pytest
 
+from alphamind._kernel.money import money, signed_money
 from alphamind.portfolio_state import PortfolioStateConfig
 from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.assembler import assemble_snapshot
@@ -163,7 +164,10 @@ class TestSectionBProjectionConsistency:
             self._snapshot,
             sector_resolver=self._sector_resolver,
             per_position_size_rule_id="position_max_size_pct",
-            total_portfolio_value_usd=total_value,
+            total_portfolio_value_usd=money(total_value),
+            available_capital_usd=signed_money(
+                self._snapshot.cash_ledger.true_deployable_capital_usd
+            ),
         )
         self._strategist_view = project_strategist_view(self._snapshot)
         self._pm_view = project_portfolio_manager_view(self._snapshot)
@@ -544,13 +548,15 @@ class TestSectionEDeterminism:
             r1.snapshot,
             sector_resolver=sector_resolver,
             per_position_size_rule_id="position_max_size_pct",
-            total_portfolio_value_usd=total_value,
+            total_portfolio_value_usd=money(total_value),
+            available_capital_usd=signed_money(r1.snapshot.cash_ledger.true_deployable_capital_usd),
         )
         v2 = project_analyst_view(
             r2.snapshot,
             sector_resolver=sector_resolver,
             per_position_size_rule_id="position_max_size_pct",
-            total_portfolio_value_usd=total_value,
+            total_portfolio_value_usd=money(total_value),
+            available_capital_usd=signed_money(r2.snapshot.cash_ledger.true_deployable_capital_usd),
         )
         assert v1 == v2
 
@@ -578,7 +584,10 @@ class TestSectionFEdgeCases:
             self._snapshot,
             sector_resolver=self._sector_resolver,
             per_position_size_rule_id="position_max_size_pct",
-            total_portfolio_value_usd=100_000.0,
+            total_portfolio_value_usd=money(100_000.0),
+            available_capital_usd=signed_money(
+                self._snapshot.cash_ledger.true_deployable_capital_usd
+            ),
         )
         assert view is not None
 

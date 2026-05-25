@@ -138,8 +138,6 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_pm_header
 
     *prior_health_snapshots* — see strategist input bundle counterpart.
     """
-    # ALP-462 — render_pm_header still takes float; cast at the boundary
-    # (risk_guardrails/state_delivery/portfolio_manager is outside ALP-462).
     header = render_pm_header(
         pm_view=pm_view,
         invocation_id=invocation_id,
@@ -149,8 +147,8 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_pm_header
         active_sectors=active_sectors,
         config=state_delivery_config,
         sector_resolver=sector_resolver,
-        total_portfolio_value_usd=float(total_portfolio_value_usd),
-        available_for_new_positions_usd=float(available_for_new_positions_usd),
+        total_portfolio_value_usd=total_portfolio_value_usd,
+        available_for_new_positions_usd=available_for_new_positions_usd,
         cross_constraint_impact=cross_constraint_impact,
         position_zones=position_zones,
         sector_label_display=sector_label_display,
@@ -200,8 +198,6 @@ def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_pm_header_ha
 
     *prior_health_snapshots* — see :func:`assemble_input_bundle_normal`.
     """
-    # ALP-462 — Money fields on render_pm_header_halt_mode still take float;
-    # cast at boundary. current_price_lookup is threaded as Price end-to-end.
     header = render_pm_header_halt_mode(
         halt_state=halt_state,
         pm_view=pm_view,
@@ -212,8 +208,8 @@ def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_pm_header_ha
         active_sectors=active_sectors,
         config=state_delivery_config,
         sector_resolver=sector_resolver,
-        total_portfolio_value_usd=float(total_portfolio_value_usd),
-        available_for_new_positions_usd=float(available_for_new_positions_usd),
+        total_portfolio_value_usd=total_portfolio_value_usd,
+        available_for_new_positions_usd=available_for_new_positions_usd,
         cross_constraint_impact=cross_constraint_impact,
         pending_orders=pending_orders,
         current_price_lookup=current_price_lookup,
@@ -361,7 +357,7 @@ def _resolve_position_ticker(pos: PositionRecord | PositionView) -> str:
 
 
 def _render_size_line(pos: PositionView) -> str:
-    market_value = format_dollar(float(pos.current_market_value_usd))
+    market_value = format_dollar(pos.current_market_value_usd)
     weight = format_pct(pos.position_weight_pct)
     details = pos.details
     if isinstance(details, EquityPositionDetails):
@@ -374,7 +370,7 @@ def _render_size_line(pos: PositionView) -> str:
 
 
 def _render_pnl_line(pos: PositionView) -> str:
-    pnl_abs = _format_signed_dollar(float(pos.unrealized_pnl_usd))
+    pnl_abs = _format_signed_dollar(pos.unrealized_pnl_usd)
     pnl_pct = _format_signed_pct(pos.unrealized_pnl_pct)
     return f"  P/L:           {pnl_abs} since open ({pnl_pct})"
 
@@ -581,7 +577,7 @@ def _render_thesis_quality_block(pm_view: PortfolioManagerView) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _format_signed_dollar(value: float) -> str:
+def _format_signed_dollar(value: Money) -> str:
     if value >= 0:
         return f"+{format_dollar(value)}"
     return format_dollar(value)

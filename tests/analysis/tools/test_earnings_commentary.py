@@ -18,6 +18,9 @@ from alphamind.analysis.tools import TOOLS, ToolQuality
 from alphamind.analysis.tools.earnings_commentary import (
     EarningsCommentaryInput,
     EarningsCommentaryOutput,
+    NotCollected,
+    PostEarningsActivity,
+    RatingChange,
 )
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -256,7 +259,79 @@ def test_earnings_commentary_post_earnings_revision_count(session: Session) -> N
 
     assert result.post_earnings_activity.estimate_revisions_since == 2
     assert result.post_earnings_activity.revision_direction == "up"
-    assert result.post_earnings_activity.rating_changes_since == ()
+    # Until analyst-rating ingestion ships, the deferred-state sentinel is
+    # what the builders emit — the empty-tuple shape would falsely read as
+    # "no rating changes occurred this quarter".
+    assert isinstance(result.post_earnings_activity.rating_changes_since, NotCollected)
+
+
+# ---------------------------------------------------------------------------
+# Deferred-field rendering (ALP-654)
+# ---------------------------------------------------------------------------
+
+
+def test_rating_changes_since_renders_as_deferred_sentinel_in_json(session: Session) -> None:
+    """An LLM reading the JSON dump sees an explicit not-collected sentinel."""
+    _add_ticker(session, "NVDA")
+    _add_earnings_event(session, event_id="ev-1", ticker=Symbol("NVDA"), reported_at=_RECENT_REPORT)
+    session.commit()
+
+    fn = TOOLS["earnings_commentary"].callable_factory(session)
+    result: EarningsCommentaryOutput = fn(
+        EarningsCommentaryInput(ticker=Symbol("NVDA"), include_transcript_analysis=False)
+    )
+
+    rendered = result.model_dump(mode="json")["post_earnings_activity"]["rating_changes_since"]
+    assert rendered == {
+        "status": "not_collected",
+        "reason": "analyst-rating ingestion not yet shipped",
+    }
+
+
+def test_rating_changes_since_populated_serializes_as_list() -> None:
+    """A populated tuple of RatingChange entries still serializes as a JSON list."""
+    activity = PostEarningsActivity(
+        estimate_revisions_since=0,
+        revision_direction="none",
+        rating_changes_since=(
+            RatingChange(
+                analyst_firm="GS",
+                prior_rating="hold",
+                new_rating="buy",
+                prior_target=120.0,
+                new_target=140.0,
+            ),
+        ),
+    )
+
+    rendered = activity.model_dump(mode="json")["rating_changes_since"]
+    assert isinstance(rendered, list)
+    assert rendered[0]["analyst_firm"] == "GS"
+
+
+def test_rating_changes_empty_collected_distinguishable_from_not_collected() -> None:
+    """Once ingestion ships, an empty tuple must round-trip as []
+    (factually 'no rating changes since reporting'), textually distinct
+    from the not-collected sentinel object."""
+    factual_empty = PostEarningsActivity(
+        estimate_revisions_since=0,
+        revision_direction="none",
+        rating_changes_since=(),
+    )
+    deferred = PostEarningsActivity(
+        estimate_revisions_since=0,
+        revision_direction="none",
+        rating_changes_since=NotCollected(reason="analyst-rating ingestion not yet shipped"),
+    )
+
+    empty_render = factual_empty.model_dump(mode="json")["rating_changes_since"]
+    deferred_render = deferred.model_dump(mode="json")["rating_changes_since"]
+
+    assert empty_render == []
+    assert deferred_render == {
+        "status": "not_collected",
+        "reason": "analyst-rating ingestion not yet shipped",
+    }
 
 
 # ---------------------------------------------------------------------------
