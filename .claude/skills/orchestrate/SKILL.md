@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Use to drive an AlphaMind feature's implementation work tree end-to-end — fetch the parent Linear Issue, dispatch its sub-issues to subagents in dependency-respecting waves, verify each, integrate to a feature branch, then PR → pre-review triage → pre-/review full-suite drift-check (no `--testmon`) → /review → address feedback → update `docs/project-tracker.md` → land → clean local git → PushNotification. Triggers on `/orchestrate <Feature>` and operator phrases like "orchestrate Breach behavior", "implement the Synthesizer feature", "drive Domain researchers to completion", "build out State persistence", "execute the Portfolio manager work tree", "land the X feature". Assumes the work tree has already been drafted via `/draft-user-stories` (parent Issue exists with sub-issues + dependency graph + orchestrator notes). Use this skill whenever the operator asks to implement, build, drive, execute, land, or complete an AlphaMind feature that has a drafted Linear work tree, even if they don't say "orchestrate". Do NOT use for one-off story dispatch (just call `Agent` directly), bug fixes, refactors, or features without a Linear parent Issue.
+description: Use to drive an AlphaMind feature's implementation work tree end-to-end — fetch the parent Linear Issue, dispatch its sub-issues to subagents in dependency-respecting waves, verify each, integrate to a feature branch, then PR → pre-review triage → wait for CI green → /review → address feedback → update `docs/project-tracker.md` → land → clean local git → PushNotification. Triggers on `/orchestrate <Feature>` and operator phrases like "orchestrate Breach behavior", "implement the Synthesizer feature", "drive Domain researchers to completion", "build out State persistence", "execute the Portfolio manager work tree", "land the X feature". Assumes the work tree has already been drafted via `/draft-user-stories` (parent Issue exists with sub-issues + dependency graph + orchestrator notes). Use this skill whenever the operator asks to implement, build, drive, execute, land, or complete an AlphaMind feature that has a drafted Linear work tree, even if they don't say "orchestrate". Do NOT use for one-off story dispatch (just call `Agent` directly), bug fixes, refactors, or features without a Linear parent Issue.
 ---
 
 # Orchestrate an AlphaMind feature implementation
@@ -17,9 +17,9 @@ These are project invariants that override any default behavior. Track them with
 - **Max 6 concurrent active subagents.** When a parallel wave has more than 6 eligible stories, batch into sub-waves of ≤6. Wait for a sub-wave to finish before dispatching the next.
 - **Always pass `isolation: "worktree"` and `run_in_background: true` to `Agent`.** Worktree isolation is mandatory per CLAUDE.md and prevents parallel-checkout collisions; background mode is mandatory per CLAUDE.md. You'll be notified as each completes — do not poll.
 - **Always tag the model in the `Agent` tool's `description` field** (`[Sonnet] 04a — Zone classifier`, `[Opus] 03 — Canonical types`). Visible-at-a-glance model selection is a CLAUDE.md requirement.
-- **Run the full lint + test chain after each parallelized wave merges** to the feature branch. Catches integration issues that pass per-story but fail in combination. Commands: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest --testmon -n auto`. Both `--testmon` and `-n auto` are mandatory per CLAUDE.md on every pytest invocation — per-story, dispatch prompts, mid-wave, AND wave-end. The single exception in this skill is the explicit pre-/review drift-check (completion-sequence step 4 below) which drops `--testmon` to surface any testmon-cache drift before /review runs. Never invoke `pytest` without `-n auto`, including from subagents.
+- **Run the full lint chain after each parallelized wave merges** to the feature branch. Catches integration issues that pass per-story but fail in combination. Commands: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports`. **Do NOT run the full pytest suite locally** — per CLAUDE.md "Testing", the CI workflow (`.github/workflows/ci.yml`) is the authoritative full-suite gate on every PR push. Per-story and per-wave pytest is scoped to the changed paths only (`uv run pytest tests/<area>/ --testmon -n auto` or a single test node-id), kept fast and used as a sanity check during integration. The CI run that fires when you open the PR (or push subsequent commits to it) is the wave-spanning full-suite check.
 - **A story blocked mid-implementation gets `state="Blocked"` in Linear,** plus a `blockedBy` link to the blocking issue if one exists in Linear (use `save_issue(id=..., state="Blocked", blockedBy=[...])`). If the blocker isn't in Linear, surface it in the final summary instead.
-- **Do not skip the post-completion sequence.** PR → pre-review triage → pre-/review full-suite drift-check (no `--testmon`) → /review → address feedback → update `docs/project-tracker.md` → land → clean local git → PushNotification. Add these as tasks before the work begins (see below).
+- **Do not skip the post-completion sequence.** PR → pre-review triage → wait for CI green → /review → address feedback → update `docs/project-tracker.md` → land → clean local git → PushNotification. Add these as tasks before the work begins (see below).
 
 ## Pre-flight
 
@@ -62,7 +62,7 @@ Use `TaskCreate` once, up front, to register everything you must not drop. Two g
 - **Completion-sequence tasks** — register all eight before the work begins so they cannot be forgotten:
   1. `Open PR to main`
   2. `Pre-review triage of work-tree residue`
-  3. `Pre-/review full-suite drift-check (no --testmon)`
+  3. `Wait for CI green on the PR`
   4. `Spawn /review subagent`
   5. `Address review feedback`
   6. `Update docs/project-tracker.md status to _done_`
@@ -105,7 +105,7 @@ For wave-1 subagents, the rebase block is a no-op because at dispatch time `orig
 
 **Push the feature branch to `origin` after each wave's wave-end gate passes**, so the next wave's worktrees can rebase onto its latest tip. Without this, wave-2+ subagents only see content from `main`, missing all prior waves' commits.
 
-**Verify before marking done.** A story is `Done` when every acceptance-criteria checkbox passes a verification step *you can describe* — typically `uv run pytest --testmon -n auto` plus a spot-check of each non-test criterion (file exists, schema validates, function exhibits the documented behavior). Do not trust the subagent's self-report alone (`feedback_subagent_must_commit`).
+**Verify before marking done.** A story is `Done` when every acceptance-criteria checkbox passes a verification step *you can describe* — typically a scoped `uv run pytest tests/<story-area>/ --testmon -n auto` (or single test node-id) plus a spot-check of each non-test criterion (file exists, schema validates, function exhibits the documented behavior). The full-suite check happens later in CI; per-story local pytest stays scoped to the story's own tests, per CLAUDE.md "Testing". Do not trust the subagent's self-report alone (`feedback_subagent_must_commit`).
 
 ## Dispatching a story
 
@@ -145,7 +145,7 @@ After tests are green and before your final commit, run the lint chain on your c
 Address all findings from your changes only. **Do NOT invoke the `code-review` skill in your dispatch.** The orchestrator runs `code-review` in the main thread after each wave merges to the feature branch (with the integration view across multiple stories), and decides whether each finding should be applied inline or dispatched to a follow-up subagent based on scope. Running `code-review` in the dispatch prompt duplicates this work, produces narrower findings than the post-wave pass, and burns tokens on diff coverage the orchestrator will redo at integration-tip anyway.
 
 When done — **REQUIRED — DO NOT SKIP THE COMMIT STEP.**
-1. Run `uv run pytest --testmon -n auto` and confirm green. (`--testmon` is mandatory per CLAUDE.md outside the documented "drop testmon" scenarios; the per-story final check is not one of them.)
+1. Run a scoped pytest covering this story's tests: `uv run pytest tests/<story-area>/ --testmon -n auto` (or the single-file / single-node-id form). Confirm green. **Do NOT run the full pytest suite locally** — the CI workflow (`.github/workflows/ci.yml`) is the authoritative full-suite gate on every PR push, per CLAUDE.md "Testing". The unscoped `uv run pytest` is forbidden during dispatch.
 2. **STAGE AND COMMIT** any remaining uncommitted work. `git add` then `git commit`. After committing, run `git log --oneline <feature-branch>..HEAD` and confirm your commits are listed. If `git status` shows untracked or modified files, you have NOT committed — `git add` and commit them.
 3. Report back with **the verbatim output of `git log --oneline <feature-branch>..HEAD`** as the FIRST item in your report (before any prose), followed by a one-line attestation per acceptance criterion ("met by test X", "met by file Y exists", "met by manual inspection of Z"). A report without verbatim git-log output as its first item signals to the orchestrator that the commit step was skipped — the orchestrator will reject the report and re-dispatch.
 
@@ -188,7 +188,7 @@ Each agent result includes the worktree path and branch name. Per result:
    - **Re-dispatch** when the work has substantive issues (lint failures, missing AC, unwarranted suppressions) on top of the missed commit.
    - **Commit-yourself** when the work is otherwise sound and only the commit step was skipped — assess the lint state with `uv run ruff check . && uv run mypy` against the worktree first, then `git add` + `git commit` with a descriptive message and proceed to step 1.
    Do NOT proceed to step 1 (Tests) on uncommitted state — the agent's "tests pass" claim is unverifiable, and pytest will collect different files than what would land at merge time.
-1. **Tests.** `cd` into the worktree and run `uv run pytest --testmon -n auto`. First run pays a one-time `uv sync` cost for the fresh `.venv` — that's fine. `--testmon` is mandatory here per CLAUDE.md; drop it only if the story changed `conftest.py`/fixtures/collection hooks or non-Python files tests depend on. **DO NOT pipe to `tail` to truncate output** — the pipe's exit code is `tail`'s (always 0), masking pytest failures. Use `uv run pytest --testmon -n auto; echo "exit=$?"` and read the test summary line for `X passed, Y failed`. If the suite has a known transient pre-existing failure you want to ignore, scope to the relevant path instead of piping. The same applies to subagent dispatch prompts — explicitly forbid `| tail` there too; otherwise a subagent's "all tests pass" report can hide a real failure that surfaces only later when a downstream wave runs an unfiltered suite.
+1. **Tests.** `cd` into the worktree and run a scoped pytest for the story's changed paths: `uv run pytest tests/<story-area>/ --testmon -n auto` (or the single-test node-id form). First run pays a one-time `uv sync` cost for the fresh `.venv` — that's fine. **Do NOT run the unscoped full suite here** — per CLAUDE.md "Testing", CI runs the full suite on PR and is the authoritative gate; the per-story local run stays narrow and fast. **DO NOT pipe to `tail` to truncate output** — the pipe's exit code is `tail`'s (always 0), masking pytest failures. Use `uv run pytest <scoped-path> --testmon -n auto; echo "exit=$?"` and read the test summary line for `X passed, Y failed`. The same applies to subagent dispatch prompts — explicitly forbid `| tail` there; a subagent's "all tests pass" report can otherwise hide a real failure that the eventual CI run would catch.
 2. **Lint.** `uv run ruff check .` and `uv run mypy` against the worktree. Clean for the changed files.
 3. **Linter suppressions.** Grep the diff for `# noqa`, `# type: ignore`, `per-file-ignores`, `ignore` keys in `pyproject.toml`. For each suppression, **first cross-check the matching sibling-feature module** (e.g., for `synthesizer/harness.py`, check `qualitative_research/harness.py` and `adaptive_research/harness.py`; for a domain-researcher story, check the other two domain-researcher modules). If the sibling carries the same suppression with the same rationale, the suppression is warranted by precedent — accept and note. This avoids re-litigating established codebase patterns. The grep is `grep -n 'noqa: <RULE>\|<symbol-name>' src/<sibling-paths>/<file>.py`. If no sibling precedent exists, then assess on its own merits (per `feedback_lint_suppression_triage`):
    - **Trivial-fix unwarranted ones yourself** — directly in the worktree before merging.
@@ -204,7 +204,7 @@ Each agent result includes the worktree path and branch name. Per result:
 
 After all stories in a wave have been verified and merged (or blocked), and *before* dispatching the next wave:
 
-- Run the full chain on the feature branch: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest --testmon -n auto`. Catches integration issues that pass per-story but fail combined. Use `--testmon -n auto` (the CLAUDE.md default); a single non-testmon drift-check runs once before /review (completion-sequence step 4) — that is the explicit moment to surface any testmon-cache drift, not the wave-end.
+- Run the full lint chain on the feature branch: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports`. Catches lint/type/import-graph integration issues that pass per-story but fail combined. **Do NOT run the full pytest suite here** — per CLAUDE.md "Testing", CI runs the full suite on PR. A scoped pytest covering the union of paths the wave touched (e.g., `uv run pytest tests/synthesizer/ tests/analyst/ --testmon -n auto`) is fine as a sanity check if the wave touched cross-cutting code; keep it narrow.
 - **Push the feature branch to `origin`** (`git push origin <feature-branch>`) so the next wave's worktrees can rebase onto its latest tip. Skipping this means wave-N+1 subagents will only see content reachable from `main`, missing every story merged in waves 1..N.
 - **Regenerate fixture artifacts ONCE per wave, not per-story.** When 3+ parallel stories in the same wave each modify a generated artifact (typical: `tests/fixtures/replay_harness/fixture_store/*/raw_inputs.sqlite` after migrations land — every story regenerates from `python tests/fixtures/replay_harness/generate_fixtures.py`), each per-story merge produces a binary-file conflict. Resolve trivially with `git checkout --theirs <path>` during cherry-pick (the regenerated content is wrong-for-the-final-state anyway), then run the regen script ONCE after all parallel stories merge and commit the result as a `test(<feature>): regenerate fixtures after wave-N <thing>` follow-up commit. Avoids N-1 useless conflict-resolution cycles.
 - **Run `code-review` in the main thread** (`Skill("code-review")`) on the post-wave state — unless the wave is docs-only (no `*.py` or other code-bearing files changed). The orchestrator owns the integration view across the wave's stories; `code-review` surfaces correctness bugs and integration gaps that per-story subagents cannot see (one story's helper duplicating another's; a state mutation in story A that breaks an invariant story B's caller relies on; a wave's worth of validators all repeating the same boilerplate that could centralize; a Protocol extension in story A whose new method story B implements but story C's caller never invokes). Subagent dispatch prompts no longer invoke `code-review` — the post-wave main-thread pass is the single point of consolidation. Skip the pass on docs-only waves (`docs/`, `*.md`) since the skill targets code-correctness signal, not prose; record the skip explicitly ("Wave-N is docs-only; code-review skipped") and proceed.
@@ -219,7 +219,7 @@ After all stories in a wave have been verified and merged (or blocked), and *bef
   When the code-review pass produces no findings, record that explicitly ("Wave-N code-review: no findings at <effort> effort") and proceed. If you ran `medium` and surfaced zero findings on a wave you'd flagged as architectural-seam-touching, re-run once at `high` before concluding the wave is clean — a zero-finding `medium` on a high-risk wave is more likely under-coverage than genuine cleanliness.
 - If clean, proceed to the next survey.
 - If the global run fails, the failure is in the integration boundary between this wave's stories. Diagnose; fix directly if trivial; re-dispatch the relevant story if not. Do not advance to the next wave until the global run is clean.
-- **If the global run flakes — passes some runs, fails others on the same code — do not defer it as a finding. Bisect.** The flake exists because some test in this wave (or in the work tree's accumulated additions to the suite) mutates global state that another test depends on; xdist surfaces it intermittently because workload distribution to workers shifts run-to-run. Procedure: confirm by running `for i in 1 2 3 4 5; do uv run pytest -n auto 2>&1 | tail -1; done`; if mixed pass/fail, narrow with `--ignore=<test-dir>` to drop test groups until the flake stops, then narrow within the offending dir to a single file; read the offending file for `sys.modules` mutation, `logging.config.fileConfig` calls (default `disable_existing_loggers=True` is a classic trap), `os.environ` writes, shared filesystem-state mutations, `caplog` interactions, or fixture-leak across tests. The fix usually lands in production code (e.g., pass `disable_existing_loggers=False` to the offending `fileConfig` call), not in the test that surfaces the flake. CLAUDE.md is strict that test-order dependence is a real bug; a flake from your work tree counts as a wave-gate failure even if a previous run passed.
+- **If a CI run flakes — passes some runs, fails others on the same code — do not defer it as a finding. Bisect.** The flake exists because some test in this wave (or in the work tree's accumulated additions to the suite) mutates global state that another test depends on; xdist surfaces it intermittently because workload distribution to workers shifts run-to-run. Diagnosing a CI flake is one of the "operator-explicitly-directed" cases where running the full pytest suite locally is permitted (per CLAUDE.md "Testing"); say so in your status update before doing it. Procedure: confirm by running `for i in 1 2 3 4 5; do uv run pytest -n auto 2>&1 | tail -1; done` locally; if mixed pass/fail, narrow with `--ignore=<test-dir>` to drop test groups until the flake stops, then narrow within the offending dir to a single file; read the offending file for `sys.modules` mutation, `logging.config.fileConfig` calls (default `disable_existing_loggers=True` is a classic trap), `os.environ` writes, shared filesystem-state mutations, `caplog` interactions, or fixture-leak across tests. The fix usually lands in production code (e.g., pass `disable_existing_loggers=False` to the offending `fileConfig` call), not in the test that surfaces the flake. Test-order dependence is a real bug; a flake from your work tree counts as a CI-gate failure even if a previous run passed.
 
 ## When you handle work directly
 
@@ -236,7 +236,7 @@ Skip delegation only when overhead exceeds the work:
 - `git -C <worktree-path> log --oneline <feature-branch>..HEAD` — if a commit is listed, the agent finished and the cutoff was during reporting; verify normally.
 - `git -C <worktree-path> status --short` — list untracked + modified files. If a coherent set of files exists (production module + tests + any required doc/config edits matching the story's scope), the work is likely complete-but-uncommitted.
 - `wc -l <files>` to gauge volume; spot-read the largest 1–2 files for shape coherence (does the script have an entry point? does the test file have the expected test cases?).
-- `cd <worktree-path> && uv run ruff check <changed-paths> && uv run mypy <changed-paths> && uv run pytest <test-path> --testmon -n auto` — if lint + tests pass against the new files, the work is sound; copy the files into the main repo, commit directly with a descriptive `feat(<feature>): <story summary> (ALP-<N>)` message, and proceed as if the dispatch had returned cleanly.
+- `cd <worktree-path> && uv run ruff check <changed-paths> && uv run mypy <changed-paths> && uv run pytest <test-path> --testmon -n auto` — if lint + scoped pytest pass against the new files, the work is sound; copy the files into the main repo, commit directly with a descriptive `feat(<feature>): <story summary> (ALP-<N>)` message, and proceed as if the dispatch had returned cleanly. `<test-path>` must be the story's own tests, not the full suite — CI does full-suite verification on the PR.
 - If the staged work is partial (missing a test, an obvious untouched file the story called out, lint failures, or any sign the agent stopped mid-implementation rather than mid-reporting), re-dispatch with a fresh worktree.
 
 The bar for direct-commit recovery: you can describe each file's purpose in one sentence and the test/lint chain is green. Otherwise re-dispatch.
@@ -258,8 +258,8 @@ gh pr create --head <feature-branch> --base main --title "<feature-name>: implem
 Closes <parent Linear issue URL>.
 
 ## Test plan
-- [ ] `uv run pytest -n auto` green on the feature branch
-- [ ] Linter chain (`ruff check`, `ruff format --check`, `mypy`) clean
+- [ ] CI (`.github/workflows/ci.yml`) green on the PR — lint on Linux + full pytest on Windows
+- [ ] Linter chain locally clean (`ruff check`, `ruff format --check`, `mypy`, `lint-imports`)
 - [ ] All <N> sub-issues marked Done in Linear
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
@@ -295,27 +295,27 @@ Anything else, fix now.
 
 When the triage list is empty, record that explicitly ("Pre-review triage: no addressable deferrals") and proceed to the drift-check.
 
-### 3. Full-suite drift-check (no `--testmon`)
+### 3. Wait for CI green on the PR
 
-Run the full test suite with `--testmon` dropped, exactly once, on the feature branch before /review runs:
+The `ci` workflow runs on every PR push: lint chain on Linux, full pytest suite on Windows (matches production). It is the authoritative full-suite gate; this skill no longer runs the full suite locally. Watch the PR run:
 
 ```bash
-uv run pytest -n auto
+gh pr checks <PR number> --watch
 ```
 
-This is the single point in the orchestration where `--testmon` is omitted — wave-end gates use `--testmon` to keep iteration fast, but testmon's cache-based skipping can mask drift introduced by intermediate cherry-picks, conftest/fixture edits, or non-Python file changes that testmon doesn't track. The drift-check forces every test to actually execute against the integration tip so /review (and the eventual PR merge) starts from a fully-verified state.
+`gh pr checks --watch` polls until every check has a terminal state. When the `ci` workflow returns green, proceed to /review. If it fails:
 
-Pair the pytest run with a final lint sanity:
+- **Lint failure** — the wave-end lint chain should have caught this; if it didn't, the failure is in a path the wave-end gate didn't fully cover. Read the CI log, fix on the feature branch, commit as `fix(<feature>): address CI lint failure in <area>`, push.
+- **Test failure on Windows that you can't reproduce locally** — the failure is platform-specific (path separators, file-handle behavior, line endings, timezone-naive datetime drift). Read the failing test's full traceback from the CI log. Reproduce by running the scoped pytest path locally if you can; if not, the fix is informed by reading the test and the production code under suspicion. Commit and push. Do not advance to /review on a failing CI run.
+- **Test failure that looks flaky** — re-run via `gh run rerun <run ID>`. If it persists, treat as a real failure (xdist flake from shared global state — bisect per CLAUDE.md "Testing" guidance on test-order dependence). Do not advance to /review on intermittent flakes; bisect the offending test.
+
+Pair the wait with a final local lint sanity (cheap, catches anything that drifted between wave-end and now):
 
 ```bash
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports
 ```
 
-On failure, the cause is almost always a testmon false-skip from one of the wave-end gates. Diagnose:
-- If the failing test is in a path touched by an earlier wave: the testmon cache from that wave skipped it because the dependency graph didn't capture the relevant edit (typical: a conftest/fixture/YAML/JSON change). Fix the test or the production code; commit as `fix(<feature>): address pre-/review drift in <area>`; re-run the drift-check until clean.
-- If the failing test is unrelated to any wave's changes: a pre-existing transient may have surfaced. Re-run; if persistent, scope-out by examining the failure mode (often a port-binding or filesystem-race issue that xdist can surface intermittently). Do not advance to /review on a failing drift-check.
-
-When clean, proceed to /review.
+When CI is green and local lint is clean, proceed to /review.
 
 ### 4. Spawn /review subagent
 
@@ -359,9 +359,9 @@ Edit the feature's bullet under "Ready for implementation": change `_in progress
 
 ### 7. Land PR and clean local git state
 
-- Wait for CI green on the PR (if CI exists).
+- Confirm CI is still green on the PR (`gh pr checks <PR number>`) — completion-sequence step 3 waited for the initial run, but the address-feedback push (step 5) triggered a fresh CI run. Wait for that one to complete green before merging.
 - **Before `gh pr merge`, sweep stale `main`-bearing worktrees.** Run `git worktree list` and look for orphan worktrees from prior sessions checked out to `main` (typical naming: `.claude/worktrees/<random-name>` with no `agent-` prefix). `gh pr merge` switches the local checkout to `main` to apply the merge and fails with `fatal: 'main' is already used by worktree at <path>` if a stale `main` worktree exists. Confirm the orphan's `git -C <path> status --short` is clean (no uncommitted work), then `git worktree remove -f -f <path>`. Diagnose only if the worktree has uncommitted work — rare for orphans, but possible if it represents the operator's in-progress side work.
-- Merge the PR (squash-merge or merge per repo convention; check `gh pr view` for repo defaults).
+- Squash-merge the PR per CLAUDE.md "Git / GitHub Instructions" (`gh pr merge <PR number> --squash --delete-branch`).
 - Locally:
 
 ```bash
@@ -446,7 +446,7 @@ Surface blockers immediately, do not work around them:
 - **Do not skip hooks** (`--no-verify`, `--no-gpg-sign`). If a hook fails, fix the underlying issue.
 - **Do not dispatch a subagent without `isolation: "worktree"`** — parallel work on the feature branch checkout corrupts state.
 - **Do not dispatch a subagent without `run_in_background: true`** — CLAUDE.md mandates async dispatch; foreground subagents block parallelism.
-- **Do not declare a story `Done` without `uv run pytest --testmon -n auto` green, lint clean, and a spot-check of every acceptance criterion.**
+- **Do not declare a story `Done` without scoped `uv run pytest tests/<story-area>/ --testmon -n auto` green, lint clean, and a spot-check of every acceptance criterion.** The full-suite check happens in CI on the PR; per-story local pytest stays scoped.
 - **Do not modify a sub-issue's description in Linear** — only the `state` and `blockedBy` fields. Description ownership lives with `/draft-user-stories`.
 - **Do not pick up a story whose `blockedBy` stories are not all `Done`.**
 - **Do not exceed 6 concurrent active subagents.** Sub-wave instead.
@@ -457,8 +457,9 @@ Surface blockers immediately, do not work around them:
 
 - **Dispatching all stories at once "to save time".** Wave structure exists because dependencies are real. Out-of-order dispatch produces stories that depend on absent code and waste subagent cycles.
 - **Dispatching multiple stories that share a target file in the same wave.** When two or more stories all create or edit the same file (e.g., three sub-stories each adding a test case to one shared file), parallel worktrees produce independent versions of the file and the cherry-picks conflict at integration time. Either sequence them across waves, merge them into one story, or — if the parent Issue's notes say "story A creates the file; siblings ADD to it" — dispatch story A first, wait for merge + push, then dispatch the siblings.
-- **Running `pytest` without `-n auto`** anywhere — your verification, the subagent's verification, the wave gate. CLAUDE.md is strict; serial pytest runs hide xdist-only failures.
-- **Running `pytest` without `--testmon`** anywhere in this skill except the single explicit drift-check step (completion-sequence step 4, before /review). CLAUDE.md mandates `--testmon` on every pytest invocation; this skill's per-story checks, dispatch prompts, mid-wave checks, AND wave-end gates all use `--testmon -n auto`. The pre-/review drift-check is the one place this skill drops `--testmon` — and only there. When you write a verbatim pytest command into a dispatch prompt, default to `uv run pytest --testmon -n auto`.
+- **Running `pytest` without `-n auto`** anywhere — your verification, the subagent's verification, the wave gate. Serial pytest runs hide xdist-only failures.
+- **Running the unscoped full pytest suite locally.** CLAUDE.md "Testing" forbids this by default — CI runs the full suite on every PR push and is the authoritative gate. This skill's per-story checks, dispatch prompts, mid-wave checks, and wave-end gates all use scoped pytest (`tests/<area>/ --testmon -n auto` or a single test node-id). When you write a verbatim pytest command into a dispatch prompt, default to the scoped form. There is no longer a pre-/review local full-suite drift-check — the CI run on the PR replaces it (completion-sequence step 3).
+- **Pushing directly to `main` instead of via PR.** CLAUDE.md "Branch policy" makes main PR-only — even though server-side branch protection isn't enforced. Push to the feature branch, open the PR, wait for CI, then merge.
 - **Trusting subagent self-reports.** They sometimes report "done" with uncommitted changes (`feedback_subagent_must_commit`). Always verify with `git log <feature-branch>..<subagent-branch>` and `git status` in the worktree. Per-story tests cover per-story acceptance criteria, but they often don't exercise the production-call path end-to-end. The /review can surface integration gaps the wave gates miss — e.g., a Phase 1 transaction commit and a repository snapshot-read each working in isolation, but the production caller unable to string them together because a sentinel field (`phase1_completed_at`) is never set on the production write path. When a story's tests rely on synthetic timestamps or state stamps that production code should but doesn't write, treat them as a yellow flag — scan for such constructs during verification and mark them as a pre-merge follow-up.
 - **Skipping the wave-end global lint+test gate.** Per-story verification doesn't catch integration issues. The global gate is cheap; skipping it costs more later.
 - **Restating the parent Issue's orchestrator notes here.** This skill provides defaults; the parent Issue provides feature-specific overrides. Read both; apply them additively.

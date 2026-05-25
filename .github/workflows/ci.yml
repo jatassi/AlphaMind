@@ -1,0 +1,91 @@
+name: ci
+
+# PR-gating workflow. Lint runs on Linux (matches existing manylinux ta-lib wheel
+# story); pytest runs on Windows (matches production host). Both gate PR merge to
+# main via the repo's documented PR-only policy (see CLAUDE.md "Branch policy").
+#
+# Path filters: changes confined to docs, archives, .claude/ tooling, or the
+# top-level audit HTML do not affect runtime behavior and skip CI. Anything that
+# can change runtime — src, tests, config, prompts, scripts, dependency files,
+# alembic.ini, .importlinter, the workflow itself — runs the full chain.
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.archive/**'
+      - '.claude/**'
+      - 'audit-*.html'
+      - '.gitignore'
+      - '.env.example'
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.archive/**'
+      - '.claude/**'
+      - 'audit-*.html'
+      - '.gitignore'
+      - '.env.example'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: ruff + mypy + import-linter
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Sync dev dependencies
+        # ta-lib ships manylinux2014 wheels for cp313, so no native libta-lib
+        # install is needed on the GitHub-hosted Linux runner.
+        run: uv sync
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: ruff format (verify)
+        run: uv run ruff format --check .
+
+      - name: mypy
+        run: uv run mypy
+
+      - name: lint-imports
+        run: uv run lint-imports
+
+  test:
+    name: pytest (windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Sync dev dependencies
+        # First-pass: rely on PyPI cp313 win_amd64 wheels (including ta-lib's
+        # prebuilt wheel). If a future ta-lib release drops the Windows wheel,
+        # add a `Install ta-lib via vcpkg` step before this and pin the wrapper
+        # version.
+        run: uv sync
+
+      - name: pytest
+        # CI runs the FULL suite without --testmon. testmon's selection is a
+        # local-dev optimization; CI must execute every test against the
+        # integration tip on every PR. -n auto allocates one worker per core.
+        run: uv run pytest -n auto

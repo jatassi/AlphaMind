@@ -17,22 +17,28 @@ Alert the user before disabling the linter or any rule in any form — including
 
 ## Testing
 
-**Always run pytest with `--testmon` and `-n auto`** unless one of the explicit exceptions below applies. This is mandatory for every pytest invocation — your own, subagent dispatches, worktree verification, the orchestrator's per-story checks, the implement-issue intermediate runs. The canonical invocation:
+**Do not run the full pytest suite locally.** CI (`.github/workflows/ci.yml`) runs the full suite on a Windows runner against every PR and every push to `main`; that is the authoritative gate. Local full-suite runs are too resource-intensive to do on every change, so they are forbidden by default — the CI run is what blesses the diff.
+
+**Narrow, scoped pytest is fine and encouraged** while implementing or debugging. Run only the tests directly relevant to the file or area you are changing:
 
 ```bash
-uv run pytest --testmon -n auto
+uv run pytest tests/<sub-path>/ --testmon -n auto       # scoped run
+uv run pytest tests/path/to/test_thing.py::test_case    # single test
 ```
 
-`--testmon` skips tests whose Python dependencies haven't changed since the last run (cache in `.testmondata`, intentionally tracked in-tree so testmon's selection survives fresh clones and CI re-runs). `-n auto` allocates one worker per CPU core. When verifying a narrow slice, scope to the relevant path: `uv run pytest tests/config/ --testmon -n auto`.
+Use `--testmon -n auto` on scoped runs to keep them fast. Scope tightly — single file, single directory, single test node-id. Treat the local pytest invocation as a TDD red-green loop or a targeted regression check, not as a release gate.
 
-**Drop `--testmon` and run the full suite ONLY when one of these specific scenarios applies:**
-- Changing `conftest.py`, fixtures, or other test-collection hooks — testmon doesn't track collection-time graph changes
-- Changing non-Python files tests depend on (YAML configs, JSON fixtures, SQL, schema files) — testmon only tracks Python imports
-- Before claiming a feature done or opening a PR — final verification must exercise everything (this is the pre-PR / pre-merge gate, not intermediate per-story or per-wave checks)
-- After pulling main or rebasing — the local cache reflects your prior state, not the merged state
-- If you suspect the cache is stale or are seeing implausible skips — delete `.testmondata` and retry
+**The full suite (`uv run pytest -n auto`) runs locally ONLY when the operator explicitly asks for it** — e.g., "run the full suite", "do a full pytest before pushing", "I want to see all tests pass locally". Otherwise push the branch, let CI run it, and act on the CI result. Subagent dispatch prompts, skill files, story acceptance criteria, and PR test plans must NOT include unscoped `uv run pytest` invocations; the CI run is the singular full-suite check.
 
-Outside these documented exceptions, **never invoke `pytest` without both `--testmon` and `-n auto`** — including from subagents and worktree verification. When writing a verbatim pytest command into a dispatch prompt, skill file, story acceptance criterion, or PR test plan, include `--testmon -n auto` by default and only omit `--testmon` when the invocation is the explicit pre-PR / pre-merge final-verification run. If a test passes serially but fails under xdist, the cause is test-order dependence (typically `sys.modules` mutation or shared filesystem state). Fix the test — do not fall back to serial.
+If a test passes locally but fails under xdist on CI, the cause is test-order dependence (typically `sys.modules` mutation or shared filesystem state). Fix the test — do not fall back to serial.
+
+## Branch policy
+
+`main` is PR-only. All changes land via pull request and require CI green (the `ci` workflow: ruff + ruff format + mypy + import-linter + Windows pytest). Do not push directly to `main`. Do not merge a PR until the `ci` workflow run completes successfully.
+
+Branch protection is not currently enforced server-side (the repo is on GitHub Free and rulesets need GitHub Pro for private repos). The policy holds anyway — treat it as a hard rule, not an aspirational one. If you find yourself about to `git push origin main`, stop and open a PR instead.
+
+Squash-merge every PR (see "Git / GitHub Instructions" below). The CI workflow uses `paths-ignore` for `**.md`, `docs/**`, `.archive/**`, `.claude/**`, and `audit-*.html` — pure docs/tooling PRs skip the test run and can merge as soon as you open them. Any change touching `src/`, `tests/`, `config/`, `prompts/`, `scripts/`, `pyproject.toml`, `uv.lock`, `.importlinter`, `alembic.ini`, or `.github/workflows/**` triggers the full CI run.
 
 ## Spawning Subagents
 
