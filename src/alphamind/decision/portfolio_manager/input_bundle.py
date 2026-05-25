@@ -200,7 +200,8 @@ def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_pm_header_ha
 
     *prior_health_snapshots* — see :func:`assemble_input_bundle_normal`.
     """
-    # ALP-462 — render_pm_header_halt_mode still takes float; cast at boundary.
+    # ALP-462 — Money fields on render_pm_header_halt_mode still take float;
+    # cast at boundary. current_price_lookup is threaded as Price end-to-end.
     header = render_pm_header_halt_mode(
         halt_state=halt_state,
         pm_view=pm_view,

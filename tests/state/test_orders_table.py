@@ -357,6 +357,19 @@ class TestRoundTripCodec:
         )
         assert row_to_record(record_to_row(record)) == record
 
+    def test_price_parameters_decoder_accepts_legacy_float_json(self) -> None:
+        """Rows written by the pre-ALP-660 codec stored prices as JSON numbers.
+
+        ``_price_parameters_from_json`` normalises both shapes via ``price()`` so
+        production rows that pre-date this migration decode cleanly.
+        """
+        from alphamind.state.tables.orders_codec import _price_parameters_from_json
+
+        legacy_payload = '{"limit_price": 152.5, "stop_trigger_price": null}'
+        decoded = _price_parameters_from_json(legacy_payload)
+        assert decoded.limit_price == price("152.5")
+        assert decoded.stop_trigger_price is None
+
     def test_options_order_round_trips(self) -> None:
         """Spot-check: options order."""
         record = _market_order(

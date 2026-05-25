@@ -485,9 +485,6 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
 # ---------------------------------------------------------------------------
 
 
-_UNAVAILABLE_PRICE: Price = price("0.0001")
-
-
 def _price_lookup_from_assembled(assembled: AssembledSnapshot) -> Callable[[str], Price]:
     """Build a synchronous ticker→price lookup over the assembler-materialized
     ``price_map`` (ALP-407).
@@ -499,21 +496,19 @@ def _price_lookup_from_assembled(assembled: AssembledSnapshot) -> Callable[[str]
     parameter that is meaningless now that the assembler is the single
     source of truth on freshness.
 
-    The fallback in the closure is unreachable in practice — every
-    ticker referenced by the snapshot's open and pending positions was
-    enumerated by the assembler and its quote is in ``price_map``, so the
-    agents only ever ask about held positions whose tickers are guaranteed
-    to be present. The strategist's input-bundle renderer raises
-    ``ValueError`` on a ``KeyError`` from this callable, so the fallback
-    exists only to satisfy the ``Callable[[str], Price]`` signature
-    without requiring callers to handle ``KeyError`` (Price must be
-    strictly positive, hence the sentinel rather than zero).
+    Raises ``KeyError`` for a ticker absent from ``price_map``. Every ticker
+    referenced by the snapshot's open and pending positions is enumerated by
+    the assembler, so callers only ever ask about held positions whose
+    quotes are guaranteed present — a miss indicates a bug upstream. Both
+    consumers (halt_mode and strategist input bundles) wrap the call in a
+    ``try/except KeyError`` that re-raises as ``ValueError`` with the
+    ticker; emitting ``KeyError`` here preserves that loud-failure contract.
     """
     by_ticker: dict[str, Price] = {
         ticker: price(quote.price_usd) for ticker, quote in assembled.price_map.items()
     }
 
     def _lookup(ticker: str) -> Price:
-        return by_ticker.get(ticker, _UNAVAILABLE_PRICE)
+        return by_ticker[ticker]
 
     return _lookup

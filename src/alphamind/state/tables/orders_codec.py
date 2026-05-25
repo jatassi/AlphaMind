@@ -99,6 +99,9 @@ def _price_parameters_to_json(pp: PriceParameters) -> str:
 
 
 def _price_parameters_from_json(payload: str) -> PriceParameters:
+    # Accepts both the new string-encoded Decimal shape and the legacy JSON-number
+    # shape from rows written before ALP-660 — ``price(...)`` normalises both via
+    # ``str``, preserving round-trip with the pre-PR codec.
     raw = json.loads(payload)
     limit_raw = raw.get("limit_price")
     stop_raw = raw.get("stop_trigger_price")
