@@ -265,6 +265,7 @@ class TestEnumMembers:
             "APPROVE",
             "APPROVE_WITH_MODIFICATION",
             "REJECT",
+            "OVERRIDE_WITH_CORRECTIVE_ACTION",
         }
 
     def test_bracket_modification_source_members(self) -> None:

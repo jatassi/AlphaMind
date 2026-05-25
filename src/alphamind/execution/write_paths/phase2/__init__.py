@@ -69,6 +69,7 @@ _VERDICT_TO_PM_VERDICT: dict[str, PMVerdict] = {
     "approve": PMVerdict.APPROVE,
     "approve_with_modification": PMVerdict.APPROVE_WITH_MODIFICATION,
     "reject": PMVerdict.REJECT,
+    "override_with_corrective_action": PMVerdict.OVERRIDE_WITH_CORRECTIVE_ACTION,
 }
 
 
