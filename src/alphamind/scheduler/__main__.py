@@ -37,6 +37,7 @@ from alphamind.persistence.session import engine_pair_context
 from alphamind.risk_guardrails.breach_behavior.config import load_breach_behavior_config
 from alphamind.scheduler.driver import run_pipeline_scheduler_task
 from alphamind.scheduler.emergency import run_emergency_receiver_task
+from alphamind.scheduler.fresh_start import run_fresh_start_bootstrap
 from alphamind.scheduler.logging_setup import configure_pipeline_logging
 from alphamind.scheduler.orchestrator import run_invocation
 from alphamind.scheduler.run_context import RunInvocationContext
@@ -98,10 +99,14 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--fresh-start",
         action="store_true",
         help=(
-            "Use the clean-slate FRESH_START_PORTFOLIO ($100k cash, zero "
-            "positions, zero theses) instead of the managed-portfolio "
-            "SYNTHETIC_PORTFOLIO fixture. Exercises the analyst's "
-            "OPEN-recommendation path. Only valid with --debug-e2e (ALP-618)."
+            "First-run bootstrap. Without --debug-e2e (ALP-620): fetch "
+            "Alpaca's cash + positions, hard-fail if any positions exist or "
+            "if cash_ledger already has a row, then insert the cash_ledger "
+            "and drawdown_state singletons from Alpaca's reported cash and "
+            "continue to the normal pipeline. Requires --once. With "
+            "--debug-e2e (ALP-618): use the clean-slate FRESH_START_PORTFOLIO "
+            "fixture ($100k cash, zero positions, zero theses) instead of "
+            "the managed-portfolio SYNTHETIC_PORTFOLIO fixture."
         ),
     )
     run_p.add_argument(
@@ -131,8 +136,14 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             parser.error("--debug-e2e requires --once <run_type> --reason <text>")
     if args.subcommand == "run" and args.archive_root is not None and not args.debug_e2e:
         parser.error("--archive-root is only valid with --debug-e2e")
-    if args.subcommand == "run" and args.fresh_start and not args.debug_e2e:
-        parser.error("--fresh-start is only valid with --debug-e2e")
+    # --fresh-start has two distinct shapes:
+    #   • with --debug-e2e: swap to the FRESH_START_PORTFOLIO fixture (ALP-618).
+    #   • without --debug-e2e: production cold-start bootstrap from Alpaca
+    #     (ALP-620). The bootstrap is a one-shot operation by design — daemon
+    #     mode is rejected so the operator runs the bootstrap once, then starts
+    #     the daemon normally.
+    if args.subcommand == "run" and args.fresh_start and not args.debug_e2e and args.once is None:
+        parser.error("--fresh-start (production bootstrap) requires --once")
     return args
 
 
@@ -159,8 +170,21 @@ async def _run_once(args: argparse.Namespace) -> None:
 
     venue_config = _load_venue_config(_CONFIG_DIR)
     execution_mode = ExecutionMode.live if args.mode == "live" else ExecutionMode.paper
+    now = datetime.now(UTC)
 
     async with engine_pair_context() as engines:
+        # ALP-620 — cold-start bootstrap. Runs before ``record_process_lifetime``
+        # so a precondition failure (positions present, cash_ledger already
+        # initialized) surfaces to the operator without opening an invocation
+        # row. The bootstrap commits its own transaction; the process-lifetime
+        # row insertion that follows starts a fresh session.
+        if args.fresh_start:
+            await run_fresh_start_bootstrap(
+                session_factory=engines.async_session_factory,
+                venue_config=venue_config,
+                execution_mode=execution_mode,
+                now=now,
+            )
         process_lifetime_id = await record_process_lifetime(
             session_factory=engines.async_session_factory,
             process_role="pipeline",
@@ -182,7 +206,7 @@ async def _run_once(args: argparse.Namespace) -> None:
             trigger_source="cli",
             trigger_reason=args.reason,
             firing_run_type=RunType(args.once),
-            now=datetime.now(UTC),
+            now=now,
         )
 
     # The dataclass-asdict path produces a plain dict; ``default=str`` covers

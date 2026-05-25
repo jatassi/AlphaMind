@@ -200,6 +200,129 @@ class TestCliArgparseSurface:
         with pytest.raises(SystemExit):
             main(argv=["run", "--once", "market_hours_rolling"])
 
+    def test_fresh_start_in_daemon_mode_rejected(self) -> None:
+        """``--fresh-start`` without ``--once`` (and without ``--debug-e2e``) is rejected.
+
+        The production bootstrap is a one-shot operation by design; an
+        operator running it under the daemon would silently skip the
+        bootstrap on every subsequent invocation.
+        """
+        with pytest.raises(SystemExit):
+            main(argv=["run", "--fresh-start", "--mode", "paper"])
+
+
+class TestCliRunOnceFreshStart:
+    """Production cold-start bootstrap path (ALP-620).
+
+    With ``--fresh-start`` and without ``--debug-e2e``, ``_run_once`` must
+    call :func:`run_fresh_start_bootstrap` before invoking
+    :func:`run_invocation`; without ``--fresh-start`` the bootstrap must be
+    skipped.
+    """
+
+    def test_invokes_bootstrap_before_run_invocation(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from alphamind.scheduler import __main__ as module
+
+        _patch_cli_heavy_setup(monkeypatch)
+
+        call_order: list[str] = []
+
+        async def _stub_bootstrap(**_kwargs: Any) -> None:
+            call_order.append("bootstrap")
+
+        async def _stub_run_invocation(**_kwargs: Any) -> Any:
+            call_order.append("run_invocation")
+            return _make_summary_stub()
+
+        monkeypatch.setattr(module, "run_fresh_start_bootstrap", _stub_bootstrap)
+        monkeypatch.setattr(module, "run_invocation", _stub_run_invocation)
+
+        main(
+            argv=[
+                "run",
+                "--fresh-start",
+                "--once",
+                "pre_open",
+                "--reason",
+                "first-run bootstrap",
+                "--mode",
+                "paper",
+            ]
+        )
+
+        assert call_order == ["bootstrap", "run_invocation"]
+
+    def test_skips_bootstrap_without_flag(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from alphamind.scheduler import __main__ as module
+
+        _patch_cli_heavy_setup(monkeypatch)
+
+        bootstrap_called: dict[str, bool] = {"called": False}
+
+        async def _stub_bootstrap(**_kwargs: Any) -> None:
+            bootstrap_called["called"] = True
+
+        async def _stub_run_invocation(**_kwargs: Any) -> Any:
+            return _make_summary_stub()
+
+        monkeypatch.setattr(module, "run_fresh_start_bootstrap", _stub_bootstrap)
+        monkeypatch.setattr(module, "run_invocation", _stub_run_invocation)
+
+        main(
+            argv=[
+                "run",
+                "--once",
+                "pre_open",
+                "--reason",
+                "no bootstrap",
+            ]
+        )
+
+        assert bootstrap_called["called"] is False
+
+    def test_bootstrap_failure_aborts_before_run_invocation(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A ``FreshStartPreconditionError`` from bootstrap must abort the
+        CLI before any invocation row is opened."""
+        from alphamind.scheduler import __main__ as module
+        from alphamind.scheduler.fresh_start import FreshStartPreconditionError
+
+        _patch_cli_heavy_setup(monkeypatch)
+
+        async def _failing_bootstrap(**_kwargs: Any) -> None:
+            msg = "positions present"
+            raise FreshStartPreconditionError(msg)
+
+        run_invocation_called: dict[str, bool] = {"called": False}
+
+        async def _stub_run_invocation(**_kwargs: Any) -> Any:
+            run_invocation_called["called"] = True
+            return _make_summary_stub()
+
+        monkeypatch.setattr(module, "run_fresh_start_bootstrap", _failing_bootstrap)
+        monkeypatch.setattr(module, "run_invocation", _stub_run_invocation)
+
+        with pytest.raises(FreshStartPreconditionError, match="positions present"):
+            main(
+                argv=[
+                    "run",
+                    "--fresh-start",
+                    "--once",
+                    "pre_open",
+                    "--reason",
+                    "blocked bootstrap",
+                ]
+            )
+        assert run_invocation_called["called"] is False
+
 
 class TestCliConfiguresUtf8Stdio:
     def test_main_calls_configure_utf8_stdio(

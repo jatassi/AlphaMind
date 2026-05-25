@@ -1,0 +1,349 @@
+"""Tests for ``alphamind.scheduler.fresh_start`` (ALP-620).
+
+Covers the cold-start bootstrap of the ``cash_ledger`` + ``drawdown_state``
+singleton rows from an Alpaca account snapshot. The bootstrap is gated
+behind ``--fresh-start`` on the scheduler CLI; this module exercises the
+bootstrap function in isolation against a stubbed broker adapter, plus
+the two hard-fail preconditions (positions present, cash_ledger already
+initialized).
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+
+import alphamind.state.tables  # noqa: F401 - register ORM mappers before create_all
+from alphamind._kernel.money import money, price
+from alphamind.config.models.main import ExecutionMode
+from alphamind.config.models.venue import (
+    Alpaca,
+    AlpacaCredentials,
+    SessionHours,
+    SessionWindow,
+    VenueConfig,
+)
+from alphamind.execution.broker_adapter.queries import (
+    PositionSnapshot,
+    TradeAccountSnapshot,
+)
+from alphamind.persistence.models import Base
+from alphamind.persistence.session import (
+    make_async_engine,
+    make_async_session_factory,
+    make_engine,
+)
+from alphamind.scheduler.fresh_start import (
+    FreshStartPreconditionError,
+    bootstrap_singletons_from_alpaca,
+    run_fresh_start_bootstrap,
+)
+from alphamind.state.tables.cash_ledger import (
+    CASH_LEDGER_SINGLETON_ID,
+    CashLedgerRow,
+)
+from alphamind.state.tables.drawdown_state import (
+    DRAWDOWN_STATE_SINGLETON_ID,
+    DrawdownStateRow,
+)
+
+_NOW = datetime(2026, 5, 25, 14, 30, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """Yield an async session factory bound to an initialized SQLite DB."""
+    db_path = tmp_path / "alphamind.db"
+    sync_engine = make_engine(str(db_path))
+    try:
+        Base.metadata.create_all(sync_engine)
+    finally:
+        sync_engine.dispose()
+
+    async_engine: AsyncEngine = make_async_engine(str(db_path))
+    factory = make_async_session_factory(async_engine)
+    try:
+        yield factory
+    finally:
+        await async_engine.dispose()
+
+
+def _make_venue_config() -> VenueConfig:
+    creds = AlpacaCredentials(
+        rest_url="https://paper-api.alpaca.markets",
+        ws_url="wss://paper-api.alpaca.markets",
+        api_key_env="ALPACA_PAPER_KEY",
+        api_secret_env="ALPACA_PAPER_SECRET",
+    )
+    return VenueConfig(
+        alpaca=Alpaca(paper=creds, live=creds, rate_limit_per_minute=200),
+        session_hours=SessionHours(
+            regular=SessionWindow(open="09:30", close="16:00"),
+            pre_market=SessionWindow(open="04:00", close="09:30"),
+            after_hours=SessionWindow(open="16:00", close="20:00"),
+        ),
+    )
+
+
+def _make_account_snapshot(cash_usd: float = 100_000.0) -> TradeAccountSnapshot:
+    money_val = money(cash_usd)
+    return TradeAccountSnapshot(
+        account_id="acc-fresh-start",
+        cash=money_val,
+        equity=money_val,
+        buying_power=money_val,
+        regt_buying_power=money_val,
+        daytrading_buying_power=money_val,
+        maintenance_margin=money(0.0),
+        daytrade_count=0,
+        pattern_day_trader=False,
+        status="ACTIVE",
+    )
+
+
+def _make_position_snapshot(symbol: str = "AAPL") -> PositionSnapshot:
+    return PositionSnapshot(
+        symbol=symbol,
+        asset_class="us_equity",
+        qty=10.0,
+        avg_entry_price=price(140.0),
+        market_value=money(1500.0),
+        cost_basis=money(1400.0),
+        unrealized_pl=money(100.0),
+        unrealized_plpc=0.0714,
+        current_price=price(150.0),
+        side="long",
+    )
+
+
+class _StubQueries:
+    """Sync stand-in for ``AccountStateQueries`` returning canned data."""
+
+    def __init__(
+        self,
+        *,
+        account: TradeAccountSnapshot,
+        positions: tuple[PositionSnapshot, ...],
+    ) -> None:
+        self._account = account
+        self._positions = positions
+
+    def get_account(self) -> TradeAccountSnapshot:
+        return self._account
+
+    def get_positions(self) -> tuple[PositionSnapshot, ...]:
+        return self._positions
+
+
+class TestBootstrapSingletonsFromAlpaca:
+    """Direct exercise of ``bootstrap_singletons_from_alpaca`` against a real session."""
+
+    async def test_happy_path_inserts_both_singletons(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Empty Alpaca account → both singletons inserted with matching values."""
+        async with async_factory() as session:
+            await bootstrap_singletons_from_alpaca(
+                session=session,
+                account=_make_account_snapshot(100_000.0),
+                positions=(),
+                now=_NOW,
+            )
+            await session.commit()
+
+        async with async_factory() as verify_session:
+            cash_row = await verify_session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+            drawdown_row = await verify_session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)
+
+        assert cash_row is not None
+        assert cash_row.current_cash_usd == Decimal("100000.0")
+        assert cash_row.settled_cash_usd == Decimal("100000.0")
+        assert cash_row.available_buying_power_usd == Decimal("100000.0")
+        assert cash_row.reserved_capital_usd == Decimal(0)
+        assert cash_row.margin_held_usd == Decimal(0)
+        assert cash_row.unsettled_proceeds_json == "[]"
+        assert cash_row.last_updated_at == _NOW.isoformat()
+
+        assert drawdown_row is not None
+        assert drawdown_row.equity_high_water_mark_usd == 100_000.0
+        assert drawdown_row.current_drawdown_pct == 0.0
+        assert drawdown_row.drawdown_duration_hours == 0.0
+        assert drawdown_row.lifetime_max_drawdown_pct == 0.0
+        assert drawdown_row.drawdown_by_source_json == "{}"
+
+    async def test_rejects_when_positions_present(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Any Alpaca-side position triggers ``FreshStartPreconditionError``."""
+        async with async_factory() as session:
+            with pytest.raises(FreshStartPreconditionError) as exc_info:
+                await bootstrap_singletons_from_alpaca(
+                    session=session,
+                    account=_make_account_snapshot(),
+                    positions=(_make_position_snapshot("AAPL"),),
+                    now=_NOW,
+                )
+
+        message = str(exc_info.value)
+        assert "AAPL" in message
+        assert "open position" in message
+        assert "--fresh-start" in message
+
+        async with async_factory() as verify_session:
+            # Neither singleton should have been inserted — the precondition
+            # check runs before any write.
+            assert (await verify_session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)) is None
+            assert (await verify_session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)) is None
+
+    async def test_rejects_when_cash_ledger_already_initialized(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Existing ``cash_ledger`` row triggers ``FreshStartPreconditionError``."""
+        async with async_factory() as seed_session:
+            seed_session.add(
+                CashLedgerRow(
+                    id=CASH_LEDGER_SINGLETON_ID,
+                    current_cash_usd=Decimal("42000.00"),
+                    settled_cash_usd=Decimal("42000.00"),
+                    reserved_capital_usd=Decimal(0),
+                    available_buying_power_usd=Decimal("42000.00"),
+                    margin_held_usd=Decimal(0),
+                    unsettled_proceeds_json="[]",
+                    last_updated_at=_NOW.isoformat(),
+                )
+            )
+            await seed_session.commit()
+
+        async with async_factory() as session:
+            with pytest.raises(FreshStartPreconditionError) as exc_info:
+                await bootstrap_singletons_from_alpaca(
+                    session=session,
+                    account=_make_account_snapshot(),
+                    positions=(),
+                    now=_NOW,
+                )
+
+        message = str(exc_info.value)
+        assert "already initialized" in message
+        assert "42000" in message
+
+        # The seeded value must still be there — the failed bootstrap must
+        # not have touched the row.
+        async with async_factory() as verify_session:
+            existing = await verify_session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+            assert existing is not None
+            assert existing.current_cash_usd == Decimal("42000.00")
+            # And drawdown_state must remain absent — the seeded fixture
+            # only inserted the cash row.
+            assert (await verify_session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)) is None
+
+    async def test_uses_full_decimal_precision_from_alpaca_cash(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Sub-cent precision in Alpaca's reported cash round-trips intact."""
+        # Alpaca returns cash as a string the broker adapter parses via
+        # ``money(raw_str)`` — a real reset may report e.g. "99999.97" rather
+        # than a round 100k. Decimal must round-trip through DecimalText.
+        precise_cash = money("99999.973")
+        account = TradeAccountSnapshot(
+            account_id="acc-precise",
+            cash=precise_cash,
+            equity=precise_cash,
+            buying_power=precise_cash,
+            regt_buying_power=precise_cash,
+            daytrading_buying_power=precise_cash,
+            maintenance_margin=money(0.0),
+            daytrade_count=0,
+            pattern_day_trader=False,
+            status="ACTIVE",
+        )
+
+        async with async_factory() as session:
+            await bootstrap_singletons_from_alpaca(
+                session=session,
+                account=account,
+                positions=(),
+                now=_NOW,
+            )
+            await session.commit()
+
+        async with async_factory() as verify_session:
+            cash_row = await verify_session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+
+        assert cash_row is not None
+        assert cash_row.current_cash_usd == Decimal("99999.973")
+
+
+class TestRunFreshStartBootstrap:
+    """Exercise the top-level entry that orchestrates broker fetch + write."""
+
+    async def test_commits_singletons_via_stub_factory(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Stubbed ``account_queries_factory`` drives the bootstrap end-to-end."""
+        account = _make_account_snapshot(50_000.0)
+        captured_args: list[tuple[VenueConfig, ExecutionMode]] = []
+
+        def _stub_factory(venue_config: VenueConfig, execution_mode: ExecutionMode) -> _StubQueries:
+            captured_args.append((venue_config, execution_mode))
+            return _StubQueries(account=account, positions=())
+
+        await run_fresh_start_bootstrap(
+            session_factory=async_factory,
+            venue_config=_make_venue_config(),
+            execution_mode=ExecutionMode.paper,
+            now=_NOW,
+            account_queries_factory=_stub_factory,
+        )
+
+        # The factory was constructed once with the venue/mode kwargs.
+        assert len(captured_args) == 1
+        assert captured_args[0][1] is ExecutionMode.paper
+
+        async with async_factory() as verify_session:
+            cash_row = await verify_session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+            drawdown_row = await verify_session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)
+        assert cash_row is not None
+        assert cash_row.current_cash_usd == Decimal("50000.0")
+        assert drawdown_row is not None
+        assert drawdown_row.equity_high_water_mark_usd == 50_000.0
+
+    async def test_propagates_precondition_error_without_writing(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Positions-present from stubbed broker → caller sees the precondition error."""
+        positions = (_make_position_snapshot("AAPL"), _make_position_snapshot("MSFT"))
+
+        def _stub_factory(venue_config: VenueConfig, execution_mode: ExecutionMode) -> _StubQueries:
+            return _StubQueries(account=_make_account_snapshot(), positions=positions)
+
+        with pytest.raises(FreshStartPreconditionError) as exc_info:
+            await run_fresh_start_bootstrap(
+                session_factory=async_factory,
+                venue_config=_make_venue_config(),
+                execution_mode=ExecutionMode.paper,
+                now=_NOW,
+                account_queries_factory=_stub_factory,
+            )
+
+        # Both symbols surface in the error message (sorted) so the operator
+        # immediately sees what's on the broker side.
+        message = str(exc_info.value)
+        assert "AAPL" in message
+        assert "MSFT" in message
+
+        async with async_factory() as verify_session:
+            rows = (await verify_session.execute(select(CashLedgerRow))).scalars().all()
+            assert rows == []
