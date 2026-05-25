@@ -421,9 +421,11 @@ def _adjust_command_basic() -> AdjustCommand:
 
 
 def _cancel_command_basic() -> CancelCommand:
+    from alphamind._kernel.ids import OrderId
+
     return CancelCommand(
         command_type="cancel",
-        order_id="ORD-1",
+        order_id=OrderId("ORD-1"),
         cancel_reason="stale",
     )
 

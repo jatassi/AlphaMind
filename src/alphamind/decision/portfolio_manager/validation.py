@@ -131,6 +131,73 @@ def _check_envelope_id_source_provenance(envelope: PMEnvelope) -> Iterable[Valid
 # ---------------------------------------------------------------------------
 
 
+def _check_override_with_corrective_action_invariants(
+    envelope: PMEnvelope,
+) -> Iterable[ValidationError]:
+    """Layer-2 invariants for the ``override_with_corrective_action`` verdict — ALP-626.
+
+    Mirrors the parse-time invariants on PMStrategistEnvelope /
+    PMAnalystEnvelope as defense-in-depth, surfacing finer field-level error
+    messages and protecting against ``model_construct`` parse-bypass paths.
+    """
+    if len(envelope.commands) < 1:
+        yield ValidationError(
+            field_path="commands",
+            message="verdict=override_with_corrective_action requires at least one command",
+            criterion="verdict_conditional_invariant",
+        )
+    if len(envelope.concerns) < 1:
+        yield ValidationError(
+            field_path="concerns",
+            message="verdict=override_with_corrective_action requires at least one concern",
+            criterion="verdict_conditional_invariant",
+        )
+    if len(envelope.modifications) != 0:
+        yield ValidationError(
+            field_path="modifications",
+            message=(
+                "verdict=override_with_corrective_action requires empty modifications "
+                "(the override authors new commands; use approve_with_modification "
+                "for parameter tweaks on an existing command)"
+            ),
+            criterion="verdict_conditional_invariant",
+        )
+    for i, command in enumerate(envelope.commands):
+        if command.command_type not in ("close", "adjust", "cancel"):
+            yield ValidationError(
+                field_path=f"commands[{i}].command_type",
+                message=(
+                    "verdict=override_with_corrective_action embedded commands must be "
+                    "CLOSE / ADJUST / CANCEL (the override is a corrective action; "
+                    "new-entry OPEN / ADD is forbidden); got "
+                    f"command_type={command.command_type!r}"
+                ),
+                criterion="verdict_conditional_invariant",
+            )
+
+
+def _check_reject_invariants(envelope: PMEnvelope) -> Iterable[ValidationError]:
+    """Layer-2 invariants for the ``reject`` verdict."""
+    if len(envelope.commands) != 0:
+        yield ValidationError(
+            field_path="commands",
+            message="verdict=reject requires empty commands",
+            criterion="verdict_conditional_invariant",
+        )
+    if len(envelope.modifications) != 0:
+        yield ValidationError(
+            field_path="modifications",
+            message="verdict=reject requires empty modifications",
+            criterion="verdict_conditional_invariant",
+        )
+    if len(envelope.concerns) < 1:
+        yield ValidationError(
+            field_path="concerns",
+            message="verdict=reject requires at least one concern",
+            criterion="verdict_conditional_invariant",
+        )
+
+
 def _check_verdict_conditional_invariants(envelope: PMEnvelope) -> Iterable[ValidationError]:
     """(b) Verdict-conditional invariants on commands / modifications / concerns.
 
@@ -140,24 +207,7 @@ def _check_verdict_conditional_invariants(envelope: PMEnvelope) -> Iterable[Vali
     parse-bypass paths.
     """
     if envelope.verdict == "reject":
-        if len(envelope.commands) != 0:
-            yield ValidationError(
-                field_path="commands",
-                message="verdict=reject requires empty commands",
-                criterion="verdict_conditional_invariant",
-            )
-        if len(envelope.modifications) != 0:
-            yield ValidationError(
-                field_path="modifications",
-                message="verdict=reject requires empty modifications",
-                criterion="verdict_conditional_invariant",
-            )
-        if len(envelope.concerns) < 1:
-            yield ValidationError(
-                field_path="concerns",
-                message="verdict=reject requires at least one concern",
-                criterion="verdict_conditional_invariant",
-            )
+        yield from _check_reject_invariants(envelope)
     elif envelope.verdict == "approve":
         if len(envelope.modifications) != 0:
             yield ValidationError(
@@ -179,48 +229,7 @@ def _check_verdict_conditional_invariants(envelope: PMEnvelope) -> Iterable[Vali
                 criterion="verdict_conditional_invariant",
             )
     elif envelope.verdict == "override_with_corrective_action":
-        # ALP-626 — PM-authored override of a strategist HOLD-with-disagreement.
-        # Mirrors the parse-time invariants on PMStrategistEnvelope /
-        # PMAnalystEnvelope as defense-in-depth, surfacing finer field-level
-        # error messages and protecting against ``model_construct`` bypass.
-        if len(envelope.commands) < 1:
-            yield ValidationError(
-                field_path="commands",
-                message=(
-                    "verdict=override_with_corrective_action requires at least one command"
-                ),
-                criterion="verdict_conditional_invariant",
-            )
-        if len(envelope.concerns) < 1:
-            yield ValidationError(
-                field_path="concerns",
-                message=(
-                    "verdict=override_with_corrective_action requires at least one concern"
-                ),
-                criterion="verdict_conditional_invariant",
-            )
-        if len(envelope.modifications) != 0:
-            yield ValidationError(
-                field_path="modifications",
-                message=(
-                    "verdict=override_with_corrective_action requires empty modifications "
-                    "(the override authors new commands; use approve_with_modification "
-                    "for parameter tweaks on an existing command)"
-                ),
-                criterion="verdict_conditional_invariant",
-            )
-        for i, command in enumerate(envelope.commands):
-            if command.command_type not in ("close", "adjust", "cancel"):
-                yield ValidationError(
-                    field_path=f"commands[{i}].command_type",
-                    message=(
-                        "verdict=override_with_corrective_action embedded commands must be "
-                        "CLOSE / ADJUST / CANCEL (the override is a corrective action; "
-                        "new-entry OPEN / ADD is forbidden); got "
-                        f"command_type={command.command_type!r}"
-                    ),
-                    criterion="verdict_conditional_invariant",
-                )
+        yield from _check_override_with_corrective_action_invariants(envelope)
 
 
 # ---------------------------------------------------------------------------

@@ -689,8 +689,7 @@ class TestVerdictConditionalInvariants:
 
 
 # ---------------------------------------------------------------------------
-# Layer-2 (b'): override_with_corrective_action — Layer-2 defense-in-depth
-#                (ALP-626)
+# Layer-2 (b'): override_with_corrective_action defense-in-depth — ALP-626
 # ---------------------------------------------------------------------------
 
 
@@ -737,9 +736,7 @@ class TestOverrideWithCorrectiveActionLayer2Invariants:
         result = _validate(envelope)
         assert not result.is_valid
         assert any("commands" in err.field_path for err in result.errors)
-        assert any(
-            err.criterion == "verdict_conditional_invariant" for err in result.errors
-        )
+        assert any(err.criterion == "verdict_conditional_invariant" for err in result.errors)
 
     def test_override_with_empty_concerns_fails(self) -> None:
         envelope = PMStrategistEnvelope.model_construct(
@@ -760,9 +757,7 @@ class TestOverrideWithCorrectiveActionLayer2Invariants:
         result = _validate(envelope)
         assert not result.is_valid
         assert any("concerns" in err.field_path for err in result.errors)
-        assert any(
-            err.criterion == "verdict_conditional_invariant" for err in result.errors
-        )
+        assert any(err.criterion == "verdict_conditional_invariant" for err in result.errors)
 
     def test_override_with_modifications_fails(self) -> None:
         envelope = PMStrategistEnvelope.model_construct(
@@ -792,9 +787,7 @@ class TestOverrideWithCorrectiveActionLayer2Invariants:
         result = _validate(envelope)
         assert not result.is_valid
         assert any("modifications" in err.field_path for err in result.errors)
-        assert any(
-            err.criterion == "verdict_conditional_invariant" for err in result.errors
-        )
+        assert any(err.criterion == "verdict_conditional_invariant" for err in result.errors)
 
     def test_override_with_open_command_fails(self) -> None:
         envelope = PMStrategistEnvelope.model_construct(
@@ -815,9 +808,7 @@ class TestOverrideWithCorrectiveActionLayer2Invariants:
         result = _validate(envelope)
         assert not result.is_valid
         assert any("commands[0]" in err.field_path for err in result.errors)
-        assert any(
-            err.criterion == "verdict_conditional_invariant" for err in result.errors
-        )
+        assert any(err.criterion == "verdict_conditional_invariant" for err in result.errors)
 
     def test_override_with_add_command_fails(self) -> None:
         envelope = PMStrategistEnvelope.model_construct(
@@ -838,9 +829,7 @@ class TestOverrideWithCorrectiveActionLayer2Invariants:
         result = _validate(envelope)
         assert not result.is_valid
         assert any("commands[0]" in err.field_path for err in result.errors)
-        assert any(
-            err.criterion == "verdict_conditional_invariant" for err in result.errors
-        )
+        assert any(err.criterion == "verdict_conditional_invariant" for err in result.errors)
 
     def test_override_in_halt_mode_with_close_passes(self) -> None:
         """Halt-mode constraint (g) passes by construction for the override
