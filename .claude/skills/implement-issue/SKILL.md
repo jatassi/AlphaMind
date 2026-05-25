@@ -14,7 +14,7 @@ Register as `TaskCreate` entries up front.
 - **Always enter an isolated worktree before any code changes.** Use `EnterWorktree`; never edit from the primary checkout. The PR's branch name is the Linear `gitBranchName` from the issue. Never work on `main`.
 - **Implement in the main thread.** No `Agent` dispatch for the implementation. Only the post-PR `/review` is an explicit `Agent` dispatch.
 - **Drive the work with TDD** via `Skill("tdd")`: red → green → refactor. Each acceptance criterion that admits a programmatic test gets one.
-- **Run the full lint chain before opening the PR and again before merging:** `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports`. **Do NOT run the full pytest suite locally** — per CLAUDE.md "Testing", CI (`.github/workflows/ci.yml`) is the authoritative full-suite gate on every PR. Use scoped pytest during implementation (`uv run pytest tests/<area>/ --testmon -n auto` or single test node-id) and rely on the CI run for the wave-spanning check.
+- **Run the full lint chain before opening the PR and again before merging:** `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports`. **Do NOT run the full pytest suite locally** — per CLAUDE.md "Testing", CI (`.github/workflows/ci.yml`) is the authoritative full-suite gate on every PR. Use scoped pytest during implementation (`uv run pytest tests/<area>/ -n auto` or single test node-id) and rely on the CI run for the wave-spanning check.
 - **Linear status transitions.** `Todo` → `In Progress` on dispatch; `In Progress` → `Done` after PR merges. On blocker mid-implementation: `Blocked` + `blockedBy` link to the blocking issue.
 
 ## Pre-flight
@@ -109,12 +109,12 @@ uv run ruff check .
 uv run ruff format .
 uv run mypy
 uv run lint-imports
-uv run pytest tests/<issue-area>/ --testmon -n auto       # scoped — NOT the full suite
+uv run pytest tests/<issue-area>/ -n auto       # scoped — NOT the full suite
 ```
 
-The pytest invocation is **scoped to the issue's tests** — typically the single test file or the immediate parent directory. Per CLAUDE.md "Testing", the full pytest suite is not run locally; CI (`.github/workflows/ci.yml`) runs it on every PR push and is the authoritative gate. Use `--testmon -n auto` to keep the scoped run fast.
+The pytest invocation is **scoped to the issue's tests** — typically the single test file or the immediate parent directory. Per CLAUDE.md "Testing", the full pytest suite is not run locally; CI (`.github/workflows/ci.yml`) runs it on every PR push and is the authoritative gate. Use `-n auto` to keep the scoped run fast.
 
-**Do not pipe `pytest` to `tail`** — the pipe's exit code is `tail`'s (always 0), masking failures. Use `uv run pytest <scoped-path> --testmon -n auto; echo "exit=$?"` and read the summary line.
+**Do not pipe `pytest` to `tail`** — the pipe's exit code is `tail`'s (always 0), masking failures. Use `uv run pytest <scoped-path> -n auto; echo "exit=$?"` and read the summary line.
 
 **For audit / docs-only issues** where the deliverable is prose making factual claims about counts, structures, or edge classifications, verify each claim against the source after writing. The lint chain validates that the file still parses, not that the prose is correct — a false count or miscategorized edge will sail through ruff/mypy/lint-imports/pytest and survive into the PR. Walk every entity the prose enumerates (each `ignore_imports` line against its source-file site, each LOC count against `wc -l`, each "TYPE_CHECKING only" claim against the actual `if TYPE_CHECKING:` block).
 
@@ -187,7 +187,7 @@ Re-run the lint chain plus scoped pytest:
 
 ```bash
 uv run ruff check . && uv run ruff format . && uv run mypy && uv run lint-imports
-uv run pytest tests/<issue-area>/ --testmon -n auto
+uv run pytest tests/<issue-area>/ -n auto
 ```
 
 The pytest invocation stays scoped per CLAUDE.md "Testing"; the full-suite verification happens in CI when you push.
@@ -269,7 +269,7 @@ A handful of sentences per section. Brevity beats completeness — the operator 
 
 - Do not push to remote branches other than the feature branch until the PR merges.
 - Do not push directly to `main`. Per CLAUDE.md "Branch policy", main is PR-only; the convention is not server-enforced but is treated as a hard rule.
-- Do not declare the issue `Done` without scoped `uv run pytest tests/<issue-area>/ --testmon -n auto` green, lint chain clean, every acceptance criterion verified, CI green on the PR, and the PR merged. The full pytest suite runs in CI — do NOT run it locally.
+- Do not declare the issue `Done` without scoped `uv run pytest tests/<issue-area>/ -n auto` green, lint chain clean, every acceptance criterion verified, CI green on the PR, and the PR merged. The full pytest suite runs in CI — do NOT run it locally.
 - Do not modify the issue's description — only `state` and `blockedBy`.
 - Verify each completion-sequence task `completed` before reporting done.
 

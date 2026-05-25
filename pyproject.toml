@@ -58,7 +58,6 @@ dev = [
     "types-pyyaml>=6.0",
     "types-requests>=2.32",
     "import-linter>=2.0",
-    "pytest-testmon>=2.2.0",
 ]
 
 [tool.ruff]
