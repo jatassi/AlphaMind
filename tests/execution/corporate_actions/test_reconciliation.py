@@ -76,6 +76,67 @@ def _equity_position_snapshot(*, symbol: str = "AAPL", qty: float = 10.0) -> Pos
     )
 
 
+# OCC contract symbol Alpaca returns for the default ``make_open_options_position``
+# (AAPL call, strike $150, expiry 2026-09-18). Derived from the substrate
+# defaults at module-import time so a strike/expiry tweak in the substrate
+# auto-retags every test that plants an Alpaca-side snapshot — no scattered
+# string edits, no risk of the constant going stale silently.
+def _default_options_occ_symbol() -> str:
+    from alphamind.execution.corporate_actions.reconciliation import _alpaca_occ_symbol
+    from alphamind.portfolio_state.records.positions import OptionsPositionDetails
+
+    details = make_open_options_position().details
+    assert isinstance(details, OptionsPositionDetails)
+    return _alpaca_occ_symbol(details)
+
+
+_DEFAULT_OPTIONS_OCC_SYMBOL = _default_options_occ_symbol()
+
+
+def _options_position_snapshot(
+    *, symbol: str = _DEFAULT_OPTIONS_OCC_SYMBOL, qty: float = 5.0
+) -> PositionSnapshot:
+    """Build a PositionSnapshot shaped like Alpaca returns for an options position.
+
+    Alpaca's ``GET /v2/positions`` keys options positions by the bare OCC
+    contract symbol (no Polygon ``O:`` prefix), not the underlying ticker.
+    """
+    return PositionSnapshot(
+        symbol=symbol,
+        asset_class="us_option",
+        qty=qty,
+        avg_entry_price=price(2.50),
+        market_value=money(qty * 250.0),
+        cost_basis=money(qty * 250.0),
+        unrealized_pl=money(0.0),
+        unrealized_plpc=0.0,
+        current_price=price(2.50),
+        side="long",
+    )
+
+
+def test_alpaca_occ_symbol_strips_dot_from_share_class_ticker() -> None:
+    """ALP-637 — share-class tickers (BRK.B, BF.B) are encoded WITHOUT the
+    dot in the OCC convention; Alpaca's `get_all_positions` returns the
+    dot-stripped form, and `build_occ_symbol` in the order-submission path
+    likewise strips the dot. The reconciler's helper must mirror that —
+    otherwise the lookup misses for every share-class options position,
+    autocorrect fires, and the local row gets zeroed."""
+    from dataclasses import replace as dc_replace
+
+    from alphamind._kernel.ids import Symbol
+    from alphamind.execution.corporate_actions.reconciliation import _alpaca_occ_symbol
+    from alphamind.portfolio_state.records.positions import OptionsPositionDetails
+
+    details = make_open_options_position().details
+    assert isinstance(details, OptionsPositionDetails)
+    brk_b_details = dc_replace(details, underlying_ticker=Symbol("BRK.B"))
+
+    occ = _alpaca_occ_symbol(brk_b_details)
+    assert occ.startswith("BRKB"), f"expected dot-stripped root, got {occ!r}"
+    assert "." not in occ
+
+
 async def test_reconcile_emits_no_alert_when_state_matches(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
@@ -169,7 +230,8 @@ async def test_reconcile_emits_alert_for_options_contract_count_delta(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """A local options position with contract_count=5 vs Alpaca's qty=4 emits one
-    alert with domain='position', field_name='contract_count'."""
+    alert with domain='position', field_name='contract_count'. Alpaca keys the
+    snapshot by the bare OCC contract symbol (ALP-637)."""
     from alphamind.execution.corporate_actions.reconciliation import reconcile
 
     _, factory = db
@@ -183,27 +245,10 @@ async def test_reconcile_emits_alert_for_options_contract_count_delta(
     )
     await seed_cash_ledger(factory, current_cash_usd=100_000.0)
 
-    # Alpaca surfaces the OCC contract symbol; the reconciler matches against
-    # the local options-position underlying_ticker by routing through that
-    # field rather than the OCC symbol — but the comparator can also consume
-    # an OCC-symbol-keyed snapshot if the test plants the matching key.
-    options_snapshot = PositionSnapshot(
-        symbol="AAPL",  # match the underlying_ticker the reconciler reads
-        asset_class="us_option",
-        qty=4.0,
-        avg_entry_price=price(2.50),
-        market_value=money(4.0 * 250.0),
-        cost_basis=money(4.0 * 250.0),
-        unrealized_pl=money(0.0),
-        unrealized_plpc=0.0,
-        current_price=price(2.50),
-        side="long",
-    )
-
     ctx, handle = await open_handle(factory)
     count = await reconcile(
         handle,
-        alpaca_positions=(options_snapshot,),
+        alpaca_positions=(_options_position_snapshot(qty=4.0),),
         alpaca_account=_trade_account(cash=100_000.0),
     )
     await ctx.__aexit__(None, None, None)
@@ -469,16 +514,13 @@ async def test_reconcile_writes_back_equity_drift_and_emits_correction(
         assert cash_row.current_cash_usd == pytest.approx(100_000.0)
 
 
-async def test_reconcile_options_drift_alerts_but_does_not_autocorrect(
+async def test_reconcile_writes_back_options_drift_and_emits_correction(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """ALP-619 — options drift emits the existing RECONCILIATION_ALERT but
-    must NOT auto-correct contract_count. Alpaca returns options positions
-    under their OCC contract symbol (e.g. 'AAPL250620C00200000'), not the
-    underlying ticker — the existing matching-by-underlying comparator is
-    structurally broken for real broker snapshots, and writeback would zero
-    out every options contract_count on every invocation. Tracked as a
-    follow-up; for ALP-619 the write path is unconditionally skipped."""
+    """ALP-637 — options contract_count drift now mirrors the equity
+    auto-correct path: reconcile updates local contract_count to Alpaca's
+    qty AND emits a paired RECONCILIATION_CORRECTION row alongside the
+    existing RECONCILIATION_ALERT. Match is by bare OCC contract symbol."""
     from alphamind.execution.corporate_actions.reconciliation import reconcile
     from alphamind.portfolio_state.records.positions import OptionsPositionDetails
     from alphamind.state.tables.positions import PositionRow
@@ -497,40 +539,24 @@ async def test_reconcile_options_drift_alerts_but_does_not_autocorrect(
     )
     await seed_cash_ledger(factory, current_cash_usd=100_000.0)
 
-    # Test substrate plants AAPL (underlying) as the snapshot key so the
-    # existing alert comparator fires — production never sees this shape,
-    # but it exercises the alert path under test.
-    options_snapshot = PositionSnapshot(
-        symbol="AAPL",
-        asset_class="us_option",
-        qty=4.0,
-        avg_entry_price=price(2.50),
-        market_value=money(4.0 * 250.0),
-        cost_basis=money(4.0 * 250.0),
-        unrealized_pl=money(0.0),
-        unrealized_plpc=0.0,
-        current_price=price(2.50),
-        side="long",
-    )
-
     ctx, handle = await open_handle(factory)
     await reconcile(
         handle,
-        alpaca_positions=(options_snapshot,),
+        alpaca_positions=(_options_position_snapshot(qty=4.0),),
         alpaca_account=_trade_account(cash=100_000.0),
     )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
-        # Local contract_count is preserved — no auto-correct fired.
         pos_row = (
             await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
         ).scalar_one()
         pos = position_row_to_record(pos_row)
         assert isinstance(pos.details, OptionsPositionDetails)
-        assert pos.details.contract_count == pytest.approx(5.0)
+        # contract_count now matches Alpaca's authoritative value.
+        assert pos.details.contract_count == pytest.approx(4.0)
 
-        # Alert still fires for visibility.
+        # Alert continues to fire alongside the correction.
         alert_rows = (
             (
                 await sess.execute(
@@ -544,8 +570,11 @@ async def test_reconcile_options_drift_alerts_but_does_not_autocorrect(
         )
         assert len(alert_rows) == 1
         assert '"field_name":"contract_count"' in alert_rows[0].detail_json
+        # Alert carries the OCC contract symbol so operators can find the
+        # specific contract that drifted.
+        assert _DEFAULT_OPTIONS_OCC_SYMBOL in alert_rows[0].detail_json
 
-        # No correction row — options writeback is gated off in this PR.
+        # Paired correction row captures prior/applied scalars.
         correction_rows = (
             (
                 await sess.execute(
@@ -557,7 +586,182 @@ async def test_reconcile_options_drift_alerts_but_does_not_autocorrect(
             .scalars()
             .all()
         )
-        assert correction_rows == []
+        assert len(correction_rows) == 1
+        assert correction_rows[0].position_id == "pos-1"
+        assert '"domain":"position"' in correction_rows[0].detail_json
+        assert '"field_name":"contract_count"' in correction_rows[0].detail_json
+        assert '"prior_local_value":5.0' in correction_rows[0].detail_json
+        assert '"applied_alpaca_value":4.0' in correction_rows[0].detail_json
+
+
+async def test_reconcile_no_spurious_alert_for_correctly_synced_options(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-637 bug reproducer — a correctly-synced local options position
+    (contract_count == Alpaca qty, matched by bare OCC contract symbol)
+    must produce NO alert and NO correction. Pre-fix, matching-by-underlying
+    always missed and the spurious-alert path fired on every invocation."""
+    from alphamind.execution.corporate_actions.reconciliation import reconcile
+
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        make_open_options_position(contract_count=5.0),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    ctx, handle = await open_handle(factory)
+    count = await reconcile(
+        handle,
+        alpaca_positions=(_options_position_snapshot(qty=5.0),),
+        alpaca_account=_trade_account(cash=100_000.0),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    assert count == 0
+    async with factory() as sess:
+        rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(ActivityLogRow.event_group == "RECONCILIATION")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert rows == []
+
+
+async def test_reconcile_multiple_options_same_underlying_reconcile_independently(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-637 — two held options on the same underlying (different strikes
+    /expiries) must reconcile against their OWN OCC snapshots, not collide
+    on the shared underlying ticker. Drift on one contract auto-corrects in
+    isolation; the other contract stays untouched."""
+    from dataclasses import replace as dc_replace
+    from datetime import date
+
+    from alphamind.execution.corporate_actions.reconciliation import (
+        _alpaca_occ_symbol,
+        reconcile,
+    )
+    from alphamind.portfolio_state.records.positions import OptionsPositionDetails
+    from alphamind.state.tables.positions import PositionRow
+    from alphamind.state.tables.positions_codec import (
+        row_to_record as position_row_to_record,
+    )
+    from tests.state._fk_substrate import stub_thesis_row
+
+    _, factory = db
+    await seed_invocation_substrate(factory)
+
+    # Two contracts on AAPL: strike 150 / Sep 2026 (default) and strike 160
+    # / Dec 2026. Same underlying, different OCC symbols.
+    pos_a = make_open_options_position(
+        position_id="pos-1",
+        thesis_id="thesis-1",
+        bracket_id="brk-1",
+        strike=150.0,
+        contract_count=5.0,
+    )
+    pos_b_template = make_open_options_position(
+        position_id="pos-2",
+        thesis_id="thesis-2",
+        bracket_id=None,
+        contract_count=3.0,
+    )
+    assert isinstance(pos_b_template.details, OptionsPositionDetails)
+    pos_b_details = dc_replace(
+        pos_b_template.details,
+        strike_price=160.0,
+        expiration_date=date(2026, 12, 18),
+    )
+    pos_b = dc_replace(pos_b_template, details=pos_b_details)
+
+    await seed_position_cluster(
+        factory,
+        pos_a,
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    # Seed pos-2 standalone (its own position row + minimal thesis stub for
+    # the FK). No bracket/order — the reconciler reads the position table only.
+    from alphamind.state.tables.positions_codec import (
+        record_to_row as position_record_to_row,
+    )
+
+    async with factory() as sess:
+        sess.add(stub_thesis_row("thesis-2", "pos-2"))
+        await sess.flush()
+        sess.add(position_record_to_row(pos_b))
+        await sess.commit()
+
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    assert isinstance(pos_a.details, OptionsPositionDetails)
+    occ_a = _alpaca_occ_symbol(pos_a.details)
+    occ_b = _alpaca_occ_symbol(pos_b_details)
+    # Pre-condition: distinct OCC keys despite shared underlying.
+    assert occ_a != occ_b
+
+    ctx, handle = await open_handle(factory)
+    await reconcile(
+        handle,
+        alpaca_positions=(
+            # pos_a drifted from 5 → 4; pos_b correctly synced at 3.
+            _options_position_snapshot(symbol=occ_a, qty=4.0),
+            _options_position_snapshot(symbol=occ_b, qty=3.0),
+        ),
+        alpaca_account=_trade_account(cash=100_000.0),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        rows = {
+            r.position_id: position_row_to_record(r)
+            for r in (await sess.execute(select(PositionRow))).scalars().all()
+        }
+        pos_a_after = rows["pos-1"]
+        pos_b_after = rows["pos-2"]
+        assert isinstance(pos_a_after.details, OptionsPositionDetails)
+        assert isinstance(pos_b_after.details, OptionsPositionDetails)
+        # pos_a auto-corrected; pos_b untouched.
+        assert pos_a_after.details.contract_count == pytest.approx(4.0)
+        assert pos_b_after.details.contract_count == pytest.approx(3.0)
+
+        alerts = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_ALERT.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        corrections = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_CORRECTION.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # Exactly one alert + one correction, both tied to pos-1.
+        assert len(alerts) == 1
+        assert len(corrections) == 1
+        assert alerts[0].position_id == "pos-1"
+        assert corrections[0].position_id == "pos-1"
 
 
 async def test_reconcile_writes_back_cash_drift_and_emits_correction(
