@@ -291,6 +291,11 @@ class BatchValidationResult(BaseModel):
     credited by prior single-call or batch calls in the invocation, not the
     proposals threaded inside this batch (those are reflected by each
     per-proposal entry's own ``cumulative_impact_note``).
+
+    Per-proposal ``proposal_index_in_invocation`` values reflect the
+    projection's threaded state inside the batch, not the post-batch cell
+    state; on aggregate FAIL or UNAVAILABLE the cell does not advance and
+    these indices are not committed.
     """
 
     model_config = ConfigDict(frozen=True)
