@@ -40,6 +40,8 @@ Branch protection is not currently enforced server-side (the repo is on GitHub F
 
 Squash-merge every PR (see "Git / GitHub Instructions" below). The CI workflow uses `paths-ignore` for `**.md`, `docs/**`, `.archive/**`, `.claude/**`, and `audit-*.html` — pure docs/tooling PRs skip the test run and can merge as soon as you open them. Any change touching `src/`, `tests/`, `config/`, `prompts/`, `scripts/`, `pyproject.toml`, `uv.lock`, `.importlinter`, `alembic.ini`, or `.github/workflows/**` triggers the full CI run.
 
+**`paths-ignore` on `pull_request` evaluates the PR's full diff, not the latest commit's diff.** Pushing a docs-only follow-up commit to a PR that already contains code changes will trigger a fresh CI run, because the PR's overall diff still has non-ignored paths. The only way to "skip CI" for a follow-up is to open a separate docs-only PR. This matters because `concurrency.cancel-in-progress: true` is set on the workflow — a fresh trigger cancels any in-flight run, so an unnecessary docs-only push to a busy PR throws away the in-flight test run's progress. If you must add a docs commit to a PR mid-CI, accept that the in-flight run will be cancelled and a fresh one will start.
+
 ### Watching CI on a PR
 
 **Do NOT invoke `gh pr checks <PR> --watch` immediately after `git push`.** GitHub takes 3–8 seconds to register the new workflow run as a check on the PR, and `--watch` interprets the empty pre-registration window as "no checks → exit." The watch exits with status 0 reporting "no checks reported on the '<branch>' branch" and the iterate-until-green loop falsely believes CI is done.
