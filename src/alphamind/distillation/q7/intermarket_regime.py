@@ -25,6 +25,7 @@ from alphamind.distillation.q7.intermarket_regime_compute import (
     VIX_SERIES,
     VIX_SOURCE,
     XLE_TICKER,
+    IntermarketRegimeInputs,
     compute_intermarket_regime_pure,
 )
 
@@ -61,6 +62,7 @@ __all__ = [
     "VIX_SERIES",
     "VIX_SOURCE",
     "XLE_TICKER",
+    "IntermarketRegimeInputs",
     "compute_intermarket_regime",
     "compute_intermarket_regime_pure",
 ]
