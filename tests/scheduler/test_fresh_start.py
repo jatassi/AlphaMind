@@ -162,6 +162,11 @@ class TestBootstrapSingletonsFromAlpaca:
             cash_row = await verify_session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
             drawdown_row = await verify_session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)
 
+        # The canonical singleton-codec format (``datetime_to_iso_z``) emits
+        # the ``Z``-suffixed ISO form; the bootstrap matches so bootstrap-
+        # written rows are byte-equal to canonical-codec writes.
+        expected_iso = "2026-05-25T14:30:00+00:00".replace("+00:00", "Z")
+
         assert cash_row is not None
         assert cash_row.current_cash_usd == Decimal("100000.0")
         assert cash_row.settled_cash_usd == Decimal("100000.0")
@@ -169,7 +174,7 @@ class TestBootstrapSingletonsFromAlpaca:
         assert cash_row.reserved_capital_usd == Decimal(0)
         assert cash_row.margin_held_usd == Decimal(0)
         assert cash_row.unsettled_proceeds_json == "[]"
-        assert cash_row.last_updated_at == _NOW.isoformat()
+        assert cash_row.last_updated_at == expected_iso
 
         assert drawdown_row is not None
         assert drawdown_row.equity_high_water_mark_usd == 100_000.0
@@ -177,6 +182,9 @@ class TestBootstrapSingletonsFromAlpaca:
         assert drawdown_row.drawdown_duration_hours == 0.0
         assert drawdown_row.lifetime_max_drawdown_pct == 0.0
         assert drawdown_row.drawdown_by_source_json == "{}"
+        # Both singletons share the same canonical timestamp form (no
+        # cross-singleton format drift).
+        assert drawdown_row.last_updated_at == expected_iso
 
     async def test_rejects_when_positions_present(
         self,
@@ -245,6 +253,53 @@ class TestBootstrapSingletonsFromAlpaca:
             # And drawdown_state must remain absent — the seeded fixture
             # only inserted the cash row.
             assert (await verify_session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)) is None
+
+    async def test_rejects_when_drawdown_state_already_initialized(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """An asymmetric DB (drawdown_state populated, cash_ledger empty) still
+        hard-fails the precondition rather than hitting an IntegrityError at
+        commit. The two singletons share the same ``id='current'`` PK; a
+        prior bootstrap or hand-seed that populated one but not the other
+        must surface as a friendly ``FreshStartPreconditionError`` here, not
+        as a SQLAlchemy traceback from the operator's perspective.
+        """
+        async with async_factory() as seed_session:
+            seed_session.add(
+                DrawdownStateRow(
+                    id=DRAWDOWN_STATE_SINGLETON_ID,
+                    equity_high_water_mark_usd=75_000.0,
+                    current_drawdown_pct=0.0,
+                    drawdown_duration_hours=0.0,
+                    lifetime_max_drawdown_pct=0.0,
+                    drawdown_by_source_json="{}",
+                    last_updated_at=_NOW.isoformat(),
+                )
+            )
+            await seed_session.commit()
+
+        async with async_factory() as session:
+            with pytest.raises(FreshStartPreconditionError) as exc_info:
+                await bootstrap_singletons_from_alpaca(
+                    session=session,
+                    account=_make_account_snapshot(),
+                    positions=(),
+                    now=_NOW,
+                )
+
+        message = str(exc_info.value)
+        assert "drawdown_state already initialized" in message
+        assert "75000" in message
+
+        async with async_factory() as verify_session:
+            # The cash_ledger row must not have been inserted (precondition
+            # bails before the writes).
+            assert (await verify_session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)) is None
+            # The seeded HWM must be unchanged.
+            existing = await verify_session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)
+            assert existing is not None
+            assert existing.equity_high_water_mark_usd == 75_000.0
 
     async def test_uses_full_decimal_precision_from_alpaca_cash(
         self,

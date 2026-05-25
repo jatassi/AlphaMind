@@ -139,11 +139,18 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     # --fresh-start has two distinct shapes:
     #   • with --debug-e2e: swap to the FRESH_START_PORTFOLIO fixture (ALP-618).
     #   • without --debug-e2e: production cold-start bootstrap from Alpaca
-    #     (ALP-620). The bootstrap is a one-shot operation by design — daemon
-    #     mode is rejected so the operator runs the bootstrap once, then starts
-    #     the daemon normally.
-    if args.subcommand == "run" and args.fresh_start and not args.debug_e2e and args.once is None:
-        parser.error("--fresh-start (production bootstrap) requires --once")
+    #     (ALP-620). The bootstrap is a one-shot operation — daemon mode is
+    #     rejected so the operator runs the bootstrap once, then starts the
+    #     daemon normally. --mode live is blocked at argparse parallel to the
+    #     --debug-e2e live guard above: bootstrapping the local DB against the
+    #     LIVE Alpaca account on a typo is a one-keystroke foot-gun, so the
+    #     paper-only constraint is enforced at parse time. The runbook
+    #     documents only the paper path.
+    if args.subcommand == "run" and args.fresh_start and not args.debug_e2e:
+        if args.once is None:
+            parser.error("--fresh-start (production bootstrap) requires --once")
+        if args.mode == "live":
+            parser.error("--fresh-start (production bootstrap) is incompatible with --mode live")
     return args
 
 
@@ -427,10 +434,23 @@ def main(argv: Sequence[str] | None = None) -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised via ``python -m``
+    # ALP-620 — the precondition class is imported only at the entry-point
+    # handler so the typecheck branch below names the public exception
+    # without polluting the module-level surface used elsewhere.
+    from alphamind.scheduler.fresh_start import FreshStartPreconditionError
+
     try:
         main(sys.argv[1:])
     except SystemExit:
         raise
+    except FreshStartPreconditionError as exc:
+        # The precondition message is operator-actionable on its own; surface
+        # it verbatim on stderr without the traceback noise the BaseException
+        # frame below would print. Distinct exit code (2) lets shell wrappers
+        # distinguish "operator made a misconfiguration call" from "scheduler
+        # blew up" — the latter is the NSSM-restart path.
+        print(f"--fresh-start: {exc}", file=sys.stderr)
+        sys.exit(2)
     except BaseException:
         # Outermost supervisor per runtime §G1: log + exit 1 so NSSM's restart
         # policy fires. ``BaseException`` (vs ``Exception``) catches

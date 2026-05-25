@@ -28,12 +28,22 @@ Hard-fail preconditions:
   invocation, and silently overwriting it would clobber the live cash
   state. The reconciliation auto-correct path handles drift on populated
   rows.
+* ``drawdown_state`` already has a row — same logic; an existing HWM row
+  must not be silently reset. The two singletons share the same
+  ``id='current'`` PK, so the asymmetric-state branch (one populated, the
+  other empty) is checked explicitly rather than caught at commit time as
+  an opaque ``IntegrityError``.
 
 The build helpers mirror :mod:`alphamind.scheduler.debug_e2e.seed`'s
-``_build_cash_ledger_row`` / ``_build_drawdown_state_row` one-for-one; the
-duplication is required because the import-linter contract
+``_build_cash_ledger_row`` / ``_build_drawdown_state_row`` in shape and
+canonical format (both use the ``Z``-suffixed ISO 8601 form the
+singleton codecs emit via :func:`datetime_to_iso_z`); the duplication is
+required because the import-linter contract
 ``debug-e2e-forbidden-in-production`` blocks production scheduler code
-from reaching into the debug-e2e package.
+from reaching into the debug-e2e package. The Decimal-typed ``cash``
+parameter is the deliberate upgrade over seed.py's ``float`` — Alpaca's
+``TradeAccountSnapshot.cash`` is already a :class:`Money` Decimal, so
+threading the Decimal end-to-end avoids the float boundary entirely.
 """
 
 from __future__ import annotations
@@ -59,6 +69,7 @@ from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
 )
+from alphamind.state.tables._singleton_codec import datetime_to_iso_z
 from alphamind.state.tables.cash_ledger import (
     CASH_LEDGER_SINGLETON_ID,
     CashLedgerRow,
@@ -82,9 +93,12 @@ _AccountQueriesFactory = Callable[[VenueConfig, ExecutionMode], AccountStateQuer
 class FreshStartPreconditionError(RuntimeError):
     """Raised when ``--fresh-start`` preconditions are not met.
 
-    The CLI surfaces the message verbatim to the operator (no traceback
-    swallow); the outermost ``BaseException`` handler in ``__main__``
-    catches it but only after the message has been logged.
+    The ``__main__`` entry handler catches this exception specifically
+    (above the generic ``BaseException`` frame), prints the message
+    verbatim to stderr with a ``--fresh-start:`` prefix, and exits with
+    code 2. Operators see a clean one-liner, not a stack trace; shell
+    wrappers can distinguish precondition failures (code 2) from
+    scheduler crashes (code 1, the NSSM-restart path).
     """
 
 
@@ -127,7 +141,7 @@ def _build_cash_ledger_row(cash: Decimal, *, now: datetime) -> CashLedgerRow:
         available_buying_power_usd=cash,
         margin_held_usd=zero,
         unsettled_proceeds_json="[]",
-        last_updated_at=now.isoformat(),
+        last_updated_at=datetime_to_iso_z(now, field_name="last_updated_at"),
     )
 
 
@@ -143,6 +157,11 @@ def _build_drawdown_state_row(cash: Decimal, *, now: datetime) -> DrawdownStateR
     computation reads a sane baseline (zero drawdown from a zero-position
     starting equity).
     """
+    # ``equity_high_water_mark_usd`` is a ``Float`` column (drawdown_state.py:38)
+    # — the float() cast accepts the schema's existing precision choice and
+    # mirrors debug-e2e seed.py. Sub-cent Decimal fragments lose ~1e-12 in the
+    # cast; the breach evaluator's threshold buckets are percent-scale so the
+    # artifact is benign.
     return DrawdownStateRow(
         id=DRAWDOWN_STATE_SINGLETON_ID,
         equity_high_water_mark_usd=float(cash),
@@ -150,7 +169,7 @@ def _build_drawdown_state_row(cash: Decimal, *, now: datetime) -> DrawdownStateR
         drawdown_duration_hours=0.0,
         lifetime_max_drawdown_pct=0.0,
         drawdown_by_source_json="{}",
-        last_updated_at=now.isoformat(),
+        last_updated_at=datetime_to_iso_z(now, field_name="last_updated_at"),
     )
 
 
@@ -164,9 +183,10 @@ async def bootstrap_singletons_from_alpaca(
     """Insert ``cash_ledger`` + ``drawdown_state`` from an Alpaca snapshot.
 
     Raises :class:`FreshStartPreconditionError` if Alpaca reports any
-    positions or if ``cash_ledger`` already has a row. Does NOT commit —
-    the caller owns the transaction so the bootstrap and any preceding /
-    following writes are atomic.
+    positions, if ``cash_ledger`` already has a row, or if
+    ``drawdown_state`` already has a row. Does NOT commit — the caller
+    owns the transaction so the bootstrap and any preceding / following
+    writes are atomic.
     """
     if positions:
         symbols = ", ".join(sorted(pos.symbol for pos in positions))
@@ -187,6 +207,23 @@ async def bootstrap_singletons_from_alpaca(
             "flag is for first-run only; a populated cash_ledger row implies "
             "a prior invocation. Use the reconciliation auto-correct path "
             "(ALP-619) to reconcile drift instead."
+        )
+        raise FreshStartPreconditionError(msg)
+
+    # Symmetric guard on drawdown_state — both singletons share the same
+    # ``id='current'`` PK; a populated drawdown_state row from a partial
+    # prior bootstrap or hand-seed would surface as a SQLAlchemy
+    # IntegrityError at commit instead of the actionable precondition
+    # error. The two singletons are written atomically below; this check
+    # closes the asymmetry.
+    existing_drawdown_row = await session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)
+    if existing_drawdown_row is not None:
+        msg = (
+            "--fresh-start refuses to run: drawdown_state already initialized "
+            f"(equity_high_water_mark_usd="
+            f"{existing_drawdown_row.equity_high_water_mark_usd}). The flag "
+            "is for first-run only; an existing HWM row implies a prior "
+            "invocation or an out-of-band hand-seed."
         )
         raise FreshStartPreconditionError(msg)
 

@@ -259,12 +259,50 @@ normally (no `--fresh-start`).
 
 - Alpaca reports any open positions. The error names the offending
   symbol(s). Reset the Alpaca account first, or — if the positions are
-  intentional — populate `cash_ledger` by hand and rely on ALP-619's
-  reconciliation auto-correct path to take it from there.
+  intentional — populate both singletons by hand (see the recovery
+  section below) and rely on ALP-619's reconciliation auto-correct path
+  to take it from there.
 - `cash_ledger` already has a row. The error includes the existing
   `current_cash_usd`. ALP-619 handles drift on existing rows; a
   re-bootstrap is never the correct path once the singleton is
   populated.
+- `drawdown_state` already has a row. The error includes the existing
+  `equity_high_water_mark_usd`. Same recovery as above.
+
+`FreshStartPreconditionError` exits the CLI with code 2 (distinct from
+the generic scheduler-error code 1) and prints the message verbatim to
+stderr — no traceback. Operators can match on the prefix
+`--fresh-start:` to filter precondition failures from scheduler crashes.
+
+**Mode restriction.** `--fresh-start` (production bootstrap) is blocked
+against `--mode live` at argparse — only `--mode paper` (the default)
+is accepted. Operators who genuinely need a live-mode bootstrap must
+edit the guard; the runbook does not document that path.
+
+**Recovery if the first invocation fails.** The bootstrap commits the
+two singleton rows in their own transaction *before* the first
+invocation runs. If the invocation itself fails (Phase 1 error, missing
+collector data, transient external dependency), the singletons remain
+committed and a retry of `--fresh-start` will hard-fail. Recovery
+options, in order of preference:
+
+1. **Re-run without `--fresh-start`.** The singletons are already
+   populated correctly; the bootstrap step is no longer needed. Drop
+   the flag:
+   ```bash
+   uv run python -m alphamind.scheduler run \
+       --once pre_open \
+       --reason "retry after bootstrap"
+   ```
+2. **Wipe the singletons and re-bootstrap** (only if the persisted
+   values are wrong, e.g., the Alpaca fetch returned a transient
+   zero-cash mid-reset). Connect to the prod DB on the prod machine
+   (the dev Mac SMB mount is read-only — see operator memory) and:
+   ```sql
+   DELETE FROM drawdown_state;
+   DELETE FROM cash_ledger;
+   ```
+   Then re-run `--fresh-start --once pre_open --reason ...`.
 
 **Verification.** After the command returns, confirm against the DB:
 

@@ -183,6 +183,26 @@ class TestParseArgsDebugE2E:
         assert args.debug_e2e is False
         assert args.once == "pre_open"
 
+    def test_fresh_start_without_debug_e2e_rejects_mode_live(self) -> None:
+        """``--fresh-start --mode live`` is blocked at argparse parallel to
+        the ``--debug-e2e --mode live`` guard. Bootstrapping the local DB
+        against the LIVE Alpaca account on a typo is a one-keystroke
+        foot-gun; the runbook documents only the paper path.
+        """
+        with pytest.raises(SystemExit):
+            _parse_args(
+                [
+                    "run",
+                    "--fresh-start",
+                    "--once",
+                    "pre_open",
+                    "--reason",
+                    "first-run bootstrap",
+                    "--mode",
+                    "live",
+                ]
+            )
+
 
 # ---------------------------------------------------------------------------
 # Execution shape — _run_debug_e2e (acceptance criterion 4)
