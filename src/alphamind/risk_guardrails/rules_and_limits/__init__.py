@@ -3,7 +3,6 @@
 from alphamind.config.control_handlers.profile_switch import (
     ProfileNotFoundError,
     ProfileSwitchOutcome,
-    build_profile_switch_activity_log_entry,
     switch_active_profile,
 )
 from alphamind.risk_guardrails.rules_and_limits.min_position_size import (
@@ -39,7 +38,6 @@ __all__ = [
     "ReviewTriggerCause",
     "ReviewTriggerSignal",
     "RuleRegistry",
-    "build_profile_switch_activity_log_entry",
     "build_rule_registry",
     "check_min_position_size",
     "evaluate_profile_boundary",

@@ -196,7 +196,6 @@ Triage convention: a finding is presumed **tracked** if the comment cites a Line
 - **src/alphamind/config/assets_views.py:90** — `future schema changes surface as a visible warning`
 - **src/alphamind/config/tools.py:21** — `Future stories may extend the set`
 - **src/alphamind/config/validation/cross_reference.py:321** — `so a future bypass of parse-time validation still catches the divergence`
-- **src/alphamind/config/control_handlers/profile_switch.py:103** — `forthcoming under the execution layer` — Activity-log persistence
 
 ### src/scheduler + _kernel
 

@@ -17,7 +17,6 @@ from __future__ import annotations
 import io
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from ruamel.yaml import YAML
 
@@ -93,25 +92,6 @@ def switch_active_profile(*, new_profile: Profile, config_dir: Path) -> ProfileS
         main_yaml_path=main_yaml_path,
         is_no_op=False,
     )
-
-
-def build_profile_switch_activity_log_entry(
-    outcome: ProfileSwitchOutcome, *, source: str = "operator_console"
-) -> dict[str, Any]:
-    """Return the activity-log entry payload for a profile-switch action.
-
-    The persistence layer (forthcoming under the execution layer) consumes
-    this dict to write a row into the ``activity_log`` table. Co-shipping the
-    factory with the handler makes the contract obvious — the entry's shape
-    is determined by what the handler produces, not by the table schema.
-    """
-    return {
-        "event_type": "profile_switched",
-        "source": source,
-        "previous_profile": outcome.previous_profile.value,
-        "new_profile": outcome.new_profile.value,
-        "is_no_op": outcome.is_no_op,
-    }
 
 
 def _rewrite_active_profile(main_yaml_path: Path, new_profile: Profile) -> None:
