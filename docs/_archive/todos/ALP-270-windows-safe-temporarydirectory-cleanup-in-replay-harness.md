@@ -1,0 +1,5 @@
+`tempfile.TemporaryDirectory(prefix="alphamind_replay_")` at `src/alphamind/distillation/replay_harness/engine.py:533` walks the tree calling `os.unlink` on `isolated.sqlite` on exit. On POSIX an unlink of an open file is fine; on Windows any lingering SQLite handle (connection-pool finalizer, child-process inheritance) holds a mandatory share-lock, causing `PermissionError [WinError 32]`.
+
+**Impact:** 24 tests across `tests/distillation/replay_harness/{test_engine,test_cli,test_e2e}.py` fail on the Windows production server — the entire replay-harness e2e surface.
+
+**Fix:** Replace `TemporaryDirectory` with manual `mkdtemp` + `shutil.rmtree(..., onerror=_retry_on_winerror_32)` (or equivalent retry loop). Test-only friction in practice (harness invoked from dev), but should land before operator wants to drive replays from Windows.
