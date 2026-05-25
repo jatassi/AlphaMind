@@ -224,12 +224,17 @@ class PortfolioStateSnapshot:
 
     ``position_max_size_pct`` is the actual maximum position size as a percent
     of portfolio value across ``open_positions + pending_positions`` (ALP-624)
-    — NOT the rule's limit value. The rule's limit lives in
-    ``LibraryConfig.effective_limits`` keyed by the rule's
-    ``effective_limit_key`` (``"position_max_size_pct"``); the projection
-    engine reads ``state.position_max_size_pct`` as the current value and the
-    limit from the config to derive the breach status. ``0.0`` when the book
-    holds no positions.
+    — NOT the rule's limit value. The basis is **underlying notional
+    exposure** (``notional_exposure_usd``), matching the rule's projection
+    math (which operates on proposal/position notional, not gross market
+    value); the two differ by orders of magnitude for options/strategies
+    because their ``current_market_value_usd`` is premium while
+    ``notional_exposure_usd`` is the underlying exposure (ALP-621). The
+    rule's limit lives in ``LibraryConfig.effective_limits`` keyed by the
+    rule's ``effective_limit_key`` (``"position_max_size_pct"``); the
+    projection engine reads ``state.position_max_size_pct`` as the current
+    value and the limit from the config to derive the breach status.
+    ``0.0`` when the book holds no positions.
 
     ``single_short_max_position_id`` carries the ``position_id`` of the short
     whose ``position_weight_pct`` equals ``single_short_max_pct``; the

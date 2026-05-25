@@ -648,8 +648,8 @@ def test_position_max_size_pct_includes_pending_positions() -> None:
 
 
 def test_position_max_size_pct_takes_max_of_short_and_long_by_abs() -> None:
-    """AC (ALP-624): the max is over |current_market_value| so a SHORT with
-    larger absolute notional outranks a smaller LONG."""
+    """AC (ALP-624 / ALP-621): the max is over |notional_exposure| so a SHORT
+    with larger absolute notional outranks a smaller LONG."""
     aapl_long = _make_equity_position_view(
         "POS-AAPL",
         "AAPL",
@@ -677,7 +677,7 @@ def test_position_max_size_pct_takes_max_of_short_and_long_by_abs() -> None:
     snapshot = _make_pydantic_snapshot(open_positions=[aapl_long, xom_short])
     lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
     # portfolio_value (per fixture convention) = 5_000 + 12_000 + 80_000 = 97_000
-    # max |market_value| / portfolio_value * 100 = 12_000 / 97_000 * 100
+    # max |notional| / portfolio_value * 100 = 12_000 / 97_000 * 100
     expected = 12_000.0 / 97_000.0 * 100.0
     assert lib.position_max_size_pct == pytest.approx(expected)
 
@@ -720,6 +720,48 @@ def test_position_max_size_pct_missing_rule_still_raises() -> None:
     snapshot = _make_pydantic_snapshot(active_risk_parameters=params)
     with pytest.raises(ValueError, match="position_max_size_pct"):
         to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+
+
+def test_position_max_size_pct_uses_notional_not_market_value_for_options() -> None:
+    """AC (ALP-621 Finding 2): an OPTIONS position's
+    ``current_market_value_usd`` is premium (e.g., $1k), while
+    ``notional_exposure_usd`` is underlying exposure (e.g., $50k). The
+    rule's projection math operates on proposal/position notional, so the
+    snapshot field must use the same basis or the rule's actual and projected
+    values disagree by the option leverage ratio.
+
+    Scenario: a single options position with $1k market value (premium) but
+    $50k notional exposure on a $100k book → ``position_max_size_pct`` must
+    be 50.0 (not 1.0).
+    """
+    opt_pos = _make_options_position_view(
+        "POS-OPT-LEVERED",
+        "NVDA",
+        Direction.LONG,
+        contract_count=5.0,
+        market_value_usd=1_000.0,  # premium paid
+        notional_usd=50_000.0,  # underlying exposure
+        delta_adjusted_usd=40_000.0,
+        position_weight_pct=1.0,
+    )
+    cash_ledger = CashLedger(
+        current_cash_usd=99_000.0,
+        settled_cash_usd=99_000.0,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=99_000.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=99.0,
+        true_deployable_capital_usd=99_000.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
+    )
+    snapshot = _make_pydantic_snapshot(open_positions=[opt_pos], cash_ledger=cash_ledger)
+    lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
+    # portfolio_value = 1_000 (mv) + 99_000 (cash) = 100_000
+    # notional 50_000 / pv 100_000 * 100 = 50.0 — NOT 1_000 / 100_000 * 100 = 1.0
+    assert lib.position_max_size_pct == pytest.approx(50.0)
 
 
 # ---------------------------------------------------------------------------

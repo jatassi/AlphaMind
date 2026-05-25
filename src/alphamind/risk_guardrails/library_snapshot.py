@@ -161,18 +161,24 @@ def _compute_position_max_size_pct(
 ) -> float:
     """Return the largest position size (% of portfolio value) across all
     positions, or ``0.0`` when the book is empty or portfolio value is zero
-    (ALP-624).
+    (ALP-624 / ALP-621).
 
-    Uses gross market value — the explicit formula in the story. Delta-adjusted
-    notional for options / strategies is an accepted approximation since the
-    assembler doesn't pre-aggregate a per-position "max size" metric in
-    delta-adjusted units. Mirrors ``compute_position_weight_pct``'s abs() and
+    Basis is **underlying notional exposure** (``notional_exposure_usd``), not
+    gross market value. For options/strategy positions the two differ by
+    orders of magnitude — an options position's ``current_market_value_usd``
+    is premium paid (e.g., $1k for 5 long calls), while
+    ``notional_exposure_usd`` is the underlying exposure (e.g., $50k for the
+    same 5 calls). The rule's projection math operates on proposal/position
+    notional (see ``_position_max_size_project_after_batch``), so the
+    read-current must use the same basis or the actual current and
+    projected-after values disagree by the option leverage ratio (ALP-621
+    Finding 2). Mirrors ``compute_position_weight_pct``'s abs() and
     zero-portfolio guards.
     """
     if portfolio_value_usd <= 0.0 or not all_positions:
         return 0.0
     return max(
-        abs(float(p.current_market_value_usd)) / portfolio_value_usd * 100.0 for p in all_positions
+        abs(float(p.notional_exposure_usd)) / portfolio_value_usd * 100.0 for p in all_positions
     )
 
 
