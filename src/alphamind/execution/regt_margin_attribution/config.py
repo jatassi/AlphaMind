@@ -44,9 +44,9 @@ class ShockParameters(BaseModel):
     Lookup is per-symbol-overrides first, falling through to
     ``unmapped_default``. All percentage values are in ``(0.0, 1.0)`` —
     e.g., ``0.15`` for ±15%. Per-symbol override keys are normalised to
-    upper-case on construction. ``extra="forbid"`` so a yaml that still
-    carries asset-class taxonomy keys (e.g., ``high_cap_equity``) fails
-    loudly at load time rather than silently no-op'ing.
+    upper-case on construction. ``extra="forbid"`` so operator-config
+    drift (retired asset-class taxonomy keys, typos, future-renamed
+    fields) fails loudly at load time rather than silently no-op'ing.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

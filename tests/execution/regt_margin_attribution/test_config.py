@@ -147,22 +147,31 @@ def test_config_rejects_shock_outside_unit_interval(tmp_path: pathlib.Path) -> N
         load_regt_margin_attribution_config(yaml_file)
 
 
-def test_config_rejects_stale_asset_class_taxonomy_keys(tmp_path: pathlib.Path) -> None:
-    """Yaml carrying the retired ``high_cap_equity`` / ``small_cap_equity`` keys fails to load.
+@pytest.mark.parametrize("retired_key", ["high_cap_equity", "small_cap_equity"])
+def test_config_rejects_stale_asset_class_taxonomy_keys(
+    tmp_path: pathlib.Path,
+    retired_key: str,
+) -> None:
+    """Yaml carrying either retired asset-class taxonomy key fails to load.
 
-    Per ALP-645: those fields were removed from ``ShockParameters`` because the
-    v1 shock lookup never consulted them. ``extra="forbid"`` on the model
-    surfaces operator config drift loudly at load time rather than silently
-    no-op'ing.
+    Per ALP-645: ``high_cap_equity`` and ``small_cap_equity`` were removed
+    from ``ShockParameters`` because the v1 shock lookup never consulted
+    them. ``extra="forbid"`` on the model raises
+    :class:`pydantic.ValidationError` at load time rather than silently
+    swallowing the operator's tuning. Parametrised over both keys so a
+    future migration that swaps the generic-extras guard for an explicit
+    retired-key enumeration can't pass with only one key covered.
     """
+    from pydantic import ValidationError
+
     from alphamind.execution.regt_margin_attribution import load_regt_margin_attribution_config
 
     payload = _minimal_yaml_payload()
-    payload["shock_parameters"]["high_cap_equity"] = 0.15
+    payload["shock_parameters"][retired_key] = 0.15
     yaml_file = tmp_path / "regt.yaml"
     yaml_file.write_text(yaml.safe_dump(payload), encoding="utf-8")
 
-    with pytest.raises((ValueError, TypeError)):
+    with pytest.raises(ValidationError):
         load_regt_margin_attribution_config(yaml_file)
 
 
