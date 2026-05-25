@@ -335,19 +335,41 @@ class IntermarketRegimeInputs:
     aligned on the date intersection performed by the IO shell (ALP-629).
     A single ticker like SPY appears in two pairs (``spy_tlt`` and
     ``vix_spy``) with different intersections because TLT (NYSE) and VIX
-    (FRED) share different overlap sets with the SPY calendar — that is
-    why each block carries its own pair rather than reading from a shared
-    ``closes_by_ticker`` mapping.
+    (FRED) share different overlap sets with the SPY calendar. The SPY
+    sequence in ``spy_tlt`` is NOT interchangeable with the one in
+    ``vix_spy`` — collapsing them to a single shared series would
+    re-introduce the ALP-629 bug on whichever pair lost its dedicated
+    intersection.
+
+    ``__post_init__`` enforces equal-length left/right pairs so a future
+    direct caller that bypasses :func:`_inner_join_on_date` fails fast at
+    construction instead of silently regressing to index-positional
+    pairing inside the per-block compute helpers.
     """
 
     spy_tlt: tuple[Sequence[float], Sequence[float]]
-    """``(spy_closes, tlt_closes)`` aligned on common dates."""
+    """``(spy_closes, tlt_closes)`` aligned on the SPY-TLT date intersection."""
     gld_real_yields: tuple[Sequence[float], Sequence[float]]
-    """``(gld_closes, real_yield_values)`` aligned on common dates."""
+    """``(gld_closes, real_yield_values)`` aligned on the GLD-DFII10 intersection."""
     oil_xle_beta: tuple[Sequence[float], Sequence[float]]
-    """``(xle_closes, oil_values)`` aligned on common dates."""
+    """``(xle_closes, oil_values)`` aligned on the XLE-DCOILWTICO intersection."""
     vix_spy: tuple[Sequence[float], Sequence[float]]
-    """``(spy_closes, vix_values)`` aligned on common dates."""
+    """``(spy_closes, vix_values)`` aligned on the SPY-VIXCLS intersection.
+
+    The ``spy_closes`` here is distinct from the one in :attr:`spy_tlt`;
+    its dates intersect with VIX, not TLT.
+    """
+
+    def __post_init__(self) -> None:
+        for field_name in ("spy_tlt", "gld_real_yields", "oil_xle_beta", "vix_spy"):
+            left, right = getattr(self, field_name)
+            if len(left) != len(right):
+                raise ValueError(
+                    f"IntermarketRegimeInputs.{field_name} legs differ in length "
+                    f"({len(left)} vs {len(right)}); the IO shell must inner-join "
+                    "the two series on common calendar dates before constructing "
+                    "this dataclass (ALP-629)."
+                )
 
 
 def compute_intermarket_regime_pure(

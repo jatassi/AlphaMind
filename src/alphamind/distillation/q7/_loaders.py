@@ -144,8 +144,10 @@ def _select_close_series(
 ) -> list[tuple[date, float]]:
     """Return ascending ``(date, adj_close)`` pairs for ``ticker`` in the window.
 
-    ``OhlcvBars.period_start`` is stored as a UTC ISO datetime string with
-    a trailing ``Z``; only the calendar date is loadbearing for pairing
+    ``OhlcvBars.period_start`` is stored as a UTC ISO datetime string; the
+    Polygon collector writes ``+00:00`` form, the FRED-day-bar paths write
+    the trailing ``Z`` form. :func:`datetime.fromisoformat` handles both
+    on Python 3.11+. Only the calendar date is loadbearing for pairing
     with macro series, so the parsed datetime is reduced to its date.
     """
     stmt = (
@@ -159,8 +161,7 @@ def _select_close_series(
         .order_by(OhlcvBars.period_start)
     )
     return [
-        (datetime.fromisoformat(str(ts)).date(), float(v))
-        for ts, v in session.execute(stmt).all()
+        (datetime.fromisoformat(str(ts)).date(), float(v)) for ts, v in session.execute(stmt).all()
     ]
 
 

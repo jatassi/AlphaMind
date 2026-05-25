@@ -571,3 +571,108 @@ class TestIntermarketDateAlignment:
         expected_n = len(intersected) - 1  # returns/deltas on the joined values
         assert vix_block.bootstrap_reason is not None
         assert f": {expected_n} < " in vix_block.bootstrap_reason, vix_block.bootstrap_reason
+
+    def test_oil_xle_beta_uses_date_joined_intersection(self, session: Session) -> None:
+        # Parallel coverage to the vix_spy case for the other motivating
+        # symptom (oil/XLE long β collapsing to ≈ 0.04 in production). XLE
+        # publishes a full NYSE-calendar window; DCOILWTICO is missing 3
+        # interior FRED-holiday days plus the latest day (FRED lag).
+        as_of = datetime(2026, 4, 30, tzinfo=UTC)
+        window_days = 60
+        start_day = as_of - timedelta(days=window_days)
+
+        # Construct XLE moves and oil moves that share sign on the same day:
+        # date-joined regression should recover a positive β; the previous
+        # positional slice scrambles it.
+        xle_step = [(0.01 if i % 2 == 0 else -0.01) for i in range(window_days)]
+        oil_step = [(0.5 if i % 2 == 0 else -0.5) for i in range(window_days)]
+        xle_closes = [80.0]
+        oil_values_full = [70.0]
+        for x_step, o_step in zip(xle_step, oil_step, strict=True):
+            xle_closes.append(xle_closes[-1] * (1.0 + x_step))
+            oil_values_full.append(oil_values_full[-1] * (1.0 + o_step / 100.0))
+
+        _seed_path(session, ticker=Symbol("XLE"), closes=xle_closes, start_day=start_day)
+        missing_offsets = {5, 10, 15, window_days}
+        oil_values_by_offset = {
+            offset: value
+            for offset, value in enumerate(oil_values_full)
+            if offset not in missing_offsets
+        }
+        _seed_macro_at_dates(
+            session,
+            series_id="DCOILWTICO",
+            values_by_offset=oil_values_by_offset,
+            start_day=start_day,
+        )
+        _seed_path(session, ticker=Symbol("SPY"), closes=[400.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("TLT"), closes=[100.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("GLD"), closes=[180.0] * 61, start_day=start_day)
+        _seed_macro(session, series_id="DFII10", values=[1.5] * 61, start_day=start_day)
+        _seed_macro(session, series_id="VIXCLS", values=[15.0] * 61, start_day=start_day)
+        session.commit()
+
+        blocks = compute_intermarket_regime(
+            session,
+            as_of=as_of,
+            window_days=window_days,
+            short_window_days=20,
+        )
+
+        oil_block = next(b for b in blocks if b.block_id.endswith("oil_xle_beta"))
+        actual_beta = oil_block.payload["long_beta"]
+        assert actual_beta is not None
+        assert actual_beta > 0.3, (
+            f"date-joined oil-vs-XLE β should be materially positive, got {actual_beta}"
+        )
+
+    def test_gld_real_yields_uses_date_joined_intersection(self, session: Session) -> None:
+        # GLD publishes a full NYSE-calendar window; DFII10 is missing 3
+        # interior days + the latest day. With anti-correlated daily moves
+        # the date-joined correlation must be materially negative.
+        as_of = datetime(2026, 4, 30, tzinfo=UTC)
+        window_days = 60
+        start_day = as_of - timedelta(days=window_days)
+
+        gld_step = [(0.01 if i % 2 == 0 else -0.01) for i in range(window_days)]
+        yield_step = [(-0.02 if i % 2 == 0 else 0.02) for i in range(window_days)]
+        gld_closes = [180.0]
+        yield_values_full = [1.5]
+        for g_step, y_step in zip(gld_step, yield_step, strict=True):
+            gld_closes.append(gld_closes[-1] * (1.0 + g_step))
+            yield_values_full.append(yield_values_full[-1] + y_step)
+
+        _seed_path(session, ticker=Symbol("GLD"), closes=gld_closes, start_day=start_day)
+        missing_offsets = {5, 10, 15, window_days}
+        yield_values_by_offset = {
+            offset: value
+            for offset, value in enumerate(yield_values_full)
+            if offset not in missing_offsets
+        }
+        _seed_macro_at_dates(
+            session,
+            series_id="DFII10",
+            values_by_offset=yield_values_by_offset,
+            start_day=start_day,
+        )
+        _seed_path(session, ticker=Symbol("SPY"), closes=[400.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("TLT"), closes=[100.0] * 61, start_day=start_day)
+        _seed_path(session, ticker=Symbol("XLE"), closes=[80.0] * 61, start_day=start_day)
+        _seed_macro(session, series_id="VIXCLS", values=[15.0] * 61, start_day=start_day)
+        _seed_macro(session, series_id="DCOILWTICO", values=[70.0] * 61, start_day=start_day)
+        session.commit()
+
+        blocks = compute_intermarket_regime(
+            session,
+            as_of=as_of,
+            window_days=window_days,
+            short_window_days=20,
+        )
+
+        gld_block = next(b for b in blocks if b.block_id.endswith("gld_real_yields"))
+        actual_correlation = gld_block.payload["correlation"]
+        assert actual_correlation is not None
+        assert actual_correlation < -0.5, (
+            f"date-joined gld vs real-yields correlation should be materially "
+            f"negative, got {actual_correlation}"
+        )
