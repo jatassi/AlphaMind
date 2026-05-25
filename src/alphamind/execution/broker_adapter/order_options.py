@@ -108,11 +108,14 @@ def build_occ_symbol(
     thousandths of a dollar, zero-padded to eight digits (e.g., ``800.0`` →
     ``00800000`` and ``12.50`` → ``00012500``).
 
+    Share-class tickers (e.g., ``BRK.B``, ``BF.B``) drop the dot in the OCC
+    root field per OCC convention — ``BRK.B`` → ``BRKB``.
+
     Examples:
         >>> build_occ_symbol("NVDA", date(2024, 3, 15), OptionContractType.CALL, 800.0)
         'NVDA  240315C00800000'
     """
-    root = underlying.upper().ljust(6)
+    root = underlying.upper().replace(".", "").ljust(6)
     yymmdd = expiration.strftime("%y%m%d")
     cp = "C" if contract_type is OptionContractType.CALL else "P"
     # ``round`` to avoid binary float drift on values like 12.50

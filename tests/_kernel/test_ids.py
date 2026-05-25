@@ -258,6 +258,9 @@ def test_make_symbol_rejects_empty_whitespace_and_lowercase() -> None:
         " AAPL",
         ".AAPL",
         "AAPL.",
+        "BRK..B",
+        "A..B",
+        "BRK.B.C",
     ):
         with pytest.raises(ValueError, match="make_symbol"):
             make_symbol(raw)
@@ -317,6 +320,36 @@ def test_make_occ_symbol_accepts_opra_space_padded_form() -> None:
         "AAAAAA250620C00200000",  # 6-letter root + 0 spaces (canonical 21-char no padding)
     ):
         assert make_occ_symbol(raw) == raw
+
+
+def test_build_occ_symbol_roundtrips_through_make_occ_symbol() -> None:
+    """Every ``build_occ_symbol`` output must pass ``make_occ_symbol``.
+
+    Guards against producer/validator divergence — historically the two were
+    written against different specs (build pads roots to 6, validator
+    initially rejected dots in roots), so a share-class underlying like
+    ``BRK.B`` would round-trip-crash. The fix in ALP-640 was for the
+    builder to drop the dot per OCC convention.
+    """
+    from datetime import date
+
+    from alphamind._kernel.ids import make_occ_symbol
+    from alphamind.execution.broker_adapter.order_options import build_occ_symbol
+    from alphamind.portfolio_state.records.positions import OptionContractType
+
+    cases = [
+        ("NVDA", OptionContractType.CALL, 800.0),
+        ("AAPL", OptionContractType.PUT, 200.0),
+        ("A", OptionContractType.CALL, 50.0),
+        ("GOOGL", OptionContractType.PUT, 150.0),
+        ("BRK.B", OptionContractType.CALL, 600.0),  # share-class — dot must be stripped
+        ("BF.B", OptionContractType.PUT, 100.0),
+        ("AAAAAA", OptionContractType.CALL, 75.0),  # 6-char root (no padding)
+    ]
+    for underlying, contract_type, strike in cases:
+        occ = build_occ_symbol(underlying, date(2026, 6, 19), contract_type, strike)
+        # Must not raise.
+        assert make_occ_symbol(occ) == occ
 
 
 def test_make_occ_symbol_rejects_invalid_input() -> None:
