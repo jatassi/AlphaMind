@@ -822,17 +822,39 @@ class TestPMCompletionRecord:
             )
 
     def test_sum_mismatch_with_override_rejected(self) -> None:
-        """Mismatch detection extends to the override_with_corrective_action count."""
+        """Mismatch detection extends to the override_with_corrective_action count.
+
+        Exercises both directions: (a) a record whose non-override verdicts
+        undershoot envelopes_submitted with override held at 0 — confirms
+        override participates as an additive contributor in the invariant; and
+        (b) a record whose override count alone overshoots envelopes_submitted
+        — confirms an inflated override is caught the same as an inflated
+        non-override count.
+        """
+        # (a) Undershoot — override=0 means the rest must sum to envelopes_submitted.
         with pytest.raises((ValueError, TypeError), match=r"(?i)sum"):
             PMCompletionRecord(
                 invocation_id=InvocationId("inv-1"),
                 timestamp=_NOW,
                 envelopes_submitted=3,
                 verdict_summary=VerdictSummary(
-                    approve=1,
+                    approve=0,
                     approve_with_modification=1,
-                    reject=0,
+                    reject=1,
                     override_with_corrective_action=0,
+                ),
+            )
+        # (b) Overshoot — override alone exceeds envelopes_submitted.
+        with pytest.raises((ValueError, TypeError), match=r"(?i)sum"):
+            PMCompletionRecord(
+                invocation_id=InvocationId("inv-1"),
+                timestamp=_NOW,
+                envelopes_submitted=2,
+                verdict_summary=VerdictSummary(
+                    approve=0,
+                    approve_with_modification=0,
+                    reject=0,
+                    override_with_corrective_action=3,
                 ),
             )
 
