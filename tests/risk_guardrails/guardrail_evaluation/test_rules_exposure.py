@@ -191,6 +191,12 @@ def _spec_by_id(specs: tuple[RuleSpec, ...], rule_id: str) -> RuleSpec:
 
 # ---------------------------------------------------------------------------
 # position_max_size_pct
+#
+# ALP-621: the rule uses a holistic ``project_after_batch`` projector that
+# simulates the post-batch position book to compute the new max. The per-
+# proposal ``contribute`` is a no-op marker; the projection engine bypasses
+# it whenever ``project_after_batch`` is set. Tests below target the holistic
+# projector directly (the field on ``RuleSpec``).
 # ---------------------------------------------------------------------------
 
 
@@ -201,133 +207,178 @@ def test_position_max_size_read_current_returns_state_value() -> None:
     assert spec.read_current(state, config) == 7.5
 
 
-def test_position_max_size_contribute_zero_when_proposal_smaller_than_current_max() -> None:
-    """An OPEN smaller than current max contributes 0."""
+def test_position_max_size_no_op_contribute_is_zero() -> None:
+    """ALP-621: ``contribute`` is a no-op marker for ``position_max_size_pct``.
+    The projection engine bypasses it whenever ``project_after_batch`` is
+    set on the RuleSpec; the callable exists only to keep ``contribute``
+    required on every spec."""
     config = _config()
     state = _snapshot(position_max_size_pct=8.0, portfolio_value_usd=100_000.0)
     spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
     proposal = _proposal(action=Action.OPEN, notional_usd=5_000.0)
     dae = _dae(signed_notional_usd=5_000.0)
-    # proposal_size_pct = 5%; current max = 8% → contribution 0
     assert spec.contribute(proposal, dae, state, config) == 0.0
 
 
-def test_position_max_size_contribute_delta_when_proposal_larger() -> None:
-    """An OPEN larger than current max contributes (proposal_pct - current_max)."""
+def test_position_max_size_project_after_batch_is_wired() -> None:
+    """ALP-621: the rule's RuleSpec wires ``project_after_batch`` so the
+    engine takes the holistic-projection path."""
     config = _config()
-    state = _snapshot(position_max_size_pct=5.0, portfolio_value_usd=100_000.0)
     spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
-    proposal = _proposal(action=Action.OPEN, notional_usd=8_000.0)
-    dae = _dae(signed_notional_usd=8_000.0)
-    # proposal_size_pct = 8%; current max = 5% → contribution 3
-    assert spec.contribute(proposal, dae, state, config) == pytest.approx(3.0)
+    assert spec.project_after_batch is not None
 
 
-def test_position_max_size_contribute_close_of_current_max_drops_to_next_largest() -> None:
-    """ALP-624: CLOSE of the current-max position contributes
-    ``next_largest_pct - current_max_pct`` so ``projected_after`` becomes the
-    next-largest position's size.
+def _five_position_existings() -> dict[str, ExistingPosition]:
+    """Five-position book at [18.1, 17.7, 14.2, 13.3, 7.1]% of $100k."""
+    return {
+        f"POS-{i}": _existing(
+            position_id=f"POS-{i}",
+            direction=Direction.LONG,
+            notional_usd=notional,
+        )
+        for i, notional in enumerate([18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1)
+    }
 
-    Scenario: 5 positions at [18.1, 17.7, 14.2, 13.3, 7.1]% of a 100_000
-    portfolio. Closing the 18.1% position must contribute -0.4 so
-    ``projected_after = 18.1 + (-0.4) = 17.7``.
+
+def test_position_max_size_project_after_batch_close_only_oversized_cures() -> None:
+    """ALP-621 cure scenario: 5 positions [18.1, 17.7, 14.2, 13.3, 7.1]%
+    with cap 10%; batch CLOSE the 4 oversized positions → projected_after
+    drops to the surviving 7.1% position.
     """
-    config = _config()
-    existings = {
-        f"POS-{i}": _existing(
-            position_id=f"POS-{i}",
-            direction=Direction.LONG,
-            notional_usd=notional,
-        )
-        for i, notional in enumerate([18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1)
-    }
-    state = _snapshot(
-        position_max_size_pct=18.1,
-        portfolio_value_usd=100_000.0,
-        existing_positions=existings,
-    )
-    spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
-    proposal = _proposal(
-        action=Action.CLOSE,
-        notional_usd=18_100.0,
-        existing_position_id="POS-1",  # the 18.1% position
-    )
-    dae = _dae(signed_notional_usd=-18_100.0)
-    # Contribution = next_largest - current_max = 17.7 - 18.1 = -0.4
-    assert spec.contribute(proposal, dae, state, config) == pytest.approx(-0.4)
-
-
-def test_position_max_size_contribute_close_of_non_max_is_zero() -> None:
-    """ALP-624: CLOSE of any position that is *not* the current-max contributes
-    0 — the max is unchanged."""
-    config = _config()
-    existings = {
-        f"POS-{i}": _existing(
-            position_id=f"POS-{i}",
-            direction=Direction.LONG,
-            notional_usd=notional,
-        )
-        for i, notional in enumerate([18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1)
-    }
-    state = _snapshot(
-        position_max_size_pct=18.1,
-        portfolio_value_usd=100_000.0,
-        existing_positions=existings,
-    )
-    spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
-    proposal = _proposal(
-        action=Action.CLOSE,
-        notional_usd=7_100.0,
-        existing_position_id="POS-5",  # the 7.1% position (non-max)
-    )
-    dae = _dae(signed_notional_usd=-7_100.0)
-    assert spec.contribute(proposal, dae, state, config) == 0.0
-
-
-def test_position_max_size_contribute_close_of_only_oversized_drops_below_limit() -> None:
-    """ALP-624: CLOSE of the only oversized position brings ``projected_after``
-    below the rule limit. Verifies that when only one position breaches, the
-    rule cures cleanly."""
     config = _config()  # position_max_size_pct limit = 10.0%
-    existings = {
-        "POS-BIG": _existing(
-            position_id="POS-BIG",
-            direction=Direction.LONG,
-            notional_usd=18_100.0,
-        ),
-        "POS-SMALL-1": _existing(
-            position_id="POS-SMALL-1",
-            direction=Direction.LONG,
-            notional_usd=4_000.0,
-        ),
-        "POS-SMALL-2": _existing(
-            position_id="POS-SMALL-2",
-            direction=Direction.LONG,
-            notional_usd=3_000.0,
-        ),
-    }
     state = _snapshot(
         position_max_size_pct=18.1,
         portfolio_value_usd=100_000.0,
-        existing_positions=existings,
+        existing_positions=_five_position_existings(),
     )
     spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
-    proposal = _proposal(
-        action=Action.CLOSE,
-        notional_usd=18_100.0,
-        existing_position_id="POS-BIG",
-    )
-    dae = _dae(signed_notional_usd=-18_100.0)
-    contribution = spec.contribute(proposal, dae, state, config)
-    # projected_after = current_max + contribution = next_largest = 4.0%
-    projected_after = state.position_max_size_pct + contribution
-    assert projected_after == pytest.approx(4.0)
-    # And 4.0% is below the rule's 10.0% limit
+    assert spec.project_after_batch is not None
+    proposals = [
+        (
+            _proposal(
+                proposal_id=f"P-{i}",
+                action=Action.CLOSE,
+                notional_usd=notional,
+                existing_position_id=f"POS-{i}",
+            ),
+            _dae(signed_notional_usd=-notional),
+        )
+        for i, notional in enumerate([18_100.0, 17_700.0, 14_200.0, 13_300.0], start=1)
+    ]
+    projected_after = spec.project_after_batch(proposals, state, config)
+    assert projected_after == pytest.approx(7.1)
     assert projected_after < config.effective_limits["position_max_size_pct"]
 
 
-def test_position_max_size_contribute_close_of_only_position() -> None:
-    """ALP-624: CLOSE of the only position drops the rule's max to 0."""
+def test_position_max_size_project_after_batch_close_single_max_drops_to_next_largest() -> None:
+    """ALP-621: CLOSE the single 18% position only; second is 8% (below cap).
+    Post-batch projected_after = 8.0 → PASS."""
+    config = _config()  # cap 10%
+    existings = {
+        "POS-1": _existing(position_id="POS-1", direction=Direction.LONG, notional_usd=18_000.0),
+        "POS-2": _existing(position_id="POS-2", direction=Direction.LONG, notional_usd=8_000.0),
+        "POS-3": _existing(position_id="POS-3", direction=Direction.LONG, notional_usd=5_000.0),
+    }
+    state = _snapshot(
+        position_max_size_pct=18.0,
+        portfolio_value_usd=100_000.0,
+        existing_positions=existings,
+    )
+    spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
+    assert spec.project_after_batch is not None
+    proposals = [
+        (
+            _proposal(action=Action.CLOSE, notional_usd=18_000.0, existing_position_id="POS-1"),
+            _dae(signed_notional_usd=-18_000.0),
+        )
+    ]
+    projected_after = spec.project_after_batch(proposals, state, config)
+    assert projected_after == pytest.approx(8.0)
+
+
+def test_position_max_size_project_after_batch_close_single_still_fails() -> None:
+    """ALP-621: CLOSE the 18% position only; second is 12% (still above cap).
+    Post-batch projected_after = 12.0 → still FAIL (12 > 10)."""
+    config = _config()  # cap 10%
+    existings = {
+        "POS-1": _existing(position_id="POS-1", direction=Direction.LONG, notional_usd=18_000.0),
+        "POS-2": _existing(position_id="POS-2", direction=Direction.LONG, notional_usd=12_000.0),
+        "POS-3": _existing(position_id="POS-3", direction=Direction.LONG, notional_usd=5_000.0),
+    }
+    state = _snapshot(
+        position_max_size_pct=18.0,
+        portfolio_value_usd=100_000.0,
+        existing_positions=existings,
+    )
+    spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
+    assert spec.project_after_batch is not None
+    proposals = [
+        (
+            _proposal(action=Action.CLOSE, notional_usd=18_000.0, existing_position_id="POS-1"),
+            _dae(signed_notional_usd=-18_000.0),
+        )
+    ]
+    projected_after = spec.project_after_batch(proposals, state, config)
+    assert projected_after == pytest.approx(12.0)
+    assert projected_after > config.effective_limits["position_max_size_pct"]
+
+
+def test_position_max_size_project_after_batch_partial_close_uses_close_size() -> None:
+    """ALP-621 Finding 4: a partial CLOSE (proposal.notional_usd < position
+    notional) reduces the position by the close size, not by the full
+    position. Starting 18% + 8% positions; close 9k of the 18% one →
+    9k remains; max = 9.0% > 8% other position."""
+    config = _config()
+    existings = {
+        "POS-1": _existing(position_id="POS-1", direction=Direction.LONG, notional_usd=18_000.0),
+        "POS-2": _existing(position_id="POS-2", direction=Direction.LONG, notional_usd=8_000.0),
+    }
+    state = _snapshot(
+        position_max_size_pct=18.0,
+        portfolio_value_usd=100_000.0,
+        existing_positions=existings,
+    )
+    spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
+    assert spec.project_after_batch is not None
+    proposals = [
+        (
+            _proposal(action=Action.CLOSE, notional_usd=9_000.0, existing_position_id="POS-1"),
+            _dae(signed_notional_usd=-9_000.0),
+        )
+    ]
+    projected_after = spec.project_after_batch(proposals, state, config)
+    assert projected_after == pytest.approx(9.0)
+
+
+def test_position_max_size_project_after_batch_add_on_existing_max() -> None:
+    """ALP-621 Finding 5: ADD on an existing max position increases its
+    notional by the proposal's notional. 18% + 8% positions; ADD 2k to
+    POS-1 → POS-1 grows to 20k = 20%."""
+    config = _config()
+    existings = {
+        "POS-1": _existing(position_id="POS-1", direction=Direction.LONG, notional_usd=18_000.0),
+        "POS-2": _existing(position_id="POS-2", direction=Direction.LONG, notional_usd=8_000.0),
+    }
+    state = _snapshot(
+        position_max_size_pct=18.0,
+        portfolio_value_usd=100_000.0,
+        existing_positions=existings,
+    )
+    spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
+    assert spec.project_after_batch is not None
+    proposals = [
+        (
+            _proposal(action=Action.ADD, notional_usd=2_000.0, existing_position_id="POS-1"),
+            _dae(signed_notional_usd=2_000.0),
+        )
+    ]
+    projected_after = spec.project_after_batch(proposals, state, config)
+    assert projected_after == pytest.approx(20.0)
+
+
+def test_position_max_size_project_after_batch_close_only_position_yields_zero() -> None:
+    """ALP-621: CLOSE the only existing position → empty post-batch book →
+    projected_after = 0."""
     config = _config()
     existings = {
         "POS-ONLY": _existing(
@@ -342,157 +393,161 @@ def test_position_max_size_contribute_close_of_only_position() -> None:
         existing_positions=existings,
     )
     spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
-    proposal = _proposal(
-        action=Action.CLOSE,
-        notional_usd=18_100.0,
-        existing_position_id="POS-ONLY",
-    )
-    dae = _dae(signed_notional_usd=-18_100.0)
-    contribution = spec.contribute(proposal, dae, state, config)
-    # next_largest = 0; contribution = 0 - 18.1 = -18.1
-    assert contribution == pytest.approx(-18.1)
+    assert spec.project_after_batch is not None
+    proposals = [
+        (
+            _proposal(action=Action.CLOSE, notional_usd=18_100.0, existing_position_id="POS-ONLY"),
+            _dae(signed_notional_usd=-18_100.0),
+        )
+    ]
+    projected_after = spec.project_after_batch(proposals, state, config)
+    assert projected_after == 0.0
 
 
-def test_position_max_size_contribute_close_unresolved_position_id_is_zero() -> None:
-    """ALP-624: A CLOSE whose existing_position_id is not in state.existing_positions
-    contributes 0 (defensive — should not happen post-validation, but the
-    function must remain total)."""
+def test_position_max_size_project_after_batch_zero_portfolio_value_returns_current() -> None:
+    """ALP-621 Finding 3: zero portfolio value guards against division-by-zero
+    — the projector returns ``current`` (the snapshot's value) instead of
+    raising."""
     config = _config()
-    state = _snapshot(position_max_size_pct=8.0, portfolio_value_usd=100_000.0)
-    spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
-    proposal = _proposal(
-        action=Action.CLOSE,
-        notional_usd=5_000.0,
-        existing_position_id="POS-UNKNOWN",
+    state = _snapshot(
+        position_max_size_pct=0.0,
+        portfolio_value_usd=0.0,
+        cash_usd=0.0,
     )
-    dae = _dae(signed_notional_usd=-5_000.0)
-    assert spec.contribute(proposal, dae, state, config) == 0.0
-
-
-def test_position_max_size_contribute_cancel_still_zero() -> None:
-    """ALP-624: CANCEL releases reserved capital but doesn't change
-    open-position notional — contribution remains 0."""
-    config = _config()
-    state = _snapshot(position_max_size_pct=8.0, portfolio_value_usd=100_000.0)
     spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
-    proposal = _proposal(action=Action.CANCEL, existing_position_id="POS-1")
-    dae = _dae(signed_notional_usd=0.0)
-    assert spec.contribute(proposal, dae, state, config) == 0.0
+    assert spec.project_after_batch is not None
+    # An OPEN proposal regardless — the projector must not divide by zero.
+    proposals = [
+        (
+            _proposal(action=Action.OPEN, notional_usd=5_000.0),
+            _dae(signed_notional_usd=5_000.0),
+        )
+    ]
+    projected_after = spec.project_after_batch(proposals, state, config)
+    assert projected_after == 0.0  # state.position_max_size_pct (current)
 
 
-def test_position_max_size_contribute_adjust_shrink_current_max() -> None:
-    """ALP-624: ADJUST that shrinks the current-max position behaves like
-    CLOSE-down-to-new-size, capped by next-largest. Position dropped from
-    18.1% to 12.0%, next-largest is 17.7% → new max = max(12.0, 17.7) = 17.7;
-    contribution = 17.7 - 18.1 = -0.4.
-    """
+def test_position_max_size_project_after_batch_close_unresolved_id_is_no_op() -> None:
+    """ALP-621: a CLOSE with an unresolved existing_position_id is a defensive
+    no-op (validation should have caught it upstream). Projected_after equals
+    the unchanged book's max."""
     config = _config()
     existings = {
-        f"POS-{i}": _existing(
-            position_id=f"POS-{i}",
-            direction=Direction.LONG,
-            notional_usd=notional,
-        )
-        for i, notional in enumerate([18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1)
+        "POS-1": _existing(position_id="POS-1", direction=Direction.LONG, notional_usd=8_000.0),
     }
     state = _snapshot(
-        position_max_size_pct=18.1,
+        position_max_size_pct=8.0,
         portfolio_value_usd=100_000.0,
         existing_positions=existings,
     )
     spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
-    proposal = _proposal(
-        action=Action.ADJUST,
-        notional_usd=12_000.0,  # shrink 18.1 → 12.0
-        existing_position_id="POS-1",
-    )
-    dae = _dae(signed_notional_usd=0.0)  # ADJUST is exposure-neutral in the DAE pipeline
-    # next-largest = 17.7; new max = max(12.0, 17.7) = 17.7; contribution = -0.4
-    assert spec.contribute(proposal, dae, state, config) == pytest.approx(-0.4)
+    assert spec.project_after_batch is not None
+    proposals = [
+        (
+            _proposal(
+                action=Action.CLOSE, notional_usd=5_000.0, existing_position_id="POS-UNKNOWN"
+            ),
+            _dae(signed_notional_usd=-5_000.0),
+        )
+    ]
+    projected_after = spec.project_after_batch(proposals, state, config)
+    assert projected_after == pytest.approx(8.0)
 
 
-def test_position_max_size_contribute_adjust_grow_current_max() -> None:
-    """ALP-624: ADJUST that grows the current-max position behaves like ADD on
-    top of the current max. Position grown from 18.1% to 22.0% → new max =
-    22.0; contribution = +3.9.
-    """
+def test_position_max_size_project_after_batch_cancel_does_not_change_book() -> None:
+    """ALP-621: CANCEL releases reserved capital but doesn't change
+    open-position notional. Post-batch max equals existing max."""
     config = _config()
     existings = {
-        f"POS-{i}": _existing(
-            position_id=f"POS-{i}",
-            direction=Direction.LONG,
-            notional_usd=notional,
-        )
-        for i, notional in enumerate([18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1)
+        "POS-1": _existing(position_id="POS-1", direction=Direction.LONG, notional_usd=8_000.0),
     }
     state = _snapshot(
-        position_max_size_pct=18.1,
+        position_max_size_pct=8.0,
         portfolio_value_usd=100_000.0,
         existing_positions=existings,
     )
     spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
-    proposal = _proposal(
-        action=Action.ADJUST,
-        notional_usd=22_000.0,  # grow 18.1 → 22.0
-        existing_position_id="POS-1",
-    )
-    dae = _dae(signed_notional_usd=0.0)
-    assert spec.contribute(proposal, dae, state, config) == pytest.approx(3.9)
-
-
-def test_position_max_size_contribute_adjust_non_max_below_max_is_zero() -> None:
-    """ALP-624: ADJUST on a non-max position to a size still below the current
-    max contributes 0."""
-    config = _config()
-    existings = {
-        f"POS-{i}": _existing(
-            position_id=f"POS-{i}",
-            direction=Direction.LONG,
-            notional_usd=notional,
+    assert spec.project_after_batch is not None
+    proposals = [
+        (
+            _proposal(action=Action.CANCEL, existing_position_id="POS-1"),
+            _dae(signed_notional_usd=0.0),
         )
-        for i, notional in enumerate([18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1)
-    }
+    ]
+    projected_after = spec.project_after_batch(proposals, state, config)
+    assert projected_after == pytest.approx(8.0)
+
+
+def test_position_max_size_project_after_batch_adjust_shrink_current_max() -> None:
+    """ALP-621: ADJUST that shrinks the current-max position; next-largest
+    becomes the new max. Position dropped from 18.1% to 12.0%; next-largest
+    is 17.7% → new max = 17.7%."""
+    config = _config()
     state = _snapshot(
         position_max_size_pct=18.1,
         portfolio_value_usd=100_000.0,
-        existing_positions=existings,
+        existing_positions=_five_position_existings(),
     )
     spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
-    proposal = _proposal(
-        action=Action.ADJUST,
-        notional_usd=15_000.0,  # grow POS-5 (7.1%) to 15%, still below 18.1% max
-        existing_position_id="POS-5",
-    )
-    dae = _dae(signed_notional_usd=0.0)
-    assert spec.contribute(proposal, dae, state, config) == 0.0
-
-
-def test_position_max_size_contribute_adjust_non_max_above_max_lifts_max() -> None:
-    """ALP-624: ADJUST on a non-max position that grows it past the current
-    max lifts the rule's max to the new size."""
-    config = _config()
-    existings = {
-        f"POS-{i}": _existing(
-            position_id=f"POS-{i}",
-            direction=Direction.LONG,
-            notional_usd=notional,
+    assert spec.project_after_batch is not None
+    proposals = [
+        (
+            _proposal(
+                action=Action.ADJUST,
+                notional_usd=12_000.0,
+                existing_position_id="POS-1",
+            ),
+            _dae(signed_notional_usd=0.0),
         )
-        for i, notional in enumerate([18_100.0, 17_700.0, 14_200.0, 13_300.0, 7_100.0], start=1)
-    }
+    ]
+    projected_after = spec.project_after_batch(proposals, state, config)
+    assert projected_after == pytest.approx(17.7)
+
+
+def test_position_max_size_project_after_batch_adjust_grow_current_max() -> None:
+    """ALP-621: ADJUST that grows the current-max from 18.1% to 22.0%
+    → new max = 22.0%."""
+    config = _config()
     state = _snapshot(
         position_max_size_pct=18.1,
         portfolio_value_usd=100_000.0,
-        existing_positions=existings,
+        existing_positions=_five_position_existings(),
     )
     spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
-    proposal = _proposal(
-        action=Action.ADJUST,
-        notional_usd=25_000.0,  # grow POS-5 to 25%, past the 18.1% max
-        existing_position_id="POS-5",
+    assert spec.project_after_batch is not None
+    proposals = [
+        (
+            _proposal(
+                action=Action.ADJUST,
+                notional_usd=22_000.0,
+                existing_position_id="POS-1",
+            ),
+            _dae(signed_notional_usd=0.0),
+        )
+    ]
+    projected_after = spec.project_after_batch(proposals, state, config)
+    assert projected_after == pytest.approx(22.0)
+
+
+def test_position_max_size_project_after_batch_open_adds_synthetic_position() -> None:
+    """ALP-621: an OPEN adds a synthetic post-batch position. Book starts
+    empty; OPEN 5k → projected_after = 5.0%."""
+    config = _config()
+    state = _snapshot(
+        position_max_size_pct=0.0,
+        portfolio_value_usd=100_000.0,
+        existing_positions={},
     )
-    dae = _dae(signed_notional_usd=0.0)
-    # new size 25.0 > current max 18.1 → contribution = +6.9
-    assert spec.contribute(proposal, dae, state, config) == pytest.approx(6.9)
+    spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
+    assert spec.project_after_batch is not None
+    proposals = [
+        (
+            _proposal(action=Action.OPEN, notional_usd=5_000.0),
+            _dae(signed_notional_usd=5_000.0),
+        )
+    ]
+    projected_after = spec.project_after_batch(proposals, state, config)
+    assert projected_after == pytest.approx(5.0)
 
 
 # ---------------------------------------------------------------------------

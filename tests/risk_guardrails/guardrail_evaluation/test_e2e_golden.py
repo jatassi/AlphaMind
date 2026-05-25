@@ -1050,10 +1050,16 @@ def test_pre_processor_breaches_extraction() -> None:
 
     # Per-proposal attribution: re-run the breaching rule's ``contribute`` for
     # each proposal individually and confirm contributors sum to the combined
-    # contribution recorded in ``per_rule``.
+    # contribution recorded in ``per_rule``. Rules that use the holistic
+    # ``project_after_batch`` projector (ALP-621 — currently only
+    # ``position_max_size_pct``) are not decomposable per-proposal, so their
+    # ``contribute`` returns 0 and the pre-processor must skip the
+    # contribution-sum attribution for those.
     spec_by_id = {spec.rule_id: spec for spec in build_active_specs(config)}
     for breach in breaches:
         spec = spec_by_id[breach.rule]
+        if spec.project_after_batch is not None:
+            continue
         contributors: dict[str, float] = {}
         for proposal in proposals:
             dae = output.delta_adjusted[proposal.id]

@@ -8,13 +8,24 @@ Five rules in this category:
 * ``net_short_pct`` — net short magnitude.
 * ``gross_exposure_pct`` — sum of absolute positions.
 
-Per-proposal ``contribute`` functions sum across the proposed batch to produce
-the rule's total contribution. The projection engine adds the result to
-``current`` to derive ``projected_after``. See the story file's per-rule
-notes for the contract underlying each implementation.
+Most exposure rules use the projection engine's default
+``contribute``-decomposable path: per-proposal ``contribute`` functions sum
+across the proposed batch to produce the rule's total contribution, which the
+engine adds to ``current`` to derive ``projected_after``.
+
+``position_max_size_pct`` is the exception. The post-batch maximum position
+size is not a sum of per-proposal contributions when multiple positions are
+modified in one batch (a CLOSE of the current max doesn't drop the max to
+``next-largest`` if a second CLOSE in the same batch also reduced that
+position). The rule uses an ``project_after_batch`` holistic projector that
+simulates the post-batch position book and computes the new max directly;
+its ``contribute`` is a no-op marker that the projection engine never reads.
+See ALP-621 for the bug this prevents.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
 
 from alphamind.risk_guardrails.guardrail_evaluation.rules._helpers import (
     RuleSpec,
@@ -24,7 +35,6 @@ from alphamind.risk_guardrails.guardrail_evaluation.rules._helpers import (
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
     Action,
     DeltaAdjustedExposure,
-    ExistingPosition,
     LibraryConfig,
     PortfolioStateSnapshot,
     ProposedDelta,
@@ -39,135 +49,122 @@ def _position_max_size_read_current(state: PortfolioStateSnapshot, config: Libra
     return state.position_max_size_pct
 
 
-def _next_largest_position_size_pct(
-    state: PortfolioStateSnapshot, excluded_position_id: str
-) -> float:
-    """Return the largest ``|notional_usd| / portfolio_value * 100`` across
-    ``state.existing_positions`` excluding ``excluded_position_id``.
-
-    Returns ``0.0`` when no other positions exist (the close empties the book
-    from the rule's perspective) or when ``portfolio_value_usd`` is zero
-    (mirrors the ``library_snapshot`` and ``_breach_magnitude`` guards).
-
-    The formula matches ``to_library_snapshot``'s actual-max derivation so the
-    rule's projected-after value stays consistent with how ``read_current``
-    would re-compute the state on the next invocation.
-    """
-    if state.portfolio_value_usd <= 0.0:
-        return 0.0
-    others = [ep for pid, ep in state.existing_positions.items() if pid != excluded_position_id]
-    if not others:
-        return 0.0
-    return max(abs(ep.notional_usd) for ep in others) / state.portfolio_value_usd * 100.0
-
-
-def _position_max_size_contribute(
+def _position_max_size_no_op_contribute(
     proposal: ProposedDelta,
     dae: DeltaAdjustedExposure,
     state: PortfolioStateSnapshot,
     config: LibraryConfig,
 ) -> float:
-    """Signed contribution to ``position_max_size_pct``.
+    """No-op ``contribute`` for ``position_max_size_pct``.
 
-    The rule tracks the largest position's size; the projection engine sums
-    contributions onto ``state.position_max_size_pct`` to derive
-    ``projected_after``.
-
-    Action-by-action semantics (ALP-624):
-
-    * **OPEN / ADD** — ``max(0, proposal_size_pct - current_max)``. When the
-      new (or grown) position would exceed the current max, the delta lifts
-      the rule's max to the new size; otherwise 0.
-    * **CLOSE** — if the proposal targets the current-max position, the
-      contribution is ``next_largest_pct - current_max_pct`` (a non-positive
-      number that drops ``projected_after`` to the next-largest position's
-      size, or to 0 when the closed position was the only one). If the
-      proposal targets a non-max position, contribution is 0. Unresolved
-      ``existing_position_id`` is treated as a non-max close (contribution 0)
-      so the function stays total.
-    * **ADJUST** — depends on whether the adjustment shrinks or grows the
-      current-max position. If the proposal targets the current-max:
-      shrink behaves like CLOSE-down-to-new-size capped by ``next_largest``
-      (the rule's max becomes ``max(new_size_pct, next_largest_pct)``); grow
-      behaves like ADD on top of the current max. ADJUST on a non-max
-      position only lifts the max when its post-adjust size exceeds the
-      current max. The DAE pipeline returns ``signed_notional_usd=0`` for
-      ADJUST (exposure-neutral by definition), so the contribution is
-      derived from ``proposal.notional_usd``.
-    * **CANCEL** — 0 (cancel releases reserved capital but doesn't change
-      open-position notional).
+    Unreachable in production: the rule's ``RuleSpec`` sets
+    ``project_after_batch=_position_max_size_project_after_batch``, and the
+    projection engine bypasses ``contribute`` whenever ``project_after_batch``
+    is set (see ``project_all`` in ``rules/__init__.py``). The callable
+    exists so ``RuleSpec.contribute`` can stay required, keeping the
+    registry's per-rule shape uniform.
     """
-    action = proposal.action
-    if action in (Action.OPEN, Action.ADD):
-        proposal_size_pct = abs(dae.signed_notional_usd) / state.portfolio_value_usd * 100.0
-        return max(0.0, proposal_size_pct - state.position_max_size_pct)
-    if action in (Action.CLOSE, Action.ADJUST):
-        return _position_max_size_existing_contribution(proposal, state)
-    # CANCEL and any unmodeled action
     return 0.0
 
 
-def _position_max_size_existing_contribution(
-    proposal: ProposedDelta, state: PortfolioStateSnapshot
-) -> float:
-    """Dispatch CLOSE/ADJUST to the per-action helper after resolving the
-    target position. Returns 0 when the position id is unresolved or absent
-    (defensive — should not happen post-validation, but keeps the contribution
-    function total)."""
-    existing = existing_position(proposal, state)
-    if existing is None:
-        return 0.0
-    current_max_pct = state.position_max_size_pct
-    existing_size_pct = abs(existing.notional_usd) / state.portfolio_value_usd * 100.0
-    is_current_max = abs(existing_size_pct - current_max_pct) <= 1e-9
-    if proposal.action is Action.CLOSE:
-        return _close_contribution(
-            existing=existing,
-            state=state,
-            current_max_pct=current_max_pct,
-            is_current_max=is_current_max,
-        )
-    # ADJUST
-    return _adjust_contribution(
-        proposal=proposal,
-        existing=existing,
-        state=state,
-        current_max_pct=current_max_pct,
-        is_current_max=is_current_max,
-    )
-
-
-def _close_contribution(
-    *,
-    existing: ExistingPosition,
+def _position_max_size_project_after_batch(
+    proposals: Sequence[tuple[ProposedDelta, DeltaAdjustedExposure]],
     state: PortfolioStateSnapshot,
-    current_max_pct: float,
-    is_current_max: bool,
+    config: LibraryConfig,
 ) -> float:
-    """CLOSE contribution: drop to next-largest when closing the current-max,
-    else 0."""
-    if not is_current_max:
+    """Compute post-batch ``position_max_size_pct`` by simulating the position book.
+
+    The post-batch maximum position size cannot be expressed as a sum of
+    per-proposal contributions when multiple positions are modified in one
+    batch (ALP-621). This projector mirrors ``library_snapshot``'s actual-max
+    derivation so ``projected_after`` matches what ``read_current`` would
+    re-compute on the next invocation.
+
+    Simulation rules are encoded in ``_simulate_post_batch_book`` —
+    OPEN/ADD/ADJUST/CLOSE/CANCEL semantics mirror the DAE pipeline.
+
+    Guards:
+
+    * ``portfolio_value_usd <= 0.0`` → return ``current`` (snapshot value)
+      — defensive; mirrors the snapshot translator and zero-division guards
+      throughout the library.
+    * Empty post-batch book → return ``0.0``.
+    """
+    portfolio_value_usd = state.portfolio_value_usd
+    if portfolio_value_usd <= 0.0:
+        return state.position_max_size_pct
+
+    post_batch_notionals = _simulate_post_batch_book(proposals, state)
+    if not post_batch_notionals:
         return 0.0
-    next_largest_pct = _next_largest_position_size_pct(state, existing.position_id)
-    return next_largest_pct - current_max_pct
+
+    max_notional = max(post_batch_notionals)
+    return max_notional / portfolio_value_usd * 100.0
 
 
-def _adjust_contribution(
-    *,
+def _simulate_post_batch_book(
+    proposals: Sequence[tuple[ProposedDelta, DeltaAdjustedExposure]],
+    state: PortfolioStateSnapshot,
+) -> list[float]:
+    """Return the list of post-batch position notionals (absolute USD).
+
+    Simulation rules (mirror the DAE pipeline's action semantics):
+
+    * **CLOSE** on existing position: subtract ``abs(proposal.notional_usd)``
+      from the position's notional. If the resulting notional is ``<= 0`` the
+      position fully closes and drops out of the book.
+    * **ADJUST** on existing position: set the position's notional to
+      ``abs(proposal.notional_usd)`` — the proposal carries the new total
+      post-ADJUST per the rule's ``contribute`` docstring.
+    * **OPEN**: add a synthetic post-batch position with notional
+      ``abs(proposal.notional_usd)``.
+    * **ADD** on existing position: add ``abs(proposal.notional_usd)`` to the
+      existing position's notional.
+    * **CANCEL**: no effect on open-position notional.
+
+    Proposals whose ``existing_position_id`` doesn't resolve are skipped
+    defensively — validation should have caught them upstream.
+    """
+    existing_book: dict[str, float] = {
+        pid: abs(ep.notional_usd) for pid, ep in state.existing_positions.items()
+    }
+    opens: list[float] = []
+    for proposal, _dae in proposals:
+        _apply_proposal_to_book(proposal, existing_book, opens)
+    return [*existing_book.values(), *opens]
+
+
+def _apply_proposal_to_book(
     proposal: ProposedDelta,
-    existing: ExistingPosition,
-    state: PortfolioStateSnapshot,
-    current_max_pct: float,
-    is_current_max: bool,
-) -> float:
-    """ADJUST contribution. The post-adjust size derives from
-    ``proposal.notional_usd``; ``dae.signed_notional_usd`` is 0 for ADJUST."""
-    new_size_pct = abs(float(proposal.notional_usd)) / state.portfolio_value_usd * 100.0
-    if is_current_max:
-        next_largest_pct = _next_largest_position_size_pct(state, existing.position_id)
-        new_max_pct = max(new_size_pct, next_largest_pct)
-        return new_max_pct - current_max_pct
-    return max(0.0, new_size_pct - current_max_pct)
+    existing_book: dict[str, float],
+    opens: list[float],
+) -> None:
+    """Apply one proposal's effect to the simulated post-batch book.
+
+    Mutates ``existing_book`` and ``opens`` in place. See
+    ``_simulate_post_batch_book`` for the per-action semantics.
+    """
+    action = proposal.action
+    if action is Action.OPEN:
+        opens.append(abs(float(proposal.notional_usd)))
+        return
+    if action is Action.CANCEL:
+        return
+    pos_id = proposal.existing_position_id
+    if pos_id is None or pos_id not in existing_book:
+        # Defensive — validation should have caught it upstream.
+        return
+    proposal_notional = abs(float(proposal.notional_usd))
+    if action is Action.CLOSE:
+        remaining = existing_book[pos_id] - proposal_notional
+        if remaining <= 0.0:
+            del existing_book[pos_id]
+        else:
+            existing_book[pos_id] = remaining
+    elif action is Action.ADJUST:
+        existing_book[pos_id] = proposal_notional
+    elif action is Action.ADD:
+        existing_book[pos_id] += proposal_notional
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +285,8 @@ def exposure_specs() -> tuple[RuleSpec, ...]:
             rule_id="position_max_size_pct",
             unit="% of portfolio",
             read_current=_position_max_size_read_current,
-            contribute=_position_max_size_contribute,
+            contribute=_position_max_size_no_op_contribute,
+            project_after_batch=_position_max_size_project_after_batch,
             effective_limit_key="position_max_size_pct",
         ),
         RuleSpec(
