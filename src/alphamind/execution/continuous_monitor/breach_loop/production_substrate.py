@@ -259,6 +259,8 @@ def make_library_config_factory(*, resolved: ResolvedConfig) -> LibraryConfigFac
             active_regime=base.active_regime,
             active_profile=base.active_profile,
             conservative_buffer_pct=base.conservative_buffer_pct,
+            position_zones=base.position_zones,
+            inverse_warning_band_pct=base.inverse_warning_band_pct,
         )
 
     return _factory

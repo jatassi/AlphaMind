@@ -54,6 +54,7 @@ from alphamind.portfolio_state.snapshot import (
     SectorExposureEntry,
 )
 from alphamind.portfolio_state.views.positions import PositionView
+from alphamind.risk_guardrails.guardrail_evaluation.types import EscalationZones
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery import render_strategist_header
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
@@ -61,6 +62,9 @@ from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 # ---------------------------------------------------------------------------
 # Fixture builders
 # ---------------------------------------------------------------------------
+
+
+_DEFAULT_POSITION_ZONES = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
 
 
 def _make_state_delivery_config() -> StateDeliveryConfig:
@@ -510,6 +514,7 @@ def test_render_strategist_header_returns_string_starting_with_envelope_open() -
         sector_resolver=_make_micro_sector_resolver(),
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert isinstance(rendered, str)
     assert rendered.startswith("=== GUARDRAIL STATE (invocation inv-001, 2026-04-28T14:32:05Z) ===")
@@ -673,6 +678,7 @@ def test_render_strategist_header_full_system_profile_full_fixture() -> None:
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
         regime_transition_breaches=breaches,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     expected = "\n".join(
         [
@@ -796,6 +802,7 @@ def test_render_strategist_header_micro_profile_full_fixture() -> None:
         sector_resolver=_make_micro_sector_resolver(),
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     expected = "\n".join(
         [
@@ -870,6 +877,7 @@ def test_render_strategist_header_renders_none_for_empty_positions() -> None:
         sector_resolver=_make_micro_sector_resolver(),
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
     proximity_idx = lines.index("Position-level constraint proximity:")
@@ -926,6 +934,7 @@ def test_render_strategist_header_renders_cumulative_tier_line(
         sector_resolver=_make_micro_sector_resolver(),
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     expected_line = f"  Cumulative tier: {expected_label} — {expected_restrictions}"
     assert expected_line in rendered.splitlines()
@@ -968,6 +977,7 @@ def test_render_strategist_header_groups_unclassified_position_at_end() -> None:
         sector_resolver=_resolver,
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
     breakdown_idx = lines.index("Sector exposure breakdown (per position):")
@@ -1014,6 +1024,7 @@ def test_render_strategist_header_emits_zone_tag_per_threshold(
         sector_resolver=_make_micro_sector_resolver(),
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     proximity_line = next(
         line for line in rendered.splitlines() if line.lstrip().startswith("POS-NVDA-001:")
@@ -1045,6 +1056,7 @@ def test_render_strategist_header_critical_from_size_not_positive_pnl() -> None:
         sector_resolver=_make_micro_sector_resolver(),
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     proximity_line = next(
         line for line in rendered.splitlines() if line.lstrip().startswith("POS-NVDA-001:")
@@ -1073,6 +1085,7 @@ def test_render_strategist_header_reads_intraday_for_daily_and_current_for_cumul
         sector_resolver=_make_micro_sector_resolver(),
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
     daily_idx = lines.index("Drawdown state:") + 1
@@ -1100,6 +1113,7 @@ def test_render_strategist_header_omits_regime_transition_block_when_empty() -> 
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
         regime_transition_breaches=(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Regime-transition breaches" not in rendered
     assert "(none)" not in rendered
@@ -1133,6 +1147,7 @@ def test_render_strategist_header_renders_per_position_max_size_breach_row() -> 
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
         regime_transition_breaches=(breach,),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert (
         "  POS-NVDA-001: 4.2% exceeds elevated regime limit of 3.5% — overage 0.7%"
@@ -1165,6 +1180,7 @@ def test_render_strategist_header_renders_aggregate_breach_row() -> None:
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
         regime_transition_breaches=(breach,),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert (
         "  Sector concentration (Tech): 28.0% exceeds elevated regime limit of "
@@ -1197,6 +1213,7 @@ def test_render_strategist_header_renders_per_position_non_max_size_with_label_s
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
         regime_transition_breaches=(breach,),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert any(
         "POS-AMD-002: 3.2% exceeds elevated regime limit of 3.0% — overage 0.2% "
@@ -1239,6 +1256,7 @@ def test_render_strategist_header_renders_mixed_breach_rows_in_order() -> None:
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
         regime_transition_breaches=(per_pos, aggregate),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     lines = rendered.splitlines()
     header_idx = lines.index("Regime-transition breaches (if any):")
@@ -1283,6 +1301,7 @@ def test_render_strategist_header_is_deterministic() -> None:
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
         regime_transition_breaches=breaches,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     first = render_strategist_header(**kwargs)  # type: ignore[arg-type]
     second = render_strategist_header(**kwargs)  # type: ignore[arg-type]
@@ -1320,6 +1339,7 @@ def test_render_strategist_header_raises_when_options_disabled_but_options_rule_
             sector_resolver=_make_micro_sector_resolver(),
             total_portfolio_value_usd=500_000.0,
             available_for_new_positions_usd=300_000.0,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
 
 
@@ -1351,6 +1371,7 @@ def test_render_strategist_header_raises_when_short_selling_disabled_but_net_sho
             sector_resolver=_make_micro_sector_resolver(),
             total_portfolio_value_usd=500_000.0,
             available_for_new_positions_usd=300_000.0,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
 
 
@@ -1376,6 +1397,7 @@ def test_render_strategist_header_raises_when_options_disabled_but_options_posit
             sector_resolver=_make_micro_sector_resolver(),
             total_portfolio_value_usd=500_000.0,
             available_for_new_positions_usd=300_000.0,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
 
 
@@ -1410,6 +1432,7 @@ def test_render_strategist_header_raises_when_risk_budget_rule_missing(rule_id: 
             sector_resolver=_make_micro_sector_resolver(),
             total_portfolio_value_usd=500_000.0,
             available_for_new_positions_usd=300_000.0,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
 
 
@@ -1447,6 +1470,7 @@ def test_render_strategist_header_raises_when_active_parameter_missing(
             sector_resolver=_make_micro_sector_resolver(),
             total_portfolio_value_usd=500_000.0,
             available_for_new_positions_usd=300_000.0,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
 
 
@@ -1480,6 +1504,7 @@ def test_render_strategist_header_renders_position_action_against_position_id(
         sector_resolver=_make_micro_sector_resolver(),
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert (
         f"  ENV-SA-{command_type}: {command_type} on POS-NVDA-001 — "
@@ -1509,6 +1534,7 @@ def test_render_strategist_header_renders_cancel_action_against_order_id() -> No
         sector_resolver=_make_micro_sector_resolver(),
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert (
         "  ENV-SA-ORD-1: CANCEL on ORD-9001 — "
@@ -1539,6 +1565,7 @@ def test_render_strategist_header_raises_when_position_action_missing_position_i
             sector_resolver=_make_micro_sector_resolver(),
             total_portfolio_value_usd=500_000.0,
             available_for_new_positions_usd=300_000.0,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
 
 
@@ -1565,6 +1592,7 @@ def test_render_strategist_header_raises_when_cancel_action_missing_order_id() -
             sector_resolver=_make_micro_sector_resolver(),
             total_portfolio_value_usd=500_000.0,
             available_for_new_positions_usd=300_000.0,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
 
 
@@ -1592,6 +1620,7 @@ def test_render_strategist_header_has_no_double_blank_lines() -> None:
         sector_resolver=_make_full_sector_resolver(),
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     for prev, nxt in pairwise(rendered.splitlines()):
         assert not (prev == "" and nxt == ""), "double blank line found"
@@ -1611,6 +1640,7 @@ def test_render_strategist_header_has_no_trailing_blank_line() -> None:
         sector_resolver=_make_micro_sector_resolver(),
         total_portfolio_value_usd=500_000.0,
         available_for_new_positions_usd=300_000.0,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert not rendered.endswith("\n")
     assert rendered.splitlines()[-1] == "==="

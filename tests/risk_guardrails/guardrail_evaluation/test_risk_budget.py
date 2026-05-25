@@ -316,7 +316,7 @@ def test_min_cash_reserve_healthy_classifies_normal_and_not_breaching() -> None:
 
 
 def test_min_cash_reserve_within_warning_band_classifies_warning() -> None:
-    # MIN_RULE_WARNING_BAND_PCT=20 → warning floor = 10.0 * 1.20 = 12.0.
+    # inverse_warning_band_pct=20 → warning floor = 10.0 * 1.20 = 12.0.
     # current=11.0% lands in [10, 12) → WARNING.
     config = _config()
     snapshot = _snapshot(cash_usd=11_000.0)

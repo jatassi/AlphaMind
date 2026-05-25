@@ -187,6 +187,39 @@ def test_project_rule_inverse_within_warning_band_is_warning() -> None:
     assert result.projected_after == pytest.approx(10.5)
 
 
+def test_project_rule_inverse_warning_band_pct_is_operator_tunable() -> None:
+    """ALP-646: ``inverse_warning_band_pct`` argument controls the band width.
+
+    The default band is 20% above the floor (matching the YAML default), so an
+    inverse rule with floor=10, projected=11.5 classifies WARNING. Mutating
+    ``inverse_warning_band_pct`` to 10.0 narrows the band to [10, 11) and the
+    same projection flips to PASS.
+    """
+    default = project_rule(
+        rule_id="min_cash_reserve_pct",
+        current=12.0,
+        projected_after=11.5,
+        effective_limit=10.0,
+        zones=_DEFAULT_ZONES,
+        unit="% of portfolio",
+        inverse=True,
+        inverse_warning_band_pct=20.0,
+    )
+    narrowed = project_rule(
+        rule_id="min_cash_reserve_pct",
+        current=12.0,
+        projected_after=11.5,
+        effective_limit=10.0,
+        zones=_DEFAULT_ZONES,
+        unit="% of portfolio",
+        inverse=True,
+        inverse_warning_band_pct=10.0,
+    )
+
+    assert default.status is Status.WARNING
+    assert narrowed.status is Status.PASS
+
+
 def test_project_rule_inverse_well_above_floor_is_pass() -> None:
     """inverse=True: projected_after >= effective_limit * 1.2 → PASS."""
     result = project_rule(

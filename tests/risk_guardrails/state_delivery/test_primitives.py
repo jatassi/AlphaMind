@@ -27,8 +27,10 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
 )
 from alphamind.portfolio_state.views.positions import PositionView
+from alphamind.risk_guardrails.guardrail_evaluation.types import EscalationZones
 from alphamind.risk_guardrails.state_delivery.primitives import (
     _classify_loss_zone,
+    _classify_position_zone,
     format_dollar,
     format_pct,
     render_capital_block,
@@ -42,6 +44,11 @@ from alphamind.risk_guardrails.state_delivery.primitives import (
     render_sector_headroom_block,
     render_zone_tag,
 )
+
+# Default position zones match the canonical {70, 85, 95} band shipped in
+# config/guardrails.yaml. Tests reference this directly so the assertions stay
+# anchored to the YAML the rest of the library reads.
+_DEFAULT_POSITION_ZONES = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
 
 
 def _make_budget_entry(
@@ -829,6 +836,7 @@ def test_position_proximity_positive_pnl_exceeding_max_loss_magnitude_not_critic
     rendered = render_position_proximity_block(
         positions=(pos,),
         active_risk_parameters=_make_active_parameters_for_proximity(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "CRITICAL" not in rendered
     assert "WARNING" not in rendered
@@ -845,6 +853,7 @@ def test_position_proximity_loss_breach_flags_critical_or_blocked() -> None:
     rendered = render_position_proximity_block(
         positions=(pos,),
         active_risk_parameters=_make_active_parameters_for_proximity(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "[\U0001f534 CRITICAL: loss]" in rendered
 
@@ -859,6 +868,7 @@ def test_position_proximity_loss_approaching_max_loss_flags_warning() -> None:
     rendered = render_position_proximity_block(
         positions=(pos,),
         active_risk_parameters=_make_active_parameters_for_proximity(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "[⚠ WARNING: loss]" in rendered
     assert "CRITICAL" not in rendered
@@ -874,6 +884,7 @@ def test_position_proximity_zero_pnl_with_max_loss_is_normal() -> None:
     rendered = render_position_proximity_block(
         positions=(pos,),
         active_risk_parameters=_make_active_parameters_for_proximity(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "CRITICAL" not in rendered
     assert "WARNING" not in rendered
@@ -890,6 +901,7 @@ def test_position_proximity_size_proximity_still_drives_tag_when_loss_normal() -
     rendered = render_position_proximity_block(
         positions=(pos,),
         active_risk_parameters=_make_active_parameters_for_proximity(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "[\U0001f534 CRITICAL: size]" in rendered
 
@@ -904,6 +916,7 @@ def test_position_proximity_takes_max_severity_when_both_zones_fire() -> None:
     rendered = render_position_proximity_block(
         positions=(pos,),
         active_risk_parameters=_make_active_parameters_for_proximity(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "[\U0001f534 CRITICAL: loss]" in rendered
     assert "WARNING" not in rendered
@@ -924,6 +937,7 @@ def test_position_proximity_debug_pos_07_critical_is_size_not_loss() -> None:
     rendered = render_position_proximity_block(
         positions=(pos,),
         active_risk_parameters=_make_active_parameters_for_proximity(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "[\U0001f534 CRITICAL: size]" in rendered
     assert "[\U0001f534 CRITICAL: loss]" not in rendered
@@ -940,6 +954,7 @@ def test_position_proximity_size_and_loss_both_critical_names_both_sources() -> 
     rendered = render_position_proximity_block(
         positions=(pos,),
         active_risk_parameters=_make_active_parameters_for_proximity(),
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "[\U0001f534 CRITICAL: size+loss]" in rendered
 
@@ -957,8 +972,71 @@ def test_classify_loss_zone_normal_for_winning_credit_strategy() -> None:
     """
     # +30% P/L (the value the ALP-599 assembler tests assert for a profitable
     # net-credit strategy) against an 80% max-loss floor.
-    assert _classify_loss_zone(30.0, 80.0) is RiskZone.NORMAL
+    assert _classify_loss_zone(30.0, 80.0, _DEFAULT_POSITION_ZONES) is RiskZone.NORMAL
     # Even an extreme winner stays NORMAL.
-    assert _classify_loss_zone(19_900.0, 80.0) is RiskZone.NORMAL
+    assert _classify_loss_zone(19_900.0, 80.0, _DEFAULT_POSITION_ZONES) is RiskZone.NORMAL
     # A losing credit strategy still escalates — the percentage is signed.
-    assert _classify_loss_zone(-72.0, 80.0) is RiskZone.CRITICAL
+    assert _classify_loss_zone(-72.0, 80.0, _DEFAULT_POSITION_ZONES) is RiskZone.CRITICAL
+
+
+def test_classify_position_zone_reads_zones_from_argument() -> None:
+    """ALP-646: ``_classify_position_zone`` reads thresholds from its zones argument.
+
+    Operators tune the warning/critical/hard-block band on the
+    ``LibraryConfig.position_zones`` field; the classifier honours whatever the
+    caller threads in. Mutating ``warning`` from 70 → 60 must flip a value at
+    65% of limit from NORMAL to WARNING (the rest of the band is unchanged so
+    CRITICAL and BLOCKED still gate at 85% / 95%).
+    """
+    default_zones = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
+    tuned_zones = EscalationZones(warning=60.0, critical=85.0, hard_block=95.0)
+
+    # 65% consumption — below the canonical 70 warning, above the tuned 60.
+    assert _classify_position_zone(0.65, 1.0, default_zones) is RiskZone.NORMAL
+    assert _classify_position_zone(0.65, 1.0, tuned_zones) is RiskZone.WARNING
+
+
+def test_classify_loss_zone_reads_zones_from_argument() -> None:
+    """ALP-646: ``_classify_loss_zone`` reads thresholds from its zones argument.
+
+    The loss zone is driven by ``-pnl_pct / max_loss_pct`` and ``warning`` /
+    ``critical`` thresholds; mutating ``critical`` from 85 → 75 must flip a
+    position at 80% loss progress from WARNING to CRITICAL.
+    """
+    default_zones = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
+    tuned_zones = EscalationZones(warning=70.0, critical=75.0, hard_block=95.0)
+
+    # pnl = -64, max_loss = 80 → loss_progress = 0.80 → WARNING by default,
+    # CRITICAL once critical drops to 75.
+    assert _classify_loss_zone(-64.0, 80.0, default_zones) is RiskZone.WARNING
+    assert _classify_loss_zone(-64.0, 80.0, tuned_zones) is RiskZone.CRITICAL
+
+
+def test_render_position_proximity_block_threads_position_zones_through() -> None:
+    """ALP-646: ``render_position_proximity_block`` honours its zones argument.
+
+    The renderer threads the caller-supplied ``EscalationZones`` into the
+    underlying size/loss classifiers. Lowering ``warning`` from 70 → 30 must
+    surface a WARNING tag on a row that otherwise renders clean.
+    """
+    pos = _make_strategist_position_view(
+        position_id="POS-001",
+        position_weight_pct=1.75,  # 35% of the 5.0 limit
+        unrealized_pnl_pct=0.0,
+    )
+
+    default_render = render_position_proximity_block(
+        positions=(pos,),
+        active_risk_parameters=_make_active_parameters_for_proximity(),
+        position_zones=_DEFAULT_POSITION_ZONES,
+    )
+    assert "WARNING" not in default_render
+    assert "CRITICAL" not in default_render
+
+    tuned_render = render_position_proximity_block(
+        positions=(pos,),
+        active_risk_parameters=_make_active_parameters_for_proximity(),
+        position_zones=EscalationZones(warning=30.0, critical=85.0, hard_block=95.0),
+    )
+    assert "WARNING" in tuned_render
+    assert "size" in tuned_render

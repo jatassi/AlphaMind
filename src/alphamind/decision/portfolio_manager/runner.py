@@ -66,6 +66,7 @@ from alphamind.portfolio_state.records.positions import (
 from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
+    EscalationZones,
     FeatureFlagsView,
     LibraryConfig,
     MarketInputs,
@@ -325,6 +326,7 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
         total_portfolio_value_usd=total_portfolio_value_usd,
         available_for_new_positions_usd=available_for_new_positions_usd,
         cross_constraint_impact=cross_constraint_impact,
+        position_zones=library_config.position_zones,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,
         active_regime_overrides=active_regime_overrides,
@@ -403,6 +405,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
     total_portfolio_value_usd: Money,
     available_for_new_positions_usd: Money,
     cross_constraint_impact: CrossConstraintImpact,
+    position_zones: EscalationZones,
     sector_label_display: dict[str, str] | None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...],
     active_regime_overrides: tuple[RegimeOverride, ...],
@@ -432,6 +435,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
             available_for_new_positions_usd=available_for_new_positions_usd,
             cross_constraint_impact=cross_constraint_impact,
             tool_names=PM_TOOL_NAMES,
+            position_zones=position_zones,
             sector_label_display=sector_label_display,
             regime_transition_breaches=regime_transition_breaches,
             active_regime_overrides=active_regime_overrides,
@@ -462,6 +466,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
         available_for_new_positions_usd=available_for_new_positions_usd,
         cross_constraint_impact=cross_constraint_impact,
         tool_names=PM_TOOL_NAMES,
+        position_zones=position_zones,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,
         active_regime_overrides=active_regime_overrides,

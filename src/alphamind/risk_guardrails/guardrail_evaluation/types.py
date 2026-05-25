@@ -349,6 +349,11 @@ class FeatureFlagsView:
     short_selling_enabled: bool
 
 
+_DEFAULT_POSITION_ZONES: EscalationZones = EscalationZones(
+    warning=70.0, critical=85.0, hard_block=95.0
+)
+
+
 @dataclass(frozen=True, slots=True)
 class LibraryConfig:
     """The carved subset of ``ResolvedConfig`` this library reads.
@@ -358,6 +363,19 @@ class LibraryConfig:
     ``conservative_buffer_pct`` is the base buffer applied to absolute delta
     (default ``10.0`` for +10%); per-regime override is applied at the call
     site in story 03.
+
+    ``position_zones`` governs the position-level proximity classifier in
+    ``state_delivery/primitives.py`` (size and loss zones rendered into the
+    PM / strategist headers). It defaults to ``{70, 85, 95}`` so that fixtures
+    constructing ``LibraryConfig`` directly stay aligned with the shipped
+    ``config/guardrails.yaml`` band; production builds via ``from_resolved_config``
+    populate it from the YAML's top-level ``position_zones`` block.
+
+    ``inverse_warning_band_pct`` is the WARNING band width (as a percentage of
+    the floor) applied by ``project_rule(..., inverse=True)`` — the projection
+    engine classifies an inverse rule as WARNING when ``projected_after`` sits
+    in ``[effective_limit, effective_limit * (1 + band/100))``. Default ``20.0``
+    matches the YAML; ``from_resolved_config`` reads the YAML value.
     """
 
     effective_limits: Mapping[str, float]
@@ -367,6 +385,8 @@ class LibraryConfig:
     active_regime: str
     active_profile: str
     conservative_buffer_pct: float
+    position_zones: EscalationZones = _DEFAULT_POSITION_ZONES
+    inverse_warning_band_pct: float = 20.0
 
     def __hash__(self) -> int:
         return hash(
@@ -378,6 +398,8 @@ class LibraryConfig:
                 self.active_regime,
                 self.active_profile,
                 self.conservative_buffer_pct,
+                self.position_zones,
+                self.inverse_warning_band_pct,
             )
         )
 

@@ -72,11 +72,26 @@ class EmergencyInvocation(BaseModel):
     triggers: list[str | dict[str, Any]] = Field(min_length=1)
 
 
+_DEFAULT_POSITION_ZONES = EscalationZones(warning=70, critical=85, hard_block=95)
+
+
 class GuardrailsConfig(BaseModel):
+    """Top-level guardrails registry.
+
+    ``position_zones`` and ``inverse_warning_band_pct`` are library-wide
+    classification knobs read by the projection engine and the position-zone
+    renderer (ALP-646). Defaults match the historical hardcoded behaviour, so
+    existing fixtures that omit them keep working; the shipped
+    ``config/guardrails.yaml`` carries them explicitly so operators can see the
+    band they are tuning.
+    """
+
     model_config = ConfigDict(frozen=True)
 
     rules: list[RuleEntry] = Field(min_length=1)
     emergency_invocation: EmergencyInvocation
+    position_zones: EscalationZones = _DEFAULT_POSITION_ZONES
+    inverse_warning_band_pct: float = Field(default=20.0, ge=0.0)
 
     @model_validator(mode="after")
     def rule_ids_unique(self) -> "GuardrailsConfig":

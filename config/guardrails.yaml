@@ -10,6 +10,18 @@
 # Escalation zones default to {70, 85, 95}; the two drawdown rules carry tighter
 # bands per the per-rule overrides in breach-behavior.md § Escalation model.
 
+# Library-wide position-level proximity zones consumed by the state-delivery
+# renderer's size / loss classifier (ALP-646). The position-level rules
+# (position_max_size_pct, position_max_loss_*_pct) carry their own per-rule
+# escalation_zones below; this top-level block governs the renderer-side
+# proximity band so operators have a single named knob to tune.
+position_zones: { warning: 70, critical: 85, hard_block: 95 }
+
+# WARNING band width for inverse rules (e.g., min_cash_reserve_pct), as a
+# percentage of the floor. With a 10% floor and a 20% band, projected ∈ [10%,
+# 12%) classifies WARNING; ≥ 12% classifies PASS (ALP-646).
+inverse_warning_band_pct: 20.0
+
 rules:
   # --- Position size ----------------------------------------------------------
   - id: position_max_size_pct

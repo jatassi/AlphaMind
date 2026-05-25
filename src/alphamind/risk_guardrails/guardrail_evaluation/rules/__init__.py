@@ -120,6 +120,7 @@ def project_all(
                 magnitude=spec.magnitude,
                 inverse=spec.inverse,
                 breaching_position_id=breaching_position_id,
+                inverse_warning_band_pct=config.inverse_warning_band_pct,
             )
         )
     return tuple(projections)

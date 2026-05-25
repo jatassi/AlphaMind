@@ -157,6 +157,9 @@ _FULL_SECTOR_LABELS = {
 # ---------------------------------------------------------------------------
 
 
+_DEFAULT_POSITION_ZONES = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
+
+
 def _assert_lines_equal(actual: str, expected: str) -> None:
     """Compare two strings line-by-line and produce a diff-friendly failure."""
     assert actual.splitlines() == expected.splitlines()
@@ -970,6 +973,7 @@ def _render_normal_strategist_header(
         total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE_USD,
         available_for_new_positions_usd=_AVAILABLE_FOR_NEW_POSITIONS_USD,
         regime_transition_breaches=regime_transition_breaches,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
 
 
@@ -999,6 +1003,7 @@ def _render_normal_pm_header(
         correlation_state=correlation_state,
         dependency_risk_flag=dependency_risk_flag,
         regime_transition_breaches=regime_transition_breaches,
+        position_zones=_DEFAULT_POSITION_ZONES,
     )
 
 
@@ -1503,6 +1508,7 @@ class TestHaltModeWrappers:
             sector_resolver=_build_sector_resolver(),
             total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE_USD,
             available_for_new_positions_usd=_AVAILABLE_FOR_NEW_POSITIONS_USD,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
         assert "** HALT MODE ACTIVE — daily drawdown 2.6% / 2.5% **" in rendered
         assert (
@@ -1532,6 +1538,7 @@ class TestHaltModeWrappers:
             cross_constraint_impact=_build_cross_constraint_impact(),
             pending_orders=(_build_pending_order(),),
             current_price_lookup=_price_lookup,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
         # Banner has three lines
         assert "** HALT MODE ACTIVE — daily drawdown 2.6% / 2.5% **" in rendered
@@ -1563,6 +1570,7 @@ class TestHaltModeWrappers:
             cross_constraint_impact=_build_cross_constraint_impact(),
             pending_orders=(),
             current_price_lookup=_price_lookup,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
         # Pending-orders-review block has the None line
         lines = rendered.splitlines()
@@ -1619,6 +1627,7 @@ class TestEmergencyWrapper:
             cross_constraint_impact=_build_cross_constraint_impact(),
             pending_orders=(_build_pending_order(),),
             current_price_lookup=_price_lookup,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
         context = EmergencyContext(
             trigger=EmergencyTrigger.MULTI_RULE_BREACH,
@@ -1868,6 +1877,7 @@ class TestComposition:
             cross_constraint_impact=_build_cross_constraint_impact(),
             pending_orders=(_build_pending_order(),),
             current_price_lookup=_price_lookup,
+            position_zones=_DEFAULT_POSITION_ZONES,
         )
         context = EmergencyContext(
             trigger=EmergencyTrigger.DAILY_DRAWDOWN_VELOCITY,
