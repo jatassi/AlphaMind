@@ -9,10 +9,6 @@ with zero output tokens. Even the same-process stall-retry mechanism
 sometimes fails (both attempts stall) because the process state itself
 has degraded.
 
-The "back-to-back" diagnostic
-(``scripts/_debug_two_back_to_back.py``) shows call 1 sometimes stalls
-once and retries to success, call 2 sometimes has both attempts stall.
-
 The workaround in this module: run each harness invocation in a fresh
 Python subprocess. Each subprocess imports the harness module, runs one
 ``invoke_<agent>`` call, serializes the result to stdout, and exits.

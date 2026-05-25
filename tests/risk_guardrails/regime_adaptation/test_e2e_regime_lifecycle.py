@@ -1,14 +1,22 @@
-"""End-to-end Scenario A — calm-week → crisis-week → recovery-week (story 10).
+"""End-to-end Scenarios A + C for the regime-adaptation orchestrator (story 10).
 
-A 10-invocation sequence walking the full transition lifecycle: low_vol
-stable, tightening into normal, stabilizing, tightening into crisis,
-stabilizing, then loosening down through elevated for three invocations
-before stabilizing.
+**Scenario A** — calm-week → crisis-week → recovery-week. A 10-invocation
+sequence walking the full transition lifecycle: low_vol stable, tightening
+into normal, stabilizing, tightening into crisis, stabilizing, then
+loosening down through elevated for three invocations before stabilizing.
+
+**Scenario C** — regime-skip emergency passthrough. A 2-invocation
+sequence: a calm low-vol baseline followed by a CRISIS_SPIKE marked as a
+regime-skip emergency by the upstream distillation classifier. The
+orchestrator must forward the flag verbatim, emit a
+``regime_skip_emergency`` audit entry, and also emit the
+``regime_transition`` audit since the ladder index moved.
 
 Each invocation:
 
 1. Builds a fresh ``RegimeAdaptationInputs`` describing the upstream
-   distillation observation (regime label + VIX).
+   distillation observation (regime label + VIX, optionally with the
+   regime-skip emergency flag set).
 2. Calls ``resolve_regime_adaptation`` with the running session.
 3. Asserts the per-invocation expected output (regime, transition state,
    transition countdown, audit log composition, interpolated effective
@@ -17,10 +25,11 @@ Each invocation:
    ``select_most_recent_state`` reads it back — driving the full
    read-compute-persist seam.
 
-Per the story file, this scenario is the regime-adaptation work tree's
-seam test for the regime-classification, transition-mechanics, and
-breach-detection composition. Per-primitive correctness is covered in
-stories 03-08; this story confirms they integrate.
+Per the story file, these scenarios are the regime-adaptation work tree's
+seam tests for the regime-classification, transition-mechanics,
+breach-detection, and emergency-passthrough composition. Per-primitive
+correctness is covered in stories 03-08; this story confirms they
+integrate.
 """
 
 from __future__ import annotations
@@ -63,7 +72,7 @@ _PER_INVOCATION_DELTA = timedelta(hours=4)
 
 @dataclass(frozen=True)
 class _Step:
-    """One scripted invocation in Scenario A's timeline.
+    """One scripted invocation in a scenario timeline.
 
     The expected fields are the story file's table columns; the test
     asserts the orchestrator's output against them.
@@ -76,6 +85,7 @@ class _Step:
     expected_transition_state: RegimeTransitionState
     expected_transition_invocations_remaining: int
     expected_emits_regime_transition_audit: bool
+    distillation_regime_skip_emergency: bool = False
 
 
 # Scenario A's 10-step timeline. The first six invocations exercise the
@@ -184,6 +194,35 @@ _TIMELINE: tuple[_Step, ...] = (
 )
 
 
+# Scenario C — regime-skip emergency passthrough. Two invocations: a calm
+# low-vol baseline followed by a CRISIS_SPIKE marked as a regime-skip
+# emergency by the upstream distillation classifier. The orchestrator
+# must forward the flag and emit both ``regime_transition`` and
+# ``regime_skip_emergency`` audits on the emergency invocation.
+_SCENARIO_C_TIMELINE: tuple[_Step, ...] = (
+    _Step(
+        invocation_id="INV-C-01",
+        distillation_regime_label=DistillationRegimeLabel.LOW_VOL_COMPRESSION,
+        distillation_vix_level=12.0,
+        expected_active_regime=Regime.low_vol,
+        expected_transition_state=RegimeTransitionState.STABLE,
+        expected_transition_invocations_remaining=0,
+        expected_emits_regime_transition_audit=False,
+        distillation_regime_skip_emergency=False,
+    ),
+    _Step(
+        invocation_id="INV-C-02",
+        distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,
+        distillation_vix_level=50.0,
+        expected_active_regime=Regime.crisis,
+        expected_transition_state=RegimeTransitionState.TIGHTENING,
+        expected_transition_invocations_remaining=0,
+        expected_emits_regime_transition_audit=True,
+        distillation_regime_skip_emergency=True,
+    ),
+)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -229,7 +268,7 @@ def _build_inputs(
     return RegimeAdaptationInputs(
         distillation_regime_label=step.distillation_regime_label,
         distillation_vix_level=step.distillation_vix_level,
-        distillation_regime_skip_emergency=False,
+        distillation_regime_skip_emergency=step.distillation_regime_skip_emergency,
         vix_thresholds=_vix_thresholds(),
         held_positions=held_positions,
         risk_budget=_empty_risk_budget(),
@@ -520,3 +559,101 @@ def test_persistence_round_trip_preserves_final_state_field_by_field(
     assert last_output is not None
     recovered = select_most_recent_state(in_memory_session)
     assert recovered == last_output.new_persisted_state
+
+
+# ---------------------------------------------------------------------------
+# Test 6 — Scenario C: regime-skip emergency flag passthrough + audit
+# ---------------------------------------------------------------------------
+
+
+def test_regime_skip_emergency_flag_passes_through_with_audit_entry(
+    in_memory_session: Session,
+    loaded_config_micro_normal: LoadedConfig,
+    rule_metadata_from_shipped_registry: Mapping[str, RuleMetadata],
+) -> None:
+    """Inv 2's ``regime_skip_emergency=True`` surfaces on the output and audit log.
+
+    Inv 1 establishes a calm low-vol baseline (no emergency flag, no
+    audit). Inv 2 reports a CRISIS_SPIKE with the emergency flag set;
+    the orchestrator forwards the flag and emits a
+    ``regime_skip_emergency`` audit entry whose payload includes the
+    distillation regime label and VIX level.
+    """
+    outputs: list[RegimeAdaptationOutput] = []
+    for index, step in enumerate(_SCENARIO_C_TIMELINE):
+        now_utc = _T0 + index * _PER_INVOCATION_DELTA
+        outputs.append(
+            _drive_one_step(
+                step=step,
+                now_utc=now_utc,
+                held_positions=(),
+                loaded_config=loaded_config_micro_normal,
+                rule_metadata=rule_metadata_from_shipped_registry,
+                session=in_memory_session,
+            )
+        )
+
+    output_1, output_2 = outputs
+    assert output_1.regime_skip_emergency is False
+    inv_1_kinds = {entry.event_kind for entry in output_1.audit_log_entries}
+    assert "regime_skip_emergency" not in inv_1_kinds
+
+    # Passthrough on the output record + persisted state.
+    assert output_2.regime_skip_emergency is True
+    assert output_2.new_persisted_state.regime_skip_emergency is True
+    # Active regime resolves to crisis (label-driven, ignores VIX).
+    assert output_2.runtime_dimensions_active_regime == Regime.crisis
+
+    # Audit log: one regime_skip_emergency entry with the correct payload.
+    skip_entries = [
+        entry for entry in output_2.audit_log_entries if entry.event_kind == "regime_skip_emergency"
+    ]
+    assert len(skip_entries) == 1
+    payload = skip_entries[0].payload
+    assert payload["distillation_regime_label"] == DistillationRegimeLabel.CRISIS_SPIKE.value
+    assert payload["distillation_vix_level"] == 50.0
+    assert payload["prior_distillation_regime_label"] == (
+        DistillationRegimeLabel.LOW_VOL_COMPRESSION.value
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 7 — Scenario C: regime_transition audit coexists with the skip audit
+# ---------------------------------------------------------------------------
+
+
+def test_regime_skip_emergency_invocation_also_emits_regime_transition_audit(
+    in_memory_session: Session,
+    loaded_config_micro_normal: LoadedConfig,
+    rule_metadata_from_shipped_registry: Mapping[str, RuleMetadata],
+) -> None:
+    """The emergency invocation crosses the regime ladder; both audits coexist.
+
+    A regime-skip emergency does not suppress the regime-transition
+    audit emission — the ladder index moved (low_vol → crisis), so the
+    orchestrator emits both ``regime_transition`` and
+    ``regime_skip_emergency`` entries on the same invocation.
+    """
+    output_2: RegimeAdaptationOutput | None = None
+    for index, step in enumerate(_SCENARIO_C_TIMELINE):
+        now_utc = _T0 + index * _PER_INVOCATION_DELTA
+        output_2 = _drive_one_step(
+            step=step,
+            now_utc=now_utc,
+            held_positions=(),
+            loaded_config=loaded_config_micro_normal,
+            rule_metadata=rule_metadata_from_shipped_registry,
+            session=in_memory_session,
+        )
+    assert output_2 is not None
+
+    inv_2_kinds = [entry.event_kind for entry in output_2.audit_log_entries]
+    assert "regime_transition" in inv_2_kinds
+    assert "regime_skip_emergency" in inv_2_kinds
+    transition_entries = [
+        entry for entry in output_2.audit_log_entries if entry.event_kind == "regime_transition"
+    ]
+    assert len(transition_entries) == 1
+    assert transition_entries[0].payload["direction"] == "tightening"
+    assert transition_entries[0].payload["prior_regime"] == Regime.low_vol.value
+    assert transition_entries[0].payload["new_regime"] == Regime.crisis.value
