@@ -1466,6 +1466,75 @@ def test_portfolio_state_section_renders_aggregate_block() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Aggregate-PnL deferred-field rendering (ALP-654)
+# ---------------------------------------------------------------------------
+
+
+def test_aggregate_pnl_block_names_populated_metrics() -> None:
+    """When the four feedback-loop metrics are populated, the Aggregate
+    block surfaces their numeric values to the strategist."""
+    # _make_pnl() carries win_rate_pct=55.0, profit_factor=1.4,
+    # average_win_size_usd=$200, average_loss_size_usd=$150.
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(),
+        sector_label_display=_SECTOR_LABELS,
+    )
+    aggregate_section = out[out.index("=== PORTFOLIO STATE ===") :]
+    assert "win rate: 55" in aggregate_section
+    assert "profit factor: 1.4" in aggregate_section
+    assert "avg win:" in aggregate_section and "$200" in aggregate_section
+    assert "avg loss:" in aggregate_section and "$150" in aggregate_section
+
+
+def test_aggregate_pnl_block_frames_deferred_metrics_explicitly() -> None:
+    """When the feedback-loop metrics are None (deferred), the Aggregate
+    block names each by name with explicit "not yet computed" framing
+    instead of silently omitting them."""
+    deferred_pnl = PortfolioPnL(
+        total_unrealized_pnl_usd=money(8200.0),
+        total_unrealized_pnl_pct_of_portfolio=0.82,
+        daily_realized_pnl_usd=money(300.0),
+        daily_total_pnl_usd=money(1200.0),
+        cumulative_realized_pnl_usd=money(10000.0),
+        rolling_realized_pnl={
+            "1d": money(300.0),
+            "3d": money(600.0),
+            "5d": money(1200.0),
+            "20d": money(3000.0),
+        },
+        win_rate_pct=None,
+        average_win_size_usd=None,
+        average_loss_size_usd=None,
+        profit_factor=None,
+    )
+    populated_view = _make_strategist_view()
+    view_deferred = StrategistView(
+        positions=populated_view.positions,
+        recent_thesis_resolutions=populated_view.recent_thesis_resolutions,
+        portfolio_pnl=deferred_pnl,
+        drawdown=populated_view.drawdown,
+        sector_exposure=populated_view.sector_exposure,
+        directional_exposure=populated_view.directional_exposure,
+        risk_budget=populated_view.risk_budget,
+        active_risk_parameters=populated_view.active_risk_parameters,
+        intra_invocation_changelog=populated_view.intra_invocation_changelog,
+        recent_pm_decision_log=populated_view.recent_pm_decision_log,
+        abandoned_openings=populated_view.abandoned_openings,
+        abandoned_actions=populated_view.abandoned_actions,
+        between_invocation_closures=populated_view.between_invocation_closures,
+    )
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(strategist_view=view_deferred),
+        sector_label_display=_SECTOR_LABELS,
+    )
+    aggregate_section = out[out.index("=== PORTFOLIO STATE ===") :]
+    assert "win rate: not yet computed" in aggregate_section
+    assert "avg win: not yet computed" in aggregate_section
+    assert "avg loss: not yet computed" in aggregate_section
+    assert "profit factor: not yet computed" in aggregate_section
+
+
+# ---------------------------------------------------------------------------
 # Between-invocation closures section (story 04c / ALP-440)
 # ---------------------------------------------------------------------------
 
