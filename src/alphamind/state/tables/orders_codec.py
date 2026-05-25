@@ -22,8 +22,8 @@ from alphamind._kernel.ids import (
     CommandId,
     OrderId,
     PositionId,
-    Symbol,
     ThesisId,
+    make_symbol,
 )
 from alphamind._kernel.money import decimal_json_default, price
 from alphamind.portfolio_state.records.orders import (
@@ -57,7 +57,7 @@ def _options_spec_to_dict(spec: OptionsInstrumentSpec) -> dict[str, Any]:
 
 def _options_spec_from_dict(payload: dict[str, Any]) -> OptionsInstrumentSpec:
     return OptionsInstrumentSpec(
-        underlying=Symbol(payload["underlying"]),
+        underlying=make_symbol(payload["underlying"]),
         strike=payload["strike"],
         expiration=date.fromisoformat(payload["expiration"]),
         contract_type=OptionContractType(payload["contract_type"]),
@@ -80,7 +80,7 @@ def _instrument_spec_to_dict(spec: InstrumentSpec) -> dict[str, Any]:
 def _instrument_spec_from_dict(payload: dict[str, Any]) -> InstrumentSpec:
     kind = payload["instrument_type"]
     if kind == InstrumentType.EQUITY.value:
-        return EquityInstrumentSpec(ticker=Symbol(payload["ticker"]))
+        return EquityInstrumentSpec(ticker=make_symbol(payload["ticker"]))
     if kind == InstrumentType.OPTIONS.value:
         return _options_spec_from_dict(payload)
     if kind == InstrumentType.STRATEGY.value:

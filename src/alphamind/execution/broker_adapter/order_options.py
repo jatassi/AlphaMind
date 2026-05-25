@@ -37,7 +37,7 @@ from alpaca.trading.requests import (
     StopLimitOrderRequest,
 )
 
-from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol
+from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol, make_occ_symbol
 from alphamind._kernel.money import Price
 from alphamind.commands.command_models import (
     AddCommand,
@@ -108,11 +108,14 @@ def build_occ_symbol(
     thousandths of a dollar, zero-padded to eight digits (e.g., ``800.0`` →
     ``00800000`` and ``12.50`` → ``00012500``).
 
+    Share-class tickers (e.g., ``BRK.B``, ``BF.B``) drop the dot in the OCC
+    root field per OCC convention — ``BRK.B`` → ``BRKB``.
+
     Examples:
         >>> build_occ_symbol("NVDA", date(2024, 3, 15), OptionContractType.CALL, 800.0)
         'NVDA  240315C00800000'
     """
-    root = underlying.upper().ljust(6)
+    root = underlying.upper().replace(".", "").ljust(6)
     yymmdd = expiration.strftime("%y%m%d")
     cp = "C" if contract_type is OptionContractType.CALL else "P"
     # ``round`` to avoid binary float drift on values like 12.50
@@ -410,7 +413,7 @@ async def _submit(
         payload=OptionsSubmission(
             alpaca_order_id=AlpacaOrderId(str(order.id)),
             client_order_id=ClientOrderId(order.client_order_id),
-            occ_symbol=OccSymbol(occ_symbol),
+            occ_symbol=make_occ_symbol(occ_symbol),
             status=order.status.value,
             order_class=order.order_class.value,
         ),

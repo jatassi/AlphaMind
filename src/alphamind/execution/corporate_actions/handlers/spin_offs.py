@@ -24,7 +24,7 @@ from __future__ import annotations
 import dataclasses
 import uuid
 
-from alphamind._kernel.ids import PositionId, Symbol
+from alphamind._kernel.ids import PositionId, make_symbol
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.write_paths.ca_integration_ledger import (
     mark_ca_activity_processed,
@@ -124,7 +124,7 @@ def _build_spin_off_child(
         live_execution_estimate=None,
     )
     details = EquityPositionDetails(
-        ticker=Symbol(child_ticker),
+        ticker=make_symbol(child_ticker),
         share_count=child_qty,
         average_cost_basis_per_share=child_basis,
     )

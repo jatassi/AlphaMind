@@ -37,7 +37,7 @@ from alpaca.trading.requests import (
     OptionLegRequest,
 )
 
-from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol
+from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol, make_occ_symbol
 from alphamind._kernel.money import Price
 from alphamind.commands.command_models import (
     AddCommand,
@@ -292,7 +292,7 @@ def _legs_to_acks(
     """
     return tuple(
         MLEGLegAck(
-            occ_symbol=OccSymbol(leg.symbol),
+            occ_symbol=make_occ_symbol(leg.symbol),
             side=_required_side(leg).value,
             ratio_qty=int(leg.ratio_qty),
             position_intent=_required_intent(leg).value,
@@ -451,7 +451,7 @@ def strategy_legs_to_close_acks(
         )
         acks.append(
             MLEGLegAck(
-                occ_symbol=OccSymbol(occ),
+                occ_symbol=make_occ_symbol(occ),
                 side=_CLOSE_SIDE_FOR_DIRECTION[direction],
                 ratio_qty=1,
                 position_intent=_CLOSE_INTENT_FOR_DIRECTION[direction],

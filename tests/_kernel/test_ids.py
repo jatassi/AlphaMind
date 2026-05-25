@@ -221,7 +221,156 @@ def test_kernel_ids_all_lists_every_public_name() -> None:
         "envelope_id",
         "command_id",
         "recommendation_id",
+        "make_symbol",
+        "make_occ_symbol",
     }
+
+
+def test_make_symbol_accepts_plain_us_equity_ticker() -> None:
+    from alphamind._kernel.ids import make_symbol
+
+    for raw in ("A", "AAPL", "GOOGL", "JPM", "NVDA"):
+        value = make_symbol(raw)
+        assert isinstance(value, str)
+        assert value == raw
+
+
+def test_make_symbol_accepts_multi_share_class_dot_ticker() -> None:
+    """``BRK.B`` / ``BF.B``-style multi-share-class tickers are valid."""
+    from alphamind._kernel.ids import make_symbol
+
+    for raw in ("BRK.B", "BF.B"):
+        assert make_symbol(raw) == raw
+
+
+def test_make_symbol_rejects_empty_whitespace_and_lowercase() -> None:
+    """``make_symbol`` rejects the malformations called out in ALP-640."""
+    import pytest
+
+    from alphamind._kernel.ids import make_symbol
+
+    for raw in (
+        "",
+        " ",
+        "with spaces",
+        "aapl",
+        "AAPL ",
+        " AAPL",
+        ".AAPL",
+        "AAPL.",
+        "BRK..B",
+        "A..B",
+        "BRK.B.C",
+    ):
+        with pytest.raises(ValueError, match="make_symbol"):
+            make_symbol(raw)
+
+
+def test_make_symbol_rejects_overlong_input() -> None:
+    """A garbage string longer than any plausible ticker is rejected.
+
+    The cap is set so ``BRK.B``-style multi-share-class tickers pass while
+    obvious malformations ("garbage-with-spaces"-length non-tickers) fail
+    at the boundary, surfacing the bug rather than propagating downstream.
+    """
+    import pytest
+
+    from alphamind._kernel.ids import make_symbol
+
+    for raw in ("ABCDEFGHIJK", "A" * 11):
+        with pytest.raises(ValueError, match="make_symbol"):
+            make_symbol(raw)
+
+
+def test_make_occ_symbol_accepts_canonical_format() -> None:
+    """Compressed form: ``AAPL250620C00200000`` (no space padding).
+
+    Both compressed and the OPRA-canonical space-padded 21-char form
+    (``"NVDA  260619C00800000"``) are accepted — the production builder
+    ``build_occ_symbol`` emits the padded form, but ``OccSymbol`` consumers
+    may receive either from external boundaries (broker payloads, strategist
+    proposals), so the constructor accepts both.
+    """
+    from alphamind._kernel.ids import make_occ_symbol
+
+    for raw in (
+        "AAPL250620C00200000",
+        "SPY250117P00450000",
+        "A250620C00050000",
+        "GOOGL260116P00150000",
+    ):
+        value = make_occ_symbol(raw)
+        assert isinstance(value, str)
+        assert value == raw
+
+
+def test_make_occ_symbol_accepts_opra_space_padded_form() -> None:
+    """OPRA fixed-21-char form: root is left-padded with spaces to six chars.
+
+    This is what ``alphamind.execution.broker_adapter.order_options.build_occ_symbol``
+    emits and what Alpaca returns on fill events.
+    """
+    from alphamind._kernel.ids import make_occ_symbol
+
+    for raw in (
+        "NVDA  260619C00800000",  # 4-letter root + 2 spaces
+        "SPY   250117P00450000",  # 3-letter root + 3 spaces
+        "A     250620C00050000",  # 1-letter root + 5 spaces
+        "GOOGL 260116P00150000",  # 5-letter root + 1 space
+        "AAAAAA250620C00200000",  # 6-letter root + 0 spaces (canonical 21-char no padding)
+    ):
+        assert make_occ_symbol(raw) == raw
+
+
+def test_build_occ_symbol_roundtrips_through_make_occ_symbol() -> None:
+    """Every ``build_occ_symbol`` output must pass ``make_occ_symbol``.
+
+    Guards against producer/validator divergence — historically the two were
+    written against different specs (build pads roots to 6, validator
+    initially rejected dots in roots), so a share-class underlying like
+    ``BRK.B`` would round-trip-crash. The fix in ALP-640 was for the
+    builder to drop the dot per OCC convention.
+    """
+    from datetime import date
+
+    from alphamind._kernel.ids import make_occ_symbol
+    from alphamind.execution.broker_adapter.order_options import build_occ_symbol
+    from alphamind.portfolio_state.records.positions import OptionContractType
+
+    cases = [
+        ("NVDA", OptionContractType.CALL, 800.0),
+        ("AAPL", OptionContractType.PUT, 200.0),
+        ("A", OptionContractType.CALL, 50.0),
+        ("GOOGL", OptionContractType.PUT, 150.0),
+        ("BRK.B", OptionContractType.CALL, 600.0),  # share-class — dot must be stripped
+        ("BF.B", OptionContractType.PUT, 100.0),
+        ("AAAAAA", OptionContractType.CALL, 75.0),  # 6-char root (no padding)
+    ]
+    for underlying, contract_type, strike in cases:
+        occ = build_occ_symbol(underlying, date(2026, 6, 19), contract_type, strike)
+        # Must not raise.
+        assert make_occ_symbol(occ) == occ
+
+
+def test_make_occ_symbol_rejects_invalid_input() -> None:
+    import pytest
+
+    from alphamind._kernel.ids import make_occ_symbol
+
+    for raw in (
+        "",
+        "garbage",
+        "AAPL250620X00200000",
+        "aapl250620C00200000",
+        "AAPL25062C00200000",
+        "AAPL250620C0020000",
+        "AAPL250620C002000000",
+        "AAPL.250620C00200000",
+        "TOOLONG250620C00200000",
+        " AAPL250620C00200000",
+    ):
+        with pytest.raises(ValueError, match="make_occ_symbol"):
+            make_occ_symbol(raw)
 
 
 def test_recommendation_id_accepts_analyst_pattern() -> None:

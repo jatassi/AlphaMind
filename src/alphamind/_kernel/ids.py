@@ -1,18 +1,14 @@
 """NewType aliases for identifiers across AlphaMind.
 
 Each alias is a distinct type for the type checker but a plain ``str`` at
-runtime; passing an :class:`EnvelopeId` where a :class:`PositionId` is expected
-fails ``mypy --strict``. Story 04 of the architecture-refactoring work tree
-(ALP-460) introduces the types in isolation; story 05a (ALP-461) migrates
-consumers to construct/return these typed values at boundaries.
-
-For IDs with a known regex pattern (engine envelope IDs, PM envelope IDs,
-their corresponding command IDs), this module exposes constructor functions
-that validate the pattern once at the boundary so downstream code can trust
-the typed value (python-architecture §D2 — parse-don't-validate). Symbol /
-OccSymbol expose only the alias because the validation source (the asset
-universe) is defined elsewhere; story 05a will add the constructor when
-consumers migrate.
+runtime; passing an :class:`EnvelopeId` where a :class:`PositionId` is
+expected fails ``mypy --strict``. Consumers construct typed values at
+boundaries via the ``envelope_id`` / ``command_id`` / ``recommendation_id``
+/ ``make_symbol`` / ``make_occ_symbol`` constructors, which validate the
+pattern once so downstream code can trust the typed value
+(python-architecture §D2 — parse-don't-validate). Bare ``Symbol`` /
+``OccSymbol`` aliases remain public so test fixtures can construct without
+re-validating known-good inputs.
 """
 
 from __future__ import annotations
@@ -35,6 +31,8 @@ __all__ = [
     "ThesisId",
     "command_id",
     "envelope_id",
+    "make_occ_symbol",
+    "make_symbol",
     "recommendation_id",
 ]
 
@@ -106,6 +104,75 @@ _STRATEGIST_RECOMMENDATION_ID_PATTERN = re.compile(r"^SA(-ORD)?-[0-9]+$")
 Mirrors the pattern in
 ``docs/design/04-decision-layer/strategist-output-schema.md``.
 """
+
+_SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9]*(?:\.[A-Z0-9]+)?$")
+"""US-equity ticker: 1-10 chars, leading uppercase letter, optional single dot.
+
+Tighter than the canonical asset-universe validator
+``alphamind.config.models.assets._TICKER_RE`` — disallows consecutive dots,
+leading/trailing dots, and lowercase. Caps total length at 10 chars so
+"garbage with spaces"-length strings fail at the boundary. Accepts plain
+tickers (``AAPL``, ``NVDA``), multi-share-class tickers with one dot
+(``BRK.B``, ``BF.B``), and the rare single-letter ticker (``A``, ``F``).
+Rejects empty string, whitespace, lowercase, leading/trailing dot,
+consecutive dots.
+
+The length cap (10) is enforced by :func:`make_symbol` rather than the
+regex — embedding ``{,10}`` inside the alternation made the pattern much
+harder to read for a marginal benefit.
+"""
+
+_OCC_SYMBOL_PATTERN = re.compile(r"^(?=.{16,21}$)[A-Z]{1,6} *\d{6}[CP]\d{8}$")
+"""OCC option symbol: ``{root:1-6}[ *]{YYMMDD:6}{CP:1}{strike:8}``.
+
+16-21 chars total. Root is uppercase alphabetic (no digits, no dot — OCC
+encodes share-class tickers without the dot), optionally right-padded with
+trailing spaces inside a fixed 21-char root field; the production builder
+``alphamind.execution.broker_adapter.order_options.build_occ_symbol`` emits
+the canonical space-padded 21-char form (``"NVDA  260619C00800000"``),
+while the compressed form (``"AAPL250620C00200000"``) is also accepted.
+Expiry is six digits. ``C`` or ``P`` denotes call/put. Strike is the
+8-digit zero-padded integer ``price * 1000`` (e.g., ``$200.00`` strike =>
+``00200000``).
+"""
+
+
+_SYMBOL_MAX_LEN = 10
+"""Length cap enforced by :func:`make_symbol` alongside :data:`_SYMBOL_PATTERN`."""
+
+
+def make_symbol(value: str) -> Symbol:
+    """Construct a :class:`Symbol`, validating the US-equity ticker pattern.
+
+    Accepts uppercase tickers up to 10 chars, optionally containing a single
+    dot for multi-share-class tickers (``BRK.B``). Raises :class:`ValueError`
+    with the offending input on mismatch.
+    """
+    if len(value) > _SYMBOL_MAX_LEN or not _SYMBOL_PATTERN.fullmatch(value):
+        msg = (
+            f"make_symbol must match {_SYMBOL_PATTERN.pattern!r} and be "
+            f"<= {_SYMBOL_MAX_LEN} chars; got {value!r}"
+        )
+        raise ValueError(msg)
+    return Symbol(value)
+
+
+def make_occ_symbol(value: str) -> OccSymbol:
+    """Construct an :class:`OccSymbol`, validating the OCC option-symbol pattern.
+
+    Pattern: ``^(?=.{16,21}$)[A-Z]{1,6} *\\d{6}[CP]\\d{8}$`` — root +
+    optional trailing space padding + YYMMDD expiry + ``C``/``P`` + 8-digit
+    zero-padded strike (price * 1000). Accepts both the canonical
+    space-padded 21-char form emitted by
+    :func:`alphamind.execution.broker_adapter.order_options.build_occ_symbol`
+    (``"NVDA  260619C00800000"``) and the compressed form without padding
+    (``"AAPL250620C00200000"``). Raises :class:`ValueError` with the
+    offending input on mismatch.
+    """
+    if not _OCC_SYMBOL_PATTERN.fullmatch(value):
+        msg = f"make_occ_symbol must match {_OCC_SYMBOL_PATTERN.pattern!r}; got {value!r}"
+        raise ValueError(msg)
+    return OccSymbol(value)
 
 
 def envelope_id(value: str) -> EnvelopeId:

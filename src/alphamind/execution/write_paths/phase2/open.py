@@ -9,8 +9,8 @@ from alphamind._kernel.ids import (
     BracketId,
     OrderId,
     PositionId,
-    Symbol,
     ThesisId,
+    make_symbol,
 )
 from alphamind.commands.command_models import (
     BracketOrderType,
@@ -444,7 +444,7 @@ def _build_strategy_skeleton(
             StrategyLeg(
                 leg_id=f"{position_id}-leg-{idx}",
                 options=OptionsPositionDetails(
-                    underlying_ticker=Symbol(instrument.underlying),
+                    underlying_ticker=make_symbol(instrument.underlying),
                     # ALP-462 — Price → float at the legacy OptionsPositionDetails surface.
                     strike_price=float(wire_leg.strike),
                     expiration_date=date.fromisoformat(wire_leg.expiration),
@@ -515,7 +515,7 @@ def _build_pending_position(
             )
             raise ValueError(msg)
         details: PositionDetailsPayload = OptionsPositionDetails(
-            underlying_ticker=Symbol(instrument.underlying),
+            underlying_ticker=make_symbol(instrument.underlying),
             # ALP-462 — Price → float at the legacy OptionsPositionDetails surface.
             strike_price=float(instrument.strike),
             expiration_date=date.fromisoformat(instrument.expiration),
@@ -534,7 +534,7 @@ def _build_pending_position(
     elif isinstance(instrument, EquityInstrument):
         short_fields_present = direction == Direction.SHORT
         details = EquityPositionDetails(
-            ticker=Symbol(instrument.ticker),
+            ticker=make_symbol(instrument.ticker),
             share_count=0.0,
             average_cost_basis_per_share=0.0,
             borrow_rate_pct=0.0 if short_fields_present else None,
@@ -677,7 +677,7 @@ def _wire_leg_to_bracket_leg(
             leg_type=BracketLegType.PRICE_STOP,
             order_id=OrderId(leg_order_id) if leg_order_id is not None else None,
             trigger=PriceTrigger(
-                underlying_ticker=Symbol(wire_leg.condition.underlying_trigger or ticker),
+                underlying_ticker=make_symbol(wire_leg.condition.underlying_trigger or ticker),
                 # ALP-462 — Price → float at the legacy PriceTrigger surface.
                 threshold_usd=float(wire_leg.condition.trigger_price),
                 direction=direction,
@@ -724,7 +724,7 @@ def _target_to_bracket_leg(
         leg_type=BracketLegType.TAKE_PROFIT,
         order_id=OrderId(target_order_id),
         trigger=PriceTrigger(
-            underlying_ticker=Symbol(ticker),
+            underlying_ticker=make_symbol(ticker),
             threshold_usd=threshold_usd,
             direction="GTE" if direction == Direction.LONG else "LTE",
         ),
@@ -780,7 +780,7 @@ def _strategy_target_to_bracket_leg(
         leg_type=BracketLegType.TAKE_PROFIT,
         order_id=OrderId(target_order_id),
         trigger=PriceTrigger(
-            underlying_ticker=Symbol(ticker),
+            underlying_ticker=make_symbol(ticker),
             threshold_usd=planned_price,
             direction="GTE",  # inert for a strategy — pl_anchor drives firing
         ),

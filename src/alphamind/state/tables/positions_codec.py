@@ -18,7 +18,7 @@ import json
 from datetime import date, datetime
 from typing import Any
 
-from alphamind._kernel.ids import BracketId, PositionId, Symbol, ThesisId
+from alphamind._kernel.ids import BracketId, PositionId, ThesisId, make_symbol
 from alphamind._kernel.money import decimal_json_default, money, price, signed_money
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -164,7 +164,7 @@ def _details_to_dict(details: PositionDetailsPayload) -> dict[str, Any]:
 def _equity_from_dict(payload: dict[str, Any]) -> EquityPositionDetails:
     locate_raw = payload.get("locate_status")
     return EquityPositionDetails(
-        ticker=Symbol(payload["ticker"]),
+        ticker=make_symbol(payload["ticker"]),
         share_count=payload["share_count"],
         average_cost_basis_per_share=payload["average_cost_basis_per_share"],
         borrow_rate_pct=payload.get("borrow_rate_pct"),
@@ -175,7 +175,7 @@ def _equity_from_dict(payload: dict[str, Any]) -> EquityPositionDetails:
 
 def _options_from_dict(payload: dict[str, Any]) -> OptionsPositionDetails:
     return OptionsPositionDetails(
-        underlying_ticker=Symbol(payload["underlying_ticker"]),
+        underlying_ticker=make_symbol(payload["underlying_ticker"]),
         strike_price=payload["strike_price"],
         expiration_date=date.fromisoformat(payload["expiration_date"]),
         contract_type=OptionContractType(payload["contract_type"]),

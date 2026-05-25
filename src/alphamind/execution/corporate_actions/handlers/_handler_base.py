@@ -19,7 +19,7 @@ import dataclasses
 from decimal import Decimal
 from typing import NamedTuple
 
-from alphamind._kernel.ids import Symbol
+from alphamind._kernel.ids import make_symbol
 from alphamind.execution.write_paths.ca_integration_ledger import (
     mark_ca_activity_processed,
 )
@@ -266,7 +266,7 @@ def apply_ticker_only_mutation(
             f"new_ticker, but it is None"
         )
         raise ValueError(msg)
-    new_ticker = Symbol(activity.new_ticker)
+    new_ticker = make_symbol(activity.new_ticker)
     details = position.details
     if isinstance(details, EquityPositionDetails):
         new_details: EquityPositionDetails | OptionsPositionDetails | StrategyPositionDetails = (

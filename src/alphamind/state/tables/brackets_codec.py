@@ -17,7 +17,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from alphamind._kernel.ids import BracketId, CommandId, OrderId, PositionId, Symbol
+from alphamind._kernel.ids import BracketId, CommandId, OrderId, PositionId, make_symbol
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegEnforcement,
@@ -61,7 +61,7 @@ def _trigger_from_dict(payload: dict[str, Any]) -> TriggerPayload:
     kind = payload["trigger_type"]
     if kind == "price":
         return PriceTrigger(
-            underlying_ticker=Symbol(payload["underlying_ticker"]),
+            underlying_ticker=make_symbol(payload["underlying_ticker"]),
             threshold_usd=payload["threshold_usd"],
             direction=payload["direction"],
         )
