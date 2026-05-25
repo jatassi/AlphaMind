@@ -42,6 +42,7 @@ from alphamind.commands.command_models import (
     StrategyInstrument,
 )
 from alphamind.commands.pm_envelope import (
+    OVERRIDE_CORRECTIVE_COMMAND_TYPES,
     AddCommand,
     AntiPattern,
     CloseCommand,
@@ -163,7 +164,7 @@ def _check_override_with_corrective_action_invariants(
             criterion="verdict_conditional_invariant",
         )
     for i, command in enumerate(envelope.commands):
-        if command.command_type not in ("close", "adjust", "cancel"):
+        if command.command_type not in OVERRIDE_CORRECTIVE_COMMAND_TYPES:
             yield ValidationError(
                 field_path=f"commands[{i}].command_type",
                 message=(

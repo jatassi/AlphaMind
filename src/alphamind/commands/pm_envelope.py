@@ -55,6 +55,7 @@ from alphamind.commands.command_models import (
 )
 
 __all__ = [
+    "OVERRIDE_CORRECTIVE_COMMAND_TYPES",
     "AddCommand",
     "AdjustCommand",
     "AdjustmentCategory",
@@ -209,7 +210,12 @@ class ConcernRecord(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-_OVERRIDE_CORRECTIVE_COMMAND_TYPES: frozenset[str] = frozenset({"close", "adjust", "cancel"})
+OVERRIDE_CORRECTIVE_COMMAND_TYPES: frozenset[str] = frozenset({"close", "adjust", "cancel"})
+"""The three command types permitted on an ``override_with_corrective_action`` envelope.
+
+Public so the Layer-2 validator can import this constant rather than restating
+the tuple inline (single source of truth across the two enforcement layers).
+"""
 
 
 def _validate_override_with_corrective_action_invariants(
@@ -238,12 +244,14 @@ def _validate_override_with_corrective_action_invariants(
             "parameter tweaks on an existing command)"
         )
     for command in commands:
-        command_type = getattr(command, "command_type", None)
-        if command_type not in _OVERRIDE_CORRECTIVE_COMMAND_TYPES:
+        # ``command_type`` is a Pydantic discriminator on the OMSCommand union; it
+        # is always present on a parsed command. Use bare attribute access (no
+        # ``getattr`` fallback) so we don't pretend the field is optional.
+        if command.command_type not in OVERRIDE_CORRECTIVE_COMMAND_TYPES:
             raise ValueError(
                 "verdict=override_with_corrective_action embedded commands must be "
                 "CLOSE / ADJUST / CANCEL (the override is a corrective action; "
-                f"new-entry OPEN / ADD is forbidden); got command_type={command_type!r}"
+                f"new-entry OPEN / ADD is forbidden); got command_type={command.command_type!r}"
             )
 
 
