@@ -318,3 +318,6 @@ def test_build_per_ticker_payload_sector_mix_escalates_to_accumulating() -> None
     assert block.bootstrap_reason is not None
     assert "BKR" in block.bootstrap_reason
     assert "APA" not in block.bootstrap_reason
+    per_ticker = block.payload["per_ticker"]
+    assert per_ticker["APA"]["calibration_state"] == CalibrationState.CALIBRATED.value
+    assert per_ticker["BKR"]["calibration_state"] == CalibrationState.UNAVAILABLE.value

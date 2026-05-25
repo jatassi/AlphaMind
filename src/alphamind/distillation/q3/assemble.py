@@ -150,6 +150,10 @@ def _ticker_calibration_state_for_flow(
     flow buckets that are indistinguishable from a real quiet day. With at
     least one today-snapshot the per-ticker label is CALIBRATED — zero
     volumes there are real reads, not missing data.
+
+    Returns the enum's string value (not the enum itself) so the result
+    drops straight into the per-ticker payload dict, where the rest of
+    the distillation pipeline stores ``calibration_state`` as a string.
     """
     has_today_snapshot = any(
         p.today_snapshot is not None and p.today_snapshot.volume_today is not None for p in pairs
@@ -176,14 +180,9 @@ def _calibration_for_flow_classification(
     has_calibrated = False
     for ticker, payload in payloads.items():
         state_value = payload.get("calibration_state")
-        if state_value is None or state_value == CalibrationState.CALIBRATED.value:
-            has_calibrated = True
-            continue
         if state_value == CalibrationState.UNAVAILABLE.value:
             unavailable.append(ticker)
         else:
-            # ACCUMULATING on a per-ticker payload would already imply some
-            # signal; treat as live for the mix rule.
             has_calibrated = True
     if not unavailable:
         return CalibrationState.CALIBRATED, None
