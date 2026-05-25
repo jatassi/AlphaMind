@@ -27,8 +27,9 @@ their severity. The exempt-flag-names set is loaded from
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
+from typing import Any
 
 from alphamind.distillation._calibration_core import CalibrationState
 from alphamind.distillation.output import (
@@ -43,6 +44,13 @@ __all__ = [
     "cap_block_severities",
     "cap_blocks_for_calibration",
 ]
+
+# Payload contract for blocks that stage producer severity into per-ticker
+# rows (currently only the q1 anomaly producers — see ALP-627). The cap
+# rewrites these in lockstep with ``block.anomaly_flags`` so the per-ticker
+# renderer and the rollup renderer agree on a single capped severity.
+_PER_TICKER_KEY = "per_ticker"
+_SEVERITY_KEY = "severity"
 
 
 # Per-state severity ceiling. CALIBRATED has no ceiling (None); the other
@@ -84,30 +92,82 @@ def cap_block_severities(
     *,
     exempt_flag_names: frozenset[str],
 ) -> OutputBlock:
-    """Return a block whose anomaly_flags have calibration-capped severity.
+    """Return a block whose anomaly_flags and per-ticker payload severities are capped.
 
-    Returns the input ``block`` unchanged when no flag's severity changes
-    — either because the block is calibrated, because it carries no
-    flags, or because every flag is already at or below the ceiling.
+    Two slices of the same block carry severity: ``block.anomaly_flags``
+    (rollup) and — for the q1 anomaly producers — ``payload["per_ticker"]
+    [ticker]["severity"]`` (per-ticker view). Both must reflect the
+    calibration-state cap so the per-ticker renderer and the rollup
+    renderer never disagree (ALP-627).
+
+    Returns the input ``block`` unchanged when nothing changes — either
+    because the block is calibrated, because it carries no flags, or
+    because every flag (and every mirrored per-ticker severity) is
+    already at or below the ceiling.
     """
     if block.calibration_state is CalibrationState.CALIBRATED or not block.anomaly_flags:
         return block
     new_flags: list[AnomalyFlag] = []
-    any_changed = False
+    flag_changed = False
+    capped_severity_by_name: dict[str, AnomalySeverity] = {}
     for flag in block.anomaly_flags:
         capped_severity = cap_anomaly_severity(
             severity=flag.severity,
             state=block.calibration_state,
             exempt=flag.name in exempt_flag_names,
         )
+        capped_severity_by_name[flag.name] = capped_severity
         if capped_severity == flag.severity:
             new_flags.append(flag)
         else:
             new_flags.append(replace(flag, severity=capped_severity))
-            any_changed = True
-    if not any_changed:
+            flag_changed = True
+    new_payload, payload_changed = _cap_per_ticker_payload(block.payload, capped_severity_by_name)
+    if not flag_changed and not payload_changed:
         return block
-    return replace(block, anomaly_flags=tuple(new_flags))
+    return replace(
+        block,
+        anomaly_flags=tuple(new_flags),
+        payload=new_payload if payload_changed else block.payload,
+    )
+
+
+def _cap_per_ticker_payload(
+    payload: Mapping[str, Any],
+    capped_severity_by_name: Mapping[str, AnomalySeverity],
+) -> tuple[Mapping[str, Any], bool]:
+    """Return ``(new_payload, changed)`` with per-ticker severities capped.
+
+    Only ``payload["per_ticker"][ticker]["severity"]`` is rewritten. The
+    target severity is the unique capped value from the block's flags —
+    q1 anomaly blocks emit one flag-name per block (``volume_anomaly`` or
+    ``price_move_anomaly``), so the mapping is unambiguous. Blocks with
+    no per-ticker severity field or with multiple distinct flag-names
+    are passed through untouched; the latter currently doesn't occur in
+    production and would require a per-row flag-name to disambiguate.
+    """
+    per_ticker = payload.get(_PER_TICKER_KEY)
+    if not isinstance(per_ticker, Mapping):
+        return payload, False
+    distinct_severities = set(capped_severity_by_name.values())
+    if len(distinct_severities) != 1:
+        return payload, False
+    target_severity = next(iter(distinct_severities))
+    new_per_ticker: dict[str, Any] = {}
+    changed = False
+    for ticker, entry in per_ticker.items():
+        if isinstance(entry, Mapping) and _SEVERITY_KEY in entry:
+            current = entry[_SEVERITY_KEY]
+            if current != target_severity:
+                new_per_ticker[ticker] = {**entry, _SEVERITY_KEY: target_severity}
+                changed = True
+            else:
+                new_per_ticker[ticker] = entry
+        else:
+            new_per_ticker[ticker] = entry
+    if not changed:
+        return payload, False
+    return {**payload, _PER_TICKER_KEY: new_per_ticker}, True
 
 
 def cap_blocks_for_calibration(
