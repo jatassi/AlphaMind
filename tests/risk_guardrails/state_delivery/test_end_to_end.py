@@ -43,6 +43,7 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
+from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.consumers.analyst import (
     AnalystAbandonedOpening,
@@ -56,7 +57,7 @@ from alphamind.portfolio_state.consumers.strategist import (
     StrategistPositionView,
     StrategistView,
 )
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventGroup,
     EventSource,
@@ -86,7 +87,6 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     PositionStatus,
 )
-from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.snapshot import DirectionalExposure, PortfolioPnL
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import (

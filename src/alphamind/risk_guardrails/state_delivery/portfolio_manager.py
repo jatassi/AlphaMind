@@ -11,7 +11,7 @@ from typing import Literal
 from alphamind._kernel.regime import RiskZone
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventSource,
     EventType,

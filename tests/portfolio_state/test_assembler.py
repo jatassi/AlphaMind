@@ -30,10 +30,19 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
+from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.consumers.synthesizer import (
     SnapshotBackedSynthesizerReader,
     adapt_ticker_sector_resolver,
+)
+from alphamind.portfolio_state.events.activity_log import (
+    ActivityLogEntry,
+    EventGroup,
+    EventSource,
+    EventType,
+    PMDecisionDetail,
+    PMVerdict,
 )
 from alphamind.portfolio_state.freshness import AssembledSnapshot, SnapshotFreshness
 from alphamind.portfolio_state.pricing import (
@@ -41,14 +50,6 @@ from alphamind.portfolio_state.pricing import (
     PriceSource,
     StubCurrentPriceProvider,
     StubOptionPriceProvider,
-)
-from alphamind.portfolio_state.records.activity_log import (
-    ActivityLogEntry,
-    EventGroup,
-    EventSource,
-    EventType,
-    PMDecisionDetail,
-    PMVerdict,
 )
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
@@ -83,7 +84,6 @@ from alphamind.portfolio_state.records.positions import (
     occ_symbol_for_options,
 )
 from alphamind.portfolio_state.records.theses import RecentThesisResolution, ThesisRecord
-from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.repository import (
     CurrentInvocationMetadata,
     PortfolioPnLInputs,

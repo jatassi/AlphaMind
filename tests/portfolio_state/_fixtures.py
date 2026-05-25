@@ -32,9 +32,9 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
+from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.computations.exposure import SectorResolver
-from alphamind.portfolio_state.pricing import PriceQuote, PriceSource
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventGroup,
     EventSource,
@@ -44,6 +44,7 @@ from alphamind.portfolio_state.records.activity_log import (
     PositionOpenedDetail,
     PositionOpenMechanism,
 )
+from alphamind.portfolio_state.pricing import PriceQuote, PriceSource
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
@@ -79,7 +80,6 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
-from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.repository import (
     CurrentInvocationMetadata,
     PortfolioPnLInputs,

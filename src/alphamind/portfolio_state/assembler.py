@@ -37,6 +37,7 @@ from alphamind.portfolio_state import PortfolioStateConfig
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
+from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.computations.exposure import (
     SectorResolver,
     compute_directional_exposure,
@@ -69,6 +70,7 @@ from alphamind.portfolio_state.computations.risk_budget import (
     compute_parameter_change_flag,
     compute_true_deployable_capital_usd,
 )
+from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
 from alphamind.portfolio_state.freshness import (
     AssembledSnapshot,
     PriceFetchOutcomes,
@@ -79,7 +81,6 @@ from alphamind.portfolio_state.pricing import (
     OptionPriceProvider,
     PriceQuote,
 )
-from alphamind.portfolio_state.records.activity_log import ActivityLogEntry
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import BracketRecord, OrderRecord
 from alphamind.portfolio_state.records.positions import (
@@ -92,7 +93,6 @@ from alphamind.portfolio_state.records.positions import (
     position_direction,
 )
 from alphamind.portfolio_state.records.theses import RecentThesisResolution, ThesisRecord
-from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.repository import (
     PortfolioPnLInputs,
     PortfolioStateRepository,

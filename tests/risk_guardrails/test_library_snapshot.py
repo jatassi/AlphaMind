@@ -37,6 +37,7 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
+from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
     EquityInstrumentSpec,
@@ -61,7 +62,6 @@ from alphamind.portfolio_state.records.positions import (
     StrategyLeg,
     StrategyPositionDetails,
 )
-from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.snapshot import (
     DirectionalExposure,
     PortfolioPnL,

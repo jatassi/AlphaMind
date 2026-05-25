@@ -20,7 +20,8 @@ from alphamind._kernel.regime import (
 )
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
+from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventGroup,
     EventSource,
@@ -46,7 +47,6 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
 )
 from alphamind.portfolio_state.records.theses import RecentThesisResolution, ThesisRecord
-from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.repository import (
     CurrentInvocationMetadata,
     PortfolioPnLInputs,

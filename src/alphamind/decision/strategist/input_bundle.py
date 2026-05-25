@@ -27,12 +27,12 @@ from alphamind.portfolio_state.consumers.strategist import (
     StrategistPositionView,
     StrategistView,
 )
-from alphamind.portfolio_state.events.formatting import render_activity_log_row
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventType,
     PMDecisionDetail,
 )
+from alphamind.portfolio_state.events.formatting import render_activity_log_row
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegType,

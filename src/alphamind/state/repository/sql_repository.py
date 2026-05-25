@@ -44,8 +44,7 @@ from alphamind.execution.regt_margin_attribution.aggregates import RegTExcessAgg
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
-from alphamind.portfolio_state.events.activity_log import EventType
-from alphamind.portfolio_state.records.activity_log import ActivityLogEntry
+from alphamind.portfolio_state.events.activity_log import ActivityLogEntry, EventType
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
     BracketRecord,

@@ -42,7 +42,7 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventGroup,
     EventSource,

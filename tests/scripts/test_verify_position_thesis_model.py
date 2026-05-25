@@ -55,7 +55,7 @@ def _load_script() -> ModuleType:
 
 
 # ---------------------------------------------------------------------------
-# Tracer bullet: script loads and full run passes 40/40
+# Tracer bullet: script loads and full run passes 39/39
 # ---------------------------------------------------------------------------
 
 
@@ -63,10 +63,10 @@ def test_script_exists() -> None:
     assert _SCRIPT_PATH.exists(), f"Script not found at {_SCRIPT_PATH}"
 
 
-def test_run_all_waves_passes_40_of_40() -> None:
+def test_run_all_waves_passes_39_of_39() -> None:
     mod = _load_script()
     total, failed = mod.run_all_waves(verbose=False)
-    assert total == 40
+    assert total == 39
     assert failed == 0
 
 
@@ -534,15 +534,15 @@ def test_wave4_pl_anchor_on_time_expiration_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Wave 5: structural (04a/04b) — 4 sub-cases
+# Wave 5: structural (04a/04b) — 3 sub-cases
 # ---------------------------------------------------------------------------
 
 
-def test_wave5_structural_returns_4_0() -> None:
+def test_wave5_structural_returns_3_0() -> None:
     mod = _load_script()
     passed, failed, results = mod.wave5_structural(verbose=False)
     assert failed == 0, f"Wave 5 failures: {[r for r in results if not r['ok']]}"
-    assert passed == 4
+    assert passed == 3
 
 
 def test_wave5_events_activity_log_import() -> None:
@@ -559,7 +559,7 @@ def test_wave5_aggregates_risk_budget_import() -> None:
 
 def test_wave5_activity_log_backward_compat_shim() -> None:
     from alphamind.portfolio_state.events import ActivityLogEntry as A
-    from alphamind.portfolio_state.records.activity_log import ActivityLogEntry as B
+    from alphamind.portfolio_state.events.activity_log import ActivityLogEntry as B
 
     assert A is B
 
@@ -704,7 +704,7 @@ def test_cli_exits_0_on_full_pass() -> None:
         f"Expected exit 0, got {result.returncode}\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
-    assert "Overall: PASS (40/40 cases)" in result.stdout
+    assert "Overall: PASS (39/39 cases)" in result.stdout
 
 
 def test_cli_help_works() -> None:
@@ -744,7 +744,7 @@ def test_cli_verdict_block_format() -> None:
     assert "Wave 3 typed payloads (03a/03b):" in stdout
     assert "Wave 4 structural (04a/04b):" in stdout
     assert "Wave 5 architectural (05a/05b/05c):" in stdout
-    assert "Overall: PASS (40/40 cases)" in stdout
+    assert "Overall: PASS (39/39 cases)" in stdout
 
 
 # ---------------------------------------------------------------------------
