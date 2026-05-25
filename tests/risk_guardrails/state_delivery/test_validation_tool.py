@@ -36,7 +36,11 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     RuleProjection,
     Status,
 )
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    Direction as LibraryDirection,
+)
 from alphamind.risk_guardrails.state_delivery.validation_tool import (
+    BatchValidationResult,
     ProjectedDelta,
     ValidationAction,
     ValidationInstrument,
@@ -48,6 +52,7 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import (
     ValidationToolState,
     ValidationUnavailableReason,
     validate_guardrail,
+    validate_guardrail_batch,
 )
 
 # ---------------------------------------------------------------------------
@@ -1682,6 +1687,232 @@ def test_library_notional_usd_option_with_premium_uses_premium_at_risk() -> None
 
     assert isinstance(result, Decimal)
     assert result == Decimal("750.0")
+
+
+# ---------------------------------------------------------------------------
+# validate_guardrail_batch — story 01b (ALP-625)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_guardrail_batch_empty_requests_returns_pass() -> None:
+    """An empty batch returns aggregate PASS with no per-proposal entries and
+    a cumulative-impact note reflecting the (empty) state.accumulated_deltas."""
+    state = _state()
+    result = validate_guardrail_batch(requests=(), state=state)
+
+    assert isinstance(result, BatchValidationResult)
+    assert result.overall == "PASS"
+    assert result.per_proposal == ()
+    # The note should reflect that no prior proposals exist (state is fresh).
+    assert "No prior proposals" in result.cumulative_impact_note
+
+
+def test_validate_guardrail_batch_all_pass_individually_returns_pass() -> None:
+    """A batch where every per-proposal projection passes returns aggregate PASS
+    with one per-proposal entry per request.
+
+    Uses distinct sectors so the second proposal does not stack tech and breach
+    the sector-concentration rule — the focus is the batch-aggregation logic,
+    not sector accumulation.
+    """
+
+    def per_ticker_sector(ticker: str) -> str:
+        return {"AAPL": "tech", "JPM": "financials"}.get(ticker, "tech")
+
+    state = _state(sector_resolver=per_ticker_sector)
+    req1 = _equity_request(ticker=Symbol("AAPL"), dollar_value=5_000.0)
+    req2 = _equity_request(ticker=Symbol("JPM"), dollar_value=5_000.0)
+
+    # JPM is not in the default market; add it.
+    state = _state(
+        sector_resolver=per_ticker_sector,
+        market=_market(underlyings=("AAPL", "NVDA", "ABC", "JPM")),
+    )
+
+    result = validate_guardrail_batch(requests=(req1, req2), state=state)
+
+    assert result.overall == "PASS"
+    assert len(result.per_proposal) == 2
+    assert all(r.overall == "PASS" for r in result.per_proposal)
+    # Indices should reflect the running count: prior=0 -> #1, then #2.
+    assert result.per_proposal[0].proposal_index_in_invocation == 1
+    assert result.per_proposal[1].proposal_index_in_invocation == 2
+
+
+def test_validate_guardrail_batch_threads_prior_pass_into_subsequent_projection() -> None:
+    """Each proposal in the batch is projected with the prior passes credited.
+
+    Mirrors ``test_two_individually_passing_proposals_breach_cumulatively`` but
+    via the batch tool: two 12% equity proposals against a 60% net-long limit
+    starting at 40% — first passes (projected 52%), second fails standalone
+    (projected 64%). The batch overall is FAIL since one per-proposal FAILs.
+    """
+    snapshot = _snapshot(
+        sector_exposure_pct={"tech": 5.0, "semis": 5.0, "financials": 5.0, "energy": 25.0},
+        net_long_pct=40.0,
+        gross_pct=40.0,
+    )
+    cfg = _config()
+    raised_limits = dict(cfg.effective_limits)
+    raised_limits["position_max_size_pct"] = 15.0
+    raised_limits["sector_concentration_pct"] = 50.0
+    config = LibraryConfig(
+        effective_limits=MappingProxyType(raised_limits),
+        escalation_zones=cfg.escalation_zones,
+        feature_flags=cfg.feature_flags,
+        active_sectors=cfg.active_sectors,
+        active_regime=cfg.active_regime,
+        active_profile=cfg.active_profile,
+        conservative_buffer_pct=cfg.conservative_buffer_pct,
+    )
+    state = _state(snapshot=snapshot, config=config)
+    req1 = _equity_request(ticker=Symbol("AAPL"), dollar_value=12_000.0)
+    req2 = _equity_request(ticker=Symbol("NVDA"), dollar_value=12_000.0)
+
+    result = validate_guardrail_batch(requests=(req1, req2), state=state)
+
+    assert result.per_proposal[0].overall == "PASS"
+    assert result.per_proposal[1].overall == "FAIL"
+    assert result.overall == "FAIL"  # worst-of aggregate
+    by_rule_second = {p.rule: p for p in result.per_proposal[1].per_rule}
+    # The second proposal sees cumulative 40 + 12 + 12 = 64% net-long.
+    assert by_rule_second["net_long_pct"].projected_after == pytest.approx(64.0)
+
+
+def test_validate_guardrail_batch_aggregate_worst_of_fail_dominates_unavailable() -> None:
+    """When any per-proposal is FAIL, aggregate is FAIL even if another is
+    UNAVAILABLE (FAIL > UNAVAILABLE > PASS)."""
+    state = _state(config=_config(options_enabled=False))
+    # First fails because options are disabled; second is UNAVAILABLE because
+    # CSCO is not in the library market.
+    req_fail = _option_request(ticker=Symbol("AAPL"))
+    req_unavail = _equity_request(ticker=Symbol("CSCO"))
+
+    result = validate_guardrail_batch(requests=(req_fail, req_unavail), state=state)
+
+    assert result.per_proposal[0].overall == "FAIL"
+    assert result.per_proposal[1].overall == "UNAVAILABLE"
+    assert result.overall == "FAIL"
+
+
+def test_validate_guardrail_batch_aggregate_unavailable_when_no_fails() -> None:
+    """Aggregate is UNAVAILABLE when at least one per-proposal is UNAVAILABLE
+    and none are FAIL."""
+    state = _state()
+    req_pass = _equity_request(ticker=Symbol("AAPL"))
+    req_unavail = _equity_request(ticker=Symbol("CSCO"))  # not in market
+
+    result = validate_guardrail_batch(requests=(req_pass, req_unavail), state=state)
+
+    assert result.per_proposal[0].overall == "PASS"
+    assert result.per_proposal[1].overall == "UNAVAILABLE"
+    assert result.overall == "UNAVAILABLE"
+
+
+def test_validate_guardrail_batch_does_not_mutate_input_state() -> None:
+    """The pure function must not advance the input state's accumulated_deltas."""
+    state = _state()
+    req1 = _equity_request(ticker=Symbol("AAPL"))
+    req2 = _equity_request(ticker=Symbol("NVDA"))
+
+    before = state.accumulated_deltas
+    result = validate_guardrail_batch(requests=(req1, req2), state=state)
+    after = state.accumulated_deltas
+
+    assert before == ()
+    assert after == ()
+    # And the result reflects the input state's prior count, not the threaded count.
+    assert "No prior proposals" in result.cumulative_impact_note
+
+
+def test_validate_guardrail_batch_standalone_fail_becomes_cumulative_pass() -> None:
+    """A coordinated package can aggregate PASS even when a member would FAIL
+    standalone — the very behavior the batch tool exists to validate.
+
+    Scenario: net_long is at 55% (limit 60%). An OPEN of 10% standalone would
+    project to 65% and FAIL. But preceded by a CLOSE of an existing 15% long
+    in the batch, the threaded state credits the close (net_long drops to 40%)
+    and the OPEN's projection then sees 40% + 10% = 50% → PASS.
+
+    Without batch threading, the OPEN would have to be issued via single-call
+    and would FAIL because the close hadn't been accepted yet — the bug story
+    01b exists to fix for coordinated multi-position remedies.
+    """
+    # Build a book with one 15K long equity position the batch will CLOSE.
+    long_pos = ExistingPosition(
+        position_id="POS-AAPL-1",
+        underlying="AAPL",
+        sector="tech",
+        direction=LibraryDirection.LONG,
+        asset_type=AssetType.EQUITY,
+        notional_usd=15_000.0,
+        delta_adjusted_exposure_usd=15_000.0,
+        current_greeks=None,
+        daily_borrow_cost_usd=None,
+        reserves_capital_usd=0.0,
+        quantity=150.0,
+    )
+    snapshot = _snapshot(
+        sector_exposure_pct={"tech": 18.3, "semis": 5.0, "financials": 5.0, "energy": 5.0},
+        net_long_pct=55.0,
+        gross_pct=55.0,
+        existing_positions={"POS-AAPL-1": long_pos},
+    )
+    cfg = _config()
+    raised_limits = dict(cfg.effective_limits)
+    raised_limits["position_max_size_pct"] = 20.0  # don't trip per-position cap
+    raised_limits["sector_concentration_pct"] = 40.0  # don't trip sector cap
+    config = LibraryConfig(
+        effective_limits=MappingProxyType(raised_limits),
+        escalation_zones=cfg.escalation_zones,
+        feature_flags=cfg.feature_flags,
+        active_sectors=cfg.active_sectors,
+        active_regime=cfg.active_regime,
+        active_profile=cfg.active_profile,
+        conservative_buffer_pct=cfg.conservative_buffer_pct,
+    )
+    state = _state(snapshot=snapshot, config=config)
+    # CLOSE the 15K AAPL long -> net_long: 55 -> 40.
+    close_req = ValidationRequest(
+        instrument=ValidationInstrument(
+            ticker="AAPL", asset_type=InstrumentType.EQUITY, direction=Direction.LONG
+        ),
+        size=ValidationSize(quantity=150, dollar_value=15_000.0),
+        action=ValidationAction.CLOSE,
+    )
+    # OPEN 10% on NVDA -> standalone would push net_long 55 -> 65 (FAIL);
+    # threaded after the close, sees net_long=40 -> 50 (PASS).
+    open_req = _equity_request(ticker=Symbol("NVDA"), dollar_value=10_000.0)
+
+    # Sanity check: the OPEN alone against the original state FAILs.
+    standalone = validate_guardrail(request=open_req, state=state)
+    assert standalone.overall == "FAIL"
+
+    # Batch: close + open together aggregates PASS.
+    result = validate_guardrail_batch(requests=(close_req, open_req), state=state)
+    # Surface which rules drove a FAIL, if any, to make debugging easy.
+    assert result.per_proposal[0].overall == "PASS", result.per_proposal[0].failure_guidance
+    failed_rules = [
+        p.rule for p in result.per_proposal[1].per_rule if p.status is Status.FAIL
+    ]
+    assert result.per_proposal[1].overall == "PASS", (
+        f"Failed rules on 2nd proposal: {failed_rules}; "
+        f"guidance: {result.per_proposal[1].failure_guidance}"
+    )
+    assert result.overall == "PASS"
+
+
+def test_validate_guardrail_batch_deterministic_replay() -> None:
+    """Same (requests, state) inputs produce equal BatchValidationResults."""
+    state = _state()
+    requests = (
+        _equity_request(ticker=Symbol("AAPL")),
+        _equity_request(ticker=Symbol("NVDA")),
+    )
+
+    a = validate_guardrail_batch(requests=requests, state=state)
+    b = validate_guardrail_batch(requests=requests, state=state)
+    assert a == b
 
 
 def test_library_notional_usd_option_without_premium_falls_back_to_dollar_value() -> None:
