@@ -891,7 +891,8 @@ async def test_runner_returns_pmresult_with_submission_log(
 
 def test_module_lifecycle_imports() -> None:
     """The runner module re-exports the surface AC1 mandates, and PM_TOOL_NAMES
-    enumerates the four wire-form MCP tool names the harness wires."""
+    enumerates the canonical wire-form MCP tool names the harness wires —
+    including both single-call and batch validators (ALP-621 Finding 7)."""
     from alphamind.decision.portfolio_manager import runner as runner_module
 
     assert hasattr(runner_module, "run_portfolio_manager")
@@ -899,9 +900,10 @@ def test_module_lifecycle_imports() -> None:
     assert hasattr(runner_module, "load_pm_agent_config")
     assert hasattr(runner_module, "PM_TOOL_NAMES")
 
-    # The four canonical wire-form MCP tool names — the PM's tool surface.
+    # The canonical wire-form MCP tool names — the PM's tool surface.
     assert PM_TOOL_NAMES == (
         "mcp__alphamind_decision_validation__validate_guardrail",
+        "mcp__alphamind_decision_validation__validate_guardrail_batch",
         "mcp__alphamind_synthesizer_retrieval__retrieve_brief",
         "mcp__alphamind_portfolio_state_thesis_components__get_thesis_components",
         "mcp__alphamind_execution_oms_submit__submit_envelope",

@@ -107,9 +107,14 @@ _AGENTS_YAML = _REPO_ROOT / "config" / "agents.yaml"
 # TOOLS ===`` section. The harness's four MCP factories
 # (``build_validate_guardrail_mcp_server``, ``build_retrieve_brief_mcp_server``,
 # ``build_get_thesis_components_mcp_server``, ``build_submit_envelope_mcp_server``)
-# emit these same names as their allowed-tools lists.
+# emit these same names as their allowed-tools lists. The validation factory
+# exposes both the single-call and batch validators when
+# ``include_batch_tool=True`` (default for PM and strategist); both must
+# appear here so the per-invocation tool reminder lists every callable the
+# allowed-tools list permits (ALP-621 Finding 7).
 PM_TOOL_NAMES: tuple[str, ...] = (
     "mcp__alphamind_decision_validation__validate_guardrail",
+    "mcp__alphamind_decision_validation__validate_guardrail_batch",
     "mcp__alphamind_synthesizer_retrieval__retrieve_brief",
     "mcp__alphamind_portfolio_state_thesis_components__get_thesis_components",
     "mcp__alphamind_execution_oms_submit__submit_envelope",
