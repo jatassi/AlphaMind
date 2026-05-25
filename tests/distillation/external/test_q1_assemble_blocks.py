@@ -43,9 +43,11 @@ from alphamind.config.models.distillation import (
     RegimeTransition,
 )
 from alphamind.distillation._config_domain import DistillationDomainConfig
+from alphamind.distillation._repository import TickerBaselineRow
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience, OutputBlock, format_block
 from alphamind.distillation.q1 import BLOCK_ID_VOLUME_ANOMALY, assemble_q1_blocks
+from alphamind.distillation.q1.assemble import _atr_regime_label_and_tag
 from alphamind.distillation.q1.output_blocks import (
     BLOCK_ID_DIVERGENCE_FLAGS,
     BLOCK_ID_GAP,
@@ -735,6 +737,70 @@ class TestConfigDrivenThresholds:
         # Loose threshold fires; tight threshold doesn't.
         assert loose_anomaly, "Loose threshold should fire"
         assert not tight_anomaly, "Tight threshold should not fire on this fixture"
+
+
+class TestAtrRegimeLabelAndTag:
+    """ALP-631: every non-CALIBRATED return carries a non-None reason.
+
+    The previously-broken path: when the ATR baseline row itself carries
+    ``calibration_state="unavailable"`` (collector-side gap, not a missing
+    row), the helper returned ``(_, UNAVAILABLE, None)``, which propagated
+    a ``None`` reason to the ``q1.trend_state`` block and rendered as an
+    empty-string reason in the operator-facing summary and the literal
+    ``None`` in the researcher-input header.
+    """
+
+    def _baseline(
+        self,
+        *,
+        ticker: str = "AAPL",
+        state: CalibrationState,
+        n_observations: int = 60,
+        window_days: int = 14,
+    ) -> TickerBaselineRow:
+        return TickerBaselineRow(
+            ticker=ticker,
+            baseline_kind="atr",
+            as_of="2026-04-25T00:00:00Z",
+            mean=2.0,
+            stdev=0.2,
+            n_observations=n_observations,
+            window_days=window_days,
+            calibration_state=state.value,
+        )
+
+    def test_missing_baseline_returns_unavailable_with_reason(self) -> None:
+        _label, state, reason = _atr_regime_label_and_tag(ticker="AAPL", atr=1.8, atr_baseline=None)
+        assert state is CalibrationState.UNAVAILABLE
+        assert reason == "atr_baseline missing for AAPL"
+
+    def test_unavailable_baseline_returns_unavailable_with_reason(self) -> None:
+        baseline = self._baseline(state=CalibrationState.UNAVAILABLE)
+        _label, state, reason = _atr_regime_label_and_tag(
+            ticker="AAPL", atr=1.8, atr_baseline=baseline
+        )
+        assert state is CalibrationState.UNAVAILABLE
+        assert reason is not None
+        assert "AAPL" in reason
+        assert "unavailable" in reason
+
+    def test_accumulating_baseline_returns_accumulating_with_observation_count(self) -> None:
+        baseline = self._baseline(
+            state=CalibrationState.ACCUMULATING, n_observations=4, window_days=14
+        )
+        _label, state, reason = _atr_regime_label_and_tag(
+            ticker="AAPL", atr=1.8, atr_baseline=baseline
+        )
+        assert state is CalibrationState.ACCUMULATING
+        assert reason == "atr_baseline_days: 4 < 14"
+
+    def test_calibrated_baseline_returns_calibrated_with_no_reason(self) -> None:
+        baseline = self._baseline(state=CalibrationState.CALIBRATED)
+        _label, state, reason = _atr_regime_label_and_tag(
+            ticker="AAPL", atr=1.8, atr_baseline=baseline
+        )
+        assert state is CalibrationState.CALIBRATED
+        assert reason is None
 
 
 class TestSixIndicatorGroupsPerAudience:

@@ -497,12 +497,16 @@ def _atr_regime_label_and_tag(
 
     A missing baseline row is :attr:`CalibrationState.UNAVAILABLE` per
     ALP-540 — the absence indicates collector failure, not "give it time."
+    Every non-CALIBRATED return carries a reason; the operator-facing
+    summary and the researcher-input header both render it directly.
     """
     if atr_baseline is None:
         return "neutral", CalibrationState.UNAVAILABLE, f"atr_baseline missing for {ticker}"
     state = _baseline_calibration_state(atr_baseline)
     reason: str | None = None
-    if state is CalibrationState.ACCUMULATING:
+    if state is CalibrationState.UNAVAILABLE:
+        reason = f"atr_baseline calibration_state=unavailable for {ticker}"
+    elif state is CalibrationState.ACCUMULATING:
         reason = f"atr_baseline_days: {atr_baseline.n_observations} < {atr_baseline.window_days}"
     atr_regime = classify_atr_regime(
         current_atr=float(atr),
