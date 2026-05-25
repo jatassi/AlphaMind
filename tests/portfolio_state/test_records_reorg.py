@@ -1,13 +1,11 @@
-"""Identity tests for the records/ -> records/+events/+aggregates reorg (ALP-347).
+"""Structural tests for the records/ -> records/+events/+aggregates reorg (ALP-347).
 
 These tests pin three invariants:
 
 1. New subpackages ``events`` and ``aggregates`` exist alongside ``records`` under
    ``alphamind.portfolio_state``, and each declares a curated ``__all__`` public API.
-2. Symbols that moved (``ActivityLogEntry``, ``ThesisQualityAggregate``, the
-   former capital.py members) live at their new canonical home. The capital.py
-   re-export shim was deleted in ALP-457; consumers now import each member
-   directly from its canonical module.
+2. Former capital.py members (split in ALP-347, with the re-export shim deleted in
+   ALP-457) live at their new canonical home.
 3. No new circular imports are introduced by the reorg.
 """
 
@@ -58,81 +56,6 @@ def test_aggregates_subpackage_declares_all() -> None:
         assert hasattr(aggregates_pkg, name), (
             f"aggregates.__all__ lists {name!r} but it is not present"
         )
-
-
-# ---------------------------------------------------------------------------
-# Activity log moved to events/
-# ---------------------------------------------------------------------------
-
-
-def test_activity_log_canonical_home_is_events() -> None:
-    """``ActivityLogEntry`` lives at events/activity_log.py; the records/ path
-    is a backward-compat shim that re-exports the same class object."""
-    from alphamind.portfolio_state.events.activity_log import (
-        ActivityLogEntry as FromEvents,
-    )
-    from alphamind.portfolio_state.records.activity_log import (
-        ActivityLogEntry as FromRecords,
-    )
-
-    assert FromEvents is FromRecords
-
-
-def test_event_group_canonical_home_is_events() -> None:
-    from alphamind.portfolio_state.events.activity_log import EventGroup as FromEvents
-    from alphamind.portfolio_state.records.activity_log import EventGroup as FromRecords
-
-    assert FromEvents is FromRecords
-
-
-def test_event_type_canonical_home_is_events() -> None:
-    from alphamind.portfolio_state.events.activity_log import EventType as FromEvents
-    from alphamind.portfolio_state.records.activity_log import EventType as FromRecords
-
-    assert FromEvents is FromRecords
-
-
-def test_event_source_canonical_home_is_events() -> None:
-    from alphamind.portfolio_state.events.activity_log import EventSource as FromEvents
-    from alphamind.portfolio_state.records.activity_log import EventSource as FromRecords
-
-    assert FromEvents is FromRecords
-
-
-def test_distillation_config_change_detail_canonical_home_is_events() -> None:
-    """Pick a representative detail-payload class to prove every detail class
-    re-exports from the events/activity_log shim."""
-    from alphamind.portfolio_state.events.activity_log import (
-        DistillationConfigChangeDetail as FromEvents,
-    )
-    from alphamind.portfolio_state.records.activity_log import (
-        DistillationConfigChangeDetail as FromRecords,
-    )
-
-    assert FromEvents is FromRecords
-
-
-# ---------------------------------------------------------------------------
-# Thesis quality moved to aggregates/
-# ---------------------------------------------------------------------------
-
-
-def test_thesis_quality_aggregate_canonical_home_is_aggregates() -> None:
-    from alphamind.portfolio_state.aggregates.thesis_quality import (
-        ThesisQualityAggregate as FromAggregates,
-    )
-    from alphamind.portfolio_state.records.thesis_quality import (
-        ThesisQualityAggregate as FromRecords,
-    )
-
-    assert FromAggregates is FromRecords
-
-
-def test_trailing_window_canonical_home_is_aggregates() -> None:
-    from alphamind.portfolio_state.aggregates.thesis_quality import TrailingWindow as FromAggregates
-    from alphamind.portfolio_state.records.thesis_quality import TrailingWindow as FromRecords
-
-    assert FromAggregates is FromRecords
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +201,3 @@ def test_no_circular_imports_among_new_modules() -> None:
     importlib.import_module("alphamind.portfolio_state.aggregates.drawdown")
     importlib.import_module("alphamind.portfolio_state.aggregates.risk_budget")
     importlib.import_module("alphamind.portfolio_state.aggregates.risk_parameters")
-    # Activity log + thesis quality were also previously re-exported from records/.
-    importlib.import_module("alphamind.portfolio_state.records.activity_log")
-    importlib.import_module("alphamind.portfolio_state.records.thesis_quality")

@@ -19,7 +19,7 @@ from alphamind.config.models.distillation import (
     RegimeClassification,
     RegimeTransition,
 )
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventGroup,
     EventSource,
@@ -995,7 +995,7 @@ class TestComputeDistillationConfigDiff:
         from alphamind.portfolio_state.computations.activity_log import (
             compute_distillation_config_diff,
         )
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             DistillationConfigChange,
         )
 
@@ -1017,7 +1017,7 @@ class TestBuildDistillationConfigChangeEntry:
             build_distillation_config_change_entry,
             compute_distillation_config_hash,
         )
-        from alphamind.portfolio_state.records.activity_log import (
+        from alphamind.portfolio_state.events.activity_log import (
             DistillationConfigChangeDetail,
             EventGroup,
             EventSource,

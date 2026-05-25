@@ -1303,7 +1303,7 @@ def wave4_typed_payloads(verbose: bool = False) -> tuple[int, int, list[dict[str
 
 
 # ---------------------------------------------------------------------------
-# Wave 5: Structural (04a/04b) — 4 cases
+# Wave 5: Structural (04a/04b) — 3 cases
 # ---------------------------------------------------------------------------
 
 
@@ -1327,14 +1327,6 @@ def wave5_structural(verbose: bool = False) -> tuple[int, int, list[dict[str, An
         assert RiskBudgetEntry is not None
 
     results.append(_run_case("04a-aggregates_risk_budget_importable", _check_aggregates_import))
-
-    def _check_backward_compat_shim() -> None:
-        from alphamind.portfolio_state.events import ActivityLogEntry as A
-        from alphamind.portfolio_state.records.activity_log import ActivityLogEntry as B
-
-        assert A is B, "ActivityLogEntry identity check failed: shim returns different object"
-
-    results.append(_run_case("04a-activity_log_backward_compat_shim", _check_backward_compat_shim))
 
     def _check_discriminated_union_bogus_rejected() -> None:
         # Post-ALP-477: dict-payload discriminator parsing lives in the codec
@@ -1516,7 +1508,7 @@ _WAVE_SPECS = [
     ("Wave 1 additive fields (01d-01j)", 14, wave2_additive_fields),
     ("Wave 2 boundary fix (02)", 2, wave3_boundary_fix),
     ("Wave 3 typed payloads (03a/03b)", 4, wave4_typed_payloads),
-    ("Wave 4 structural (04a/04b)", 4, wave5_structural),
+    ("Wave 4 structural (04a/04b)", 3, wave5_structural),
     ("Wave 5 architectural (05a/05b/05c)", 4, wave6_architectural),
 ]
 

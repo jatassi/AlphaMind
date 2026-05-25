@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from alphamind.portfolio_state.records.thesis_quality import (
+from alphamind.portfolio_state.aggregates.thesis_quality import (
     AlphaBetaDecomposition,
     AttributionDimension,
     ConvictionCalibrationEntry,

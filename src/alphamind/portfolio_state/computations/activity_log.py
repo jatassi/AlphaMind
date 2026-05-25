@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from alphamind.config.models.distillation import DistillationConfig
-from alphamind.portfolio_state.records.activity_log import (
+from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     DistillationConfigChange,
     DistillationConfigChangeDetail,
