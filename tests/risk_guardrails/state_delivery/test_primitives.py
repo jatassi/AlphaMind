@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 
 from alphamind._kernel.ids import PositionId, Symbol
-from alphamind._kernel.money import money, price, signed_money
+from alphamind._kernel.money import Money, money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -93,19 +94,48 @@ def _make_active_parameter_set(
 
 
 def test_format_dollar_renders_positive_with_comma_separator() -> None:
-    assert format_dollar(1_500_000) == "$1,500,000"
+    assert format_dollar(money(1_500_000)) == "$1,500,000"
 
 
 def test_format_dollar_renders_zero() -> None:
-    assert format_dollar(0) == "$0"
+    assert format_dollar(money(0)) == "$0"
 
 
 def test_format_dollar_renders_negative_with_leading_dash() -> None:
-    assert format_dollar(-1_500) == "-$1,500"
+    assert format_dollar(signed_money(-1_500)) == "-$1,500"
 
 
 def test_format_dollar_is_deterministic() -> None:
-    assert format_dollar(42_000) == format_dollar(42_000)
+    assert format_dollar(money(42_000)) == format_dollar(money(42_000))
+
+
+def test_format_dollar_money_boundary_preserves_decimal_precision_alp657() -> None:
+    """ALP-657 regression guard: format_dollar consumes Money / Decimal natively.
+
+    Pre-migration, the state-delivery renderers accepted ``float``, so every
+    Money value rendered into the PM input bundle traversed
+    ``Decimal → float → str``. For arithmetic that float drifts on
+    (``money("0.1") * 7`` in Decimal yields ``Decimal("0.7")`` exactly, while
+    ``0.1 * 7`` in float yields ``0.7000000000000001``), the round trip
+    silently re-introduced the binary-float artifact at the LLM-input
+    boundary that the Money type exists to eliminate.
+
+    This test pins the Decimal-through-format_dollar contract: a Money value
+    produced by Decimal arithmetic preserves its exact stored digits at
+    arbitrary precision, and format_dollar's ``:,.0f`` spec consumes the
+    Decimal directly — no float cast in between.
+    """
+    total = Money(money("0.1") * 7)
+    assert total == Decimal("0.7")
+    # ``:.17f`` exposes binary drift when the value is a float; for Decimal
+    # the exact stored digits surface.
+    assert f"{total:.17f}" == "0.70000000000000000"
+    # Counter-evidence: the float counterpart of the same arithmetic drifts.
+    assert f"{0.1 * 7:.17f}" == "0.70000000000000007"
+    # Visible rendering: ``:,.0f`` rounds 0.7 → 1 with no intermediate float
+    # conversion that could re-introduce drift on adjacent unrounded paths
+    # (e.g., ``_render_drawdown_context_block``'s pct-of-portfolio).
+    assert format_dollar(total) == "$1"
 
 
 def test_format_pct_renders_one_decimal_place() -> None:
@@ -237,9 +267,9 @@ def test_regime_line_is_deterministic() -> None:
 
 def test_capital_block_renders_documented_three_lines() -> None:
     rendered = render_capital_block(
-        available_for_new_positions_usd=300_000,
+        available_for_new_positions_usd=money(300_000),
         available_for_new_positions_pct=60.0,
-        per_position_max_usd=25_000,
+        per_position_max_usd=money(25_000),
         per_position_max_pct=5.0,
         regime_label_display="normal",
     )
@@ -252,9 +282,9 @@ def test_capital_block_renders_documented_three_lines() -> None:
 
 def test_capital_block_renders_large_dollars_with_comma_separator() -> None:
     rendered = render_capital_block(
-        available_for_new_positions_usd=1_500_000,
+        available_for_new_positions_usd=money(1_500_000),
         available_for_new_positions_pct=75.5,
-        per_position_max_usd=120_000,
+        per_position_max_usd=money(120_000),
         per_position_max_pct=6.0,
         regime_label_display="low-vol compression",
     )
@@ -265,9 +295,9 @@ def test_capital_block_renders_large_dollars_with_comma_separator() -> None:
 
 def test_capital_block_renders_zero_values_cleanly() -> None:
     rendered = render_capital_block(
-        available_for_new_positions_usd=0,
+        available_for_new_positions_usd=money(0),
         available_for_new_positions_pct=0,
-        per_position_max_usd=0,
+        per_position_max_usd=money(0),
         per_position_max_pct=0,
         regime_label_display="crisis",
     )
@@ -277,16 +307,16 @@ def test_capital_block_renders_zero_values_cleanly() -> None:
 
 def test_capital_block_is_deterministic() -> None:
     first = render_capital_block(
-        available_for_new_positions_usd=300_000,
+        available_for_new_positions_usd=money(300_000),
         available_for_new_positions_pct=60.0,
-        per_position_max_usd=25_000,
+        per_position_max_usd=money(25_000),
         per_position_max_pct=5.0,
         regime_label_display="normal",
     )
     second = render_capital_block(
-        available_for_new_positions_usd=300_000,
+        available_for_new_positions_usd=money(300_000),
         available_for_new_positions_pct=60.0,
-        per_position_max_usd=25_000,
+        per_position_max_usd=money(25_000),
         per_position_max_pct=5.0,
         regime_label_display="normal",
     )

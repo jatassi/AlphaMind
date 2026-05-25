@@ -8,6 +8,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
+from alphamind._kernel.money import Money
 from alphamind._kernel.regime import RiskZone
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
@@ -91,8 +92,8 @@ class CrossConstraintImpact:
 
     per_rule: tuple[CrossConstraintImpactPerRule, ...]
     flagged_rule_ids: tuple[str, ...]
-    available_capital_before_usd: float
-    available_capital_after_usd: float
+    available_capital_before_usd: Money
+    available_capital_after_usd: Money
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,8 +139,8 @@ def render_pm_header(  # noqa: PLR0913 — keyword-only signature dictated by st
     active_sectors: tuple[str, ...],
     config: StateDeliveryConfig,
     sector_resolver: Callable[[PositionRecord], str | None],
-    total_portfolio_value_usd: float,
-    available_for_new_positions_usd: float,
+    total_portfolio_value_usd: Money,
+    available_for_new_positions_usd: Money,
     cross_constraint_impact: CrossConstraintImpact,
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
@@ -157,11 +158,13 @@ def render_pm_header(  # noqa: PLR0913 — keyword-only signature dictated by st
         pm_view.active_risk_parameters, POSITION_MAX_SIZE_RULE_ID
     ).value
     available_pct = (
-        (available_for_new_positions_usd / total_portfolio_value_usd) * 100.0
+        float((available_for_new_positions_usd / total_portfolio_value_usd) * Decimal(100))
         if total_portfolio_value_usd
         else 0.0
     )
-    per_position_max_usd = total_portfolio_value_usd * per_position_max_pct / 100.0
+    per_position_max_usd = Money(
+        total_portfolio_value_usd * Decimal(str(per_position_max_pct)) / Decimal(100)
+    )
     regime_display = regime_label_display(pm_view.active_risk_parameters.regime_label)
     sector_entries = resolve_sector_entries(pm_view.risk_budget, active_sectors)
     sector_label_resolver = make_sector_label_resolver(sector_label_display)
@@ -351,16 +354,14 @@ def _format_signed_pct(value: float) -> str:
 def _render_drawdown_context_block(
     *,
     pm_view: PortfolioManagerView,
-    total_portfolio_value_usd: float | Decimal,
+    total_portfolio_value_usd: Money,
 ) -> str:
-    # ALP-462 — daily_total_pnl_usd is ``Money`` (Decimal); thread the percent
-    # computation through Decimal so the float-valued caller doesn't break.
-    pnl_usd_decimal = Decimal(str(pm_view.portfolio_pnl.daily_total_pnl_usd))
-    portfolio_decimal = (
-        Decimal(str(total_portfolio_value_usd)) if total_portfolio_value_usd else Decimal(0)
-    )
     daily_pnl_pct = (
-        float((pnl_usd_decimal / portfolio_decimal) * Decimal(100)) if portfolio_decimal else 0.0
+        float(
+            (pm_view.portfolio_pnl.daily_total_pnl_usd / total_portfolio_value_usd) * Decimal(100)
+        )
+        if total_portfolio_value_usd
+        else 0.0
     )
     daily_zone_tag = render_zone_tag(pm_view.drawdown.daily_zone)
     cumulative_zone_tag = render_zone_tag(pm_view.drawdown.cumulative_zone)

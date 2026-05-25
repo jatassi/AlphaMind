@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
+from alphamind._kernel.money import Money
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.computations.exposure import SectorResolver
@@ -94,8 +96,8 @@ def render_strategist_header(  # noqa: PLR0913 — signature dictated by story 0
     active_sectors: tuple[str, ...],
     config: StateDeliveryConfig,
     sector_resolver: SectorResolver,
-    total_portfolio_value_usd: float,
-    available_for_new_positions_usd: float,
+    total_portfolio_value_usd: Money,
+    available_for_new_positions_usd: Money,
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
 ) -> str:
@@ -125,14 +127,14 @@ def render_strategist_header(  # noqa: PLR0913 — signature dictated by story 0
         active_risk_parameters, POSITION_MAX_SIZE_RULE_ID
     ).value
     available_pct = (
-        (available_for_new_positions_usd / total_portfolio_value_usd) * 100.0
+        float((available_for_new_positions_usd / total_portfolio_value_usd) * Decimal(100))
         if total_portfolio_value_usd > 0
         else 0.0
     )
     per_position_max_usd = (
-        per_position_max_pct / 100.0 * total_portfolio_value_usd
+        Money(Decimal(str(per_position_max_pct)) / Decimal(100) * total_portfolio_value_usd)
         if total_portfolio_value_usd > 0
-        else 0.0
+        else Money(Decimal(0))
     )
 
     blocks: list[str] = [

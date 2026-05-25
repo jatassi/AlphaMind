@@ -301,9 +301,9 @@ def _make_thesis_quality_aggregates() -> ThesisQualityAggregate:
 
 def _make_analyst_capital() -> AnalystAvailableCapital:
     return AnalystAvailableCapital(
-        available_for_new_positions_usd=300_000.0,
+        available_for_new_positions_usd=money(300_000.0),
         available_for_new_positions_pct=60.0,
-        per_position_max_size_usd=25_000.0,
+        per_position_max_size_usd=money(25_000.0),
         per_position_max_size_pct=5.0,
     )
 
@@ -710,8 +710,8 @@ def test_render_strategist_header_halt_mode_full_fixture() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_strategist_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
     )
     expected = "\n".join(
         [
@@ -781,8 +781,8 @@ def _make_default_cross_constraint_impact() -> CrossConstraintImpact:
             ),
         ),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=315_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(315_000.0),
     )
 
 
@@ -835,8 +835,8 @@ def test_render_pm_header_halt_mode_full_fixture() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_pm_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=_make_default_cross_constraint_impact(),
         pending_orders=pending_orders,
         current_price_lookup=_make_pm_current_price_lookup(),
@@ -881,8 +881,8 @@ def test_render_pm_header_halt_mode_pending_orders_empty_renders_none() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_pm_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=_make_default_cross_constraint_impact(),
         pending_orders=(),
         current_price_lookup=_make_pm_current_price_lookup(),
@@ -913,8 +913,8 @@ def test_render_pm_header_halt_mode_missing_price_raises_value_error() -> None:
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_pm_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
             cross_constraint_impact=_make_default_cross_constraint_impact(),
             pending_orders=pending_orders,
             current_price_lookup=_make_pm_current_price_lookup(),
@@ -941,8 +941,8 @@ def test_render_pm_header_halt_mode_cross_constraint_status_aware_breach_marker(
             ),
         ),
         flagged_rule_ids=("net_long_pct",),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header_halt_mode(
         halt_state=_make_halt_state(),
@@ -955,8 +955,8 @@ def test_render_pm_header_halt_mode_cross_constraint_status_aware_breach_marker(
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_pm_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         pending_orders=(),
         current_price_lookup=_make_pm_current_price_lookup(),
@@ -970,8 +970,8 @@ def test_render_pm_header_halt_mode_cross_constraint_empty_emits_no_pending_line
     empty_impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header_halt_mode(
         halt_state=_make_halt_state(),
@@ -984,8 +984,8 @@ def test_render_pm_header_halt_mode_cross_constraint_empty_emits_no_pending_line
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_pm_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=empty_impact,
         pending_orders=(),
         current_price_lookup=_make_pm_current_price_lookup(),
@@ -1052,8 +1052,8 @@ def test_render_pm_header_halt_mode_hard_blocks_no_breaches_synthesizes_block() 
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_pm_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=_make_default_cross_constraint_impact(),
         pending_orders=(),
         current_price_lookup=_make_pm_current_price_lookup(),
@@ -1078,8 +1078,8 @@ def test_render_pm_header_halt_mode_hard_blocks_breaches_present_appends_action_
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_pm_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=_make_default_cross_constraint_impact(),
         pending_orders=(),
         current_price_lookup=_make_pm_current_price_lookup(),
@@ -1143,8 +1143,8 @@ def test_render_pm_header_halt_mode_hard_blocks_disabled_features_then_action_li
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_pm_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=_make_default_cross_constraint_impact(),
         pending_orders=(),
         current_price_lookup=_make_pm_current_price_lookup(),
@@ -1177,8 +1177,8 @@ def test_render_strategist_header_halt_mode_preserves_other_blocks() -> None:
         "config": _make_state_delivery_config(),
         "sector_label_display": _MICRO_SECTOR_LABELS,
         "sector_resolver": _make_strategist_sector_resolver(),
-        "total_portfolio_value_usd": 500_000.0,
-        "available_for_new_positions_usd": 300_000.0,
+        "total_portfolio_value_usd": money(500_000.0),
+        "available_for_new_positions_usd": money(300_000.0),
     }
     halt_rendered = render_strategist_header_halt_mode(
         halt_state=_make_halt_state(), **common_kwargs
@@ -1237,8 +1237,8 @@ def test_halt_mode_wrappers_are_deterministic(render_call: str) -> None:
             "config": config,
             "sector_label_display": _MICRO_SECTOR_LABELS,
             "sector_resolver": _make_strategist_sector_resolver(),
-            "total_portfolio_value_usd": 500_000.0,
-            "available_for_new_positions_usd": 300_000.0,
+            "total_portfolio_value_usd": money(500_000.0),
+            "available_for_new_positions_usd": money(300_000.0),
         }
         first = render_strategist_header_halt_mode(**kwargs_s)
         second = render_strategist_header_halt_mode(**kwargs_s)
@@ -1255,8 +1255,8 @@ def test_halt_mode_wrappers_are_deterministic(render_call: str) -> None:
             "config": config,
             "sector_label_display": _MICRO_SECTOR_LABELS,
             "sector_resolver": _make_pm_sector_resolver(),
-            "total_portfolio_value_usd": 500_000.0,
-            "available_for_new_positions_usd": 300_000.0,
+            "total_portfolio_value_usd": money(500_000.0),
+            "available_for_new_positions_usd": money(300_000.0),
             "cross_constraint_impact": _make_default_cross_constraint_impact(),
             "pending_orders": (),
             "current_price_lookup": _make_pm_current_price_lookup(),
@@ -1304,8 +1304,8 @@ def test_halt_mode_wrappers_have_no_double_blank_or_trailing_blank(render_call: 
             config=config,
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_strategist_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
         )
     else:
         rendered = render_pm_header_halt_mode(
@@ -1319,8 +1319,8 @@ def test_halt_mode_wrappers_have_no_double_blank_or_trailing_blank(render_call: 
             config=config,
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_pm_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
             cross_constraint_impact=_make_default_cross_constraint_impact(),
             pending_orders=(),
             current_price_lookup=_make_pm_current_price_lookup(),
@@ -1349,8 +1349,8 @@ def test_halt_mode_banner_renders_halt_state_pcts_not_pm_view_drawdown() -> None
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_pm_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=_make_default_cross_constraint_impact(),
         pending_orders=(),
         current_price_lookup=_make_pm_current_price_lookup(),
@@ -1377,7 +1377,7 @@ def test_halt_mode_banner_renders_when_only_cumulative_active() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_strategist_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
     )
     assert "** HALT MODE ACTIVE — daily drawdown 0.0% / 2.5% **" in rendered

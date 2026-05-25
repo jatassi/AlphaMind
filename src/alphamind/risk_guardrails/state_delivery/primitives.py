@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
+from decimal import Decimal
 
+from alphamind._kernel.money import Money
 from alphamind._kernel.regime import (
     DrawdownTier,
     RegimeLabel,
@@ -99,8 +101,14 @@ _ZONE_CRITICAL_THRESHOLD = 0.85
 _ZONE_BLOCKED_THRESHOLD = 0.95
 
 
-def format_dollar(value: float) -> str:
-    """Render *value* as a dollar amount with comma separators and zero decimals."""
+def format_dollar(value: Money | Decimal) -> str:
+    """Render *value* as a dollar amount with comma separators and zero decimals.
+
+    Accepts ``Money`` / ``Decimal`` only — formatting uses Decimal's native
+    ``:,.0f`` spec, so no intermediate float cast traverses the LLM-input
+    rendering boundary (ALP-657 closing of the ALP-462-deferred state-delivery
+    gap).
+    """
     if value < 0:
         return f"-${-value:,.0f}"
     return f"${value:,.0f}"
@@ -154,9 +162,9 @@ def render_regime_line(active: ActiveRiskParameterSet) -> str:
 
 def render_capital_block(
     *,
-    available_for_new_positions_usd: float,
+    available_for_new_positions_usd: Money,
     available_for_new_positions_pct: float,
-    per_position_max_usd: float,
+    per_position_max_usd: Money,
     per_position_max_pct: float,
     regime_label_display: str,
 ) -> str:

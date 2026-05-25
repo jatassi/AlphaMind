@@ -43,7 +43,7 @@ from typing import Any, Literal
 
 from alphamind._kernel.exception_group import first_non_cancelled
 from alphamind._kernel.mode import PipelineMode
-from alphamind._kernel.money import money
+from alphamind._kernel.money import Money, money
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
 from alphamind.config.models.guardrails import ProgressiveTier
@@ -144,7 +144,7 @@ class DecisionPipelineResult:
 def _derive_cross_constraint_impact(
     *,
     combined_set_impact: CombinedSetImpact,
-    available_capital_usd: float,
+    available_capital_usd: Money,
 ) -> CrossConstraintImpact:
     """Translate the pre-processor's ``combined_set_impact`` into the PM-side
     :class:`CrossConstraintImpact`.
@@ -324,7 +324,12 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     pipeline_mode = PipelineMode(mode)
     analyst_mode = pipeline_mode.to_analyst_pipeline_mode()
     strategist_mode = pipeline_mode.to_strategist_pipeline_mode()
-    available_capital_usd = pydantic_snapshot.cash_ledger.true_deployable_capital_usd
+    # ALP-657 — wrap production-aggregation floats into ``Money`` once at the
+    # pipeline boundary so every downstream consumer (strategist runner, PM
+    # runner, cross-constraint impact derivation) reads the same Decimal-typed
+    # value. Closes the state-delivery rendering gap ALP-462 deferred.
+    total_portfolio_value_usd = money(str(library_snapshot.portfolio_value_usd))
+    available_capital_usd = money(str(pydantic_snapshot.cash_ledger.true_deployable_capital_usd))
     current_price_lookup = _price_lookup_from_assembled(assembled)
     progress.phase_start("analyst")
     progress.phase_start("strategist")
@@ -371,7 +376,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
                     active_sectors=tuple(sorted(active_sectors)),
                     state_delivery_config=state_delivery_config,
                     sector_resolver=sector_resolver,
-                    total_portfolio_value_usd=library_snapshot.portfolio_value_usd,
+                    total_portfolio_value_usd=total_portfolio_value_usd,
                     available_for_new_positions_usd=available_capital_usd,
                     current_price_lookup=current_price_lookup,
                     profile_feature_flags=profile_feature_flags,
@@ -444,9 +449,8 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
         state_delivery_config=state_delivery_config,
         options_enabled=options_enabled,
         short_selling_enabled=short_selling_enabled,
-        # ALP-462 — wrap production-aggregation floats into ``Money`` at the PM runner boundary.
-        total_portfolio_value_usd=money(str(library_snapshot.portfolio_value_usd)),
-        available_for_new_positions_usd=money(str(available_capital_usd)),
+        total_portfolio_value_usd=total_portfolio_value_usd,
+        available_for_new_positions_usd=available_capital_usd,
         cross_constraint_impact=cross_constraint_impact,
         halt_state=halt_state,
         pending_orders=pydantic_snapshot.pending_orders,

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 
+from alphamind._kernel.money import Money, money
 from alphamind.portfolio_state.computations.activity_log import filter_by_event_type
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.consumers.synthesizer import (
@@ -54,11 +56,16 @@ class AnalystHeldPosition:
 
 @dataclass(frozen=True, slots=True)
 class AnalystAvailableCapital:
-    """Capital availability summary for the analyst."""
+    """Capital availability summary for the analyst.
 
-    available_for_new_positions_usd: float
+    USD fields are typed :class:`Money` so the state-delivery renderer
+    (``render_capital_block``) consumes Decimal natively without an
+    intermediate float boundary cast (ALP-657).
+    """
+
+    available_for_new_positions_usd: Money
     available_for_new_positions_pct: float
-    per_position_max_size_usd: float
+    per_position_max_size_usd: Money
     per_position_max_size_pct: float
 
 
@@ -136,12 +143,12 @@ def _project_available_capital(
     )
     per_position_pct = rule_entry.value if rule_entry is not None else 0.0
     per_position_usd = (
-        (per_position_pct / 100.0 * total_portfolio_value_usd)
+        money(str(per_position_pct / 100.0 * total_portfolio_value_usd))
         if total_portfolio_value_usd > 0
-        else 0.0
+        else Money(Decimal(0))
     )
     return AnalystAvailableCapital(
-        available_for_new_positions_usd=deployable,
+        available_for_new_positions_usd=money(str(deployable)),
         available_for_new_positions_pct=available_pct,
         per_position_max_size_usd=per_position_usd,
         per_position_max_size_pct=per_position_pct,

@@ -814,9 +814,11 @@ def _build_analyst_view() -> AnalystView:
         held_positions=_build_analyst_held_positions(),
         active_thesis_summaries=(),
         available_capital=AnalystAvailableCapital(
-            available_for_new_positions_usd=_AVAILABLE_FOR_NEW_POSITIONS_USD,
+            available_for_new_positions_usd=money(_AVAILABLE_FOR_NEW_POSITIONS_USD),
             available_for_new_positions_pct=10.0,
-            per_position_max_size_usd=_PER_POSITION_MAX_PCT * _TOTAL_PORTFOLIO_VALUE_USD / 100.0,
+            per_position_max_size_usd=money(
+                _PER_POSITION_MAX_PCT * _TOTAL_PORTFOLIO_VALUE_USD / 100.0
+            ),
             per_position_max_size_pct=_PER_POSITION_MAX_PCT,
         ),
         pending_orders=(),
@@ -902,8 +904,8 @@ def _build_cross_constraint_impact() -> CrossConstraintImpact:
             ),
         ),
         flagged_rule_ids=(),
-        available_capital_before_usd=5_000.0,
-        available_capital_after_usd=3_500.0,
+        available_capital_before_usd=money(5_000.0),
+        available_capital_after_usd=money(3_500.0),
     )
 
 
@@ -967,8 +969,8 @@ def _render_normal_strategist_header(
         config=_make_state_delivery_config(),
         sector_label_display=_FULL_SECTOR_LABELS,
         sector_resolver=_build_sector_resolver(),
-        total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE_USD,
-        available_for_new_positions_usd=_AVAILABLE_FOR_NEW_POSITIONS_USD,
+        total_portfolio_value_usd=money(_TOTAL_PORTFOLIO_VALUE_USD),
+        available_for_new_positions_usd=money(_AVAILABLE_FOR_NEW_POSITIONS_USD),
         regime_transition_breaches=regime_transition_breaches,
     )
 
@@ -993,8 +995,8 @@ def _render_normal_pm_header(
         config=_make_state_delivery_config(),
         sector_label_display=_FULL_SECTOR_LABELS,
         sector_resolver=_build_sector_resolver(),
-        total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE_USD,
-        available_for_new_positions_usd=_AVAILABLE_FOR_NEW_POSITIONS_USD,
+        total_portfolio_value_usd=money(_TOTAL_PORTFOLIO_VALUE_USD),
+        available_for_new_positions_usd=money(_AVAILABLE_FOR_NEW_POSITIONS_USD),
         cross_constraint_impact=_build_cross_constraint_impact(),
         correlation_state=correlation_state,
         dependency_risk_flag=dependency_risk_flag,
@@ -1501,8 +1503,8 @@ class TestHaltModeWrappers:
             config=_make_state_delivery_config(),
             sector_label_display=_FULL_SECTOR_LABELS,
             sector_resolver=_build_sector_resolver(),
-            total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE_USD,
-            available_for_new_positions_usd=_AVAILABLE_FOR_NEW_POSITIONS_USD,
+            total_portfolio_value_usd=money(_TOTAL_PORTFOLIO_VALUE_USD),
+            available_for_new_positions_usd=money(_AVAILABLE_FOR_NEW_POSITIONS_USD),
         )
         assert "** HALT MODE ACTIVE — daily drawdown 2.6% / 2.5% **" in rendered
         assert (
@@ -1527,8 +1529,8 @@ class TestHaltModeWrappers:
             config=_make_state_delivery_config(),
             sector_label_display=_FULL_SECTOR_LABELS,
             sector_resolver=_build_sector_resolver(),
-            total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE_USD,
-            available_for_new_positions_usd=_AVAILABLE_FOR_NEW_POSITIONS_USD,
+            total_portfolio_value_usd=money(_TOTAL_PORTFOLIO_VALUE_USD),
+            available_for_new_positions_usd=money(_AVAILABLE_FOR_NEW_POSITIONS_USD),
             cross_constraint_impact=_build_cross_constraint_impact(),
             pending_orders=(_build_pending_order(),),
             current_price_lookup=_price_lookup,
@@ -1558,8 +1560,8 @@ class TestHaltModeWrappers:
             config=_make_state_delivery_config(),
             sector_label_display=_FULL_SECTOR_LABELS,
             sector_resolver=_build_sector_resolver(),
-            total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE_USD,
-            available_for_new_positions_usd=_AVAILABLE_FOR_NEW_POSITIONS_USD,
+            total_portfolio_value_usd=money(_TOTAL_PORTFOLIO_VALUE_USD),
+            available_for_new_positions_usd=money(_AVAILABLE_FOR_NEW_POSITIONS_USD),
             cross_constraint_impact=_build_cross_constraint_impact(),
             pending_orders=(),
             current_price_lookup=_price_lookup,
@@ -1614,8 +1616,8 @@ class TestEmergencyWrapper:
             config=_make_state_delivery_config(),
             sector_label_display=_FULL_SECTOR_LABELS,
             sector_resolver=_build_sector_resolver(),
-            total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE_USD,
-            available_for_new_positions_usd=_AVAILABLE_FOR_NEW_POSITIONS_USD,
+            total_portfolio_value_usd=money(_TOTAL_PORTFOLIO_VALUE_USD),
+            available_for_new_positions_usd=money(_AVAILABLE_FOR_NEW_POSITIONS_USD),
             cross_constraint_impact=_build_cross_constraint_impact(),
             pending_orders=(_build_pending_order(),),
             current_price_lookup=_price_lookup,
@@ -1863,8 +1865,8 @@ class TestComposition:
             config=_make_state_delivery_config(),
             sector_label_display=_FULL_SECTOR_LABELS,
             sector_resolver=_build_sector_resolver(),
-            total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE_USD,
-            available_for_new_positions_usd=_AVAILABLE_FOR_NEW_POSITIONS_USD,
+            total_portfolio_value_usd=money(_TOTAL_PORTFOLIO_VALUE_USD),
+            available_for_new_positions_usd=money(_AVAILABLE_FOR_NEW_POSITIONS_USD),
             cross_constraint_impact=_build_cross_constraint_impact(),
             pending_orders=(_build_pending_order(),),
             current_price_lookup=_price_lookup,

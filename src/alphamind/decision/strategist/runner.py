@@ -27,6 +27,7 @@ from typing import Any, Literal
 
 import yaml
 
+from alphamind._kernel.money import Money
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
@@ -190,8 +191,8 @@ async def run_strategist(  # noqa: PLR0913 — signature dictated by ALP-308 spe
     active_sectors: tuple[str, ...],
     state_delivery_config: StateDeliveryConfig,
     sector_resolver: Callable[[str], str],
-    total_portfolio_value_usd: float,
-    available_for_new_positions_usd: float,
+    total_portfolio_value_usd: Money,
+    available_for_new_positions_usd: Money,
     current_price_lookup: Callable[[str], float],
     profile_feature_flags: FeatureFlagsView,
     library_config: LibraryConfig,
@@ -318,8 +319,8 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
     active_sectors: tuple[str, ...],
     state_delivery_config: StateDeliveryConfig,
     sector_resolver: Callable[[str], str],
-    total_portfolio_value_usd: float,
-    available_for_new_positions_usd: float,
+    total_portfolio_value_usd: Money,
+    available_for_new_positions_usd: Money,
     current_price_lookup: Callable[[str], float],
     synthesizer_brief_text: str,
     sector_label_display: dict[str, str] | None,

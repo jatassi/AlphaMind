@@ -682,13 +682,13 @@ class TestAnalystValueObjects:
 
     def test_available_capital_frozen(self) -> None:
         ac = AnalystAvailableCapital(
-            available_for_new_positions_usd=44000.0,
+            available_for_new_positions_usd=money(44000.0),
             available_for_new_positions_pct=44.0,
-            per_position_max_size_usd=5000.0,
+            per_position_max_size_usd=money(5000.0),
             per_position_max_size_pct=5.0,
         )
         with pytest.raises(FrozenInstanceError):
-            ac.available_for_new_positions_usd = 0.0  # type: ignore[misc]
+            ac.available_for_new_positions_usd = money(0)  # type: ignore[misc]
 
     def test_abandoned_opening_frozen(self) -> None:
         ao = AnalystAbandonedOpening(
@@ -708,9 +708,9 @@ class TestAnalystValueObjects:
             held_positions=(),
             active_thesis_summaries=(),
             available_capital=AnalystAvailableCapital(
-                available_for_new_positions_usd=0.0,
+                available_for_new_positions_usd=money(0.0),
                 available_for_new_positions_pct=0.0,
-                per_position_max_size_usd=0.0,
+                per_position_max_size_usd=money(0.0),
                 per_position_max_size_pct=0.0,
             ),
             pending_orders=(),

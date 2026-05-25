@@ -364,8 +364,8 @@ def test_render_pm_header_returns_string_with_envelope_open_and_close() -> None:
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -377,8 +377,8 @@ def test_render_pm_header_returns_string_with_envelope_open_and_close() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert isinstance(rendered, str)
@@ -391,8 +391,8 @@ def test_render_pm_header_renders_regime_line_after_envelope() -> None:
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -404,8 +404,8 @@ def test_render_pm_header_renders_regime_line_after_envelope() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     lines = rendered.splitlines()
@@ -417,8 +417,8 @@ def test_render_pm_header_renders_capital_block_after_blank() -> None:
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -430,8 +430,8 @@ def test_render_pm_header_renders_capital_block_after_blank() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     lines = rendered.splitlines()
@@ -446,8 +446,8 @@ def test_render_pm_header_renders_sector_and_directional_headroom_blocks() -> No
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -459,8 +459,8 @@ def test_render_pm_header_renders_sector_and_directional_headroom_blocks() -> No
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "Sector headroom (delta-adjusted):" in rendered
@@ -492,8 +492,8 @@ def test_render_pm_header_renders_position_level_constraint_proximity_block() ->
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -505,8 +505,8 @@ def test_render_pm_header_renders_position_level_constraint_proximity_block() ->
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "Position-level constraint proximity:" in rendered
@@ -537,8 +537,8 @@ def test_render_pm_header_critical_from_size_not_positive_pnl() -> None:
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -550,8 +550,8 @@ def test_render_pm_header_critical_from_size_not_positive_pnl() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     proximity_line = next(
@@ -589,8 +589,8 @@ def test_render_pm_header_renders_sector_exposure_breakdown_per_position() -> No
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -602,8 +602,8 @@ def test_render_pm_header_renders_sector_exposure_breakdown_per_position() -> No
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "Sector exposure breakdown (per position):" in rendered
@@ -619,8 +619,8 @@ def test_render_pm_header_renders_cross_constraint_impact_empty_per_rule() -> No
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -632,8 +632,8 @@ def test_render_pm_header_renders_cross_constraint_impact_empty_per_rule() -> No
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "Cross-constraint impact summary:" in rendered
@@ -676,8 +676,8 @@ def test_render_pm_header_renders_cross_constraint_impact_with_per_rule_lines() 
             ),
         ),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=240_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(240_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -689,8 +689,8 @@ def test_render_pm_header_renders_cross_constraint_impact_with_per_rule_lines() 
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "Cross-constraint impact summary:" in rendered
@@ -719,8 +719,8 @@ def test_render_pm_header_cross_constraint_impact_breach_status() -> None:
             ),
         ),
         flagged_rule_ids=("sector_concentration_tech",),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=240_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(240_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -732,8 +732,8 @@ def test_render_pm_header_cross_constraint_impact_breach_status() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "    Sector tech: 18.3% → 27.5% [BREACH] would breach by 2.5%" in rendered
@@ -746,8 +746,8 @@ def _render_with_single_rule(rule: CrossConstraintImpactPerRule) -> str:
     impact = CrossConstraintImpact(
         per_rule=(rule,),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=240_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(240_000.0),
     )
     return render_pm_header(
         pm_view=view,
@@ -759,8 +759,8 @@ def _render_with_single_rule(rule: CrossConstraintImpactPerRule) -> str:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
 
@@ -863,8 +863,8 @@ def test_render_pm_header_renders_validation_tool_reminder_block_verbatim() -> N
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -876,8 +876,8 @@ def test_render_pm_header_renders_validation_tool_reminder_block_verbatim() -> N
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "Guardrail validation tool available:" in rendered
@@ -894,8 +894,8 @@ def test_render_pm_header_renders_drawdown_context_with_signed_daily_pnl_positiv
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -907,8 +907,8 @@ def test_render_pm_header_renders_drawdown_context_with_signed_daily_pnl_positiv
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "Drawdown context:" in rendered
@@ -922,8 +922,8 @@ def test_render_pm_header_drawdown_context_negative_daily_pnl() -> None:
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -935,8 +935,8 @@ def test_render_pm_header_drawdown_context_negative_daily_pnl() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "  Daily P/L:     -1.2% (NORMAL)" in rendered
@@ -947,8 +947,8 @@ def test_render_pm_header_drawdown_context_zero_daily_pnl_signed_positive() -> N
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -960,8 +960,8 @@ def test_render_pm_header_drawdown_context_zero_daily_pnl_signed_positive() -> N
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "  Daily P/L:     +0.0% (NORMAL)" in rendered
@@ -978,8 +978,8 @@ def test_render_pm_header_drawdown_context_with_cumulative_tier() -> None:
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -991,8 +991,8 @@ def test_render_pm_header_drawdown_context_with_cumulative_tier() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "  Cumulative:    8.5% from HWM (⚠ WARNING)" in rendered
@@ -1007,8 +1007,8 @@ def test_render_pm_header_regime_transition_breaches_block_present_when_breaches
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     breach = RegimeTransitionBreach(
         position_id=PositionId("POS-NVDA-001"),
@@ -1029,8 +1029,8 @@ def test_render_pm_header_regime_transition_breaches_block_present_when_breaches
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         regime_transition_breaches=(breach,),
     )
@@ -1045,8 +1045,8 @@ def test_render_pm_header_regime_transition_breaches_block_omitted_when_empty() 
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -1058,8 +1058,8 @@ def test_render_pm_header_regime_transition_breaches_block_omitted_when_empty() 
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "Regime-transition breaches" not in rendered
@@ -1120,8 +1120,8 @@ def test_render_pm_header_recent_engine_actions_block_none_when_changelog_empty(
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -1133,8 +1133,8 @@ def test_render_pm_header_recent_engine_actions_block_none_when_changelog_empty(
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "Recent engine-originated actions (since last invocation):" in rendered
@@ -1154,8 +1154,8 @@ def test_render_pm_header_recent_engine_actions_block_renders_close_and_trim_in_
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -1167,8 +1167,8 @@ def test_render_pm_header_recent_engine_actions_block_renders_close_and_trim_in_
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     lines = rendered.splitlines()
@@ -1184,8 +1184,8 @@ def test_render_pm_header_active_regime_overrides_block_none_when_empty() -> Non
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -1197,8 +1197,8 @@ def test_render_pm_header_active_regime_overrides_block_none_when_empty() -> Non
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "Active regime overrides:" in rendered
@@ -1212,8 +1212,8 @@ def test_render_pm_header_active_regime_overrides_block_with_expiry_appends_suff
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     expiry = datetime(2026, 4, 29, 21, 0, 0, tzinfo=UTC)
     overlay = RegimeOverride(
@@ -1233,8 +1233,8 @@ def test_render_pm_header_active_regime_overrides_block_with_expiry_appends_suff
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         active_regime_overrides=(overlay,),
     )
@@ -1250,8 +1250,8 @@ def test_render_pm_header_active_regime_overrides_block_without_expiry_no_suffix
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     overlay = RegimeOverride(
         overlay_name="stress_overlay",
@@ -1268,8 +1268,8 @@ def test_render_pm_header_active_regime_overrides_block_without_expiry_no_suffix
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         active_regime_overrides=(overlay,),
     )
@@ -1300,8 +1300,8 @@ def test_render_pm_header_correlation_state_block_omitted_when_state_is_none() -
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -1313,8 +1313,8 @@ def test_render_pm_header_correlation_state_block_omitted_when_state_is_none() -
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         correlation_state=None,
     )
@@ -1335,8 +1335,8 @@ def test_render_pm_header_correlation_state_block_omitted_when_below_position_th
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     correlation = CorrelationState(
         weighted_avg_correlation=0.62,
@@ -1356,8 +1356,8 @@ def test_render_pm_header_correlation_state_block_omitted_when_below_position_th
         config=_make_state_delivery_config(correlation_min=3),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         correlation_state=correlation,
     )
@@ -1369,8 +1369,8 @@ def test_render_pm_header_correlation_state_block_renders_when_threshold_met() -
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     correlation = CorrelationState(
         weighted_avg_correlation=0.62,
@@ -1390,8 +1390,8 @@ def test_render_pm_header_correlation_state_block_renders_when_threshold_met() -
         config=_make_state_delivery_config(correlation_min=3),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         correlation_state=correlation,
     )
@@ -1405,8 +1405,8 @@ def test_render_pm_header_dependency_risk_flag_block_omitted_when_none_or_below_
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered_none = render_pm_header(
         pm_view=view,
@@ -1418,8 +1418,8 @@ def test_render_pm_header_dependency_risk_flag_block_omitted_when_none_or_below_
         config=_make_state_delivery_config(dependency_min=3),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         dependency_risk_flag=None,
     )
@@ -1453,8 +1453,8 @@ def test_render_pm_header_dependency_risk_flag_block_omitted_when_none_or_below_
         config=_make_state_delivery_config(dependency_min=3),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         dependency_risk_flag=flag,
     )
@@ -1466,8 +1466,8 @@ def test_render_pm_header_dependency_risk_flag_block_renders_when_threshold_met(
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     flag = DependencyRiskFlag(
         max_catalyst_failure_exposure_pct=18.0,
@@ -1487,8 +1487,8 @@ def test_render_pm_header_dependency_risk_flag_block_renders_when_threshold_met(
         config=_make_state_delivery_config(dependency_min=3),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         dependency_risk_flag=flag,
     )
@@ -1518,8 +1518,8 @@ def test_render_pm_header_hard_blocks_uses_pm_specific_header_label() -> None:
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -1531,8 +1531,8 @@ def test_render_pm_header_hard_blocks_uses_pm_specific_header_label() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "Hard blocks (do NOT issue commands violating):" in rendered
@@ -1580,8 +1580,8 @@ def test_render_pm_header_omits_hard_blocks_when_no_breaches_and_features_enable
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -1593,8 +1593,8 @@ def test_render_pm_header_omits_hard_blocks_when_no_breaches_and_features_enable
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     assert "Hard blocks" not in rendered
@@ -1619,8 +1619,8 @@ def test_render_pm_header_raises_when_options_disabled_but_options_rule_present(
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     with pytest.raises(ValueError, match="options_delta_pct"):
         render_pm_header(
@@ -1633,8 +1633,8 @@ def test_render_pm_header_raises_when_options_disabled_but_options_rule_present(
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_sector_resolver,
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
             cross_constraint_impact=impact,
         )
 
@@ -1655,8 +1655,8 @@ def test_render_pm_header_raises_when_short_selling_disabled_but_net_short_prese
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     with pytest.raises(ValueError, match="net_short_pct"):
         render_pm_header(
@@ -1669,8 +1669,8 @@ def test_render_pm_header_raises_when_short_selling_disabled_but_net_short_prese
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_sector_resolver,
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
             cross_constraint_impact=impact,
         )
 
@@ -1697,8 +1697,8 @@ def test_render_pm_header_raises_when_position_max_size_pct_missing() -> None:
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     with pytest.raises(ValueError, match="position_max_size_pct"):
         render_pm_header(
@@ -1711,8 +1711,8 @@ def test_render_pm_header_raises_when_position_max_size_pct_missing() -> None:
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_sector_resolver,
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
             cross_constraint_impact=impact,
         )
 
@@ -1727,8 +1727,8 @@ def test_render_pm_header_raises_when_net_long_pct_missing_from_risk_budget() ->
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     with pytest.raises(ValueError, match="net_long_pct"):
         render_pm_header(
@@ -1741,8 +1741,8 @@ def test_render_pm_header_raises_when_net_long_pct_missing_from_risk_budget() ->
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_sector_resolver,
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
             cross_constraint_impact=impact,
         )
 
@@ -1752,8 +1752,8 @@ def test_render_pm_header_raises_when_active_sector_missing_from_risk_budget() -
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     with pytest.raises(ValueError, match="sector_concentration_financials"):
         render_pm_header(
@@ -1766,8 +1766,8 @@ def test_render_pm_header_raises_when_active_sector_missing_from_risk_budget() -
             config=_make_state_delivery_config(),
             sector_label_display={"tech": "Tech", "semis": "Semis", "financials": "Financials"},
             sector_resolver=_sector_resolver,
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
             cross_constraint_impact=impact,
         )
 
@@ -1788,8 +1788,8 @@ def test_render_pm_header_is_deterministic() -> None:
             ),
         ),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=240_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(240_000.0),
     )
     timestamp = datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC)
     config = _make_state_delivery_config()
@@ -1805,8 +1805,8 @@ def test_render_pm_header_is_deterministic() -> None:
             config=config,
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_sector_resolver,
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
             cross_constraint_impact=impact,
         )
 
@@ -1819,8 +1819,8 @@ def test_render_pm_header_micro_fixture_full_render() -> None:
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -1834,8 +1834,8 @@ def test_render_pm_header_micro_fixture_full_render() -> None:
         config=_make_state_delivery_config(correlation_min=4, dependency_min=4),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     expected = "\n".join(
@@ -1990,8 +1990,8 @@ def test_render_pm_header_full_system_fixture_full_render() -> None:
             ),
         ),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=240_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(240_000.0),
     )
     overlay = RegimeOverride(
         overlay_name="pre_event_tightening",
@@ -2026,8 +2026,8 @@ def test_render_pm_header_full_system_fixture_full_render() -> None:
         config=_make_state_delivery_config(correlation_min=3, dependency_min=3),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
         active_regime_overrides=(overlay,),
         correlation_state=correlation,
@@ -2142,8 +2142,8 @@ def test_cross_constraint_impact_is_frozen_slotted_dataclass() -> None:
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=5_000.0,
-        available_capital_after_usd=3_500.0,
+        available_capital_before_usd=money(5_000.0),
+        available_capital_after_usd=money(3_500.0),
     )
     assert dataclasses.is_dataclass(impact)
     assert hasattr(CrossConstraintImpact, "__slots__")
@@ -2198,8 +2198,8 @@ def test_render_pm_header_has_no_double_blank_lines_and_no_trailing_blank() -> N
     impact = CrossConstraintImpact(
         per_rule=(),
         flagged_rule_ids=(),
-        available_capital_before_usd=300_000.0,
-        available_capital_after_usd=300_000.0,
+        available_capital_before_usd=money(300_000.0),
+        available_capital_after_usd=money(300_000.0),
     )
     rendered = render_pm_header(
         pm_view=view,
@@ -2211,8 +2211,8 @@ def test_render_pm_header_has_no_double_blank_lines_and_no_trailing_blank() -> N
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         cross_constraint_impact=impact,
     )
     lines = rendered.splitlines()

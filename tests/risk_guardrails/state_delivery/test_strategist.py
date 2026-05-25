@@ -508,8 +508,8 @@ def test_render_strategist_header_returns_string_starting_with_envelope_open() -
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
     )
     assert isinstance(rendered, str)
     assert rendered.startswith("=== GUARDRAIL STATE (invocation inv-001, 2026-04-28T14:32:05Z) ===")
@@ -670,8 +670,8 @@ def test_render_strategist_header_full_system_profile_full_fixture() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_FULL_SECTOR_LABELS,
         sector_resolver=_make_full_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         regime_transition_breaches=breaches,
     )
     expected = "\n".join(
@@ -794,8 +794,8 @@ def test_render_strategist_header_micro_profile_full_fixture() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
     )
     expected = "\n".join(
         [
@@ -868,8 +868,8 @@ def test_render_strategist_header_renders_none_for_empty_positions() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
     )
     lines = rendered.splitlines()
     proximity_idx = lines.index("Position-level constraint proximity:")
@@ -924,8 +924,8 @@ def test_render_strategist_header_renders_cumulative_tier_line(
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
     )
     expected_line = f"  Cumulative tier: {expected_label} — {expected_restrictions}"
     assert expected_line in rendered.splitlines()
@@ -966,8 +966,8 @@ def test_render_strategist_header_groups_unclassified_position_at_end() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_resolver,
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
     )
     lines = rendered.splitlines()
     breakdown_idx = lines.index("Sector exposure breakdown (per position):")
@@ -1012,8 +1012,8 @@ def test_render_strategist_header_emits_zone_tag_per_threshold(
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
     )
     proximity_line = next(
         line for line in rendered.splitlines() if line.lstrip().startswith("POS-NVDA-001:")
@@ -1043,8 +1043,8 @@ def test_render_strategist_header_critical_from_size_not_positive_pnl() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
     )
     proximity_line = next(
         line for line in rendered.splitlines() if line.lstrip().startswith("POS-NVDA-001:")
@@ -1071,8 +1071,8 @@ def test_render_strategist_header_reads_intraday_for_daily_and_current_for_cumul
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
     )
     lines = rendered.splitlines()
     daily_idx = lines.index("Drawdown state:") + 1
@@ -1097,8 +1097,8 @@ def test_render_strategist_header_omits_regime_transition_block_when_empty() -> 
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         regime_transition_breaches=(),
     )
     assert "Regime-transition breaches" not in rendered
@@ -1130,8 +1130,8 @@ def test_render_strategist_header_renders_per_position_max_size_breach_row() -> 
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         regime_transition_breaches=(breach,),
     )
     assert (
@@ -1162,8 +1162,8 @@ def test_render_strategist_header_renders_aggregate_breach_row() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         regime_transition_breaches=(breach,),
     )
     assert (
@@ -1194,8 +1194,8 @@ def test_render_strategist_header_renders_per_position_non_max_size_with_label_s
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         regime_transition_breaches=(breach,),
     )
     assert any(
@@ -1236,8 +1236,8 @@ def test_render_strategist_header_renders_mixed_breach_rows_in_order() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         regime_transition_breaches=(per_pos, aggregate),
     )
     lines = rendered.splitlines()
@@ -1280,8 +1280,8 @@ def test_render_strategist_header_is_deterministic() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_FULL_SECTOR_LABELS,
         sector_resolver=_make_full_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
         regime_transition_breaches=breaches,
     )
     first = render_strategist_header(**kwargs)  # type: ignore[arg-type]
@@ -1318,8 +1318,8 @@ def test_render_strategist_header_raises_when_options_disabled_but_options_rule_
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_micro_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
         )
 
 
@@ -1349,8 +1349,8 @@ def test_render_strategist_header_raises_when_short_selling_disabled_but_net_sho
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_micro_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
         )
 
 
@@ -1374,8 +1374,8 @@ def test_render_strategist_header_raises_when_options_disabled_but_options_posit
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_micro_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
         )
 
 
@@ -1408,8 +1408,8 @@ def test_render_strategist_header_raises_when_risk_budget_rule_missing(rule_id: 
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_micro_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
         )
 
 
@@ -1445,8 +1445,8 @@ def test_render_strategist_header_raises_when_active_parameter_missing(
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_micro_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
         )
 
 
@@ -1478,8 +1478,8 @@ def test_render_strategist_header_renders_position_action_against_position_id(
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
     )
     assert (
         f"  ENV-SA-{command_type}: {command_type} on POS-NVDA-001 — "
@@ -1507,8 +1507,8 @@ def test_render_strategist_header_renders_cancel_action_against_order_id() -> No
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
     )
     assert (
         "  ENV-SA-ORD-1: CANCEL on ORD-9001 — "
@@ -1537,8 +1537,8 @@ def test_render_strategist_header_raises_when_position_action_missing_position_i
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_micro_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
         )
 
 
@@ -1563,8 +1563,8 @@ def test_render_strategist_header_raises_when_cancel_action_missing_order_id() -
             config=_make_state_delivery_config(),
             sector_label_display=_MICRO_SECTOR_LABELS,
             sector_resolver=_make_micro_sector_resolver(),
-            total_portfolio_value_usd=500_000.0,
-            available_for_new_positions_usd=300_000.0,
+            total_portfolio_value_usd=money(500_000.0),
+            available_for_new_positions_usd=money(300_000.0),
         )
 
 
@@ -1590,8 +1590,8 @@ def test_render_strategist_header_has_no_double_blank_lines() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_FULL_SECTOR_LABELS,
         sector_resolver=_make_full_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
     )
     for prev, nxt in pairwise(rendered.splitlines()):
         assert not (prev == "" and nxt == ""), "double blank line found"
@@ -1609,8 +1609,8 @@ def test_render_strategist_header_has_no_trailing_blank_line() -> None:
         config=_make_state_delivery_config(),
         sector_label_display=_MICRO_SECTOR_LABELS,
         sector_resolver=_make_micro_sector_resolver(),
-        total_portfolio_value_usd=500_000.0,
-        available_for_new_positions_usd=300_000.0,
+        total_portfolio_value_usd=money(500_000.0),
+        available_for_new_positions_usd=money(300_000.0),
     )
     assert not rendered.endswith("\n")
     assert rendered.splitlines()[-1] == "==="
