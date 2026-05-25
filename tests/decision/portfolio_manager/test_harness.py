@@ -1020,9 +1020,11 @@ async def test_four_mcp_servers_registered(
         assert options.mcp_servers[server_name]["type"] == "sdk"
     assert len(options.mcp_servers) == 4
 
-    # allowed_tools merges all four servers' wire-form names.
+    # allowed_tools merges all four servers' wire-form names — the validation
+    # MCP exposes both the single-call and batch tools (ALP-625).
     expected_allowed = {
         "mcp__alphamind_decision_validation__validate_guardrail",
+        "mcp__alphamind_decision_validation__validate_guardrail_batch",
         "mcp__alphamind_synthesizer_retrieval__retrieve_brief",
         "mcp__alphamind_portfolio_state_thesis_components__get_thesis_components",
         "mcp__alphamind_execution_oms_submit__submit_envelope",

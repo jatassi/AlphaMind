@@ -278,6 +278,28 @@ class ValidationResult(BaseModel):
         return self
 
 
+class BatchValidationResult(BaseModel):
+    """The batch tool's output — one entry per request plus an aggregate.
+
+    Produced by :func:`validate_guardrail_batch` when validating a coordinated
+    package of proposals that should be treated as a single transaction. Each
+    :class:`ValidationResult` in ``per_proposal`` mirrors the single-call shape
+    and is projected with the prior in-batch passes credited; ``overall`` is
+    the worst-of aggregate across the per-proposal entries (``FAIL`` >
+    ``UNAVAILABLE`` > ``PASS``). ``cumulative_impact_note`` reflects
+    ``state.accumulated_deltas`` at batch entry — i.e. proposals already
+    credited by prior single-call or batch calls in the invocation, not the
+    proposals threaded inside this batch (those are reflected by each
+    per-proposal entry's own ``cumulative_impact_note``).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    per_proposal: tuple[ValidationResult, ...]
+    overall: Literal["PASS", "FAIL", "UNAVAILABLE"]
+    cumulative_impact_note: str
+
+
 class ProjectedDelta(BaseModel):
     """A previously-validated proposal's projected impact, for cumulative tracking.
 
@@ -491,6 +513,112 @@ def validate_guardrail(
         failure_guidance=failure_guidance,
         proposal_index_in_invocation=proposal_index,
     )
+
+
+def validate_guardrail_batch(
+    *,
+    requests: tuple[ValidationRequest, ...],
+    state: ValidationToolState,
+) -> BatchValidationResult:
+    """Project *requests* as one coordinated package, threading PASSes in-batch.
+
+    The batch tool exists so a strategist or PM can validate a multi-position
+    remediation as a single transaction: each individual proposal may FAIL
+    standalone because a portfolio-scoped rule stays red until *all* offending
+    positions are reduced, yet the cumulative package brings the rule back
+    inside the limit. The single-call ``validate_guardrail`` cannot express
+    this — its per-call PASS/FAIL is independent.
+
+    Semantics:
+
+    * Empty ``requests``: returns aggregate ``PASS`` with empty
+      ``per_proposal``. ``cumulative_impact_note`` reflects the input
+      ``state.accumulated_deltas``.
+    * Non-empty: each request is projected in order against a state threaded
+      with the prior in-batch PASSes (a PASSed proposal is appended to the
+      threaded state's ``accumulated_deltas`` so the next request's projection
+      sees its impact). A FAIL or UNAVAILABLE per-proposal does NOT thread —
+      only PASSes contribute to subsequent headroom.
+    * Aggregate ``overall``: ``PASS`` iff every per-proposal is ``PASS``;
+      otherwise the worst-of (``FAIL`` > ``UNAVAILABLE`` > ``PASS``).
+
+    Purity contract: same ``(requests, state)`` produces an equal
+    ``BatchValidationResult``. The function does NOT advance the input
+    ``state`` — state advancement on aggregate PASS lives in the MCP wrapper.
+    """
+    cumulative_impact_note = _format_cumulative_impact_note(state)
+
+    if not requests:
+        return BatchValidationResult(
+            per_proposal=(),
+            overall="PASS",
+            cumulative_impact_note=cumulative_impact_note,
+        )
+
+    per_proposal: list[ValidationResult] = []
+    threaded_state = state
+    for request in requests:
+        result = validate_guardrail(request=request, state=threaded_state)
+        per_proposal.append(result)
+        if result.overall == "PASS":
+            threaded_state = threaded_state.with_accepted_proposal(
+                _build_projected_delta_from(request=request, result=result, state=threaded_state)
+            )
+
+    return BatchValidationResult(
+        per_proposal=tuple(per_proposal),
+        overall=_aggregate_overall(tuple(per_proposal)),
+        cumulative_impact_note=cumulative_impact_note,
+    )
+
+
+def _build_projected_delta_from(
+    *,
+    request: ValidationRequest,
+    result: ValidationResult,
+    state: ValidationToolState,
+) -> ProjectedDelta:
+    """Construct the :class:`ProjectedDelta` cache record for a PASSed request.
+
+    Mirrors the per-request library conversion: the proposal's sector is
+    resolved via ``state.sector_resolver`` and ``existing_position_id`` is
+    looked up against ``state.starting_snapshot`` so a threaded CLOSE/ADD/
+    ADJUST replays with the same position binding the original call used.
+    """
+    return ProjectedDelta(
+        instrument=request.instrument,
+        size=request.size,
+        action=request.action,
+        sector=state.sector_resolver(request.instrument.ticker),
+        delta_adjusted_exposure=result.delta_adjusted_exposure,
+        greeks=result.greeks,
+        proposal_index=result.proposal_index_in_invocation,
+        reserves_capital=request.reserves_capital,
+        existing_position_id=_lookup_existing_position(request, snapshot=state.starting_snapshot),
+    )
+
+
+_OVERALL_RANK: dict[str, int] = {"PASS": 0, "UNAVAILABLE": 1, "FAIL": 2}
+_RANK_OVERALL: dict[int, Literal["PASS", "FAIL", "UNAVAILABLE"]] = {
+    0: "PASS",
+    1: "UNAVAILABLE",
+    2: "FAIL",
+}
+
+
+def _aggregate_overall(
+    per_proposal: tuple[ValidationResult, ...],
+) -> Literal["PASS", "FAIL", "UNAVAILABLE"]:
+    """Worst-of aggregate across per-proposal overalls.
+
+    ``FAIL`` > ``UNAVAILABLE`` > ``PASS``: any FAIL dominates everything, any
+    UNAVAILABLE dominates remaining PASSes, all-PASS yields PASS. Empty input
+    returns PASS by vacuous truth.
+    """
+    if not per_proposal:
+        return "PASS"
+    worst_rank = max(_OVERALL_RANK[r.overall] for r in per_proposal)
+    return _RANK_OVERALL[worst_rank]
 
 
 # ---------------------------------------------------------------------------
