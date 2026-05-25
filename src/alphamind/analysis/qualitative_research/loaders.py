@@ -51,6 +51,9 @@ from alphamind.distillation.contract_freshness import (
     parse_resolution_date,
     question_references_past_date,
 )
+from alphamind.distillation.qualitative.prediction_market_deltas_compute import (
+    MACRO_RELEVANCE_CATEGORIES,
+)
 from alphamind.persistence.models import (
     DistillationContractHistory,
     DistillationTickerBaseline,
@@ -721,6 +724,12 @@ def load_prediction_market_snapshot(
       ``|delta_since_last_invocation_pp| >= delta_pp_threshold``.
     * ``is_low_liquidity`` is ``True`` when 24h volume ≤
       ``low_liquidity_volume_min_usd``.
+
+    Contracts are filtered to a curated set matching the distillation brief
+    (ALP-633): only contracts whose ``meets_threshold_flag`` is ``True`` OR
+    whose ``category`` is in :data:`MACRO_RELEVANCE_CATEGORIES` reach the
+    bundle, so the qualitative researcher and the synthesizer see the same
+    rows. Past-dated questions are excluded ahead of the curation gate.
     """
     as_of_str = _format_iso_utc(as_of)
 
@@ -828,6 +837,7 @@ def load_prediction_market_snapshot(
 
     results: list[PredictionMarketSnapshot] = []
     excluded_past_dated = 0
+    excluded_uncurated = 0
     as_of_date = as_of.date()
 
     for contract_id in contract_ids:
@@ -851,6 +861,21 @@ def load_prediction_market_snapshot(
         # every trailing-history snapshot recorded for this contract.
         is_stale_low_signal = low_liquidity and contract_id not in contracts_with_movement
 
+        # ``meets_threshold_flag`` here mirrors the compute layer's
+        # ``delta_anomaly`` field (see
+        # ``prediction_market_deltas_compute._build_per_contract_payload``);
+        # both reduce to ``abs(delta_pp_since_prior) >= delta_pp_threshold``
+        # against the same history column. Keep the two definitions in
+        # lock-step so the QR + synth curation gates can't diverge.
+        meets_threshold_flag = abs(delta_since_last) >= delta_pp_threshold
+        # Brief curation (ALP-633): mirror the compute layer's gate so synth
+        # and QR see the same contract set — a contract that doesn't carry
+        # signal (above-threshold delta) and isn't in a macro-relevance
+        # category (level itself tradeable) is dropped from the bundle.
+        if not (meets_threshold_flag or category in MACRO_RELEVANCE_CATEGORIES):
+            excluded_uncurated += 1
+            continue
+
         results.append(
             PredictionMarketSnapshot(
                 contract_id=contract_id,
@@ -863,7 +888,7 @@ def load_prediction_market_snapshot(
                 volume_24h_usd=volume_24h,
                 expiration=resolution_date_raw,
                 is_low_liquidity=low_liquidity,
-                meets_threshold_flag=abs(delta_since_last) >= delta_pp_threshold,
+                meets_threshold_flag=meets_threshold_flag,
                 is_stale_low_signal=is_stale_low_signal,
                 data_freshness=_parse_iso_utc(snapshot_ts_str),
             )
@@ -875,6 +900,13 @@ def load_prediction_market_snapshot(
             "question references a date before as_of=%s",
             excluded_past_dated,
             as_of_date.isoformat(),
+        )
+    if excluded_uncurated > 0:
+        log.info(
+            "load_prediction_market_snapshot: excluded %d contract(s) failing "
+            "brief curation (no above-threshold delta, category outside %s)",
+            excluded_uncurated,
+            sorted(MACRO_RELEVANCE_CATEGORIES),
         )
 
     return tuple(results)
