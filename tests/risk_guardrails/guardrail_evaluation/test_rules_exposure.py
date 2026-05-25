@@ -929,3 +929,44 @@ def test_gross_contribute_zero_for_adjust_and_cancel() -> None:
         proposal = _proposal(action=action)
         dae = _dae(signed_notional_usd=0.0)
         assert spec.contribute(proposal, dae, state, config) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# ALP-636: holistic-rule pairing invariant on RuleSpec
+# ---------------------------------------------------------------------------
+
+
+def test_rulespec_holistic_pairing_requires_contributors_from_batch() -> None:
+    """A RuleSpec with ``project_after_batch`` set but no ``contributors_from_batch``
+    must raise at construction — otherwise ``_build_breach_entry`` falls back to
+    the no-op ``contribute`` walk and silently emits empty contributors (the
+    exact bug ALP-636 fixed; the invariant prevents future regressions).
+    """
+
+    def _noop_read(state: PortfolioStateSnapshot, config: LibraryConfig) -> float:
+        return 0.0
+
+    def _noop_contribute(
+        proposal: ProposedDelta,
+        dae: DeltaAdjustedExposure,
+        state: PortfolioStateSnapshot,
+        config: LibraryConfig,
+    ) -> float:
+        return 0.0
+
+    def _project(
+        proposals: object,
+        state: PortfolioStateSnapshot,
+        config: LibraryConfig,
+    ) -> float:
+        return 0.0
+
+    with pytest.raises(ValueError, match="contributors_from_batch"):
+        RuleSpec(
+            rule_id="bogus_holistic",
+            unit="% of portfolio",
+            read_current=_noop_read,
+            contribute=_noop_contribute,
+            project_after_batch=_project,
+            effective_limit_key="bogus_holistic",
+        )

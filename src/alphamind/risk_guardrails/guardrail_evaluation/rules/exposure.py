@@ -137,11 +137,17 @@ def _position_max_size_contributors_from_batch(
     tracks which proposals touched each post-batch position. For each proposal
     that shaped a position at the post-batch maximum, emits one
     :class:`ProposalContribution` with ``contribution`` equal to the post-batch
-    max size as % of portfolio. A pre-existing position over the limit that no
-    proposal touched yields no contributors — the breach is from the existing
-    book, not the batch.
+    max size as % of portfolio.
 
-    Same zero/empty-book guards as the projector.
+    Edge cases:
+
+    * Pre-existing position over the limit that no proposal touched: returns
+      empty contributors — the breach is from the existing book, not the batch.
+    * Full-CLOSE of an existing position: the position is removed from the
+      simulated book (mirroring the projector), so any proposals that had
+      previously ADD/ADJUST'd that position in the same batch don't surface
+      as contributors to a different position that became the post-batch max.
+    * Same zero/empty-book guards as the projector.
     """
     portfolio_value_usd = state.portfolio_value_usd
     if portfolio_value_usd <= 0.0:
@@ -151,6 +157,11 @@ def _position_max_size_contributors_from_batch(
     if not post_batch_positions:
         return ()
 
+    # ``max_notional`` is taken from the list itself, so a position whose
+    # ``notional_usd is max_notional`` necessarily compares equal under ``==``
+    # too — no float drift between the max value and the position it came from.
+    # Do NOT replace ``max_notional`` with a recomputed value (scaling,
+    # arithmetic) without also switching this filter to ``math.isclose``.
     max_notional = max(p.notional_usd for p in post_batch_positions)
     if max_notional <= 0.0:
         return ()

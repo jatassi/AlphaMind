@@ -1062,8 +1062,10 @@ def test_position_max_size_breach_close_partial_records_close_as_contributor() -
     breach = breaches_by_rule["position_max_size_pct"]
     by_id = {c.proposal_id: c.contribution for c in breach.contributors}
     assert "SA-1" in by_id
-    # Close trimmed POS-1 from $20k to ~$15k → 15% of portfolio.
-    assert abs(by_id["SA-1"] - 15.0) < 0.5
+    # Translator pro-rates the close: notional_closed = (33/133) * 20_000 →
+    # POS-1 remaining = 20_000 * (1 - 33/133) = 20_000 * 100/133 → 15.037594...%.
+    expected_pct = 20_000.0 * (100.0 / 133.0) / 100_000.0 * 100.0
+    assert abs(by_id["SA-1"] - expected_pct) < 1e-6
 
 
 def test_holistic_contributors_pattern_falls_back_for_non_holistic_rules() -> None:

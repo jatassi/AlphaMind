@@ -99,7 +99,7 @@ class RuleSpec:
                 PortfolioStateSnapshot,
                 LibraryConfig,
             ],
-            Sequence[ProposalContribution],
+            tuple[ProposalContribution, ...],
         ]
         | None
     ) = None
@@ -110,6 +110,19 @@ class RuleSpec:
     read_breaching_position_id: (
         Callable[[PortfolioStateSnapshot, LibraryConfig], str | None] | None
     ) = None
+
+    def __post_init__(self) -> None:
+        # Holistic-rule pairing: a rule that bypasses ``contribute`` via
+        # ``project_after_batch`` must also provide ``contributors_from_batch``
+        # for the proposal pre-processor — otherwise ``_build_breach_entry``
+        # falls back to walking the no-op ``contribute`` and silently emits
+        # empty contributors (ALP-636).
+        if self.project_after_batch is not None and self.contributors_from_batch is None:
+            raise ValueError(
+                f"RuleSpec(rule_id={self.rule_id!r}): project_after_batch is set "
+                "but contributors_from_batch is missing; holistic rules must "
+                "provide both (see ALP-636)"
+            )
 
 
 def existing_position(
