@@ -494,7 +494,8 @@ class OpenCommand(BaseModel):
         # would-be silent broker submit → fill → Phase 1 hard-crash into a
         # structured ValidationError the LLM sees at envelope time. Single-leg
         # short options remain allowed because the options write path treats
-        # SELL_TO_OPEN as first-class.
+        # SELL_TO_OPEN as first-class. Retire this guard when the option-A
+        # SHORT-equity write path (borrow modeling + SHORT entry/exit math) lands.
         if isinstance(self.instrument, EquityInstrument) and self.instrument.direction == "short":
             raise ValueError(
                 "OpenCommand does not support SHORT equity entry: the Phase 1 "
