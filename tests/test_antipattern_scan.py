@@ -66,6 +66,14 @@ _BASEMODEL_SRC = "from pydantic import BaseModel\nclass Foo(BaseModel):\n    x: 
             r"C:/Users/runner/work/AlphaMind/src/alphamind/config/models.py",
             id="windows-style-forward-slashes",
         ),
+        pytest.param(
+            r"C:\Users\runner/work/AlphaMind\src\alphamind/config\models.py",
+            id="mixed-separators",
+        ),
+        pytest.param(
+            r"C:\Users\Runner\Work\AlphaMind\src\alphamind\CONFIG\models.py",
+            id="windows-uppercase-dirs",
+        ),
     ],
 )
 def test_scan_pydantic_internal_skips_boundary_dirs(scanner: ModuleType, abs_path: str) -> None:
@@ -89,6 +97,11 @@ def test_scan_pydantic_internal_skips_boundary_dirs(scanner: ModuleType, abs_pat
             r"C:\Users\runner\work\AlphaMind\src\alphamind\decision\portfolio_manager\types.py",
             id="windows-style",
         ),
+        pytest.param(
+            r"C:\Users\runner/work/AlphaMind\src\alphamind/decision/portfolio_manager\types.py",
+            id="mixed-separators",
+        ),
+        pytest.param("types.py", id="bare-filename-no-separator"),
     ],
 )
 def test_scan_pydantic_internal_flags_internal_basemodel(
@@ -142,7 +155,9 @@ def test_scan_print_skips_cli_and_scripts(scanner: ModuleType, rel_path: str) ->
     [
         pytest.param("decision/pm.py", id="decision-module"),
         pytest.param("distillation/replay_harness/cli.py", id="file-named-cli-py"),
+        pytest.param("cli.py", id="top-level-file-named-cli-py"),
         pytest.param(r"decision\pm.py", id="windows-decision-module"),
+        pytest.param("pm.py", id="bare-filename-no-separator"),
     ],
 )
 def test_scan_print_flags_non_cli_directories(scanner: ModuleType, rel_path: str) -> None:
