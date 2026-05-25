@@ -6,12 +6,12 @@ These tests verify the script's wave functions produce the correct
 results and the CLI machinery (exit codes, --verbose, --help) works.
 
 Coverage:
-- Tracer: script module imports and run_all_waves returns (total, failed)=(40, 0)
+- Tracer: script module imports and run_all_waves returns (total, failed)=(39, 0)
 - Wave 1 utilities (01a/01b/01c): 12 sub-cases
 - Wave 1 additive fields (01d-01j): 14 sub-cases
 - Wave 2 boundary fix (02): 2 sub-cases
 - Wave 3 typed payloads (03a/03b): 4 sub-cases
-- Wave 4 structural (04a/04b): 4 sub-cases
+- Wave 4 structural (04a/04b): 3 sub-cases
 - Wave 5 architectural (05a/05b/05c): 4 sub-cases
 - CLI: exit 0 on full pass, exit 1 on injected failure, --help works
 """
@@ -555,13 +555,6 @@ def test_wave5_aggregates_risk_budget_import() -> None:
     from alphamind.portfolio_state.aggregates import RiskBudgetEntry
 
     assert RiskBudgetEntry is not None
-
-
-def test_wave5_activity_log_backward_compat_shim() -> None:
-    from alphamind.portfolio_state.events import ActivityLogEntry as A
-    from alphamind.portfolio_state.events.activity_log import ActivityLogEntry as B
-
-    assert A is B
 
 
 def test_wave5_discriminated_union_bogus_instrument_type_rejected() -> None:

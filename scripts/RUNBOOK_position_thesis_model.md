@@ -24,12 +24,11 @@ phase. It exercises:
 - The typed discriminated-union payloads from ALP-345/346 (`BracketLeg`
   trigger and `PLAnchorSpec` cross-validators).
 - The structural reorganisation from ALP-347/348 (`events/`, `aggregates/`
-  subpackages + backward-compat shims; Pydantic discriminated-union at parse
-  time).
+  subpackages; Pydantic discriminated-union at parse time).
 - The architectural splits from ALP-349/350/351 (`PositionRecord` vs
   `PositionView`; `BasePositionProtocol`; `ThesisHealthSnapshot` lifecycle).
 
-No SDK calls; no DB reads. All 40 cases should complete in under 10 seconds.
+No SDK calls; no DB reads. All 39 cases should complete in under 10 seconds.
 
 ## Prerequisites
 
@@ -58,10 +57,10 @@ Wave 1 utilities (01a/01b/01c):             PASS (12/12 cases)
 Wave 1 additive fields (01d-01j):           PASS (14/14 cases)
 Wave 2 boundary fix (02):                   PASS (2/2 cases)
 Wave 3 typed payloads (03a/03b):            PASS (4/4 cases)
-Wave 4 structural (04a/04b):                PASS (4/4 cases)
+Wave 4 structural (04a/04b):                PASS (3/3 cases)
 Wave 5 architectural (05a/05b/05c):         PASS (4/4 cases)
 -----------------------------------------------
-Overall: PASS (40/40 cases)
+Overall: PASS (39/39 cases)
 Wall-clock: 0.Xs
 ```
 
@@ -77,7 +76,7 @@ full traceback. The failure detail is printed regardless of `--verbose`.
 | Wave 1 additive fields (01d-01j) | ALP-337, ALP-338, ALP-339, ALP-340, ALP-341, ALP-342, ALP-343 | Check `src/alphamind/portfolio_state/records/theses.py`, `positions.py`, `orders.py` for the relevant field validator. The FAIL detail names the scenario (e.g., `01d-time_expectation_float_parses`); find the matching story by the `01x` prefix. |
 | Wave 2 boundary fix (02) | ALP-344 | Import `RegimeLabel` from `alphamind.risk_guardrails.regime_adaptation.types` directly. If that fails, ALP-344 did not land. If identity check fails, `capital.py` is re-exporting a different object — check the re-export chain. |
 | Wave 3 typed payloads (03a/03b) | ALP-345, ALP-346 | Check `BracketLeg`'s `_validate_trigger_matches_leg_type` and `_validate_pl_anchor_compatibility` model validators in `orders.py`. |
-| Wave 4 structural (04a/04b) | ALP-347, ALP-348 | If events/aggregates imports fail, ALP-347 did not land the subpackage `__init__.py`. If the backward-compat shim fails, `records/activity_log.py` is missing or broken. If discriminated-union test fails, ALP-348 did not apply the `PositionDetailsPayload` discriminator. |
+| Wave 4 structural (04a/04b) | ALP-347, ALP-348 | If events/aggregates imports fail, ALP-347 did not land the subpackage `__init__.py`. If discriminated-union test fails, ALP-348 did not apply the `PositionDetailsPayload` discriminator. |
 | Wave 5 architectural (05a/05b/05c) | ALP-349, ALP-350, ALP-351 | If `current_market_value_usd` is still on `PositionRecord`, ALP-349 did not land. If isinstance check fails, ALP-350's `BasePositionProtocol` is not `runtime_checkable` or `PositionRecord` doesn't expose the required properties. If `ThesisComponent` still has `supporting_signals`, ALP-351 did not move it to `ComponentHealthEntry`. |
 
 ## References

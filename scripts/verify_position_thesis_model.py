@@ -1508,7 +1508,7 @@ _WAVE_SPECS = [
     ("Wave 1 additive fields (01d-01j)", 14, wave2_additive_fields),
     ("Wave 2 boundary fix (02)", 2, wave3_boundary_fix),
     ("Wave 3 typed payloads (03a/03b)", 4, wave4_typed_payloads),
-    ("Wave 4 structural (04a/04b)", 4, wave5_structural),
+    ("Wave 4 structural (04a/04b)", 3, wave5_structural),
     ("Wave 5 architectural (05a/05b/05c)", 4, wave6_architectural),
 ]
 
