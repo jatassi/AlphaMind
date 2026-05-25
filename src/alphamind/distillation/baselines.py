@@ -185,10 +185,18 @@ def _welford_evict(
 
 
 def _stdev_from_m2(*, n: int, m2: float) -> float:
-    """Population standard deviation derived from Welford's M2 accumulator."""
+    """Population standard deviation derived from Welford's M2 accumulator.
+
+    Clamps ``m2 / n`` to zero before the square root: variance is
+    mathematically non-negative, but the rolling-window evict step
+    (``_welford_evict``) can land at a tiny negative due to floating-point
+    cancellation when the true variance is zero. Without the clamp,
+    ``(negative) ** 0.5`` returns a ``complex`` and the ``float(...)`` cast
+    raises ``TypeError``.
+    """
     if n <= 0:
         return 0.0
-    return float((m2 / n) ** 0.5)
+    return float(max(0.0, m2 / n) ** 0.5)
 
 
 # ---------------------------------------------------------------------------
