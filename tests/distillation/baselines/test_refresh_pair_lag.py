@@ -307,11 +307,21 @@ class TestRefreshPairLagPerPairMaxDays:
     """
 
     def test_per_pair_max_days_caps_estimate_independently(self, session: Session) -> None:
-        # Three pairs share an identical lag-3 lead/lag relationship — the
-        # lag series for each pair is the lead series shifted forward by 3
-        # days. If the implementation respects per-pair caps, the three
-        # estimates land at 3, ≤2, and 1; if it collapses to a single bound
-        # (the regression), all three would pick lag 3.
+        # Three pairs share an identical lag-3 lead/lag relationship — each
+        # lag series is the lead series shifted forward by 3 days. The
+        # regression bug collapses every pair to a single cap (3), so under
+        # the bug every pair would persist estimate=3. With the fix, each
+        # pair searches against its own cap and the (max=2) pair must drop
+        # to ≤ 2.
+        #
+        # The window-day budget (PAIR_LAG_WINDOW_DAYS = 20) is load-bearing
+        # here: the 25 bars below correspond to days 1..25, and the
+        # ``as_of - window_days = 2026-04-05`` cutoff prunes the first ~4
+        # bars (and the 3 filler returns) out of the visible slice. If the
+        # window constant ever widens past ~24, the filler returns enter the
+        # alignment window and the lag-3 perfect-correlation property
+        # breaks. Co-locate any change to PAIR_LAG_WINDOW_DAYS with a review
+        # of this fixture.
         pairs = (("HYG", "SPY", 3), ("SOXX", "QQQ", 2), ("XLF", "TLT", 1))
         for lead, lag, _ in pairs:
             _add_ticker(session, lead)
@@ -327,7 +337,8 @@ class TestRefreshPairLagPerPairMaxDays:
         ]  # fmt: skip
         # Lag series tracks the lead with a 3-day lag — the first three lag
         # returns are filler so the close series is non-degenerate but they
-        # fall outside any d≤3 alignment window.
+        # are pruned by the window cutoff (see PAIR_LAG_WINDOW_DAYS comment
+        # above).
         filler = [0.001, -0.001, 0.001]
         lag_returns = [*filler, *lead_returns[: len(lead_returns) - 3]]
 
@@ -351,22 +362,17 @@ class TestRefreshPairLagPerPairMaxDays:
             min_events=PAIR_LAG_MIN_EVENTS,
         )
 
-        # Each pair's persisted estimate respects its own bound.
+        # Sanity: the max=3 pair finds the engineered lag-3 peak. This
+        # anchors the test — if the synthetic signal ever stops carrying a
+        # lag-3 peak, no other assertion is meaningful.
         hyg_spy = result[("HYG", "SPY")].value["lead_lag_days_estimate"]
-        soxx_qqq = result[("SOXX", "QQQ")].value["lead_lag_days_estimate"]
-        xlf_tlt = result[("XLF", "TLT")].value["lead_lag_days_estimate"]
-
         assert hyg_spy == pytest.approx(3.0), (
-            f"max=3 pair should pick the true lag-3 peak; got {hyg_spy}"
+            f"max=3 pair should pick the engineered lag-3 peak; got {hyg_spy}"
         )
-        # The bug being regressed: a collapsed-bound implementation reports 3.
-        assert soxx_qqq <= 2.0, (
-            f"max=2 pair must stay within its own cap; got {soxx_qqq} — "
-            "the per-pair max_lag_days is being ignored."
-        )
-        assert xlf_tlt == pytest.approx(1.0), f"max=1 pair has only lag 1 available; got {xlf_tlt}"
 
-        # All persisted rows respect their own bound.
+        # Regression check: under the ALP-628 bug, every pair would scan to
+        # 3 and persist 3. Each pair's estimate must stay within its own
+        # configured ceiling.
         rows = session.execute(select(DistillationPairLag)).scalars().all()
         by_pair = {(r.lead_ticker, r.lag_ticker): r for r in rows}
         for lead, lag, max_days in pairs:

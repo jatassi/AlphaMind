@@ -325,6 +325,12 @@ def default_lead_lag_pair_estimate(
     Per ``threshold-calibration.md`` § Bootstrap policy, lead-lag pair
     estimates begin updating after the first 10 observed pair events; until
     then the prior *is* the configured ``_max_days`` ceiling for the pair.
+
+    Semantic alias for :func:`pair_max_lag_days` — the bootstrap prior is
+    numerically identical to the live search ceiling by design (the cap
+    *is* the cold-start guess). The two names exist so each call site can
+    declare which role it's using; do not add divergent logic to one
+    without the other.
     """
     return pair_max_lag_days(pair_key=pair_key, lead_lag_config=lead_lag_config)
 
