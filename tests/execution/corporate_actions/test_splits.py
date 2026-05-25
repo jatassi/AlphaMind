@@ -60,9 +60,11 @@ from alphamind.portfolio_state.records.orders import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
+    OptionsPositionDetails,
     PositionFill,
     PositionRecord,
     PositionStatus,
+    StrategyPositionDetails,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -110,6 +112,12 @@ from alphamind.state.tables.positions_codec import (
 )
 from alphamind.state.tables.theses_codec import (
     record_to_rows as thesis_record_to_rows,
+)
+from tests.execution.corporate_actions._handler_substrate import (
+    FakeAlpacaPositionLookup,
+    make_open_options_position,
+    make_open_strategy_position,
+    make_options_position_snapshot,
 )
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
@@ -627,3 +635,147 @@ async def test_split_writes_ledger_dedup_anchor(
         ).scalar_one()
         assert ledger_row.processing_status == CorporateActionLedgerStatus.PROCESSED.value
         assert ledger_row.processing_invocation_id == handle.invocation_id
+
+
+# ---------------------------------------------------------------------------
+# Options + strategy positions (ALP-639)
+# ---------------------------------------------------------------------------
+
+
+async def test_split_options_projects_alpaca_state_and_clears_greeks(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """Forward split on an options position projects post-adjustment state from
+    Alpaca, flags the position for adjustment, cancels the bracket, writes the
+    dedup row, and marks greeks stale via ``refresh_failed=True``."""
+    from alphamind.execution.corporate_actions import integrate_ca_activity
+    from alphamind.execution.corporate_actions.types import CorporateActionActivity
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position_cluster(
+        factory,
+        make_open_options_position(
+            strike=150.0,
+            contract_count=5.0,
+            premium_paid_per_contract=250.0,
+        ),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_active_bracket(),
+    )
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+
+    lookup = FakeAlpacaPositionLookup()
+    # Post-adjustment Alpaca snapshot for a 4-for-1 forward split on a contract
+    # whose pre-adjustment per-share basis was 2.50 (premium 250 / multiplier 100):
+    # contract count fans to 20, per-share basis drops to 0.625, multiplier
+    # unchanged at 100 → post per-contract premium = 0.625 * 100 = 62.50.
+    lookup.register("AAPL", make_options_position_snapshot(qty=20.0, avg_entry_price=0.625))
+
+    ca = CorporateActionActivity(
+        alpaca_activity_id="ca-split-opt-1",
+        action_type=CorporateActionType.SPLIT,
+        ticker=Symbol("AAPL"),
+        new_ticker=None,
+        ratio_or_amount=4.0,
+        position_id=PositionId("pos-1"),
+        signed_cash_impact_usd=0.0,
+        transaction_time=_NOW - timedelta(minutes=5),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await integrate_ca_activity(handle, ca, alpaca_position_lookup=lookup)
+    await ctx.__aexit__(None, None, None)
+
+    assert lookup.calls == ["AAPL"]
+    async with factory() as sess:
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert isinstance(pos.details, OptionsPositionDetails)
+        assert pos.details.contract_count == pytest.approx(20.0)
+        assert pos.details.premium_paid_per_contract == pytest.approx(62.50)
+        assert pos.details.greeks.refresh_failed is True
+        assert pos.corporate_action_adjustment_needed is True
+
+        bracket_row = (
+            await sess.execute(select(BracketRow).where(BracketRow.bracket_id == "brk-1"))
+        ).scalar_one()
+        assert bracket_row.status == BracketStatus.DISSOLVED.value
+
+        ledger_row = (
+            await sess.execute(
+                select(CorporateActionIntegrationLedgerRow).where(
+                    CorporateActionIntegrationLedgerRow.alpaca_activity_id == "ca-split-opt-1"
+                )
+            )
+        ).scalar_one()
+        assert ledger_row.processing_status == CorporateActionLedgerStatus.PROCESSED.value
+
+
+async def test_split_strategy_applies_per_leg_projection(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """Forward split on a multi-leg strategy position projects per-leg state from
+    Alpaca and emits exactly one CORPORATE_ACTION_APPLIED entry for the parent."""
+    from alphamind.execution.corporate_actions import integrate_ca_activity
+    from alphamind.execution.corporate_actions.types import CorporateActionActivity
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position_cluster(
+        factory,
+        make_open_strategy_position(),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_active_bracket(),
+    )
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+
+    lookup = FakeAlpacaPositionLookup()
+    lookup.register("AAPL", make_options_position_snapshot(qty=20.0, avg_entry_price=0.625))
+
+    ca = CorporateActionActivity(
+        alpaca_activity_id="ca-split-strat-1",
+        action_type=CorporateActionType.SPLIT,
+        ticker=Symbol("AAPL"),
+        new_ticker=None,
+        ratio_or_amount=4.0,
+        position_id=PositionId("pos-1"),
+        signed_cash_impact_usd=0.0,
+        transaction_time=_NOW - timedelta(minutes=5),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await integrate_ca_activity(handle, ca, alpaca_position_lookup=lookup)
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert isinstance(pos.details, StrategyPositionDetails)
+        for leg in pos.details.legs:
+            assert leg.options.contract_count == pytest.approx(20.0)
+            assert leg.options.premium_paid_per_contract == pytest.approx(62.50)
+            assert leg.options.greeks.refresh_failed is True
+        assert pos.corporate_action_adjustment_needed is True
+
+        log_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.invocation_id == handle.invocation_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        applied = [r for r in log_rows if r.event_type == EventType.CORPORATE_ACTION_APPLIED.value]
+        assert len(applied) == 1
