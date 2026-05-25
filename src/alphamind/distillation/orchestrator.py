@@ -71,7 +71,11 @@ from alphamind.distillation.baselines import (
     refresh_pair_lag,
     refresh_ticker_baselines,
 )
-from alphamind.distillation.calibration import CalibrationState, combine_calibration_states
+from alphamind.distillation.calibration import (
+    CalibrationState,
+    combine_calibration_states,
+    pair_max_lag_days,
+)
 from alphamind.distillation.calibration_snapshot import (
     write_calibration_state_snapshot,
     write_operator_data_health_summary,
@@ -256,15 +260,22 @@ def _refresh_class_b_state(
             )
         )
 
-    # Lead-lag pairs.
+    # Lead-lag pairs — each pair searches against its own configured
+    # ``_max_days`` ceiling rather than a shared scalar (ALP-628).
     rows += len(
         refresh_pair_lag(
             session,
-            pair_scope=tuple((p.lead, p.lag) for p in config.lead_lag.pairs),
+            pair_scope=tuple(
+                (
+                    p.lead,
+                    p.lag,
+                    pair_max_lag_days(pair_key=p.key, lead_lag_config=config.lead_lag),
+                )
+                for p in config.lead_lag.pairs
+            ),
             as_of=as_of_iso,
             window_days=pw.correlation_long_days,
             min_events=config.anomaly_detection.earnings_revision_cluster_count,
-            max_lag_days=config.lead_lag.lead_lag_credit_to_equity_max_days,
         )
     )
 
