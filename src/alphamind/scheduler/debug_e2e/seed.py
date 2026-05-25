@@ -466,7 +466,7 @@ def _build_entry_order_row(
     A strategy row carries ``direction = NULL`` (ALP-610) — it has no
     position-level side — so its entry order takes an inert ``BUY``
     placeholder; the order-level direction is not a meaningful side for a
-    strategy (the order-direction reshape is the separate ALP-603 follow-on).
+    strategy (strategy order-level direction is the separate ALP-614 follow-on).
     """
     timestamp = _isoformat(now)
     is_short = position_row.direction == Direction.SHORT.value
