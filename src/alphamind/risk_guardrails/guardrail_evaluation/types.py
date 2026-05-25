@@ -349,6 +349,11 @@ class FeatureFlagsView:
     short_selling_enabled: bool
 
 
+# Library-side default for ``LibraryConfig.position_zones`` (float typing).
+# Mirrored — with int typing — by ``_DEFAULT_POSITION_ZONES`` in
+# ``alphamind.config.models.guardrails``; the two constants must stay
+# numerically aligned so dataclass fixtures and YAML-loaded configs exercise
+# the same band.
 _DEFAULT_POSITION_ZONES: EscalationZones = EscalationZones(
     warning=70.0, critical=85.0, hard_block=95.0
 )

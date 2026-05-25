@@ -1170,6 +1170,68 @@ def test_render_pm_header_halt_mode_hard_blocks_disabled_features_then_action_li
     assert lines[hb_idx + 4] == "  ADD: BLOCKED (halt mode)"
 
 
+def test_render_strategist_header_halt_mode_threads_tuned_position_zones() -> None:
+    """ALP-646: halt-mode strategist renderer honours non-default position_zones.
+
+    Guards against a regression where a future refactor drops the
+    ``position_zones=position_zones`` kwarg from the halt-mode call into
+    ``render_position_proximity_block``; every existing halt-mode test uses the
+    canonical {70, 85, 95} band, so a missing thread-through would silently
+    fall back to "still correct by coincidence".
+    """
+    pos = _wrap_position(
+        _make_equity_position(position_id="POS-NVDA-001", position_weight_pct=1.75)
+    )
+    rendered = render_strategist_header_halt_mode(
+        halt_state=_make_halt_state(),
+        strategist_view=_make_strategist_view(positions=(pos,)),
+        invocation_id="inv-001",
+        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
+        options_enabled=False,
+        short_selling_enabled=False,
+        active_sectors=("tech", "semis"),
+        config=_make_state_delivery_config(),
+        sector_label_display=_MICRO_SECTOR_LABELS,
+        sector_resolver=_make_strategist_sector_resolver(),
+        total_portfolio_value_usd=500_000.0,
+        available_for_new_positions_usd=300_000.0,
+        # 1.75% weight against 5% per-position max → 35% consumption — NORMAL
+        # under the default 70/85/95 band, WARNING once warning drops to 30.
+        position_zones=EscalationZones(warning=30.0, critical=85.0, hard_block=95.0),
+    )
+    assert "WARNING" in rendered
+
+
+def test_render_pm_header_halt_mode_threads_tuned_position_zones() -> None:
+    """ALP-646: halt-mode PM renderer honours non-default position_zones.
+
+    Same regression guard as the strategist halt-mode test above.
+    """
+    pos = _wrap_position(
+        _make_equity_position(position_id="POS-NVDA-001", position_weight_pct=1.75)
+    )
+    pm_view = _make_pm_view(positions=(pos,))
+    rendered = render_pm_header_halt_mode(
+        halt_state=_make_halt_state(),
+        pm_view=pm_view,
+        invocation_id="inv-001",
+        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
+        options_enabled=False,
+        short_selling_enabled=False,
+        active_sectors=("tech", "semis"),
+        config=_make_state_delivery_config(),
+        sector_label_display=_MICRO_SECTOR_LABELS,
+        sector_resolver=_make_pm_sector_resolver(),
+        total_portfolio_value_usd=500_000.0,
+        available_for_new_positions_usd=300_000.0,
+        cross_constraint_impact=_make_default_cross_constraint_impact(),
+        pending_orders=(),
+        current_price_lookup=_make_pm_current_price_lookup(),
+        position_zones=EscalationZones(warning=30.0, critical=85.0, hard_block=95.0),
+    )
+    assert "WARNING" in rendered
+
+
 def test_render_strategist_header_halt_mode_preserves_other_blocks() -> None:
     """Regression: halt-mode output minus banner equals normal output."""
     positions = tuple(

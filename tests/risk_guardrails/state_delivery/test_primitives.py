@@ -986,7 +986,10 @@ def test_classify_position_zone_reads_zones_from_argument() -> None:
     ``LibraryConfig.position_zones`` field; the classifier honours whatever the
     caller threads in. Mutating ``warning`` from 70 → 60 must flip a value at
     65% of limit from NORMAL to WARNING (the rest of the band is unchanged so
-    CRITICAL and BLOCKED still gate at 85% / 95%).
+    CRITICAL and BLOCKED still gate at 85% / 95%). The second assertion uses a
+    realistic-percentage input pair so a hypothetical regression dropping the
+    ``* 100.0`` scale factor (which would still classify ratio-shaped inputs
+    correctly by coincidence) would surface as a test failure.
     """
     default_zones = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
     tuned_zones = EscalationZones(warning=60.0, critical=85.0, hard_block=95.0)
@@ -994,6 +997,14 @@ def test_classify_position_zone_reads_zones_from_argument() -> None:
     # 65% consumption — below the canonical 70 warning, above the tuned 60.
     assert _classify_position_zone(0.65, 1.0, default_zones) is RiskZone.NORMAL
     assert _classify_position_zone(0.65, 1.0, tuned_zones) is RiskZone.WARNING
+
+    # Same 65% consumption expressed in percentage-shaped inputs (value=7.5,
+    # limit=10.0); guards against accidental loss of the ``* 100.0`` scale
+    # factor, which would silently flip the ratio-shaped assertion to a still
+    # NORMAL result (0.65 < 70 same as 65.0 < 70 visually).
+    assert _classify_position_zone(7.5, 10.0, default_zones) is RiskZone.WARNING
+    assert _classify_position_zone(8.6, 10.0, default_zones) is RiskZone.CRITICAL
+    assert _classify_position_zone(9.6, 10.0, default_zones) is RiskZone.BLOCKED
 
 
 def test_classify_loss_zone_reads_zones_from_argument() -> None:

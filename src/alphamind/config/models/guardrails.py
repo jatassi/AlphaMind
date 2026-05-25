@@ -72,6 +72,13 @@ class EmergencyInvocation(BaseModel):
     triggers: list[str | dict[str, Any]] = Field(min_length=1)
 
 
+# Schema-level default for the top-level ``position_zones`` block. Mirrored —
+# with float typing — by ``_DEFAULT_POSITION_ZONES`` in
+# ``alphamind.risk_guardrails.guardrail_evaluation.types``; the two constants
+# must stay numerically aligned so dataclass fixtures and YAML-loaded configs
+# exercise the same band. The Pydantic shape uses ``int`` fields, the
+# dataclass shape uses ``float``; ``from_resolved_config`` widens int → float
+# at the adapter boundary.
 _DEFAULT_POSITION_ZONES = EscalationZones(warning=70, critical=85, hard_block=95)
 
 
@@ -119,6 +126,13 @@ class GuardrailsConfig(BaseModel):
                     f"warning < critical < hard_block, got "
                     f"{zones.warning}/{zones.critical}/{zones.hard_block}"
                 )
+        pz = self.position_zones
+        if not (pz.warning < pz.critical < pz.hard_block):
+            raise ValueError(
+                f"Top-level position_zones must satisfy "
+                f"warning < critical < hard_block, got "
+                f"{pz.warning}/{pz.critical}/{pz.hard_block}"
+            )
         return self
 
     @model_validator(mode="after")

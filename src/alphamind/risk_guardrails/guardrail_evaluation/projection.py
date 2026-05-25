@@ -85,7 +85,9 @@ def project_rule(  # noqa: PLR0913 — math primitive entry point; args mirror t
         effective_limit`` (positive when above the floor).
         ``inverse_warning_band_pct`` is sourced from
         ``LibraryConfig.inverse_warning_band_pct`` (ALP-646); the default
-        ``20.0`` matches the historical hardcoded band.
+        ``20.0`` matches the historical hardcoded band. The argument is
+        ignored on the standard and magnitude paths (``inverse=False``) — it
+        is consulted only when an inverse-rule classification is requested.
 
     Raises ``ProjectionError`` if ``effective_limit <= 0`` — the configuration
     semantic-self-test is supposed to block non-positive limits upstream; the
