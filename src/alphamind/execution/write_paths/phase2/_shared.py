@@ -22,8 +22,8 @@ from alphamind._kernel.ids import (
     CommandId,
     OrderId,
     PositionId,
-    Symbol,
     ThesisId,
+    make_symbol,
 )
 from alphamind._kernel.money import Money, money, signed_money
 from alphamind.commands.command_models import (
@@ -218,7 +218,7 @@ def _build_pending_order(  # noqa: PLR0913 — captures every NOT-NULL OrderReco
         position_id=PositionId(position_id) if position_id is not None else None,
         bracket_id=BracketId(bracket_id),
         role=role,
-        instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
+        instrument_spec=EquityInstrumentSpec(ticker=make_symbol(ticker)),
         direction=direction,
         order_type=order_type,
         order_class=order_class,

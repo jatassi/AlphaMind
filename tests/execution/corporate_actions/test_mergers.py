@@ -1418,7 +1418,7 @@ async def test_stock_merger_options_projects_post_adjustment_state_with_none_gre
     await _seed_drawdown_state(factory)
 
     # New OCC contract on ACQ, 3 contracts @ $4 premium per contract.
-    new_symbol = "ACQ_OCC"
+    new_symbol = "ACQ"
     lookup = _FakePositionLookup(
         {new_symbol: _option_snapshot(new_symbol, qty=3.0, avg_entry_price=4.0)}
     )

@@ -37,7 +37,7 @@ from alpaca.trading.requests import (
     StopLimitOrderRequest,
 )
 
-from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol
+from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol, make_occ_symbol
 from alphamind._kernel.money import Price
 from alphamind.commands.command_models import (
     AddCommand,
@@ -410,7 +410,7 @@ async def _submit(
         payload=OptionsSubmission(
             alpaca_order_id=AlpacaOrderId(str(order.id)),
             client_order_id=ClientOrderId(order.client_order_id),
-            occ_symbol=OccSymbol(occ_symbol),
+            occ_symbol=make_occ_symbol(occ_symbol),
             status=order.status.value,
             order_class=order.order_class.value,
         ),

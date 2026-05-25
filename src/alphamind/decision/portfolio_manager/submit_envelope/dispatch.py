@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from sqlalchemy import select as _select
 
-from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol, PositionId
+from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, PositionId, make_occ_symbol
 from alphamind._kernel.money import price
 from alphamind.commands.command_models import (
     AddCommand,
@@ -460,7 +460,7 @@ def _persisted_legs_to_mleg_acks(legs: Any) -> tuple[Any, ...]:
         )
         acks.append(
             MLEGLegAck(
-                occ_symbol=OccSymbol(occ),
+                occ_symbol=make_occ_symbol(occ),
                 side=side,
                 ratio_qty=1,
                 position_intent=intent,

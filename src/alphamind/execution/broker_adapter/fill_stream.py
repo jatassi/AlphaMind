@@ -31,7 +31,7 @@ from typing import Any, Final, Literal, Protocol, cast
 from alpaca.trading.models import Order, TradeUpdate
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol
+from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol, make_occ_symbol
 
 OrderStatus = Literal[
     "new",
@@ -185,7 +185,7 @@ def _build_parent_report(
         cumulative_filled_quantity=cumulative,
         remaining_quantity=remaining,
         execution_venue=None,
-        occ_symbol=OccSymbol(occ) if occ is not None else None,
+        occ_symbol=make_occ_symbol(occ) if occ is not None else None,
         position_intent=None,
         raw_event_payload=raw_payload,
     )
@@ -212,7 +212,7 @@ def _build_leg_report(
         cumulative_filled_quantity=cumulative,
         remaining_quantity=remaining,
         execution_venue=None,
-        occ_symbol=OccSymbol(leg.symbol) if leg.symbol is not None else None,
+        occ_symbol=make_occ_symbol(leg.symbol) if leg.symbol is not None else None,
         position_intent=_position_intent_for(leg),
         raw_event_payload=raw_payload,
     )

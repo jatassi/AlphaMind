@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Literal
 
-from alphamind._kernel.ids import Symbol
+from alphamind._kernel.ids import Symbol, make_symbol
 from alphamind.portfolio_state.records.positions import (
     Direction,
     OptionContractType,
@@ -150,35 +150,35 @@ class SyntheticPortfolio:
 SYNTHETIC_PORTFOLIO = SyntheticPortfolio(
     positions=(
         SyntheticEquity(
-            symbol=Symbol("NVDA"),
+            symbol=make_symbol("NVDA"),
             direction=Direction.LONG,
             qty=30,
             avg_cost=620.0,
             sector="semis",
         ),
         SyntheticEquity(
-            symbol=Symbol("JPM"),
+            symbol=make_symbol("JPM"),
             direction=Direction.LONG,
             qty=100,
             avg_cost=190.0,
             sector="financials",
         ),
         SyntheticEquity(
-            symbol=Symbol("GOOGL"),
+            symbol=make_symbol("GOOGL"),
             direction=Direction.LONG,
             qty=70,
             avg_cost=200.0,
             sector="tech",
         ),
         SyntheticEquity(
-            symbol=Symbol("COP"),
+            symbol=make_symbol("COP"),
             direction=Direction.LONG,
             qty=130,
             avg_cost=115.0,
             sector="energy",
         ),
         SyntheticEquity(
-            symbol=Symbol("TSLA"),
+            symbol=make_symbol("TSLA"),
             direction=Direction.SHORT,
             qty=30,
             avg_cost=250.0,
@@ -186,7 +186,7 @@ SYNTHETIC_PORTFOLIO = SyntheticPortfolio(
             borrow_rate_pct=1.5,
         ),
         SyntheticOption(
-            underlying=Symbol("AAPL"),
+            underlying=make_symbol("AAPL"),
             contract_type=OptionContractType.CALL,
             strike=230.0,
             expiration_offset_days=270,
@@ -195,7 +195,7 @@ SYNTHETIC_PORTFOLIO = SyntheticPortfolio(
             sector="tech",
         ),
         SyntheticOption(
-            underlying=Symbol("META"),
+            underlying=make_symbol("META"),
             contract_type=OptionContractType.PUT,
             strike=480.0,
             expiration_offset_days=90,
@@ -204,7 +204,7 @@ SYNTHETIC_PORTFOLIO = SyntheticPortfolio(
             sector="tech",
         ),
         SyntheticStrategy(
-            underlying=Symbol("MSFT"),
+            underlying=make_symbol("MSFT"),
             expiration_offset_days=180,
             legs=(
                 SyntheticStrategyLeg(

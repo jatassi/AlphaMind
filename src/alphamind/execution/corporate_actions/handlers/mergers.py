@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from alphamind._kernel.ids import Symbol
+from alphamind._kernel.ids import make_symbol
 from alphamind._kernel.money import money, signed_money
 from alphamind.execution.broker_adapter.queries import PositionSnapshot
 from alphamind.execution.write_paths.ca_integration_ledger import (
@@ -304,7 +304,7 @@ def _swap_for_stock_merger(
     snapshot: PositionSnapshot,
 ) -> tuple[float, float, float, float, _PositionDetails]:
     """Project the post-merger Alpaca snapshot onto the position's details."""
-    new_ticker = Symbol(new_ticker_str)
+    new_ticker = make_symbol(new_ticker_str)
     details = position.details
     # Stock-merger creates a new OCC contract whose underlying differs from
     # the prior contract — prior greeks were computed against a different

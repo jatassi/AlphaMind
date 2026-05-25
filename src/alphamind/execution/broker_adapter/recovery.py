@@ -28,7 +28,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, Final, Literal, Protocol, cast
 
-from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol
+from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, make_occ_symbol
 from alphamind._kernel.money import Price
 from alphamind.execution.broker_adapter.fill_stream import (
     FillReport,
@@ -200,7 +200,7 @@ def _build_parent_report(
         cumulative_filled_quantity=snapshot.filled_qty,
         remaining_quantity=max(snapshot.qty - snapshot.filled_qty, 0.0),
         execution_venue=None,
-        occ_symbol=OccSymbol(occ) if occ is not None else None,
+        occ_symbol=make_occ_symbol(occ) if occ is not None else None,
         position_intent=None,
         raw_event_payload=raw_payload,
     )
@@ -234,7 +234,7 @@ def _build_leg_report(
         cumulative_filled_quantity=leg.filled_qty,
         remaining_quantity=max(leg.qty - leg.filled_qty, 0.0),
         execution_venue=None,
-        occ_symbol=OccSymbol(leg.symbol),
+        occ_symbol=make_occ_symbol(leg.symbol),
         position_intent=_position_intent_for(leg),
         raw_event_payload=raw_payload,
     )
