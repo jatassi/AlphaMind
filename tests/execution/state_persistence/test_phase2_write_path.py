@@ -1049,6 +1049,7 @@ async def test_handle_submit_envelope_writes_envelope_rejection_on_layer23_failu
         active_sectors=frozenset({"tech", "semis", "financials", "energy"}),
         halt_mode=True,  # forces Layer-2/3 failure on the OPEN command
         sector_resolver=lambda _: "semis",
+        state_persistence_config=_make_state_persistence_config(),
         invocation_handle=handle,
     )
     await ctx.__aexit__(None, None, None)
@@ -2743,6 +2744,7 @@ async def test_persist_envelope_parse_failure_without_handle_is_noop(
         active_sectors=frozenset({"tech", "semis", "financials", "energy"}),
         halt_mode=False,
         sector_resolver=lambda _: "tech",
+        state_persistence_config=_make_state_persistence_config(),
         invocation_handle=None,
     )
 
@@ -2785,6 +2787,7 @@ async def test_handle_submit_envelope_wires_sql_writeback_on_layer1_failure(
         active_sectors=frozenset({"tech", "semis", "financials", "energy"}),
         halt_mode=False,
         sector_resolver=lambda _: "tech",
+        state_persistence_config=_make_state_persistence_config(),
         invocation_handle=handle,
     )
     await ctx.__aexit__(None, None, None)
@@ -2832,6 +2835,7 @@ async def test_handle_submit_envelope_wires_sql_writeback_on_accepted_envelope(
         active_sectors=frozenset({"tech", "semis", "financials", "energy"}),
         halt_mode=False,
         sector_resolver=lambda _: "semis",
+        state_persistence_config=_make_state_persistence_config(),
         invocation_handle=handle,
     )
     await ctx.__aexit__(None, None, None)

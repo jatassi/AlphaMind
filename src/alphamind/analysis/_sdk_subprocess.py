@@ -90,6 +90,7 @@ if TYPE_CHECKING:
     )
     from alphamind.portfolio_state.consumers.synthesizer import SynthesizerPortfolioStateReader
     from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationToolState
+    from alphamind.state.config import StatePersistenceConfig
 
 __all__ = [
     "invoke_adaptive_researcher_in_subprocess",
@@ -694,6 +695,7 @@ async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature
     sector_resolver: Any,  # SectorResolver instance (callable class) — picklable
     library_config: Any,  # LibraryConfig — frozen dataclass, picklable
     library_market: MarketInputs,
+    state_persistence_config: StatePersistenceConfig,
     archive_root: Path | None = None,
     sdk_query_fn: Any = None,
     broker_dispatch: Any = None,
@@ -748,6 +750,7 @@ async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature
             sector_resolver=sector_resolver,
             library_config=library_config,
             library_market=library_market,
+            state_persistence_config=state_persistence_config,
             archive_root=archive_root,
             sdk_query_fn=sdk_query_fn,
             broker_dispatch=None,
@@ -775,6 +778,7 @@ async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature
         "sector_resolver_pickle": _encode_pickle(sector_resolver),
         "library_config_pickle": _encode_pickle(library_config),
         "library_market_pickle": _encode_pickle(_prepare_market_inputs_for_pickle(library_market)),
+        "state_persistence_config": state_persistence_config.model_dump(mode="json"),
         "archive_root": str(archive_root) if archive_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,

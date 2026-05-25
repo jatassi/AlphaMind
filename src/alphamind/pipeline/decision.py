@@ -98,6 +98,7 @@ from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
     DependencyRiskFlag,
     RegimeOverride,
 )
+from alphamind.state.config import StatePersistenceConfig
 
 # Synthesizer's ``RetrievalStore`` is the harness-side type the analyst,
 # strategist, and PM consume.
@@ -204,6 +205,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     library_market: MarketInputs,
     profile_feature_flags: FeatureFlagsView,
     state_delivery_config: StateDeliveryConfig,
+    state_persistence_config: StatePersistenceConfig,
     options_enabled: bool,
     short_selling_enabled: bool,
     active_sectors: frozenset[str],
@@ -442,6 +444,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
         invocation_id=invocation_id,
         timestamp=timestamp,
         state_delivery_config=state_delivery_config,
+        state_persistence_config=state_persistence_config,
         options_enabled=options_enabled,
         short_selling_enabled=short_selling_enabled,
         # ALP-462 — wrap production-aggregation floats into ``Money`` at the PM runner boundary.

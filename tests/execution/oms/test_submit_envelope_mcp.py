@@ -92,6 +92,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
 from alphamind.risk_guardrails.state_delivery.validation_tool import (
     ValidationToolState,
 )
+from alphamind.state.config import StatePersistenceConfig
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -149,6 +150,17 @@ def _bypass_init_PositionView(**kwargs: object) -> Any:  # noqa: N802
 
 def _zones() -> EscalationZones:
     return EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
+
+
+def _state_persistence_config() -> StatePersistenceConfig:
+    return StatePersistenceConfig.model_validate(
+        {
+            "pm_decision_log_sliding_window_invocations": 3,
+            "snapshot_read_timeout_seconds": 5.0,
+            "pip_freeze_snapshot_root": "/tmp/test-submit-envelope-mcp",
+            "invocation_provenance_root": "/tmp/test-submit-envelope-mcp",
+        }
+    )
 
 
 def _config(
@@ -709,6 +721,7 @@ def _build_state_and_server(
         sector_resolver=_sector_resolver,
         library_config=cfg,
         library_market=_market(),
+        state_persistence_config=_state_persistence_config(),
     )
     server = mcp_servers["alphamind_execution_oms_submit"]["instance"]
     return get_state, server, allowed_tools
@@ -748,6 +761,7 @@ def test_factory_returns_mcp_server_and_allowed_tools() -> None:
         sector_resolver=_sector_resolver,
         library_config=cfg,
         library_market=_market(),
+        state_persistence_config=_state_persistence_config(),
     )
 
     assert "alphamind_execution_oms_submit" in mcp_servers
@@ -1321,6 +1335,7 @@ async def test_handle_submit_envelope_persists_layer1_failure_via_phase2(
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
             halt_mode=False,
             sector_resolver=_sector_resolver,
+            state_persistence_config=_state_persistence_config(),
             invocation_handle=handle,
         )
         await ctx.__aexit__(None, None, None)
@@ -1471,6 +1486,7 @@ async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
             halt_mode=False,
             sector_resolver=_sector_resolver,
+            state_persistence_config=_state_persistence_config(),
             invocation_handle=handle,
         )
         await ctx.__aexit__(None, None, None)

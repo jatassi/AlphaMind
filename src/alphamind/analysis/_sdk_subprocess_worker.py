@@ -49,6 +49,7 @@ from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.risk_guardrails.guardrail_evaluation import MarketInputs
 from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import SqlOptionsIvProvider
 from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationToolState
+from alphamind.state.config import StatePersistenceConfig
 
 
 class _JsonlAppender:
@@ -435,6 +436,9 @@ async def _run_portfolio_manager(payload: dict[str, Any]) -> dict[str, Any]:
     halt_mode = bool(payload["halt_mode"])
     sector_resolver = _decode_pickle(payload["sector_resolver_pickle"])
     library_config = _decode_pickle(payload["library_config_pickle"])
+    state_persistence_config = StatePersistenceConfig.model_validate(
+        payload["state_persistence_config"]
+    )
 
     engine = make_engine()
     sync_session_factory = make_session_factory(engine)
@@ -472,6 +476,7 @@ async def _run_portfolio_manager(payload: dict[str, Any]) -> dict[str, Any]:
                 sector_resolver=sector_resolver,
                 library_config=library_config,
                 library_market=library_market,
+                state_persistence_config=state_persistence_config,
                 archive_root=archive_root,
                 broker_dispatch=None,
                 progress=progress,

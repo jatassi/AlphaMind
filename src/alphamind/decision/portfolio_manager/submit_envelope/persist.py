@@ -8,9 +8,9 @@ of this module, used by every helper below.
 
 Each helper wraps one Phase-2 entrypoint: ``persist_envelope_outcome``,
 ``persist_command_abandoned``, ``persist_envelope_parse_failure``,
-``persist_envelope_rejection``. The wrappers exist so the orchestrator can
-default the ``StatePersistenceConfig`` argument uniformly via
-:func:`_stub_state_persistence_config` when callers don't supply one.
+``persist_envelope_rejection``. The wrappers forward the orchestrator-supplied
+:class:`~alphamind.state.config.StatePersistenceConfig` through unchanged so
+every Phase-2 knob read inside the engine sees the operator's real config.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from alphamind.execution.write_paths.phase2 import (
     persist_envelope_parse_failure,
     persist_envelope_rejection,
 )
+from alphamind.state.config import StatePersistenceConfig
 
 if TYPE_CHECKING:
     from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
@@ -39,17 +40,16 @@ async def _persist_envelope_outcome_via_phase2(
     invocation_handle: Any,
     envelope: PMEnvelope,
     submission_results: tuple[SubmissionResult, ...],
-    state_persistence_config: Any | None,
+    state_persistence_config: StatePersistenceConfig,
     *,
     dispatch_results: tuple[BrokerDispatchResult | None, ...] | None = None,
 ) -> None:
-    """Dispatch to :func:`persist_envelope_outcome` with a default config."""
-    config = state_persistence_config or _stub_state_persistence_config()
+    """Dispatch to :func:`persist_envelope_outcome` with the supplied config."""
     await persist_envelope_outcome(
         invocation_handle,
         envelope,
         submission_results,
-        config=config,
+        config=state_persistence_config,
         dispatch_results=dispatch_results,
     )
 
@@ -84,39 +84,23 @@ async def _emit_command_abandoned_via_phase2(
 async def _persist_envelope_parse_failure_via_phase2(
     invocation_handle: Any,
     failed_entry: FailedSubmissionEntry,
-    state_persistence_config: Any | None,
+    state_persistence_config: StatePersistenceConfig,
 ) -> None:
-    """Dispatch to :func:`persist_envelope_parse_failure` with a default config."""
-    config = state_persistence_config or _stub_state_persistence_config()
-    await persist_envelope_parse_failure(invocation_handle, failed_entry, config=config)
+    """Dispatch to :func:`persist_envelope_parse_failure` with the supplied config."""
+    await persist_envelope_parse_failure(
+        invocation_handle, failed_entry, config=state_persistence_config
+    )
 
 
 async def _persist_envelope_rejection_via_phase2(
     invocation_handle: Any,
     envelope: PMEnvelope,
     errors: Sequence[Any],
-    state_persistence_config: Any | None,
+    state_persistence_config: StatePersistenceConfig,
 ) -> None:
-    """Dispatch to :func:`persist_envelope_rejection` with a default config."""
-    config = state_persistence_config or _stub_state_persistence_config()
-    await persist_envelope_rejection(invocation_handle, envelope, tuple(errors), config=config)
-
-
-def _stub_state_persistence_config() -> Any:
-    """Construct a no-op StatePersistenceConfig for callers that didn't supply one.
-
-    Phase 2 doesn't read any knob in this story; the config is part of the
-    forward-shaped signature only.
-    """
-    from alphamind.state.config import StatePersistenceConfig
-
-    return StatePersistenceConfig.model_validate(
-        {
-            "pm_decision_log_sliding_window_invocations": 1,
-            "snapshot_read_timeout_seconds": 1.0,
-            "pip_freeze_snapshot_root": "/tmp",
-            "invocation_provenance_root": "/tmp",
-        }
+    """Dispatch to :func:`persist_envelope_rejection` with the supplied config."""
+    await persist_envelope_rejection(
+        invocation_handle, envelope, tuple(errors), config=state_persistence_config
     )
 
 
@@ -125,5 +109,4 @@ __all__ = [
     "_persist_envelope_outcome_via_phase2",
     "_persist_envelope_parse_failure_via_phase2",
     "_persist_envelope_rejection_via_phase2",
-    "_stub_state_persistence_config",
 ]

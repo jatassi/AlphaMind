@@ -82,6 +82,7 @@ from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
     DependencyRiskFlag,
     RegimeOverride,
 )
+from alphamind.state.config import StatePersistenceConfig
 
 __all__ = [
     "PM_TOOL_NAMES",
@@ -230,6 +231,7 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
     invocation_id: str,
     timestamp: datetime,
     state_delivery_config: StateDeliveryConfig,
+    state_persistence_config: StatePersistenceConfig,
     options_enabled: bool,
     short_selling_enabled: bool,
     total_portfolio_value_usd: Money,
@@ -366,6 +368,7 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
         sector_resolver=sector_resolver,
         library_config=library_config,
         library_market=library_market,
+        state_persistence_config=state_persistence_config,
         archive_root=archive_root,
         sdk_query_fn=sdk_query_fn,
         broker_dispatch=broker_dispatch,
