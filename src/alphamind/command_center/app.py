@@ -126,6 +126,7 @@ from alphamind.command_center.persistence.session import (
 )
 from alphamind.command_center.session import ProcessSession
 from alphamind.command_center.views.activity_log import build_activity_log_router
+from alphamind.command_center.views.configuration import build_configuration_router
 from alphamind.command_center.views.history import build_history_router
 from alphamind.command_center.views.live_operations import (
     build_views_router,
@@ -584,6 +585,7 @@ def build_app(  # noqa: PLR0913, PLR0915 — composition root wires four overrid
     alerts_config: AlertsConfig,
     production_session_factory: async_sessionmaker[AsyncSession] | None = None,
     process_lifetime_id: str | None = None,
+    config_dir: Path | None = None,
     auth_overrides: AuthOverrides | None = None,
     control_overrides: ControlOverrides | None = None,
     events_overrides: EventsOverrides | None = None,
@@ -628,6 +630,12 @@ def build_app(  # noqa: PLR0913, PLR0915 — composition root wires four overrid
         ``app.state.process_lifetime_id`` is read at request time, not
         at app construction, so a missing value surfaces as an
         ``AttributeError`` only when a control verb is invoked).
+    config_dir:
+        Filesystem directory carrying the YAML files the config-editor
+        framework (story 05i / ALP-679) reads + writes. Production
+        callers thread the daemon's resolved ``config/`` directory;
+        tests may omit it when not exercising the editor's PUT path (the
+        handler raises 500 if it is unset when a PUT lands).
     auth_overrides:
         Optional :class:`AuthOverrides` bundle for test / deploy-time
         injection of the auth collaborators (WebAuthn verifier, setup-
@@ -676,6 +684,11 @@ def build_app(  # noqa: PLR0913, PLR0915 — composition root wires four overrid
     app.state.security_config = security_config
     app.state.alerts_config = alerts_config
     app.state.production_session_factory = production_session_factory
+    # Config-editor framework (story 05i / ALP-679) reads this to resolve
+    # the YAML target on PUT. Stories that don't exercise the editor
+    # (most tests) leave it ``None``; the route handler raises 500 if it
+    # is unset when a PUT lands.
+    app.state.config_dir = config_dir
     app.state.process_lifetime_id = (
         cc_control.process_lifetime_id
         if cc_control.process_lifetime_id is not None
@@ -771,6 +784,13 @@ def build_app(  # noqa: PLR0913, PLR0915 — composition root wires four overrid
 
     # Mount the portfolio dashboard router (story 05f / ALP-676).
     app.include_router(build_portfolio_router(), prefix="/api/views/portfolio")
+
+    # Mount the config editor framework router (story 05i / ALP-679).
+    # Carries GET /api/views/config/schema/{slug} and PUT /api/views/config/{slug}.
+    # The PUT handler reads ``app.state.config_dir`` to resolve the YAML
+    # target; production callers thread the daemon's resolved ``config/``
+    # directory via the ``config_dir`` build_app kwarg.
+    app.include_router(build_configuration_router(), prefix="/api/views/config")
 
     # Alerts wiring (story 05a / ALP-671). The engine itself is
     # constructed inside the lifespan (it needs the cc_writer +

@@ -268,12 +268,15 @@ class TestRegisteredRoutes:
                 # Story 05h (ALP-678) — theses dashboard + detail view.
                 "/api/views/portfolio/theses",
                 "/api/views/portfolio/theses/{thesis_id}",
+                # Story 05i (ALP-679) — config editor framework.
+                "/api/views/config/schema/{config_file}",
+                "/api/views/config/{config_file}",
             ]
         )
         assert own_routes == expected, (
             f"unexpected routes registered after stories "
-            f"02 + 03 + 04a + 04b + 04d + 05a + 05b + 05c + 05d + 05e + 05f + 05g + 05h — "
-            f"found {own_routes}; expected {expected}. Stories 05i-05j/"
+            f"02 + 03 + 04a + 04b + 04d + 05a + 05b + 05c + 05d + 05e + 05f + 05g + 05h + 05i — "
+            f"found {own_routes}; expected {expected}. Stories 05j/"
             f"06a-06c register their routers later."
         )
 

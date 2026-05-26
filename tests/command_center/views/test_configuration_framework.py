@@ -32,7 +32,8 @@ class TestReloadPolicyEnum:
         # Two policies per the design — invocation-time-reload (most fields)
         # and deploy-time-only (paths in main.yaml, SQLite pragmas, package
         # versions, .env location). The badge UI dispatches on the enum.
-        assert ReloadPolicy.INVOCATION_TIME != ReloadPolicy.DEPLOY_TIME
+        members = {ReloadPolicy.INVOCATION_TIME, ReloadPolicy.DEPLOY_TIME}
+        assert len(members) == 2
 
     def test_invocation_time_default_extracted_when_no_annotation(self) -> None:
         from alphamind.command_center.config import SessionConfig
@@ -406,6 +407,51 @@ class TestLayeredValidationHooks:
         assert report.cross_reference == []
         assert len(report.semantic) == 1
         assert report.semantic[0].message == "invariant violated"
+
+    def test_router_mounted_under_views_config_prefix(self, tmp_path: Path) -> None:
+        """build_app wires build_configuration_router under /api/views/config."""
+        import shutil
+
+        from alphamind.command_center.app import build_app
+        from alphamind.command_center.config import (
+            load_alerts_config,
+            load_command_center_config,
+            load_security_config,
+        )
+
+        # Mirror the shipped config tree into tmp_path so build_app's
+        # loaders find their three YAML files.
+        repo_config = Path(__file__).parents[3] / "config"
+        cc_yaml = tmp_path / "command-center.yaml"
+        # Substitute an isolated DB path so build_app's lifespan can later
+        # construct engines without touching the host's data dir.
+        cc_text = (
+            (repo_config / "command-center.yaml")
+            .read_text(encoding="utf-8")
+            .replace(
+                '"%USERPROFILE%/AlphaMind/data/alphamind.db"',
+                f'"{tmp_path}/alphamind.db"',
+            )
+        )
+        cc_yaml.write_text(cc_text, encoding="utf-8")
+        shutil.copy(repo_config / "security.yaml", tmp_path / "security.yaml")
+        shutil.copy(repo_config / "alerts.yaml", tmp_path / "alerts.yaml")
+
+        app = build_app(
+            command_center_config=load_command_center_config(tmp_path),
+            security_config=load_security_config(tmp_path),
+            alerts_config=load_alerts_config(tmp_path),
+            config_dir=tmp_path,
+        )
+
+        # build_app threads config_dir onto app.state for the PUT handler.
+        assert app.state.config_dir == tmp_path
+        # The schema endpoint surfaces under the mounted prefix without
+        # exercising the lifespan (it has no DB dependency).
+        client = TestClient(app)
+        response = client.get("/api/views/config/schema/security")
+        assert response.status_code == 200
+        assert response.json()["slug"] == "security"
 
     def test_cross_reference_short_circuits_semantic(self) -> None:
         from alphamind.command_center.config import SecurityConfig
