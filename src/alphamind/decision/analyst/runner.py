@@ -221,6 +221,7 @@ async def run_analyst(  # noqa: PLR0913 — signature dictated by ALP-299 spec p
         initial_validation_state=initial_validation_state,
         retrieval_store=retrieval_store,
         active_sectors=active_sectors,
+        as_of=timestamp,
         archive_root=archive_root,
         sdk_query_fn=sdk_query_fn,
         progress=progress,

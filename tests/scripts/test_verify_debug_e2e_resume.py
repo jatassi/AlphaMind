@@ -312,8 +312,14 @@ def _stub_main_for_resume(
     monkeypatch.setattr(verify_module.subprocess, "run", _stub_run)
 
     def _passing_archive(*, archive_root: Path, invocation_id: str) -> Any:
-        inv_dir = archive_root / "invocations" / invocation_id
-        inv_dir.mkdir(parents=True, exist_ok=True)
+        from alphamind._kernel.archive_layout import find_invocation_archive_dir
+
+        inv_dir = find_invocation_archive_dir(
+            archive_root=archive_root, invocation_id=invocation_id
+        )
+        if inv_dir is None:
+            inv_dir = archive_root / "invocations" / invocation_id
+            inv_dir.mkdir(parents=True, exist_ok=True)
         (inv_dir / "progress.jsonl").touch()
         return verify_module.CheckResult(label="archive_directory", passed=True, message="stub")
 

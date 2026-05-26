@@ -30,6 +30,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from alphamind._kernel.archive_layout import find_invocation_archive_dir
 from alphamind.scheduler.debug_e2e.phase_outputs import (
     SDK_PHASE_NAMES,
     phase_output_path,
@@ -222,26 +223,30 @@ def load_resume_context(
 
     Raises :class:`ResumeValidationError` when:
 
-    * ``<archive_root>/invocations/<invocation_id>/`` does not exist;
+    * the source invocation directory cannot be located under
+      ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/`` (glob returns zero
+      or multiple matches — zero means the invocation never ran or the
+      archive was pruned; multiple means two date partitions carry the same
+      invocation-id which is a corrupted archive);
     * ``phase`` is not in :data:`SDK_PHASE_NAMES`;
     * any phase in the computed ``phases_to_replay(phase)`` lacks its
       ``phase_outputs/<phase>.json`` file in the source archive.  The
       message names the missing phase and the earliest valid resume
       target the source archive does cover.
+
+    Uses :func:`alphamind._kernel.archive_layout.find_invocation_archive_dir`
+    to locate the source directory under the date-partitioned canonical layout
+    (ALP-689 followup — migrated from the legacy flat
+    ``<archive_root>/invocations/<invocation_id>/`` path).
     """
-    source_archive_dir = archive_root / "invocations" / invocation_id
-    try:
-        archive_is_dir = source_archive_dir.is_dir()
-    except OSError as e:
-        # Defensive: a concurrently-removed parent directory can raise
-        # PermissionError on Windows rather than returning False. Surface
-        # as the typed validation error so the CLI exits 2 cleanly.
-        msg = f"--resume-from: cannot stat source invocation directory {source_archive_dir}: {e}"
-        raise ResumeValidationError(msg) from e
-    if not archive_is_dir:
+    source_archive_dir = find_invocation_archive_dir(
+        archive_root=archive_root, invocation_id=invocation_id
+    )
+    if source_archive_dir is None:
         msg = (
-            f"--resume-from: source invocation directory not found: "
-            f"{source_archive_dir} (invocation_id={invocation_id!r})"
+            f"--resume-from: source invocation directory not found under "
+            f"{archive_root} for invocation_id={invocation_id!r} "
+            "(globbed <archive_root>/*/<invocation_id>; zero or multiple matches)"
         )
         raise ResumeValidationError(msg)
 

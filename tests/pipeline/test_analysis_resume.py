@@ -493,7 +493,7 @@ _DIAG_DIR_NAME: dict[str, str] = {
 
 
 def _seed_source_archive(archive_root: Path, source_invocation_id: str) -> Path:
-    """Populate <archive>/invocations/<source-id>/ with phase outputs + diagnostic dirs.
+    """Populate <archive>/invocations/<source-id>/ (glob-discoverable) with outputs + diag dirs.
 
     Writes the 6 phase-output JSON files via the canonical
     :func:`write_phase_output` (which the loader/reader path goes through),
@@ -756,7 +756,7 @@ class TestNoResumeContextIsByteIdenticalToBaseline:
         """
         _drive(archive_root=tmp_path, monkeypatch=monkeypatch, resume_context=None)
 
-        analysis_dirs = list((tmp_path / "invocations" / _INVOCATION_ID).rglob("analysis"))
+        analysis_dirs = list((tmp_path / "2026-05-03" / _INVOCATION_ID).rglob("analysis"))
         assert analysis_dirs == [], (
             f"unexpected analysis/ dirs created without replay: {analysis_dirs}"
         )
@@ -887,7 +887,7 @@ class TestDiagnosticDirCopy:
 
         target_qual_dir = (
             tmp_path
-            / "invocations"
+            / "2026-05-03"
             / _INVOCATION_ID
             / "analysis"
             / AgentName.qualitative_researcher.value
@@ -926,7 +926,7 @@ class TestDiagnosticDirCopy:
             resume_context=resume_context,
         )
 
-        target_analysis_dir = tmp_path / "invocations" / _INVOCATION_ID / "analysis"
+        target_analysis_dir = tmp_path / "2026-05-03" / _INVOCATION_ID / "analysis"
         for sector_dir_name in (
             AgentName.tech_semis_researcher.value,
             AgentName.financials_researcher.value,
@@ -947,7 +947,7 @@ class TestDiagnosticDirCopy:
         # archive — this should be rejected.
         target_dir = (
             tmp_path
-            / "invocations"
+            / "2026-05-03"
             / _INVOCATION_ID
             / "analysis"
             / AgentName.adaptive_researcher.value
@@ -1123,8 +1123,8 @@ def _make_resume_context(*, source_archive_dir: Path, resume_phase: str) -> Any:
     """Build a real ``ResumeContext`` for the test rig.
 
     Uses the actual loader path so the test exercises the same data shape
-    the orchestrator constructs at CLI time. The loader walks
-    ``<archive_root>/invocations/<id>`` so we recover the archive root /
+    the orchestrator constructs at CLI time. The loader globs
+    ``<archive_root>/*/<id>`` so we recover the archive root /
     invocation id from the source path.
     """
     from alphamind.scheduler.debug_e2e.resume import load_resume_context

@@ -34,6 +34,7 @@ from typing import Any, cast
 import pydantic
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind._kernel.atomic_io import atomic_write_text
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._shared import TokensUsed
@@ -81,10 +82,11 @@ def _emit_phase_output(
     *,
     archive_root: Path,
     invocation_id: str,
+    as_of: datetime,
     phase: str,
     model: pydantic.BaseModel,
 ) -> None:
-    """Atomically write *model* to ``<archive_root>/invocations/<id>/phase_outputs/<phase>.json``.
+    """Atomically write *model* to ``<archive_root>/<YYYY-MM-DD>/<id>/phase_outputs/<phase>.json``.
 
     Uses :func:`alphamind._kernel.atomic_io.atomic_write_text` for the
     staging-and-rename guarantee. The ``phase_outputs/`` subdirectory is
@@ -93,9 +95,14 @@ def _emit_phase_output(
 
     This helper mirrors :func:`alphamind.scheduler.debug_e2e.phase_outputs.write_phase_output`
     but lives here to respect the import-linter layering rule that forbids
-    ``alphamind.pipeline`` from importing ``alphamind.scheduler``.
+    ``alphamind.pipeline`` from importing ``alphamind.scheduler``.  Uses the
+    date-partitioned canonical layout (ALP-689 followup).
     """
-    target = archive_root / "invocations" / invocation_id / "phase_outputs" / f"{phase}.json"
+    target = (
+        invocation_archive_dir(archive_root=archive_root, as_of=as_of, invocation_id=invocation_id)
+        / "phase_outputs"
+        / f"{phase}.json"
+    )
     atomic_write_text(target, model.model_dump_json())
 
 
@@ -416,7 +423,7 @@ async def _run_domain_and_qualitative_phase(  # noqa: PLR0913 — composition he
         )
         if emit:
             assert archive_root is not None
-            _emit_qualitative(archive_root, invocation_id, qualitative_result)
+            _emit_qualitative(archive_root, invocation_id, as_of, qualitative_result)
         progress.phase_done("qualitative")
         return domain_output, qualitative_result
 
@@ -437,7 +444,7 @@ async def _run_domain_and_qualitative_phase(  # noqa: PLR0913 — composition he
         )
         if emit:
             assert archive_root is not None
-            _emit_domain_sectors(archive_root, invocation_id, domain_output)
+            _emit_domain_sectors(archive_root, invocation_id, as_of, domain_output)
         progress.phase_done("domain_researchers")
         qualitative_result = _replay_qualitative_researcher(
             source_archive_dir=replay_source_dir,
@@ -492,8 +499,8 @@ async def _run_domain_and_qualitative_phase(  # noqa: PLR0913 — composition he
 
     if emit:
         assert archive_root is not None
-        _emit_domain_sectors(archive_root, invocation_id, domain_output)
-        _emit_qualitative(archive_root, invocation_id, qualitative_result)
+        _emit_domain_sectors(archive_root, invocation_id, as_of, domain_output)
+        _emit_qualitative(archive_root, invocation_id, as_of, qualitative_result)
 
     progress.phase_done("domain_researchers")
     progress.phase_done("qualitative")
@@ -503,6 +510,7 @@ async def _run_domain_and_qualitative_phase(  # noqa: PLR0913 — composition he
 def _emit_domain_sectors(
     archive_root: Path,
     invocation_id: str,
+    as_of: datetime,
     domain_output: DomainResearchersOutput,
 ) -> None:
     """Emit the 3 sector phase-output files (ALP-691)."""
@@ -511,18 +519,21 @@ def _emit_domain_sectors(
     _emit_phase_output(
         archive_root=archive_root,
         invocation_id=invocation_id,
+        as_of=as_of,
         phase="tech_semis",
         model=DomainResearcherOutputModel.from_domain(domain_output.tech_semis),
     )
     _emit_phase_output(
         archive_root=archive_root,
         invocation_id=invocation_id,
+        as_of=as_of,
         phase="financials",
         model=DomainResearcherOutputModel.from_domain(domain_output.financials),
     )
     _emit_phase_output(
         archive_root=archive_root,
         invocation_id=invocation_id,
+        as_of=as_of,
         phase="energy",
         model=DomainResearcherOutputModel.from_domain(domain_output.energy),
     )
@@ -531,6 +542,7 @@ def _emit_domain_sectors(
 def _emit_qualitative(
     archive_root: Path,
     invocation_id: str,
+    as_of: datetime,
     qualitative_result: QualitativeResearcherResult,
 ) -> None:
     """Emit the qualitative phase-output file (ALP-691)."""
@@ -539,6 +551,7 @@ def _emit_qualitative(
     _emit_phase_output(
         archive_root=archive_root,
         invocation_id=invocation_id,
+        as_of=as_of,
         phase="qualitative",
         model=QualitativeResearcherResultModel.from_domain(qualitative_result),
     )
@@ -655,7 +668,9 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
         _resume_context.source_archive_dir.name if _resume_context is not None else ""
     )
     _target_archive_dir: Path | None = (
-        archive_root / "invocations" / invocation_id if archive_root is not None else None
+        invocation_archive_dir(archive_root=archive_root, as_of=as_of, invocation_id=invocation_id)
+        if archive_root is not None
+        else None
     )
 
     # Replay decisions for the parallel phase (ALP-694). Domain researchers
@@ -756,6 +771,7 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
             _emit_phase_output(
                 archive_root=archive_root,
                 invocation_id=invocation_id,
+                as_of=as_of,
                 phase="adaptive",
                 model=AdaptiveResearcherResultModel.from_domain(adaptive_result),
             )
@@ -797,6 +813,7 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
             _emit_phase_output(
                 archive_root=archive_root,
                 invocation_id=invocation_id,
+                as_of=as_of,
                 phase="synthesizer",
                 model=SynthesizerResultModel.from_domain(synthesizer_result),
             )

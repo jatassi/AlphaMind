@@ -3,7 +3,7 @@
 Verifies that ``run_analysis_pipeline`` writes the 6 phase-output JSON files
 (``tech_semis.json``, ``financials.json``, ``energy.json``, ``qualitative.json``,
 ``adaptive.json``, ``synthesizer.json``) under the canonical
-``<archive>/invocations/<id>/phase_outputs/`` directory when ``archive_root``
+``<archive>/<YYYY-MM-DD>/<id>/phase_outputs/`` directory when ``archive_root``
 is set.
 
 Also pins the no-write invariant: when ``archive_root is None`` (the production
@@ -436,10 +436,10 @@ class TestAnalysisPipelinePhaseEmission:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """6 phase-output files land under <archive>/invocations/<id>/phase_outputs/."""
+        """6 phase-output files land under <archive>/<YYYY-MM-DD>/<id>/phase_outputs/."""
         _drive(archive_root=tmp_path, monkeypatch=monkeypatch)
 
-        phase_outputs_dir = tmp_path / "invocations" / _INVOCATION_ID / "phase_outputs"
+        phase_outputs_dir = tmp_path / "2026-05-03" / _INVOCATION_ID / "phase_outputs"
         expected_files = {
             "tech_semis.json",
             "financials.json",
@@ -460,7 +460,7 @@ class TestAnalysisPipelinePhaseEmission:
         """Each emitted JSON file is well-formed and pretty-printable."""
         _drive(archive_root=tmp_path, monkeypatch=monkeypatch)
 
-        phase_outputs_dir = tmp_path / "invocations" / _INVOCATION_ID / "phase_outputs"
+        phase_outputs_dir = tmp_path / "2026-05-03" / _INVOCATION_ID / "phase_outputs"
         for phase_file in phase_outputs_dir.iterdir():
             raw = phase_file.read_text(encoding="utf-8")
             parsed = json.loads(raw)  # raises if invalid JSON
@@ -476,7 +476,7 @@ class TestAnalysisPipelinePhaseEmission:
 
         _drive(archive_root=tmp_path, monkeypatch=monkeypatch)
 
-        archive_dir = tmp_path / "invocations" / _INVOCATION_ID
+        archive_dir = tmp_path / "2026-05-03" / _INVOCATION_ID
         model = read_phase_output(
             archive_dir=archive_dir,
             phase="tech_semis",
@@ -498,7 +498,7 @@ class TestAnalysisPipelinePhaseEmission:
 
         _drive(archive_root=tmp_path, monkeypatch=monkeypatch)
 
-        archive_dir = tmp_path / "invocations" / _INVOCATION_ID
+        archive_dir = tmp_path / "2026-05-03" / _INVOCATION_ID
         model = read_phase_output(
             archive_dir=archive_dir,
             phase="qualitative",
@@ -517,7 +517,7 @@ class TestAnalysisPipelinePhaseEmission:
 
         _drive(archive_root=tmp_path, monkeypatch=monkeypatch)
 
-        archive_dir = tmp_path / "invocations" / _INVOCATION_ID
+        archive_dir = tmp_path / "2026-05-03" / _INVOCATION_ID
         model = read_phase_output(
             archive_dir=archive_dir,
             phase="adaptive",
@@ -536,7 +536,7 @@ class TestAnalysisPipelinePhaseEmission:
 
         _drive(archive_root=tmp_path, monkeypatch=monkeypatch)
 
-        archive_dir = tmp_path / "invocations" / _INVOCATION_ID
+        archive_dir = tmp_path / "2026-05-03" / _INVOCATION_ID
         model = read_phase_output(
             archive_dir=archive_dir,
             phase="synthesizer",
@@ -583,7 +583,7 @@ class TestAnalysisPipelineNoEmissionWhenNoArchive:
         """When debug_e2e is None, phase outputs are suppressed even if archive_root is set."""
         _drive(archive_root=tmp_path, monkeypatch=monkeypatch, debug_e2e=None)
 
-        phase_outputs_dir = tmp_path / "invocations" / _INVOCATION_ID / "phase_outputs"
+        phase_outputs_dir = tmp_path / "2026-05-03" / _INVOCATION_ID / "phase_outputs"
         if phase_outputs_dir.exists():
             written = list(phase_outputs_dir.iterdir())
             assert written == [], (

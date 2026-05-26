@@ -41,6 +41,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind._kernel.exception_group import first_non_cancelled
 from alphamind._kernel.mode import PipelineMode
 from alphamind._kernel.money import Money, Price, money, price, signed_money
@@ -195,12 +196,13 @@ def _emit_decision_phase_output(
     *,
     archive_root: Path | None,
     invocation_id: str,
+    as_of: datetime,
     phase: str,
     result: AnalystResult | StrategistResult | PMResult,
     debug_e2e: object | None,
 ) -> None:
     """Serialize ``result`` to
-    ``<archive_root>/invocations/<invocation_id>/phase_outputs/<phase>.json``.
+    ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/phase_outputs/<phase>.json``.
 
     No-op unless BOTH ``debug_e2e`` is non-``None`` (debug-e2e mode is
     active) AND ``archive_root`` is non-``None`` (a place to write to).
@@ -211,7 +213,8 @@ def _emit_decision_phase_output(
     Uses :func:`alphamind._kernel.atomic_io.atomic_write_text` directly so
     this module never reaches ``scheduler/debug_e2e/`` — the import-linter
     ``composition-root-layering`` contract forbids ``alphamind.pipeline``
-    from importing ``alphamind.scheduler``.
+    from importing ``alphamind.scheduler``.  Uses the date-partitioned
+    canonical layout (ALP-689 followup).
     """
     if debug_e2e is None or archive_root is None:
         return
@@ -223,7 +226,9 @@ def _emit_decision_phase_output(
     from alphamind.decision.portfolio_manager.models import PMResultModel
     from alphamind.decision.strategist.models import StrategistResultModel
 
-    archive_dir = archive_root / "invocations" / invocation_id
+    archive_dir = invocation_archive_dir(
+        archive_root=archive_root, as_of=as_of, invocation_id=invocation_id
+    )
 
     boundary_model: pydantic.BaseModel
     if isinstance(result, AnalystResult):
@@ -259,6 +264,7 @@ def _replay_decision_phase(
     resume_context: Any,
     archive_root: Path | None,
     invocation_id: str,
+    as_of: datetime,
     progress: ProgressEmitter,
 ) -> AnalystResult | StrategistResult | PMResult:
     """Hydrate ``phase``'s typed result from the source archive on disk.
@@ -280,7 +286,8 @@ def _replay_decision_phase(
     :mod:`alphamind.scheduler.debug_e2e.phase_outputs` — the import-linter
     ``composition-root-layering`` contract forbids ``alphamind.pipeline``
     from importing ``alphamind.scheduler``. The path layout mirrors
-    :func:`_emit_decision_phase_output`.
+    :func:`_emit_decision_phase_output`.  Uses the date-partitioned canonical
+    layout for the target archive dir (ALP-689 followup).
     """
     import shutil
 
@@ -309,7 +316,13 @@ def _replay_decision_phase(
     if archive_root is not None:
         agent_dir = _DECISION_PHASE_TO_AGENT_DIR[phase]
         source_diag = source_archive_dir / "decision" / agent_dir
-        target_diag = archive_root / "invocations" / invocation_id / "decision" / agent_dir
+        target_diag = (
+            invocation_archive_dir(
+                archive_root=archive_root, as_of=as_of, invocation_id=invocation_id
+            )
+            / "decision"
+            / agent_dir
+        )
         if source_diag.is_dir():
             # dirs_exist_ok=False per quality lens — fail loud if the target
             # diagnostic dir already exists. The runner emits diagnostic
@@ -535,6 +548,7 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
             resume_context=resume_context,
             archive_root=archive_root,
             invocation_id=invocation_id,
+            as_of=timestamp,
             progress=progress,
         )
         progress.phase_start("strategist")
@@ -543,6 +557,7 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
             resume_context=resume_context,
             archive_root=archive_root,
             invocation_id=invocation_id,
+            as_of=timestamp,
             progress=progress,
         )
     else:
@@ -631,6 +646,7 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
         _emit_decision_phase_output(
             archive_root=archive_root,
             invocation_id=invocation_id,
+            as_of=timestamp,
             phase="analyst",
             result=analyst_result,
             debug_e2e=debug_e2e,
@@ -638,6 +654,7 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
         _emit_decision_phase_output(
             archive_root=archive_root,
             invocation_id=invocation_id,
+            as_of=timestamp,
             phase="strategist",
             result=strategist_result,
             debug_e2e=debug_e2e,
@@ -709,6 +726,7 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
     _emit_decision_phase_output(
         archive_root=archive_root,
         invocation_id=invocation_id,
+        as_of=timestamp,
         phase="pm",
         result=pm_result,
         debug_e2e=debug_e2e,

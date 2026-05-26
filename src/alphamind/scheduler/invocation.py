@@ -29,11 +29,9 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind._kernel.atomic_io import atomic_write_text
-from alphamind._kernel.invocations import (
-    CALIBRATION_SNAPSHOT_FILENAME,
-    INVOCATIONS_DIRNAME,
-)
+from alphamind._kernel.invocations import CALIBRATION_SNAPSHOT_FILENAME
 from alphamind._kernel.mode import PipelineMode
 from alphamind.config.load import PipelineConfig, load_full_config
 from alphamind.config.models.run_types import RunType
@@ -79,7 +77,7 @@ async def build_invocation_record(  # noqa: PLR0913 — signature pinned by stor
     start_at = _isoformat_z(now)
     git_sha = _git_rev_parse_head()
     calibration_path = _persist_data_calibration_snapshot(
-        archive_root=archive_root, invocation_id=invocation_id
+        archive_root=archive_root, invocation_id=invocation_id, as_of=now
     )
     data_source_freshness_json = await _compute_data_source_freshness_json(session)
 
@@ -123,14 +121,16 @@ def _persist_data_calibration_snapshot(
     *,
     archive_root: Path,
     invocation_id: str,
+    as_of: datetime,
 ) -> Path:
     """Copy the most recent prior invocation's calibration state into this invocation's dir.
 
     Implements the bootstrap path described in parent issue ``ALP-431`` § Pre-resolved
-    configuration decisions (J). Scans ``<archive_root>/invocations/`` for the
-    lexicographically-greatest invocation-id directory (excluding ``invocation_id``)
+    configuration decisions (J). Scans ``<archive_root>/*/`` for the
+    lexicographically-greatest per-invocation directory (excluding ``invocation_id``)
     whose ``data_calibration_state.json`` exists, and atomically copies that content
-    into ``<archive_root>/invocations/<invocation_id>/data_calibration_state.json``.
+    into ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/data_calibration_state.json``
+    (date-partitioned canonical layout per ALP-689 followup).
     When no prior snapshot is found (first-ever invocation) the target file is
     initialized to ``{}``.
 
@@ -138,11 +138,13 @@ def _persist_data_calibration_snapshot(
     expose a "latest snapshot path" helper, so the directory scan lives inline here
     per story 03a's spec.
     """
-    invocations_dir = archive_root / INVOCATIONS_DIRNAME
-    target_path = invocations_dir / invocation_id / CALIBRATION_SNAPSHOT_FILENAME
+    target_path = (
+        invocation_archive_dir(archive_root=archive_root, as_of=as_of, invocation_id=invocation_id)
+        / CALIBRATION_SNAPSHOT_FILENAME
+    )
 
     prior_content = _find_latest_prior_calibration_content(
-        invocations_dir=invocations_dir, current_invocation_id=invocation_id
+        archive_root=archive_root, current_invocation_id=invocation_id
     )
     payload = prior_content if prior_content is not None else "{}"
 
@@ -152,17 +154,29 @@ def _persist_data_calibration_snapshot(
 
 def _find_latest_prior_calibration_content(
     *,
-    invocations_dir: Path,
+    archive_root: Path,
     current_invocation_id: str,
 ) -> str | None:
-    """Return the content of the latest prior calibration snapshot, or ``None``."""
-    if not invocations_dir.exists():
+    """Return the content of the latest prior calibration snapshot, or ``None``.
+
+    Scans the date-partitioned archive layout (``<archive_root>/*/<invocation_id>/``)
+    for any invocation directory that is not ``current_invocation_id``, sorts
+    by invocation-id name (lexicographic order equals chronological order for
+    the ``inv-YYYYMMDDTHHMMSSZ-<hex>`` format), and returns the content of
+    the most recent existing ``data_calibration_state.json``.
+    """
+    if not archive_root.exists():
         return None
 
+    # Collect all per-invocation directories across date partitions, filtering
+    # to those whose name matches the invocation-id pattern and is not the
+    # current invocation being seeded.
     candidates = sorted(
         (
             entry
-            for entry in invocations_dir.iterdir()
+            for date_dir in archive_root.iterdir()
+            if date_dir.is_dir()
+            for entry in date_dir.iterdir()
             if entry.is_dir()
             and entry.name != current_invocation_id
             and _INVOCATION_ID_PATTERN.match(entry.name) is not None
@@ -274,8 +288,9 @@ async def insert_invocation_record(  # noqa: PLR0913 — composition surface thr
     1. Mint ``invocation_id`` via :func:`_mint_invocation_id`.
     2. Open a short read-only session for the freshness query.
     3. Call :func:`load_full_config` to validate, compose, and persist the
-       resolved configuration snapshot under ``<archive_root>/invocations/
-       <invocation_id>/resolved_config.json``.
+       resolved configuration snapshot under
+       ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/resolved_config.json``
+       (date-partitioned canonical layout per ALP-689 followup).
     4. Build the ``InvocationRecord`` via :func:`build_invocation_record` —
        this step persists the data-calibration snapshot inline and computes
        the freshness JSON against the short session.
@@ -297,6 +312,7 @@ async def insert_invocation_record(  # noqa: PLR0913 — composition surface thr
             invocation_id=invocation_id,
             runtime=runtime,
             today=now.astimezone(UTC).date(),
+            as_of=now,
         )
         record = await build_invocation_record(
             session=short_session,

@@ -25,6 +25,7 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -282,12 +283,13 @@ _BETWEEN_MESSAGE_STALL_SECONDS: float | None = None
 _LAUNCH_JITTER_SECONDS = 0.5
 
 
-async def invoke_domain_researcher(
+async def invoke_domain_researcher(  # noqa: PLR0913 — signature dictated by domain researcher's parameter surface
     *,
     agent_config: BaseAgentConfig,
     sector: Sector,
     user_message: str,
     invocation_id: str,
+    as_of: datetime | None = None,
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
@@ -318,6 +320,7 @@ async def invoke_domain_researcher(
         user_message=user_message,
         model=str(agent_config.model),
         archive_root=archive_root,
+        as_of=as_of,
     )
     wall_start = time.monotonic()
 

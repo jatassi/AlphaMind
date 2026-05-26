@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -29,6 +30,9 @@ from alphamind.analysis.domain_researchers.harness import (
 )
 from alphamind.analysis.domain_researchers.models import SectorBrief, SignalQuality
 from alphamind.config.models.agents import AllowedModel, BaseAgentConfig
+
+# Canonical test invocation timestamp; date partition is "2026-05-01".
+_AS_OF = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -164,6 +168,7 @@ async def test_happy_path_returns_harness_success(
         user_message="Analyse tech sector.",
         invocation_id="inv-test-001",
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
@@ -246,6 +251,7 @@ async def test_parse_failure_triggers_retry_with_correct_message(
         user_message="Analyse tech sector.",
         invocation_id="inv-test-001",
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_stub,
     )
 
@@ -287,6 +293,7 @@ async def test_two_parse_failures_raise_malformed_output(
             user_message="Analyse.",
             invocation_id="inv-test-001",
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
 
@@ -337,6 +344,7 @@ async def test_validation_failure_then_success_returns_retry_count_1(
         user_message="Analyse.",
         invocation_id="inv-test-001",
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
@@ -363,6 +371,7 @@ async def test_parse_failure_with_max_tokens_raises_context_overflow(
             user_message="Analyse.",
             invocation_id="inv-test-001",
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
 
@@ -393,6 +402,7 @@ async def test_validation_failure_with_max_tokens_raises_context_overflow(
             user_message="Analyse.",
             invocation_id="inv-test-001",
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
 
@@ -420,6 +430,7 @@ async def test_auth_failure_raises_sdk_failure_naming_env_var(
             user_message="Analyse.",
             invocation_id="inv-test-001",
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_auth_fail_stub,
         )
 
@@ -457,6 +468,7 @@ async def test_timeout_raises_timeout_failure(
             user_message="Analyse.",
             invocation_id="inv-test-001",
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_slow_stub,
         )
 
@@ -490,6 +502,7 @@ async def test_retry_message_omits_full_error_list_and_raw_input(
         user_message=raw_input,
         invocation_id="inv-test-001",
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_stub,
     )
 
@@ -522,10 +535,11 @@ async def test_diagnostic_files_written_on_success(
         user_message="Analyse.",
         invocation_id="inv-diag-001",
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
-    diag_dir = archive_root / "invocations" / "inv-diag-001" / "analysis"
+    diag_dir = archive_root / "2026-05-01" / "inv-diag-001" / "analysis"
     # At least one subdirectory (agent_name) exists
     agent_dirs = list(diag_dir.iterdir())
     assert len(agent_dirs) == 1
@@ -554,10 +568,11 @@ async def test_diagnostic_files_written_on_failure(
             user_message="Analyse.",
             invocation_id="inv-diag-fail",
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
 
-    diag_dir = archive_root / "invocations" / "inv-diag-fail" / "analysis"
+    diag_dir = archive_root / "2026-05-01" / "inv-diag-fail" / "analysis"
     agent_dirs = list(diag_dir.iterdir())
     assert len(agent_dirs) == 1
     agent_dir = agent_dirs[0]
@@ -582,10 +597,11 @@ async def test_metadata_json_contains_expected_fields(
         user_message="Analyse.",
         invocation_id="inv-meta-001",
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
-    diag_dir = archive_root / "invocations" / "inv-meta-001" / "analysis"
+    diag_dir = archive_root / "2026-05-01" / "inv-meta-001" / "analysis"
     agent_dir = next(diag_dir.iterdir())
     meta = json.loads((agent_dir / "metadata.json").read_text())
 
@@ -628,6 +644,7 @@ async def test_system_prompt_cached_per_process(
             user_message="Call 1.",
             invocation_id="inv-cache-001",
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)]),
         )
         await invoke_domain_researcher(
@@ -636,6 +653,7 @@ async def test_system_prompt_cached_per_process(
             user_message="Call 2.",
             invocation_id="inv-cache-002",
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)]),
         )
 
@@ -665,6 +683,7 @@ async def test_sdk_is_stubbed_no_real_api_call(
             user_message="Analyse.",
             invocation_id="inv-stub-001",
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
         mock_real.assert_not_called()
@@ -689,6 +708,7 @@ async def test_malformed_output_failure_carries_agent_name(
             user_message="Analyse.",
             invocation_id="inv-err-001",
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
 
@@ -749,6 +769,7 @@ async def test_harness_claude_agent_options_structure(
         user_message="Analyse.",
         invocation_id="inv-options-001",
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_capturing_stub,
     )
 

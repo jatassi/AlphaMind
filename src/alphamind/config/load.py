@@ -24,7 +24,7 @@ pipeline scheduler) is the layer that catches and routes those errors.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from alphamind.config.loaders import (
@@ -122,6 +122,7 @@ def load_full_config(
     invocation_id: str,
     runtime: RuntimeDimensions,
     today: date,
+    as_of: datetime,
 ) -> PipelineConfig:
     """Load, validate, resolve, persist, and return one invocation's config.
 
@@ -133,6 +134,10 @@ def load_full_config(
     Parameters group as ``RuntimeDimensions`` (regime, mode, overlays, firing
     trigger) to keep the call surface aligned with story 05's
     :func:`compose_config` and stay under the 8-arg cap.
+
+    ``as_of`` is the invocation timestamp used to place the resolved-config
+    snapshot under the date-partitioned canonical archive layout (ALP-689
+    followup).
     """
     # 1. Parse-time validation. ValidationError propagates.
     inputs = parse_loaded_config(config_dir)
@@ -162,7 +167,7 @@ def load_full_config(
 
     # 5. Snapshot persistence.
     snapshot_result = persist_snapshot(
-        resolved, archive_root=archive_root, invocation_id=invocation_id
+        resolved, archive_root=archive_root, invocation_id=invocation_id, as_of=as_of
     )
 
     # 6. Wrap.

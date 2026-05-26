@@ -303,10 +303,10 @@ def _make_retrieval_store() -> RetrievalStore:
 
 
 def test_stage_artifacts_dir_layout(tmp_path: Path) -> None:
-    """The directory derives from ``<archive_root>/invocations/<id>/stage_artifacts``."""
+    """The directory derives from ``<archive_root>/<YYYY-MM-DD>/<id>/stage_artifacts``."""
     archive_root = tmp_path / "archive"
-    out = stage_artifacts_dir(archive_root, _INVOCATION_ID)
-    assert out == archive_root / "invocations" / _INVOCATION_ID / "stage_artifacts"
+    out = stage_artifacts_dir(archive_root, _INVOCATION_ID, _AS_OF)
+    assert out == archive_root / "2026-05-03" / _INVOCATION_ID / "stage_artifacts"
 
 
 # ---------------------------------------------------------------------------

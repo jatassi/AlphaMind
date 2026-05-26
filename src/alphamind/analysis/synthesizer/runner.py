@@ -252,6 +252,7 @@ async def run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 sp
             user_message=user_message,
             invocation_id=invocation_id,
             portfolio_reader=portfolio_reader,
+            as_of=now_utc,
             archive_root=archive_root,
             sdk_query_fn=sdk_query_fn,
             progress=progress,

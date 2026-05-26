@@ -91,6 +91,9 @@ def _baseline_runtime() -> RuntimeDimensions:
     )
 
 
+_AS_OF = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
+
+
 @pytest.fixture
 def pipeline_config(env_path: Path, archive_root: Path) -> PipelineConfig:
     """Load the shipped config tree once for tests that don't need to vary it."""
@@ -100,7 +103,8 @@ def pipeline_config(env_path: Path, archive_root: Path) -> PipelineConfig:
         archive_root=archive_root,
         invocation_id="inv-build-fixture",
         runtime=_baseline_runtime(),
-        today=datetime(2026, 5, 7, tzinfo=UTC).date(),
+        today=_AS_OF.date(),
+        as_of=_AS_OF,
     )
 
 
@@ -210,7 +214,8 @@ class TestBuildInvocationRecord:
             archive_root=archive_root,
             invocation_id="inv-build-halt-fixture",
             runtime=halt_runtime,
-            today=datetime(2026, 5, 7, tzinfo=UTC).date(),
+            today=_AS_OF.date(),
+            as_of=_AS_OF,
         )
 
         async with async_factory() as session:
@@ -368,7 +373,7 @@ class TestBuildInvocationRecord:
 
         expected = (
             archive_root
-            / "invocations"
+            / "2026-05-07"
             / "inv-20260507T143000Z-feedface"
             / "data_calibration_state.json"
         )
@@ -431,6 +436,9 @@ class TestBuildInvocationRecord:
 
 
 class TestPersistDataCalibrationSnapshot:
+    # Canonical as_of for tests in this class; date partition is "2026-05-07".
+    _AS_OF_CURRENT = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
+
     def test_writes_empty_object_when_no_prior_snapshot_exists(
         self,
         tmp_path: Path,
@@ -441,9 +449,10 @@ class TestPersistDataCalibrationSnapshot:
         result = _persist_data_calibration_snapshot(
             archive_root=archive_root,
             invocation_id=invocation_id,
+            as_of=self._AS_OF_CURRENT,
         )
 
-        expected = archive_root / "invocations" / invocation_id / "data_calibration_state.json"
+        expected = archive_root / "2026-05-07" / invocation_id / "data_calibration_state.json"
         assert result == expected
         assert result.exists()
         assert result.read_text() == "{}"
@@ -453,9 +462,9 @@ class TestPersistDataCalibrationSnapshot:
         tmp_path: Path,
     ) -> None:
         archive_root = tmp_path / "archive"
-        invocations = archive_root / "invocations"
+        # Prior invocation lives under its own date partition (date-partitioned layout).
         prior_id = "inv-20260506T143000Z-deadbeef"
-        prior_dir = invocations / prior_id
+        prior_dir = archive_root / "2026-05-06" / prior_id
         prior_dir.mkdir(parents=True)
         prior_content = '{"schema_version": "1", "summary": {"total_blocks": 7}}'
         (prior_dir / "data_calibration_state.json").write_text(prior_content)
@@ -464,9 +473,10 @@ class TestPersistDataCalibrationSnapshot:
         result = _persist_data_calibration_snapshot(
             archive_root=archive_root,
             invocation_id=current_id,
+            as_of=self._AS_OF_CURRENT,
         )
 
-        assert result == invocations / current_id / "data_calibration_state.json"
+        assert result == archive_root / "2026-05-07" / current_id / "data_calibration_state.json"
         assert result.read_text() == prior_content
 
     def test_picks_lexicographically_greatest_prior_id_when_multiple_priors(
@@ -474,18 +484,18 @@ class TestPersistDataCalibrationSnapshot:
         tmp_path: Path,
     ) -> None:
         archive_root = tmp_path / "archive"
-        invocations = archive_root / "invocations"
 
         # Three prior invocations with deterministic id-suffixes; the
         # lexicographically-greatest matches the chronologically-most-recent
-        # because the id prefix sorts on the timestamp.
+        # because the id prefix sorts on the timestamp. Each prior lives under
+        # its own date partition (date-partitioned canonical layout).
         priors = {
-            "inv-20260505T090000Z-00000001": '{"label": "oldest"}',
-            "inv-20260506T090000Z-00000002": '{"label": "middle"}',
-            "inv-20260507T090000Z-00000003": '{"label": "newest"}',
+            "inv-20260505T090000Z-00000001": ("2026-05-05", '{"label": "oldest"}'),
+            "inv-20260506T090000Z-00000002": ("2026-05-06", '{"label": "middle"}'),
+            "inv-20260507T090000Z-00000003": ("2026-05-07", '{"label": "newest"}'),
         }
-        for prior_id, content in priors.items():
-            d = invocations / prior_id
+        for prior_id, (date_part, content) in priors.items():
+            d = archive_root / date_part / prior_id
             d.mkdir(parents=True)
             (d / "data_calibration_state.json").write_text(content)
 
@@ -493,6 +503,7 @@ class TestPersistDataCalibrationSnapshot:
         result = _persist_data_calibration_snapshot(
             archive_root=archive_root,
             invocation_id=current_id,
+            as_of=self._AS_OF_CURRENT,
         )
 
         assert result.read_text() == '{"label": "newest"}'
@@ -503,16 +514,15 @@ class TestPersistDataCalibrationSnapshot:
     ) -> None:
         """A pre-existing current-invocation directory must not be used as the source."""
         archive_root = tmp_path / "archive"
-        invocations = archive_root / "invocations"
         current_id = "inv-20260507T143000Z-feedface"
         prior_id = "inv-20260506T090000Z-deadbeef"
 
         # Even though the current_id sorts greater, the scan must skip it.
-        current_dir = invocations / current_id
+        current_dir = archive_root / "2026-05-07" / current_id
         current_dir.mkdir(parents=True)
         (current_dir / "data_calibration_state.json").write_text('{"stale": "from-self"}')
 
-        prior_dir = invocations / prior_id
+        prior_dir = archive_root / "2026-05-06" / prior_id
         prior_dir.mkdir(parents=True)
         prior_content = '{"label": "expected-prior"}'
         (prior_dir / "data_calibration_state.json").write_text(prior_content)
@@ -520,6 +530,7 @@ class TestPersistDataCalibrationSnapshot:
         result = _persist_data_calibration_snapshot(
             archive_root=archive_root,
             invocation_id=current_id,
+            as_of=self._AS_OF_CURRENT,
         )
 
         assert result.read_text() == prior_content
@@ -530,10 +541,9 @@ class TestPersistDataCalibrationSnapshot:
     ) -> None:
         """Directories whose names do not match the invocation-id regex are skipped."""
         archive_root = tmp_path / "archive"
-        invocations = archive_root / "invocations"
 
-        # Bogus directory with a calibration file — must not be selected.
-        bogus = invocations / "not-an-invocation-id"
+        # Bogus directory with a calibration file under a date partition — must not be selected.
+        bogus = archive_root / "2026-05-07" / "not-an-invocation-id"
         bogus.mkdir(parents=True)
         (bogus / "data_calibration_state.json").write_text('{"label": "bogus"}')
 
@@ -541,6 +551,7 @@ class TestPersistDataCalibrationSnapshot:
         result = _persist_data_calibration_snapshot(
             archive_root=archive_root,
             invocation_id=current_id,
+            as_of=self._AS_OF_CURRENT,
         )
 
         # No legitimate prior, so the file must be a fresh "{}".

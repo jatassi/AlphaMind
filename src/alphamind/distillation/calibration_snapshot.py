@@ -24,11 +24,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind._kernel.atomic_io import atomic_write_text
-from alphamind._kernel.invocations import (
-    CALIBRATION_SNAPSHOT_FILENAME,
-    INVOCATIONS_DIRNAME,
-)
+from alphamind._kernel.invocations import CALIBRATION_SNAPSHOT_FILENAME
 from alphamind.distillation.calibration import CALIBRATION_STATE_VALUES, CalibrationState
 from alphamind.distillation.output import OutputBlock
 
@@ -171,7 +169,8 @@ def write_calibration_state_snapshot(
     audience, and per-block-kind counts; populates the accumulating- and
     unavailable-reason maps for non-calibrated blocks; and writes the
     deterministic JSON document to
-    ``<base_path>/invocations/<invocation_id>/data_calibration_state.json``.
+    ``<base_path>/<YYYY-MM-DD>/<invocation_id>/data_calibration_state.json``
+    (date-partitioned canonical layout per ALP-689 followup).
 
     The returned path is the file location the caller records on the
     invocation row's ``data_calibration_state_reference`` field. Callers
@@ -194,7 +193,12 @@ def write_calibration_state_snapshot(
         "unavailable_reasons": _aggregate_reasons(blocks, CalibrationState.UNAVAILABLE),
     }
 
-    target_path = base_path / INVOCATIONS_DIRNAME / invocation_id / CALIBRATION_SNAPSHOT_FILENAME
+    target_path = (
+        invocation_archive_dir(
+            archive_root=base_path, as_of=outputs.as_of, invocation_id=invocation_id
+        )
+        / CALIBRATION_SNAPSHOT_FILENAME
+    )
     atomic_write_text(target_path, _serialize(snapshot))
     return target_path
 
@@ -280,12 +284,13 @@ def write_operator_data_health_summary(
     """Write the operator-facing data-health summary to the archive root.
 
     The summary lands at
-    ``<archive_root>/invocations/<invocation_id>/data_calibration_state.json``,
-    overwriting the bootstrap-seed scaffold ``_persist_data_calibration_snapshot``
-    leaves there at invocation start. Per ALP-540 the operator reads this
-    file (and the verify-debug-e2e harness's ``=== DATA HEALTH ===`` block
-    rendered from it) to distinguish ``accumulating`` (give it time) from
-    ``unavailable`` (collector / vendor failure) series.
+    ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/data_calibration_state.json``
+    (date-partitioned canonical layout per ALP-689 followup), overwriting the
+    bootstrap-seed scaffold ``_persist_data_calibration_snapshot`` leaves there
+    at invocation start. Per ALP-540 the operator reads this file (and the
+    verify-debug-e2e harness's ``=== DATA HEALTH ===`` block rendered from it)
+    to distinguish ``accumulating`` (give it time) from ``unavailable``
+    (collector / vendor failure) series.
 
     Distinct from :func:`write_calibration_state_snapshot`:
 
@@ -294,7 +299,12 @@ def write_operator_data_health_summary(
       shape, not the internal ``by_audience``/``by_block_kind`` breakdown.
     """
     payload = _operator_summary_payload(outputs, invocation_id)
-    target_path = archive_root / INVOCATIONS_DIRNAME / invocation_id / CALIBRATION_SNAPSHOT_FILENAME
+    target_path = (
+        invocation_archive_dir(
+            archive_root=archive_root, as_of=outputs.as_of, invocation_id=invocation_id
+        )
+        / CALIBRATION_SNAPSHOT_FILENAME
+    )
     atomic_write_text(target_path, _serialize(payload))
     return target_path
 

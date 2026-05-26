@@ -431,7 +431,7 @@ class TestResumeContextNone:
         _drive(archive_root=tmp_path, resume_context=None)
 
         # Target-side diagnostic dir was never created — confirms no copy.
-        target_decision_dir = tmp_path / "invocations" / _INVOCATION_ID / "decision"
+        target_decision_dir = tmp_path / "2025-06-01" / _INVOCATION_ID / "decision"
         assert not target_decision_dir.exists(), (
             f"Replay-side diagnostic copy ran but should not have: {target_decision_dir} exists"
         )
@@ -528,9 +528,9 @@ class TestReplayEmitOrder:
         # The target-side diagnostic dir exists (the copy ran before
         # phase_done fired — phase_done's presence in the events list
         # combined with the on-disk dir confirms the order).
-        target_analyst_dir = archive_root / "invocations" / _INVOCATION_ID / "decision" / "analyst"
+        target_analyst_dir = archive_root / "2025-06-01" / _INVOCATION_ID / "decision" / "analyst"
         target_strategist_dir = (
-            archive_root / "invocations" / _INVOCATION_ID / "decision" / "strategist"
+            archive_root / "2025-06-01" / _INVOCATION_ID / "decision" / "strategist"
         )
         assert target_analyst_dir.is_dir()
         assert target_strategist_dir.is_dir()
@@ -640,9 +640,9 @@ class TestDiagnosticDirCopy:
         _drive(archive_root=archive_root, resume_context=resume_ctx)
 
         # Target diag dirs exist with file-byte equality.
-        target_analyst_diag = archive_root / "invocations" / _INVOCATION_ID / "decision" / "analyst"
+        target_analyst_diag = archive_root / "2025-06-01" / _INVOCATION_ID / "decision" / "analyst"
         target_strategist_diag = (
-            archive_root / "invocations" / _INVOCATION_ID / "decision" / "strategist"
+            archive_root / "2025-06-01" / _INVOCATION_ID / "decision" / "strategist"
         )
         assert target_analyst_diag.is_dir()
         assert target_strategist_diag.is_dir()
@@ -675,7 +675,7 @@ class TestDiagnosticDirCopy:
             strategist_result=_make_strategist_result(),
         )
         # Pre-create the target's analyst diagnostic dir.
-        target_analyst_diag = archive_root / "invocations" / _INVOCATION_ID / "decision" / "analyst"
+        target_analyst_diag = archive_root / "2025-06-01" / _INVOCATION_ID / "decision" / "analyst"
         target_analyst_diag.mkdir(parents=True)
         (target_analyst_diag / "stale.md").write_text("stale", encoding="utf-8")
 

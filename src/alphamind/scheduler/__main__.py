@@ -379,7 +379,9 @@ async def _run_debug_e2e(args: argparse.Namespace) -> None:
         # The canonical invocation_id is not known until ``run_invocation``
         # opens the invocation row; the ``_pre_invocation`` sentinel keys the
         # pre-invocation seed log so it doesn't race with the per-invocation file.
-        pre_emitter = debug_settings.emitter_factory("_pre_invocation")
+        # ``now`` (already computed above) is passed as ``as_of`` so the emitter
+        # can construct the date-partitioned archive path (ALP-689 followup).
+        pre_emitter = debug_settings.emitter_factory("_pre_invocation", now)
         pre_emitter.phase_start("seed")
         try:
             async with engines.async_session_factory() as session:

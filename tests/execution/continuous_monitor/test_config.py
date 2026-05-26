@@ -18,7 +18,7 @@ pipeline's resolved-config loader so the values surface on
 from __future__ import annotations
 
 import shutil
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -30,6 +30,7 @@ from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SHIPPED_CONFIG_DIR = REPO_ROOT / "config"
 TODAY = date(2026, 4, 27)
+_AS_OF = datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC)
 
 _VENUE_ENV_KEYS: tuple[str, ...] = (
     "ALPACA_PAPER_KEY",
@@ -156,6 +157,7 @@ class TestContinuousMonitorYamlWiring:
             invocation_id="inv-continuous-monitor-001",
             runtime=shipped_runtime,
             today=TODAY,
+            as_of=_AS_OF,
         )
         cm = loaded.resolved.continuous_monitor
         assert isinstance(cm, ContinuousMonitorConfig)
@@ -195,4 +197,5 @@ class TestContinuousMonitorYamlWiring:
                 invocation_id="inv-continuous-monitor-bad",
                 runtime=shipped_runtime,
                 today=TODAY,
+                as_of=_AS_OF,
             )

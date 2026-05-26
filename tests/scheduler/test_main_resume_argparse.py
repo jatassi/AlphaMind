@@ -329,7 +329,7 @@ def _patch_debug_e2e_heavy_setup_for_resume(
         return settings_module.DebugE2ESettings(
             account_queries=LogOnlyAccountStateQueries(portfolio),
             ca_queries=LogOnlyCorporateActionsQueries(),
-            emitter_factory=lambda _invocation_id: shared_recorder,
+            emitter_factory=lambda _invocation_id, _as_of: shared_recorder,
             resume_context=resume_context,
         )
 

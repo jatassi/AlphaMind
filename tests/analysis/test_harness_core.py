@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -31,6 +32,9 @@ import pytest
 
 from alphamind.analysis import _harness_core as core
 from alphamind.analysis._shared import TokensUsed
+
+# Canonical test invocation timestamp; date partition is "2026-05-01".
+_AS_OF = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
 
 # ---------------------------------------------------------------------------
 # Exception hierarchy is re-exported from _harness_core
@@ -208,6 +212,7 @@ def _make_diag(tmp_path: Path, **overrides: Any) -> core.DiagState:
         "user_message": "USER",
         "model": "claude-sonnet",
         "archive_root": tmp_path,
+        "as_of": _AS_OF,
     }
     base.update(overrides)
     return core.DiagState(**base)
@@ -220,7 +225,7 @@ def test_diagstate_writes_two_response_files_when_retry_present(tmp_path: Path) 
     diag.errors = [{"stage": "parse", "attempt": 1}]
     diag.retry_count = 1
     diag.write(success=True, wall_clock_seconds=1.25, stop_reason="end_turn")
-    diag_dir = tmp_path / "invocations" / "inv-001" / "analysis" / "demo_agent"
+    diag_dir = tmp_path / "2026-05-01" / "inv-001" / "analysis" / "demo_agent"
     assert (diag_dir / "prompt.md").read_text() == "PROMPT"
     assert (diag_dir / "user_message.md").read_text() == "USER"
     assert (diag_dir / "response_initial.md").read_text() == "first response"
@@ -235,7 +240,7 @@ def test_diagstate_omits_response_retry_when_none(tmp_path: Path) -> None:
     diag = _make_diag(tmp_path)
     diag.response_initial = "first"
     diag.write(success=False, wall_clock_seconds=2.0, stop_reason=None)
-    diag_dir = tmp_path / "invocations" / "inv-001" / "analysis" / "demo_agent"
+    diag_dir = tmp_path / "2026-05-01" / "inv-001" / "analysis" / "demo_agent"
     assert (diag_dir / "response_initial.md").read_text() == "first"
     assert not (diag_dir / "response_retry.md").exists()
 
@@ -252,7 +257,7 @@ def test_diagstate_metadata_includes_tool_calls_when_set(tmp_path: Path) -> None
     diag.response_initial = "ok"
     diag.tool_calls_used = 7
     diag.write(success=True, wall_clock_seconds=0.5, stop_reason="end_turn")
-    diag_dir = tmp_path / "invocations" / "inv-001" / "analysis" / "demo_agent"
+    diag_dir = tmp_path / "2026-05-01" / "inv-001" / "analysis" / "demo_agent"
     meta = json.loads((diag_dir / "metadata.json").read_text())
     assert meta["tool_calls_used"] == 7
 
@@ -266,11 +271,12 @@ def test_diagstate_writes_single_response_file_when_no_retry_field(tmp_path: Pat
         user_message="U",
         model="m",
         archive_root=tmp_path,
+        as_of=_AS_OF,
         response_filename="response.md",
     )
     diag.response_initial = "the prose"
     diag.write(success=True, wall_clock_seconds=0.5, stop_reason="end_turn")
-    diag_dir = tmp_path / "invocations" / "inv-002" / "analysis" / "synthesizer"
+    diag_dir = tmp_path / "2026-05-01" / "inv-002" / "analysis" / "synthesizer"
     assert (diag_dir / "response.md").read_text() == "the prose"
     assert not (diag_dir / "response_initial.md").exists()
 
@@ -875,14 +881,15 @@ def test_diagstate_writes_to_archive_layer_decision(tmp_path: Path) -> None:
         user_message="U",
         model="m",
         archive_root=tmp_path,
+        as_of=_AS_OF,
         archive_layer="decision",
     )
     diag.response_initial = "ok"
     diag.write(success=True, wall_clock_seconds=0.1, stop_reason="end_turn")
-    decision_dir = tmp_path / "invocations" / "inv-dec-001" / "decision" / "analyst"
+    decision_dir = tmp_path / "2026-05-01" / "inv-dec-001" / "decision" / "analyst"
     assert (decision_dir / "prompt.md").read_text() == "P"
     # Analysis path is NOT populated.
-    assert not (tmp_path / "invocations" / "inv-dec-001" / "analysis").exists()
+    assert not (tmp_path / "2026-05-01" / "inv-dec-001" / "analysis").exists()
 
 
 def test_diagstate_defaults_archive_layer_to_analysis(tmp_path: Path) -> None:
@@ -890,7 +897,7 @@ def test_diagstate_defaults_archive_layer_to_analysis(tmp_path: Path) -> None:
     diag = _make_diag(tmp_path)
     diag.response_initial = "ok"
     diag.write(success=True, wall_clock_seconds=0.1, stop_reason="end_turn")
-    analysis_dir = tmp_path / "invocations" / "inv-001" / "analysis" / "demo_agent"
+    analysis_dir = tmp_path / "2026-05-01" / "inv-001" / "analysis" / "demo_agent"
     assert (analysis_dir / "prompt.md").exists()
 
 
@@ -1023,7 +1030,7 @@ async def test_invoke_sdk_defaults_progress_to_noop(tmp_path: Path) -> None:
 
 def test_diagstate_diag_dir_resolves_under_archive(tmp_path: Path) -> None:
     diag = _make_diag(tmp_path)
-    assert diag.diag_dir == tmp_path / "invocations" / "inv-001" / "analysis" / "demo_agent"
+    assert diag.diag_dir == tmp_path / "2026-05-01" / "inv-001" / "analysis" / "demo_agent"
 
 
 def test_diagstate_diag_dir_is_none_without_archive(tmp_path: Path) -> None:
@@ -1148,7 +1155,7 @@ async def test_invoke_sdk_writes_sdk_trace_to_diag_dir(tmp_path: Path) -> None:
         on_cli_result_error="sdk_failure",
         phase="demo",
     )
-    trace = tmp_path / "invocations" / "inv-001" / "analysis" / "demo_agent" / "sdk_trace.jsonl"
+    trace = tmp_path / "2026-05-01" / "inv-001" / "analysis" / "demo_agent" / "sdk_trace.jsonl"
     records = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
     events = [r["event"] for r in records]
     assert "attempt_start" in events

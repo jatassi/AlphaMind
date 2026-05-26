@@ -517,7 +517,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     # emitter (story 02c / ALP-499) opens a fresh log under the
     # invocation's archive directory.
     progress: ProgressEmitter = (
-        context.debug_e2e.emitter_factory(invocation_id)
+        context.debug_e2e.emitter_factory(invocation_id, now)
         if context.debug_e2e is not None
         else NOOP_PROGRESS_EMITTER
     )

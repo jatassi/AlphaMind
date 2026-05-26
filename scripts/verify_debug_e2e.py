@@ -60,9 +60,9 @@ from typing import Any
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
+from alphamind._kernel.archive_layout import find_invocation_archive_dir
 from alphamind._kernel.invocations import (
     CALIBRATION_SNAPSHOT_FILENAME,
-    INVOCATIONS_DIRNAME,
     RESOLVED_CONFIG_FILENAME,
 )
 from alphamind.config.models.run_types import RunType
@@ -149,12 +149,12 @@ _PROGRESS_JSONL_FILENAME = "progress.jsonl"
 
 def check_archive_directory(*, archive_root: Path, invocation_id: str) -> CheckResult:
     """Assert the per-invocation directory carries the two required files."""
-    inv_dir = archive_root / INVOCATIONS_DIRNAME / invocation_id
-    if not inv_dir.is_dir():
+    inv_dir = find_invocation_archive_dir(archive_root=archive_root, invocation_id=invocation_id)
+    if inv_dir is None or not inv_dir.is_dir():
         return CheckResult(
             label="archive_directory",
             passed=False,
-            message=f"archive directory missing: {inv_dir}",
+            message=f"archive directory missing for {invocation_id!r} under {archive_root}",
         )
     resolved = inv_dir / RESOLVED_CONFIG_FILENAME
     if not resolved.is_file():
@@ -1101,10 +1101,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         results,
         check_archive_directory(archive_root=args.archive_root, invocation_id=invocation_id),
     )
-    progress_path = (
-        args.archive_root / INVOCATIONS_DIRNAME / invocation_id / _PROGRESS_JSONL_FILENAME
+    _inv_dir_for_progress = find_invocation_archive_dir(
+        archive_root=args.archive_root, invocation_id=invocation_id
     )
-    if progress_path.is_file():
+    progress_path = (
+        _inv_dir_for_progress / _PROGRESS_JSONL_FILENAME
+        if _inv_dir_for_progress is not None
+        else None
+    )
+    if progress_path is not None and progress_path.is_file():
         _emit(results, check_jsonl_ordering(progress_path))
     else:
         _emit(
@@ -1112,7 +1117,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             CheckResult(
                 label="jsonl_ordering",
                 passed=False,
-                message=f"progress.jsonl missing at {progress_path}",
+                message=f"progress.jsonl missing (invocation dir not found for {invocation_id!r})",
             ),
         )
 
@@ -1266,9 +1271,11 @@ def _print_data_health(*, archive_root: Path, invocation_id: str) -> None:
     with a "(no calibration snapshot)" line in either case so the operator
     sees the section in every run.
     """
-    snapshot_path = (
-        archive_root / INVOCATIONS_DIRNAME / invocation_id / CALIBRATION_SNAPSHOT_FILENAME
-    )
+    _inv_dir = find_invocation_archive_dir(archive_root=archive_root, invocation_id=invocation_id)
+    if _inv_dir is None:
+        print(format_data_health_block({}))
+        return
+    snapshot_path = _inv_dir / CALIBRATION_SNAPSHOT_FILENAME
     try:
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):

@@ -28,6 +28,7 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -406,6 +407,7 @@ async def invoke_adaptive_researcher(
     sector_briefs: tuple[SectorBrief, ...],
     qualitative_brief: QualitativeBrief,
     correlation_regime_brief: CorrelationRegimeBrief,
+    as_of: datetime | None = None,
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
@@ -442,6 +444,7 @@ async def invoke_adaptive_researcher(
         user_message=user_message,
         model=str(agent_config.model),
         archive_root=archive_root,
+        as_of=as_of,
         record_tool_calls=True,
     )
     wall_start = time.monotonic()

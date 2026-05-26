@@ -22,6 +22,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from dataclasses import FrozenInstanceError, fields
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -38,11 +39,11 @@ def test_debug_e2e_settings_is_frozen_and_slotted() -> None:
     settings = DebugE2ESettings(
         account_queries=object(),  # type: ignore[arg-type]
         ca_queries=object(),  # type: ignore[arg-type]
-        emitter_factory=lambda _: object(),  # type: ignore[arg-type,return-value]
+        emitter_factory=lambda _id, _dt: object(),  # type: ignore[arg-type,return-value]
     )
 
     with pytest.raises(FrozenInstanceError):
-        settings.emitter_factory = lambda _: object()  # type: ignore[misc,assignment,return-value]
+        settings.emitter_factory = lambda _id, _dt: object()  # type: ignore[misc,assignment,return-value]
 
     # ``slots=True`` removes ``__dict__`` so unknown attribute names
     # cannot be silently attached. Python 3.13 raises ``TypeError`` from
@@ -148,14 +149,15 @@ def test_emitter_factory_returns_jsonl_emitter_under_invocation_id(
     from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
     from alphamind.scheduler.debug_e2e.settings import configure_debug_e2e
 
+    _as_of = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
     settings = configure_debug_e2e(archive_root=tmp_path, portfolio=SYNTHETIC_PORTFOLIO)
-    emitter = settings.emitter_factory("inv-test")
+    emitter = settings.emitter_factory("inv-test", _as_of)
 
     assert isinstance(emitter, JsonlProgressEmitter)
 
     # Round-trip via a real emit to prove the path is the one the factory
     # constructed — observable behaviour rather than an internal attribute.
-    expected_path = tmp_path / "invocations" / "inv-test" / "progress.jsonl"
+    expected_path = tmp_path / "2026-05-07" / "inv-test" / "progress.jsonl"
     assert not expected_path.exists()
     emitter.phase_start("phase1")
     assert expected_path.is_file()

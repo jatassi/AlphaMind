@@ -190,6 +190,7 @@ async def _run_domain_researcher(  # noqa: PLR0913 — internal helper threading
         sector=sector,
         user_message=bundle.bundle_text,
         invocation_id=invocation_id,
+        as_of=as_of,
         archive_root=archive_root,
         progress=progress,
         phase=phase,

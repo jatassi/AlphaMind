@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -52,9 +53,11 @@ class DebugE2ESettings:
     * ``account_queries`` / ``ca_queries`` substitute the Alpaca-backed
       broker-adapter classes ``gather_phase1_inputs`` would otherwise
       construct.
-    * ``emitter_factory`` is invoked once per invocation with the
-      ``invocation_id`` so the JSONL emitter (story 02c) can open a
-      fresh log file under the invocation's archive directory.
+    * ``emitter_factory`` is invoked once per invocation with
+      ``(invocation_id, as_of)`` so the JSONL emitter (story 02c) can open
+      a fresh log file under the date-partitioned invocation archive
+      directory (ALP-689 followup — layout migrated from the legacy flat
+      ``invocations/<id>/`` to ``<YYYY-MM-DD>/<id>/``).
     * ``resume_context`` (ALP-693) carries the resume-from inputs the
       pipeline-composition runners (stories 04a / 04b) inspect to gate
       the replay short-circuit. ``None`` on a fresh debug-e2e run; a
@@ -67,7 +70,7 @@ class DebugE2ESettings:
 
     account_queries: AccountStateQueriesP
     ca_queries: CorporateActionsQueriesP
-    emitter_factory: Callable[[str], ProgressEmitter]
+    emitter_factory: Callable[[str, datetime], ProgressEmitter]
     resume_context: ResumeContext | None = None
 
 
@@ -99,15 +102,20 @@ def configure_debug_e2e(
     function is what makes the contract holdable while still letting
     the CLI import the factory at top-of-module.
     """
+    from alphamind._kernel.archive_layout import invocation_archive_dir
     from alphamind.scheduler.debug_e2e.broker import (
         LogOnlyAccountStateQueries,
         LogOnlyCorporateActionsQueries,
     )
     from alphamind.scheduler.debug_e2e.jsonl_emitter import JsonlProgressEmitter
 
-    def make_emitter(invocation_id: str) -> ProgressEmitter:
+    def make_emitter(invocation_id: str, as_of: datetime) -> ProgressEmitter:
+        """Open the JSONL emitter at the date-partitioned archive location."""
         return JsonlProgressEmitter(
-            path=archive_root / "invocations" / invocation_id / "progress.jsonl"
+            path=invocation_archive_dir(
+                archive_root=archive_root, as_of=as_of, invocation_id=invocation_id
+            )
+            / "progress.jsonl"
         )
 
     return DebugE2ESettings(

@@ -3,7 +3,7 @@
 Exercises ``run_decision_pipeline`` with:
 * ``archive_root`` set + ``debug_e2e``-populated context — verifies that
   ``analyst.json``, ``strategist.json``, ``pm.json`` land under
-  ``<archive_root>/invocations/<invocation_id>/phase_outputs/``.
+  ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/phase_outputs/``.
 * ``archive_root is None`` — verifies no files are written under
   ``phase_outputs/``.
 * Each emitted file round-trips through ``read_phase_output`` to a model
@@ -208,7 +208,7 @@ class TestDecisionPhaseEmission:
         _patch_runners(monkeypatch)
         _drive(archive_root=tmp_path)
 
-        phase_outputs_dir = tmp_path / "invocations" / _INVOCATION_ID / "phase_outputs"
+        phase_outputs_dir = tmp_path / "2025-06-01" / _INVOCATION_ID / "phase_outputs"
         assert (phase_outputs_dir / "analyst.json").exists(), "analyst.json missing"
         assert (phase_outputs_dir / "strategist.json").exists(), "strategist.json missing"
         assert (phase_outputs_dir / "pm.json").exists(), "pm.json missing"
@@ -222,7 +222,7 @@ class TestDecisionPhaseEmission:
         _patch_runners(monkeypatch)
         _drive(archive_root=tmp_path)
 
-        archive_dir = tmp_path / "invocations" / _INVOCATION_ID
+        archive_dir = tmp_path / "2025-06-01" / _INVOCATION_ID
         model = read_phase_output(
             archive_dir=archive_dir, phase="analyst", model_cls=AnalystResultModel
         )
@@ -238,7 +238,7 @@ class TestDecisionPhaseEmission:
         _patch_runners(monkeypatch)
         _drive(archive_root=tmp_path)
 
-        archive_dir = tmp_path / "invocations" / _INVOCATION_ID
+        archive_dir = tmp_path / "2025-06-01" / _INVOCATION_ID
         model = read_phase_output(
             archive_dir=archive_dir, phase="strategist", model_cls=StrategistResultModel
         )
@@ -253,7 +253,7 @@ class TestDecisionPhaseEmission:
         _patch_runners(monkeypatch)
         _drive(archive_root=tmp_path)
 
-        archive_dir = tmp_path / "invocations" / _INVOCATION_ID
+        archive_dir = tmp_path / "2025-06-01" / _INVOCATION_ID
         model = read_phase_output(archive_dir=archive_dir, phase="pm", model_cls=PMResultModel)
         assert isinstance(model, PMResultModel)
         assert model.retry_count == 0
@@ -268,7 +268,7 @@ class TestDecisionPhaseEmission:
         _patch_runners(monkeypatch, analyst_result=analyst_result)
         _drive(archive_root=tmp_path)
 
-        archive_dir = tmp_path / "invocations" / _INVOCATION_ID
+        archive_dir = tmp_path / "2025-06-01" / _INVOCATION_ID
         recovered = read_phase_output(
             archive_dir=archive_dir, phase="analyst", model_cls=AnalystResultModel
         )

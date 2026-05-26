@@ -1270,7 +1270,7 @@ class TestRunInvocationDebugE2EWiring:
         debug_settings = DebugE2ESettings(
             account_queries=account_queries,
             ca_queries=ca_queries,
-            emitter_factory=lambda _inv_id: NOOP_PROGRESS_EMITTER,
+            emitter_factory=lambda _inv_id, _as_of: NOOP_PROGRESS_EMITTER,
         )
 
         captured: dict[str, Any] = {}

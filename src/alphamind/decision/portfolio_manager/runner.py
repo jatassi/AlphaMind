@@ -369,6 +369,7 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
         library_config=library_config,
         library_market=library_market,
         state_persistence_config=state_persistence_config,
+        as_of=timestamp,
         archive_root=archive_root,
         sdk_query_fn=sdk_query_fn,
         broker_dispatch=broker_dispatch,

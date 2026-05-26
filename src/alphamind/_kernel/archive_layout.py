@@ -20,9 +20,7 @@ from pathlib import Path
 __all__ = ["find_invocation_archive_dir", "invocation_archive_dir"]
 
 
-def invocation_archive_dir(
-    *, archive_root: Path, as_of: datetime, invocation_id: str
-) -> Path:
+def invocation_archive_dir(*, archive_root: Path, as_of: datetime, invocation_id: str) -> Path:
     """Return ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/``.
 
     The date partition is ``as_of.astimezone(UTC).strftime('%Y-%m-%d')`` —
@@ -40,9 +38,7 @@ def invocation_archive_dir(
     return archive_root / date_part / invocation_id
 
 
-def find_invocation_archive_dir(
-    *, archive_root: Path, invocation_id: str
-) -> Path | None:
+def find_invocation_archive_dir(*, archive_root: Path, invocation_id: str) -> Path | None:
     """Return the per-invocation archive dir without knowing its ``as_of``.
 
     Globs ``<archive_root>/*/<invocation_id>`` so any date partition
@@ -55,9 +51,7 @@ def find_invocation_archive_dir(
     no timestamp for).  Callers that own ``as_of`` should call
     :func:`invocation_archive_dir` directly to avoid the glob cost.
     """
-    matches = [
-        p for p in sorted(archive_root.glob(f"*/{invocation_id}")) if p.is_dir()
-    ]
+    matches = [p for p in sorted(archive_root.glob(f"*/{invocation_id}")) if p.is_dir()]
     if len(matches) != 1:
         return None
     return matches[0]

@@ -194,7 +194,7 @@ def _make_context(
     _MAKE_CONTEXT_ENGINES.append(sync_engine)
     sync_session_factory = make_session_factory(sync_engine)
 
-    def _factory(_invocation_id: str) -> ProgressEmitter:
+    def _factory(_invocation_id: str, _as_of: datetime) -> ProgressEmitter:
         return emitter
 
     return RunInvocationContext(
