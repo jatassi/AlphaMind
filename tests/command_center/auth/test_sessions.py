@@ -57,6 +57,40 @@ class TestEncodeSessionCookie:
         assert body
         assert sig
 
+    def test_hmac_is_over_raw_json_bytes_not_base64url(self) -> None:
+        # F15: HMAC must be computed over the raw JSON bytes (the result
+        # of json.dumps(...).encode("utf-8")) — not over the base64url-
+        # encoded form. Verify by recomputing the HMAC manually against
+        # the raw JSON and asserting it matches the signature in the
+        # cookie.
+        import base64
+        import hashlib
+        import hmac
+        import json
+
+        payload = SessionCookiePayload(
+            session_id=operator_session_id("sess-hmac"),
+            expires_at="2026-05-26T12:00:00Z",
+        )
+        cookie = encode_session_cookie(payload, secret=_SECRET)
+        body_b64, sig_b64 = cookie.split(".")
+
+        def _pad(s: str) -> str:
+            return "=" * (-len(s) % 4)
+
+        body_raw = base64.urlsafe_b64decode(body_b64 + _pad(body_b64))
+        sig_raw = base64.urlsafe_b64decode(sig_b64 + _pad(sig_b64))
+        # The HMAC matches HMAC(raw JSON bytes), NOT HMAC(base64url(body)).
+        expected_over_raw = hmac.new(_SECRET, body_raw, hashlib.sha256).digest()
+        expected_over_b64 = hmac.new(_SECRET, body_b64.encode("ascii"), hashlib.sha256).digest()
+        assert sig_raw == expected_over_raw
+        assert sig_raw != expected_over_b64
+        # Sanity: body parses back to the same JSON payload.
+        assert json.loads(body_raw.decode("utf-8")) == {
+            "session_id": "sess-hmac",
+            "expires_at": "2026-05-26T12:00:00Z",
+        }
+
 
 class TestDecodeSessionCookieRejection:
     def test_rejects_tampered_body(self) -> None:

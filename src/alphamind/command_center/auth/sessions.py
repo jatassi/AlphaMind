@@ -101,17 +101,19 @@ def encode_session_cookie(payload: SessionCookiePayload, *, secret: bytes) -> st
     """Encode a session payload as a signed cookie value.
 
     Returns ``<base64url(body)>.<base64url(sig)>`` where ``body`` is the
-    JSON-encoded payload and ``sig`` is HMAC-SHA-256 over the body using
-    *secret*. The two-segment format makes the cookie split trivially
-    decodable while the HMAC defeats tampering.
+    JSON-encoded payload bytes and ``sig`` is HMAC-SHA-256 over those
+    raw bytes (NOT over the base64url-encoded form — F15). The two-
+    segment format makes the cookie split trivially decodable; the HMAC
+    over the raw JSON keeps the signature scheme canonical even if the
+    base64url alphabet ever changes.
     """
     body = json.dumps(
         {"session_id": payload.session_id, "expires_at": payload.expires_at},
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
+    sig = hmac.new(secret, body, hashlib.sha256).digest()
     body_b64 = _b64url_encode(body)
-    sig = hmac.new(secret, body_b64.encode("ascii"), hashlib.sha256).digest()
     sig_b64 = _b64url_encode(sig)
     return f"{body_b64}.{sig_b64}"
 
@@ -125,6 +127,9 @@ def decode_session_cookie(cookie: str, *, secret: bytes) -> SessionCookiePayload
 
     Constant-time signature comparison via :func:`hmac.compare_digest`
     so timing-attack measurements don't yield the signature.
+
+    The HMAC is verified against the raw JSON bytes (F15), not the
+    base64url-encoded form — matches :func:`encode_session_cookie`.
     """
     if not cookie or "." not in cookie:
         raise InvalidSessionCookieError("malformed cookie — missing separator")
@@ -134,7 +139,7 @@ def decode_session_cookie(cookie: str, *, secret: bytes) -> SessionCookiePayload
         presented_sig = _b64url_decode(sig_b64)
     except ValueError as exc:
         raise InvalidSessionCookieError("malformed cookie — invalid base64url") from exc
-    expected_sig = hmac.new(secret, body_b64.encode("ascii"), hashlib.sha256).digest()
+    expected_sig = hmac.new(secret, body, hashlib.sha256).digest()
     if not hmac.compare_digest(presented_sig, expected_sig):
         raise InvalidSessionCookieError("signature mismatch")
     try:
