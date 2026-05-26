@@ -38,7 +38,6 @@ from typing import Annotated, Any
 
 from fastapi import (
     APIRouter,
-    Cookie,
     Depends,
     HTTPException,
     Request,
@@ -420,7 +419,6 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
         body: RegisterBeginRequest,
         request: Request,
         response: Response,
-        cc_session: Annotated[str | None, Cookie()] = None,
     ) -> RegisterBeginResponse:
         cc_factory = request.app.state.cc_writer_session_factory
         existing = await list_credentials(cc_factory)
@@ -449,7 +447,9 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
                 ) from exc
         else:
             # Subsequent registration must carry a valid session.
-            await current_session(request, cc_session=cc_session)
+            # F11: current_session resolves the cookie name from
+            # security_config — no hardcoded "cc_session" reference.
+            await current_session(request)
 
         verifier = request.app.state.webauthn_verifier
         user_id = secrets.token_bytes(16)

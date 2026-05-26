@@ -70,9 +70,15 @@ _CSRF_FAILED_DETAIL = "CSRF check failed"
 
 async def current_session(
     request: Request,
-    cc_session: Annotated[str | None, Cookie()] = None,
 ) -> OperatorSessionId:
     """Validate the presented session cookie and return its session id.
+
+    Reads the session cookie by its configured name from
+    ``request.cookies`` (F11) — previously the cookie name was
+    hardcoded as ``cc_session`` via the ``Cookie()`` injector, which
+    diverged from the configured name in :class:`SessionConfig.cookie_name`.
+    Unified path: name is resolved per request from
+    ``app.state.security_config.session.cookie_name``.
 
     Raises :exc:`HTTPException(401)` on any rejection path:
 
@@ -88,8 +94,10 @@ async def current_session(
     auth attempt failed without the response itself leaking that to a
     probing client.
     """
+    session_cookie_name = request.app.state.security_config.session.cookie_name
+    cc_session = request.cookies.get(session_cookie_name)
     if cc_session is None:
-        log.debug("current_session: no cc_session cookie presented")
+        log.debug("current_session: no %s cookie presented", session_cookie_name)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_FAILED_DETAIL)
     secret: bytes = request.app.state.session_signing_secret
     try:
