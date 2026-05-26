@@ -2,12 +2,17 @@
 //
 // Disabled when the client-side parse layer surfaces any errors (the
 // FormComposer pre-validates against the schema's constraints). PUTs to
-// /api/views/config/{slug} with the proposed YAML body. Renders a toast
-// on success (with a restart reminder when any deploy-time field was
-// touched) or a layered envelope when the backend rejects.
+// /api/views/config/{slug} with the proposed YAML body via the shared
+// ``api`` wrapper so the ``X-CSRF-Token`` header is auto-injected from
+// the ``cc_csrf`` cookie (per the project's mutating-verb contract).
+//
+// Renders a toast on success (with a restart reminder when any
+// deploy-time field was touched) or a layered envelope when the
+// backend rejects.
 
 import { useState } from 'react'
 
+import { api, ApiError } from '@/api/client'
 import { cn } from '@/lib/utils'
 
 import type { ValidationReport } from './types'
@@ -21,22 +26,34 @@ type SaveActionProps = {
   className?: string
 }
 
+type SaveSuccessBody = { deploy_time_fields_changed: boolean }
+
 type SaveStatus =
   | { kind: 'idle' }
   | { kind: 'success'; restartReminder: boolean }
   | { kind: 'error'; report: ValidationReport | null; httpStatus: number }
 
-async function postUpdate(
-  slug: string,
-  yamlBody: string,
-): Promise<{ ok: boolean; status: number; body: unknown }> {
-  const response = await fetch(`/api/views/config/${slug}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ yaml: yamlBody }),
-  })
-  const body: unknown = await response.json()
-  return { ok: response.ok, status: response.status, body }
+type SaveOutcome =
+  | { ok: true; body: SaveSuccessBody }
+  | { ok: false; status: number; body: unknown }
+
+async function postUpdate(slug: string, yamlBody: string): Promise<SaveOutcome> {
+  // The shared ``api.put`` wrapper auto-injects the ``X-CSRF-Token``
+  // header (read from the ``cc_csrf`` cookie); without that header the
+  // backend's ``csrf_required`` dependency 403s every Save click
+  // (regression for the #1 + #2 coupling identified in the Wave-5
+  // review).
+  try {
+    const body = await api.put<SaveSuccessBody>(`/api/views/config/${slug}`, {
+      yaml: yamlBody,
+    })
+    return { ok: true, body }
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return { ok: false, status: error.status, body: error.detail }
+    }
+    throw error
+  }
 }
 
 function extractReport(body: unknown): ValidationReport | null {
@@ -45,6 +62,12 @@ function extractReport(body: unknown): ValidationReport | null {
     body === null ||
     !('detail' in (body as Record<string, unknown>))
   ) {
+    // ``ApiError.detail`` already carries the parsed response body
+    // (without the surrounding ``{detail: ...}`` envelope), so accept
+    // the bare ValidationReport shape too.
+    if (typeof body === 'object' && body !== null && 'parse' in (body as Record<string, unknown>)) {
+      return body as ValidationReport
+    }
     return null
   }
   const detail = (body as { detail: unknown }).detail
@@ -90,19 +113,20 @@ export function SaveAction({
   const handleClick = async (): Promise<void> => {
     setSubmitting(true)
     try {
-      const { ok, status: httpStatus, body } = await postUpdate(configFileSlug, yamlBody)
-      if (ok) {
-        const deployChanged =
-          typeof body === 'object' &&
-          body !== null &&
-          (body as { deploy_time_fields_changed?: boolean }).deploy_time_fields_changed === true
+      const outcome = await postUpdate(configFileSlug, yamlBody)
+      if (outcome.ok) {
+        const deployChanged = outcome.body.deploy_time_fields_changed
         setStatus({
           kind: 'success',
           restartReminder: deployTimeFieldsTouched || deployChanged,
         })
         onSaved({ deployTimeFieldsChanged: deployChanged })
       } else {
-        setStatus({ kind: 'error', report: extractReport(body), httpStatus })
+        setStatus({
+          kind: 'error',
+          report: extractReport(outcome.body),
+          httpStatus: outcome.status,
+        })
       }
     } finally {
       setSubmitting(false)

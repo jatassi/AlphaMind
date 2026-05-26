@@ -220,29 +220,32 @@ describe('SaveAction rendering', () => {
   })
 })
 
+function _stubSuccessfulPut(): ReturnType<typeof vi.fn> {
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: () =>
+      Promise.resolve({
+        slug: 'security',
+        filename: 'security.yaml',
+        deploy_time_fields_changed: false,
+      }),
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
 describe('SaveAction PUT request', () => {
   it('PUTs to /api/views/config/{slug} on click', async () => {
     const user = userEvent.setup()
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () =>
-        Promise.resolve({
-          slug: 'security',
-          filename: 'security.yaml',
-          deploy_time_fields_changed: false,
-        }),
-    })
-    vi.stubGlobal('fetch', fetchMock)
-
-    const onSaved = vi.fn()
+    const fetchMock = _stubSuccessfulPut()
     render(
       <SaveAction
         configFileSlug="security"
         yamlBody='x: "y"\n'
         hasClientValidationErrors={false}
         deployTimeFieldsTouched={false}
-        onSaved={onSaved}
+        onSaved={vi.fn()}
       />,
     )
     await user.click(screen.getByRole('button', { name: /save/i }))
@@ -254,6 +257,32 @@ describe('SaveAction PUT request', () => {
     // through JSON.parse to confirm the YAML body landed unchanged. The
     // test fixture's body uses backslash-n (literal, not a newline).
     expect(JSON.parse(init.body ?? '{}')).toEqual({ yaml: String.raw`x: "y"\n` })
+  })
+
+  it('injects the X-CSRF-Token header from the cc_csrf cookie', async () => {
+    // Regression for the #1+#2 coupling identified in the Wave-5
+    // review: the previous implementation used raw ``fetch`` with no
+    // CSRF header; once the backend's PUT gate landed, every Save
+    // click 403'd. Routing through ``api.put`` auto-injects the
+    // ``X-CSRF-Token`` header from the cookie via ``buildHeaders``.
+    const user = userEvent.setup()
+    Object.defineProperty(document, 'cookie', {
+      configurable: true,
+      get: () => 'cc_csrf=abc123',
+    })
+    const fetchMock = _stubSuccessfulPut()
+    render(
+      <SaveAction
+        configFileSlug="security"
+        yamlBody="x: 1\n"
+        hasClientValidationErrors={false}
+        deployTimeFieldsTouched={false}
+        onSaved={vi.fn()}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: /save/i }))
+    const [, init] = fetchMock.mock.calls[0] as [string, { headers?: Headers }]
+    expect(init.headers?.get('X-CSRF-Token')).toBe('abc123')
   })
 })
 
