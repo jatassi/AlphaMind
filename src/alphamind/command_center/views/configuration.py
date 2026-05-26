@@ -1,6 +1,6 @@
-"""Config editor framework (story 05i / ALP-679).
+"""Config editor framework (story 05i / ALP-679) + profiles/regimes editors (06a / ALP-682).
 
-Two surfaces:
+Three surfaces:
 
 * ``GET /api/views/config/schema/{config_file}`` — form-schema metadata
   derived from the file's Pydantic model + per-field reload-policy
@@ -8,6 +8,9 @@ Two surfaces:
 * ``PUT /api/views/config/{config_file}`` — atomic file write via
   :func:`alphamind._kernel.atomic_io.atomic_write_text` after all three
   validation layers (parse / cross-ref / semantic) pass.
+* ``GET /api/views/config/files`` — list of config-file slugs for a given
+  ``family`` query parameter (``profiles`` or ``regimes``). The frontend
+  uses this to populate the file-picker sidebar on each editor page.
 
 The framework is generic; per-file editor pages (06a profiles+regimes,
 06b alerts+security+other, 06c resolved viewer + diff) instantiate it
@@ -21,9 +24,12 @@ Per ``docs/design/command-center.md`` § Config editor:
 * Each setting carries a reload-policy badge — invocation-time-reload
   (most settings) or deploy-time-only.
 
-This story decorates :class:`CommandCenterConfig` / :class:`SecurityConfig`
-/ :class:`AlertsConfig`; the other YAML files inherit the same framework
-via additional registry entries in stories 06a/06b.
+Story 05i decorates :class:`CommandCenterConfig` / :class:`SecurityConfig`
+/ :class:`AlertsConfig`. Story 06a registers one slug per profile YAML
+(``profiles/small``, ``profiles/medium``, etc.) and one per regime YAML
+(``regimes/normal``, ``regimes/crisis``, etc.) using
+:class:`alphamind.config.models.profiles.ProfileConfig` and
+:class:`alphamind.config.models.regimes.RegimeConfig`.
 """
 
 from __future__ import annotations
@@ -48,9 +54,12 @@ from alphamind.command_center.config import (
     ReloadPolicy,
     SecurityConfig,
 )
+from alphamind.config.models.profiles import ProfileConfig
+from alphamind.config.models.regimes import RegimeConfig
 
 __all__ = [
     "ConfigFile",
+    "ConfigFileListResponse",
     "ConfigUpdateRequest",
     "ConfigUpdateResponse",
     "FormFieldSchema",
@@ -144,6 +153,54 @@ _REGISTRY: dict[str, ConfigFile] = {
         model=AlertsConfig,
         filename="alerts.yaml",
     ),
+    # Story 06a: profiles — one slug per YAML file in config/profiles/.
+    "profiles/large": ConfigFile(
+        slug="profiles/large",
+        model=ProfileConfig,
+        filename="profiles/large.yaml",
+    ),
+    "profiles/medium": ConfigFile(
+        slug="profiles/medium",
+        model=ProfileConfig,
+        filename="profiles/medium.yaml",
+    ),
+    "profiles/micro": ConfigFile(
+        slug="profiles/micro",
+        model=ProfileConfig,
+        filename="profiles/micro.yaml",
+    ),
+    "profiles/small": ConfigFile(
+        slug="profiles/small",
+        model=ProfileConfig,
+        filename="profiles/small.yaml",
+    ),
+    # Story 06a: regimes — one slug per YAML file in config/regimes/.
+    "regimes/crisis": ConfigFile(
+        slug="regimes/crisis",
+        model=RegimeConfig,
+        filename="regimes/crisis.yaml",
+    ),
+    "regimes/elevated": ConfigFile(
+        slug="regimes/elevated",
+        model=RegimeConfig,
+        filename="regimes/elevated.yaml",
+    ),
+    "regimes/low-vol": ConfigFile(
+        slug="regimes/low-vol",
+        model=RegimeConfig,
+        filename="regimes/low-vol.yaml",
+    ),
+    "regimes/normal": ConfigFile(
+        slug="regimes/normal",
+        model=RegimeConfig,
+        filename="regimes/normal.yaml",
+    ),
+}
+
+# Ordered slug lists per family — consumed by GET /api/views/config/files.
+_FAMILY_SLUGS: dict[str, list[str]] = {
+    "profiles": ["profiles/large", "profiles/medium", "profiles/micro", "profiles/small"],
+    "regimes": ["regimes/crisis", "regimes/elevated", "regimes/low-vol", "regimes/normal"],
 }
 
 
@@ -255,6 +312,20 @@ class ConfigUpdateResponse(BaseModel):
     deploy_time_fields_changed: bool
 
 
+class ConfigFileListResponse(BaseModel):
+    """Response for ``GET /api/views/config/files?family=<family>``.
+
+    Returns the ordered list of registered slugs for the requested
+    config-file family. The frontend's file-picker sidebar iterates
+    this list to build navigation links to the per-file editor pages.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    family: str
+    slugs: list[str]
+
+
 # ----------------------------------------------------------------------------
 # Reload-policy extraction
 # ----------------------------------------------------------------------------
@@ -364,11 +435,12 @@ def _classify_control_type(field_type: Any) -> ControlType:
     2. Enum subclass or ``Literal[...]`` with string args → ``enum``.
     3. Structural: bool → boolean, int/float → number,
        list[BaseModel | dict] → object-array, list[anything else] →
-       string-array.
+       string-array, dict[str, T] → object-array (key/value table).
     4. Fallback → ``string``.
 
-    Per-file editors in 06a/06b extend the override surface as their
-    YAML shapes demand.
+    ``dict[str, T]`` (e.g. ``rule_values: dict[str, float]``) renders as
+    an object-array table with ``key`` and ``value`` columns — the same
+    :class:`ObjectArrayTableEditor` component the frontend uses for lists.
     """
     hint = _control_hint_of(field_type)
     if hint is not None:
@@ -382,6 +454,8 @@ def _classify_control_type(field_type: Any) -> ControlType:
         if not args:
             return "string-array"
         return _classify_list_element(_strip_annotated(args[0]))
+    if get_origin(inner) is dict:
+        return "object-array"
     return "string"
 
 
@@ -422,6 +496,41 @@ def _element_columns(field_type: Any) -> list[FormFieldSchema] | None:
         # surrounding form payload.
         return _walk_fields(elem, prefix="")
     return None
+
+
+def _dict_columns(field_type: Any) -> list[FormFieldSchema] | None:
+    """Derive ``key`` + ``value`` columns for a ``dict[str, T]`` field.
+
+    ``rule_values`` (profiles) and ``multipliers`` (regimes) are
+    ``dict[str, float]``; the table editor renders them as a two-column
+    key/value table. The columns carry no ``reload_policy`` or
+    ``constraints`` of their own — those live on the enclosing field.
+    Returns ``None`` for non-dict types.
+    """
+    inner = _strip_annotated(field_type)
+    if get_origin(inner) is not dict:
+        return None
+    args = get_args(inner)
+    # Determine the value column's control type from the dict's value type.
+    # dict[str, float] → number; anything else → string.
+    value_type = _strip_annotated(args[1]) if len(args) >= 2 else None
+    value_control: ControlType = (
+        "number" if value_type is not None and value_type in (int, float) else "string"
+    )
+    return [
+        FormFieldSchema(
+            path="key",
+            control_type="string",
+            reload_policy=ReloadPolicy.INVOCATION_TIME.value,
+            constraints={},
+        ),
+        FormFieldSchema(
+            path="value",
+            control_type=value_control,
+            reload_policy=ReloadPolicy.INVOCATION_TIME.value,
+            constraints={},
+        ),
+    ]
 
 
 def _extract_constraints(field_info: Any) -> dict[str, Any]:
@@ -502,7 +611,12 @@ def _walk_fields(model: type[BaseModel], prefix: str = "") -> list[FormFieldSche
             constraints["enum_choices"] = choices
         # Object-array fields surface per-column FormFieldSchema entries
         # so the table editor knows what cells to render (#12).
-        columns = _element_columns(annotation) if control_type == "object-array" else None
+        # list[BaseModel] → typed element columns; dict[str, T] → key/value
+        # columns; list[dict[str, Any]] (untyped) → None (table editor
+        # infers from first-row keys).
+        columns: list[FormFieldSchema] | None = None
+        if control_type == "object-array":
+            columns = _element_columns(annotation) or _dict_columns(annotation)
         fields.append(
             FormFieldSchema(
                 path=path,
@@ -683,137 +797,161 @@ def _resolve_config_dir(request: Request) -> Path:
     return Path(cfg_dir)
 
 
+def _handle_get_files(
+    family: str,
+    _session: Annotated[OperatorSessionId, Depends(current_session)],
+) -> ConfigFileListResponse:
+    """Return the ordered list of registered slugs for a config-file family.
+
+    family must be one of the keys in :data:`_FAMILY_SLUGS`
+    (profiles or regimes). 404 for unknown families.
+
+    Requires a valid session cookie — the slug list reveals the
+    on-disk file inventory, which is operator-only information.
+    """
+    del _session
+    slugs = _FAMILY_SLUGS.get(family)
+    if slugs is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown config file family: {family!r}",
+        )
+    return ConfigFileListResponse(family=family, slugs=slugs)
+
+
+def _handle_get_path_exists(
+    path: str,
+    request: Request,
+    _session: Annotated[OperatorSessionId, Depends(current_session)],
+) -> dict[str, bool]:
+    """Backend probe for the :class:`PathInput` control (story 05i).
+
+    Returns ``{"exists": true|false}``. Used by the frontend
+    :class:`PathInput` component to render an inline file-existence
+    indicator so the operator catches typos before saving.
+
+    Two security layers (findings #1 and #2 from Wave-5 review):
+
+    * Authentication: the route requires a valid session cookie
+      (current_session dependency). Without it the endpoint was
+      a filesystem oracle that any unauthenticated curl could use
+      to probe arbitrary paths on the host.
+
+    * Path sandboxing: the requested path is resolved and checked
+      against the configured config_dir ancestor. Paths outside
+      (including ..-traversal escapes) return 400. The probe is
+      only useful for PathInput controls editing config-tree values
+      anyway; the sandbox closes the broader filesystem-oracle
+      surface without losing functionality.
+    """
+    del _session
+    config_dir = _resolve_config_dir(request).resolve()
+    candidate = Path(path)
+    # Path.resolve on a non-existent path returns a normalized
+    # absolute path on POSIX but on Windows can still surface the
+    # original — normalize via absolute().resolve(strict=False)
+    # so the is_relative_to check works uniformly.
+    resolved = candidate.absolute().resolve(strict=False)
+    if not resolved.is_relative_to(config_dir):
+        raise HTTPException(
+            status_code=400,
+            detail="path must be inside the configured config directory",
+        )
+    return {"exists": resolved.exists()}
+
+
+def _handle_get_schema(
+    config_file: str,
+    _session: Annotated[OperatorSessionId, Depends(current_session)],
+) -> FormSchema:
+    """Return the form-schema metadata for the named config file.
+
+    404 when the slug is not registered — the operator chose a config
+    file the framework does not yet support.
+
+    Requires a valid session cookie (finding #1, Wave-5 review) —
+    the schema reveals the config tree shape, which is not
+    operator-secret material but is still operator-only.
+    """
+    del _session
+    entry = _REGISTRY.get(config_file)
+    if entry is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown config file: {config_file!r}",
+        )
+    return derive_form_schema(entry)
+
+
+def _handle_put_config(
+    config_file: str,
+    request: Request,
+    body: ConfigUpdateRequest,
+    _session: Annotated[OperatorSessionId, Depends(current_session)],
+    _csrf: Annotated[None, Depends(csrf_required)],
+) -> ConfigUpdateResponse:
+    """Atomically replace the named YAML file after layered validation.
+
+    Validation order: parse → cross-reference → semantic. The first
+    failing layer errors surface in the layered envelope
+    (detail carries the :class:`ValidationReport` shape); the
+    atomic write only fires after all three pass.
+
+    Atomic write semantics inherited from
+    :func:`alphamind._kernel.atomic_io.atomic_write_text`: writes
+    {path}.tmp, fsyncs, renames onto {path}, fsyncs parent
+    directory on non-Windows hosts.
+
+    Gated by both current_session (finding #1, Wave-5 review)
+    and csrf_required per the projects auth contract for
+    mutating verbs (see alerts/routes.py:225 and
+    control/routes.py:332 for the same pattern).
+    """
+    del _session, _csrf
+    entry = _REGISTRY.get(config_file)
+    if entry is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown config file: {config_file!r}",
+        )
+    config_dir = _resolve_config_dir(request)
+    target_path = config_dir / entry.filename
+    _model, report = run_validation(entry, body.yaml)
+    if report.parse or report.cross_reference or report.semantic:
+        raise HTTPException(status_code=422, detail=report.model_dump())
+    existing_text: str | None = None
+    if target_path.exists():
+        existing_text = target_path.read_text(encoding="utf-8")
+    atomic_write_text(target_path, body.yaml)
+    deploy_changed = _deploy_time_field_changed(
+        entry,
+        existing_text=existing_text,
+        proposed_text=body.yaml,
+    )
+    return ConfigUpdateResponse(
+        slug=entry.slug,
+        filename=entry.filename,
+        deploy_time_fields_changed=deploy_changed,
+    )
+
+
 def build_configuration_router() -> APIRouter:
-    """Return a fresh ``APIRouter`` for the config editor framework.
+    """Return a fresh APIRouter for the config editor framework.
 
-    Mount under ``/api/views/config`` in :mod:`app`. The router carries:
+    Mount under /api/views/config in :mod:`app`. The router carries:
 
-    * ``GET /schema/{config_file}`` — form-schema metadata.
-    * ``PUT /{config_file}`` — atomic file write after three-layer
+    * GET /files — ordered slug list for a config-file family.
+    * GET /schema/{config_file} — form-schema metadata.
+    * PUT /{config_file} — atomic file write after three-layer
       validation passes.
     """
     router = APIRouter(tags=["views:configuration"])
-
-    @router.get("/path-exists")
-    def get_path_exists(
-        path: str,
-        request: Request,
-        _session: Annotated[OperatorSessionId, Depends(current_session)],
-    ) -> dict[str, bool]:
-        """Backend probe for the :class:`PathInput` control (story 05i).
-
-        Returns ``{"exists": true|false}``. Used by the frontend
-        :class:`PathInput` component to render an inline file-existence
-        indicator so the operator catches typos before saving.
-
-        Two security layers (findings #1 and #2 from Wave-5 review):
-
-        * Authentication: the route requires a valid session cookie
-          (``current_session`` dependency). Without it the endpoint was
-          a filesystem oracle that any unauthenticated curl could use
-          to probe arbitrary paths on the host.
-
-        * Path sandboxing: the requested path is resolved and checked
-          against the configured ``config_dir`` ancestor. Paths outside
-          (including ``..``-traversal escapes) return 400. The probe is
-          only useful for PathInput controls editing config-tree values
-          anyway; the sandbox closes the broader filesystem-oracle
-          surface without losing functionality.
-        """
-        del _session
-        config_dir = _resolve_config_dir(request).resolve()
-        candidate = Path(path)
-        # ``Path.resolve`` is on a non-existent path returns a normalized
-        # absolute path on POSIX but on Windows can still surface the
-        # original — normalize via ``absolute().resolve(strict=False)``
-        # so the ``is_relative_to`` check works uniformly.
-        resolved = candidate.absolute().resolve(strict=False)
-        if not resolved.is_relative_to(config_dir):
-            raise HTTPException(
-                status_code=400,
-                detail="path must be inside the configured config directory",
-            )
-        return {"exists": resolved.exists()}
-
-    @router.get("/schema/{config_file}", response_model=FormSchema)
-    def get_schema(
-        config_file: str,
-        _session: Annotated[OperatorSessionId, Depends(current_session)],
-    ) -> FormSchema:
-        """Return the form-schema metadata for the named config file.
-
-        404 when the slug is not registered — the operator chose a config
-        file the framework doesn't yet support.
-
-        Requires a valid session cookie (finding #1, Wave-5 review) —
-        the schema reveals the config tree's shape, which is not
-        operator-secret material but is still operator-only.
-        """
-        del _session
-        entry = _REGISTRY.get(config_file)
-        if entry is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Unknown config file: {config_file!r}",
-            )
-        return derive_form_schema(entry)
-
-    @router.put("/{config_file}", response_model=ConfigUpdateResponse)
-    def put_config(
-        config_file: str,
-        request: Request,
-        body: ConfigUpdateRequest,
-        _session: Annotated[OperatorSessionId, Depends(current_session)],
-        _csrf: Annotated[None, Depends(csrf_required)],
-    ) -> ConfigUpdateResponse:
-        """Atomically replace the named YAML file after layered validation.
-
-        Validation order: parse → cross-reference → semantic. The first
-        failing layer's errors are surfaced in the layered envelope
-        (``detail`` carries the :class:`ValidationReport` shape); the
-        atomic write only fires after all three pass.
-
-        Atomic write semantics inherited from
-        :func:`alphamind._kernel.atomic_io.atomic_write_text`: writes
-        ``{path}.tmp``, fsyncs, renames onto ``{path}``, fsyncs parent
-        directory on non-Windows hosts.
-
-        Gated by both ``current_session`` (finding #1, Wave-5 review)
-        and ``csrf_required`` per the project's auth contract for
-        mutating verbs (see ``alerts/routes.py:225`` and
-        ``control/routes.py:332`` for the same pattern).
-        """
-        del _session, _csrf
-        entry = _REGISTRY.get(config_file)
-        if entry is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Unknown config file: {config_file!r}",
-            )
-
-        config_dir = _resolve_config_dir(request)
-        target_path = config_dir / entry.filename
-
-        _model, report = run_validation(entry, body.yaml)
-        if report.parse or report.cross_reference or report.semantic:
-            raise HTTPException(status_code=422, detail=report.model_dump())
-
-        existing_text: str | None = None
-        if target_path.exists():
-            existing_text = target_path.read_text(encoding="utf-8")
-
-        atomic_write_text(target_path, body.yaml)
-
-        deploy_changed = _deploy_time_field_changed(
-            entry,
-            existing_text=existing_text,
-            proposed_text=body.yaml,
-        )
-
-        return ConfigUpdateResponse(
-            slug=entry.slug,
-            filename=entry.filename,
-            deploy_time_fields_changed=deploy_changed,
-        )
-
+    router.get("/files", response_model=ConfigFileListResponse)(_handle_get_files)
+    router.get("/path-exists")(_handle_get_path_exists)
+    # ``{config_file:path}`` captures slashes so slug ``profiles/small`` is
+    # routed correctly. The ``/schema/`` and ``/`` (PUT) prefixes remain
+    # unambiguous because ``/files`` and ``/path-exists`` are registered
+    # first as concrete paths.
+    router.get("/schema/{config_file:path}", response_model=FormSchema)(_handle_get_schema)
+    router.put("/{config_file:path}", response_model=ConfigUpdateResponse)(_handle_put_config)
     return router
