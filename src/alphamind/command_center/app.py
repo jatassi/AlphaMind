@@ -873,6 +873,15 @@ def build_app(  # noqa: PLR0913, PLR0915 — composition root wires four overrid
     # here so a configuration error fails loud at build time rather
     # than under the first request. Tests override the Discord channel
     # via AlertsOverrides.discord_channel and / or replace the rules.
+    #
+    # The data-dir override is mirrored to ``app.state.alerts_data_dir``
+    # so the hot-reload rules-builder closure (in ``_wire_alert_engine``)
+    # can re-render the disk-pressure predicate against the same
+    # production directory the initial rule set was built against.
+    # Without this mirror the closure read ``getattr(..., None)`` and
+    # silently downgraded the disk-pressure rule to its dormant variant
+    # on every hot-reload (Wave-6 finding #3).
+    app.state.alerts_data_dir = alerts.data_dir
     if alerts.rules is not None:
         app.state.alerts_rules = alerts.rules
     else:

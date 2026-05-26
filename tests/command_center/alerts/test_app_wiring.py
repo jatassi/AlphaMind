@@ -280,6 +280,62 @@ def test_alert_engine_factory_raises_after_budget(
         app_module._ALERTS_ENGINE_WIRE_BUDGET_SECONDS = original_budget
 
 
+def test_alerts_data_dir_survives_hot_reload(
+    tmp_path: Path,
+    configs: tuple[Path, Path],
+) -> None:
+    """Wave-6 finding #3 — hot-reload must keep the disk-pressure rule live.
+
+    Pre-fix ``_wire_alert_engine`` read ``getattr(app.state,
+    'alerts_data_dir', None)`` for the rules-builder closure, but
+    ``build_app`` never wrote that attribute. The closure returned
+    ``data_dir=None`` on every hot-reload, swapping the live
+    ``DataDirectoryDiskPressureCondition`` for a dormant placeholder —
+    monitoring would silently stop after the first ``alerts.yaml`` edit.
+
+    The fix mirrors ``alerts.data_dir`` onto ``app.state.alerts_data_dir``
+    in build_app; the closure then re-renders the same live condition.
+    """
+    from alphamind.command_center.alerts.conditions import (
+        DataDirectoryDiskPressureCondition,
+    )
+
+    config_dir, _ = configs
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    app = build_app(
+        command_center_config=load_command_center_config(config_dir),
+        security_config=load_security_config(config_dir),
+        alerts_config=load_alerts_config(config_dir),
+        config_dir=config_dir,
+        alerts_overrides=AlertsOverrides(
+            discord_channel=FakeDiscordChannel(),
+            data_dir=data_dir,
+        ),
+    )
+    # The state attr must be present even before the lifespan runs.
+    assert app.state.alerts_data_dir == data_dir
+    with TestClient(app):
+        engine = app.state.alert_engine
+        assert engine is not None
+        # Construction path: the initial disk-pressure rule must be live
+        # (not dormant) because alerts.data_dir was threaded through.
+        disk_rule = next(
+            r for r in engine.rules if str(r.name) == "data_directory_disk_pressure"
+        )
+        assert isinstance(disk_rule.condition, DataDirectoryDiskPressureCondition)
+        # Hot-reload path: the rules_builder closure captured inside
+        # ``_wire_alert_engine`` must still produce a live condition (not
+        # the dormant placeholder) when re-invoked. The builder is
+        # private to the engine; ``_rules_builder`` is the attribute the
+        # constructor stashes.
+        rebuilt = engine._rules_builder(app.state.alerts_config)  # type: ignore[attr-defined]
+        rebuilt_disk = next(
+            r for r in rebuilt if str(r.name) == "data_directory_disk_pressure"
+        )
+        assert isinstance(rebuilt_disk.condition, DataDirectoryDiskPressureCondition)
+
+
 @pytest.fixture(autouse=True)
 def _anyio_backend() -> str:
     return "asyncio"
