@@ -110,9 +110,7 @@ class TestControlOverridesWire:
 
 
 class TestLifespanConstructsRealClients:
-    def test_real_pipeline_client_constructed_when_no_override(
-        self, configs: Path
-    ) -> None:
+    def test_real_pipeline_client_constructed_when_no_override(self, configs: Path) -> None:
         app = build_app(
             command_center_config=load_command_center_config(configs),
             security_config=load_security_config(configs),
@@ -125,9 +123,7 @@ class TestLifespanConstructsRealClients:
             # Both clients share the lifespan-owned httpx client.
             assert app.state.control_http_client is not None
 
-    def test_lifespan_closes_shared_httpx_client_on_shutdown(
-        self, configs: Path
-    ) -> None:
+    def test_lifespan_closes_shared_httpx_client_on_shutdown(self, configs: Path) -> None:
         app = build_app(
             command_center_config=load_command_center_config(configs),
             security_config=load_security_config(configs),

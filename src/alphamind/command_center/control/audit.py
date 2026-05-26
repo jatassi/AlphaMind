@@ -234,13 +234,13 @@ def _build_detail(
         # ``regime_jump`` as the closest semantic fit when the operator
         # initiates the call (the operator's reason text carries the actual
         # rationale verbatim).
-        detail = EmergencyInvocationRequestedDetail(
+        emergency_detail = EmergencyInvocationRequestedDetail(
             trigger_type="regime_jump",
             trigger_reason=f"operator_console: {reason}",
             cooldown_remaining_seconds=0,
         )
         return (
-            detail,
+            emergency_detail,
             EventType.EMERGENCY_INVOCATION_REQUESTED,
             EventGroup.RISK_AND_GUARDRAIL,
             None,
@@ -249,12 +249,12 @@ def _build_detail(
 
     if verb == ControlVerb.CANCEL_ORDER:
         order_id = parameters.get("order_id")
-        detail = OrderCancelledDetail(
+        cancel_detail = OrderCancelledDetail(
             cancel_reason="operator_cancel",
             filled_quantity_at_cancellation=0,
         )
         return (
-            detail,
+            cancel_detail,
             EventType.ORDER_CANCELLED,
             EventGroup.ORDER_LIFECYCLE,
             None,

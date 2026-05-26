@@ -24,7 +24,9 @@ here.
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any
+from collections.abc import Callable
+from datetime import datetime
+from typing import Annotated, Any, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
@@ -102,12 +104,18 @@ def _build_error_envelope(result: ControlResult) -> ControlErrorEnvelope:
     else:
         code = result.error_code
         detail = result.error_detail
+    # ``ControlError.code`` is typed as ``Literal[...]``; ``ControlErrorCode``
+    # is a StrEnum whose values are exactly that Literal's members. Pass the
+    # string value so the Pydantic boundary type doesn't see a StrEnum
+    # instance that mypy considers a wider type.
     return ControlErrorEnvelope(
-        error=ControlError(code=code, detail=detail, details=None)
+        error=ControlError.model_validate(
+            {"code": code.value, "detail": detail, "details": None}
+        )
     )
 
 
-def _raise_for_failure(result: ControlResult) -> None:
+def _raise_for_failure(result: ControlResult) -> NoReturn:
     """Raise :class:`HTTPException` for a failed :class:`ControlResult`.
 
     The HTTP body is the :class:`ControlErrorEnvelope` shape; the
@@ -131,11 +139,12 @@ def _make_ctx(request: Request, session_id: OperatorSessionId) -> ProxyContext:
     reaches into ``app.state`` so the proxy stays decoupled from
     FastAPI.
     """
+    clock: Callable[[], datetime] | None = getattr(request.app.state, "clock", None)
     return ProxyContext(
         production_session_factory=request.app.state.production_session_factory,
         process_lifetime_id=request.app.state.process_lifetime_id,
         operator_session_id=session_id,
-        now_factory=getattr(request.app.state, "clock", None),
+        now_factory=clock,
     )
 
 
@@ -180,207 +189,198 @@ def _report_to_pydantic(
 
 
 # ---------------------------------------------------------------------------
-# Router builder
+# Routes — module-level @router.post handlers (mccabe complexity discipline:
+# keep build_control_router() trivial; let the route handlers carry the
+# per-verb dispatch logic in their own bodies).
 # ---------------------------------------------------------------------------
 
 
+router = APIRouter()
+
+
+@router.post("/pause", response_model=ControlResponseEnvelope)
+async def post_pause(
+    body: PauseRequest,
+    request: Request,
+    session_id: Annotated[OperatorSessionId, Depends(current_session)],
+    _csrf: Annotated[None, Depends(csrf_required)],
+) -> ControlResponseEnvelope:
+    """``POST /api/control/pause`` — relay to pipeline + audit."""
+    out = await proxy_pause(
+        ctx=_make_ctx(request, session_id),
+        pipeline=_pipeline_client(request),
+        reason=body.reason,
+    )
+    if not out.result.ok:
+        _raise_for_failure(out.result)
+    return ControlResponseEnvelope(status="accepted", applied_at=_parse_applied_at(out.result))
+
+
+@router.post("/resume", response_model=ControlResponseEnvelope)
+async def post_resume(
+    body: ResumeRequest,  # noqa: ARG001 — empty body validated by Pydantic
+    request: Request,
+    session_id: Annotated[OperatorSessionId, Depends(current_session)],
+    _csrf: Annotated[None, Depends(csrf_required)],
+) -> ControlResponseEnvelope:
+    """``POST /api/control/resume`` — relay to pipeline + audit."""
+    out = await proxy_resume(ctx=_make_ctx(request, session_id), pipeline=_pipeline_client(request))
+    if not out.result.ok:
+        _raise_for_failure(out.result)
+    return ControlResponseEnvelope(status="accepted", applied_at=_parse_applied_at(out.result))
+
+
+@router.post(
+    "/trigger_emergency_invocation",
+    response_model=TriggerEmergencyInvocationResponse,
+)
+async def post_trigger_emergency(
+    body: TriggerEmergencyInvocationRequest,
+    request: Request,
+    session_id: Annotated[OperatorSessionId, Depends(current_session)],
+    _csrf: Annotated[None, Depends(csrf_required)],
+) -> TriggerEmergencyInvocationResponse:
+    """``POST /api/control/trigger_emergency_invocation`` — relay + audit."""
+    out = await proxy_trigger_emergency_invocation(
+        ctx=_make_ctx(request, session_id),
+        pipeline=_pipeline_client(request),
+        reason=body.reason,
+    )
+    if not out.result.ok:
+        _raise_for_failure(out.result)
+    if out.pipeline_invocation_id is None:
+        # Defensive — happy path always populates the pipeline id.
+        _raise_internal_error("upstream omitted invocation_id")
+    return TriggerEmergencyInvocationResponse(
+        status="accepted",
+        applied_at=_parse_applied_at(out.result),
+        invocation_id=out.pipeline_invocation_id,
+    )
+
+
+@router.post("/switch_profile", response_model=ControlResponseEnvelope)
+async def post_switch_profile(
+    body: SwitchProfileRequest,
+    request: Request,
+    session_id: Annotated[OperatorSessionId, Depends(current_session)],
+    _csrf: Annotated[None, Depends(csrf_required)],
+) -> ControlResponseEnvelope:
+    """``POST /api/control/switch_profile`` — relay + emit_profile_switch_entry."""
+    out = await proxy_switch_profile(
+        ctx=_make_ctx(request, session_id),
+        pipeline=_pipeline_client(request),
+        profile_name=body.profile_name,
+    )
+    if not out.result.ok:
+        _raise_for_failure(out.result)
+    return ControlResponseEnvelope(status="accepted", applied_at=_parse_applied_at(out.result))
+
+
+@router.post(
+    "/run_universe_validation",
+    response_model=RunUniverseValidationResponse,
+)
+async def post_run_universe_validation(
+    body: RunUniverseValidationRequest,  # noqa: ARG001
+    request: Request,
+    session_id: Annotated[OperatorSessionId, Depends(current_session)],
+    _csrf: Annotated[None, Depends(csrf_required)],
+) -> RunUniverseValidationResponse:
+    """``POST /api/control/run_universe_validation`` — relay, render report."""
+    out = await proxy_run_universe_validation(
+        ctx=_make_ctx(request, session_id), pipeline=_pipeline_client(request)
+    )
+    if not out.result.ok:
+        _raise_for_failure(out.result)
+    if out.report is None or not isinstance(out.report, PipelineUniverseValidationReport):
+        _raise_internal_error("upstream omitted report")
+    return RunUniverseValidationResponse(
+        status="accepted",
+        applied_at=_parse_applied_at(out.result),
+        report=_report_to_pydantic(out.report),
+    )
+
+
+@router.post("/cancel_order", response_model=ControlResponseEnvelope)
+async def post_cancel_order(
+    body: CancelOrderRequest,
+    request: Request,
+    session_id: Annotated[OperatorSessionId, Depends(current_session)],
+    _csrf: Annotated[None, Depends(csrf_required)],
+) -> ControlResponseEnvelope:
+    """``POST /api/control/cancel_order`` — relay to monitor + audit."""
+    out = await proxy_cancel_order(
+        ctx=_make_ctx(request, session_id),
+        monitor=_monitor_client(request),
+        order_id=body.order_id,
+    )
+    if not out.result.ok:
+        _raise_for_failure(out.result)
+    return ControlResponseEnvelope(status="accepted", applied_at=_parse_applied_at(out.result))
+
+
+@router.post("/force_close_position", response_model=ForceClosePositionResponse)
+async def post_force_close_position(
+    body: ForceClosePositionRequest,
+    request: Request,
+    session_id: Annotated[OperatorSessionId, Depends(current_session)],
+    _csrf: Annotated[None, Depends(csrf_required)],
+) -> ForceClosePositionResponse:
+    """``POST /api/control/force_close_position`` — relay + audit + envelope id."""
+    out = await proxy_force_close_position(
+        ctx=_make_ctx(request, session_id),
+        monitor=_monitor_client(request),
+        position_id=body.position_id,
+        rationale=body.rationale,
+    )
+    if not out.result.ok:
+        _raise_for_failure(out.result)
+    if out.envelope_id is None:
+        _raise_internal_error("upstream omitted envelope_id")
+    return ForceClosePositionResponse(
+        status="accepted",
+        applied_at=_parse_applied_at(out.result),
+        envelope_id=out.envelope_id,
+    )
+
+
+@router.post("/set_halt_mode", response_model=ControlResponseEnvelope)
+async def post_set_halt_mode(
+    body: SetHaltModeRequest,
+    request: Request,
+    session_id: Annotated[OperatorSessionId, Depends(current_session)],
+    _csrf: Annotated[None, Depends(csrf_required)],
+) -> ControlResponseEnvelope:
+    """``POST /api/control/set_halt_mode`` — relay to monitor + audit."""
+    out = await proxy_set_halt_mode(
+        ctx=_make_ctx(request, session_id),
+        monitor=_monitor_client(request),
+        enabled=body.enabled,
+        reason=body.reason,
+    )
+    if not out.result.ok:
+        _raise_for_failure(out.result)
+    return ControlResponseEnvelope(status="accepted", applied_at=_parse_applied_at(out.result))
+
+
+def _raise_internal_error(detail: str) -> NoReturn:
+    """Raise ``500 Internal Server Error`` with the documented envelope shape."""
+    raise HTTPException(
+        status_code=500,
+        detail=_build_error_envelope(
+            ControlResult.failure(error_code=ControlErrorCode.INTERNAL_ERROR, error_detail=detail)
+        ).model_dump(mode="json"),
+    )
+
+
 def build_control_router() -> APIRouter:
-    """Construct the ``/api/control/*`` router.
+    """Return the module-level :class:`APIRouter` carrying the 8 ``/api/control/*`` routes.
 
-    The router is mounted under ``/api/control`` so each registered
-    route's path is the verb's path segment without further prefixing.
+    Provided as a function (rather than re-exporting the global
+    ``router`` directly) so consumers see a stable API and so tests
+    can build their own minimal app via ``app.include_router(...)``
+    without importing the module-level symbol.
     """
-    router = APIRouter()
-
-    @router.post("/pause", response_model=ControlResponseEnvelope)
-    async def post_pause(
-        body: PauseRequest,
-        request: Request,
-        session_id: Annotated[OperatorSessionId, Depends(current_session)],
-        _csrf: Annotated[None, Depends(csrf_required)],
-    ) -> ControlResponseEnvelope:
-        out = await proxy_pause(
-            ctx=_make_ctx(request, session_id),
-            pipeline=_pipeline_client(request),
-            reason=body.reason,
-        )
-        if not out.result.ok:
-            _raise_for_failure(out.result)
-        return ControlResponseEnvelope(
-            status="accepted", applied_at=_parse_applied_at(out.result)
-        )
-
-    @router.post("/resume", response_model=ControlResponseEnvelope)
-    async def post_resume(
-        body: ResumeRequest,  # noqa: ARG001 — empty body validated by Pydantic
-        request: Request,
-        session_id: Annotated[OperatorSessionId, Depends(current_session)],
-        _csrf: Annotated[None, Depends(csrf_required)],
-    ) -> ControlResponseEnvelope:
-        out = await proxy_resume(
-            ctx=_make_ctx(request, session_id), pipeline=_pipeline_client(request)
-        )
-        if not out.result.ok:
-            _raise_for_failure(out.result)
-        return ControlResponseEnvelope(
-            status="accepted", applied_at=_parse_applied_at(out.result)
-        )
-
-    @router.post(
-        "/trigger_emergency_invocation",
-        response_model=TriggerEmergencyInvocationResponse,
-    )
-    async def post_trigger_emergency(
-        body: TriggerEmergencyInvocationRequest,
-        request: Request,
-        session_id: Annotated[OperatorSessionId, Depends(current_session)],
-        _csrf: Annotated[None, Depends(csrf_required)],
-    ) -> TriggerEmergencyInvocationResponse:
-        out = await proxy_trigger_emergency_invocation(
-            ctx=_make_ctx(request, session_id),
-            pipeline=_pipeline_client(request),
-            reason=body.reason,
-        )
-        if not out.result.ok:
-            _raise_for_failure(out.result)
-        if out.pipeline_invocation_id is None:
-            # Defensive — happy path always populates the pipeline id.
-            raise HTTPException(
-                status_code=500,
-                detail=_build_error_envelope(
-                    ControlResult.failure(
-                        error_code=ControlErrorCode.INTERNAL_ERROR,
-                        error_detail="upstream omitted invocation_id",
-                    )
-                ).model_dump(mode="json"),
-            )
-        return TriggerEmergencyInvocationResponse(
-            status="accepted",
-            applied_at=_parse_applied_at(out.result),
-            invocation_id=out.pipeline_invocation_id,
-        )
-
-    @router.post("/switch_profile", response_model=ControlResponseEnvelope)
-    async def post_switch_profile(
-        body: SwitchProfileRequest,
-        request: Request,
-        session_id: Annotated[OperatorSessionId, Depends(current_session)],
-        _csrf: Annotated[None, Depends(csrf_required)],
-    ) -> ControlResponseEnvelope:
-        out = await proxy_switch_profile(
-            ctx=_make_ctx(request, session_id),
-            pipeline=_pipeline_client(request),
-            profile_name=body.profile_name,
-        )
-        if not out.result.ok:
-            _raise_for_failure(out.result)
-        return ControlResponseEnvelope(
-            status="accepted", applied_at=_parse_applied_at(out.result)
-        )
-
-    @router.post(
-        "/run_universe_validation",
-        response_model=RunUniverseValidationResponse,
-    )
-    async def post_run_universe_validation(
-        body: RunUniverseValidationRequest,  # noqa: ARG001
-        request: Request,
-        session_id: Annotated[OperatorSessionId, Depends(current_session)],
-        _csrf: Annotated[None, Depends(csrf_required)],
-    ) -> RunUniverseValidationResponse:
-        out = await proxy_run_universe_validation(
-            ctx=_make_ctx(request, session_id), pipeline=_pipeline_client(request)
-        )
-        if not out.result.ok:
-            _raise_for_failure(out.result)
-        if out.report is None or not isinstance(
-            out.report, PipelineUniverseValidationReport
-        ):
-            raise HTTPException(
-                status_code=500,
-                detail=_build_error_envelope(
-                    ControlResult.failure(
-                        error_code=ControlErrorCode.INTERNAL_ERROR,
-                        error_detail="upstream omitted report",
-                    )
-                ).model_dump(mode="json"),
-            )
-        return RunUniverseValidationResponse(
-            status="accepted",
-            applied_at=_parse_applied_at(out.result),
-            report=_report_to_pydantic(out.report),
-        )
-
-    @router.post("/cancel_order", response_model=ControlResponseEnvelope)
-    async def post_cancel_order(
-        body: CancelOrderRequest,
-        request: Request,
-        session_id: Annotated[OperatorSessionId, Depends(current_session)],
-        _csrf: Annotated[None, Depends(csrf_required)],
-    ) -> ControlResponseEnvelope:
-        out = await proxy_cancel_order(
-            ctx=_make_ctx(request, session_id),
-            monitor=_monitor_client(request),
-            order_id=body.order_id,
-        )
-        if not out.result.ok:
-            _raise_for_failure(out.result)
-        return ControlResponseEnvelope(
-            status="accepted", applied_at=_parse_applied_at(out.result)
-        )
-
-    @router.post(
-        "/force_close_position", response_model=ForceClosePositionResponse
-    )
-    async def post_force_close_position(
-        body: ForceClosePositionRequest,
-        request: Request,
-        session_id: Annotated[OperatorSessionId, Depends(current_session)],
-        _csrf: Annotated[None, Depends(csrf_required)],
-    ) -> ForceClosePositionResponse:
-        out = await proxy_force_close_position(
-            ctx=_make_ctx(request, session_id),
-            monitor=_monitor_client(request),
-            position_id=body.position_id,
-            rationale=body.rationale,
-        )
-        if not out.result.ok:
-            _raise_for_failure(out.result)
-        if out.envelope_id is None:
-            raise HTTPException(
-                status_code=500,
-                detail=_build_error_envelope(
-                    ControlResult.failure(
-                        error_code=ControlErrorCode.INTERNAL_ERROR,
-                        error_detail="upstream omitted envelope_id",
-                    )
-                ).model_dump(mode="json"),
-            )
-        return ForceClosePositionResponse(
-            status="accepted",
-            applied_at=_parse_applied_at(out.result),
-            envelope_id=out.envelope_id,
-        )
-
-    @router.post("/set_halt_mode", response_model=ControlResponseEnvelope)
-    async def post_set_halt_mode(
-        body: SetHaltModeRequest,
-        request: Request,
-        session_id: Annotated[OperatorSessionId, Depends(current_session)],
-        _csrf: Annotated[None, Depends(csrf_required)],
-    ) -> ControlResponseEnvelope:
-        out = await proxy_set_halt_mode(
-            ctx=_make_ctx(request, session_id),
-            monitor=_monitor_client(request),
-            enabled=body.enabled,
-            reason=body.reason,
-        )
-        if not out.result.ok:
-            _raise_for_failure(out.result)
-        return ControlResponseEnvelope(
-            status="accepted", applied_at=_parse_applied_at(out.result)
-        )
-
     return router
 
 

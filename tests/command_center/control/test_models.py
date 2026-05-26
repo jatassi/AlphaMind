@@ -59,9 +59,7 @@ class TestRequestBodiesForbidExtra:
 
     def test_set_halt_mode_rejects_unknown_field(self) -> None:
         with pytest.raises(ValidationError):
-            SetHaltModeRequest.model_validate(
-                {"enabled": True, "reason": "vol spike", "tier": 3}
-            )
+            SetHaltModeRequest.model_validate({"enabled": True, "reason": "vol spike", "tier": 3})
 
 
 class TestRequestBodiesValidate:
@@ -97,10 +95,11 @@ class TestRequestBodiesValidate:
 
 class TestResponseEnvelopes:
     def test_control_response_envelope_requires_aware_datetime(self) -> None:
+        # Deliberately naive — exercises the AwareDatetime field's
+        # rejection path. DTZ001 suppressed for this single line.
+        naive = datetime(2026, 5, 26)  # noqa: DTZ001
         with pytest.raises(ValidationError):
-            ControlResponseEnvelope.model_validate(
-                {"status": "accepted", "applied_at": datetime(2026, 5, 26)}
-            )
+            ControlResponseEnvelope.model_validate({"status": "accepted", "applied_at": naive})
 
     def test_control_response_envelope_round_trip(self) -> None:
         applied_at = datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC)
@@ -155,37 +154,27 @@ class TestUniverseValidationReportShape:
     def test_ticker_row_requires_exactly_5_criteria(self) -> None:
         rows = self._make_criterion_rows()
         with pytest.raises(ValidationError):
-            UniverseValidationTickerRow(
-                ticker="AAPL", verdict="pass", criteria=rows[:4]
-            )
+            UniverseValidationTickerRow(ticker="AAPL", verdict="pass", criteria=rows[:4])
 
     def test_report_requires_at_least_one_ticker(self) -> None:
         with pytest.raises(ValidationError):
-            UniverseValidationReport(
-                validated_at=datetime(2026, 5, 26, tzinfo=UTC), tickers=[]
-            )
+            UniverseValidationReport(validated_at=datetime(2026, 5, 26, tzinfo=UTC), tickers=[])
 
     def test_run_universe_validation_response_round_trip(self) -> None:
         applied_at = datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC)
         rows = self._make_criterion_rows()
         report = UniverseValidationReport(
             validated_at=applied_at,
-            tickers=[
-                UniverseValidationTickerRow(ticker="AAPL", verdict="pass", criteria=rows)
-            ],
+            tickers=[UniverseValidationTickerRow(ticker="AAPL", verdict="pass", criteria=rows)],
         )
-        env = RunUniverseValidationResponse(
-            status="accepted", applied_at=applied_at, report=report
-        )
+        env = RunUniverseValidationResponse(status="accepted", applied_at=applied_at, report=report)
         assert env.report.tickers[0].ticker == "AAPL"
 
 
 class TestErrorEnvelope:
     def test_error_envelope_requires_known_code(self) -> None:
         with pytest.raises(ValidationError):
-            ControlErrorEnvelope.model_validate(
-                {"error": {"code": "wat", "detail": "nope"}}
-            )
+            ControlErrorEnvelope.model_validate({"error": {"code": "wat", "detail": "nope"}})
 
     def test_error_envelope_round_trip(self) -> None:
         env = ControlErrorEnvelope(

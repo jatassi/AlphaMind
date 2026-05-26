@@ -56,10 +56,14 @@ async def _read_activity_rows(
 ) -> list[ActivityLogRow]:
     async with factory() as session:
         rows = (
-            await session.execute(
-                select(ActivityLogRow).where(ActivityLogRow.invocation_id == invocation_id)
+            (
+                await session.execute(
+                    select(ActivityLogRow).where(ActivityLogRow.invocation_id == invocation_id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     return list(rows)
 
 
@@ -88,9 +92,7 @@ class TestProxyHappyPaths:
         self, production_session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         pipeline = FakePipelineClient()
-        out = await proxy_resume(
-            ctx=_ctx(production_session_factory), pipeline=pipeline
-        )
+        out = await proxy_resume(ctx=_ctx(production_session_factory), pipeline=pipeline)
         assert out.result.ok is True
         rows = await _read_activity_rows(production_session_factory, out.invocation_id)
         assert len(rows) == 1
@@ -223,9 +225,7 @@ class TestProxySwitchProfile:
         rows = await _read_activity_rows(production_session_factory, out.invocation_id)
         assert rows == []
         # But the invocation row itself is still durable.
-        invocation = await _read_invocation_row(
-            production_session_factory, out.invocation_id
-        )
+        invocation = await _read_invocation_row(production_session_factory, out.invocation_id)
         assert invocation is not None
         assert invocation.trigger_source == "operator_console"
 
@@ -282,12 +282,8 @@ class TestProxyInvocationRowMetadata:
         self, production_session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         pipeline = FakePipelineClient()
-        out = await proxy_pause(
-            ctx=_ctx(production_session_factory), pipeline=pipeline, reason="x"
-        )
-        invocation = await _read_invocation_row(
-            production_session_factory, out.invocation_id
-        )
+        out = await proxy_pause(ctx=_ctx(production_session_factory), pipeline=pipeline, reason="x")
+        invocation = await _read_invocation_row(production_session_factory, out.invocation_id)
         assert invocation is not None
         assert invocation.trigger_source == "operator_console"
         assert "verb=pause" in invocation.trigger_reason

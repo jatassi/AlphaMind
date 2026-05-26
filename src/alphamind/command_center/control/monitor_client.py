@@ -140,9 +140,7 @@ class RealMonitorClient:
             body={"enabled": enabled, "reason": reason},
         )
 
-    async def _call_envelope_only(
-        self, *, path: str, body: dict[str, object]
-    ) -> ControlResult:
+    async def _call_envelope_only(self, *, path: str, body: dict[str, object]) -> ControlResult:
         try:
             response = await self._http_client.post(self._url(path), json=body)
         except httpx.RequestError as exc:

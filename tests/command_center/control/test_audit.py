@@ -31,7 +31,7 @@ async def _run_with_handle(
     factory: async_sessionmaker[AsyncSession],
     verb: ControlVerb,
     *,
-    parameters: dict,
+    parameters: dict[str, object],
     result: ControlResult,
 ) -> str:
     """Open the operator-invocation handle, call audit, commit; return invocation id."""
@@ -48,7 +48,7 @@ async def _run_with_handle(
             result=result,
             now=_NOW,
         )
-        assert entry is not None or verb.value in {"run_universe_validation"}
+        assert entry is not None or verb.value == "run_universe_validation"
         return handle.invocation_id
 
 
@@ -57,10 +57,14 @@ async def _read_rows_for(
 ) -> list[ActivityLogRow]:
     async with factory() as session:
         rows = (
-            await session.execute(
-                select(ActivityLogRow).where(ActivityLogRow.invocation_id == invocation_id)
+            (
+                await session.execute(
+                    select(ActivityLogRow).where(ActivityLogRow.invocation_id == invocation_id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     return list(rows)
 
 
@@ -206,7 +210,10 @@ class TestAuditWriterSuppressionAndErrors:
     async def test_naive_now_rejected(
         self, production_session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        naive = datetime(2026, 5, 26, 12, 0, 0)  # no tzinfo
+        # Deliberately naive — the test exercises the audit helper's
+        # tzinfo-required guard. DTZ001 is suppressed for this single
+        # construction so the rejection path is testable.
+        naive = datetime(2026, 5, 26, 12, 0, 0)  # noqa: DTZ001
         async with operator_invocation(
             production_session_factory=production_session_factory,
             process_lifetime_id=PROCESS_LIFETIME_ID,
@@ -241,5 +248,3 @@ class TestAuditWriterFailurePath:
         body = rows[0].detail_json
         assert "precondition_failed" in body
         assert "already paused" in body
-
-

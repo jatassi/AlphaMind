@@ -46,9 +46,7 @@ _FROZEN_NOW = datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC)
 
 
 @pytest.fixture
-async def production_session_factory() -> AsyncIterator[
-    async_sessionmaker[AsyncSession]
-]:
+async def production_session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -169,9 +167,7 @@ class TestPipelineVerbsHappyPath:
         body = r.json()
         assert body["invocation_id"] == "inv-99"
 
-    def test_switch_profile_returns_accepted(
-        self, client: TestClient
-    ) -> None:
+    def test_switch_profile_returns_accepted(self, client: TestClient) -> None:
         r = client.post("/api/control/switch_profile", json={"profile_name": "large"})
         assert r.status_code == 200
         assert r.json()["status"] == "accepted"
@@ -194,9 +190,7 @@ class TestMonitorVerbsHappyPath:
         assert r.json()["status"] == "accepted"
         assert fake_monitor_client.calls == [("cancel_order", {"order_id": "ord-1"})]
 
-    def test_force_close_position_returns_envelope_id(
-        self, client: TestClient
-    ) -> None:
+    def test_force_close_position_returns_envelope_id(self, client: TestClient) -> None:
         r = client.post(
             "/api/control/force_close_position",
             json={"position_id": "pos-1", "rationale": "exit"},
@@ -271,9 +265,7 @@ class TestErrorCodeToHttpStatusMapping:
                 )
             )
         )
-        r = client.post(
-            "/api/control/trigger_emergency_invocation", json={"reason": "x"}
-        )
+        r = client.post("/api/control/trigger_emergency_invocation", json={"reason": "x"})
         assert r.status_code == 409
         assert r.json()["detail"]["error"]["code"] == "cooldown_active"
 
@@ -318,15 +310,11 @@ class TestRequestValidation:
         assert r.status_code == 422
 
     def test_pause_extra_field_rejected(self, client: TestClient) -> None:
-        r = client.post(
-            "/api/control/pause", json={"reason": "x", "bogus": True}
-        )
+        r = client.post("/api/control/pause", json={"reason": "x", "bogus": True})
         assert r.status_code == 422
 
     def test_force_close_missing_rationale_rejected(self, client: TestClient) -> None:
-        r = client.post(
-            "/api/control/force_close_position", json={"position_id": "pos-1"}
-        )
+        r = client.post("/api/control/force_close_position", json={"position_id": "pos-1"})
         assert r.status_code == 422
 
 
@@ -340,9 +328,11 @@ class TestRouteAuthGatesDeclared:
 
     def _route_dependencies(self, app: FastAPI, path: str) -> set[object]:
         """Pull the set of dependency-call function objects out of the route signature."""
+        from fastapi.routing import APIRoute
+
         for route in app.router.routes:
-            if getattr(route, "path", None) == path:
-                return {d.call for d in getattr(route.dependant, "dependencies", [])}
+            if isinstance(route, APIRoute) and route.path == path:
+                return {d.call for d in route.dependant.dependencies}
         msg = f"route {path!r} not found in app"
         raise AssertionError(msg)
 
@@ -363,9 +353,7 @@ class TestRouteAuthGatesDeclared:
         self, control_app: FastAPI, path: str
     ) -> None:
         deps = self._route_dependencies(control_app, path)
-        assert current_session in deps, (
-            f"route {path!r} missing Depends(current_session)"
-        )
+        assert current_session in deps, f"route {path!r} missing Depends(current_session)"
         assert csrf_required in deps, f"route {path!r} missing Depends(csrf_required)"
 
 
@@ -413,9 +401,7 @@ def unauth_app(
     app.state.security_config = SecurityConfig(
         session=SessionConfig(duration_hours=12, cookie_name="cc_session"),
         csrf=CsrfConfig(cookie_name="cc_csrf"),
-        webauthn=WebauthnConfig(
-            relying_party_id="localhost", relying_party_name="AlphaMind"
-        ),
+        webauthn=WebauthnConfig(relying_party_id="localhost", relying_party_name="AlphaMind"),
     )
     app.state.session_signing_secret = b"x" * 32
     app.state.clock = lambda: _FROZEN_NOW
@@ -432,9 +418,7 @@ def unauth_app(
 
 
 class TestAuthGateLive:
-    def test_pause_without_session_cookie_returns_401(
-        self, unauth_app: FastAPI
-    ) -> None:
+    def test_pause_without_session_cookie_returns_401(self, unauth_app: FastAPI) -> None:
         with TestClient(unauth_app) as c:
             r = c.post("/api/control/pause", json={"reason": "x"})
         assert r.status_code == 401

@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, cast
 
 import httpx
 
@@ -166,9 +166,7 @@ class PipelineClient(Protocol):
         self, *, reason: str
     ) -> PipelineTriggerEmergencyResult: ...
 
-    async def switch_profile(
-        self, *, profile_name: str
-    ) -> PipelineSwitchProfileResult: ...
+    async def switch_profile(self, *, profile_name: str) -> PipelineSwitchProfileResult: ...
 
     async def run_universe_validation(self) -> PipelineRunUniverseValidationResult: ...
 
@@ -196,16 +194,12 @@ class RealPipelineClient:
         self._http_client = http_client
 
     async def pause(self, *, reason: str) -> ControlResult:
-        return await self._call_envelope_only(
-            path="/control/pause", body={"reason": reason}
-        )
+        return await self._call_envelope_only(path="/control/pause", body={"reason": reason})
 
     async def resume(self) -> ControlResult:
         return await self._call_envelope_only(path="/control/resume", body={})
 
-    async def trigger_emergency_invocation(
-        self, *, reason: str
-    ) -> PipelineTriggerEmergencyResult:
+    async def trigger_emergency_invocation(self, *, reason: str) -> PipelineTriggerEmergencyResult:
         try:
             response = await self._http_client.post(
                 self._url("/control/trigger_emergency_invocation"),
@@ -233,11 +227,11 @@ class RealPipelineClient:
                 result=ControlResult.success(applied_at=applied_at),
                 invocation_id=invocation_id,
             )
-        return PipelineTriggerEmergencyResult(result=parse_error_envelope(response, source=_SOURCE_TAG))
+        return PipelineTriggerEmergencyResult(
+            result=parse_error_envelope(response, source=_SOURCE_TAG)
+        )
 
-    async def switch_profile(
-        self, *, profile_name: str
-    ) -> PipelineSwitchProfileResult:
+    async def switch_profile(self, *, profile_name: str) -> PipelineSwitchProfileResult:
         try:
             response = await self._http_client.post(
                 self._url("/control/switch_profile"),
@@ -250,7 +244,7 @@ class RealPipelineClient:
         if response.is_success:
             payload = safe_json(response)
             applied_at = extract_str_field(payload, "applied_at")
-            outcome = _extract_profile_switch_outcome(payload, profile_name=profile_name)
+            outcome = _extract_profile_switch_outcome(payload)
             if applied_at is None or outcome is None:
                 return PipelineSwitchProfileResult(
                     result=ControlResult.failure(
@@ -264,7 +258,9 @@ class RealPipelineClient:
             return PipelineSwitchProfileResult(
                 result=ControlResult.success(applied_at=applied_at), outcome=outcome
             )
-        return PipelineSwitchProfileResult(result=parse_error_envelope(response, source=_SOURCE_TAG))
+        return PipelineSwitchProfileResult(
+            result=parse_error_envelope(response, source=_SOURCE_TAG)
+        )
 
     async def run_universe_validation(self) -> PipelineRunUniverseValidationResult:
         try:
@@ -284,19 +280,18 @@ class RealPipelineClient:
                     result=ControlResult.failure(
                         error_code=ControlErrorCode.INTERNAL_ERROR,
                         error_detail=(
-                            "upstream run_universe_validation response missing "
-                            "applied_at or report"
+                            "upstream run_universe_validation response missing applied_at or report"
                         ),
                     )
                 )
             return PipelineRunUniverseValidationResult(
                 result=ControlResult.success(applied_at=applied_at), report=report
             )
-        return PipelineRunUniverseValidationResult(result=parse_error_envelope(response, source=_SOURCE_TAG))
+        return PipelineRunUniverseValidationResult(
+            result=parse_error_envelope(response, source=_SOURCE_TAG)
+        )
 
-    async def _call_envelope_only(
-        self, *, path: str, body: dict[str, object]
-    ) -> ControlResult:
+    async def _call_envelope_only(self, *, path: str, body: dict[str, object]) -> ControlResult:
         """Wire shape for the verbs that return the bare ``ControlResponseEnvelope``."""
         try:
             response = await self._http_client.post(self._url(path), json=body)
@@ -324,9 +319,7 @@ class RealPipelineClient:
 # ---------------------------------------------------------------------------
 
 
-def _extract_profile_switch_outcome(
-    payload: object, *, profile_name: str
-) -> ProfileSwitchOutcome | None:
+def _extract_profile_switch_outcome(payload: object) -> ProfileSwitchOutcome | None:
     """Reconstruct a :class:`ProfileSwitchOutcome` from the upstream response.
 
     The pipeline schema's ``switch_profile`` response carries only the
@@ -366,6 +359,66 @@ def _extract_profile_switch_outcome(
     )
 
 
+def _parse_criterion(c_raw: object) -> PipelineUniverseValidationCriterion | None:
+    """Parse one criterion row out of the upstream JSON, or ``None`` on malformed input."""
+    if not isinstance(c_raw, dict):
+        return None
+    c_name = c_raw.get("criterion")
+    c_verdict = c_raw.get("verdict")
+    if not isinstance(c_name, str) or not isinstance(c_verdict, str):
+        return None
+    note_raw = c_raw.get("note")
+    computed_value_raw = c_raw.get("computed_value")
+    threshold_raw = c_raw.get("threshold")
+    # ``computed_value`` / ``threshold`` carry either a scalar or a per-key
+    # mapping per the upstream schema. We forward whatever the upstream sent
+    # (the Pydantic boundary model validates the union on the way out).
+    if not _is_optional_value(computed_value_raw) or not _is_optional_value(threshold_raw):
+        return None
+    # ``_is_optional_value`` has narrowed both raw values to the criterion's
+    # union shape; the cast forwards the runtime invariant to mypy.
+    return PipelineUniverseValidationCriterion(
+        criterion=c_name,
+        verdict=c_verdict,
+        computed_value=cast("float | dict[str, float] | None", computed_value_raw),
+        threshold=cast("float | dict[str, float] | None", threshold_raw),
+        note=note_raw if isinstance(note_raw, str) else None,
+    )
+
+
+def _is_optional_value(value: object) -> bool:
+    """``computed_value`` / ``threshold`` are ``float | dict[str, float] | None``."""
+    if value is None or isinstance(value, int | float):
+        return True
+    if isinstance(value, dict):
+        return all(isinstance(v, int | float) for v in value.values())
+    return False
+
+
+def _parse_ticker(ticker_raw: object) -> PipelineUniverseValidationTicker | None:
+    """Parse one ticker row + its 5 criterion rows."""
+    if not isinstance(ticker_raw, dict):
+        return None
+    ticker = ticker_raw.get("ticker")
+    verdict = ticker_raw.get("verdict")
+    criteria_raw = ticker_raw.get("criteria")
+    if (
+        not isinstance(ticker, str)
+        or not isinstance(verdict, str)
+        or not isinstance(criteria_raw, list)
+    ):
+        return None
+    criteria: list[PipelineUniverseValidationCriterion] = []
+    for c_raw in criteria_raw:
+        criterion = _parse_criterion(c_raw)
+        if criterion is None:
+            return None
+        criteria.append(criterion)
+    return PipelineUniverseValidationTicker(
+        ticker=ticker, verdict=verdict, criteria=tuple(criteria)
+    )
+
+
 def _extract_universe_report(payload: object) -> PipelineUniverseValidationReport | None:
     """Reconstruct the universe-validation report from the upstream JSON."""
     if not isinstance(payload, dict):
@@ -383,42 +436,11 @@ def _extract_universe_report(payload: object) -> PipelineUniverseValidationRepor
         return None
     tickers: list[PipelineUniverseValidationTicker] = []
     for ticker_raw in tickers_raw:
-        if not isinstance(ticker_raw, dict):
+        ticker = _parse_ticker(ticker_raw)
+        if ticker is None:
             return None
-        ticker = ticker_raw.get("ticker")
-        verdict = ticker_raw.get("verdict")
-        criteria_raw = ticker_raw.get("criteria")
-        if (
-            not isinstance(ticker, str)
-            or not isinstance(verdict, str)
-            or not isinstance(criteria_raw, list)
-        ):
-            return None
-        criteria: list[PipelineUniverseValidationCriterion] = []
-        for c_raw in criteria_raw:
-            if not isinstance(c_raw, dict):
-                return None
-            c_name = c_raw.get("criterion")
-            c_verdict = c_raw.get("verdict")
-            if not isinstance(c_name, str) or not isinstance(c_verdict, str):
-                return None
-            criteria.append(
-                PipelineUniverseValidationCriterion(
-                    criterion=c_name,
-                    verdict=c_verdict,
-                    computed_value=c_raw.get("computed_value"),  # type: ignore[arg-type]
-                    threshold=c_raw.get("threshold"),  # type: ignore[arg-type]
-                    note=c_raw.get("note") if isinstance(c_raw.get("note"), str) else None,
-                )
-            )
-        tickers.append(
-            PipelineUniverseValidationTicker(
-                ticker=ticker, verdict=verdict, criteria=tuple(criteria)
-            )
-        )
-    return PipelineUniverseValidationReport(
-        validated_at=validated_at, tickers=tuple(tickers)
-    )
+        tickers.append(ticker)
+    return PipelineUniverseValidationReport(validated_at=validated_at, tickers=tuple(tickers))
 
 
 # ---------------------------------------------------------------------------
@@ -461,9 +483,7 @@ class FakePipelineClient:
     def set_resume_response(self, response: ControlResult) -> None:
         self._resume_response = response
 
-    def set_trigger_emergency_response(
-        self, response: PipelineTriggerEmergencyResult
-    ) -> None:
+    def set_trigger_emergency_response(self, response: PipelineTriggerEmergencyResult) -> None:
         self._trigger_emergency_response = response
 
     def set_switch_profile_response(self, response: PipelineSwitchProfileResult) -> None:
@@ -484,15 +504,11 @@ class FakePipelineClient:
         self.calls.append(("resume", {}))
         return self._resume_response
 
-    async def trigger_emergency_invocation(
-        self, *, reason: str
-    ) -> PipelineTriggerEmergencyResult:
+    async def trigger_emergency_invocation(self, *, reason: str) -> PipelineTriggerEmergencyResult:
         self.calls.append(("trigger_emergency_invocation", {"reason": reason}))
         return self._trigger_emergency_response
 
-    async def switch_profile(
-        self, *, profile_name: str
-    ) -> PipelineSwitchProfileResult:
+    async def switch_profile(self, *, profile_name: str) -> PipelineSwitchProfileResult:
         self.calls.append(("switch_profile", {"profile_name": profile_name}))
         if self._switch_profile_response is not None:
             return self._switch_profile_response
@@ -538,15 +554,11 @@ class FakePipelineClient:
                         ticker="AAPL",
                         verdict="pass",
                         criteria=(
-                            PipelineUniverseValidationCriterion(
-                                criterion="adv", verdict="pass"
-                            ),
+                            PipelineUniverseValidationCriterion(criterion="adv", verdict="pass"),
                             PipelineUniverseValidationCriterion(
                                 criterion="analyst_coverage", verdict="pass"
                             ),
-                            PipelineUniverseValidationCriterion(
-                                criterion="beta", verdict="pass"
-                            ),
+                            PipelineUniverseValidationCriterion(criterion="beta", verdict="pass"),
                             PipelineUniverseValidationCriterion(
                                 criterion="market_cap", verdict="pass"
                             ),

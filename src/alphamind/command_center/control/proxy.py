@@ -30,6 +30,7 @@ Per the ALP-128 invariants:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -50,6 +51,7 @@ from alphamind.command_center.control.pipeline_client import (
     PipelineRunUniverseValidationResult,
     PipelineSwitchProfileResult,
     PipelineTriggerEmergencyResult,
+    PipelineUniverseValidationReport,
 )
 from alphamind.state.invocation_context.config_change import (
     emit_profile_switch_entry,
@@ -110,7 +112,7 @@ class ProxyRunUniverseValidationResult:
 
     result: ControlResult
     invocation_id: str
-    report: object | None = None
+    report: PipelineUniverseValidationReport | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -131,20 +133,17 @@ class ProxyContext:
     production_session_factory: async_sessionmaker[AsyncSession]
     process_lifetime_id: str
     operator_session_id: OperatorSessionId
-    now_factory: object = None  # callable[[], datetime] | None — see _now() below
+    now_factory: Callable[[], datetime] | None = None
 
     def now(self) -> datetime:
         """Return the current UTC datetime, allowing test injection.
 
-        ``now_factory`` is annotated as ``object`` to keep the proxy's
-        public surface from leaking a ``Callable`` typing dependency.
-        The concrete signature is ``Callable[[], datetime]``; tests pass
-        a frozen ``lambda: <fixed>`` to keep activity-log timestamps
-        deterministic.
+        Tests pass a frozen ``lambda: <fixed>`` to keep activity-log
+        timestamps deterministic; production callers leave ``now_factory``
+        as ``None`` and the helper falls through to :func:`datetime.now`.
         """
-        factory = self.now_factory
-        if callable(factory):
-            return factory()  # type: ignore[no-any-return]
+        if self.now_factory is not None:
+            return self.now_factory()
         return datetime.now(UTC)
 
 
@@ -153,9 +152,7 @@ class ProxyContext:
 # ---------------------------------------------------------------------------
 
 
-async def proxy_pause(
-    *, ctx: ProxyContext, pipeline: PipelineClient, reason: str
-) -> ProxyResult:
+async def proxy_pause(*, ctx: ProxyContext, pipeline: PipelineClient, reason: str) -> ProxyResult:
     """``/api/control/pause`` proxy."""
     async with operator_invocation(
         production_session_factory=ctx.production_session_factory,
@@ -206,8 +203,8 @@ async def proxy_trigger_emergency_invocation(
         verb=ControlVerb.TRIGGER_EMERGENCY_INVOCATION,
         now=ctx.now(),
     ) as handle:
-        upstream: PipelineTriggerEmergencyResult = (
-            await pipeline.trigger_emergency_invocation(reason=reason)
+        upstream: PipelineTriggerEmergencyResult = await pipeline.trigger_emergency_invocation(
+            reason=reason
         )
         write_operator_action_entry(
             handle=handle,
@@ -256,9 +253,7 @@ async def proxy_switch_profile(
                 outcome=upstream.outcome,
                 now=ctx.now(),
             )
-        return ProxyResult(
-            result=upstream.result, invocation_id=handle.invocation_id
-        )
+        return ProxyResult(result=upstream.result, invocation_id=handle.invocation_id)
 
 
 async def proxy_run_universe_validation(
@@ -272,9 +267,7 @@ async def proxy_run_universe_validation(
         verb=ControlVerb.RUN_UNIVERSE_VALIDATION,
         now=ctx.now(),
     ) as handle:
-        upstream: PipelineRunUniverseValidationResult = (
-            await pipeline.run_universe_validation()
-        )
+        upstream: PipelineRunUniverseValidationResult = await pipeline.run_universe_validation()
         # No audit row — read-only verb.
         write_operator_action_entry(
             handle=handle,
@@ -328,10 +321,8 @@ async def proxy_force_close_position(
         verb=ControlVerb.FORCE_CLOSE_POSITION,
         now=ctx.now(),
     ) as handle:
-        upstream: MonitorForceClosePositionResult = (
-            await monitor.force_close_position(
-                position_id=position_id, rationale=rationale
-            )
+        upstream: MonitorForceClosePositionResult = await monitor.force_close_position(
+            position_id=position_id, rationale=rationale
         )
         write_operator_action_entry(
             handle=handle,

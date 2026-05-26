@@ -59,9 +59,7 @@ def parse_error_envelope(response: httpx.Response, *, source: str) -> ControlRes
         code = _STATUS_TO_DEFAULT_CODE.get(detail_status, ControlErrorCode.INTERNAL_ERROR)
         return ControlResult.failure(
             error_code=code,
-            error_detail=(
-                f"upstream {source} returned HTTP {detail_status} with non-JSON body"
-            ),
+            error_detail=(f"upstream {source} returned HTTP {detail_status} with non-JSON body"),
         )
     error_obj = _extract_error_object(body)
     if error_obj is None:
@@ -74,27 +72,30 @@ def parse_error_envelope(response: httpx.Response, *, source: str) -> ControlRes
         )
     raw_code = error_obj.get("code")
     raw_detail = error_obj.get("detail") or f"HTTP {detail_status}"
-    code = None
+    parsed_code: ControlErrorCode | None = None
     if isinstance(raw_code, str):
         try:
-            code = ControlErrorCode(raw_code)
+            parsed_code = ControlErrorCode(raw_code)
         except ValueError:
-            code = None
-    if code is None:
-        code = _STATUS_TO_DEFAULT_CODE.get(detail_status, ControlErrorCode.INTERNAL_ERROR)
-    return ControlResult.failure(error_code=code, error_detail=str(raw_detail))
+            parsed_code = None
+    if parsed_code is None:
+        parsed_code = _STATUS_TO_DEFAULT_CODE.get(detail_status, ControlErrorCode.INTERNAL_ERROR)
+    return ControlResult.failure(error_code=parsed_code, error_detail=str(raw_detail))
 
 
 def _extract_error_object(body: object) -> dict[str, object] | None:
     """Pull the ``{code, detail, details?}`` block out of either wire shape."""
     if not isinstance(body, dict):
         return None
-    if isinstance(body.get("error"), dict):
-        return body["error"]
+    direct = body.get("error")
+    if isinstance(direct, dict):
+        return dict(direct)
     # FastAPI wraps HTTPException(detail=...) under "detail".
     inner = body.get("detail")
-    if isinstance(inner, dict) and isinstance(inner.get("error"), dict):
-        return inner["error"]
+    if isinstance(inner, dict):
+        nested = inner.get("error")
+        if isinstance(nested, dict):
+            return dict(nested)
     return None
 
 
