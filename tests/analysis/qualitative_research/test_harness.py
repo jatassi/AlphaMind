@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -33,6 +34,9 @@ from alphamind.analysis.qualitative_research.models import QualitativeBrief
 from alphamind.config.models.agents import AdaptiveAgentConfig, AllowedModel
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
+
+# Canonical test invocation timestamp; date partition is "2026-05-01".
+_AS_OF = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -234,6 +238,7 @@ async def test_happy_path_returns_harness_success(
         session=session,
         universe=universe,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
@@ -281,6 +286,7 @@ async def test_one_retry_recovery_returns_retry_count_one(
         session=session,
         universe=universe,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_stub,
     )
 
@@ -318,6 +324,7 @@ async def test_both_attempts_malformed_raises_with_both_raw_responses(
             session=session,
             universe=universe,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
 
@@ -361,6 +368,7 @@ async def test_max_tokens_with_parse_error_raises_context_overflow_no_retry(
             session=session,
             universe=universe,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_stub,
         )
 
@@ -411,6 +419,7 @@ async def test_tool_allowlist_drift_raises_sdk_failure_at_startup(
             session=session,
             universe=universe,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_stub,
         )
 
@@ -454,6 +463,7 @@ async def test_slow_sdk_stub_raises_timeout_failure(
             session=session,
             universe=universe,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_slow_stub,
         )
 
@@ -503,6 +513,7 @@ async def test_off_universe_ticker_triggers_validation_retry(
         session=session,
         universe=universe,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_stub,
     )
 
@@ -535,10 +546,11 @@ async def test_diagnostic_files_written_when_archive_root_provided(
         session=session,
         universe=universe,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
-    diag_dir = archive_root / "invocations" / "inv-diag-001" / "analysis" / "qualitative_researcher"
+    diag_dir = archive_root / "2026-05-01" / "inv-diag-001" / "analysis" / "qualitative_researcher"
     assert (diag_dir / "prompt.md").exists()
     assert (diag_dir / "user_message.md").exists()
     assert (diag_dir / "response_initial.md").exists()
@@ -599,12 +611,11 @@ async def test_diagnostic_files_include_retry_on_corrective_loop(
         session=session,
         universe=universe,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
-    diag_dir = (
-        archive_root / "invocations" / "inv-retry-001" / "analysis" / "qualitative_researcher"
-    )
+    diag_dir = archive_root / "2026-05-01" / "inv-retry-001" / "analysis" / "qualitative_researcher"
     initial_text = (diag_dir / "response_initial.md").read_text(encoding="utf-8")
     retry_text = (diag_dir / "response_retry.md").read_text(encoding="utf-8")
     assert "structured_output not populated" in initial_text
@@ -635,6 +646,7 @@ async def test_tool_calls_used_counts_tool_use_blocks(
         session=session,
         universe=universe,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
@@ -663,6 +675,7 @@ async def test_tool_calls_used_accumulates_across_retry(
         session=session,
         universe=universe,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
@@ -703,6 +716,7 @@ async def test_claude_agent_options_structure(
         session=session,
         universe=universe,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_capturing_stub,
     )
 
@@ -755,6 +769,7 @@ async def test_mcp_servers_populated_when_tools_configured(
         session=session,
         universe=universe,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_capturing_stub,
     )
 
@@ -804,6 +819,7 @@ async def test_mcp_servers_empty_when_no_tools_configured(
         session=session,
         universe=universe,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_capturing_stub,
     )
 
@@ -844,6 +860,7 @@ async def test_mcp_handlers_preserve_envelope_fields(
         session=session,
         universe=universe,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_capturing_stub,
     )
 
@@ -921,6 +938,7 @@ async def test_mcp_handler_fails_closed_on_invalid_input(
         session=session,
         universe=universe,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_capturing_stub,
     )
 
@@ -968,6 +986,7 @@ async def test_auth_failure_raises_sdk_failure_naming_env_var(
             session=session,
             universe=universe,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_auth_fail_stub,
         )
 
@@ -997,6 +1016,7 @@ async def test_sdk_query_fn_is_used_real_query_never_called(
             session=session,
             universe=universe,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
         mock_real.assert_not_called()
@@ -1034,6 +1054,7 @@ async def test_system_prompt_cached_per_process(
             session=session,
             universe=universe,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)]),
         )
         await invoke_qualitative_researcher(
@@ -1043,6 +1064,7 @@ async def test_system_prompt_cached_per_process(
             session=session,
             universe=universe,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)]),
         )
 

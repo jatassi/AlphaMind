@@ -18,10 +18,10 @@ alphamind.scheduler run --debug-e2e``:
 
 Emits one self-contained dark-mode HTML page summarizing the
 invocation: a 12-phase verdict ribbon, a 10-row SDK-call table with
-each call's ``duration_s`` / ``input_tokens`` / ``output_tokens`` /
-``tool_calls`` / ``stop_reason``, the resolved-config summary, an
-incomplete-phase failure section, and a collapsible pipeline-log
-excerpt.
+each call's ``duration_s`` / ``input_tokens`` / ``cache_read_tokens`` /
+``cache_write_tokens`` / ``output_tokens`` / ``tool_calls`` /
+``stop_reason``, the resolved-config summary, an incomplete-phase
+failure section, and a collapsible pipeline-log excerpt.
 
 Usage::
 
@@ -44,7 +44,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
+from alphamind._kernel.archive_layout import find_invocation_archive_dir
 from alphamind.scripts._stdio import configure_utf8_stdio
 
 __all__ = [
@@ -116,13 +116,23 @@ class PhaseSummary:
 
 @dataclass(frozen=True, slots=True)
 class SdkCallRow:
-    """One row of the SDK-call table — paired ``agent_request``/``response``."""
+    """One row of the SDK-call table — paired ``agent_request``/``response``.
+
+    The three input-side counts mirror the SDK ``usage`` split: most
+    AlphaMind prompts hit the cache, so ``cache_read_tokens`` carries the
+    bulk of the volume while ``input_tokens`` is the non-cached delta
+    (typically single-to-low-double-digit). ``cache_write_tokens`` is the
+    cache-creation cost on a miss. Splitting the columns lets the
+    operator confirm at a glance that the prompt was assembled (ALP-701).
+    """
 
     phase: str
     agent: str
     model: str
     duration_s: float | None
     input_tokens: int | None
+    cache_read_tokens: int | None
+    cache_write_tokens: int | None
     output_tokens: int | None
     tool_calls: int | None
     stop_reason: str | None
@@ -140,28 +150,33 @@ def discover_invocation_id(archive_root: Path) -> str:
     the caller can either fall back to ``--invocation-id`` or surface
     the operator-visible error.
 
-    Leading-underscore directory names (e.g. ``_pre_invocation``, where
-    the debug-e2e CLI writes the pre-invocation ``seed`` event) are
-    excluded from the candidate set so they don't collide with the
-    canonical ``<invocation_id>`` directory.
+    Searches the date-partitioned canonical layout
+    ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/``. Leading-underscore
+    directory names (e.g. ``_pre_invocation``) are excluded from the
+    candidate set.
     """
-    inv_root = archive_root / INVOCATIONS_DIRNAME
-    if not inv_root.is_dir():
-        msg = f"no invocations directory under {archive_root}; did the debug-e2e subprocess run?"
+    if not archive_root.is_dir():
+        msg = f"archive root does not exist: {archive_root}; did the debug-e2e subprocess run?"
         raise ValueError(msg)
+    # Collect all invocation dirs across all date partitions.
     candidates = sorted(
-        p.name for p in inv_root.iterdir() if p.is_dir() and not p.name.startswith("_")
+        p
+        for date_dir in sorted(archive_root.iterdir())
+        if date_dir.is_dir() and not date_dir.name.startswith("_")
+        for p in date_dir.iterdir()
+        if p.is_dir() and not p.name.startswith("_")
     )
     if not candidates:
-        msg = f"no invocations under {inv_root}"
+        msg = f"no invocations found under {archive_root}"
         raise ValueError(msg)
     if len(candidates) > 1:
+        names = ", ".join(p.name for p in candidates)
         msg = (
-            f"multiple invocations under {inv_root}: {', '.join(candidates)}; "
+            f"multiple invocations under {archive_root}: {names}; "
             "pass --invocation-id to disambiguate"
         )
         raise ValueError(msg)
-    return candidates[0]
+    return candidates[0].name
 
 
 def load_invocation_archive(*, archive_root: Path, invocation_id: str) -> InvocationArchive:
@@ -172,9 +187,9 @@ def load_invocation_archive(*, archive_root: Path, invocation_id: str) -> Invoca
     directory by default, not under the archive — operator copies it in
     when summarizing a run).
     """
-    inv_dir = archive_root / INVOCATIONS_DIRNAME / invocation_id
-    if not inv_dir.is_dir():
-        msg = f"invocation directory not found: {inv_dir}"
+    inv_dir = find_invocation_archive_dir(archive_root=archive_root, invocation_id=invocation_id)
+    if inv_dir is None or not inv_dir.is_dir():
+        msg = f"invocation directory not found for {invocation_id!r} under {archive_root}"
         raise FileNotFoundError(msg)
 
     events: list[dict[str, Any]] = []
@@ -300,6 +315,8 @@ def build_sdk_call_rows(events: list[dict[str, Any]]) -> list[SdkCallRow]:
                     model=model,
                     duration_s=None,
                     input_tokens=None,
+                    cache_read_tokens=None,
+                    cache_write_tokens=None,
                     output_tokens=None,
                     tool_calls=None,
                     stop_reason=None,
@@ -315,6 +332,12 @@ def build_sdk_call_rows(events: list[dict[str, Any]]) -> list[SdkCallRow]:
                 duration_s=float(duration) if isinstance(duration, (int, float)) else None,
                 input_tokens=resp.get("input_tokens")
                 if isinstance(resp.get("input_tokens"), int)
+                else None,
+                cache_read_tokens=resp.get("cache_read_tokens")
+                if isinstance(resp.get("cache_read_tokens"), int)
+                else None,
+                cache_write_tokens=resp.get("cache_write_tokens")
+                if isinstance(resp.get("cache_write_tokens"), int)
                 else None,
                 output_tokens=resp.get("output_tokens")
                 if isinstance(resp.get("output_tokens"), int)
@@ -411,6 +434,8 @@ def _sdk_call_table(rows: list[SdkCallRow]) -> str:
             f"<td>{_esc(r.model)}</td>"
             f"<td>{_esc(duration_txt)}</td>"
             f'<td class="num">{_esc(_format_tokens(r.input_tokens))}</td>'
+            f'<td class="num">{_esc(_format_tokens(r.cache_read_tokens))}</td>'
+            f'<td class="num">{_esc(_format_tokens(r.cache_write_tokens))}</td>'
             f'<td class="num">{_esc(_format_tokens(r.output_tokens))}</td>'
             f'<td class="num">{_esc(_format_tokens(r.tool_calls))}</td>'
             f'<td class="status {status_cls}">{stop}</td>'
@@ -420,7 +445,8 @@ def _sdk_call_table(rows: list[SdkCallRow]) -> str:
         '<table class="stats wide">'
         "<thead><tr>"
         "<th>Phase</th><th>Agent</th><th>Model</th><th>Duration</th>"
-        "<th>Input tokens</th><th>Output tokens</th><th>Tool calls</th>"
+        "<th>Input tokens</th><th>Cache read</th><th>Cache write</th>"
+        "<th>Output tokens</th><th>Tool calls</th>"
         "<th>Stop reason</th>"
         "</tr></thead>"
         f"<tbody>{''.join(tr_lines)}</tbody>"

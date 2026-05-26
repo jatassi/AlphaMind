@@ -20,17 +20,15 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
+from alphamind._kernel.archive_layout import RESOLVED_CONFIG_FILENAME, invocation_archive_dir
 from alphamind._kernel.atomic_io import atomic_write_text
-from alphamind._kernel.invocations import (
-    INVOCATIONS_DIRNAME,
-    RESOLVED_CONFIG_FILENAME,
-)
 from alphamind.config.resolver import ResolvedConfig
 
 
@@ -127,20 +125,23 @@ def feature_flags_snapshot(resolved: ResolvedConfig) -> dict[str, bool]:
 
 
 def persist_snapshot(
-    resolved: ResolvedConfig, *, archive_root: Path, invocation_id: str
+    resolved: ResolvedConfig, *, archive_root: Path, invocation_id: str, as_of: datetime
 ) -> SnapshotResult:
     """Serialize, hash, and atomically write the snapshot for one invocation.
 
-    Writes to ``archive_root / INVOCATIONS_DIRNAME / invocation_id /
-    RESOLVED_CONFIG_FILENAME``, creating intermediate directories. The caller
-    is responsible for resolving any ``%USERPROFILE%`` expansions in
-    ``archive_root`` before passing the path in.
+    Writes to ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/<RESOLVED_CONFIG_FILENAME>``
+    (date-partitioned canonical layout per ALP-689 followup), creating intermediate
+    directories. The caller is responsible for resolving any ``%USERPROFILE%``
+    expansions in ``archive_root`` before passing the path in.
     """
     serialized = serialize_resolved_config(resolved)
     digest = compute_snapshot_hash(serialized)
     flags = feature_flags_snapshot(resolved)
 
-    snapshot_path = archive_root / INVOCATIONS_DIRNAME / invocation_id / RESOLVED_CONFIG_FILENAME
+    snapshot_path = (
+        invocation_archive_dir(archive_root=archive_root, as_of=as_of, invocation_id=invocation_id)
+        / RESOLVED_CONFIG_FILENAME
+    )
     atomic_write_text(snapshot_path, serialized)
 
     return SnapshotResult(hash=digest, path=snapshot_path, feature_flags_snapshot=flags)

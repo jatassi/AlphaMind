@@ -98,6 +98,14 @@ def _resolve_progress(progress_jsonl_path: str | None) -> ProgressEmitter:
     return _JsonlAppender(path=Path(progress_jsonl_path))
 
 
+def _parse_as_of(payload: dict[str, Any]) -> datetime | None:
+    """Parse the optional ``as_of`` ISO 8601 string from the worker payload."""
+    as_of_str = payload.get("as_of")
+    if not as_of_str:
+        return None
+    return datetime.fromisoformat(as_of_str).astimezone(UTC)
+
+
 async def _run_domain_researcher(payload: dict[str, Any]) -> dict[str, Any]:
     """Invoke ``invoke_domain_researcher`` in this fresh process and serialize the result."""
     # Parent marshals the resolved (per-trigger-override-applied)
@@ -108,6 +116,7 @@ async def _run_domain_researcher(payload: dict[str, Any]) -> dict[str, Any]:
     progress = _resolve_progress(payload.get("progress_jsonl_path"))
     archive_root_str = payload.get("archive_root")
     archive_root = Path(archive_root_str) if archive_root_str else None
+    as_of = _parse_as_of(payload)
 
     try:
         result = await invoke_domain_researcher(
@@ -115,6 +124,7 @@ async def _run_domain_researcher(payload: dict[str, Any]) -> dict[str, Any]:
             sector=sector,
             user_message=payload["user_message"],
             invocation_id=payload["invocation_id"],
+            as_of=as_of,
             archive_root=archive_root,
             progress=progress,
             phase=payload.get("phase", "domain_researchers"),
@@ -226,6 +236,7 @@ async def _run_qualitative_researcher(payload: dict[str, Any]) -> dict[str, Any]
     archive_root_str = payload.get("archive_root")
     archive_root = Path(archive_root_str) if archive_root_str else None
     universe = frozenset(payload["universe"])
+    as_of = _parse_as_of(payload)
 
     engine = make_engine()
     session_factory = make_session_factory(engine)
@@ -238,6 +249,7 @@ async def _run_qualitative_researcher(payload: dict[str, Any]) -> dict[str, Any]
                 invocation_id=payload["invocation_id"],
                 session=session,
                 universe=universe,
+                as_of=as_of,
                 archive_root=archive_root,
                 progress=progress,
                 phase=payload.get("phase", "qualitative"),
@@ -301,6 +313,7 @@ async def _run_synthesizer(payload: dict[str, Any]) -> dict[str, Any]:
     archive_root_str = payload.get("archive_root")
     archive_root = Path(archive_root_str) if archive_root_str else None
     portfolio_reader = _decode_pickle(payload["portfolio_reader_pickle"])
+    as_of = _parse_as_of(payload)
 
     try:
         result = await invoke_synthesizer(
@@ -308,6 +321,7 @@ async def _run_synthesizer(payload: dict[str, Any]) -> dict[str, Any]:
             user_message=payload["user_message"],
             invocation_id=payload["invocation_id"],
             portfolio_reader=portfolio_reader,
+            as_of=as_of,
             archive_root=archive_root,
             progress=progress,
             phase=payload.get("phase", "synthesizer"),
@@ -327,6 +341,7 @@ async def _run_adaptive_researcher(payload: dict[str, Any]) -> dict[str, Any]:
     sector_briefs = _decode_pickle(payload["sector_briefs_pickle"])
     qualitative_brief = _decode_pickle(payload["qualitative_brief_pickle"])
     correlation_regime_brief = _decode_pickle(payload["correlation_regime_brief_pickle"])
+    as_of = _parse_as_of(payload)
 
     engine = make_engine()
     session_factory = make_session_factory(engine)
@@ -342,6 +357,7 @@ async def _run_adaptive_researcher(payload: dict[str, Any]) -> dict[str, Any]:
                 sector_briefs=sector_briefs,
                 qualitative_brief=qualitative_brief,
                 correlation_regime_brief=correlation_regime_brief,
+                as_of=as_of,
                 archive_root=archive_root,
                 progress=progress,
                 phase=payload.get("phase", "adaptive"),
@@ -361,6 +377,7 @@ async def _run_analyst(payload: dict[str, Any]) -> dict[str, Any]:
     archive_root = Path(archive_root_str) if archive_root_str else None
     retrieval_store = _decode_pickle(payload["retrieval_store_pickle"])
     active_sectors = frozenset(payload["active_sectors"])
+    as_of = _parse_as_of(payload)
 
     engine = make_engine()
     sync_session_factory = make_session_factory(engine)
@@ -377,6 +394,7 @@ async def _run_analyst(payload: dict[str, Any]) -> dict[str, Any]:
                 initial_validation_state=validation_state,
                 retrieval_store=retrieval_store,
                 active_sectors=active_sectors,
+                as_of=as_of,
                 archive_root=archive_root,
                 progress=progress,
                 phase=payload.get("phase", "analyst"),
@@ -395,6 +413,7 @@ async def _run_strategist(payload: dict[str, Any]) -> dict[str, Any]:
     archive_root = Path(archive_root_str) if archive_root_str else None
     retrieval_store = _decode_pickle(payload["retrieval_store_pickle"])
     active_sectors = frozenset(payload["active_sectors"])
+    as_of = _parse_as_of(payload)
 
     engine = make_engine()
     sync_session_factory = make_session_factory(engine)
@@ -412,6 +431,7 @@ async def _run_strategist(payload: dict[str, Any]) -> dict[str, Any]:
                 validation_state=validation_state,
                 retrieval_store=retrieval_store,
                 active_sectors=active_sectors,
+                as_of=as_of,
                 archive_root=archive_root,
                 progress=progress,
                 phase=payload.get("phase", "strategist"),
@@ -428,6 +448,7 @@ async def _run_portfolio_manager(payload: dict[str, Any]) -> dict[str, Any]:
     progress = _resolve_progress(payload.get("progress_jsonl_path"))
     archive_root_str = payload.get("archive_root")
     archive_root = Path(archive_root_str) if archive_root_str else None
+    as_of = _parse_as_of(payload)
     retrieval_store = _decode_pickle(payload["retrieval_store_pickle"])
     thesis_component_reader = _decode_pickle(payload["thesis_component_reader_pickle"])
     pre_processor_bundle = _decode_pickle(payload["pre_processor_bundle_pickle"])
@@ -477,6 +498,7 @@ async def _run_portfolio_manager(payload: dict[str, Any]) -> dict[str, Any]:
                 library_config=library_config,
                 library_market=library_market,
                 state_persistence_config=state_persistence_config,
+                as_of=as_of,
                 archive_root=archive_root,
                 broker_dispatch=None,
                 progress=progress,

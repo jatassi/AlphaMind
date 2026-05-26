@@ -27,16 +27,19 @@ invariant the prior per-feature verify suite collectively covered:
 - All 12 in-invocation phases produced both `phase_start` + `phase_done`
   events in dependency-respecting order (parent issue § D). The
   pre-invocation `seed` event lands under
-  `<archive>/invocations/_pre_invocation/progress.jsonl` and is
+  `<archive>/<YYYY-MM-DD>/_pre_invocation/progress.jsonl` and is
   intentionally NOT part of the real-invocation stream the verify
   script inspects — operators can read that file directly for
   seed-step debugging.
 - All 9 SDK call pairs landed with `agent_request`/`agent_response` pairs
-  carrying `duration_s` / `input_tokens` / `output_tokens` / `tool_calls` /
-  `stop_reason` (parent issue § E). The 9 are: 3 domain researchers
-  (tech_semis, financials, energy), qualitative, adaptive, synthesizer,
-  analyst, strategist, pm. Distillation is the deterministic 7-phase
-  numerical orchestrator and emits no SDK call.
+  carrying `duration_s` / `input_tokens` / `cache_read_tokens` /
+  `cache_write_tokens` / `output_tokens` / `tool_calls` / `stop_reason`
+  (parent issue § E; cache split added per ALP-701 so the operator can
+  tell apart a cache-hit prompt from a broken context-assembly path).
+  The 9 are: 3 domain researchers (tech_semis, financials, energy),
+  qualitative, adaptive, synthesizer, analyst, strategist, pm.
+  Distillation is the deterministic 7-phase numerical orchestrator and
+  emits no SDK call.
 - The synthetic portfolio seeded cleanly (8 positions, 8 theses, cash
   ledger at $24,440).
 - No Alpaca HTTP traffic leaked into the subprocess's captured
@@ -153,7 +156,9 @@ Argparse surface:
 
 - `--archive-root DIR` (required) — root of the verification archive. The
   CLI writes the per-invocation directory under
-  `<archive-root>/invocations/<invocation_id>/`.
+  `<archive-root>/<YYYY-MM-DD>/<invocation_id>/` (date-bucketed layout
+  introduced by ALP-689 / PR #204; see
+  `src/alphamind/_kernel/archive_layout.py`).
 - `--db-path PATH` (default `data/alphamind-debug-e2e.db`) — SQLite DB the
   debug-e2e mode targets. Must end with `-debug-e2e.db`.
 - `--run-type {pre_open,market_hours_rolling,pre_close,off_hours_rolling,weekend_saturday,weekend_sunday,emergency}`
@@ -166,6 +171,16 @@ Argparse surface:
   `FRESH_START_PORTFOLIO` fixture (0 positions / 0 theses / $100,000
   cash). Forwards to the scheduler subprocess and reparameterizes the
   `synthetic_portfolio` check (ALP-618). See the subsection below.
+- `--resume-from INVOCATION_ID:PHASE` (default unset) — forward
+  `--resume-from` to the scheduler subprocess so it hydrates SDK-phase
+  outputs from the named source invocation and re-runs from `<phase>`
+  onward (ALP-693 / ALP-696). The wrapper does no validation — the
+  scheduler CLI is the source of truth on validity. Mutually exclusive
+  with `--fresh-start` (enforced at the scheduler CLI's argparse
+  layer). When set, the wrapper also runs the post-resume
+  `check_deterministic_prefix` check that hashes the distillation
+  outputs against the source archive. See the "Resuming a failed run"
+  section below.
 
 `check_no_alpaca` scans the captured subprocess stderr stream directly — no
 separate `--pipeline-log` flag is needed.
@@ -193,7 +208,7 @@ set -a && source <(tr -d '\r' < .env) && set +a && \
 What to watch for in the archive after a green run:
 
 - **Analyst** — `decision/analyst/sdk_response.json` (or the equivalent
-  per-agent diagnostics under `<archive>/invocations/<id>/decision/analyst/`)
+  per-agent diagnostics under `<archive>/<YYYY-MM-DD>/<id>/decision/analyst/`)
   should carry OPEN recommendations sized against the $100,000 cash
   budget. The analyst is the "new trade opportunities" agent; with no
   pre-existing positions to manage, it has the full book to fill.
@@ -340,19 +355,34 @@ emitted line becomes one notification.
 
 ```bash
 # === AUTHORITATIVE e2e progress monitor — arm right after launching verify ===
-# Waits for the latest invocation's progress.jsonl to land, then polls it
-# and emits every phase_start / phase_done / agent_request / agent_response
-# event as it is written.
+# Waits for an invocation's progress.jsonl to appear under the date-bucketed
+# archive layout (`<archive>/<YYYY-MM-DD>/inv-*/`), then polls it and emits
+# every phase_start / phase_done / agent_request / agent_response event as
+# it is written. WATERMARK_EPOCH gates against stale prior-run dirs.
 
 set -u
 ARCHIVE_ROOT="${ARCHIVE_ROOT:-.archive/verify-debug-e2e}"
 PATTERN='"(phase_start|phase_done|agent_request|agent_response)"'
+# Default watermark: 5 minutes ago. Override if launching the verify well
+# before arming. Stale prior-run dirs (often hours old) are skipped because
+# their mtime falls below the watermark.
+WATERMARK_EPOCH="${WATERMARK_EPOCH:-$(($(date -u +%s) - 300))}"
 
-echo "waiting for $ARCHIVE_ROOT/invocations/inv-*/progress.jsonl ..."
+echo "waiting for inv dir under $ARCHIVE_ROOT with mtime >= $WATERMARK_EPOCH ($(date -u -d "@$WATERMARK_EPOCH" +%Y-%m-%dT%H:%M:%SZ)) ..."
+f=""
 while true; do
-  f=$(ls -td "$ARCHIVE_ROOT"/invocations/inv-*/progress.jsonl 2>/dev/null | head -1)
-  if [ -n "$f" ] && [ -f "$f" ]; then break; fi
-  sleep 2
+  # New layout: <archive>/<YYYY-MM-DD>/inv-*/progress.jsonl
+  # The intermediate '*' is the date bucket. The 'inv-*' glob filters out
+  # the sibling '_pre_invocation' directory that holds the seed event.
+  for d in $(ls -td "$ARCHIVE_ROOT"/*/inv-*/ 2>/dev/null); do
+    mt=$(stat -c %Y "$d" 2>/dev/null || echo 0)
+    if [ "$mt" -ge "$WATERMARK_EPOCH" ] && [ -f "$d/progress.jsonl" ]; then
+      f="$d/progress.jsonl"
+      break
+    fi
+  done
+  if [ -n "$f" ]; then break; fi
+  sleep 3
 done
 matched=$(grep -cE "$PATTERN" "$f" 2>/dev/null || echo 0)
 echo "armed: $matched backlog matches in $f"
@@ -364,28 +394,32 @@ while true; do
     sed -n "$((prev+1)),${cur}p" "$f" | grep -E "$PATTERN" || true
     prev=$cur
   fi
-  sleep 2
+  sleep 3
 done
 ```
 
-**Why "right after launching" and not "before".** `ls -td` picks the
-most recently modified `inv-*/progress.jsonl`. If you arm before the
-verify launches AND prior runs sit in the archive root, the script
-locks onto the most recent stale file and tails it forever — silence,
-no error. Two ways to avoid this:
+**Why a `WATERMARK_EPOCH` and not just `ls -td`.** A naive `ls -td`
+picks the most recently modified `inv-*/progress.jsonl` *anywhere*
+under the archive root. Two failure modes that bit operators before
+the watermark was added:
 
-1. **Arm right after launching the verify.** The new run's directory
-   appears within a second or two, and `ls -td` then ranks it above
-   any prior runs. This is the recommended pattern.
-2. **Clear stale archives first** (`rm -rf
-   "$ARCHIVE_ROOT/invocations"`) before arming, so there is no prior
-   `progress.jsonl` for the wait loop to lock onto.
+1. **Stale prior runs locked the tail.** The wait loop matches the
+   newest `inv-*/progress.jsonl` instantly — including yesterday's
+   completed run. The monitor tails a fixed-size file forever, emitting
+   silence. The watermark filters by mtime so only post-launch dirs
+   qualify.
+2. **Legacy flat-layout dirs.** PR #204 (ALP-689) moved the layout
+   from `<archive>/invocations/inv-*/` to
+   `<archive>/<YYYY-MM-DD>/inv-*/`. Old runs may still sit under the
+   former `invocations/` subtree. The new glob (`*/inv-*/`) targets the
+   date-bucketed layout; the watermark filter handles the rest.
 
-The earlier two-step variant (`d=$(ls -td ...)` then `f="$d/progress.jsonl"`)
-proved fragile in practice: an empty-glob expansion + the path-join can
-silently leave the loop spinning. The single-step `ls -td .../inv-*/progress.jsonl`
-fails closed — if no file matches, the wait loop loops; if one does,
-the loop breaks. Stick with the form above.
+To clear all stale archives before a run (the nuclear option, only
+when you are certain no prior diagnostic data is needed):
+
+```bash
+rm -rf "$ARCHIVE_ROOT"/[0-9]*-[0-9]*-[0-9]* "$ARCHIVE_ROOT"/invocations
+```
 
 What to watch for as events arrive:
 
@@ -446,7 +480,7 @@ Seven PASS lines on a clean run, in order:
 ```
 PASS: auth — all required env vars present (CLAUDE_CODE_OAUTH_TOKEN)
 PASS: subprocess — debug-e2e subprocess exited 0
-PASS: archive_directory — directory + resolved_config.json + progress.jsonl present at <archive>/invocations/<id>
+PASS: archive_directory — directory + resolved_config.json + progress.jsonl present at <archive>/<YYYY-MM-DD>/<id>
 PASS: jsonl_ordering — 12/12 phases with paired start/done in dependency order; 9/9 SDK call pairs matched
 PASS: synthetic_portfolio — positions=8, theses=8, cash_ledger.current_cash_usd=24440.0
 PASS: no_alpaca — no alpaca indicators in captured stream
@@ -457,10 +491,11 @@ PASS: invocation_summary — staleness_flag=false, trigger_source='debug_e2e_cli
 The archive directory carries:
 
 ```
-<archive-root>/invocations/<invocation_id>/
+<archive-root>/<YYYY-MM-DD>/<invocation_id>/
 ├── resolved_config.json
 ├── progress.jsonl                  # append-only event log (fsync per write)
 ├── data_calibration_state.json
+├── verify_summary.txt              # PASS/FAIL lines + summary + DATA HEALTH
 └── (per-agent diagnostic subdirs   — analysis/<agent>/, decision/<agent>/ —
     populated by the agent harnesses)
 ```
@@ -487,12 +522,25 @@ A clean debug-e2e run wires one Sonnet pass through the analysis layer
 calls; distillation is deterministic and emits no SDK call) and one
 Opus pass through the four decision agents (analyst + strategist + PM
 = 3 Opus calls; the proposal pre-processor is deterministic and emits
-no SDK call). Approximate cost:
+no SDK call). Approximate cost — the *Total input* column below is the
+sum `input_tokens + cache_read_tokens + cache_write_tokens` across all
+SDK calls in the layer, NOT the value of any single `agent_response`
+field. The HTML report's "Input tokens" column is the bare
+`input_tokens` (non-cached delta) only — see disambiguation below.
 
-| Layer    | Model  | Input tokens | Output tokens |
-|----------|--------|--------------|---------------|
-| analysis | Sonnet | ~54K–70K     | ~7.6K–13.6K   |
-| decision | Opus   | ~68K–102K    | ~57K–100K     |
+| Layer    | Model  | Total input | Output tokens |
+|----------|--------|-------------|---------------|
+| analysis | Sonnet | ~54K–70K    | ~7.6K–13.6K   |
+| decision | Opus   | ~68K–102K   | ~57K–100K     |
+
+Most AlphaMind prompts hit the cache, so in a healthy run the bulk of
+the per-call input volume lands in `cache_read_tokens` and the bare
+`input_tokens` field shows the non-cached delta only (single-to-low-
+double-digit). The HTML report renders these as three separate columns
+("Input tokens" / "Cache read" / "Cache write") so the operator sees
+the split directly. If `input_tokens` looks "tiny" in `progress.jsonl`,
+that is the SDK's cache-hit signature — check `cache_read_tokens` for
+the real prompt volume (ALP-701).
 
 Roughly 10–15% of the nominal weekly Sonnet cap and a smaller slice of
 the Opus cap per `docs/design/cost-and-rate-limit-modeling.md`. Don't
@@ -501,6 +549,66 @@ re-run gratuitously.
 Wall-clock: ~5–15 minutes end-to-end; the strategist scenario is the
 typical long pole. See the archive's `progress.jsonl` for per-phase
 timings.
+
+## Resuming a failed run
+
+The motivating shape: the analyst SDK call hits its latency budget 9
+minutes into a debug-e2e run, the operator bumps
+`decision.analyst.latency_budget_s` in `config/run_types/<trigger>.yaml`,
+and re-invokes the verify wrapper with `--resume-from <inv-id>:<phase>`.
+The new invocation re-runs the deterministic prefix (phase1 +
+snapshot_assembly + distillation — all cheap, all deterministic against
+the synthetic portfolio fixture) and hydrates the upstream SDK-phase
+outputs from the prior archive, then runs the named target phase and
+everything downstream with the new budget. Saves ~10–12 minutes of
+wall-clock and ~6 Sonnet calls per iteration.
+
+`--resume-from` is the verify wrapper's pass-through to the scheduler
+CLI's [ALP-693](https://linear.app/alphamind-jatassi/issue/ALP-693)
+flag. The wrapper does no validation — the underlying CLI is the
+source of truth on `<invocation-id>:<phase>` validity and exits 2 with
+a named-cause stderr message on rejection. Mutually exclusive with
+`--fresh-start` (a different portfolio fixture would invalidate the
+prior archive's outputs — surfaced at argparse-time by the underlying
+CLI).
+
+```bash
+set -a && source <(tr -d '\r' < .env) && set +a && \
+    uv run python scripts/verify_debug_e2e.py \
+        --archive-root .archive/verify-debug-e2e \
+        --resume-from <inv-id>:<phase>
+```
+
+**Reading the resume target out of a failed run.** Open the source
+invocation's `progress.jsonl` and look for the last `phase_done`
+event; the next `phase_start` with no matching `phase_done` is the
+phase the original run died on. That is your resume target. The 9
+SDK-phase names recognized by `--resume-from` are: `tech_semis`,
+`financials`, `energy`, `qualitative`, `adaptive`, `synthesizer`,
+`analyst`, `strategist`, `pm`. The deterministic phases (`phase1`,
+`snapshot_assembly`, `distillation`, `pre_processor`, `phase2`) are
+always re-run from scratch on resume and cannot be named as the
+target — they are cheap and produce identical outputs against the
+synthetic fixture, so the resume contract does not need to
+special-case them.
+
+**Deterministic-prefix check.** On every resume run the verify
+wrapper adds one extra check (`check_deterministic_prefix`) that
+hashes the source-archive vs new-archive distillation outputs
+pairwise and FAILs on the first byte mismatch. A clean resume run
+shows 8 PASS lines (the existing 7 plus this one) and the summary
+reads `8/8 checks passed`; a FAIL surfaces as `7/8 checks passed`.
+The check fires ONLY on resume — fresh debug-e2e invocations stay at
+`7/7 checks passed` with no extra line emitted.
+
+A FAIL of this check means the upstream-replayed SDK phases are now
+operating against a different deterministic prefix than they
+originally saw — a silent correctness bug. Do not trust the run's
+downstream output.
+
+```
+PASS: deterministic_prefix — 5 distillation file(s) byte-identical (N bytes hashed) vs source archive
+```
 
 ## Failure-mode triage
 
@@ -523,9 +631,10 @@ timings.
 | `FAIL: invocation_summary — staleness_flag expected false` | Phase 1 saw a stale data source | Inspect the staleness logger output in the pipeline log; debug-e2e seeds fresh state so this is a real regression |
 | `FAIL: invocation_summary — trigger_source expected 'debug_e2e_cli'` | CLI dispatch routed to `_run_once` instead of `_run_debug_e2e` | The `--debug-e2e` argparse branch in `__main__.py` regressed |
 | `FAIL: invocation_summary — commands_submitted` | The orchestrator's typed return shape changed | Inspect `InvocationSummary` against `scheduler/orchestrator.py` |
+| `FAIL: deterministic_prefix — distillation file <name> differs` (resume only) | Non-determinism regression in phase1 / snapshot_assembly / distillation, OR the synthetic portfolio fixture changed between runs | First re-snapshot the debug DB (`scripts/snapshot_prod_for_debug_e2e.py --force`) in case the source archive's distillation was computed against drifted upstream state; if the FAIL repeats, `git bisect` for the regression starting from the source archive's commit |
 
 For deeper investigation: every agent harness writes its own diagnostic
-archive under `<archive>/invocations/<id>/analysis/<agent>/` (and
+archive under `<archive>/<YYYY-MM-DD>/<id>/analysis/<agent>/` (and
 `decision/<agent>/`) — the same per-agent shape the retired verify
 suite produced. Each carries the assembled input bundle, the prompt,
 the full SDK response, and a `metadata.json` with token + wall-clock +

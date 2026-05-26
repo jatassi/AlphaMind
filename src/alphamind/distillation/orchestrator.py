@@ -55,6 +55,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation._repository_sql import SqlDistillationRepository
 from alphamind.distillation._severity_cap import cap_blocks_for_calibration
@@ -209,10 +210,13 @@ def _invocation_archive_dir(*, archive_root: Path, as_of: datetime, invocation_i
     Layout: ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/distillation/``.
     The date partition mirrors the per-invocation file tree convention
     pinned by ``docs/architecture/infrastructure.md`` § Layer 2 invocation
-    archive.
+    archive. Delegates to :func:`alphamind._kernel.archive_layout.invocation_archive_dir`
+    and appends the ``distillation/`` subdir.
     """
-    date_part = as_of.astimezone(UTC).strftime("%Y-%m-%d")
-    return archive_root / date_part / invocation_id / "distillation"
+    return (
+        invocation_archive_dir(archive_root=archive_root, as_of=as_of, invocation_id=invocation_id)
+        / "distillation"
+    )
 
 
 # ---------------------------------------------------------------------------

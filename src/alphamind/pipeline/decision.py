@@ -41,6 +41,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind._kernel.exception_group import first_non_cancelled
 from alphamind._kernel.mode import PipelineMode
 from alphamind._kernel.money import Money, Price, money, price, signed_money
@@ -103,6 +104,10 @@ from alphamind.state.config import StatePersistenceConfig
 # Synthesizer's ``RetrievalStore`` is the harness-side type the analyst,
 # strategist, and PM consume.
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore  # isort: skip
+
+# Phase-output emission substrate (ALP-690 / ALP-692) — imported lazily below
+# inside ``_emit_phase_output`` so the top-level import graph never reaches
+# ``scheduler/debug_e2e/`` for production callers that pass ``archive_root=None``.
 
 __all__ = ["DecisionPipelineResult", "run_decision_pipeline"]
 
@@ -183,11 +188,159 @@ def _derive_cross_constraint_impact(
 
 
 # ---------------------------------------------------------------------------
+# Phase-output emission helper (ALP-692)
+# ---------------------------------------------------------------------------
+
+
+def _emit_decision_phase_output(
+    *,
+    archive_root: Path | None,
+    invocation_id: str,
+    as_of: datetime,
+    phase: str,
+    result: AnalystResult | StrategistResult | PMResult,
+    debug_e2e: object | None,
+) -> None:
+    """Serialize ``result`` to
+    ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/phase_outputs/<phase>.json``.
+
+    No-op unless BOTH ``debug_e2e`` is non-``None`` (debug-e2e mode is
+    active) AND ``archive_root`` is non-``None`` (a place to write to).
+    Production daemon callers leave ``debug_e2e`` at the default ``None``
+    and never write phase outputs — even though they always set
+    ``archive_root`` for general per-invocation diagnostics.
+
+    Uses :func:`alphamind._kernel.atomic_io.atomic_write_text` directly so
+    this module never reaches ``scheduler/debug_e2e/`` — the import-linter
+    ``composition-root-layering`` contract forbids ``alphamind.pipeline``
+    from importing ``alphamind.scheduler``.  Uses the date-partitioned
+    canonical layout (ALP-689 followup).
+    """
+    if debug_e2e is None or archive_root is None:
+        return
+
+    import pydantic
+
+    from alphamind._kernel.atomic_io import atomic_write_text
+    from alphamind.decision.analyst.models import AnalystResultModel
+    from alphamind.decision.portfolio_manager.models import PMResultModel
+    from alphamind.decision.strategist.models import StrategistResultModel
+
+    archive_dir = invocation_archive_dir(
+        archive_root=archive_root, as_of=as_of, invocation_id=invocation_id
+    )
+
+    boundary_model: pydantic.BaseModel
+    if isinstance(result, AnalystResult):
+        boundary_model = AnalystResultModel.from_domain(result)
+    elif isinstance(result, StrategistResult):
+        boundary_model = StrategistResultModel.from_domain(result)
+    else:
+        boundary_model = PMResultModel.from_domain(result)
+
+    target = archive_dir / "phase_outputs" / f"{phase}.json"
+    atomic_write_text(target, boundary_model.model_dump_json())
+
+
+# ---------------------------------------------------------------------------
+# Phase-replay helper (ALP-695)
+# ---------------------------------------------------------------------------
+
+# Map from SDK phase name → per-agent diagnostic-dir segment under
+# ``<archive>/invocations/<id>/decision/``. The phase name and the agent
+# directory segment diverge for ``pm`` (phase) vs ``portfolio_manager``
+# (diagnostic dir, matching ``AgentName.portfolio_manager.value`` set by
+# the harness). Used by :func:`_replay_decision_phase`.
+_DECISION_PHASE_TO_AGENT_DIR: Mapping[str, str] = {
+    "analyst": "analyst",
+    "strategist": "strategist",
+    "pm": "portfolio_manager",
+}
+
+
+def _replay_decision_phase(
+    *,
+    phase: str,
+    resume_context: Any,
+    archive_root: Path | None,
+    invocation_id: str,
+    as_of: datetime,
+    progress: ProgressEmitter,
+) -> AnalystResult | StrategistResult | PMResult:
+    """Hydrate ``phase``'s typed result from the source archive on disk.
+
+    Reads ``<source>/phase_outputs/<phase>.json``, calls ``to_domain()`` to
+    rebuild the dataclass result, then copies the per-agent diagnostic
+    directory from the source archive to the current invocation's archive
+    so the resumed run carries a complete diagnostic record. Finally emits
+    ``phase_done(phase, replayed_from=<source-invocation-id>)`` so the
+    progress stream marks the phase as replayed (not freshly run).
+
+    The caller emits ``phase_start(phase)`` immediately before invoking
+    this helper; the emit-order contract is documented in story ALP-695
+    test #4: ``phase_start`` → ``read_phase_output`` → diagnostic-dir copy
+    → ``phase_done(...)``.
+
+    Reads the on-disk JSON via :func:`pydantic.BaseModel.model_validate_json`
+    directly so this module never imports
+    :mod:`alphamind.scheduler.debug_e2e.phase_outputs` — the import-linter
+    ``composition-root-layering`` contract forbids ``alphamind.pipeline``
+    from importing ``alphamind.scheduler``. The path layout mirrors
+    :func:`_emit_decision_phase_output`.  Uses the date-partitioned canonical
+    layout for the target archive dir (ALP-689 followup).
+    """
+    import shutil
+
+    from alphamind.decision.analyst.models import AnalystResultModel
+    from alphamind.decision.portfolio_manager.models import PMResultModel
+    from alphamind.decision.strategist.models import StrategistResultModel
+
+    source_archive_dir = resume_context.source_archive_dir
+    source_invocation_id = source_archive_dir.name
+
+    # Read + hydrate.
+    source_output_path = source_archive_dir / "phase_outputs" / f"{phase}.json"
+    raw = source_output_path.read_text(encoding="utf-8")
+    result: AnalystResult | StrategistResult | PMResult
+    if phase == "analyst":
+        result = AnalystResultModel.model_validate_json(raw).to_domain()
+    elif phase == "strategist":
+        result = StrategistResultModel.model_validate_json(raw).to_domain()
+    else:  # phase == "pm"
+        result = PMResultModel.model_validate_json(raw).to_domain()
+
+    # Copy per-agent diagnostic dir if the target archive is set. The
+    # diagnostic dir is the source of the resumed run's record-of-truth for
+    # this phase (prompts, responses, errors) — without the copy, the
+    # resumed archive has a stub-shaped record for replayed phases.
+    if archive_root is not None:
+        agent_dir = _DECISION_PHASE_TO_AGENT_DIR[phase]
+        source_diag = source_archive_dir / "decision" / agent_dir
+        target_diag = (
+            invocation_archive_dir(
+                archive_root=archive_root, as_of=as_of, invocation_id=invocation_id
+            )
+            / "decision"
+            / agent_dir
+        )
+        if source_diag.is_dir():
+            # dirs_exist_ok=False per quality lens — fail loud if the target
+            # diagnostic dir already exists. The runner emits diagnostic
+            # dirs from the agent runners on a fresh invocation; replaying a
+            # phase into an archive that already has the dir indicates a
+            # double-replay or stale-archive bug.
+            shutil.copytree(source_diag, target_diag, dirs_exist_ok=False)
+
+    progress.phase_done(phase, replayed_from=source_invocation_id)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Composition runner
 # ---------------------------------------------------------------------------
 
 
-async def run_decision_pipeline(  # noqa: PLR0913 — composition surface threads typed inputs through every stage plus ALP-497 progress
+async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surface threads typed inputs through every stage plus ALP-497 progress; PLR0915 covers the 6-stage sequence + ALP-695 replay gate
     *,
     assembled_snapshot: AssembledSnapshot,
     repository: PortfolioStateRepository,
@@ -219,6 +372,8 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     dependency_risk_flag: DependencyRiskFlag | None = None,
     prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    debug_e2e: object | None = None,
+    resume_context: object | None = None,
 ) -> DecisionPipelineResult:
     """Run the decision-layer composition end-to-end.
 
@@ -345,84 +500,168 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     def _strategist_price_lookup(ticker: str) -> float:
         return float(current_price_lookup(ticker))
 
-    progress.phase_start("analyst")
-    progress.phase_start("strategist")
-    try:
-        async with asyncio.TaskGroup() as tg:
-            analyst_task = tg.create_task(
-                run_analyst(
-                    mode=analyst_mode,
-                    synthesizer_text=synthesizer_text,
-                    retrieval_store=retrieval_store,
-                    analyst_view=analyst_view,
-                    risk_budget=pydantic_snapshot.risk_budget,
-                    active_risk_parameters=pydantic_snapshot.active_risk_parameters,
-                    profile_feature_flags=profile_feature_flags,
-                    library_config=library_config,
-                    library_market=library_market,
-                    sector_resolver=sector_resolver,
-                    portfolio_state_snapshot=library_snapshot,
-                    active_sectors=active_sectors,
-                    invocation_id=invocation_id,
-                    timestamp=timestamp,
-                    state_delivery_config=state_delivery_config,
-                    options_enabled=options_enabled,
-                    short_selling_enabled=short_selling_enabled,
-                    halt_state=halt_state,
-                    archive_root=archive_root,
-                    agent_config=resolved_agents.get(AgentName.analyst.value),
-                    borrow_cost_resolver=borrow_cost_resolver,
-                    progress=progress,
-                    phase="analyst",
-                )
-            )
-            strategist_task = tg.create_task(
-                run_strategist(
-                    invocation_id=invocation_id,
-                    timestamp=timestamp,
-                    mode=strategist_mode,
-                    halt_state=halt_state,
-                    strategist_view=strategist_view,
-                    synthesizer_brief_text=synthesizer_text,
-                    retrieval_store=retrieval_store,
-                    options_enabled=options_enabled,
-                    short_selling_enabled=short_selling_enabled,
-                    active_sectors=tuple(sorted(active_sectors)),
-                    state_delivery_config=state_delivery_config,
-                    sector_resolver=sector_resolver,
-                    total_portfolio_value_usd=total_portfolio_value_usd,
-                    available_for_new_positions_usd=available_capital_usd,
-                    current_price_lookup=_strategist_price_lookup,
-                    profile_feature_flags=profile_feature_flags,
-                    library_config=library_config,
-                    library_market=library_market,
-                    starting_snapshot=library_snapshot,
-                    archive_root=archive_root,
-                    agent_config=resolved_agents.get(AgentName.strategist.value),
-                    sector_label_display=sector_label_display,
-                    regime_transition_breaches=regime_transition_breaches,
-                    borrow_cost_resolver=borrow_cost_resolver,
-                    prior_health_snapshots=prior_health_snapshots,
-                    progress=progress,
-                    phase="strategist",
-                )
-            )
-    except BaseExceptionGroup as eg:
-        # Preserve the prior ``asyncio.gather`` API: callers see the first
-        # non-``CancelledError`` failure unchanged. The group is attached as
-        # ``__cause__`` via ``raise ... from eg`` so diagnostics still
-        # surface every concurrent failure. ``first_non_cancelled`` returns
-        # ``None`` only when every child is ``CancelledError`` (external
-        # cancellation of the parent task) — re-raise the group in that case.
-        first = first_non_cancelled(eg)
-        if first is not None:
-            raise first from eg
-        raise
+    # Phase-replay gate (ALP-695): analyst + strategist have identical
+    # upstream dependencies (``synthesizer``) per the DAG in
+    # ``alphamind.scheduler.debug_e2e.resume._PHASE_DEPENDENCIES``, so they
+    # are co-replayable — either both run via the TaskGroup, both replay
+    # from disk, or one is the resume target (in which case neither is in
+    # ``phases_to_replay`` since the target itself is RE-RUN). The two
+    # cases the runner must handle:
+    #   * ``analyst`` and ``strategist`` both in ``phases_to_replay``
+    #     (resume target = pm) → skip the TaskGroup; hydrate both from
+    #     disk; emit ``phase_done(..., replayed_from=...)`` for each.
+    #   * neither in ``phases_to_replay`` (resume target = analyst,
+    #     strategist, or no resume) → run the TaskGroup normally.
+    phases_to_replay_set: frozenset[str] = (
+        resume_context.phases_to_replay  # type: ignore[attr-defined]
+        if resume_context is not None
+        else frozenset()
+    )
+    analyst_replay = "analyst" in phases_to_replay_set
+    strategist_replay = "strategist" in phases_to_replay_set
+    # Mirror the analysis-side defensive check (see pipeline/analysis.py's
+    # ``_sectors_in_replay`` assertion): analyst + strategist have
+    # identical upstream dependencies in the resume DAG, so they are
+    # co-replayable — the loader's ``phases_to_replay`` set contains
+    # either both or neither. An asymmetric set means a hand-crafted
+    # ``ResumeContext`` bypassed the loader; treat it as corrupted state
+    # and fail fast rather than silently re-running one agent live.
+    if analyst_replay != strategist_replay:
+        msg = (
+            "phases_to_replay contains exactly one of {'analyst', 'strategist'}; "
+            "they must replay atomically (both-in or both-out). The resume loader "
+            "never produces such a set."
+        )
+        raise AssertionError(msg)
 
-    analyst_result = analyst_task.result()
-    strategist_result = strategist_task.result()
-    progress.phase_done("analyst")
-    progress.phase_done("strategist")
+    analyst_result: AnalystResult
+    strategist_result: StrategistResult
+    if analyst_replay and strategist_replay:
+        # Replay path: skip the TaskGroup; hydrate both results from the
+        # source archive. ``phase_start`` for each phase emits BEFORE the
+        # read so the progress stream marks the replay attempt; the helper
+        # emits ``phase_done(..., replayed_from=...)`` after the
+        # diagnostic-dir copy completes.
+        progress.phase_start("analyst")
+        analyst_result = _replay_decision_phase(  # type: ignore[assignment]
+            phase="analyst",
+            resume_context=resume_context,
+            archive_root=archive_root,
+            invocation_id=invocation_id,
+            as_of=timestamp,
+            progress=progress,
+        )
+        progress.phase_start("strategist")
+        strategist_result = _replay_decision_phase(  # type: ignore[assignment]
+            phase="strategist",
+            resume_context=resume_context,
+            archive_root=archive_root,
+            invocation_id=invocation_id,
+            as_of=timestamp,
+            progress=progress,
+        )
+    else:
+        progress.phase_start("analyst")
+        progress.phase_start("strategist")
+        try:
+            async with asyncio.TaskGroup() as tg:
+                analyst_task = tg.create_task(
+                    run_analyst(
+                        mode=analyst_mode,
+                        synthesizer_text=synthesizer_text,
+                        retrieval_store=retrieval_store,
+                        analyst_view=analyst_view,
+                        risk_budget=pydantic_snapshot.risk_budget,
+                        active_risk_parameters=pydantic_snapshot.active_risk_parameters,
+                        profile_feature_flags=profile_feature_flags,
+                        library_config=library_config,
+                        library_market=library_market,
+                        sector_resolver=sector_resolver,
+                        portfolio_state_snapshot=library_snapshot,
+                        active_sectors=active_sectors,
+                        invocation_id=invocation_id,
+                        timestamp=timestamp,
+                        state_delivery_config=state_delivery_config,
+                        options_enabled=options_enabled,
+                        short_selling_enabled=short_selling_enabled,
+                        halt_state=halt_state,
+                        archive_root=archive_root,
+                        agent_config=resolved_agents.get(AgentName.analyst.value),
+                        borrow_cost_resolver=borrow_cost_resolver,
+                        progress=progress,
+                        phase="analyst",
+                    )
+                )
+                strategist_task = tg.create_task(
+                    run_strategist(
+                        invocation_id=invocation_id,
+                        timestamp=timestamp,
+                        mode=strategist_mode,
+                        halt_state=halt_state,
+                        strategist_view=strategist_view,
+                        synthesizer_brief_text=synthesizer_text,
+                        retrieval_store=retrieval_store,
+                        options_enabled=options_enabled,
+                        short_selling_enabled=short_selling_enabled,
+                        active_sectors=tuple(sorted(active_sectors)),
+                        state_delivery_config=state_delivery_config,
+                        sector_resolver=sector_resolver,
+                        total_portfolio_value_usd=total_portfolio_value_usd,
+                        available_for_new_positions_usd=available_capital_usd,
+                        current_price_lookup=_strategist_price_lookup,
+                        profile_feature_flags=profile_feature_flags,
+                        library_config=library_config,
+                        library_market=library_market,
+                        starting_snapshot=library_snapshot,
+                        archive_root=archive_root,
+                        agent_config=resolved_agents.get(AgentName.strategist.value),
+                        sector_label_display=sector_label_display,
+                        regime_transition_breaches=regime_transition_breaches,
+                        borrow_cost_resolver=borrow_cost_resolver,
+                        prior_health_snapshots=prior_health_snapshots,
+                        progress=progress,
+                        phase="strategist",
+                    )
+                )
+        except BaseExceptionGroup as eg:
+            # Preserve the prior ``asyncio.gather`` API: callers see the first
+            # non-``CancelledError`` failure unchanged. The group is attached as
+            # ``__cause__`` via ``raise ... from eg`` so diagnostics still
+            # surface every concurrent failure. ``first_non_cancelled`` returns
+            # ``None`` only when every child is ``CancelledError`` (external
+            # cancellation of the parent task) — re-raise the group in that case.
+            first = first_non_cancelled(eg)
+            if first is not None:
+                raise first from eg
+            raise
+
+        analyst_result = analyst_task.result()
+        strategist_result = strategist_task.result()
+
+        # Emit phase outputs for analyst + strategist (ALP-692). Both run in
+        # parallel (TaskGroup above) and both emit after the group completes,
+        # mirroring the 02a domain-researcher emission pattern. Emission lands
+        # BEFORE the matching ``phase_done`` events so a consumer of
+        # ``progress.jsonl`` can rely on file-presence at the event.
+        _emit_decision_phase_output(
+            archive_root=archive_root,
+            invocation_id=invocation_id,
+            as_of=timestamp,
+            phase="analyst",
+            result=analyst_result,
+            debug_e2e=debug_e2e,
+        )
+        _emit_decision_phase_output(
+            archive_root=archive_root,
+            invocation_id=invocation_id,
+            as_of=timestamp,
+            phase="strategist",
+            result=strategist_result,
+            debug_e2e=debug_e2e,
+        )
+
+        progress.phase_done("analyst")
+        progress.phase_done("strategist")
 
     # 7. Run proposal pre-processor — pure (no I/O, no clock reads).
     progress.phase_start("pre_processor")
@@ -482,6 +721,17 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
         progress=progress,
         phase="pm",
     )
+    # Emit phase output for PM (ALP-692). Emission lands BEFORE the
+    # matching ``phase_done`` event.
+    _emit_decision_phase_output(
+        archive_root=archive_root,
+        invocation_id=invocation_id,
+        as_of=timestamp,
+        phase="pm",
+        result=pm_result,
+        debug_e2e=debug_e2e,
+    )
+
     progress.phase_done("pm")
 
     return DecisionPipelineResult(

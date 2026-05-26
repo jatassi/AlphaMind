@@ -3,8 +3,8 @@
 Verifies the public contract called out by the user story:
 
 * :class:`DebugE2ESettings` is a ``frozen=True, slots=True`` dataclass with
-  exactly three fields: ``account_queries``, ``ca_queries``,
-  ``emitter_factory``.
+  exactly four fields: ``account_queries``, ``ca_queries``,
+  ``emitter_factory``, ``resume_context`` (the last added by ALP-693).
 * :func:`configure_debug_e2e(*, archive_root)` returns a populated
   :class:`DebugE2ESettings` whose ``account_queries`` /
   ``ca_queries`` are the log-only stand-ins from story 02b and whose
@@ -22,6 +22,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from dataclasses import FrozenInstanceError, fields
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -38,11 +39,11 @@ def test_debug_e2e_settings_is_frozen_and_slotted() -> None:
     settings = DebugE2ESettings(
         account_queries=object(),  # type: ignore[arg-type]
         ca_queries=object(),  # type: ignore[arg-type]
-        emitter_factory=lambda _: object(),  # type: ignore[arg-type,return-value]
+        emitter_factory=lambda _id, _dt: object(),  # type: ignore[arg-type,return-value]
     )
 
     with pytest.raises(FrozenInstanceError):
-        settings.emitter_factory = lambda _: object()  # type: ignore[misc,assignment,return-value]
+        settings.emitter_factory = lambda _id, _dt: object()  # type: ignore[misc,assignment,return-value]
 
     # ``slots=True`` removes ``__dict__`` so unknown attribute names
     # cannot be silently attached. Python 3.13 raises ``TypeError`` from
@@ -51,18 +52,31 @@ def test_debug_e2e_settings_is_frozen_and_slotted() -> None:
     with pytest.raises((AttributeError, TypeError, FrozenInstanceError)):
         settings.unknown_field = "x"  # type: ignore[attr-defined]
 
-    # Confirm slots are declared — ``__slots__`` lists the three fields
-    # and ``__dict__`` is absent on instances.
+    # Confirm slots are declared — ``__slots__`` lists the four fields
+    # (ALP-693 added ``resume_context``) and ``__dict__`` is absent on
+    # instances.
     assert hasattr(type(settings), "__slots__")
     assert not hasattr(settings, "__dict__")
 
 
-def test_debug_e2e_settings_has_three_named_fields() -> None:
-    """:class:`DebugE2ESettings` declares exactly the three story-named fields."""
+def test_debug_e2e_settings_has_four_named_fields() -> None:
+    """:class:`DebugE2ESettings` declares exactly the four story-named fields.
+
+    The first three originate in story ALP-500 (03). The fourth
+    (``resume_context``) was added in story ALP-693 to carry the
+    ``--resume-from`` inputs through to stories 04a / 04b's
+    pipeline-composition runners; it defaults to ``None`` so existing
+    constructors keep parsing.
+    """
     from alphamind.scheduler.debug_e2e.settings import DebugE2ESettings
 
     field_names = tuple(f.name for f in fields(DebugE2ESettings))
-    assert field_names == ("account_queries", "ca_queries", "emitter_factory")
+    assert field_names == (
+        "account_queries",
+        "ca_queries",
+        "emitter_factory",
+        "resume_context",
+    )
 
 
 def test_configure_debug_e2e_returns_debug_e2e_settings(tmp_path: Path) -> None:
@@ -135,14 +149,15 @@ def test_emitter_factory_returns_jsonl_emitter_under_invocation_id(
     from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
     from alphamind.scheduler.debug_e2e.settings import configure_debug_e2e
 
+    _as_of = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
     settings = configure_debug_e2e(archive_root=tmp_path, portfolio=SYNTHETIC_PORTFOLIO)
-    emitter = settings.emitter_factory("inv-test")
+    emitter = settings.emitter_factory("inv-test", _as_of)
 
     assert isinstance(emitter, JsonlProgressEmitter)
 
     # Round-trip via a real emit to prove the path is the one the factory
     # constructed — observable behaviour rather than an internal attribute.
-    expected_path = tmp_path / "invocations" / "inv-test" / "progress.jsonl"
+    expected_path = tmp_path / "2026-05-07" / "inv-test" / "progress.jsonl"
     assert not expected_path.exists()
     emitter.phase_start("phase1")
     assert expected_path.is_file()

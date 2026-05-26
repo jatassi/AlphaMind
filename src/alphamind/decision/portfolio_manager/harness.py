@@ -35,10 +35,11 @@ import json
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
+from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._harness_core import (
     ContextOverflowFailure,
@@ -203,6 +204,7 @@ class _DiagState:
     model: str
     archive_root: Path | None
     get_submit_envelope_state: Callable[[], SubmitEnvelopeState]
+    as_of: datetime | None = None
 
     response_initial: str = ""
     response_retry: str | None = None
@@ -224,23 +226,26 @@ class _DiagState:
     ) -> None:
         """Flush the diagnostic record to disk if archive_root is set.
 
-        Path: ``<archive_root>/invocations/<invocation_id>/decision/portfolio_manager/``
-        — mirrors the strategist pattern with the agent segment switched to
-        ``portfolio_manager``. The PM-only ``submission_log.json`` and
-        ``failed_submission_log.json`` are written alongside the standard six
-        files; they capture the submit_envelope wrapper's
-        ``state.submission_log`` (calls whose payload parsed to a
-        :class:`PMEnvelope`) and
-        ``state.failed_submission_log`` (Layer-1 Pydantic parse failures)
-        respectively after the SDK loop completes so the verify script
-        (story 09) can inspect every envelope the PM attempted.
+        Path: ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/decision/portfolio_manager/``
+        — date-partitioned canonical layout per ALP-689 followup. The PM-only
+        ``submission_log.json`` and ``failed_submission_log.json`` are written
+        alongside the standard six files; they capture the submit_envelope
+        wrapper's ``state.submission_log`` (calls whose payload parsed to a
+        :class:`PMEnvelope`) and ``state.failed_submission_log`` (Layer-1
+        Pydantic parse failures) respectively after the SDK loop completes so
+        the verify script (story 09) can inspect every envelope the PM attempted.
         """
         if self.archive_root is None:
             return
+        if self.as_of is None:
+            msg = "_DiagState.as_of must be set when archive_root is provided"
+            raise ValueError(msg)
         diag_dir = (
-            self.archive_root
-            / INVOCATIONS_DIRNAME
-            / self.invocation_id
+            invocation_archive_dir(
+                archive_root=self.archive_root,
+                as_of=self.as_of,
+                invocation_id=self.invocation_id,
+            )
             / "decision"
             / self.agent_name
         )
@@ -572,6 +577,7 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
     active_sectors: frozenset[str],
     halt_mode: bool,
     sector_resolver: Callable[[str], str],
+    as_of: datetime | None = None,
     library_config: LibraryConfig,
     library_market: MarketInputs,
     state_persistence_config: StatePersistenceConfig,
@@ -685,6 +691,7 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
             options=options,
             sdk_query_fn=sdk_query_fn,
             get_submit_envelope_state=get_submit_envelope_state,
+            as_of=as_of,
             archive_root=archive_root,
             progress=progress,
             phase=phase,
@@ -701,6 +708,7 @@ async def _run_invocation(  # noqa: PLR0913 — internal helper threading runner
     options: Any,
     sdk_query_fn: Callable[..., AsyncIterator[Any]],
     get_submit_envelope_state: Callable[[], SubmitEnvelopeState],
+    as_of: datetime | None,
     archive_root: Path | None,
     progress: ProgressEmitter,
     phase: str,
@@ -721,6 +729,7 @@ async def _run_invocation(  # noqa: PLR0913 — internal helper threading runner
         model=str(agent_config.model),
         archive_root=archive_root,
         get_submit_envelope_state=get_submit_envelope_state,
+        as_of=as_of,
     )
     wall_start = time.monotonic()
 

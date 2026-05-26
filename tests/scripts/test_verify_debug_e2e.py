@@ -32,9 +32,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import alphamind.state.tables  # noqa: F401  # registers every state table on Base.metadata
+from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind.persistence.models import Base
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "verify_debug_e2e.py"
+_INVOCATION_AS_OF = datetime(2026, 5, 26, tzinfo=UTC)
 
 
 @pytest.fixture(scope="module")
@@ -98,8 +100,12 @@ def test_check_auth_does_not_require_alpaca_creds(
 def test_check_archive_directory_passes_with_required_files(
     verify_module: ModuleType, tmp_path: Path
 ) -> None:
-    """PASS when ``<archive>/invocations/<id>/`` carries the two required files."""
-    invocation_dir = tmp_path / "invocations" / "20260516T000000Z-debug-e2e"
+    """PASS when the date-partitioned invocation dir carries the two required files."""
+    invocation_dir = invocation_archive_dir(
+        archive_root=tmp_path,
+        as_of=_INVOCATION_AS_OF,
+        invocation_id="20260516T000000Z-debug-e2e",
+    )
     invocation_dir.mkdir(parents=True)
     (invocation_dir / "resolved_config.json").write_text("{}", encoding="utf-8")
     (invocation_dir / "progress.jsonl").write_text("", encoding="utf-8")
@@ -126,7 +132,9 @@ def test_check_archive_directory_fails_when_resolved_config_missing(
     verify_module: ModuleType, tmp_path: Path
 ) -> None:
     """FAIL when ``resolved_config.json`` is absent."""
-    invocation_dir = tmp_path / "invocations" / "iid"
+    invocation_dir = invocation_archive_dir(
+        archive_root=tmp_path, as_of=_INVOCATION_AS_OF, invocation_id="iid"
+    )
     invocation_dir.mkdir(parents=True)
     (invocation_dir / "progress.jsonl").write_text("", encoding="utf-8")
 
@@ -139,7 +147,9 @@ def test_check_archive_directory_fails_when_progress_jsonl_missing(
     verify_module: ModuleType, tmp_path: Path
 ) -> None:
     """FAIL when ``progress.jsonl`` is absent."""
-    invocation_dir = tmp_path / "invocations" / "iid"
+    invocation_dir = invocation_archive_dir(
+        archive_root=tmp_path, as_of=_INVOCATION_AS_OF, invocation_id="iid"
+    )
     invocation_dir.mkdir(parents=True)
     (invocation_dir / "resolved_config.json").write_text("{}", encoding="utf-8")
 
@@ -232,6 +242,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
                 "model": "sonnet",
                 "duration_s": 12.0,
                 "input_tokens": 8000,
+                "cache_read_tokens": 60_000,
+                "cache_write_tokens": 0,
                 "output_tokens": 1500,
                 "tool_calls": 0,
                 "stop_reason": "end_turn",
@@ -246,6 +258,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
             "model": "sonnet",
             "duration_s": 15.0,
             "input_tokens": 7000,
+            "cache_read_tokens": 68_214,
+            "cache_write_tokens": 0,
             "output_tokens": 800,
             "tool_calls": 5,
             "stop_reason": "end_turn",
@@ -274,6 +288,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
             "model": "sonnet",
             "duration_s": 20.0,
             "input_tokens": 9000,
+            "cache_read_tokens": 70_000,
+            "cache_write_tokens": 0,
             "output_tokens": 1200,
             "tool_calls": 10,
             "stop_reason": "end_turn",
@@ -300,6 +316,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
             "model": "sonnet",
             "duration_s": 12.0,
             "input_tokens": 11000,
+            "cache_read_tokens": 55_000,
+            "cache_write_tokens": 1_024,
             "output_tokens": 1800,
             "tool_calls": 0,
             "stop_reason": "end_turn",
@@ -340,6 +358,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
             "model": "opus",
             "duration_s": 60.0,
             "input_tokens": 15000,
+            "cache_read_tokens": 80_000,
+            "cache_write_tokens": 0,
             "output_tokens": 4000,
             "tool_calls": 2,
             "stop_reason": "end_turn",
@@ -355,6 +375,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
             "model": "opus",
             "duration_s": 600.0,
             "input_tokens": 30000,
+            "cache_read_tokens": 90_000,
+            "cache_write_tokens": 0,
             "output_tokens": 40000,
             "tool_calls": 0,
             "stop_reason": "end_turn",
@@ -384,6 +406,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
             "model": "opus",
             "duration_s": 360.0,
             "input_tokens": 35000,
+            "cache_read_tokens": 100_000,
+            "cache_write_tokens": 0,
             "output_tokens": 30000,
             "tool_calls": 8,
             "stop_reason": "end_turn",
@@ -597,6 +621,8 @@ def test_check_jsonl_ordering_fails_on_orphan_agent_response(
     [
         "duration_s",
         "input_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
         "output_tokens",
         "tool_calls",
         # ``stop_reason`` is allowed to be null per parent issue ALP-493
@@ -607,11 +633,13 @@ def test_check_jsonl_ordering_fails_on_orphan_agent_response(
 def test_check_jsonl_ordering_fails_when_agent_response_missing_required_field(
     verify_module: ModuleType, tmp_path: Path, field: str
 ) -> None:
-    """Each ``agent_response`` must carry the 5-field set per parent § (B).
+    """Each ``agent_response`` must carry the 7-field set per parent § (B).
 
-    ``duration_s`` / ``input_tokens`` / ``output_tokens`` / ``tool_calls``
-    must be non-null; ``stop_reason`` may be ``None`` but must be
-    present as a key.
+    ``duration_s`` / ``input_tokens`` / ``cache_read_tokens`` /
+    ``cache_write_tokens`` / ``output_tokens`` / ``tool_calls`` must be
+    non-null; ``stop_reason`` may be ``None`` but must be present as a
+    key. The cache split was added per ALP-701 so an operator can
+    distinguish a cache-hit prompt from a broken context-assembly path.
     """
     stream = _canonical_event_stream()
     # Drop the field from the synthesizer agent_response only.
@@ -632,10 +660,13 @@ def test_check_jsonl_ordering_fails_when_agent_response_missing_required_field(
 def test_check_jsonl_ordering_fails_when_required_field_is_null(
     verify_module: ModuleType, tmp_path: Path
 ) -> None:
-    """The non-stop_reason 4 fields must be non-null.
+    """The non-stop_reason 6 fields must be non-null.
 
     ``stop_reason`` is allowed to be null (it's optional per the
-    Anthropic SDK); the other four are load-bearing for the report.
+    Anthropic SDK); the other six (``duration_s``, ``input_tokens``,
+    ``cache_read_tokens``, ``cache_write_tokens``, ``output_tokens``,
+    ``tool_calls``) are load-bearing for the report. Cache split per
+    ALP-701.
     """
     stream = _canonical_event_stream()
     mutated: list[dict[str, Any]] = []
@@ -1292,12 +1323,21 @@ def _stub_main_dependencies(
     monkeypatch.setattr(verify_module.subprocess, "run", _stub_run)
 
     def _passing_archive(*, archive_root: Path, invocation_id: str) -> Any:
-        # main() reads progress_path.is_file() directly before dispatching
-        # to check_jsonl_ordering, so the stub must touch the JSONL file
-        # (otherwise the missing-file branch fires and the monkey-patched
-        # ordering check never runs).
-        inv_dir = archive_root / "invocations" / invocation_id
-        inv_dir.mkdir(parents=True, exist_ok=True)
+        # main() resolves progress_path via find_invocation_archive_dir so
+        # the stub must touch the JSONL file inside the same directory the
+        # glob would locate — create the date-partitioned path if none exists yet.
+        from alphamind._kernel.archive_layout import find_invocation_archive_dir
+
+        inv_dir = find_invocation_archive_dir(
+            archive_root=archive_root, invocation_id=invocation_id
+        )
+        if inv_dir is None:
+            inv_dir = invocation_archive_dir(
+                archive_root=archive_root,
+                as_of=_INVOCATION_AS_OF,
+                invocation_id=invocation_id,
+            )
+            inv_dir.mkdir(parents=True, exist_ok=True)
         (inv_dir / "progress.jsonl").touch()
         return verify_module.CheckResult(label="archive_directory", passed=True, message="stub")
 
@@ -1366,6 +1406,85 @@ def test_main_threads_fresh_start_expectations_when_flag_set(
 
     assert exit_code == 0
     assert captured["expected"] is verify_module.FRESH_START_EXPECTATIONS
+
+
+# ---------------------------------------------------------------------------
+# verify_summary.txt persistence
+# ---------------------------------------------------------------------------
+
+
+def test_main_writes_verify_summary_to_inv_dir(
+    verify_module: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A green run persists wrapper stdout to ``<inv_dir>/verify_summary.txt``.
+
+    The verdict + DATA HEALTH block previously only reached the operator
+    via stdout; ``tee``-to-a-side-file was the workaround. The script
+    now persists the same content alongside the run's archive so the
+    artifact lives with progress.jsonl / per-agent diagnostics.
+    """
+    _stub_main_dependencies(verify_module, monkeypatch)
+    archive_root = tmp_path / "archive"
+
+    exit_code = verify_module.main(
+        [
+            "--archive-root",
+            str(archive_root),
+            "--db-path",
+            str(tmp_path / "alphamind-debug-e2e.db"),
+        ]
+    )
+
+    assert exit_code == 0
+    # Stub stdout_payload pins invocation_id="inv-test".
+    from alphamind._kernel.archive_layout import find_invocation_archive_dir
+
+    inv_dir = find_invocation_archive_dir(archive_root=archive_root, invocation_id="inv-test")
+    assert inv_dir is not None, "stub failed to create the invocation dir"
+    summary_path = inv_dir / verify_module.VERIFY_SUMMARY_FILENAME
+    assert summary_path.is_file(), (
+        f"{verify_module.VERIFY_SUMMARY_FILENAME} not written under {inv_dir}"
+    )
+    content = summary_path.read_text(encoding="utf-8")
+    assert "PASS: auth" in content
+    assert "=== DEBUG-E2E VERIFICATION ===" in content
+    assert "=== DATA HEALTH ===" in content
+
+
+def test_persist_verify_summary_no_op_when_invocation_id_missing(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """Early pre-flight FAIL (no invocation_id) silently skips the file write.
+
+    Auth / subprocess failures short-circuit before the orchestrator
+    inserts an invocation row, so there is no inv_dir to write into.
+    The function must no-op rather than raise — losing the side
+    artifact must never escalate a pre-existing FAIL.
+    """
+    verify_module._persist_verify_summary(
+        archive_root=tmp_path,
+        invocation_id=None,
+        content="anything\n",
+    )
+    # No file is created anywhere under the archive root.
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_persist_verify_summary_no_op_when_inv_dir_missing(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """Subprocess-FAIL-before-archive paths leave no inv_dir; skip the write.
+
+    A subprocess that crashes before ``insert_invocation_record`` commits
+    will still have produced an invocation_id (parsed from stdout) but
+    no archive directory on disk. The function tolerates that and no-ops.
+    """
+    verify_module._persist_verify_summary(
+        archive_root=tmp_path,
+        invocation_id="inv-nonexistent",
+        content="anything\n",
+    )
+    assert list(tmp_path.iterdir()) == []
 
 
 # ---------------------------------------------------------------------------

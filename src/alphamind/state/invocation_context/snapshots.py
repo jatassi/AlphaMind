@@ -8,7 +8,8 @@ The directory layouts mirror the design doc at
   ``<root>/process_lifetimes/<id>/``.
 * ``write_invocation_provenance_snapshots`` lays down both
   ``resolved_config.json`` and ``data_calibration_state.json`` under
-  ``<root>/invocations/<id>/``.
+  ``<root>/<YYYY-MM-DD>/<id>/`` (date-partitioned canonical layout per
+  ALP-689 followup).
 
 Both helpers create parent directories as needed and overwrite existing
 files (the per-process / per-invocation IDs are unique, so re-writes only
@@ -18,13 +19,14 @@ happen when an operator deliberately re-runs setup).
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from alphamind._kernel.invocations import (
+from alphamind._kernel.archive_layout import (
     CALIBRATION_SNAPSHOT_FILENAME,
-    INVOCATIONS_DIRNAME,
     RESOLVED_CONFIG_FILENAME,
+    invocation_archive_dir,
 )
 
 
@@ -50,22 +52,25 @@ def write_pip_freeze_snapshot(
 def write_invocation_provenance_snapshots(
     *,
     invocation_id: str,
+    as_of: datetime,
     resolved_config: dict[str, Any],
     data_calibration_state: dict[str, Any],
     root: str,
 ) -> tuple[str, str]:
     """Write the two per-invocation provenance snapshots and return their paths.
 
-    Layout::
+    Layout (date-partitioned canonical layout per ALP-689 followup)::
 
-        <root>/invocations/<invocation_id>/resolved_config.json
-        <root>/invocations/<invocation_id>/data_calibration_state.json
+        <root>/<YYYY-MM-DD>/<invocation_id>/resolved_config.json
+        <root>/<YYYY-MM-DD>/<invocation_id>/data_calibration_state.json
 
     The two payloads are written via ``json.dumps`` with sorted keys for
     deterministic byte-level output (eases diff-on-hash comparisons across
     invocations).
     """
-    target_dir = Path(root) / INVOCATIONS_DIRNAME / invocation_id
+    target_dir = invocation_archive_dir(
+        archive_root=Path(root), as_of=as_of, invocation_id=invocation_id
+    )
     target_dir.mkdir(parents=True, exist_ok=True)
 
     config_path = target_dir / RESOLVED_CONFIG_FILENAME

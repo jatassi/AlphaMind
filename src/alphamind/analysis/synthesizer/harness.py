@@ -29,6 +29,7 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -152,12 +153,13 @@ def _build_sdk_options(
 # ---------------------------------------------------------------------------
 
 
-async def invoke_synthesizer(
+async def invoke_synthesizer(  # noqa: PLR0913 — signature dictated by synthesizer's parameter surface
     *,
     agent_config: BaseAgentConfig,
     user_message: str,
     invocation_id: str,
     portfolio_reader: SynthesizerPortfolioStateReader,
+    as_of: datetime | None = None,
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
@@ -195,6 +197,7 @@ async def invoke_synthesizer(
         user_message=user_message,
         model=str(agent_config.model),
         archive_root=archive_root,
+        as_of=as_of,
         response_filename="response.md",
         record_tool_calls=True,
     )

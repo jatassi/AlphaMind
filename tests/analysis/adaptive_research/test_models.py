@@ -381,6 +381,7 @@ class TestDunderAll:
 
         assert set(m.__all__) == {
             "AdaptiveBrief",
+            "AdaptiveResearcherResultModel",
             "Assessment",
             "Confidence",
             "InvestigationThread",

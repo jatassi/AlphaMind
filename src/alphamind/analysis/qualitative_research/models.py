@@ -19,10 +19,15 @@ Public names
 from __future__ import annotations
 
 import enum
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from alphamind.analysis._shared import SignalQuality
+from alphamind.analysis._shared import SignalQuality, TokensUsed
+
+if TYPE_CHECKING:
+    from alphamind.analysis.qualitative_research.news_digest import NewsDigest
 
 __all__ = [
     "TIME_HORIZON_DISPLAY",
@@ -30,6 +35,7 @@ __all__ = [
     "EvidenceLine",
     "NarrativeThread",
     "QualitativeBrief",
+    "QualitativeResearcherResultModel",
     "SentimentSnapshot",
     "SignalQuality",
     "ThreadDirection",
@@ -172,3 +178,117 @@ class QualitativeBrief(BaseModel, frozen=True):
                 "use a 'nothing is happening' thread on quiet days"
             )
         return self
+
+
+# ---------------------------------------------------------------------------
+# Phase-output boundary model — story ALP-691
+# ---------------------------------------------------------------------------
+
+
+class _QualInputBundleModel(BaseModel, frozen=True):
+    """Pydantic mirror of the qualitative-researcher :class:`InputBundle` dataclass."""
+
+    invocation_id: str
+    as_of: datetime
+    regime_text: str
+    digest_text: str
+    sentiment_text: str
+    prediction_market_text: str
+    calendar_text: str
+    thesis_text: str
+    bundle_text: str
+
+    @classmethod
+    def _from_domain(cls, dc: Any) -> _QualInputBundleModel:
+        return cls(
+            invocation_id=dc.invocation_id,
+            as_of=dc.as_of,
+            regime_text=dc.regime_text,
+            digest_text=dc.digest_text,
+            sentiment_text=dc.sentiment_text,
+            prediction_market_text=dc.prediction_market_text,
+            calendar_text=dc.calendar_text,
+            thesis_text=dc.thesis_text,
+            bundle_text=dc.bundle_text,
+        )
+
+    def _to_domain(self) -> Any:
+        import importlib
+
+        _mod = "alphamind.analysis.qualitative_research.input_bundle"
+        _input_bundle = importlib.import_module(_mod)
+        InputBundle = _input_bundle.InputBundle  # noqa: N806
+
+        return InputBundle(
+            invocation_id=self.invocation_id,
+            as_of=self.as_of,
+            regime_text=self.regime_text,
+            digest_text=self.digest_text,
+            sentiment_text=self.sentiment_text,
+            prediction_market_text=self.prediction_market_text,
+            calendar_text=self.calendar_text,
+            thesis_text=self.thesis_text,
+            bundle_text=self.bundle_text,
+        )
+
+
+class QualitativeResearcherResultModel(BaseModel, frozen=True):
+    """Frozen Pydantic boundary model for the qualitative researcher result.
+
+    Used by the debug-e2e phase-output persistence layer (story ALP-691).
+    ``from_domain`` / ``to_domain`` provide lossless round-trip.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    brief: QualitativeBrief
+    input_bundle: _QualInputBundleModel
+    # NewsDigest is a frozen Pydantic BaseModel imported lazily to avoid
+    # pulling the SQLAlchemy-heavy news_digest module at models.py load time.
+    # The type annotation uses a string so Pydantic resolves it on first use.
+    news_digest: NewsDigest  # resolved lazily via _rebuild_qualitative_models()
+    tokens_used: TokensUsed
+    tool_calls_used: int
+    wall_clock_seconds: float
+    retry_count: int
+
+    @classmethod
+    def from_domain(cls, dc: object) -> QualitativeResearcherResultModel:
+        """Project a :class:`QualitativeResearcherResult` onto this model."""
+        return cls(
+            brief=dc.brief,  # type: ignore[attr-defined]
+            input_bundle=_QualInputBundleModel._from_domain(dc.input_bundle),  # type: ignore[attr-defined]
+            news_digest=dc.news_digest,  # type: ignore[attr-defined]
+            tokens_used=dc.tokens_used,  # type: ignore[attr-defined]
+            tool_calls_used=dc.tool_calls_used,  # type: ignore[attr-defined]
+            wall_clock_seconds=dc.wall_clock_seconds,  # type: ignore[attr-defined]
+            retry_count=dc.retry_count,  # type: ignore[attr-defined]
+        )
+
+    def to_domain(self) -> Any:
+        """Recover the original :class:`QualitativeResearcherResult`."""
+        import importlib
+
+        _runner = importlib.import_module("alphamind.analysis.qualitative_research.runner")
+        QualitativeResearcherResult = _runner.QualitativeResearcherResult  # noqa: N806
+
+        return QualitativeResearcherResult(
+            brief=self.brief,
+            input_bundle=self.input_bundle._to_domain(),
+            news_digest=self.news_digest,
+            tokens_used=self.tokens_used,
+            tool_calls_used=self.tool_calls_used,
+            wall_clock_seconds=self.wall_clock_seconds,
+            retry_count=self.retry_count,
+        )
+
+
+# Resolve forward references so Pydantic can serialize NewsDigest correctly.
+# This must run after NewsDigest is importable at runtime.
+def _rebuild_qualitative_models() -> None:
+    from alphamind.analysis.qualitative_research.news_digest import NewsDigest  # noqa: F401
+
+    QualitativeResearcherResultModel.model_rebuild()
+
+
+_rebuild_qualitative_models()

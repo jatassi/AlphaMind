@@ -10,8 +10,11 @@ throughput here; buffering or async writes are out of scope.
 
 Per parent issue ALP-493 § Pre-resolved (B) — the ``agent_response``
 field set is fixed at the Protocol level (``duration_s``,
-``input_tokens``, ``output_tokens``, ``tool_calls``, ``stop_reason``);
-this emitter forwards every caller-supplied kwarg as-is.
+``input_tokens``, ``cache_read_tokens``, ``cache_write_tokens``,
+``output_tokens``, ``tool_calls``, ``stop_reason``); this emitter
+forwards every caller-supplied kwarg as-is. The three input-side
+counts mirror the SDK ``usage`` split so an operator can confirm at a
+glance that the prompt was assembled and cached (ALP-701).
 """
 
 from __future__ import annotations

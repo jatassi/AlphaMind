@@ -49,7 +49,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
-from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
+from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._shared import TokensUsed
 
@@ -419,6 +419,7 @@ class DiagState:
     user_message: str
     model: str
     archive_root: Path | None
+    as_of: datetime | None = None
 
     response_initial: str = ""
     response_retry: str | None = None
@@ -447,10 +448,15 @@ class DiagState:
         """
         if self.archive_root is None:
             return None
+        if self.as_of is None:
+            msg = "DiagState.as_of must be set when archive_root is provided"
+            raise ValueError(msg)
         return (
-            self.archive_root
-            / INVOCATIONS_DIRNAME
-            / self.invocation_id
+            invocation_archive_dir(
+                archive_root=self.archive_root,
+                as_of=self.as_of,
+                invocation_id=self.invocation_id,
+            )
             / self.archive_layer
             / self.agent_name
         )
@@ -555,7 +561,14 @@ def _describe_sdk_message(message: Any) -> dict[str, Any]:
         usage = getattr(message, "usage", None)
         if isinstance(usage, dict):
             detail["usage"] = {
-                key: usage[key] for key in ("input_tokens", "output_tokens") if key in usage
+                key: usage[key]
+                for key in (
+                    "input_tokens",
+                    "cache_read_input_tokens",
+                    "cache_creation_input_tokens",
+                    "output_tokens",
+                )
+                if key in usage
             }
     except (TypeError, AttributeError, ValueError) as exc:
         detail["describe_error"] = repr(exc)
@@ -848,11 +861,20 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
     * Emits ``progress.agent_request(phase, agent, model)`` immediately
       before opening the SDK call.
     * Emits ``progress.agent_response(phase, agent, model, duration_s,
-      input_tokens, output_tokens, tool_calls, stop_reason)`` after the
-      call settles — on the happy path with the outcome's fields, and on
-      every terminal failure path with whatever cost the SDK accumulated
-      before raising (zero tokens / no stop_reason for stalls and auth
-      failures; partial tokens / stop_reason for ``_CLIResultError``).
+      input_tokens, cache_read_tokens, cache_write_tokens, output_tokens,
+      tool_calls, stop_reason)`` after the call settles. Happy path
+      forwards the outcome's accumulated token counts; every terminal
+      failure path emits zero tokens because ``_collect_response``'s
+      local accumulator is not threaded through the exception types
+      that the failure arms catch (``_CLIResultError`` /
+      ``_StuckSDKCall`` / ``CLIConnectionError`` / ``ClaudeSDKError``
+      carry only error/stop-reason context, not partial usage).
+      ``stop_reason`` is forwarded on ``_CLIResultError`` (the SDK
+      surfaces it on the error result) and ``None`` elsewhere. The
+      three input-side counts mirror the SDK ``usage`` split so the
+      operator can tell apart a cache-hit prompt (bulk in
+      ``cache_read_tokens``) from a broken context-assembly path
+      (ALP-701).
 
     ``progress`` defaults to :class:`NoOpProgressEmitter` so production
     callers keep their original signature; ``phase`` is required and
@@ -874,6 +896,8 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
         *,
         stop_reason: str | None,
         input_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
         output_tokens: int = 0,
         tool_calls: int = 0,
     ) -> None:
@@ -883,6 +907,8 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
             model=diag.model,
             duration_s=time.monotonic() - wall_start,
             input_tokens=input_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
             output_tokens=output_tokens,
             tool_calls=tool_calls,
             stop_reason=stop_reason,
@@ -983,6 +1009,8 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
             _emit_response(
                 stop_reason=outcome.stop_reason,
                 input_tokens=outcome.tokens_used.input_tokens,
+                cache_read_tokens=outcome.tokens_used.cache_read_tokens,
+                cache_write_tokens=outcome.tokens_used.cache_write_tokens,
                 output_tokens=outcome.tokens_used.output_tokens,
                 tool_calls=outcome.tool_calls,
             )

@@ -145,9 +145,12 @@ def _validation_module_for(spec: AgentSpec) -> ModuleType:
     return importlib.import_module(f"{parent}.validation")
 
 
+_AS_OF = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
+
+
 def _diag_dir(agent: AgentSpec, archive_root: Path) -> Path:
     agent_name = "portfolio_manager" if agent.name == "pm" else agent.name
-    return archive_root / "invocations" / "INV-contract-001" / agent.archive_layer / agent_name
+    return archive_root / "2026-05-01" / "INV-contract-001" / agent.archive_layer / agent_name
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +313,7 @@ def _build_diag(agent: AgentSpec, archive_root: Path) -> Any:
         "prompt_text": "<system prompt text>",
         "user_message": "<user message text>",
         "model": "claude-sonnet-4-6",
+        "as_of": _AS_OF,
         "archive_root": archive_root,
     }
     if agent.name == "strategist":

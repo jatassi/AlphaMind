@@ -22,9 +22,9 @@ import re
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from alphamind.analysis._shared import Sector
+from alphamind.analysis._shared import Sector, TokensUsed
 from alphamind.analysis.domain_researchers.models import SECTOR_PREFIX
 
 __all__ = [
@@ -33,6 +33,8 @@ __all__ = [
     "BriefBundle",
     "BriefSource",
     "ReferencePrefix",
+    "RetrievalStoreModel",
+    "SynthesizerResultModel",
     "find_bare_prefix_citations",
     "parse_reference_id",
 ]
@@ -231,3 +233,91 @@ def find_bare_prefix_citations(text: str) -> tuple[str, ...]:
         seen.add(body)
         bare.append(body)
     return tuple(bare)
+
+
+# ---------------------------------------------------------------------------
+# Phase-output boundary models — story ALP-691
+# ---------------------------------------------------------------------------
+
+
+class RetrievalStoreModel(BaseModel, frozen=True):
+    """Frozen Pydantic boundary model for :class:`RetrievalStore`.
+
+    ``freshness_by_source`` serializes :class:`BriefSource` enum keys as their
+    string values (via ``dict[str, datetime]`` on the wire); ``from_domain``
+    and ``to_domain`` convert to/from the typed ``dict[BriefSource, datetime]``
+    form losslessly.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    entries: dict[str, str]
+    # Wire representation: BriefSource enum keys serialized as strings.
+    freshness_by_source: dict[str, datetime]
+
+    @classmethod
+    def from_domain(cls, store: object) -> RetrievalStoreModel:
+        """Project a :class:`RetrievalStore` onto this model."""
+        return cls(
+            entries=dict(store.entries),  # type: ignore[attr-defined]
+            freshness_by_source={
+                source.value: ts
+                for source, ts in store.freshness_by_source.items()  # type: ignore[attr-defined]
+            },
+        )
+
+    def to_domain(self) -> Any:
+        """Recover the original :class:`RetrievalStore`."""
+        from alphamind.analysis.synthesizer.retrieval import RetrievalStore
+
+        return RetrievalStore(
+            entries=dict(self.entries),
+            freshness_by_source={
+                BriefSource(source): ts for source, ts in self.freshness_by_source.items()
+            },
+        )
+
+
+class SynthesizerResultModel(BaseModel, frozen=True):
+    """Frozen Pydantic boundary model for the synthesizer result.
+
+    Used by the debug-e2e phase-output persistence layer (story ALP-691).
+    ``from_domain`` / ``to_domain`` provide lossless round-trip.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    synthesis_text: str
+    retrieval_store: RetrievalStoreModel
+    tokens_used: TokensUsed
+    tool_calls_used: int
+    wall_clock_seconds: float
+    stop_reason: str | None
+
+    @classmethod
+    def from_domain(cls, dc: object) -> SynthesizerResultModel:
+        """Project a :class:`SynthesizerResult` onto this model."""
+        return cls(
+            synthesis_text=dc.synthesis_text,  # type: ignore[attr-defined]
+            retrieval_store=RetrievalStoreModel.from_domain(dc.retrieval_store),  # type: ignore[attr-defined]
+            tokens_used=dc.tokens_used,  # type: ignore[attr-defined]
+            tool_calls_used=dc.tool_calls_used,  # type: ignore[attr-defined]
+            wall_clock_seconds=dc.wall_clock_seconds,  # type: ignore[attr-defined]
+            stop_reason=dc.stop_reason,  # type: ignore[attr-defined]
+        )
+
+    def to_domain(self) -> Any:
+        """Recover the original :class:`SynthesizerResult`."""
+        import importlib
+
+        _runner = importlib.import_module("alphamind.analysis.synthesizer.runner")
+        SynthesizerResult = _runner.SynthesizerResult  # noqa: N806
+
+        return SynthesizerResult(
+            synthesis_text=self.synthesis_text,
+            retrieval_store=self.retrieval_store.to_domain(),
+            tokens_used=self.tokens_used,
+            tool_calls_used=self.tool_calls_used,
+            wall_clock_seconds=self.wall_clock_seconds,
+            stop_reason=self.stop_reason,
+        )

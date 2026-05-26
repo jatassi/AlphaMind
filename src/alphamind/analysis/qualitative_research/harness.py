@@ -23,6 +23,7 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -305,6 +306,7 @@ async def invoke_qualitative_researcher(  # noqa: PLR0913 — public signature i
     invocation_id: str,
     session: Session,
     universe: frozenset[str],
+    as_of: datetime | None = None,
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
@@ -344,6 +346,7 @@ async def invoke_qualitative_researcher(  # noqa: PLR0913 — public signature i
         user_message=user_message,
         model=str(agent_config.model),
         archive_root=archive_root,
+        as_of=as_of,
         record_tool_calls=True,
     )
     wall_start = time.monotonic()

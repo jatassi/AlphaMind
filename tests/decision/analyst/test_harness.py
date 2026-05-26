@@ -379,6 +379,7 @@ async def test_happy_path_returns_harness_success(
         retrieval_store=retrieval_store,
         active_sectors=active_sectors,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
@@ -425,6 +426,7 @@ async def test_claude_agent_options_wires_two_mcp_servers_and_json_schema(
         retrieval_store=retrieval_store,
         active_sectors=active_sectors,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_capturing_stub,
     )
 
@@ -561,6 +563,7 @@ async def test_parse_failure_then_retry_success(
         retrieval_store=retrieval_store,
         active_sectors=active_sectors,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_stub,
     )
 
@@ -637,6 +640,7 @@ async def test_validation_failure_then_retry_success(
         retrieval_store=retrieval_store,
         active_sectors=narrow_active,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_stub,
     )
 
@@ -697,6 +701,7 @@ async def test_validation_warnings_only_returns_success_no_retry(
             retrieval_store=retrieval_store,
             active_sectors=active_sectors,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_stub,
         )
 
@@ -732,6 +737,7 @@ async def test_both_attempts_malformed_raises_with_both_raw_responses(
             retrieval_store=retrieval_store,
             active_sectors=active_sectors,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
 
@@ -777,6 +783,7 @@ async def test_max_tokens_with_parse_error_raises_context_overflow_no_retry(
             retrieval_store=retrieval_store,
             active_sectors=active_sectors,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_stub,
         )
 
@@ -818,6 +825,7 @@ async def test_slow_sdk_stub_raises_timeout_failure(
             retrieval_store=retrieval_store,
             active_sectors=active_sectors,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_slow_stub,
         )
 
@@ -851,6 +859,7 @@ async def test_auth_failure_raises_sdk_failure_naming_env_var(
             retrieval_store=retrieval_store,
             active_sectors=active_sectors,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_auth_fail_stub,
         )
 
@@ -886,6 +895,7 @@ async def test_claude_sdk_error_raises_sdk_failure(
             retrieval_store=retrieval_store,
             active_sectors=active_sectors,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_sdk_err_stub,
         )
 
@@ -920,6 +930,7 @@ async def test_cli_result_error_raises_sdk_failure(
             retrieval_store=retrieval_store,
             active_sectors=active_sectors,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
 
@@ -1032,6 +1043,7 @@ async def test_tool_call_counter_includes_both_mcp_prefixes_excludes_others(
         retrieval_store=retrieval_store,
         active_sectors=active_sectors,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
@@ -1065,10 +1077,11 @@ async def test_diagnostic_files_written_when_archive_root_provided(
         retrieval_store=retrieval_store,
         active_sectors=active_sectors,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
-    diag_dir = archive_root / "invocations" / "inv-diag-001" / "decision" / "analyst"
+    diag_dir = archive_root / "2026-04-28" / "inv-diag-001" / "decision" / "analyst"
     assert (diag_dir / "prompt.md").exists()
     assert (diag_dir / "user_message.md").exists()
     assert (diag_dir / "response_initial.md").exists()
@@ -1101,10 +1114,11 @@ async def test_diagnostic_files_include_retry_on_corrective_loop(
         retrieval_store=retrieval_store,
         active_sectors=active_sectors,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
-    diag_dir = archive_root / "invocations" / "inv-retry-001" / "decision" / "analyst"
+    diag_dir = archive_root / "2026-04-28" / "inv-retry-001" / "decision" / "analyst"
     initial_text = (diag_dir / "response_initial.md").read_text(encoding="utf-8")
     retry_text = (diag_dir / "response_retry.md").read_text(encoding="utf-8")
     assert "structured_output not populated" in initial_text
@@ -1165,6 +1179,7 @@ async def test_sdk_query_fn_is_used_real_query_never_called(
             retrieval_store=retrieval_store,
             active_sectors=active_sectors,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
         mock_real.assert_not_called()
@@ -1201,6 +1216,7 @@ async def test_tokens_used_accumulates_across_retry(
         retrieval_store=retrieval_store,
         active_sectors=active_sectors,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 

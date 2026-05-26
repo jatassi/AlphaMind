@@ -96,7 +96,13 @@ def test_agent_request_emits_event_with_kwargs(tmp_path: Path) -> None:
 
 
 def test_agent_response_emits_full_field_set(tmp_path: Path) -> None:
-    """``agent_response`` carries the 5-field response set per ALP-493 (B)."""
+    """``agent_response`` carries the 7-field response set per ALP-493 (B).
+
+    The cache-read / cache-write columns were added per ALP-701 so an
+    operator tailing the JSONL can distinguish a cache-hit prompt
+    (bulk in ``cache_read_tokens``) from a broken context-assembly
+    path.
+    """
     path = tmp_path / "progress.jsonl"
     emitter = JsonlProgressEmitter(path=path)
 
@@ -106,6 +112,8 @@ def test_agent_response_emits_full_field_set(tmp_path: Path) -> None:
         model="claude-opus-4-7",
         duration_s=42.7,
         input_tokens=12_345,
+        cache_read_tokens=68_214,
+        cache_write_tokens=1_024,
         output_tokens=6_789,
         tool_calls=3,
         stop_reason="end_turn",
@@ -118,6 +126,8 @@ def test_agent_response_emits_full_field_set(tmp_path: Path) -> None:
     assert record["model"] == "claude-opus-4-7"
     assert record["duration_s"] == 42.7
     assert record["input_tokens"] == 12_345
+    assert record["cache_read_tokens"] == 68_214
+    assert record["cache_write_tokens"] == 1_024
     assert record["output_tokens"] == 6_789
     assert record["tool_calls"] == 3
     assert record["stop_reason"] == "end_turn"
@@ -196,6 +206,8 @@ def test_emit_one_of_each_event_type_roundtrips_in_order(tmp_path: Path) -> None
         model="claude-opus-4-7",
         duration_s=3.0,
         input_tokens=100,
+        cache_read_tokens=60_000,
+        cache_write_tokens=0,
         output_tokens=50,
         tool_calls=0,
         stop_reason="end_turn",

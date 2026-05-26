@@ -8,6 +8,7 @@ These tests exercise ``serialize_resolved_config``, ``compute_snapshot_hash``,
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -51,6 +52,9 @@ from alphamind.config.snapshot import (
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 CONFIG_DIR = REPO_ROOT / "config"
+
+# Canonical test invocation timestamp; date partition is "2026-04-27".
+_AS_OF = datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC)
 
 
 def _read(name: str) -> dict[str, Any]:
@@ -158,13 +162,10 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     """
     resolved = _fixture_resolved()
     digest = compute_snapshot_hash(serialize_resolved_config(resolved))
-    # Pin updated 2026-05-26 (ALP-668 rebase): the base branch added
-    # scheduler.yaml.control_port (ALP-664) and main raised
-    # agents.yaml.analyst.latency_budget_seconds from 300 to 500 (#200);
-    # the combined canonical form on the ALP-128 work tree shifts the
-    # hash. Pin reflects the merged state. Wave-6 integration: 06b
-    # (ALP-683) re-pinned to the merged-tree canonical hash after
-    # cherry-picking 06a/06b/06c onto c09904ee.
+    # Pin updated 2026-05-26 (ALP-128 merge into main): canonical bytes shift
+    # from the ALP-128 work tree's added scheduler.yaml.control_port (ALP-664)
+    # combined with main's PR #200 latency_budget bump (300 -> 500), PR #201/202
+    # risk/translator config updates, and the merge-time resolution.
     expected = "2b973263dbd53b290b32ed2a68453f7f3a70b17541db51d668af64cd70ba6a49"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
@@ -180,8 +181,10 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
 def test_persist_snapshot_writes_to_documented_path_layout(tmp_path: Path) -> None:
     resolved = _fixture_resolved()
     invocation_id = "inv-20260427-001"
-    result = persist_snapshot(resolved, archive_root=tmp_path, invocation_id=invocation_id)
-    expected = tmp_path / "invocations" / invocation_id / "resolved_config.json"
+    result = persist_snapshot(
+        resolved, archive_root=tmp_path, invocation_id=invocation_id, as_of=_AS_OF
+    )
+    expected = tmp_path / "2026-04-27" / invocation_id / "resolved_config.json"
     assert result.path == expected
     assert expected.exists()
 
@@ -189,8 +192,8 @@ def test_persist_snapshot_writes_to_documented_path_layout(tmp_path: Path) -> No
 def test_persist_snapshot_file_content_equals_serialize_output(tmp_path: Path) -> None:
     resolved = _fixture_resolved()
     invocation_id = "inv-20260427-002"
-    persist_snapshot(resolved, archive_root=tmp_path, invocation_id=invocation_id)
-    written = (tmp_path / "invocations" / invocation_id / "resolved_config.json").read_text()
+    persist_snapshot(resolved, archive_root=tmp_path, invocation_id=invocation_id, as_of=_AS_OF)
+    written = (tmp_path / "2026-04-27" / invocation_id / "resolved_config.json").read_text()
     assert written == serialize_resolved_config(resolved)
 
 
@@ -198,15 +201,17 @@ def test_persist_snapshot_creates_intermediate_directories(tmp_path: Path) -> No
     resolved = _fixture_resolved()
     invocation_id = "inv-20260427-003"
     deeply_nested = tmp_path / "does" / "not" / "yet" / "exist" / "provenance"
-    persist_snapshot(resolved, archive_root=deeply_nested, invocation_id=invocation_id)
-    assert (deeply_nested / "invocations" / invocation_id / "resolved_config.json").exists()
+    persist_snapshot(
+        resolved, archive_root=deeply_nested, invocation_id=invocation_id, as_of=_AS_OF
+    )
+    assert (deeply_nested / "2026-04-27" / invocation_id / "resolved_config.json").exists()
 
 
 def test_persist_snapshot_leaves_no_tmp_file_on_success(tmp_path: Path) -> None:
     resolved = _fixture_resolved()
     invocation_id = "inv-20260427-004"
-    persist_snapshot(resolved, archive_root=tmp_path, invocation_id=invocation_id)
-    invocation_dir = tmp_path / "invocations" / invocation_id
+    persist_snapshot(resolved, archive_root=tmp_path, invocation_id=invocation_id, as_of=_AS_OF)
+    invocation_dir = tmp_path / "2026-04-27" / invocation_id
     tmp_files = list(invocation_dir.glob("*.tmp"))
     assert tmp_files == [], f"Expected no .tmp files; found {tmp_files}"
 
@@ -250,8 +255,8 @@ def test_feature_flags_snapshot_returns_flat_dict_equal_to_model_dump() -> None:
 def test_persisted_json_is_round_trippable(tmp_path: Path) -> None:
     resolved = _fixture_resolved()
     invocation_id = "inv-20260427-005"
-    persist_snapshot(resolved, archive_root=tmp_path, invocation_id=invocation_id)
-    written = (tmp_path / "invocations" / invocation_id / "resolved_config.json").read_text()
+    persist_snapshot(resolved, archive_root=tmp_path, invocation_id=invocation_id, as_of=_AS_OF)
+    written = (tmp_path / "2026-04-27" / invocation_id / "resolved_config.json").read_text()
     payload = json.loads(written)
     assert isinstance(payload, dict)
     # Spot-check a few expected top-level keys
@@ -270,8 +275,10 @@ def test_persist_snapshot_returns_snapshot_result_with_hash_path_and_flags(
 ) -> None:
     resolved = _fixture_resolved()
     invocation_id = "inv-20260427-006"
-    result = persist_snapshot(resolved, archive_root=tmp_path, invocation_id=invocation_id)
+    result = persist_snapshot(
+        resolved, archive_root=tmp_path, invocation_id=invocation_id, as_of=_AS_OF
+    )
     assert isinstance(result, SnapshotResult)
     assert result.hash == compute_snapshot_hash(serialize_resolved_config(resolved))
-    assert result.path == tmp_path / "invocations" / invocation_id / "resolved_config.json"
+    assert result.path == tmp_path / "2026-04-27" / invocation_id / "resolved_config.json"
     assert result.feature_flags_snapshot == feature_flags_snapshot(resolved)

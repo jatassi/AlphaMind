@@ -485,6 +485,7 @@ def _invoke_kwargs(
     library_config: LibraryConfig,
     library_market: MarketInputs,
     halt_mode: bool = False,
+    as_of: datetime | None = None,
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
 ) -> dict[str, Any]:
@@ -501,6 +502,7 @@ def _invoke_kwargs(
         "active_sectors": active_sectors,
         "halt_mode": halt_mode,
         "sector_resolver": _sector_resolver,
+        "as_of": as_of,
         "library_config": library_config,
         "library_market": library_market,
         "state_persistence_config": _state_persistence_config(),
@@ -557,6 +559,7 @@ async def test_happy_path_with_stub_sdk(
             library_config=library_config,
             library_market=library_market,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
     )
@@ -624,6 +627,7 @@ async def test_parse_failure_retries_then_succeeds(
             library_config=library_config,
             library_market=library_market,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_stub,
         )
     )
@@ -682,6 +686,7 @@ async def test_parse_failure_with_max_tokens_raises_context_overflow(
                 library_config=library_config,
                 library_market=library_market,
                 archive_root=archive_root,
+                as_of=_AS_OF,
                 sdk_query_fn=_stub,
             )
         )
@@ -729,6 +734,7 @@ async def test_parse_failure_after_retry_raises_malformed(
                 library_config=library_config,
                 library_market=library_market,
                 archive_root=archive_root,
+                as_of=_AS_OF,
                 sdk_query_fn=stub,
             )
         )
@@ -791,6 +797,7 @@ async def test_timeout_raises_timeout_failure(
                 library_config=library_config,
                 library_market=library_market,
                 archive_root=archive_root,
+                as_of=_AS_OF,
                 sdk_query_fn=_slow_stub,
             )
         )
@@ -838,6 +845,7 @@ async def test_sdk_exception_raises_sdk_failure(
                 library_config=library_config,
                 library_market=library_market,
                 archive_root=archive_root,
+                as_of=_AS_OF,
                 sdk_query_fn=_sdk_err_stub,
             )
         )
@@ -887,11 +895,12 @@ async def test_diagnostic_archive_written(
             library_config=library_config,
             library_market=library_market,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
     )
 
-    diag_dir = archive_root / "invocations" / "inv-diag-001" / "decision" / "portfolio_manager"
+    diag_dir = archive_root / "2026-04-28" / "inv-diag-001" / "decision" / "portfolio_manager"
     assert (diag_dir / "prompt.md").exists()
     assert (diag_dir / "user_message.md").exists()
     assert (diag_dir / "response_initial.md").exists()
@@ -1012,6 +1021,7 @@ async def test_four_mcp_servers_registered(
             library_config=library_config,
             library_market=library_market,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_capturing_stub,
         )
     )
@@ -1117,6 +1127,7 @@ async def test_state_cells_are_per_invocation(
             library_config=library_config,
             library_market=library_market,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_capturing_stub,
         )
     )
@@ -1135,6 +1146,7 @@ async def test_state_cells_are_per_invocation(
             library_config=library_config,
             library_market=library_market,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_capturing_stub,
         )
     )
@@ -1283,13 +1295,14 @@ async def test_submission_log_threads_from_engine_stub_state_cell(
             library_config=library_config,
             library_market=library_market,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
     )
 
     assert result.submission_log == (fake_entry,)
 
-    diag_dir = archive_root / "invocations" / "inv-log-001" / "decision" / "portfolio_manager"
+    diag_dir = archive_root / "2026-04-28" / "inv-log-001" / "decision" / "portfolio_manager"
     log_dump = json.loads((diag_dir / "submission_log.json").read_text())
     assert len(log_dump) == 1
     assert log_dump[0]["envelope"]["envelope_id"] == "ENV-REC-1"
@@ -1345,11 +1358,12 @@ async def test_failed_submission_log_archived_from_state_cell(
             library_config=library_config,
             library_market=library_market,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
     )
 
-    diag_dir = archive_root / "invocations" / "inv-fail-001" / "decision" / "portfolio_manager"
+    diag_dir = archive_root / "2026-04-28" / "inv-fail-001" / "decision" / "portfolio_manager"
     failed_dump = json.loads((diag_dir / "failed_submission_log.json").read_text())
     assert len(failed_dump) == 1
     assert failed_dump[0]["command_id"] == "inv-fail-001.ENV-REC-99.0.0"
@@ -1395,6 +1409,7 @@ async def test_sdk_query_fn_is_used_real_query_never_called(
                 library_config=library_config,
                 library_market=library_market,
                 archive_root=archive_root,
+                as_of=_AS_OF,
                 sdk_query_fn=stub,
             )
         )

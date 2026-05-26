@@ -239,6 +239,7 @@ async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; va
             sector_briefs=sector_briefs,
             qualitative_brief=qualitative_brief,
             correlation_regime_brief=correlation_regime_brief,
+            as_of=as_of,
             archive_root=archive_root,
             progress=progress,
             phase=phase,

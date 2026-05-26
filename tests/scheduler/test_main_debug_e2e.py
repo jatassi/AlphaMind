@@ -342,13 +342,17 @@ def _patch_debug_e2e_heavy_setup(monkeypatch: pytest.MonkeyPatch) -> dict[str, A
 
     monkeypatch.setattr(seed_module, "wipe_and_seed", _stub_wipe_and_seed)
 
-    def _stub_configure_debug_e2e(*, archive_root: Any, portfolio: Any) -> Any:
+    def _stub_configure_debug_e2e(
+        *, archive_root: Any, portfolio: Any, resume_context: Any = None
+    ) -> Any:
         captured["configure_debug_e2e_archive_root"] = archive_root
         captured["configure_debug_e2e_portfolio"] = portfolio
+        captured["configure_debug_e2e_resume_context"] = resume_context
         return settings_module.DebugE2ESettings(
             account_queries=LogOnlyAccountStateQueries(portfolio),
             ca_queries=LogOnlyCorporateActionsQueries(),
-            emitter_factory=lambda _invocation_id: shared_recorder,
+            emitter_factory=lambda _invocation_id, _as_of: shared_recorder,
+            resume_context=resume_context,
         )
 
     monkeypatch.setattr(settings_module, "configure_debug_e2e", _stub_configure_debug_e2e)
@@ -608,6 +612,10 @@ class TestRunDebugE2E:
         # portfolio so the broker stand-in projects what the seeder wrote.
         assert captured["configure_debug_e2e_portfolio"] is SYNTHETIC_PORTFOLIO
         assert captured["wipe_seed_calls"][0]["portfolio"] is SYNTHETIC_PORTFOLIO
+        # Without --resume-from, configure_debug_e2e must receive
+        # resume_context=None; a spurious non-None would silently flip
+        # the debug-e2e mode into "replay" for every invocation.
+        assert captured["configure_debug_e2e_resume_context"] is None
 
     async def test_fresh_start_threads_fresh_start_portfolio(
         self,

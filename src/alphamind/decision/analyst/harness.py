@@ -22,6 +22,7 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -456,6 +457,7 @@ async def invoke_analyst(  # noqa: PLR0913 — public signature is fixed by ALP-
     initial_validation_state: ValidationToolState,
     retrieval_store: RetrievalStore,
     active_sectors: frozenset[str],
+    as_of: datetime | None = None,
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
@@ -531,6 +533,7 @@ async def invoke_analyst(  # noqa: PLR0913 — public signature is fixed by ALP-
             options=options,
             sdk_query_fn=sdk_query_fn,
             validator=validator,
+            as_of=as_of,
             archive_root=archive_root,
             progress=progress,
             phase=phase,
@@ -547,6 +550,7 @@ async def _run_invocation(  # noqa: PLR0913 — internal helper threading runner
     options: Any,
     sdk_query_fn: Callable[..., AsyncIterator[Any]],
     validator: _ValidatorContext,
+    as_of: datetime | None,
     archive_root: Path | None,
     progress: ProgressEmitter,
     phase: str,
@@ -567,6 +571,7 @@ async def _run_invocation(  # noqa: PLR0913 — internal helper threading runner
         user_message=user_message,
         model=str(agent_config.model),
         archive_root=archive_root,
+        as_of=as_of,
         record_tool_calls=True,
         archive_layer="decision",
     )

@@ -46,6 +46,9 @@ See ``scripts/RUNBOOK_end_to_end_verification.md`` for the operator runbook.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import hashlib
+import io
 import json
 import os
 import re
@@ -54,15 +57,15 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
-from alphamind._kernel.invocations import (
+from alphamind._kernel.archive_layout import (
     CALIBRATION_SNAPSHOT_FILENAME,
-    INVOCATIONS_DIRNAME,
     RESOLVED_CONFIG_FILENAME,
+    find_invocation_archive_dir,
 )
 from alphamind.config.models.run_types import RunType
 from alphamind.scripts._stdio import configure_utf8_stdio
@@ -70,10 +73,12 @@ from alphamind.scripts._stdio import configure_utf8_stdio
 __all__ = [
     "FRESH_START_EXPECTATIONS",
     "SYNTHETIC_EXPECTATIONS",
+    "VERIFY_SUMMARY_FILENAME",
     "CheckResult",
     "PortfolioExpectations",
     "check_archive_directory",
     "check_auth",
+    "check_deterministic_prefix",
     "check_invocation_summary",
     "check_jsonl_ordering",
     "check_no_alpaca",
@@ -143,16 +148,25 @@ def check_auth() -> CheckResult:
 
 
 _PROGRESS_JSONL_FILENAME = "progress.jsonl"
+VERIFY_SUMMARY_FILENAME = "verify_summary.txt"
+"""Operator-facing summary persisted alongside the run's archive.
+
+Mirrors the wrapper stdout (PASS/FAIL lines + ``=== DEBUG-E2E VERIFICATION ===``
+summary + ``=== DATA HEALTH ===`` block). Written at the end of
+:func:`main` once the invocation directory is resolved, so the verdict
+lives with the rest of the run's artifacts instead of relying on the
+operator to ``tee`` wrapper output to a side file.
+"""
 
 
 def check_archive_directory(*, archive_root: Path, invocation_id: str) -> CheckResult:
     """Assert the per-invocation directory carries the two required files."""
-    inv_dir = archive_root / INVOCATIONS_DIRNAME / invocation_id
-    if not inv_dir.is_dir():
+    inv_dir = find_invocation_archive_dir(archive_root=archive_root, invocation_id=invocation_id)
+    if inv_dir is None or not inv_dir.is_dir():
         return CheckResult(
             label="archive_directory",
             passed=False,
-            message=f"archive directory missing: {inv_dir}",
+            message=f"archive directory missing for {invocation_id!r} under {archive_root}",
         )
     resolved = inv_dir / RESOLVED_CONFIG_FILENAME
     if not resolved.is_file():
@@ -396,27 +410,40 @@ def _check_phase_pairs(events: list[dict[str, object]]) -> str | None:
 
 # Fields every ``agent_response`` must carry per parent issue ALP-493 § (B).
 # ``stop_reason`` may legitimately be ``None`` (the Anthropic SDK does not
-# always populate it); the other four must be present AND non-null because
+# always populate it); the other six must be present AND non-null because
 # the report builder + cost-tracking downstream rely on them.
+# ``cache_read_tokens`` / ``cache_write_tokens`` were added per ALP-701 so
+# an operator can distinguish a cache-hit prompt (the AlphaMind norm —
+# bulk of input lives in ``cache_read_tokens``) from a broken
+# context-assembly path.
 _AGENT_RESPONSE_REQUIRED_FIELDS: tuple[str, ...] = (
     "duration_s",
     "input_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
     "output_tokens",
     "tool_calls",
     "stop_reason",
 )
 _AGENT_RESPONSE_NON_NULL_FIELDS: frozenset[str] = frozenset(
-    {"duration_s", "input_tokens", "output_tokens", "tool_calls"}
+    {
+        "duration_s",
+        "input_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "output_tokens",
+        "tool_calls",
+    }
 )
 
 
 def _check_agent_response_fields(
     *, event_index: int, ev: dict[str, object], key: tuple[str, str]
 ) -> str | None:
-    """Assert one ``agent_response`` carries the 5-field set per § (B).
+    """Assert one ``agent_response`` carries the 7-field set per § (B).
 
     Returns a non-``None`` error string when a required field is absent
-    or — for the four load-bearing fields — null.
+    or — for the six load-bearing fields — null.
     """
     for field in _AGENT_RESPONSE_REQUIRED_FIELDS:
         if field not in ev:
@@ -692,6 +719,176 @@ def check_invocation_summary(stdout: str) -> CheckResult:
 
 
 # ---------------------------------------------------------------------------
+# Deterministic-prefix check (fires only on resume runs)
+# ---------------------------------------------------------------------------
+
+
+#: Header-line prefixes (followed by ``: ``) that vary per invocation by
+#: design and must be stripped before hashing. Distillation outputs
+#: embed the per-run ``invocation_id`` in a header line
+#: (``sector_assembly.py:229``, ``correlation_brief.py:683``); the
+#: per-run mint makes a naive byte-comparison guaranteed to fail across
+#: source vs new archives. Normalising here preserves the
+#: "deterministic prefix" invariant the design doc § 5 actually wants
+#: to assert (the computation produced the same content) without
+#: mistaking the wrapping metadata for a divergence.
+_DISTILLATION_VARIABLE_HEADER_PREFIXES: tuple[bytes, ...] = (b"Invocation: ",)
+
+
+def _sha256_of_file(path: Path) -> str:
+    """Stream a file through ``hashlib.sha256`` and return the hex digest.
+
+    Reads the file in binary mode (``Path.open("rb")``) to avoid the
+    text-mode line-ending normalization differences that would
+    otherwise make this check unstable across platforms — distillation
+    writes ``\\n`` line endings deterministically, but reading via
+    text mode on Windows can fold CRLF into LF and produce a false
+    match. Binary mode pins the comparison to actual on-disk bytes.
+
+    Lines whose prefix matches
+    :data:`_DISTILLATION_VARIABLE_HEADER_PREFIXES` are stripped before
+    hashing — these are per-invocation metadata (notably
+    ``Invocation: <id>``) that the design-doc invariant explicitly
+    permits to vary while the rest of the file stays byte-identical.
+    """
+    hasher = hashlib.sha256()
+    with path.open("rb") as f:
+        for raw_line in f:
+            stripped = raw_line.lstrip()
+            if any(
+                stripped.startswith(prefix) for prefix in _DISTILLATION_VARIABLE_HEADER_PREFIXES
+            ):
+                continue
+            hasher.update(raw_line)
+    return hasher.hexdigest()
+
+
+def _relative_files(root: Path) -> dict[str, Path]:
+    """Return ``{relative_posix_path: absolute_path}`` for every regular
+    file under *root*.
+
+    POSIX-style relative keys keep the cross-archive comparison stable
+    across Windows / Mac path separators. Skips symlinks and non-files
+    so a stray ``.DS_Store`` -> directory link doesn't poison the hash.
+    """
+    if not root.is_dir():
+        return {}
+    out: dict[str, Path] = {}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        out[rel] = path
+    return out
+
+
+def check_deterministic_prefix(
+    *,
+    source_distillation_dir: Path,
+    new_distillation_dir: Path,
+) -> CheckResult:
+    """Hash distillation outputs pairwise; FAIL on the first byte mismatch.
+
+    Asserts the design-doc § 5 deterministic-prefix invariant: phase1 +
+    snapshot_assembly + distillation must produce byte-identical
+    outputs on a resume run vs the source run. Distillation is the
+    load-bearing comparison surface — it is the deterministic phase
+    whose output drives every replayed SDK phase. A mismatch surfaces
+    one of two failure modes (operator runbook):
+
+    * the synthetic portfolio fixture changed between runs, or
+    * a non-determinism regression slipped into distillation.
+
+    The check fires ONLY on resume runs — the wrapper omits it on a
+    fresh debug-e2e invocation, keeping the summary line at ``7/7
+    checks passed``.
+
+    Returns a :class:`CheckResult` with ``label='deterministic_prefix'``;
+    the caller formats and prints it. PASS message names the file count
+    + cumulative hashed bytes; FAIL message names the first divergent
+    file and a one-line summary of how the bytes differ (length /
+    first-mismatched-byte offset). Missing source / target directories
+    are FAIL — the resume invocation is expected to produce
+    distillation outputs in the same shape as the source.
+    """
+    source_files = _relative_files(source_distillation_dir)
+    new_files = _relative_files(new_distillation_dir)
+
+    if not source_files:
+        return CheckResult(
+            label="deterministic_prefix",
+            passed=False,
+            message=(f"source distillation directory missing or empty: {source_distillation_dir}"),
+        )
+    if not new_files:
+        return CheckResult(
+            label="deterministic_prefix",
+            passed=False,
+            message=(f"new distillation directory missing or empty: {new_distillation_dir}"),
+        )
+
+    # Walk in deterministic order so the "first mismatched file" the
+    # FAIL message names is reproducible across runs (``_relative_files``
+    # already sorts via ``rglob``, but be explicit on the join).
+    total_bytes = 0
+    for rel in sorted(source_files):
+        source_path = source_files[rel]
+        new_path = new_files.get(rel)
+        if new_path is None:
+            return CheckResult(
+                label="deterministic_prefix",
+                passed=False,
+                message=(
+                    f"distillation file {rel!r} present in source but missing "
+                    f"in new archive (source={source_path}, "
+                    f"new_dir={new_distillation_dir})"
+                ),
+            )
+        source_hash = _sha256_of_file(source_path)
+        new_hash = _sha256_of_file(new_path)
+        if source_hash != new_hash:
+            source_len = source_path.stat().st_size
+            new_len = new_path.stat().st_size
+            return CheckResult(
+                label="deterministic_prefix",
+                passed=False,
+                message=(
+                    f"distillation file {rel!r} differs: "
+                    f"source={source_hash[:16]}... ({source_len}B), "
+                    f"new={new_hash[:16]}... ({new_len}B). "
+                    f"Likely cause: non-determinism regression in "
+                    f"phase1 / snapshot_assembly / distillation."
+                ),
+            )
+        total_bytes += source_path.stat().st_size
+
+    # Surface extra files in the new archive only after the source files
+    # all match — a "new file appeared" surface is a soft mismatch
+    # signal worth surfacing but not load-bearing. We FAIL on it because
+    # the invariant is byte-identical outputs, and an extra file is a
+    # divergence.
+    extra = sorted(set(new_files) - set(source_files))
+    if extra:
+        return CheckResult(
+            label="deterministic_prefix",
+            passed=False,
+            message=(
+                f"distillation file(s) {extra} present in new archive but "
+                f"missing in source (new_dir={new_distillation_dir})"
+            ),
+        )
+
+    return CheckResult(
+        label="deterministic_prefix",
+        passed=True,
+        message=(
+            f"{len(source_files)} distillation file(s) byte-identical "
+            f"({total_bytes}B hashed) vs source archive"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Argparse + main
 # ---------------------------------------------------------------------------
 
@@ -748,12 +945,55 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             "synthetic-portfolio visibility check (ALP-618)."
         ),
     )
+    parser.add_argument(
+        "--resume-from",
+        metavar="INVOCATION_ID:PHASE",
+        default=None,
+        help=(
+            "Forward ``--resume-from <invocation-id>:<phase>`` to the "
+            "underlying scheduler subprocess so it hydrates SDK-phase "
+            "outputs from the named source invocation and re-runs from "
+            "``<phase>`` onward (ALP-693 / ALP-696). The wrapper does no "
+            "validation — the scheduler CLI is the source of truth on "
+            "validity and exits 2 with a named-cause stderr message on "
+            "rejection. When set, the wrapper also runs the post-resume "
+            "``check_deterministic_prefix`` check that hashes the "
+            "distillation outputs against the source archive."
+        ),
+    )
     return parser.parse_args(argv)
 
 
 def _emit(results: list[CheckResult], result: CheckResult) -> None:
     results.append(result)
     print(result.format_line())
+
+
+class _TeeStream(io.TextIOBase):
+    """Forward writes to a real stdout while accumulating them in a buffer.
+
+    Used by :func:`main` under :func:`contextlib.redirect_stdout` so every
+    operator-facing line (PASS/FAIL, summary, DATA HEALTH) is both shown
+    on the terminal in real time and captured for persistence to
+    ``<inv_dir>/verify_summary.txt``. Operators no longer need a side
+    ``tee`` invocation to keep the verdict after the wrapper exits.
+    """
+
+    def __init__(self, downstream: IO[str]) -> None:
+        super().__init__()
+        self._downstream = downstream
+        self._buffer: list[str] = []
+
+    def write(self, data: str) -> int:
+        self._downstream.write(data)
+        self._buffer.append(data)
+        return len(data)
+
+    def flush(self) -> None:
+        self._downstream.flush()
+
+    def getvalue(self) -> str:
+        return "".join(self._buffer)
 
 
 @dataclass(frozen=True, slots=True)
@@ -792,6 +1032,12 @@ def _drive_debug_e2e_subprocess(
     ]
     if args.fresh_start:
         cmd.append("--fresh-start")
+    if args.resume_from is not None:
+        # Forward verbatim — the scheduler CLI is the source of truth on
+        # ``--resume-from`` validity (story ALP-693). The wrapper does no
+        # parsing or pre-validation; a malformed value surfaces as the
+        # scheduler's exit-2 with a named-cause stderr message.
+        cmd.extend(["--resume-from", args.resume_from])
     env = os.environ.copy()
     env["DATABASE_PATH"] = str(args.db_path)
     try:
@@ -845,6 +1091,40 @@ def _invocation_id_from_summary(stdout: str) -> str | None:
     return invocation_id if isinstance(invocation_id, str) else None
 
 
+def _resolve_distillation_dir(*, archive_root: Path, invocation_id: str) -> Path | None:
+    """Locate the per-invocation distillation directory under *archive_root*.
+
+    The distillation orchestrator writes outputs to
+    ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/distillation/`` (date
+    partitioning per ``docs/architecture/infrastructure.md`` § Layer 2).
+    Rather than parse the invocation_id timestamp prefix (fragile to
+    ID-format changes), glob ``<archive_root>/*/<invocation_id>/distillation``
+    so any date partition that carries this invocation matches.
+
+    Returns the resolved path when exactly one match is found; ``None``
+    when none or multiple matches exist. The caller decides whether
+    absent / ambiguous distillation is a FAIL or a no-op — for the
+    resume-only deterministic-prefix check, both surface as FAIL via
+    the check helper's empty-directory guard.
+    """
+    matches = sorted(archive_root.glob(f"*/{invocation_id}/distillation"))
+    matches = [m for m in matches if m.is_dir()]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def _source_invocation_id(resume_from: str) -> str:
+    """Extract the source invocation_id from a ``<id>:<phase>`` value.
+
+    Mirrors the scheduler CLI's ``rpartition`` split (invocation IDs
+    embed ISO-8601 timestamps that already contain colons, so the LAST
+    colon separates ID from phase).
+    """
+    invocation_id, _, _phase = resume_from.rpartition(":")
+    return invocation_id
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the six check helpers around one debug-e2e subprocess.
 
@@ -853,21 +1133,65 @@ def main(argv: Sequence[str] | None = None) -> int:
     subprocess: subsequent checks consume the archive the subprocess
     produces, so there's no value in running them against a missing
     archive.
+
+    Wrapper stdout (PASS/FAIL lines, summary, DATA HEALTH block) is
+    teed into a buffer and persisted to
+    ``<inv_dir>/verify_summary.txt`` once the invocation directory is
+    resolved, so the operator-facing verdict lives with the rest of the
+    run's artifacts. Failures before the inv_dir exists (auth FAIL,
+    subprocess FAIL, missing-archive FAIL) emit to stdout only — there
+    is no inv_dir to write into.
     """
     configure_utf8_stdio()
     args = _parse_args(argv)
+    tee = _TeeStream(sys.stdout)
+    with contextlib.redirect_stdout(tee):
+        exit_code, invocation_id = _run_checks(args)
+    _persist_verify_summary(
+        archive_root=args.archive_root,
+        invocation_id=invocation_id,
+        content=tee.getvalue(),
+    )
+    return exit_code
+
+
+def _persist_verify_summary(*, archive_root: Path, invocation_id: str | None, content: str) -> None:
+    """Write the tee'd wrapper stdout into the run's archive dir, best-effort.
+
+    Silently skips when no ``invocation_id`` was extracted (early pre-flight
+    failure) or when the inv_dir hasn't been materialized yet (subprocess
+    FAIL before ``insert_invocation_record``). An ``OSError`` during the
+    write is swallowed too — losing the side artifact must not turn an
+    otherwise-green run into a non-zero exit.
+    """
+    if invocation_id is None:
+        return
+    inv_dir = find_invocation_archive_dir(archive_root=archive_root, invocation_id=invocation_id)
+    if inv_dir is None or not inv_dir.is_dir():
+        return
+    with contextlib.suppress(OSError):
+        (inv_dir / VERIFY_SUMMARY_FILENAME).write_text(content, encoding="utf-8")
+
+
+def _run_checks(args: argparse.Namespace) -> tuple[int, str | None]:
+    """Body of :func:`main` — extracted so :func:`main` can wrap stdout cleanly.
+
+    Returns ``(exit_code, invocation_id_or_None)``. The invocation_id is
+    threaded back so :func:`main` can locate the run's archive dir for
+    the summary-file write even on the short-circuit FAIL paths.
+    """
     results: list[CheckResult] = []
 
     _emit(results, check_auth())
     if not results[-1].passed:
         _print_summary(results)
-        return 1
+        return 1, None
 
     subprocess_result, output = _drive_debug_e2e_subprocess(args)
     _emit(results, subprocess_result)
     if not subprocess_result.passed or output is None:
         _print_summary(results)
-        return 1
+        return 1, None
 
     invocation_id = _invocation_id_from_summary(output.stdout)
     if invocation_id is None:
@@ -880,16 +1204,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
         )
         _print_summary(results)
-        return 1
+        return 1, None
 
     _emit(
         results,
         check_archive_directory(archive_root=args.archive_root, invocation_id=invocation_id),
     )
-    progress_path = (
-        args.archive_root / INVOCATIONS_DIRNAME / invocation_id / _PROGRESS_JSONL_FILENAME
+    _inv_dir_for_progress = find_invocation_archive_dir(
+        archive_root=args.archive_root, invocation_id=invocation_id
     )
-    if progress_path.is_file():
+    progress_path = (
+        _inv_dir_for_progress / _PROGRESS_JSONL_FILENAME
+        if _inv_dir_for_progress is not None
+        else None
+    )
+    if progress_path is not None and progress_path.is_file():
         _emit(results, check_jsonl_ordering(progress_path))
     else:
         _emit(
@@ -897,7 +1226,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             CheckResult(
                 label="jsonl_ordering",
                 passed=False,
-                message=f"progress.jsonl missing at {progress_path}",
+                message=f"progress.jsonl missing (invocation dir not found for {invocation_id!r})",
             ),
         )
 
@@ -914,12 +1243,63 @@ def main(argv: Sequence[str] | None = None) -> int:
     _emit(results, check_no_alpaca(output.stderr))
     _emit(results, check_invocation_summary(output.stdout))
 
+    # ALP-696: the deterministic-prefix check fires ONLY on resume runs.
+    # On a fresh debug-e2e invocation the line is absent and the summary
+    # stays at ``7/7 checks passed``; on a resume run we hash the source
+    # vs new distillation outputs pairwise and emit one extra PASS / FAIL
+    # line. Source / new dirs are looked up via glob over the archive
+    # root (distillation outputs land under the
+    # ``<archive_root>/<DATE>/<invocation_id>/distillation/`` date-partitioned
+    # path, not the ``invocations/<id>/`` per-invocation path).
+    if args.resume_from is not None:
+        source_invocation_id = _source_invocation_id(args.resume_from)
+        source_distillation = _resolve_distillation_dir(
+            archive_root=args.archive_root, invocation_id=source_invocation_id
+        )
+        new_distillation = _resolve_distillation_dir(
+            archive_root=args.archive_root, invocation_id=invocation_id
+        )
+        if source_distillation is None:
+            _emit(
+                results,
+                CheckResult(
+                    label="deterministic_prefix",
+                    passed=False,
+                    message=(
+                        f"source distillation directory not found under "
+                        f"{args.archive_root} for invocation_id="
+                        f"{source_invocation_id!r}"
+                    ),
+                ),
+            )
+        elif new_distillation is None:
+            _emit(
+                results,
+                CheckResult(
+                    label="deterministic_prefix",
+                    passed=False,
+                    message=(
+                        f"new distillation directory not found under "
+                        f"{args.archive_root} for invocation_id="
+                        f"{invocation_id!r}"
+                    ),
+                ),
+            )
+        else:
+            _emit(
+                results,
+                check_deterministic_prefix(
+                    source_distillation_dir=source_distillation,
+                    new_distillation_dir=new_distillation,
+                ),
+            )
+
     _print_summary(results)
     # ALP-540: elevate per-series data health to the operator so collector
     # failures (``unavailable``) don't masquerade as warm-up state
     # (``accumulating``) inside a green run.
     _print_data_health(archive_root=args.archive_root, invocation_id=invocation_id)
-    return 0 if all(r.passed for r in results) else 1
+    return (0 if all(r.passed for r in results) else 1, invocation_id)
 
 
 def _print_summary(results: list[CheckResult]) -> None:
@@ -1000,9 +1380,11 @@ def _print_data_health(*, archive_root: Path, invocation_id: str) -> None:
     with a "(no calibration snapshot)" line in either case so the operator
     sees the section in every run.
     """
-    snapshot_path = (
-        archive_root / INVOCATIONS_DIRNAME / invocation_id / CALIBRATION_SNAPSHOT_FILENAME
-    )
+    _inv_dir = find_invocation_archive_dir(archive_root=archive_root, invocation_id=invocation_id)
+    if _inv_dir is None:
+        print(format_data_health_block({}))
+        return
+    snapshot_path = _inv_dir / CALIBRATION_SNAPSHOT_FILENAME
     try:
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):

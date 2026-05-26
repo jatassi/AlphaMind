@@ -12,7 +12,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import shutil
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -49,6 +49,8 @@ SHIPPED_CONFIG_DIR = REPO_ROOT / "config"
 # Today is fixed so the semantic invariant on ``last_full_validation`` does not
 # depend on calendar drift between test runs.
 TODAY = date(2026, 4, 27)
+# Canonical test invocation timestamp; date partition is "2026-04-27".
+_AS_OF = datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC)
 
 # Env-var names referenced by ``config/venue.yaml`` — the cross-reference
 # validator must see every one in ``.env`` for a clean load.
@@ -115,6 +117,7 @@ def test_load_full_config_against_shipped_tree_returns_pipeline_config(
         invocation_id="inv-08-happy-001",
         runtime=shipped_runtime,
         today=TODAY,
+        as_of=_AS_OF,
     )
     assert isinstance(loaded, PipelineConfig)
     assert isinstance(loaded.resolved, ResolvedConfig)
@@ -141,6 +144,7 @@ def test_load_full_config_resolves_to_expected_identity_dimensions(
         invocation_id="inv-08-happy-002",
         runtime=shipped_runtime,
         today=TODAY,
+        as_of=_AS_OF,
     )
     # Re-read the bundles directly to spot-check projected identity. Comparing
     # the composed snapshot against the loaded bundle entry is stronger than
@@ -168,6 +172,7 @@ def test_load_full_config_enabled_agents_count_is_nine(
         invocation_id="inv-08-happy-003",
         runtime=shipped_runtime,
         today=TODAY,
+        as_of=_AS_OF,
     )
     # AgentName has nine members; pre_open enables every one of them.
     assert len(loaded.resolved.enabled_agents) == 9
@@ -185,6 +190,7 @@ def test_load_full_config_writes_snapshot_to_archive_root(
         invocation_id="inv-08-happy-004",
         runtime=shipped_runtime,
         today=TODAY,
+        as_of=_AS_OF,
     )
     assert loaded.snapshot.path.exists()
     payload = json.loads(loaded.snapshot.path.read_text())
@@ -204,6 +210,7 @@ def test_load_full_config_snapshot_hash_matches_canonical_serialization(
         invocation_id="inv-08-happy-005",
         runtime=shipped_runtime,
         today=TODAY,
+        as_of=_AS_OF,
     )
     expected = compute_snapshot_hash(serialize_resolved_config(loaded.resolved))
     assert loaded.snapshot.hash == expected
@@ -229,6 +236,7 @@ def test_pipeline_config_disallows_attribute_assignment(
         invocation_id="inv-08-frozen",
         runtime=shipped_runtime,
         today=TODAY,
+        as_of=_AS_OF,
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         loaded.__setattr__("resolved", loaded.resolved)
@@ -247,6 +255,7 @@ def test_pipeline_config_has_no_instance_dict(
         invocation_id="inv-08-slots",
         runtime=shipped_runtime,
         today=TODAY,
+        as_of=_AS_OF,
     )
     assert not hasattr(loaded, "__dict__")
 
@@ -279,6 +288,7 @@ def test_malformed_yaml_raises_pydantic_validation_error(
             invocation_id="inv-08-parse-fail",
             runtime=shipped_runtime,
             today=TODAY,
+            as_of=_AS_OF,
         )
 
 
@@ -304,6 +314,7 @@ def test_missing_env_var_raises_cross_reference_error(
             invocation_id="inv-08-xref-fail",
             runtime=shipped_runtime,
             today=TODAY,
+            as_of=_AS_OF,
         )
 
 
@@ -333,6 +344,7 @@ def test_future_last_full_validation_raises_semantic_invariant_error(
             invocation_id="inv-08-semantic-fail",
             runtime=shipped_runtime,
             today=TODAY,
+            as_of=_AS_OF,
         )
 
 
@@ -367,6 +379,7 @@ def test_loader_propagates_native_exception_types_unchanged(
             invocation_id="inv-08-no-swallow-parse",
             runtime=shipped_runtime,
             today=TODAY,
+            as_of=_AS_OF,
         )
     assert type(parse_exc.value) is ValidationError
 
@@ -381,6 +394,7 @@ def test_loader_propagates_native_exception_types_unchanged(
             invocation_id="inv-08-no-swallow-xref",
             runtime=shipped_runtime,
             today=TODAY,
+            as_of=_AS_OF,
         )
     assert type(xref_exc.value) is CrossReferenceError
 
@@ -403,6 +417,7 @@ def test_loader_propagates_native_exception_types_unchanged(
             invocation_id="inv-08-no-swallow-semantic",
             runtime=shipped_runtime,
             today=TODAY,
+            as_of=_AS_OF,
         )
     assert type(semantic_exc.value) is SemanticInvariantError
 
@@ -425,6 +440,7 @@ def test_snapshot_path_uses_invocation_id_directory_under_archive_root(
         invocation_id=invocation_id,
         runtime=shipped_runtime,
         today=TODAY,
+        as_of=_AS_OF,
     )
-    expected = archive_root / "invocations" / invocation_id / "resolved_config.json"
+    expected = archive_root / "2026-04-27" / invocation_id / "resolved_config.json"
     assert loaded.snapshot.path == expected
