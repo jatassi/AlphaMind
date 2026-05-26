@@ -136,11 +136,32 @@ def _make_ctx(request: Request, session_id: OperatorSessionId) -> ProxyContext:
     ``request.app.state``; the route layer is the only place that
     reaches into ``app.state`` so the proxy stays decoupled from
     FastAPI.
+
+    The two required fields (``production_session_factory`` and
+    ``process_lifetime_id``) are typed Optional on ``app.state`` because
+    ``build_app`` accepts them as optional kwargs (for the test path).
+    :class:`ProxyContext` requires both non-None, so a wiring miss would
+    otherwise propagate to a ``TypeError`` deep inside ``operator_invocation``.
+    The route layer is the first place that knows the values are needed,
+    so we raise a clear 500 here instead of letting the None propagate
+    (F3, F4).
     """
+    production_session_factory = getattr(request.app.state, "production_session_factory", None)
+    if production_session_factory is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="control surface not wired: production_session_factory unset",
+        )
+    process_lifetime_id = getattr(request.app.state, "process_lifetime_id", None)
+    if process_lifetime_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="control surface not wired: process_lifetime_id unset",
+        )
     clock: Callable[[], datetime] | None = getattr(request.app.state, "clock", None)
     return ProxyContext(
-        production_session_factory=request.app.state.production_session_factory,
-        process_lifetime_id=request.app.state.process_lifetime_id,
+        production_session_factory=production_session_factory,
+        process_lifetime_id=process_lifetime_id,
         operator_session_id=session_id,
         now_factory=clock,
     )

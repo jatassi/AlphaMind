@@ -422,3 +422,76 @@ class TestAuthGateLive:
         with TestClient(unauth_app) as c:
             r = c.post("/api/control/pause", json={"reason": "x"})
         assert r.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# F3 + F4 — explicit 500 when app.state is missing required wiring.
+# ---------------------------------------------------------------------------
+
+
+class TestRequiredAppStateGuards:
+    """``_make_ctx`` must raise HTTP 500 with a clear detail when the
+    required ``production_session_factory`` / ``process_lifetime_id`` fields
+    are ``None`` on ``app.state``. Without the guard, ``ProxyContext``
+    construction propagates a ``TypeError`` deep in ``operator_invocation``
+    (F3, F4).
+    """
+
+    def _build_app_with_state_holes(
+        self,
+        fake_pipeline_client: FakePipelineClient,
+        fake_monitor_client: FakeMonitorClient,
+        *,
+        production_session_factory: object | None,
+        process_lifetime_id: object | None,
+    ) -> FastAPI:
+        app = FastAPI()
+        app.state.production_session_factory = production_session_factory
+        app.state.process_lifetime_id = process_lifetime_id
+        app.state.pipeline_client = fake_pipeline_client
+        app.state.monitor_client = fake_monitor_client
+        app.state.clock = lambda: _FROZEN_NOW
+
+        async def _ok_session() -> str:
+            return operator_session_id(SESSION_ID)
+
+        async def _ok_csrf() -> None:
+            return None
+
+        app.dependency_overrides[current_session] = _ok_session
+        app.dependency_overrides[csrf_required] = _ok_csrf
+        app.include_router(build_control_router(), prefix="/api/control")
+        return app
+
+    def test_missing_production_session_factory_returns_500(
+        self,
+        fake_pipeline_client: FakePipelineClient,
+        fake_monitor_client: FakeMonitorClient,
+    ) -> None:
+        app = self._build_app_with_state_holes(
+            fake_pipeline_client,
+            fake_monitor_client,
+            production_session_factory=None,
+            process_lifetime_id=PROCESS_LIFETIME_ID,
+        )
+        with TestClient(app) as c:
+            r = c.post("/api/control/pause", json={"reason": "x"})
+        assert r.status_code == 500
+        assert "production_session_factory" in r.json()["detail"]
+
+    def test_missing_process_lifetime_id_returns_500(
+        self,
+        production_session_factory: async_sessionmaker[AsyncSession],
+        fake_pipeline_client: FakePipelineClient,
+        fake_monitor_client: FakeMonitorClient,
+    ) -> None:
+        app = self._build_app_with_state_holes(
+            fake_pipeline_client,
+            fake_monitor_client,
+            production_session_factory=production_session_factory,
+            process_lifetime_id=None,
+        )
+        with TestClient(app) as c:
+            r = c.post("/api/control/pause", json={"reason": "x"})
+        assert r.status_code == 500
+        assert "process_lifetime_id" in r.json()["detail"]
