@@ -29,14 +29,16 @@ __all__ = ["ControlErrorCode", "ControlResult", "ControlVerb"]
 
 
 class ControlVerb(StrEnum):
-    """The eight operator-action verbs the command center proxies.
+    """The operator-action verbs the command center proxies + emits.
 
     Five pipeline verbs (``pause`` / ``resume`` /
     ``trigger_emergency_invocation`` / ``switch_profile`` /
     ``run_universe_validation``) and three monitor verbs (``cancel_order``
-    / ``force_close_position`` / ``set_halt_mode``). The StrEnum value is
-    the snake-case verb name — identical to the FastAPI route path segment
-    and the activity-log audit row's ``verb`` field.
+    / ``force_close_position`` / ``set_halt_mode``) plus two alert-
+    surface verbs (``acknowledge_alert`` / ``snooze_alert``) from
+    story 05a (ALP-671). The StrEnum value is the snake-case verb name —
+    identical to the FastAPI route path segment and the activity-log
+    audit row's ``verb`` field.
     """
 
     # Pipeline verbs (docs/design/pipeline-control-and-events-schema.md
@@ -52,6 +54,14 @@ class ControlVerb(StrEnum):
     CANCEL_ORDER = "cancel_order"
     FORCE_CLOSE_POSITION = "force_close_position"
     SET_HALT_MODE = "set_halt_mode"
+
+    # Alert verbs (docs/design/command-center.md § Alerting — Acknowledge
+    # and snooze). The alert-engine surface (story 05a / ALP-671) wraps
+    # these in operator_invocation() so the activity-log explorer's
+    # "Operator actions" saved filter view surfaces them alongside the
+    # pipeline / monitor verbs.
+    ACKNOWLEDGE_ALERT = "acknowledge_alert"
+    SNOOZE_ALERT = "snooze_alert"
 
 
 class ControlErrorCode(StrEnum):

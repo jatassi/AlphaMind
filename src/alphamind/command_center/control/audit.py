@@ -80,11 +80,20 @@ _NO_AUDIT_VERBS: frozenset[ControlVerb] = frozenset(
     {
         # Read-only verb — no state change to audit beyond the invocation row.
         ControlVerb.RUN_UNIVERSE_VALIDATION,
+        # Alert-surface verbs (story 05a / ALP-671) write their own
+        # activity-log rows in the alert-routes module (typed
+        # ``RiskParameterChangedDetail`` capturing the alert id + new
+        # status). This helper is the proxy's verb path; the alert
+        # routes don't reach it.
+        ControlVerb.ACKNOWLEDGE_ALERT,
+        ControlVerb.SNOOZE_ALERT,
     }
 )
 """Verbs that do NOT produce an audit row from this helper.
 
 * ``run_universe_validation`` is read-only — no state change to audit.
+* ``acknowledge_alert`` / ``snooze_alert`` write directly from the
+  alert-routes module (story 05a) — not via the proxy's audit helper.
 
 ``switch_profile`` is NOT in the set: its success path delegates to
 :func:`emit_profile_switch_entry` (typed
