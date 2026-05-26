@@ -63,7 +63,6 @@ import argparse
 import asyncio
 import base64
 import contextlib
-import json
 import logging
 import secrets
 import socket
@@ -75,6 +74,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -237,13 +237,11 @@ class VerifyContext:
     fake_discord_channel: FakeDiscordChannel = field(default_factory=FakeDiscordChannel)
     fake_pipeline_events_client: FakePipelineEventsClient | None = None
     fake_monitor_events_client: FakeMonitorEventsClient | None = None
-    webauthn_verifier: InMemoryWebauthnVerifier = field(
-        default_factory=InMemoryWebauthnVerifier
-    )
+    webauthn_verifier: InMemoryWebauthnVerifier = field(default_factory=InMemoryWebauthnVerifier)
     setup_token_gate: SetupTokenGate = field(default_factory=SetupTokenGate)
     cc_writer_factory: async_sessionmaker[AsyncSession] | None = None
     production_session_factory: async_sessionmaker[AsyncSession] | None = None
-    app: object | None = None  # FastAPI handle — pulled lazily to keep imports lean
+    app: FastAPI | None = None
     supervisor: CommandCenterSupervisor | None = None
     run_task: asyncio.Task[None] | None = None
 
@@ -282,8 +280,7 @@ async def check_daemons_bind(*, host: str, port: int, timeout_seconds: float) ->
             label="daemons_bind",
             passed=True,
             message=(
-                f"command center bound to {host}:{port} after {elapsed:.2f}s "
-                f"({attempts} probe(s))"
+                f"command center bound to {host}:{port} after {elapsed:.2f}s ({attempts} probe(s))"
             ),
         )
     return CheckResult(
@@ -311,74 +308,51 @@ def _b64url_decode(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + padding)
 
 
-async def check_passkey_roundtrip(
+def _passkey_fail(message: str) -> CheckResult:
+    """Build a FAIL :class:`CheckResult` for the passkey roundtrip step.
+
+    Used by the per-sub-step helpers below so each helper can short-
+    circuit on its own failure without re-typing the label.
+    """
+    return CheckResult(label="passkey_roundtrip", passed=False, message=message)
+
+
+async def _passkey_register(
     *,
     client: httpx.AsyncClient,
     setup_token: str,
     csrf_cookie_name: str,
     session_cookie_name: str,
-) -> CheckResult:
-    """Drive a full WebAuthn registration + login roundtrip.
+    credential_id: str,
+) -> CheckResult | None:
+    """Drive register/begin → register/complete.
 
-    Steps:
-
-    1. ``POST /auth/register/begin`` with the operator-supplied
-       ``setup_token`` (first-launch enrollment flow).
-    2. Synthesize the in-memory client_data_json + attestation_object
-       blobs using the test helpers, then
-       ``POST /auth/register/complete`` with the WebAuthn response.
-       Reads the CSRF cookie off the begin response and echoes it via
-       ``X-CSRF-Token``.
-    3. ``POST /auth/login/begin`` to start the login ceremony.
-    4. ``POST /auth/login/complete`` with the in-memory authentication
-       response. Asserts the response sets both the session + CSRF
-       cookies.
-
-    The check returns FAIL on any non-2xx response and on a missing
-    cookie set. The cookie names are configurable via
-    :class:`SecurityConfig.session.cookie_name` / ``csrf.cookie_name``;
-    the caller threads the resolved values in.
+    Returns the FAIL :class:`CheckResult` on any rejection; ``None``
+    on success so the caller proceeds to the login leg.
     """
-    # ---- /auth/register/begin ---------------------------------------------
-    begin_url = "/auth/register/begin"
     register_begin_resp = await client.post(
-        begin_url,
+        "/auth/register/begin",
         json={"user_name": "verify-operator", "setup_token": setup_token},
     )
     if register_begin_resp.status_code != 200:
-        return CheckResult(
-            label="passkey_roundtrip",
-            passed=False,
-            message=(
-                f"POST {begin_url} returned {register_begin_resp.status_code}; "
-                f"body: {register_begin_resp.text[:200]}"
-            ),
+        return _passkey_fail(
+            f"POST /auth/register/begin returned {register_begin_resp.status_code}; "
+            f"body: {register_begin_resp.text[:200]}"
         )
     register_begin = register_begin_resp.json()
     challenge_token = register_begin["challenge_token"]
-    challenge_b64 = register_begin["challenge"]
-    challenge = _b64url_decode(challenge_b64)
+    challenge = _b64url_decode(register_begin["challenge"])
 
-    # Read the CSRF cookie the begin response set so /complete can echo
-    # it back via the X-CSRF-Token header (the F8 pre-session flow).
     csrf_cookie = client.cookies.get(csrf_cookie_name)
     if csrf_cookie is None:
-        return CheckResult(
-            label="passkey_roundtrip",
-            passed=False,
-            message=(
-                f"register/begin response did NOT set {csrf_cookie_name!r} cookie; "
-                "the pre-session CSRF flow is broken"
-            ),
+        return _passkey_fail(
+            f"register/begin response did NOT set {csrf_cookie_name!r} cookie; "
+            "the pre-session CSRF flow is broken"
         )
 
-    # ---- /auth/register/complete ------------------------------------------
-    credential_id = "verify-credential-1"
     public_key = b"verify-pubkey"
     client_data_json = encode_inmemory_client_data_json(challenge)
-    attestation_object = encode_inmemory_attestation_object(
-        public_key=public_key, sign_count=0
-    )
+    attestation_object = encode_inmemory_attestation_object(public_key=public_key, sign_count=0)
     register_complete_resp = await client.post(
         "/auth/register/complete",
         json={
@@ -391,51 +365,47 @@ async def check_passkey_roundtrip(
         headers={"X-CSRF-Token": csrf_cookie},
     )
     if register_complete_resp.status_code != 200:
-        return CheckResult(
-            label="passkey_roundtrip",
-            passed=False,
-            message=(
-                f"POST /auth/register/complete returned "
-                f"{register_complete_resp.status_code}; "
-                f"body: {register_complete_resp.text[:200]}"
-            ),
+        return _passkey_fail(
+            f"POST /auth/register/complete returned "
+            f"{register_complete_resp.status_code}; "
+            f"body: {register_complete_resp.text[:200]}"
         )
     if client.cookies.get(session_cookie_name) is None:
-        return CheckResult(
-            label="passkey_roundtrip",
-            passed=False,
-            message=(
-                f"register/complete response did NOT set {session_cookie_name!r} cookie; "
-                "the post-registration session issuance is broken"
-            ),
+        return _passkey_fail(
+            f"register/complete response did NOT set {session_cookie_name!r} cookie; "
+            "the post-registration session issuance is broken"
         )
+    return None
 
-    # ---- /auth/login/begin -------------------------------------------------
+
+async def _passkey_login(
+    *,
+    client: httpx.AsyncClient,
+    csrf_cookie_name: str,
+    session_cookie_name: str,
+    credential_id: str,
+) -> CheckResult | None:
+    """Drive login/begin → login/complete.
+
+    Returns the FAIL :class:`CheckResult` on any rejection; ``None``
+    on success so the caller renders the final PASS line.
+    """
     login_begin_resp = await client.post("/auth/login/begin")
     if login_begin_resp.status_code != 200:
-        return CheckResult(
-            label="passkey_roundtrip",
-            passed=False,
-            message=(
-                f"POST /auth/login/begin returned {login_begin_resp.status_code}; "
-                f"body: {login_begin_resp.text[:200]}"
-            ),
+        return _passkey_fail(
+            f"POST /auth/login/begin returned {login_begin_resp.status_code}; "
+            f"body: {login_begin_resp.text[:200]}"
         )
     login_begin = login_begin_resp.json()
     login_challenge = _b64url_decode(login_begin["challenge"])
     login_challenge_token = login_begin["challenge_token"]
     login_csrf_cookie = client.cookies.get(csrf_cookie_name)
     if login_csrf_cookie is None:
-        return CheckResult(
-            label="passkey_roundtrip",
-            passed=False,
-            message=(
-                f"login/begin response did NOT set {csrf_cookie_name!r} cookie; "
-                "the pre-session CSRF flow is broken on login"
-            ),
+        return _passkey_fail(
+            f"login/begin response did NOT set {csrf_cookie_name!r} cookie; "
+            "the pre-session CSRF flow is broken on login"
         )
 
-    # ---- /auth/login/complete ---------------------------------------------
     login_client_data = encode_inmemory_client_data_json(login_challenge)
     login_complete_resp = await client.post(
         "/auth/login/complete",
@@ -450,25 +420,54 @@ async def check_passkey_roundtrip(
         headers={"X-CSRF-Token": login_csrf_cookie},
     )
     if login_complete_resp.status_code != 200:
-        return CheckResult(
-            label="passkey_roundtrip",
-            passed=False,
-            message=(
-                f"POST /auth/login/complete returned "
-                f"{login_complete_resp.status_code}; "
-                f"body: {login_complete_resp.text[:200]}"
-            ),
+        return _passkey_fail(
+            f"POST /auth/login/complete returned "
+            f"{login_complete_resp.status_code}; "
+            f"body: {login_complete_resp.text[:200]}"
         )
-    # Final post-login session cookie must be present.
     if client.cookies.get(session_cookie_name) is None:
-        return CheckResult(
-            label="passkey_roundtrip",
-            passed=False,
-            message=(
-                f"login/complete response did NOT set {session_cookie_name!r} cookie"
-            ),
-        )
+        return _passkey_fail(f"login/complete response did NOT set {session_cookie_name!r} cookie")
+    return None
 
+
+async def check_passkey_roundtrip(
+    *,
+    client: httpx.AsyncClient,
+    setup_token: str,
+    csrf_cookie_name: str,
+    session_cookie_name: str,
+) -> CheckResult:
+    """Drive a full WebAuthn registration + login roundtrip.
+
+    Composes :func:`_passkey_register` (register/begin →
+    register/complete) and :func:`_passkey_login` (login/begin →
+    login/complete). Each sub-helper short-circuits with a FAIL
+    :class:`CheckResult` on its own rejection; the final PASS
+    only renders when both ceremonies complete + the session
+    cookie + CSRF cookie are present on the final response.
+
+    The cookie names are configurable via
+    :class:`SecurityConfig.session.cookie_name` /
+    ``csrf.cookie_name``; the caller threads the resolved values in.
+    """
+    credential_id = "verify-credential-1"
+    register_fail = await _passkey_register(
+        client=client,
+        setup_token=setup_token,
+        csrf_cookie_name=csrf_cookie_name,
+        session_cookie_name=session_cookie_name,
+        credential_id=credential_id,
+    )
+    if register_fail is not None:
+        return register_fail
+    login_fail = await _passkey_login(
+        client=client,
+        csrf_cookie_name=csrf_cookie_name,
+        session_cookie_name=session_cookie_name,
+        credential_id=credential_id,
+    )
+    if login_fail is not None:
+        return login_fail
     return CheckResult(
         label="passkey_roundtrip",
         passed=True,
@@ -553,9 +552,7 @@ async def check_control_verbs(
             failures.append(f"{verb}: transport error: {exc}")
             continue
         if resp.status_code != 200:
-            failures.append(
-                f"{verb}: HTTP {resp.status_code}; body: {resp.text[:200]}"
-            )
+            failures.append(f"{verb}: HTTP {resp.status_code}; body: {resp.text[:200]}")
             continue
         payload = resp.json()
         # The successful envelope shape per
@@ -566,8 +563,7 @@ async def check_control_verbs(
         # base.
         if payload.get("status") != "accepted":
             failures.append(
-                f"{verb}: response envelope status={payload.get('status')!r}; "
-                f"payload: {payload}"
+                f"{verb}: response envelope status={payload.get('status')!r}; payload: {payload}"
             )
             continue
 
@@ -602,10 +598,7 @@ async def check_control_verbs(
         return CheckResult(
             label="control_verbs",
             passed=False,
-            message=(
-                "no PROFILE_SWITCHED activity_log row found after "
-                "switch_profile verb"
-            ),
+            message=("no PROFILE_SWITCHED activity_log row found after switch_profile verb"),
         )
 
     return CheckResult(
@@ -628,9 +621,7 @@ async def _count_operator_console_rows(session: AsyncSession) -> int:
 
 async def _count_profile_switched_rows(session: AsyncSession) -> int:
     """Count activity_log rows with ``event_type=PROFILE_SWITCHED``."""
-    stmt = select(ActivityLogRow).where(
-        ActivityLogRow.event_type == "PROFILE_SWITCHED"
-    )
+    stmt = select(ActivityLogRow).where(ActivityLogRow.event_type == "PROFILE_SWITCHED")
     result = await session.execute(stmt)
     return len(result.scalars().all())
 
@@ -642,7 +633,7 @@ async def _count_profile_switched_rows(session: AsyncSession) -> int:
 
 async def check_alert_fires(
     *,
-    app: object,
+    app: FastAPI,
     fake_discord: FakeDiscordChannel,
     cc_writer: async_sessionmaker[AsyncSession],
 ) -> CheckResult:
@@ -667,11 +658,7 @@ async def check_alert_fires(
     is non-deterministic (TaskGroup scheduling) so we poll rather
     than assume a single tick is enough.
     """
-    # Pull the multiplexer + engine off app.state via getattr because
-    # the verify-script's type imports are intentionally thin (the
-    # FastAPI app is constructed elsewhere; this module only treats
-    # it as a black-box handle).
-    multiplexer = app.state.event_multiplexer  # type: ignore[attr-defined]
+    multiplexer = app.state.event_multiplexer
     invocation_id = f"inv-verify-{secrets.token_hex(4)}"
     failed_event = PipelineEvent(
         event_type=PipelineEventType.INVOCATION_ENDED,
@@ -723,7 +710,7 @@ async def check_alert_fires(
 # ---------------------------------------------------------------------------
 
 
-async def check_sse_roundtrip(*, app: object) -> CheckResult:
+async def check_sse_roundtrip(*, app: FastAPI) -> CheckResult:
     """Subscribe to the multiplexer + observe one pipeline + one monitor event.
 
     Publishes two synthetic events (a pipeline ``HEARTBEAT`` and a
@@ -735,7 +722,7 @@ async def check_sse_roundtrip(*, app: object) -> CheckResult:
     Returns FAIL if either event is missing after a short polling
     budget; PASS otherwise.
     """
-    multiplexer = app.state.event_multiplexer  # type: ignore[attr-defined]
+    multiplexer = app.state.event_multiplexer
     async with multiplexer.subscribe() as queue:
         pipeline_event = PipelineEvent(
             event_type=PipelineEventType.HEARTBEAT,
@@ -767,10 +754,7 @@ async def check_sse_roundtrip(*, app: object) -> CheckResult:
         return CheckResult(
             label="sse_roundtrip",
             passed=False,
-            message=(
-                f"missing event(s); saw pipeline={saw_pipeline}, "
-                f"monitor={saw_monitor}"
-            ),
+            message=(f"missing event(s); saw pipeline={saw_pipeline}, monitor={saw_monitor}"),
         )
     return CheckResult(
         label="sse_roundtrip",
@@ -851,7 +835,7 @@ async def check_clean_teardown(
                 "Uvicorn may be ignoring its cancellation token"
             ),
         )
-    except BaseException as exc:  # noqa: BLE001 - surface as FAIL not stack trace
+    except BaseException as exc:
         return CheckResult(
             label="clean_teardown",
             passed=False,
@@ -908,7 +892,7 @@ async def _build_verify_app(
     config_dir: Path,
     db_path: Path,
     context: VerifyContext,
-) -> AsyncIterator[tuple[object, async_sessionmaker[AsyncSession]]]:
+) -> AsyncIterator[tuple[FastAPI, async_sessionmaker[AsyncSession]]]:
     """Build the FastAPI app + production session factory under fakes.
 
     Yields ``(app, production_session_factory)`` so the caller can
@@ -929,9 +913,7 @@ async def _build_verify_app(
     async with production_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(CommandCenterBase.metadata.create_all)
-    production_factory = async_sessionmaker(
-        bind=production_engine, expire_on_commit=False
-    )
+    production_factory = async_sessionmaker(bind=production_engine, expire_on_commit=False)
     await _seed_process_lifetime(production_factory)
 
     command_center_config = load_command_center_config(config_dir)
@@ -1016,12 +998,8 @@ monitor:
 """,
         encoding="utf-8",
     )
-    (config_dir / "security.yaml").write_bytes(
-        (repo_config_dir / "security.yaml").read_bytes()
-    )
-    (config_dir / "alerts.yaml").write_bytes(
-        (repo_config_dir / "alerts.yaml").read_bytes()
-    )
+    (config_dir / "security.yaml").write_bytes((repo_config_dir / "security.yaml").read_bytes())
+    (config_dir / "alerts.yaml").write_bytes((repo_config_dir / "alerts.yaml").read_bytes())
 
 
 # ---------------------------------------------------------------------------
@@ -1048,10 +1026,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--frontend-dist",
         type=Path,
         default=Path("src/alphamind/command_center/frontend/dist"),
-        help=(
-            "Path to the bun-built frontend bundle. "
-            "Default mirrors the production config."
-        ),
+        help=("Path to the bun-built frontend bundle. Default mirrors the production config."),
     )
     return parser.parse_args(argv)
 
@@ -1068,9 +1043,222 @@ def _print_summary(results: list[CheckResult]) -> None:
     print(f"=== COMMAND-CENTER VERIFICATION === {passed}/{total} checks passed")
 
 
-async def _run_checks(
-    args: argparse.Namespace,
+@dataclass(frozen=True, slots=True)
+class _RunSetup:
+    """Pre-computed sync setup shared between :func:`_run_checks` callers.
+
+    Holds the per-run binding choice + materialized config + DB paths
+    so the async run loop doesn't have to call any filesystem APIs
+    (ASYNC240 — pathlib in async functions is flagged because
+    SQLite-on-network-share file I/O can block the event loop; the
+    verify run is loopback-only and dev-Mac but the rule still applies
+    to keep the discipline tight).
+    """
+
+    repo_config_dir: Path
+    bind_host: str
+    bind_port: int
+    base_url: str
+    db_path: Path
+    config_dir: Path
+    frontend_dist_path: Path
+
+
+def _prepare_run_setup(args: argparse.Namespace, tmp: Path) -> _RunSetup:
+    """Materialize the per-run DB + config-dir + bind triple synchronously."""
+    repo_config_dir = Path(__file__).resolve().parents[1] / "config"
+    bind_port = _pick_free_port()
+    bind_host: str = args.bind_host
+    base_url = f"http://{bind_host}:{bind_port}"
+    db_path = tmp / "verify-command-center.db"
+    db_path.touch()
+    config_dir = tmp / "config"
+    config_dir.mkdir()
+    frontend_dist_path = Path(args.frontend_dist)
+    _write_verify_command_center_yaml(
+        config_dir=config_dir,
+        repo_config_dir=repo_config_dir,
+        db_path=db_path,
+        bind_host=bind_host,
+        bind_port=bind_port,
+        frontend_dist_path=frontend_dist_path,
+    )
+    return _RunSetup(
+        repo_config_dir=repo_config_dir,
+        bind_host=bind_host,
+        bind_port=bind_port,
+        base_url=base_url,
+        db_path=db_path,
+        config_dir=config_dir,
+        frontend_dist_path=frontend_dist_path,
+    )
+
+
+def _register_supervisor_tasks(
+    *,
+    supervisor: CommandCenterSupervisor,
+    app: FastAPI,
+    setup: _RunSetup,
+) -> None:
+    """Register Uvicorn + events consumers + alerts engine on the supervisor."""
+    from alphamind.command_center.__main__ import _run_uvicorn_task
+
+    async def uvicorn_task(s: ProcessSession) -> None:
+        await _run_uvicorn_task(s, app=app, host=setup.bind_host, port=setup.bind_port)
+
+    supervisor.register_task(name="uvicorn", coro_fn=uvicorn_task)
+    factories = app.state.event_consumer_task_factories
+    for task_name, factory in factories.items():
+        supervisor.register_task(name=task_name, coro_fn=factory)
+    alerts_factory = getattr(app.state, "alert_engine_task_factory", None)
+    if alerts_factory is not None:
+        supervisor.register_task(name="alerts_engine", coro_fn=alerts_factory)
+
+
+@dataclass(frozen=True, slots=True)
+class _PostBindArgs:
+    """Bundle of collaborators :func:`_drive_post_bind_checks` consumes.
+
+    Collapses the 8-field call signature into one dataclass so the
+    PLR0913 (max-arguments=8) lint stays clean without splitting the
+    helper into smaller fragments that wouldn't cluster the cookie
+    + cc_writer + fake_discord lifetime around the running app.
+    """
+
+    app: FastAPI
+    base_url: str
+    setup_token: str
+    csrf_cookie_name: str
+    session_cookie_name: str
+    cc_writer: async_sessionmaker[AsyncSession]
+    fake_discord: FakeDiscordChannel
+    frontend_dist_path: Path
+
+
+async def _drive_post_bind_checks(
+    *,
+    results: list[CheckResult],
+    args: _PostBindArgs,
+) -> None:
+    """Run checks 2-6 against the bound app (caller drives bind + teardown)."""
+    async with httpx.AsyncClient(base_url=args.base_url) as client:
+        _emit(
+            results,
+            await check_passkey_roundtrip(
+                client=client,
+                setup_token=args.setup_token,
+                csrf_cookie_name=args.csrf_cookie_name,
+                session_cookie_name=args.session_cookie_name,
+            ),
+        )
+        _emit(
+            results,
+            await check_control_verbs(
+                client=client,
+                csrf_cookie_name=args.csrf_cookie_name,
+                cc_writer=args.cc_writer,
+            ),
+        )
+    _emit(
+        results,
+        await check_alert_fires(
+            app=args.app,
+            fake_discord=args.fake_discord,
+            cc_writer=args.cc_writer,
+        ),
+    )
+    _emit(results, await check_sse_roundtrip(app=args.app))
+    _emit(results, check_frontend_build(dist_path=args.frontend_dist_path))
+
+
+async def _force_teardown(
+    supervisor: CommandCenterSupervisor,
+    run_task: asyncio.Task[None],
+) -> None:
+    """Belt-and-suspenders teardown for the early-failure / exception paths."""
+    if run_task.done():
+        return
+    supervisor.request_stop()
+    with contextlib.suppress(BaseException):
+        await asyncio.wait_for(run_task, timeout=_CLEAN_TEARDOWN_TIMEOUT_SECONDS)
+
+
+async def _drive_one_run(
+    *,
+    setup: _RunSetup,
+    context: VerifyContext,
+    results: list[CheckResult],
 ) -> int:
+    """Drive a single bound-app run from boot through teardown.
+
+    Returns the exit code (0 on full pass, 1 on any FAIL). The
+    supervisor + run_task are owned by this coroutine; the finally
+    block guarantees teardown even on early failure.
+    """
+    async with _build_verify_app(
+        config_dir=setup.config_dir, db_path=setup.db_path, context=context
+    ) as (app, production_factory):
+        context.app = app
+        context.production_session_factory = production_factory
+        setup_token = context.setup_token_gate.mint()
+
+        session = ProcessSession(
+            process_lifetime_id=_PROCESS_LIFETIME_ID,
+            started_at=_FROZEN_NOW,
+        )
+        supervisor = CommandCenterSupervisor(
+            session=session,
+            shutdown_timeout_seconds=int(_CLEAN_TEARDOWN_TIMEOUT_SECONDS),
+        )
+        _register_supervisor_tasks(supervisor=supervisor, app=app, setup=setup)
+
+        run_task = asyncio.create_task(supervisor.run())
+        context.supervisor = supervisor
+        context.run_task = run_task
+
+        try:
+            bind_result = await check_daemons_bind(
+                host=setup.bind_host,
+                port=setup.bind_port,
+                timeout_seconds=_DAEMON_BIND_TIMEOUT_SECONDS,
+            )
+            _emit(results, bind_result)
+            if not bind_result.passed:
+                _print_summary(results)
+                await _force_teardown(supervisor, run_task)
+                return 1
+
+            cc_writer = app.state.cc_writer_session_factory
+            security_cfg = app.state.security_config
+            await _drive_post_bind_checks(
+                results=results,
+                args=_PostBindArgs(
+                    app=app,
+                    base_url=setup.base_url,
+                    setup_token=setup_token,
+                    csrf_cookie_name=security_cfg.csrf.cookie_name,
+                    session_cookie_name=security_cfg.session.cookie_name,
+                    cc_writer=cc_writer,
+                    fake_discord=context.fake_discord_channel,
+                    frontend_dist_path=setup.frontend_dist_path,
+                ),
+            )
+            _emit(
+                results,
+                await check_clean_teardown(
+                    supervisor=supervisor,
+                    run_task=run_task,
+                    timeout_seconds=_CLEAN_TEARDOWN_TIMEOUT_SECONDS,
+                ),
+            )
+        finally:
+            await _force_teardown(supervisor, run_task)
+
+    _print_summary(results)
+    return 0 if all(r.passed for r in results) else 1
+
+
+async def _run_checks(args: argparse.Namespace) -> int:
     """Body of :func:`main` — run all 7 checks in order against a fresh app.
 
     Returns 0 on full pass, non-zero on any failure. Mirrors
@@ -1080,145 +1268,10 @@ async def _run_checks(
     checks would fail trivially against a non-bound server).
     """
     results: list[CheckResult] = []
-
-    repo_config_dir = Path(__file__).resolve().parents[1] / "config"
-    bind_port = _pick_free_port()
-    bind_host: str = args.bind_host
-    base_url = f"http://{bind_host}:{bind_port}"
-
     with tempfile.TemporaryDirectory() as tmpdir:
-        tmp = Path(tmpdir)
-        db_path = tmp / "verify-command-center.db"
-        db_path.touch()
-        config_dir = tmp / "config"
-        config_dir.mkdir()
-        _write_verify_command_center_yaml(
-            config_dir=config_dir,
-            repo_config_dir=repo_config_dir,
-            db_path=db_path,
-            bind_host=bind_host,
-            bind_port=bind_port,
-            frontend_dist_path=args.frontend_dist,
-        )
-
-        context = VerifyContext(app_port=bind_port, base_url=base_url)
-
-        async with _build_verify_app(
-            config_dir=config_dir, db_path=db_path, context=context
-        ) as (app, production_factory):
-            context.app = app
-            context.production_session_factory = production_factory
-
-            setup_token = context.setup_token_gate.mint()
-
-            from alphamind.command_center.__main__ import _run_uvicorn_task
-
-            session = ProcessSession(
-                process_lifetime_id=_PROCESS_LIFETIME_ID,
-                started_at=_FROZEN_NOW,
-            )
-            supervisor = CommandCenterSupervisor(
-                session=session,
-                shutdown_timeout_seconds=int(_CLEAN_TEARDOWN_TIMEOUT_SECONDS),
-            )
-
-            async def uvicorn_task(s: ProcessSession) -> None:
-                await _run_uvicorn_task(s, app=app, host=bind_host, port=bind_port)
-
-            supervisor.register_task(name="uvicorn", coro_fn=uvicorn_task)
-            for task_name, factory in app.state.event_consumer_task_factories.items():
-                supervisor.register_task(name=task_name, coro_fn=factory)
-            alerts_factory = getattr(app.state, "alert_engine_task_factory", None)
-            if alerts_factory is not None:
-                supervisor.register_task(name="alerts_engine", coro_fn=alerts_factory)
-
-            run_task = asyncio.create_task(supervisor.run())
-            context.supervisor = supervisor
-            context.run_task = run_task
-
-            try:
-                # ---- 1. daemons_bind --------------------------------------
-                bind_result = await check_daemons_bind(
-                    host=bind_host,
-                    port=bind_port,
-                    timeout_seconds=_DAEMON_BIND_TIMEOUT_SECONDS,
-                )
-                _emit(results, bind_result)
-                if not bind_result.passed:
-                    _print_summary(results)
-                    # Force shutdown to keep teardown deterministic on early
-                    # failure — the supervisor's request_stop() drains
-                    # Uvicorn + any background tasks the partial boot left
-                    # running.
-                    supervisor.request_stop()
-                    with contextlib.suppress(BaseException):
-                        await asyncio.wait_for(
-                            run_task, timeout=_CLEAN_TEARDOWN_TIMEOUT_SECONDS
-                        )
-                    return 1
-
-                # ---- 2-5. checks driven against the running app ----------
-                cc_writer = app.state.cc_writer_session_factory
-                security_cfg = app.state.security_config
-                session_cookie_name: str = security_cfg.session.cookie_name
-                csrf_cookie_name: str = security_cfg.csrf.cookie_name
-
-                async with httpx.AsyncClient(base_url=base_url) as client:
-                    _emit(
-                        results,
-                        await check_passkey_roundtrip(
-                            client=client,
-                            setup_token=setup_token,
-                            csrf_cookie_name=csrf_cookie_name,
-                            session_cookie_name=session_cookie_name,
-                        ),
-                    )
-                    _emit(
-                        results,
-                        await check_control_verbs(
-                            client=client,
-                            csrf_cookie_name=csrf_cookie_name,
-                            cc_writer=cc_writer,
-                        ),
-                    )
-                _emit(
-                    results,
-                    await check_alert_fires(
-                        app=app,
-                        fake_discord=context.fake_discord_channel,
-                        cc_writer=cc_writer,
-                    ),
-                )
-                _emit(results, await check_sse_roundtrip(app=app))
-
-                # ---- 6. frontend_build (sync; no app interaction) --------
-                _emit(
-                    results,
-                    check_frontend_build(dist_path=Path(args.frontend_dist)),
-                )
-
-                # ---- 7. clean_teardown -----------------------------------
-                _emit(
-                    results,
-                    await check_clean_teardown(
-                        supervisor=supervisor,
-                        run_task=run_task,
-                        timeout_seconds=_CLEAN_TEARDOWN_TIMEOUT_SECONDS,
-                    ),
-                )
-            finally:
-                # Belt-and-suspenders: if any check raised before the
-                # explicit teardown check, force the supervisor to stop
-                # so the temp-directory cleanup can release the DB file.
-                if not run_task.done():
-                    supervisor.request_stop()
-                    with contextlib.suppress(BaseException):
-                        await asyncio.wait_for(
-                            run_task, timeout=_CLEAN_TEARDOWN_TIMEOUT_SECONDS
-                        )
-
-    _print_summary(results)
-    return 0 if all(r.passed for r in results) else 1
+        setup = _prepare_run_setup(args, Path(tmpdir))
+        context = VerifyContext(app_port=setup.bind_port, base_url=setup.base_url)
+        return await _drive_one_run(setup=setup, context=context, results=results)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1246,12 +1299,3 @@ if __name__ == "__main__":  # pragma: no cover - operator entry point
     except BaseException:
         log.exception("verify_command_center exited with error")
         sys.exit(1)
-
-
-# ---------------------------------------------------------------------------
-# Module-level smoke import — keeps ``json`` referenced even when the
-# operator-only path doesn't exercise it (silences ruff F401 without
-# pulling in a runtime cost on import).
-# ---------------------------------------------------------------------------
-
-_ = json  # used by future debug paths; keep import live for downstream tools.

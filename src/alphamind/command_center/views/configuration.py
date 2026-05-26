@@ -1116,9 +1116,7 @@ def _find_resolved_config_path(invocation_id: str) -> Path:
     caller's ``is_file()`` check still works without an extra None branch.
     """
     archive_root = _archive_base_dir()
-    inv_dir = find_invocation_archive_dir(
-        archive_root=archive_root, invocation_id=invocation_id
-    )
+    inv_dir = find_invocation_archive_dir(archive_root=archive_root, invocation_id=invocation_id)
     if inv_dir is None:
         # Deterministic non-existent fallback so callers' ``is_file()``
         # check is False and the route renders the same "no snapshot"
