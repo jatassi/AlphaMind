@@ -1,4 +1,4 @@
-// Portfolio dashboard API types and query hooks (ALP-676).
+// Portfolio API types and query hooks (ALP-676 dashboard, ALP-677 detail).
 //
 // Types mirror the Pydantic response models in
 // `command_center/views/portfolio.py`.  Until `bun run generate-types`
@@ -110,4 +110,107 @@ export function portfolioDashboardQueryOptions() {
 
 export function usePortfolioDashboard(): UseQueryResult<PortfolioDashboard> {
   return useQuery(portfolioDashboardQueryOptions())
+}
+
+// ---------------------------------------------------------------------------
+// Position detail types (ALP-677)
+// ---------------------------------------------------------------------------
+
+export type BracketLegDetail = {
+  bracket_leg_id: string
+  leg_index: number
+  leg_type: string
+  trigger_kind: string
+  trigger_payload: Record<string, unknown>
+  pl_anchor: Record<string, unknown> | null
+  enforcement: string
+  leg_status: string
+  order_id: string | null
+}
+
+export type FillDetail = {
+  fill_id: string
+  order_id: string
+  fill_timestamp: string
+  fill_price: string
+  fill_quantity: number
+  remaining_quantity_after: number
+  order_status_after: string
+  slippage_usd: string | null
+  fees_usd: string
+  execution_venue: string | null
+}
+
+export type ThesisComponentDetail = {
+  component_id: string
+  component_type: string
+  linked_bracket_leg: string | null
+  instrument_reference: string | null
+  narrative: string
+  key_assumptions: string[]
+  supporting_signals: string[]
+  resolution_outcome: string | null
+  resolution_notes: string | null
+}
+
+export type ThesisDetail = {
+  thesis_id: string
+  status: string
+  summary: string
+  time_expectation_hours: number | null
+  position_size_rationale: string | null
+  generation_timestamp: string
+  resolution_timestamp: string | null
+  resolution_category: string | null
+  components: ThesisComponentDetail[]
+}
+
+export type ActivityLogEntry = {
+  entry_id: string
+  invocation_id: string
+  entry_at: string
+  event_type: string
+  event_group: string
+  order_id: string | null
+  thesis_id: string | null
+  source: string
+  detail_json: string
+}
+
+export type PositionDetail = {
+  position_id: string
+  ticker: string
+  instrument_type: string
+  direction: string | null
+  status: string
+  quantity: number
+  market_value_usd: string
+  unrealized_pl_usd: string
+  realized_pl_usd: string | null
+  age_hours: number
+  distance_to_target_pct: number | null
+  distance_to_nearest_invalidation_pct: number | null
+  bracket_id: string | null
+  bracket_legs: BracketLegDetail[]
+  fills: FillDetail[]
+  thesis: ThesisDetail | null
+  activity_log: ActivityLogEntry[]
+}
+
+// ---------------------------------------------------------------------------
+// Position detail query (ALP-677)
+// ---------------------------------------------------------------------------
+
+export function positionDetailQueryOptions(positionId: string) {
+  return queryOptions<PositionDetail>({
+    queryKey: ['portfolio', 'position', positionId] as const,
+    queryFn: () =>
+      api.get<PositionDetail>(`/api/views/portfolio/positions/${encodeURIComponent(positionId)}`),
+    staleTime: 10 * 1000,
+    retry: 1,
+  })
+}
+
+export function usePositionDetail(positionId: string): UseQueryResult<PositionDetail> {
+  return useQuery(positionDetailQueryOptions(positionId))
 }
