@@ -320,9 +320,7 @@ def test_alerts_data_dir_survives_hot_reload(
         assert engine is not None
         # Construction path: the initial disk-pressure rule must be live
         # (not dormant) because alerts.data_dir was threaded through.
-        disk_rule = next(
-            r for r in engine.rules if str(r.name) == "data_directory_disk_pressure"
-        )
+        disk_rule = next(r for r in engine.rules if str(r.name) == "data_directory_disk_pressure")
         assert isinstance(disk_rule.condition, DataDirectoryDiskPressureCondition)
         # Hot-reload path: the rules_builder closure captured inside
         # ``_wire_alert_engine`` must still produce a live condition (not
@@ -330,9 +328,7 @@ def test_alerts_data_dir_survives_hot_reload(
         # private to the engine; ``_rules_builder`` is the attribute the
         # constructor stashes.
         rebuilt = engine._rules_builder(app.state.alerts_config)  # type: ignore[attr-defined]
-        rebuilt_disk = next(
-            r for r in rebuilt if str(r.name) == "data_directory_disk_pressure"
-        )
+        rebuilt_disk = next(r for r in rebuilt if str(r.name) == "data_directory_disk_pressure")
         assert isinstance(rebuilt_disk.condition, DataDirectoryDiskPressureCondition)
 
 

@@ -1111,12 +1111,7 @@ def _find_resolved_config_path(invocation_id: str) -> Path:
     two matches → the helper returned ``None`` → the endpoint 404'd in
     production.
     """
-    return (
-        _archive_base_dir()
-        / INVOCATIONS_DIRNAME
-        / invocation_id
-        / RESOLVED_CONFIG_FILENAME
-    )
+    return _archive_base_dir() / INVOCATIONS_DIRNAME / invocation_id / RESOLVED_CONFIG_FILENAME
 
 
 def _load_resolved_config_for_invocation(invocation_id: str) -> dict[str, Any] | None:
