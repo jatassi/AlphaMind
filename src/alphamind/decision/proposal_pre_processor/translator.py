@@ -102,7 +102,15 @@ def translate_position_assessment_to_proposed_delta(
 
     Caller is responsible for filtering hold actions before calling this function;
     a hold-action assessment raises TranslatorError. Adjust-bracket actions are
-    accepted and translated to Action.ADJUST (zero-exposure-change projection).
+    accepted and translated to Action.ADJUST carrying the existing position's
+    notional and quantity — the ``position_max_size_pct`` simulator reads
+    ``proposal.notional_usd`` as the new total for the position (see
+    ``risk_guardrails.guardrail_evaluation.rules.exposure._apply_proposal_to_book``),
+    so emitting the existing totals keeps the simulated post-batch book
+    unchanged. Exposure-neutrality is preserved at the rule-projection level
+    by ``delta_adjusted._exposure_neutral``, which short-circuits ADJUST to
+    ``signed_notional_usd=0`` regardless of the proposal's carried values
+    (ALP-698).
     """
     if assessment.recommended_action == "hold":
         raise TranslatorError(
@@ -323,5 +331,12 @@ def _notional_and_quantity_for_assessment(
     if isinstance(params, AddParameters):
         return params.additional_dollar_value, float(params.additional_quantity)
 
-    # AdjustBracketParameters — no exposure change.
-    return money(0), 0.0
+    # AdjustBracketParameters — exposure-neutral. Emit the existing position's
+    # totals so the position_max_size_pct simulator (the only consumer that
+    # reads proposal.notional_usd raw for ADJUST) gets a no-op "set new total"
+    # branch (ALP-698). Other rules go through delta_adjusted._exposure_neutral,
+    # which short-circuits ADJUST to signed_notional_usd=0 regardless of these
+    # carried values. abs() mirrors the projector's defensive abs() on
+    # ExistingPosition.notional_usd in _simulate_post_batch_book and keeps the
+    # money() boundary non-negative.
+    return money(abs(existing.notional_usd)), existing.quantity
