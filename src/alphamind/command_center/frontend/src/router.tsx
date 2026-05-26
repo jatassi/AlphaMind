@@ -11,6 +11,9 @@ import { Route as PortfolioRoute } from './routes/_authed/portfolio/index'
 import { Route as PositionDetailRoute } from './routes/_authed/portfolio/positions/$position-id'
 import { Route as ThesisDetailRoute } from './routes/_authed/portfolio/theses/$thesis-id'
 import { Route as ThesesRoute } from './routes/_authed/portfolio/theses/index'
+import { Route as CalibrationMixRoute } from './routes/_authed/risk/calibration-mix'
+import { Route as RiskRoute } from './routes/_authed/risk/index'
+import { Route as RegimeTimelineRoute } from './routes/_authed/risk/timeline'
 import { Route as ActivityLogRoute } from './routes/activity-log'
 import { Route as IndexRoute } from './routes/index'
 import { Route as LoginRoute } from './routes/login'
@@ -33,6 +36,9 @@ const routeTree = RootRoute.addChildren([
     PositionDetailRoute,
     ThesesRoute,
     ThesisDetailRoute,
+    RiskRoute,
+    RegimeTimelineRoute,
+    CalibrationMixRoute,
   ]),
 ])
 
