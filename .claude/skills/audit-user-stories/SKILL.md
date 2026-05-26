@@ -1,6 +1,6 @@
 ---
 name: audit-user-stories
-description: Use to audit and repair an existing AlphaMind feature's Linear work tree when the stories were drafted before some upstream layer landed (or otherwise drifted from current ground truth). Triggers on `/audit-user-stories <Feature>` and operator phrases like "audit the Domain researchers stories", "review existing user stories for the Synthesizer", "the Breach behavior stories were drafted before regime-adaptation completed — verify they still match", "check the X work tree's assumptions against current code", "the X stories may be stale", "reconcile the X stories with what landed". The skill resolves the Linear parent + sub-issues, gathers current ground truth (design docs + the actual src/ code that landed since drafting), audits each story body for stale paths, contract drift, type-collision, schema mismatch, and duplicates/copy-paste body errors, then surfaces a severity-tagged findings report and — after operator confirms scope — applies targeted repairs (canceling moot stories, rewriting bodies, wiring missing `blockedBy`, optionally rewriting the parent body) so the work tree is dispatch-ready. Companion to the `draft-user-stories` skill — that one drafts a fresh work tree; this one repairs an existing one. Do NOT use for one-off bug fixes or work outside AlphaMind.
+description: Use to audit and repair an existing AlphaMind feature's Linear work tree when the stories were drafted before some upstream layer landed (or otherwise drifted from current ground truth). Triggers on `/audit-user-stories <Feature>` and operator phrases like "audit the Domain researchers stories", "review existing user stories for the Synthesizer", "the Breach behavior stories were drafted before regime-adaptation completed — verify they still match", "check the X work tree's assumptions against current code", "the X stories may be stale", "reconcile the X stories with what landed". The skill resolves the Linear parent + sub-issues, captures a starting SHA for mid-flight commit detection, gathers current ground truth (design docs + the actual src/ code that landed since drafting + optional `python-architecture` audit-mode sweep), audits each story body for stale paths, contract drift, type-collision, schema mismatch, and duplicates/copy-paste body errors, then surfaces a severity-tagged findings report and — after operator confirms scope — runs a Linear cap pre-flight (only if repairs create new sub-issues) and applies targeted repairs (canceling moot stories, rewriting bodies to the User Story template with the fresh-agent/atomicity/editorial-discipline quality bars, wiring missing `blockedBy`, optionally rewriting the parent body with the breach-behavior pattern's renderer-safe structure), spot-checks the result, diffs mid-flight commits against the rewritten stories, and commits any repo edits — so the work tree is dispatch-ready via `/orchestrate`. Companion to the `draft-user-stories` skill — that one drafts a fresh work tree; this one repairs an existing one. Do NOT use for one-off bug fixes or work outside AlphaMind.
 ---
 
 # Audit user stories for an AlphaMind feature
@@ -37,6 +37,8 @@ Six phases. Work through them in order. After each phase, briefly tell the opera
 ### Phase 1 — Resolve the work tree
 
 Read `docs/project-tracker.md` and locate the bullet matching the argument. Confirm status is `_stories drafted_`, `_in progress_`, or `_done_` (anything but `_requirements pending_`). Capture the section it lives under (the Linear Project name) and the design/architecture doc paths the bullet links.
+
+**Capture the starting SHA.** Run `git rev-parse HEAD` and stash the value in working notes — Phase 5's spot-check wave uses it to diff mid-flight commits that landed while the audit ran. Audits routinely take 30-60+ minutes and the codebase moves; catching a sibling work tree's commit that overlaps audited paths is much cheaper here than after dispatch.
 
 Then locate the Linear work tree:
 
@@ -81,6 +83,14 @@ Survey the actual code that has landed. Critical questions:
 - **What schema columns actually exist** that stories propose to read or write? `grep -n "__tablename__\|class.*Base.*:" src/alphamind/persistence/models.py`. Stories that declare `tickers: tuple[str, ...]` against a column that's actually a single-row `ticker: TEXT NULL` need schema reconciliation. P1 finding.
 - **What scaffolding is already in place?** Empty `__init__.py` stubs in the feature's package directory mean the structural decisions were made; new stories shouldn't redesign the layout.
 - **What sibling work shipped recently** — `git log --oneline -30`, `git log --since=<stories drafted date>` — that the stories were drafted before? The commits that reference upstream feature names are the relevant ones.
+
+**Use `python-architecture` audit mode for systematic coverage.** Ad-hoc grepping catches the obvious collisions but misses structural drift — primitive obsession that's metastasized since drafting, a shallow-module swarm an upstream introduced, layer violations that crossed into the feature's intended scope, mutable-default landmines in records the stories propose to consume. Invoke `Skill("python-architecture")` in audit mode scoped to the feature's package and each upstream package whose contract the stories lean on. Treat the audit findings as inputs to Phase 3's per-story checks:
+
+- **Load-bearing findings that touch the audited stories' surface** (e.g., a `Money` primitive obsession in a record story 04 imports; a shallow-module swarm an upstream introduced that story 06 navigates) become P1 findings on the affected stories, with the repair being "fold the upstream fix into this story's scope" or "surface a coordinated-edit note to the operator".
+- **High-yield findings inside the feature's planned scope** (naive datetimes, missing timeouts, mutable defaults) that the audited stories silently inherit become P2 findings — small acceptance-criteria additions, not new stories.
+- **Findings outside the audited feature's scope** are *not* this audit's job. Surface them to the operator separately at Phase 4 close-out as candidate follow-on Linear issues — do not silently expand the audit's repair scope.
+
+Skill invocation runs in your thread (no Agent dispatch), so it's compatible with the no-delegation rule. Skip the systematic audit when the feature is small, purely additive, and the source-tree grep above caught every named drift you needed.
 
 #### Existing config + prompts reconnaissance
 
@@ -214,6 +224,29 @@ Recommend one based on the severity profile you found. If the audit found one P0
 
 Execute the operator's chosen scope in this wave order. Each wave can run in parallel within itself (one `save_issue` call per issue, sent in a single message); waves are sequential because later waves depend on earlier waves' outcomes.
 
+#### Pre-flight: Linear free-tier cap check
+
+If the operator's chosen scope creates any new sub-issues (e.g., a shared-types consolidation story, a verification-conversion that splits one story into two), run the cap check before any writes. Linear's free tier caps the workspace at roughly 250 active (non-archived) issues; hitting it mid-repair leaves the work tree half-fixed and forces an out-of-band consolidation rollup before you can resume.
+
+Compute the count and run the check:
+
+- `needed` = number of new sub-issues the repair will create. If the repair only rewrites + cancels existing issues (the common case), `needed = 0` and you can skip — `save_issue(id=...)` updates don't consume cap.
+- For `needed > 0`:
+
+```
+uv run python scripts/check_linear_cap.py --needed <needed> --json
+```
+
+The script paginates the workspace via Linear's GraphQL API and prints one JSON line with `active`, `cap`, `buffer`, `needed`, `margin`, `required`, and `ok`. It applies a 2-issue safety margin internally. Exit code mirrors `ok`: `0` = clear, `1` = cap risk, `2` = error.
+
+Decision:
+
+- **`ok == true`** — proceed to Wave 1.
+- **`ok == false`** — surface to the operator *before any writes*. Report the numbers from the JSON. Recommend running `/linear-consolidate` (per the `project_linear_consolidation` memory) or `scripts/linear_consolidation_candidates.py` to free slots. Ask whether to (a) pause for rollup, (b) proceed accepting cap-risk and inline the un-created stories in the hand-off, or (c) trim repair scope to drop the new creations.
+- **exit 2** — script failure (missing `LINEAR_API_KEY` in `.env`, network/API error). Surface and resolve before proceeding; don't fall back to manual MCP counting.
+
+Skip this pre-flight entirely if the repair scope is pure-update (no `save_issue` calls without an `id`).
+
 #### Wave 1 — Duplicate cleanup
 
 For each pair of duplicate sub-issues:
@@ -237,10 +270,24 @@ Sections to cover (drop a section only if it genuinely doesn't apply):
 - One-sentence purpose.
 - `## Design and architecture` — bullet list of design docs + cross-cutting policy refs.
 - `## Cross-feature dependencies` with two subsections: hard contract dependencies (upstream features by ALP ID, with the named types/functions this feature consumes) and sequencing context (recently-landed work that doesn't gate dispatch but is worth naming).
-- `## Dependency graph` — ASCII showing wave structure. Reference the [Linear renderer caveat](#linear-mcp-gotchas-relevant-here) for layout.
+- `## Pre-resolved configuration decisions` — only if any drafting-time decisions were resolved during the audit (rare; usually audit findings either land as story-body rewrites or surface as operator follow-ups). When present, use bold-text paragraphs not bullet lists.
+- `## Dependency graph` — ASCII showing wave structure (see rendering constraints below).
 - `## Notes for the orchestrator` — type-reuse hard rule, model-selection nuances, architectural invariants, surfacing conditions.
 
-Apply via `save_issue(id=<parent>, description=<new body>)`. If the original body had operator-authored content (a custom "additional context" section etc.), preserve it — diff and merge mentally before saving.
+**ASCII-graph rendering constraints (Linear).** Linear renders ASCII graphs as plain code blocks, but the container wraps on narrower viewports. Keep the graph readable:
+
+- Cap line width at ~60 characters before any trailing arrow / box-drawing character. Pad short lines with spaces so column-anchored arrows stay aligned.
+- Avoid right-edge box-drawing characters (`│`, `┐`, `┘`) past column 60 — they wrap and the visual mapping breaks.
+- For wide work trees (5+ parallel stories at one position), prefer multi-line stanzas with `(parallel: ...)` annotations on a separate line below rather than a single horizontal fan-out.
+- Re-fetch the parent after saving and skim the rendered graph; narrow and re-save if any line wrapped.
+
+**Inline-code-in-bold-prefix gotcha.** A bold prefix containing inline code — `**(A) `code` rest of label.**` — is truncated by Linear's renderer at the first backtick; the closing `**` lands inside the inline-code span and bold ends prematurely. Keep the bold prefix free of inline code (move backticks into the following prose) or rephrase the label without the code reference.
+
+**Bullet-list-after-colon-or-heading collapse.** The Linear renderer drops bullet lists that immediately follow a colon-ending paragraph or a heading-then-prose stanza, keeping only the first bullet. Use inline prose, insert a heading break, or use bold-text paragraphs (`**Label.** Body sentence.`) instead.
+
+**Auto-converted `ALP-XXX` references.** When you re-fetch a body you just wrote, the renderer will have auto-converted naked issue references (`ALP-227`) into `<issue id="...">ALP-227</issue>` tags. This is cosmetic — the rendered display is unchanged — but the round-tripped body is not byte-identical to what you sent. Don't chase the diff.
+
+Apply via `save_issue(id=<parent>, description=<new body>)`. If the original body had operator-authored content (a custom "additional context" section etc.), preserve it — diff and merge mentally before saving. After saving, re-fetch with `get_issue(id, includeRelations=true)` and verify the dependency graph, bold-paragraph stanzas, and section headers rendered as intended; if any section collapsed (the bullet-list-after-colon trap is the most common), reshape and re-save.
 
 #### Wave 3 — Sub-issue body rewrites
 
@@ -249,6 +296,20 @@ For each story flagged P0 or P1 with body-rewrite repairs, apply via `save_issue
 Order matters within this wave: rewrite stories that **define types** before stories that **import them**. Story 02's repurposing as the shared-types module owner needs to land before story 03's "import from `_shared`" rewrite, because story 03's rewrite references `_shared.py`. In practice the rewrites are all save calls (no actual code lands at this stage), so ordering matters only for cross-references in prose — but readers (including the operator skimming the diff) benefit from reading them in dependency order.
 
 For verification-conversion stories (the 09a/b/c pattern — convert "draft the prompt" to "round-trip the existing prompt through parser+validator"), use the original story's structural sections as the template; rewrite the Goal, Scope, and Acceptance criteria; preserve the Reading list and Out-of-scope sections where still applicable.
+
+**User Story body shape (mirror this for every rewritten story).** Each story has `## Goal`, `## Reading`, `## Depends on`, `## Scope` (with numbered named-deliverable subsections + `### Out of scope`), `## Acceptance criteria`, and `## Verification` — the same template `draft-user-stories` Phase 7 uses. When rewriting, keep the rewritten body within this skeleton; don't invent new top-level sections or drop required ones. If a section genuinely doesn't apply (rare), state that inline rather than removing the heading.
+
+**Quality bars every rewrite must clear:**
+
+- **Fresh-agent test.** A competent engineer who has read no design docs and only the rewritten story can implement it. They must follow the Reading list, but they should not have to ask clarifying questions. If the rewrite leaves an agent guessing about an interface contract, scope boundary, or dependency mechanic, it's underspecified — fix before saving.
+- **Atomicity test.** Each acceptance criterion asserts one observable outcome, mark-able pass/fail by running one command or reading one file. Umbrella criteria like "the module works" or "tests pass" are not atomic — split into specific named-function-with-named-input behaviors.
+- **Editorial discipline.** Write the final shape, not your drafting process. Phrases like "Wait, this is a third method. Let me include it", "Actually, on second thought…", or "Let me consider…" are thinking-out-loud residue. They survive Linear's render and clutter the body for the agent picking it up. Edit them out before `save_issue`. Same applies to internal contradictions ("X is NOT in the API. … Implement X as a third method.") — converge to one positive statement. Don't write decision-trail prose ("this story used to say X but now says Y") — the audit trail lives in Linear's revision history, not the body.
+
+**No-numeric-anchor reminder.** Per `feedback_avoid_numeric_anchors`, don't bake numeric thresholds (`70/85/95`, `60%`, `30 minutes`) into acceptance criteria. Reference the config source (`config/<feature>.yaml`, the relevant `Config` class) and let the verification test load the value.
+
+**No-invented-names reminder.** Per `feedback_no_inventing_component_names`, every typed value object the rewritten Scope section names either mirrors an existing upstream record or is named by the design doc. If the rewrite introduces a new name without a design-doc precedent, stop — re-read or surface to the operator before saving.
+
+The Linear renderer caveats in Wave 2 (bullet-list-after-colon collapse, inline-code-in-bold-prefix, ASCII-graph constraints, ALP-XXX auto-conversion) apply to sub-issue bodies too — apply the same defensive choices.
 
 #### Wave 4 — Relations cleanup
 
@@ -270,7 +331,11 @@ After all waves apply, spot-check 2–3 critical issues with `get_issue(id, incl
 
 If anything's off, surface immediately and re-issue the corrective `save_issue` calls. Don't pretend a partial state is the desired state.
 
+**Check for mid-flight commits to `main`.** Use the starting SHA captured in Phase 1: `git log <starting-sha>..main --oneline` (or `git log --oneline -20` as a fallback). For each commit that landed during the audit, run `git show --stat <sha>` and ask whether its file changes overlap any path or symbol referenced in the rewritten stories' Reading lists, Scope sections, or the parent body's cross-feature dependencies. Common overlap patterns: a fix to a file your rewrites extend (typed-record edits, MCP-server wrappers); a sibling work tree shipping a typed record a rewritten story depends on; a refactor renaming a symbol an acceptance criterion mentions. If overlap exists, surface to the operator with a one-line summary of each commit's impact — Reading-list pointers, Scope deliverables, acceptance criteria, and the parent's Pre-resolved decisions can all need touch-ups. The cost of catching this here is minutes; the cost of catching it after dispatch is a subagent diverging from a freshly-stale spec.
+
 ### Phase 6 — Close out
+
+If the audit edited any tracked files in the repo (e.g., touched `docs/project-tracker.md` to fix a stale link, repaired a renamed design-doc path the stories reference), stage and commit those edits before reporting. Stage only the audit-edited files, commit with a short imperative subject mirroring the in-tree style (`chore(project-tracker): fix stale Reading-list paths for <feature>` or `docs(<area>): repair link drift surfaced by <feature> audit`), and push to the default remote. Linear-only repairs don't touch the repo, so the common case is no commit — but when the audit does change files, leaving them uncommitted creates a hand-off mismatch between the work tree's stated truth (post-audit) and what `git status` shows. Skip the commit only if the audit did not complete cleanly (a surfacing condition fired, the cap blocked late stories, etc.) — in that case leave the edits uncommitted and let the operator decide.
 
 Report back to the operator in this shape (one short paragraph plus a structured summary):
 
@@ -278,6 +343,7 @@ Report back to the operator in this shape (one short paragraph plus a structured
 - The final dependency-graph shape in one line.
 - Any unresolved gaps the operator should know about (e.g., the `output_token_budget` divergence in `agents.yaml` that story 02 surfaces but does not unilaterally resolve).
 - Confirmation that `/orchestrate <Feature>` is now a viable next step.
+- The commit hash from any tracker/docs edits that landed, or "no repo edits" if the audit was Linear-only.
 - A one-line offer to schedule a follow-up if the work tree has natural verification windows ("schedule an agent to verify the first dispatch wave goes cleanly?").
 
 Then stop. The operator drives next steps from there.
