@@ -167,6 +167,14 @@ async def _run(config: CommandCenterConfig) -> None:
         # they read off ``app.state.event_consumer_task_factories``.
         for task_name, factory in app.state.event_consumer_task_factories.items():
             supervisor.register_task(name=task_name, coro_fn=factory)
+        # Story 05a / ALP-671: the alert engine factory is constructed
+        # inside the lifespan (it needs the cc_writer + foreign_reader
+        # factories the lifespan builds against the configured DB). The
+        # factory may be None if alerts are explicitly disabled in tests;
+        # production always wires it.
+        alerts_factory = getattr(app.state, "alert_engine_task_factory", None)
+        if alerts_factory is not None:
+            supervisor.register_task(name="alerts_engine", coro_fn=alerts_factory)
         await supervisor.run()
         log.info(
             "command center session end: process_lifetime_id=%s",

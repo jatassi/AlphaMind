@@ -77,6 +77,17 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind.command_center.alerts.channels.discord import (
+    DiscordChannel,
+    RealDiscordChannel,
+)
+from alphamind.command_center.alerts.config import (
+    bind_rules_from_config,
+    resolve_discord_webhook,
+)
+from alphamind.command_center.alerts.engine import AlertEngine
+from alphamind.command_center.alerts.routes import build_alerts_router
+from alphamind.command_center.alerts.rules import AlertRule
 from alphamind.command_center.auth.routes import build_auth_router
 from alphamind.command_center.auth.setup_token import SetupTokenGate
 from alphamind.command_center.auth.webauthn import (
@@ -122,7 +133,13 @@ from alphamind.command_center.views.live_operations import (
 )
 from alphamind.command_center.views.portfolio import build_portfolio_router
 
-__all__ = ["AuthOverrides", "ControlOverrides", "EventsOverrides", "build_app"]
+__all__ = [
+    "AlertsOverrides",
+    "AuthOverrides",
+    "ControlOverrides",
+    "EventsOverrides",
+    "build_app",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +198,35 @@ class AuthOverrides:
     session_signing_secret: bytes | None = None
     cookies_secure: bool = False
     clock: Callable[[], datetime] | None = field(default=None)
+
+
+@dataclass(frozen=True, slots=True)
+class AlertsOverrides:
+    """Test-time / deploy-time overrides for the alert engine (story 05a / ALP-671).
+
+    Production callers leave every field ``None``; ``build_app``
+    constructs the engine + the Real Discord channel from the YAML +
+    env vars. Tests pass a :class:`FakeDiscordChannel` (recorder) and /
+    or a custom rule set so the engine can be exercised without
+    booting the live Discord webhook or rebuilding the full 17-rule
+    registry per test.
+
+    Fields:
+
+    * ``discord_channel``: override for the Discord webhook channel.
+      Defaults to :class:`RealDiscordChannel` constructed from the env
+      var named in :class:`AlertsConfig.channels.discord.webhook_url_env`.
+    * ``rules``: override for the registered rule list. Defaults to
+      :func:`bind_rules_from_config` against the loaded
+      :class:`AlertsConfig`.
+    * ``data_dir``: path for the data-directory disk-pressure predicate.
+      Defaults to ``%USERPROFILE%/AlphaMind/data/`` resolved via
+      :class:`CommandCenterConfig.db.alphamind_db_path`'s parent.
+    """
+
+    discord_channel: DiscordChannel | None = None
+    rules: tuple[AlertRule, ...] | None = None
+    data_dir: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,6 +337,75 @@ def _resolve_webauthn_verifier(
         relying_party_name=security_config.webauthn.relying_party_name,
         expected_origin=expected_origin,
     )
+
+
+def _wire_alert_engine(
+    *,
+    app: FastAPI,
+    cc_writer: async_sessionmaker[AsyncSession],
+    foreign_reader: async_sessionmaker[AsyncSession],
+) -> None:
+    """Construct the alert engine inside the lifespan.
+
+    The engine needs both the cc_writer factory (alerts table writes)
+    AND the foreign_reader factory (state-polling predicates) — both
+    constructed by the surrounding lifespan. The rule list + Discord
+    channel were prepared by ``build_app`` and stashed under
+    ``app.state.alerts_*``. When alerts are disabled (no rules or no
+    channel resolvable), ``app.state.alert_engine`` is set to ``None``
+    so the supervisor's alerts-engine task factory exits cleanly
+    without crashing.
+    """
+    discord_channel = getattr(app.state, "alerts_discord_channel", None)
+    rules = getattr(app.state, "alerts_rules", None)
+    if discord_channel is None and rules is not None:
+        alerts_http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        discord_channel = RealDiscordChannel(
+            webhook_url=app.state.alerts_discord_webhook_url,
+            http_client=alerts_http_client,
+        )
+        app.state.alerts_discord_channel = discord_channel
+        app.state.alerts_http_client = alerts_http_client
+    if rules is None or discord_channel is None:
+        app.state.alert_engine = None
+        return
+    app.state.alert_engine = AlertEngine(
+        rules=rules,
+        multiplexer=app.state.event_multiplexer,
+        cc_writer_factory=cc_writer,
+        discord_channel=discord_channel,
+        foreign_reader_factory=foreign_reader,
+        clock=getattr(app.state, "alerts_clock", None) or app.state.clock,
+    )
+
+
+def _make_alerts_engine_factory(
+    *,
+    app: FastAPI,
+) -> Callable[[ProcessSession], Coroutine[Any, Any, None]]:
+    """Bind the alert engine to a supervisor-task factory.
+
+    The supervisor calls the returned factory with its
+    :class:`ProcessSession`; the factory pulls the engine off
+    ``app.state.alert_engine`` (constructed inside the FastAPI
+    lifespan, which runs before the Uvicorn server accepts requests).
+    The supervisor registers this factory at startup; the lifespan
+    publishes the engine to app.state before the factory is invoked.
+
+    A None engine means alerts are disabled (a test path or a
+    configuration where the rules list is empty); the factory returns
+    immediately so the supervisor's task tree carries one less
+    long-running coroutine rather than crashing.
+    """
+
+    async def factory(_session: ProcessSession) -> None:
+        engine: AlertEngine | None = getattr(app.state, "alert_engine", None)
+        if engine is None:
+            log.info("alerts_engine task: no engine wired; skipping run")
+            return
+        await engine.run()
+
+    return factory
 
 
 def _make_pipeline_consumer_factory(
@@ -413,6 +528,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     app.state.control_http_client = http_client
 
+    _wire_alert_engine(
+        app=app,
+        cc_writer=cc_writer,
+        foreign_reader=foreign_reader,
+    )
+
     try:
         yield
     finally:
@@ -423,9 +544,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # here — its lifetime is owned by the composition root's
         # engine_pair_context.
         events_http_client = getattr(app.state, "events_http_client", None)
+        alerts_http_client_for_close = getattr(app.state, "alerts_http_client", None)
         for client_label, client in (
             ("control", http_client),
             ("events", events_http_client),
+            ("alerts", alerts_http_client_for_close),
         ):
             if client is None:
                 continue
@@ -451,7 +574,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 )
 
 
-def build_app(
+def build_app(  # noqa: PLR0913 — composition root wires four override bundles; raising the cap here keeps the layered Overrides design readable.
     *,
     command_center_config: CommandCenterConfig,
     security_config: SecurityConfig,
@@ -461,6 +584,7 @@ def build_app(
     auth_overrides: AuthOverrides | None = None,
     control_overrides: ControlOverrides | None = None,
     events_overrides: EventsOverrides | None = None,
+    alerts_overrides: AlertsOverrides | None = None,
 ) -> FastAPI:
     """Construct the FastAPI app composition root.
 
@@ -535,6 +659,7 @@ def build_app(
     overrides = auth_overrides if auth_overrides is not None else AuthOverrides()
     cc_control = control_overrides if control_overrides is not None else ControlOverrides()
     events = events_overrides if events_overrides is not None else EventsOverrides()
+    alerts = alerts_overrides if alerts_overrides is not None else AlertsOverrides()
     app = FastAPI(
         title="AlphaMind command center",
         description=(
@@ -643,6 +768,46 @@ def build_app(
 
     # Mount the portfolio dashboard router (story 05f / ALP-676).
     app.include_router(build_portfolio_router(), prefix="/api/views/portfolio")
+
+    # Alerts wiring (story 05a / ALP-671). The engine itself is
+    # constructed inside the lifespan (it needs the cc_writer +
+    # foreign_reader factories which the lifespan builds against the
+    # configured DB). The rule list + Discord webhook URL are resolved
+    # here so a configuration error fails loud at build time rather
+    # than under the first request. Tests override the Discord channel
+    # via AlertsOverrides.discord_channel and / or replace the rules.
+    if alerts.rules is not None:
+        app.state.alerts_rules = alerts.rules
+    else:
+        app.state.alerts_rules = bind_rules_from_config(
+            alerts_config,
+            data_dir=alerts.data_dir,
+        )
+    if alerts.discord_channel is not None:
+        app.state.alerts_discord_channel = alerts.discord_channel
+        # Fake / pre-wired channel — no webhook URL resolution.
+        app.state.alerts_discord_webhook_url = None
+    else:
+        wiring = resolve_discord_webhook(alerts_config)
+        app.state.alerts_discord_webhook_url = wiring.webhook_url
+        if wiring.webhook_url is None:
+            log.warning(
+                "command_center: %s not set; Discord alerts disabled. "
+                "Set the env var to enable Discord fanout.",
+                wiring.env_name,
+            )
+
+    # Mount the alerts router (story 05a / ALP-671). The router carries
+    # its own /api/alerts prefix; no further prefix= kwarg here.
+    app.include_router(build_alerts_router())
+
+    # Expose the alert-engine task factory under
+    # ``app.state.alert_engine_task_factory`` so the composition root
+    # (``__main__``) registers it on the supervisor's TaskGroup. The
+    # factory closes over the FastAPI app and resolves the engine at
+    # run time from ``app.state.alert_engine`` (the lifespan constructs
+    # the engine after the cc_writer + foreign_reader factories exist).
+    app.state.alert_engine_task_factory = _make_alerts_engine_factory(app=app)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

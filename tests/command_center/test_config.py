@@ -129,10 +129,14 @@ class TestAlertsConfig:
         config = load_alerts_config(config_dir)
         assert isinstance(config, AlertsConfig)
 
-    def test_rules_default_empty(self, config_dir: Path) -> None:
+    def test_rules_populated_with_default_set(self, config_dir: Path) -> None:
         config = load_alerts_config(config_dir)
-        # Story 05a populates the rule list; story 02 ships an empty list.
-        assert config.rules == []
+        # Story 05a populated the rule list with the 17 default rules.
+        assert len(config.rules) == 17
+        names = [row.get("name") for row in config.rules]
+        assert "pipeline_aborted" in names
+        assert "monitor_websocket_disconnected" in names
+        assert "thesis_resolved" in names
 
     def test_discord_webhook_url_env_present(self, config_dir: Path) -> None:
         config = load_alerts_config(config_dir)

@@ -191,17 +191,18 @@ class TestRegisteredRoutes:
     """Story 02 ships /healthz; story 03 (ALP-667) adds /auth/*; story 04a
     (ALP-668) adds /api/control/*; story 04b (ALP-669) adds /api/events;
     story 04d (ALP-670) adds /auth/me + the StaticFiles mount at /;
+    story 05a (ALP-671) adds /api/alerts + acknowledge/snooze;
     story 05b (ALP-672) adds /api/views/live + /api/views/schedule;
     story 05c (ALP-673) adds /api/views/history/runs + failure-log preset;
     story 05e (ALP-675) adds /api/views/activity-log + event-types +
     saved-filters; story 05f (ALP-676) adds /api/views/portfolio/dashboard.
 
     Asserts that only the routes belonging to the merged stories are
-    present at this point — stories 05a (alerts) / remaining view stories
-    register their routers later.
+    present at this point — stories 05d/05g-05j/06a-06c register their
+    routers later.
     """
 
-    def test_includes_healthz_auth_control_and_events_routes(
+    def test_includes_healthz_auth_control_events_and_alerts_routes(
         self, configs: tuple[Path, Path]
     ) -> None:
         config_dir, _ = configs
@@ -246,6 +247,9 @@ class TestRegisteredRoutes:
                 "/api/control/force_close_position",
                 "/api/control/set_halt_mode",
                 "/api/events",
+                "/api/alerts",
+                "/api/alerts/{alert_id_raw}/acknowledge",
+                "/api/alerts/{alert_id_raw}/snooze",
                 # Story 05e (ALP-675) — activity-log explorer view routes.
                 "/api/views/activity-log",
                 "/api/views/activity-log/event-types",
@@ -260,9 +264,9 @@ class TestRegisteredRoutes:
         )
         assert own_routes == expected, (
             f"unexpected routes registered after stories "
-            f"02 + 03 + 04a + 04b + 04d + 05b + 05c + 05e + 05f — "
-            f"found {own_routes}; expected {expected}. Stories 05a / "
-            f"remaining view stories register their routers later."
+            f"02 + 03 + 04a + 04b + 04d + 05a + 05b + 05c + 05e + 05f — "
+            f"found {own_routes}; expected {expected}. Stories 05d/05g-05j/"
+            f"06a-06c register their routers later."
         )
 
 
