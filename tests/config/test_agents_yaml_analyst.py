@@ -36,7 +36,7 @@ def test_analyst_entry_loads() -> None:
     entry = _load_analyst_entry()
     assert entry.model == "claude-opus-4-7"
     assert entry.prompt == "prompts/decision/analyst.md"
-    assert entry.latency_budget_seconds == 300
+    assert entry.latency_budget_seconds == 500
     assert entry.context_token_budget == 8000
     assert entry.output_token_budget == 6000
 
