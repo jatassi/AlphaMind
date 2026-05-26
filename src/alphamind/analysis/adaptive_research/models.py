@@ -30,14 +30,22 @@ to this assessment", ``()`` means "applicable, explicitly empty".
 from __future__ import annotations
 
 import enum
+from datetime import datetime
+from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from alphamind.analysis._shared import Sector
+from alphamind.analysis._shared import AnomalySeverity, Sector, TokensUsed
+
+if TYPE_CHECKING:
+    from alphamind.analysis.adaptive_research.input_bundle import InputBundle
+    from alphamind.analysis.adaptive_research.loaders import AdaptiveAnomalyInputs
+    from alphamind.analysis.adaptive_research.runner import AdaptiveResearcherResult
 
 __all__ = [
     "REQUIRED_BY_ASSESSMENT",
     "AdaptiveBrief",
+    "AdaptiveResearcherResultModel",
     "Assessment",
     "Confidence",
     "InvestigationThread",
@@ -158,3 +166,185 @@ class AdaptiveBrief(BaseModel, frozen=True):
                 f"must be >= threads_investigated_count ({self.threads_investigated_count})"
             )
         return self
+
+
+# ---------------------------------------------------------------------------
+# Phase-output boundary models — story ALP-691
+# ---------------------------------------------------------------------------
+
+
+class _DistillationAnomalyRecordModel(BaseModel, frozen=True):
+    """Pydantic mirror of :class:`~alphamind.analysis.adaptive_research.loaders.DistillationAnomalyRecord`."""
+
+    block_id: str
+    flag_name: str
+    magnitude: float
+    severity: AnomalySeverity
+    regime_context: str | None
+    freshness_ts: datetime
+
+    @classmethod
+    def _from_domain(cls, dc: object) -> _DistillationAnomalyRecordModel:
+        return cls(
+            block_id=dc.block_id,  # type: ignore[attr-defined]
+            flag_name=dc.flag_name,  # type: ignore[attr-defined]
+            magnitude=dc.magnitude,  # type: ignore[attr-defined]
+            severity=dc.severity,  # type: ignore[attr-defined]
+            regime_context=dc.regime_context,  # type: ignore[attr-defined]
+            freshness_ts=dc.freshness_ts,  # type: ignore[attr-defined]
+        )
+
+    def _to_domain(self) -> object:
+        from alphamind.analysis.adaptive_research.loaders import DistillationAnomalyRecord
+
+        return DistillationAnomalyRecord(
+            block_id=self.block_id,
+            flag_name=self.flag_name,
+            magnitude=self.magnitude,
+            severity=self.severity,
+            regime_context=self.regime_context,
+            freshness_ts=self.freshness_ts,
+        )
+
+
+class _SectorAnomalyRecordModel(BaseModel, frozen=True):
+    """Pydantic mirror of :class:`~alphamind.analysis.adaptive_research.loaders.SectorAnomalyRecord`."""
+
+    anomaly_id: str
+    description: str
+    anomaly_type: str
+    tickers: tuple[str, ...]
+    severity: AnomalySeverity
+    suggested_question: str
+    sector: Sector
+
+    @classmethod
+    def _from_domain(cls, dc: object) -> _SectorAnomalyRecordModel:
+        return cls(
+            anomaly_id=dc.anomaly_id,  # type: ignore[attr-defined]
+            description=dc.description,  # type: ignore[attr-defined]
+            anomaly_type=dc.anomaly_type,  # type: ignore[attr-defined]
+            tickers=dc.tickers,  # type: ignore[attr-defined]
+            severity=dc.severity,  # type: ignore[attr-defined]
+            suggested_question=dc.suggested_question,  # type: ignore[attr-defined]
+            sector=dc.sector,  # type: ignore[attr-defined]
+        )
+
+    def _to_domain(self) -> object:
+        from alphamind.analysis.adaptive_research.loaders import SectorAnomalyRecord
+
+        return SectorAnomalyRecord(
+            anomaly_id=self.anomaly_id,
+            description=self.description,
+            anomaly_type=self.anomaly_type,
+            tickers=self.tickers,
+            severity=self.severity,
+            suggested_question=self.suggested_question,
+            sector=self.sector,
+        )
+
+
+class _AdaptiveAnomalyInputsModel(BaseModel, frozen=True):
+    """Pydantic mirror of :class:`~alphamind.analysis.adaptive_research.loaders.AdaptiveAnomalyInputs`."""
+
+    distillation: tuple[_DistillationAnomalyRecordModel, ...]
+    sector: tuple[_SectorAnomalyRecordModel, ...]
+    data_freshness: datetime
+
+    @classmethod
+    def _from_domain(cls, dc: AdaptiveAnomalyInputs) -> _AdaptiveAnomalyInputsModel:
+        return cls(
+            distillation=tuple(
+                _DistillationAnomalyRecordModel._from_domain(r) for r in dc.distillation
+            ),
+            sector=tuple(_SectorAnomalyRecordModel._from_domain(r) for r in dc.sector),
+            data_freshness=dc.data_freshness,
+        )
+
+    def _to_domain(self) -> AdaptiveAnomalyInputs:
+        from alphamind.analysis.adaptive_research.loaders import AdaptiveAnomalyInputs
+
+        return AdaptiveAnomalyInputs(
+            distillation=tuple(r._to_domain() for r in self.distillation),  # type: ignore[arg-type]
+            sector=tuple(r._to_domain() for r in self.sector),  # type: ignore[arg-type]
+            data_freshness=self.data_freshness,
+        )
+
+
+class _AdaptiveInputBundleModel(BaseModel, frozen=True):
+    """Pydantic mirror of :class:`~alphamind.analysis.adaptive_research.input_bundle.InputBundle`."""
+
+    invocation_id: str
+    as_of: datetime
+    regime_text: str
+    distillation_text: str
+    sector_text: str
+    bundle_text: str
+
+    @classmethod
+    def _from_domain(cls, dc: InputBundle) -> _AdaptiveInputBundleModel:
+        return cls(
+            invocation_id=dc.invocation_id,
+            as_of=dc.as_of,
+            regime_text=dc.regime_text,
+            distillation_text=dc.distillation_text,
+            sector_text=dc.sector_text,
+            bundle_text=dc.bundle_text,
+        )
+
+    def _to_domain(self) -> InputBundle:
+        from alphamind.analysis.adaptive_research.input_bundle import InputBundle
+
+        return InputBundle(
+            invocation_id=self.invocation_id,
+            as_of=self.as_of,
+            regime_text=self.regime_text,
+            distillation_text=self.distillation_text,
+            sector_text=self.sector_text,
+            bundle_text=self.bundle_text,
+        )
+
+
+class AdaptiveResearcherResultModel(BaseModel, frozen=True):
+    """Frozen Pydantic boundary model for :class:`~alphamind.analysis.adaptive_research.runner.AdaptiveResearcherResult`.
+
+    Used by the debug-e2e phase-output persistence layer (story ALP-691).
+    ``from_domain`` / ``to_domain`` provide lossless round-trip.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    brief: AdaptiveBrief
+    input_bundle: _AdaptiveInputBundleModel
+    anomaly_inputs: _AdaptiveAnomalyInputsModel
+    tokens_used: TokensUsed
+    tool_calls_used: int
+    wall_clock_seconds: float
+    retry_count: int
+
+    @classmethod
+    def from_domain(cls, dc: AdaptiveResearcherResult) -> AdaptiveResearcherResultModel:
+        """Project a :class:`~alphamind.analysis.adaptive_research.runner.AdaptiveResearcherResult` onto this model."""
+        return cls(
+            brief=dc.brief,
+            input_bundle=_AdaptiveInputBundleModel._from_domain(dc.input_bundle),
+            anomaly_inputs=_AdaptiveAnomalyInputsModel._from_domain(dc.anomaly_inputs),
+            tokens_used=dc.tokens_used,
+            tool_calls_used=dc.tool_calls_used,
+            wall_clock_seconds=dc.wall_clock_seconds,
+            retry_count=dc.retry_count,
+        )
+
+    def to_domain(self) -> AdaptiveResearcherResult:
+        """Recover the original :class:`~alphamind.analysis.adaptive_research.runner.AdaptiveResearcherResult`."""
+        from alphamind.analysis.adaptive_research.runner import AdaptiveResearcherResult
+
+        return AdaptiveResearcherResult(
+            brief=self.brief,
+            input_bundle=self.input_bundle._to_domain(),
+            anomaly_inputs=self.anomaly_inputs._to_domain(),
+            tokens_used=self.tokens_used,
+            tool_calls_used=self.tool_calls_used,
+            wall_clock_seconds=self.wall_clock_seconds,
+            retry_count=self.retry_count,
+        )
