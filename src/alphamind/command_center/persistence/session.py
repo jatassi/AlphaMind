@@ -42,6 +42,9 @@ narrow writes coexist without contention.
 
 from __future__ import annotations
 
+import os
+import re
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
@@ -61,6 +64,53 @@ __all__ = [
     "build_cc_writer_session_factory",
     "build_foreign_reader_session_factory",
 ]
+
+
+_PERCENT_VAR_PATTERN = re.compile(r"%([A-Za-z_][A-Za-z0-9_]*)%")
+
+
+def _substitute_percent_var(match: re.Match[str]) -> str:
+    """Expand ``%VAR%`` against the environment; ``%USERPROFILE%`` falls
+    back to :func:`Path.home` on POSIX.
+
+    Mirrors :func:`alphamind.persistence.session._substitute_percent_var`
+    so cc YAML values that use ``%USERPROFILE%`` resolve identically on
+    Windows production and macOS / Linux test machines.
+    """
+    name = match.group(1)
+    value = os.environ.get(name)
+    if value is not None:
+        return value
+    if name == "USERPROFILE":
+        return str(Path.home())
+    return match.group(0)
+
+
+def _resolve_db_path(db_path: str) -> str:
+    """Expand ``%VAR%`` placeholders (and tilde) in *db_path*.
+
+    The cc YAML carries paths such as ``%USERPROFILE%/AlphaMind/data/alphamind.db``
+    (verbatim from production); on macOS / Linux that expands to
+    ``~/AlphaMind/data/alphamind.db`` via the ``USERPROFILE`` fallback.
+    Raises :class:`RuntimeError` if a placeholder remains after substitution
+    so a typo'd variable name fails loud instead of writing a literal
+    ``%TYPO%/...`` file in cwd.
+    """
+    if db_path == ":memory:":
+        return db_path
+    expanded = _PERCENT_VAR_PATTERN.sub(_substitute_percent_var, db_path)
+    unresolved = _PERCENT_VAR_PATTERN.findall(expanded)
+    if unresolved:
+        msg = (
+            f"command_center db_path resolved to {expanded!r} with unexpanded "
+            f"variables {unresolved!r}; set the corresponding environment "
+            f"variable or fix the YAML."
+        )
+        raise RuntimeError(msg)
+    # ``~`` expansion mirrors ``Path.expanduser`` so a tilde-form path
+    # from a hand-edited YAML resolves identically to the ``%USERPROFILE%``
+    # form.
+    return str(Path(expanded).expanduser())
 
 
 class ForeignTableWriteError(RuntimeError):
@@ -157,10 +207,11 @@ def build_cc_writer_session_factory(
         same engine, so the schema survives session boundaries; intended
         for tests).
     """
+    resolved = _resolve_db_path(db_path)
     url = (
         "sqlite+aiosqlite:///:memory:"
-        if db_path == ":memory:"
-        else f"sqlite+aiosqlite:///{db_path}"
+        if resolved == ":memory:"
+        else f"sqlite+aiosqlite:///{resolved}"
     )
     engine = create_async_engine(url)
     # The sync ``Engine`` underlying an ``AsyncEngine`` exposes the
@@ -209,12 +260,13 @@ def build_foreign_reader_session_factory(
         )
         raise ValueError(msg)
 
+    resolved = _resolve_db_path(db_path)
     # ``aiosqlite`` accepts URI-form file paths via the ``uri=true``
     # query parameter; the read-only flag is the ``mode=ro`` parameter.
     # SQLAlchemy threads the query string through to the underlying
     # connect() call.
     query = urlencode({"mode": "ro", "uri": "true"})
-    url = f"sqlite+aiosqlite:///file:{db_path}?{query}"
+    url = f"sqlite+aiosqlite:///file:{resolved}?{query}"
     engine = create_async_engine(url)
     return _make_factory(engine)
 

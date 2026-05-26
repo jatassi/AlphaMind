@@ -17,6 +17,7 @@ tables but raises on INSERT.
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -34,6 +35,7 @@ from alphamind.command_center.persistence.codecs import (
     AlertStatus,
 )
 from alphamind.command_center.persistence.session import (
+    _resolve_db_path,
     build_cc_writer_session_factory,
     build_foreign_reader_session_factory,
 )
@@ -285,6 +287,98 @@ class TestEngineDisposal:
                 assert session.get_bind() is not None
         finally:
             await _dispose_factory(factory)
+
+
+class TestResolveDbPath:
+    """``_resolve_db_path`` mirrors production's path-expansion helper.
+
+    The cc YAML carries ``%USERPROFILE%/AlphaMind/data/alphamind.db``
+    verbatim from production; on macOS / Linux the helper substitutes
+    :func:`Path.home` for ``%USERPROFILE%`` so the same YAML resolves
+    identically across platforms (F3).
+    """
+
+    def test_userprofile_expands_to_home_on_posix(self) -> None:
+        raw = r"%USERPROFILE%/AlphaMind/data/alphamind.db"
+        resolved = _resolve_db_path(raw)
+        # Should NOT contain the raw placeholder anymore.
+        assert "%USERPROFILE%" not in resolved
+        # Should be an absolute path containing the AlphaMind subtree.
+        assert resolved.endswith("/AlphaMind/data/alphamind.db")
+        # On a machine without USERPROFILE in the env, the helper falls
+        # back to Path.home() — assert the result starts with home().
+        if "USERPROFILE" not in os.environ:
+            assert resolved.startswith(str(Path.home()))
+
+    def test_memory_returns_as_is(self) -> None:
+        assert _resolve_db_path(":memory:") == ":memory:"
+
+    def test_unresolved_placeholder_raises(self) -> None:
+        # A made-up variable name with no env value falls through to the
+        # raise — this is the fail-loud branch.
+        raw = "%TOTALLY_MADE_UP_VAR_NAME_XYZ%/some/path"
+        with pytest.raises(RuntimeError, match="unexpanded variables"):
+            _resolve_db_path(raw)
+
+    def test_env_var_takes_precedence(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ALPHAMIND_TEST_CC_DB_VAR", "/tmp/alphamind-test")
+        raw = "%ALPHAMIND_TEST_CC_DB_VAR%/foo.db"
+        resolved = _resolve_db_path(raw)
+        assert resolved == "/tmp/alphamind-test/foo.db"
+
+    def test_tilde_expansion(self) -> None:
+        resolved = _resolve_db_path("~/AlphaMind/data/alphamind.db")
+        assert "~" not in resolved
+        assert resolved.startswith(str(Path.home()))
+
+    async def test_writer_factory_resolves_userprofile_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """End-to-end: writer factory accepts a %VAR%-prefixed path."""
+        # Point USERPROFILE at the tmp_path so the resolved DB lives there.
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        db_dir = tmp_path / "AlphaMind" / "data"
+        db_dir.mkdir(parents=True)
+        db_file = db_dir / "test.db"
+        db_file.touch()
+        # Build the production + cc schemas on the resolved path.
+        bootstrap = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
+        async with bootstrap.begin() as conn:
+            await conn.run_sync(ProductionBase.metadata.create_all)
+            await conn.run_sync(CommandCenterBase.metadata.create_all)
+        await bootstrap.dispose()
+
+        # Pass the %VAR%-form path to the factory and confirm a write
+        # against the resolved file succeeds.
+        raw = r"%USERPROFILE%/AlphaMind/data/test.db"
+        factory = build_cc_writer_session_factory(raw)
+        try:
+            async with factory() as session:
+                session.add(
+                    AlertRow(
+                        alert_id="alert-f3",
+                        rule_name="pipeline_aborted",
+                        severity=AlertSeverity.CRITICAL.value,
+                        status=AlertStatus.FIRING.value,
+                        fired_at="2026-05-26T00:00:00Z",
+                        acknowledged_at=None,
+                        snoozed_until=None,
+                        context_json="{}",
+                    )
+                )
+                await session.commit()
+        finally:
+            await _dispose_factory(factory)
+
+        # Confirm the row landed in the resolved file (not a literal
+        # %USERPROFILE%-named directory).
+        verifier = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
+        async with async_sessionmaker(bind=verifier)() as session:
+            row = await session.get(AlertRow, "alert-f3")
+            assert row is not None
+        await verifier.dispose()
 
 
 async def _dispose_factory(factory: async_sessionmaker[AsyncSession]) -> None:
