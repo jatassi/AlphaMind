@@ -161,11 +161,20 @@ def _replay_analysis_phase[ModelT: pydantic.BaseModel, ResultT](
         source_archive_dir=source_archive_dir, phase=phase, model_cls=model_cls
     )
     result = convert(model)
-    shutil.copytree(
-        source_archive_dir / diagnostic_subpath,
-        target_archive_dir / diagnostic_subpath,
-        dirs_exist_ok=False,
-    )
+    # The phase_output file is the load-bearing replay surface (validated
+    # by ALP-693's loader); the diagnostic dir is a best-effort copy that
+    # may be absent if the original run crashed between the phase_output
+    # write and the harness's diagnostic-dir creation. Guard with is_dir
+    # to match the decision-side _replay_decision_phase behavior — skip
+    # the copy silently rather than raise FileNotFoundError mid-replay,
+    # which would leave the target archive in an inconsistent state.
+    source_diag = source_archive_dir / diagnostic_subpath
+    if source_diag.is_dir():
+        shutil.copytree(
+            source_diag,
+            target_archive_dir / diagnostic_subpath,
+            dirs_exist_ok=False,
+        )
     progress.phase_done(phase, replayed_from=replayed_from)
     return result
 
@@ -240,9 +249,16 @@ def _replay_domain_researchers(
             + fin.tokens_used.cache_write_tokens
             + energy.tokens_used.cache_write_tokens,
         ),
-        total_wall_clock_seconds=tech.wall_clock_seconds
-        + fin.wall_clock_seconds
-        + energy.wall_clock_seconds,
+        # The three sector runners execute in parallel under a TaskGroup
+        # in the fresh-run path; the aggregate wall-clock is the MAX of
+        # their durations, not the sum. Summing would inflate replayed
+        # invocations' reported wall-clock by ~3x and confuse any latency
+        # gate that consumes this field.
+        total_wall_clock_seconds=max(
+            tech.wall_clock_seconds,
+            fin.wall_clock_seconds,
+            energy.wall_clock_seconds,
+        ),
         total_retry_count=tech.retry_count + fin.retry_count + energy.retry_count,
     )
 
@@ -352,12 +368,18 @@ async def _run_domain_and_qualitative_phase(  # noqa: PLR0913 — composition he
     if replay_domain and replay_qualitative:
         assert replay_source_dir is not None
         assert target_archive_dir is not None
+        # Emit the aggregate ``domain_researchers`` start/done pair around
+        # the per-sector events so consumers of progress.jsonl that key on
+        # the aggregate event (matching the fresh-run topology at line
+        # ~442) see a consistent stream shape on replay.
+        progress.phase_start("domain_researchers")
         domain_output = _replay_domain_researchers(
             source_archive_dir=replay_source_dir,
             target_archive_dir=target_archive_dir,
             replayed_from=replay_source_id,
             progress=progress,
         )
+        progress.phase_done("domain_researchers", replayed_from=replay_source_id)
         qualitative_result = _replay_qualitative_researcher(
             source_archive_dir=replay_source_dir,
             target_archive_dir=target_archive_dir,
@@ -369,6 +391,9 @@ async def _run_domain_and_qualitative_phase(  # noqa: PLR0913 — composition he
     if replay_domain:
         assert replay_source_dir is not None
         assert target_archive_dir is not None
+        # Aggregate domain_researchers event for stream-shape consistency
+        # with the fresh-run path (line ~442).
+        progress.phase_start("domain_researchers")
         progress.phase_start("qualitative")
         domain_output = _replay_domain_researchers(
             source_archive_dir=replay_source_dir,
@@ -376,6 +401,7 @@ async def _run_domain_and_qualitative_phase(  # noqa: PLR0913 — composition he
             replayed_from=replay_source_id,
             progress=progress,
         )
+        progress.phase_done("domain_researchers", replayed_from=replay_source_id)
         qualitative_result = await run_qualitative_researcher(
             invocation_id,
             as_of,
@@ -632,6 +658,28 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
         archive_root / "invocations" / invocation_id if archive_root is not None else None
     )
 
+    # Replay decisions for the parallel phase (ALP-694). Domain researchers
+    # are co-emitted by one TaskGroup, so their replay decision must be
+    # atomic — the loader's ``phases_to_replay`` set is either all-3-in
+    # or none-in; a partial overlap means callers bypassed the loader and
+    # is treated as corrupted state (defense-in-depth).
+    #
+    # Fail-fast BEFORE distillation runs: distillation is expensive and
+    # writes to the target archive, so a partial-sector resume context
+    # that surfaces after distillation would leave the target archive
+    # half-populated and require operator cleanup before any retry.
+    _domain_sectors: frozenset[str] = frozenset({"tech_semis", "financials", "energy"})
+    _sectors_in_replay = _replay & _domain_sectors
+    if 0 < len(_sectors_in_replay) < len(_domain_sectors):
+        msg = (
+            "phases_to_replay contains a partial domain-researcher set "
+            f"{sorted(_sectors_in_replay)}; the 3 sectors must replay atomically "
+            "(all-3-in or none-in). The resume loader never produces such a set."
+        )
+        raise AssertionError(msg)
+    _replay_domain = len(_sectors_in_replay) == len(_domain_sectors)
+    _replay_qualitative = "qualitative" in _replay
+
     # Project the Pydantic ``DistillationConfig`` boundary type onto its
     # frozen-dataclass mirror (ALP-471) before the orchestrator runs — the
     # orchestrator's compute path consumes the dataclass form.
@@ -646,23 +694,6 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
         provenance_root=provenance_root,
     )
     progress.phase_done("distillation")
-
-    # Replay decisions for the parallel phase (ALP-694). Domain researchers
-    # are co-emitted by one TaskGroup, so their replay decision must be
-    # atomic — the loader's ``phases_to_replay`` set is either all-3-in
-    # or none-in; a partial overlap means callers bypassed the loader and
-    # is treated as corrupted state (defense-in-depth).
-    _domain_sectors: frozenset[str] = frozenset({"tech_semis", "financials", "energy"})
-    _sectors_in_replay = _replay & _domain_sectors
-    if 0 < len(_sectors_in_replay) < len(_domain_sectors):
-        msg = (
-            "phases_to_replay contains a partial domain-researcher set "
-            f"{sorted(_sectors_in_replay)}; the 3 sectors must replay atomically "
-            "(all-3-in or none-in). The resume loader never produces such a set."
-        )
-        raise AssertionError(msg)
-    _replay_domain = len(_sectors_in_replay) == len(_domain_sectors)
-    _replay_qualitative = "qualitative" in _replay
 
     domain_researchers_output, qualitative_result = await _run_domain_and_qualitative_phase(
         invocation_id=invocation_id,

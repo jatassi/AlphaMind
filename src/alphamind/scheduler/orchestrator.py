@@ -337,6 +337,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     regime_output: RegimeAdaptationOutput,
     progressive_tiers: tuple[ProgressiveTier, ...],
     debug_e2e: Any = None,
+    resume_context: Any = None,
 ) -> dict[str, Any]:
     """Assemble the kwargs ``run_decision_pipeline`` requires."""
     resolved = pipeline_config.resolved
@@ -368,6 +369,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
         "timestamp": now,
         "archive_root": archive_root,
         "debug_e2e": debug_e2e,
+        "resume_context": resume_context,
     }
 
 
@@ -631,6 +633,9 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         regime_output=regime_output,
         progressive_tiers=load_cumulative_drawdown_progressive_tiers(),
         debug_e2e=context.debug_e2e,
+        resume_context=(
+            context.debug_e2e.resume_context if context.debug_e2e is not None else None
+        ),
     )
     decision_result = await run_decision_pipeline(**decision_kwargs, progress=progress)
 

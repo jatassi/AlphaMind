@@ -506,6 +506,20 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
     )
     analyst_replay = "analyst" in phases_to_replay_set
     strategist_replay = "strategist" in phases_to_replay_set
+    # Mirror the analysis-side defensive check (see pipeline/analysis.py's
+    # ``_sectors_in_replay`` assertion): analyst + strategist have
+    # identical upstream dependencies in the resume DAG, so they are
+    # co-replayable — the loader's ``phases_to_replay`` set contains
+    # either both or neither. An asymmetric set means a hand-crafted
+    # ``ResumeContext`` bypassed the loader; treat it as corrupted state
+    # and fail fast rather than silently re-running one agent live.
+    if analyst_replay != strategist_replay:
+        msg = (
+            "phases_to_replay contains exactly one of {'analyst', 'strategist'}; "
+            "they must replay atomically (both-in or both-out). The resume loader "
+            "never produces such a set."
+        )
+        raise AssertionError(msg)
 
     analyst_result: AnalystResult
     strategist_result: StrategistResult

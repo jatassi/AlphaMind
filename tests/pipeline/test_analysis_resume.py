@@ -996,7 +996,18 @@ class TestReplayedFromEventField:
             for kind, phase, payload in progress.events
             if kind == "phase_done" and payload.get("replayed_from") == _SOURCE_INVOCATION_ID
         }
-        assert replayed_phases == {"tech_semis", "financials", "energy", "qualitative", "adaptive"}
+        # ``domain_researchers`` is the aggregate event wrapping the
+        # per-sector tech_semis/financials/energy events; it carries
+        # ``replayed_from`` too so consumers keying on the aggregate (the
+        # fresh-run topology) see a consistent stream shape.
+        assert replayed_phases == {
+            "domain_researchers",
+            "tech_semis",
+            "financials",
+            "energy",
+            "qualitative",
+            "adaptive",
+        }
 
     def test_phase_start_emitted_for_each_replayed_phase(
         self,
