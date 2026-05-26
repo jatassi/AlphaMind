@@ -19,15 +19,22 @@ stand by design; they share the ``severity`` vocabulary via the shared
 from __future__ import annotations
 
 import enum
+from datetime import datetime
+from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from alphamind.analysis._shared import AnomalySeverity, Sector, SignalQuality
+from alphamind.analysis._shared import AnomalySeverity, Sector, SignalQuality, TokensUsed
+
+if TYPE_CHECKING:
+    from alphamind.analysis.domain_researchers.input_bundle import InputBundle
+    from alphamind.analysis.domain_researchers.runner import DomainResearcherResult
 
 __all__ = [
     "SECTOR_PREFIX",
     "Anomaly",
     "AnomalyType",
+    "DomainResearcherOutputModel",
     "ConvictionSketch",
     "Direction",
     "Finding",
@@ -200,3 +207,92 @@ SECTOR_PREFIX: dict[Sector, str] = {
     Sector.FINANCIALS: "SA-FIN",
     Sector.ENERGY: "SA-ENERGY",
 }
+
+
+# ---------------------------------------------------------------------------
+# Phase-output boundary model — story ALP-691
+# ---------------------------------------------------------------------------
+
+
+class _InputBundleModel(BaseModel, frozen=True):
+    """Pydantic mirror of :class:`~alphamind.analysis.domain_researchers.input_bundle.InputBundle`."""
+
+    sector: Sector
+    invocation_id: str
+    as_of: datetime
+    distillation_text: str
+    qualitative_text: str
+    bundle_text: str
+
+    @classmethod
+    def _from_domain(
+        cls,
+        dc: InputBundle,
+    ) -> _InputBundleModel:
+        return cls(
+            sector=dc.sector,
+            invocation_id=dc.invocation_id,
+            as_of=dc.as_of,
+            distillation_text=dc.distillation_text,
+            qualitative_text=dc.qualitative_text,
+            bundle_text=dc.bundle_text,
+        )
+
+    def _to_domain(self) -> InputBundle:
+        from alphamind.analysis.domain_researchers.input_bundle import InputBundle
+
+        return InputBundle(
+            sector=self.sector,
+            invocation_id=self.invocation_id,
+            as_of=self.as_of,
+            distillation_text=self.distillation_text,
+            qualitative_text=self.qualitative_text,
+            bundle_text=self.bundle_text,
+        )
+
+
+class DomainResearcherOutputModel(BaseModel, frozen=True):
+    """Frozen Pydantic boundary model for :class:`~alphamind.analysis.domain_researchers.runner.DomainResearcherResult`.
+
+    Used by the debug-e2e phase-output persistence layer (story ALP-691).
+    One model class is shared across the three sector phases
+    (``tech_semis``, ``financials``, ``energy``) per parent decision (E).
+
+    ``from_domain`` / ``to_domain`` provide lossless round-trip through the
+    underlying :class:`~alphamind.analysis.domain_researchers.runner.DomainResearcherResult`
+    frozen dataclass.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    sector: Sector
+    brief: SectorBrief
+    input_bundle: _InputBundleModel
+    tokens_used: TokensUsed
+    wall_clock_seconds: float
+    retry_count: int
+
+    @classmethod
+    def from_domain(cls, dc: DomainResearcherResult) -> DomainResearcherOutputModel:
+        """Project a :class:`~alphamind.analysis.domain_researchers.runner.DomainResearcherResult` onto this model."""
+        return cls(
+            sector=dc.sector,
+            brief=dc.brief,
+            input_bundle=_InputBundleModel._from_domain(dc.input_bundle),
+            tokens_used=dc.tokens_used,
+            wall_clock_seconds=dc.wall_clock_seconds,
+            retry_count=dc.retry_count,
+        )
+
+    def to_domain(self) -> DomainResearcherResult:
+        """Recover the original :class:`~alphamind.analysis.domain_researchers.runner.DomainResearcherResult`."""
+        from alphamind.analysis.domain_researchers.runner import DomainResearcherResult
+
+        return DomainResearcherResult(
+            sector=self.sector,
+            brief=self.brief,
+            input_bundle=self.input_bundle._to_domain(),
+            tokens_used=self.tokens_used,
+            wall_clock_seconds=self.wall_clock_seconds,
+            retry_count=self.retry_count,
+        )
