@@ -73,14 +73,19 @@ jobs:
       - name: lint-imports
         run: uv run lint-imports
 
-  frontend-lint:
-    name: bun lint + format-check (frontend)
+  frontend:
+    name: bun lint + format-check + typecheck + test (frontend)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Only run when frontend files change — saves CI minutes on Python-only PRs.
     # Note: on `pull_request` this filter evaluates the PR's full diff, not just
     # the triggering commit. A PR that started as Python-only stays fast even if
     # a docs follow-up is pushed.
+    #
+    # Story 04d (ALP-670) extended the lint-only job with `bun run typecheck`
+    # (tsc -b --noEmit) and `bun run test` (Vitest run mode) — every push
+    # against the foundation now exercises both the TypeScript compiler and
+    # the smoke + webauthn unit tests.
     steps:
       - uses: actions/checkout@v4
 
@@ -98,6 +103,14 @@ jobs:
       - name: Prettier (format check)
         working-directory: src/alphamind/command_center/frontend
         run: bun run format:check
+
+      - name: TypeScript (tsc -b --noEmit)
+        working-directory: src/alphamind/command_center/frontend
+        run: bun run typecheck
+
+      - name: Vitest
+        working-directory: src/alphamind/command_center/frontend
+        run: bun run test
 
   test:
     name: pytest (windows)
