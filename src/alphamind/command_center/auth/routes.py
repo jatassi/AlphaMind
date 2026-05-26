@@ -553,9 +553,13 @@ def build_auth_router() -> APIRouter:
             request.app.state.security_config.session.cookie_name
         )
         csrf_cookie_name = request.app.state.security_config.csrf.cookie_name
-        response.delete_cookie(session_cookie_name)
-        response.delete_cookie(csrf_cookie_name)
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+        # Construct the 204 response and set the delete-cookie headers on
+        # *it* (not on the injected ``response`` — that one is only used
+        # for headers when FastAPI's default JSON response is returned).
+        out = Response(status_code=status.HTTP_204_NO_CONTENT)
+        out.delete_cookie(session_cookie_name)
+        out.delete_cookie(csrf_cookie_name)
+        return out
 
     return router
 
