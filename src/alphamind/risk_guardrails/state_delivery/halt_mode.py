@@ -24,8 +24,13 @@ from alphamind.portfolio_state.records.orders import (
     EquityInstrumentSpec,
     OptionsInstrumentSpec,
     OrderRecord,
+    StrategyInstrumentSpec,
+    order_direction,
 )
-from alphamind.portfolio_state.records.positions import PositionRecord
+from alphamind.portfolio_state.records.positions import (
+    PositionRecord,
+    StrategyPositionDetails,
+)
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation.types import EscalationZones
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
@@ -264,14 +269,23 @@ def _splice_banner_after_envelope_open(
 def _render_pending_orders_review_block(
     pending_orders: tuple[OrderRecord, ...],
     current_price_lookup: Callable[[str], Price],
+    strategy_label_by_position_id: dict[str, str],
 ) -> str:
-    """Render the PM's halt-mode ``Pending orders review:`` block."""
+    """Render the PM's halt-mode ``Pending orders review:`` block.
+
+    ``strategy_label_by_position_id`` maps each strategy position's id to its
+    ``StrategyPositionDetails.strategy_type_label``; consumed by the row
+    renderer for MLEG envelope orders, which carry ``direction=None`` and
+    therefore have no BUY/SELL prefix (ALP-614).
+    """
     rows: list[str] = [_PENDING_ORDERS_REVIEW_HEADER]
     if not pending_orders:
         rows.append(_PENDING_ORDERS_NONE_LINE)
         return "\n".join(rows)
     for order in pending_orders:
-        rows.append(_render_pending_order_row(order, current_price_lookup))
+        rows.append(
+            _render_pending_order_row(order, current_price_lookup, strategy_label_by_position_id)
+        )
     return "\n".join(rows)
 
 
@@ -281,6 +295,7 @@ _HUNDRED = Decimal(100)
 def _render_pending_order_row(
     order: OrderRecord,
     current_price_lookup: Callable[[str], Price],
+    strategy_label_by_position_id: dict[str, str],
 ) -> str:
     ticker = _resolve_order_ticker(order)
     try:
@@ -294,11 +309,38 @@ def _render_pending_order_row(
         raise ValueError(msg)
     distance_pct = ((current_price - limit_price) / limit_price) * _HUNDRED
     distance_sign = "+" if distance_pct >= 0 else "-"
+    direction = order_direction(order)
+    if direction is None:
+        # MLEG strategy envelope — no envelope-level side. Render the
+        # strategy_type_label (e.g., ``vertical_spread``) in place of the
+        # direction prefix (ALP-614).
+        position_id = order.position_id
+        if position_id is None or position_id not in strategy_label_by_position_id:
+            msg = (
+                f"strategy MLEG order {order.order_id!r} has no resolvable "
+                f"strategy_type_label (position_id={position_id!r})"
+            )
+            raise ValueError(msg)
+        prefix = strategy_label_by_position_id[position_id]
+    else:
+        prefix = direction.value
     return (
-        f"  {order.order_id}: {order.direction.value} {ticker} @ ${limit_price:.2f} "
+        f"  {order.order_id}: {prefix} {ticker} @ ${limit_price:.2f} "
         f"— current distance: {distance_sign}{abs(distance_pct):.1f}% "
         f"(placed {order.age_hours:.1f}h ago)"
     )
+
+
+def _strategy_label_lookup_from_pm_view(pm_view: PortfolioManagerView) -> dict[str, str]:
+    """Build the position-id → strategy_type_label lookup the halt-mode
+    pending-orders-review block consumes for MLEG envelope rows (ALP-614).
+    """
+    lookup: dict[str, str] = {}
+    for spv in pm_view.positions:
+        details = spv.position.record.details
+        if isinstance(details, StrategyPositionDetails):
+            lookup[spv.position.record.position_id] = details.strategy_type_label
+    return lookup
 
 
 def _resolve_order_ticker(order: OrderRecord) -> str:
@@ -307,6 +349,10 @@ def _resolve_order_ticker(order: OrderRecord) -> str:
         return spec.ticker
     if isinstance(spec, OptionsInstrumentSpec):
         return spec.underlying
+    if isinstance(spec, StrategyInstrumentSpec):
+        # Every strategy leg shares the same underlying per
+        # StrategyInstrumentSpec construction.
+        return spec.legs[0].underlying
     msg = f"pending order {order.order_id!r} has no ticker or underlying"
     raise ValueError(msg)
 
@@ -413,6 +459,7 @@ def render_pm_header_halt_mode(  # noqa: PLR0913 — mirrors render_pm_header
     regime_display = regime_label_display(pm_view.active_risk_parameters.regime_label)
     sector_entries = resolve_sector_entries(pm_view.risk_budget, active_sectors)
     sector_label_resolver = make_sector_label_resolver(sector_label_display)
+    strategy_label_by_position_id = _strategy_label_lookup_from_pm_view(pm_view)
 
     blocks: list[str] = [
         "\n".join(
@@ -424,7 +471,9 @@ def render_pm_header_halt_mode(  # noqa: PLR0913 — mirrors render_pm_header
                 render_regime_line(pm_view.active_risk_parameters),
             ]
         ),
-        _render_pending_orders_review_block(pending_orders, current_price_lookup),
+        _render_pending_orders_review_block(
+            pending_orders, current_price_lookup, strategy_label_by_position_id
+        ),
         render_capital_block(
             available_for_new_positions_usd=available_for_new_positions_usd,
             available_for_new_positions_pct=available_pct,

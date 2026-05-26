@@ -208,7 +208,7 @@ class OrderRecord:
     bracket_id: BracketId
     role: OrderRole
     instrument_spec: InstrumentSpec
-    direction: OrderDirection
+    direction: OrderDirection | None
     order_type: OrderType
     price_parameters: PriceParameters
     quantity: float
@@ -229,6 +229,7 @@ class OrderRecord:
 
     def __post_init__(self) -> None:
         self._check_mleg_requires_strategy()
+        self._check_direction_matches_order_class()
         self._check_price_parameters()
         self._check_quantity_constraints()
         self._check_alpaca_chain()
@@ -242,6 +243,28 @@ class OrderRecord:
                 f"order_class=MLEG requires instrument_spec.instrument_type=STRATEGY; "
                 f"got {self.instrument_spec.instrument_type!r}"
             )
+            raise ValueError(msg)
+
+    def _check_direction_matches_order_class(self) -> None:
+        """``direction is None`` iff ``order_class == OrderClass.MLEG``.
+
+        Order-level direction is a category error for a multi-leg strategy MLEG
+        envelope — the broker adapter emits per-leg ``side`` /
+        ``position_intent`` from each :class:`StrategyLeg` and the
+        envelope-level field has no coherent single value. Every other order
+        class carries a non-``None`` ``OrderDirection``. The companion
+        ``_check_mleg_requires_strategy`` validator ties ``MLEG`` to a
+        :class:`StrategyInstrumentSpec`, so transitively a strategy spec also
+        implies ``direction is None``. Mirrors :class:`PositionRecord`'s
+        direction-vs-payload binding (ALP-591); :func:`order_direction` is
+        the canonical accessor. ALP-614.
+        """
+        is_mleg = self.order_class == OrderClass.MLEG
+        if is_mleg and self.direction is not None:
+            msg = "direction must be None for an MLEG strategy order"
+            raise ValueError(msg)
+        if not is_mleg and self.direction is None:
+            msg = "direction must be non-None for a non-MLEG order"
             raise ValueError(msg)
 
     def _check_price_parameters(self) -> None:
@@ -330,6 +353,24 @@ class OrderRecord:
         if self.age_hours < 0:
             msg = f"age_hours must be >= 0; got {self.age_hours}"
             raise ValueError(msg)
+
+
+def order_direction(order: OrderRecord) -> OrderDirection | None:
+    """Return the order-level direction, MLEG-aware.
+
+    A simple / bracket / OCO / OTO order carries a meaningful single
+    :class:`OrderDirection`; the accessor returns it. A multi-leg strategy
+    MLEG envelope has no coherent envelope-level side — the broker adapter
+    emits per-leg ``side`` / ``position_intent`` from each
+    :class:`StrategyLeg` — and the validator ties ``direction is None`` to
+    ``order_class == OrderClass.MLEG``, so the accessor returns ``None`` for
+    a strategy order.
+
+    This is the one accessor for order-level direction: consumers must not
+    read ``OrderRecord.direction`` directly. Mirrors
+    :func:`position_direction` on :class:`PositionRecord`. ALP-614.
+    """
+    return order.direction
 
 
 @dataclass(frozen=True, slots=True)

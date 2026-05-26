@@ -41,6 +41,7 @@ from alphamind.portfolio_state.records.orders import (
     StrategyInstrumentSpec,
     TimeTrigger,
     direction_to_side,
+    order_direction,
 )
 from alphamind.portfolio_state.records.positions import InstrumentType, OptionContractType
 
@@ -759,12 +760,15 @@ class TestOrderRecordOrderClass:
 
     def test_mleg_with_equity_spec_raises(self) -> None:
         with pytest.raises((ValueError, TypeError)) as exc_info:
-            _make_order(order_class=OrderClass.MLEG, instrument_spec=_equity_spec())
+            _make_order(order_class=OrderClass.MLEG, instrument_spec=_equity_spec(), direction=None)
         assert "STRATEGY" in str(exc_info.value)
 
     def test_mleg_with_strategy_spec_passes(self) -> None:
-        order = _make_order(order_class=OrderClass.MLEG, instrument_spec=_strategy_spec())
+        order = _make_order(
+            order_class=OrderClass.MLEG, instrument_spec=_strategy_spec(), direction=None
+        )
         assert order.order_class == OrderClass.MLEG
+        assert order.direction is None
 
     def test_bracket_with_equity_spec_passes(self) -> None:
         order = _make_order(order_class=OrderClass.BRACKET, instrument_spec=_equity_spec())
@@ -1308,3 +1312,60 @@ class TestDirectionToSide:
         where a future variant is added to the mapping with a third side."""
         sides = {direction_to_side(d) for d in OrderDirection}
         assert sides == {"buy", "sell"}
+
+
+# ---------------------------------------------------------------------------
+# order_direction() accessor + MLEG ↔ None binding (ALP-614)
+# ---------------------------------------------------------------------------
+
+
+class TestOrderDirectionAccessor:
+    """``order_direction()`` is the canonical order-level direction read."""
+
+    def test_equity_order_returns_direction(self) -> None:
+        order = _make_order(direction=OrderDirection.BUY)
+        assert order_direction(order) == OrderDirection.BUY
+
+    def test_single_leg_options_order_returns_direction(self) -> None:
+        order = _make_order(
+            direction=OrderDirection.SELL_TO_OPEN,
+            instrument_spec=_options_spec(),
+        )
+        assert order_direction(order) == OrderDirection.SELL_TO_OPEN
+
+    def test_strategy_mleg_order_returns_none(self) -> None:
+        """A multi-leg strategy MLEG envelope is neither buy nor sell."""
+        order = _make_order(
+            order_class=OrderClass.MLEG,
+            instrument_spec=_strategy_spec(),
+            direction=None,
+        )
+        assert order_direction(order) is None
+
+
+class TestOrderDirectionValidator:
+    """``direction is None`` iff ``order_class == OrderClass.MLEG``."""
+
+    def test_mleg_with_none_passes(self) -> None:
+        order = _make_order(
+            order_class=OrderClass.MLEG,
+            instrument_spec=_strategy_spec(),
+            direction=None,
+        )
+        assert order.direction is None
+
+    def test_mleg_with_non_none_direction_raises(self) -> None:
+        with pytest.raises(ValueError, match="None for an MLEG"):
+            _make_order(
+                order_class=OrderClass.MLEG,
+                instrument_spec=_strategy_spec(),
+                direction=OrderDirection.BUY,
+            )
+
+    def test_non_mleg_with_none_direction_raises(self) -> None:
+        with pytest.raises(ValueError, match="non-None for a non-MLEG"):
+            _make_order(order_class=OrderClass.BRACKET, direction=None)
+
+    def test_non_mleg_with_non_none_direction_passes(self) -> None:
+        order = _make_order(order_class=OrderClass.SIMPLE, direction=OrderDirection.SELL)
+        assert order.direction == OrderDirection.SELL

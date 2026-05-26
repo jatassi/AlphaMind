@@ -74,11 +74,12 @@ class SqlOrderLookup:
             return None
         payload = json.loads(row.instrument_spec_json)
         ticker_or_underlying = _extract_ticker(payload)
-        if ticker_or_underlying is None:
-            # STRATEGY parent orders (no single underlying) — the translator
-            # filters STRATEGY parent fills upstream so this branch is unreachable
-            # via the wedge. Return None defensively so a misuse surfaces as a
-            # graceful no-estimate rather than an exception in the hot path.
+        if ticker_or_underlying is None or row.direction is None:
+            # STRATEGY parent orders (no single underlying, direction is NULL
+            # per ALP-614) — the translator filters STRATEGY parent fills
+            # upstream so this branch is unreachable via the wedge. Return
+            # None defensively so a misuse surfaces as a graceful no-estimate
+            # rather than an exception in the hot path.
             return None
         return OrderAttributes(
             order_type=_ORDER_TYPE_TO_HARNESS[OrderType(row.order_type)],

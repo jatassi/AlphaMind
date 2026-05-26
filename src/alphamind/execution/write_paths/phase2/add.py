@@ -23,7 +23,7 @@ from alphamind.execution.write_paths.phase2._shared import (
     _emit_order_cancelled,
     _emit_order_submitted,
     _id_suffix,
-    _order_position_direction,
+    _instrument_spec_for_position,
     _protective_roles_for_change_fields,
     _reserve_capital,
 )
@@ -38,7 +38,7 @@ from alphamind.portfolio_state.events.activity_log import (
     ThesisComponentAddedDetail,
 )
 from alphamind.portfolio_state.records.orders import OrderRole
-from alphamind.portfolio_state.records.positions import PositionRecord
+from alphamind.portfolio_state.records.positions import PositionRecord, position_direction
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
@@ -97,7 +97,8 @@ async def _writeback_add(
         ticker=ticker,
         entry_order=command.entry_order,
         quantity=command.additional_quantity,
-        direction=_order_position_direction(position),
+        direction=position_direction(position),
+        instrument_spec=_instrument_spec_for_position(position),
         pm_command_id=result.command_id,
         timestamp=timestamp,
         role=OrderRole.ADD_ENTRY,

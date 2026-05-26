@@ -84,7 +84,7 @@ class OrderRow(Base):
     order_role: Mapped[str] = mapped_column(Text, nullable=False)
     order_class: Mapped[str] = mapped_column(Text, nullable=False)
     instrument_spec_json: Mapped[str] = mapped_column(Text, nullable=False)
-    direction: Mapped[str] = mapped_column(Text, nullable=False)
+    direction: Mapped[str | None] = mapped_column(Text, nullable=True)
     order_type: Mapped[str] = mapped_column(Text, nullable=False)
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
     price_parameters_json: Mapped[str] = mapped_column(Text, nullable=False)

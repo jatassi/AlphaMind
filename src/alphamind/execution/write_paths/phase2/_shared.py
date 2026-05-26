@@ -50,6 +50,8 @@ from alphamind.portfolio_state.events.activity_log import (
 from alphamind.portfolio_state.records.orders import (
     BracketLegModification,
     EquityInstrumentSpec,
+    InstrumentSpec,
+    OptionsInstrumentSpec,
     OrderClass,
     OrderDirection,
     OrderDuration,
@@ -58,6 +60,7 @@ from alphamind.portfolio_state.records.orders import (
     OrderStatus,
     OrderType,
     PriceParameters,
+    StrategyInstrumentSpec,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -110,24 +113,6 @@ _OMS_COMPONENT_TYPE_TO_PERSISTED: dict[str, ThesisComponentType] = {
 }
 
 
-def _order_position_direction(position: PositionRecord) -> Direction:
-    """Resolve the position-level :class:`Direction` an order builder needs.
-
-    Reads route through :func:`position_direction`: equity / single-leg
-    options positions yield their non-None ``LONG`` / ``SHORT`` side. A
-    multi-leg strategy has no position-level direction, so the accessor
-    returns ``None`` — this helper substitutes an inert ``Direction.LONG``
-    placeholder. The resulting ``OrderRecord.direction`` is not a meaningful
-    side for a strategy: ALP-588 story 01f made the close path leg-derived,
-    and the order-level direction-field reshaping that retires this
-    placeholder is tracked by **ALP-614** (the proposal-side analogue for
-    ``ProposedDelta`` / ``ExistingPosition`` is ALP-603). Mirrors story 02a's
-    ``ProposedClose`` treatment in ``breach_behavior/cascade.py``.
-    """
-    direction = position_direction(position)
-    return direction if direction is not None else Direction.LONG
-
-
 def _order_direction_for_entry(direction: Direction) -> OrderDirection:
     return OrderDirection.BUY if direction == Direction.LONG else OrderDirection.SELL
 
@@ -135,6 +120,66 @@ def _order_direction_for_entry(direction: Direction) -> OrderDirection:
 def _order_direction_for_close(direction: Direction) -> OrderDirection:
     """Direction of the order that closes a position with the given direction."""
     return OrderDirection.SELL if direction == Direction.LONG else OrderDirection.BUY
+
+
+def _entry_order_direction_for_position(position: PositionRecord) -> OrderDirection | None:
+    """Order-side direction for opening an entry / add-entry on *position*.
+
+    Mirrors the inverse :func:`_close_order_direction_for_position`. Returns
+    ``None`` for a strategy position (the parent MLEG envelope's direction is
+    a category error — per-leg side / position_intent ride on each
+    :class:`StrategyLeg`). ALP-614.
+    """
+    direction = position_direction(position)
+    return None if direction is None else _order_direction_for_entry(direction)
+
+
+def _close_order_direction_for_position(position: PositionRecord) -> OrderDirection | None:
+    """Order-side direction for closing *position*.
+
+    Returns ``None`` for a strategy position (see
+    :func:`_entry_order_direction_for_position`). ALP-614.
+    """
+    direction = position_direction(position)
+    return None if direction is None else _order_direction_for_close(direction)
+
+
+def _instrument_spec_for_position(position: PositionRecord) -> InstrumentSpec:
+    """Derive the :class:`InstrumentSpec` for an order against *position*.
+
+    Equity → :class:`EquityInstrumentSpec` (ticker). Options → single-leg
+    :class:`OptionsInstrumentSpec`. Strategy → :class:`StrategyInstrumentSpec`
+    rebuilt from each :class:`StrategyLeg`'s options details — the order
+    record then carries the strategy envelope shape the broker adapter sends
+    over the wire, per ALP-614 + the design comment in
+    ``continuous_monitor/fill_stream_consumer/translation.py`` ("OMS persists
+    mleg orders as a single parent OrderRecord with order_class=MLEG and
+    the legs encoded on instrument_spec").
+    """
+    details = position.details
+    if isinstance(details, EquityPositionDetails):
+        return EquityInstrumentSpec(ticker=details.ticker)
+    if isinstance(details, OptionsPositionDetails):
+        return OptionsInstrumentSpec(
+            underlying=details.underlying_ticker,
+            strike=details.strike_price,
+            expiration=details.expiration_date,
+            contract_type=details.contract_type,
+            contract_multiplier=details.contract_multiplier,
+        )
+    # StrategyPositionDetails
+    return StrategyInstrumentSpec(
+        legs=tuple(
+            OptionsInstrumentSpec(
+                underlying=leg.options.underlying_ticker,
+                strike=leg.options.strike_price,
+                expiration=leg.options.expiration_date,
+                contract_type=leg.options.contract_type,
+                contract_multiplier=leg.options.contract_multiplier,
+            )
+            for leg in details.legs
+        )
+    )
 
 
 def _entry_price_parameters(entry_order: EntryOrder) -> PriceParameters:
@@ -196,10 +241,11 @@ def _build_pending_order(  # noqa: PLR0913 — captures every NOT-NULL OrderReco
     bracket_id: str,
     role: OrderRole,
     order_class: OrderClass,
-    direction: OrderDirection,
+    direction: OrderDirection | None,
     order_type: OrderType,
     price_parameters: PriceParameters,
-    ticker: str,
+    instrument_spec: InstrumentSpec | None = None,
+    ticker: str | None = None,
     pm_command_id: str,
     thesis_id: str | None,
     timestamp: datetime,
@@ -208,17 +254,30 @@ def _build_pending_order(  # noqa: PLR0913 — captures every NOT-NULL OrderReco
 ) -> OrderRecord:
     """Build a fresh PENDING :class:`OrderRecord`.
 
+    Callers pass either ``instrument_spec`` (the typed payload directly) or
+    ``ticker`` (for the common equity case — the function wraps it in an
+    :class:`EquityInstrumentSpec`). Strategy callers must pass the
+    :class:`StrategyInstrumentSpec` via ``instrument_spec`` together with
+    ``order_class=OrderClass.MLEG`` and ``direction=None`` (ALP-614);
+    options single-leg callers pass an :class:`OptionsInstrumentSpec`
+    similarly.
+
     ``alpaca_order_id_override`` (broker-routing coordinated swap, story 03e /
     ALP-390) wires the broker's real id; otherwise falls back to the synthetic
     ``alp-{order_id}`` placeholder.
     """
+    if instrument_spec is None:
+        if ticker is None:
+            msg = "_build_pending_order requires either instrument_spec or ticker"
+            raise ValueError(msg)
+        instrument_spec = EquityInstrumentSpec(ticker=make_symbol(ticker))
     alpaca_id = alpaca_order_id_override or f"alp-{order_id}"
     return OrderRecord(
         order_id=OrderId(order_id),
         position_id=PositionId(position_id) if position_id is not None else None,
         bracket_id=BracketId(bracket_id),
         role=role,
-        instrument_spec=EquityInstrumentSpec(ticker=make_symbol(ticker)),
+        instrument_spec=instrument_spec,
         direction=direction,
         order_type=order_type,
         order_class=order_class,
@@ -249,27 +308,39 @@ def _build_entry_order_from_command(  # noqa: PLR0913 — distinct ID, position,
     ticker: str,
     entry_order: EntryOrder,
     quantity: float,
-    direction: Direction,
+    direction: Direction | None,
+    instrument_spec: InstrumentSpec | None = None,
     pm_command_id: str,
     timestamp: datetime,
     role: OrderRole,
     alpaca_order_id_override: str | None = None,
 ) -> OrderRecord:
-    """Build the persisted entry / add-entry order from a canonical EntryOrder."""
+    """Build the persisted entry / add-entry order from a canonical EntryOrder.
+
+    For a strategy position the caller passes ``direction=None`` and the
+    pre-built :class:`StrategyInstrumentSpec` via ``instrument_spec``; the
+    resulting record is the MLEG parent envelope per ALP-614.
+    """
     persisted_order_type = _ENTRY_ORDER_TYPE_TO_PERSISTED[entry_order.type]
     price_parameters = _entry_price_parameters(entry_order)
-    order_class = OrderClass.SIMPLE if role == OrderRole.ADD_ENTRY else OrderClass.BRACKET
+    if direction is None:
+        order_class = OrderClass.MLEG
+        order_direction: OrderDirection | None = None
+    else:
+        order_class = OrderClass.SIMPLE if role == OrderRole.ADD_ENTRY else OrderClass.BRACKET
+        order_direction = _order_direction_for_entry(direction)
     return _build_pending_order(
         order_id=order_id,
         position_id=position_id,
         bracket_id=bracket_id,
         role=role,
         order_class=order_class,
-        direction=_order_direction_for_entry(direction),
+        direction=order_direction,
         order_type=persisted_order_type,
         price_parameters=price_parameters,
         quantity=quantity,
-        ticker=ticker,
+        instrument_spec=instrument_spec,
+        ticker=ticker if instrument_spec is None else None,
         pm_command_id=pm_command_id,
         thesis_id=thesis_id,
         timestamp=timestamp,
@@ -459,11 +530,16 @@ def _emit_order_submitted(
     parameters: dict[str, Any] = {
         "order_id": order.order_id,
         "role": order.role.value,
-        "direction": order.direction.value,
         "order_type": order.order_type.value,
         "quantity": order.quantity,
         "instrument_ticker": getattr(order.instrument_spec, "ticker", ""),
     }
+    if order.direction is not None:
+        # MLEG strategy parents carry direction=None — the broker adapter
+        # emits per-leg side / position_intent and the envelope-level value
+        # has no meaning (ALP-614). Omit the key from the payload entirely
+        # rather than emitting null.
+        parameters["direction"] = order.direction.value
     if order.price_parameters.limit_price is not None:
         parameters["limit_price"] = order.price_parameters.limit_price
     if order.price_parameters.stop_trigger_price is not None:

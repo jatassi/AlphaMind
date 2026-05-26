@@ -24,14 +24,13 @@ from alphamind.execution.write_paths.phase2._shared import (
     _append_bracket_modification,
     _build_pending_order,
     _cancel_pending_protective_orders,
+    _close_order_direction_for_position,
     _emit,
     _emit_order_cancelled,
     _emit_order_submitted,
     _id_suffix,
-    _order_direction_for_close,
-    _order_position_direction,
+    _instrument_spec_for_position,
     _position_quantity,
-    _position_ticker,
     _protective_roles_for_change_fields,
 )
 from alphamind.portfolio_state.events.activity_log import (
@@ -390,14 +389,15 @@ def _build_replacement_order_for_change_fields(
     if kind is None:
         return None
     bracket_id = position.bracket_id or ""
+    close_order_direction = _close_order_direction_for_position(position)
     common: dict[str, Any] = {
         "order_id": new_order_id,
         "position_id": position.position_id,
         "bracket_id": bracket_id,
-        "order_class": OrderClass.OTO,
-        "direction": _order_direction_for_close(_order_position_direction(position)),
+        "order_class": OrderClass.MLEG if close_order_direction is None else OrderClass.OTO,
+        "direction": close_order_direction,
         "quantity": _position_quantity(position),
-        "ticker": _position_ticker(position),
+        "instrument_spec": _instrument_spec_for_position(position),
         "pm_command_id": pm_command_id,
         "thesis_id": position.thesis_id,
         "timestamp": timestamp,
