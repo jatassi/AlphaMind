@@ -259,7 +259,8 @@ class TestRegisteredRoutes:
             ]
         )
         assert own_routes == expected, (
-            f"unexpected routes registered after stories 02 + 03 + 04a + 04b + 04d + 05b + 05c + 05e + 05f — "
+            f"unexpected routes registered after stories "
+            f"02 + 03 + 04a + 04b + 04d + 05b + 05c + 05e + 05f — "
             f"found {own_routes}; expected {expected}. Stories 05a / "
             f"remaining view stories register their routers later."
         )

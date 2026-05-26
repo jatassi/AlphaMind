@@ -15,8 +15,8 @@ import { describe, expect, it } from 'vitest'
 
 import type {
   CashAndCapital,
-  Exposure,
   EquityAndPL,
+  Exposure,
   PendingOrderRow,
   PositionRow,
 } from '@/api/portfolio'
@@ -56,9 +56,9 @@ const CASH: CashAndCapital = {
 }
 
 const EXPOSURE: Exposure = {
-  gross_exposure_pct: 120.0,
-  net_long_pct: 60.0,
-  net_short_pct: -40.0,
+  gross_exposure_pct: 120,
+  net_long_pct: 60,
+  net_short_pct: -40,
   delta_adjusted_net_usd: '20000.00',
   sector_breakdown: [
     { sector: 'Technology', long_market_value_usd: '40000.00', short_market_value_usd: '0.00' },
@@ -75,8 +75,8 @@ const POSITION: PositionRow = {
   unrealized_pl_usd: '500.00',
   thesis_status: 'ACTIVE',
   age_hours: 48,
-  distance_to_target_pct: 5.0,
-  distance_to_nearest_invalidation_pct: -3.0,
+  distance_to_target_pct: 5,
+  distance_to_nearest_invalidation_pct: -3,
 }
 
 const ORDER: PendingOrderRow = {
@@ -98,7 +98,7 @@ const ORDER: PendingOrderRow = {
 // ---------------------------------------------------------------------------
 
 function withRouter(child: React.ReactNode): React.ReactElement {
-  const root = createRootRoute({ component: () => <>{child}</> })
+  const root = createRootRoute({ component: () => child })
   const index = createRoute({ getParentRoute: () => root, path: '/', component: () => null })
   const router = createRouter({
     routeTree: root.addChildren([index]),

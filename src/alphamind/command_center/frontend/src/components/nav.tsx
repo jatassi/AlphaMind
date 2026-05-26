@@ -7,6 +7,56 @@ import { Link } from '@tanstack/react-router'
 // Intentionally restrained — the command center is an operator console, not
 // a marketing surface. Visual depth comes from the per-view layouts.
 
+function NavLinks(): React.JSX.Element {
+  return (
+    <nav className="flex items-center gap-4 text-sm">
+      {/* Story 05b (ALP-672) — live run watcher. */}
+      <Link to="/live" className="hover:text-foreground/80 transition-colors">
+        Live
+      </Link>
+      {/* Story 05c (ALP-673) — run history. */}
+      <Link
+        to="/history"
+        search={{
+          date_from: undefined,
+          date_to: undefined,
+          run_type: undefined,
+          status: undefined,
+          page: undefined,
+          page_size: undefined,
+        }}
+        className="hover:underline"
+      >
+        Run history
+      </Link>
+      <Link
+        to="/history/failures"
+        search={{
+          date_from: undefined,
+          date_to: undefined,
+          run_type: undefined,
+          page: undefined,
+          page_size: undefined,
+        }}
+        className="hover:underline"
+      >
+        Failure log
+      </Link>
+      {/* Story 05e (ALP-675) — activity log. */}
+      <Link to="/activity-log" className="hover:text-foreground text-muted-foreground">
+        Activity log
+      </Link>
+      {/* Story 05f (ALP-676) — portfolio dashboard. */}
+      <Link
+        to="/portfolio"
+        className="text-muted-foreground hover:text-foreground transition-colors"
+      >
+        Portfolio
+      </Link>
+    </nav>
+  )
+}
+
 export function Nav(): React.JSX.Element {
   return (
     <header className="border-b">
@@ -14,51 +64,7 @@ export function Nav(): React.JSX.Element {
         <Link to="/" className="font-semibold">
           AlphaMind Command Center
         </Link>
-        <nav className="flex items-center gap-4 text-sm">
-          {/* Story 05b (ALP-672) — live run watcher. */}
-          <Link to="/live" className="hover:text-foreground/80 transition-colors">
-            Live
-          </Link>
-          {/* Story 05c (ALP-673) — run history. */}
-          <Link
-            to="/history"
-            search={{
-              date_from: undefined,
-              date_to: undefined,
-              run_type: undefined,
-              status: undefined,
-              page: undefined,
-              page_size: undefined,
-            }}
-            className="hover:underline"
-          >
-            Run history
-          </Link>
-          <Link
-            to="/history/failures"
-            search={{
-              date_from: undefined,
-              date_to: undefined,
-              run_type: undefined,
-              page: undefined,
-              page_size: undefined,
-            }}
-            className="hover:underline"
-          >
-            Failure log
-          </Link>
-          {/* Story 05e (ALP-675) — activity log. */}
-          <Link to="/activity-log" className="hover:text-foreground text-muted-foreground">
-            Activity log
-          </Link>
-          {/* Story 05f (ALP-676) — portfolio dashboard. */}
-          <Link
-            to="/portfolio"
-            className="text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Portfolio
-          </Link>
-        </nav>
+        <NavLinks />
       </div>
     </header>
   )
