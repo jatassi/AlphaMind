@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime
 
 import pytest
@@ -87,6 +88,25 @@ class TestSubscriberLifecycle:
             second = await asyncio.wait_for(q2.get(), timeout=1.0)
             assert first.name == "heartbeat"
             assert second.name == "heartbeat"
+
+    async def test_slow_subscriber_queue_saturates_then_drops_with_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A slow consumer's queue saturates at ``queue_maxsize``; subsequent
+        emits drop for that subscriber and log a warning rather than blocking
+        the producer (mirrors the monitor SSE emitter's drop-on-full policy).
+        """
+        emitter = events.SSEEventEmitter(queue_maxsize=2)
+        async with emitter.subscribe() as q:
+            # Fill the queue to capacity without draining.
+            emitter.emit_heartbeat(_NOW)
+            emitter.emit_heartbeat(_NOW)
+            with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.control.events"):
+                # This emit overflows — should drop + log instead of raising.
+                emitter.emit_heartbeat(_NOW)
+            assert q.qsize() == 2
+            assert any("SSE subscriber queue full" in rec.getMessage() for rec in caplog.records)
 
 
 # ---------------------------------------------------------------------------

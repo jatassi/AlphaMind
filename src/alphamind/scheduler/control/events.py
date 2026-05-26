@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -47,14 +48,23 @@ from pydantic import BaseModel
 
 from alphamind.scheduler.control.models import HeartbeatEvent
 
+log = logging.getLogger(__name__)
+
 __all__ = [
     "DEFAULT_HEARTBEAT_INTERVAL_SECONDS",
+    "DEFAULT_SUBSCRIBER_QUEUE_MAXSIZE",
     "SSEEventEmitter",
     "format_sse_record",
 ]
 
 
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS: Final = 15.0
+# Per-subscriber queue capacity. Mirrors the monitor's bound — a slow
+# SSE consumer's queue grows up to this size before put_nowait() raises
+# QueueFull, at which point the producer drops the event for that
+# subscriber rather than blocking the fan-out. Live state is transient
+# screen state, not history (per ALP-128 pre-resolved decision G).
+DEFAULT_SUBSCRIBER_QUEUE_MAXSIZE: Final = 256
 
 
 # Map every Pydantic event class onto the SSE ``event:`` name.  The
@@ -159,11 +169,13 @@ class SSEEventEmitter:
         self,
         *,
         heartbeat_interval_seconds: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+        queue_maxsize: int = DEFAULT_SUBSCRIBER_QUEUE_MAXSIZE,
     ) -> None:
         if heartbeat_interval_seconds <= 0:
             msg = "heartbeat_interval_seconds must be positive"
             raise ValueError(msg)
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
+        self._queue_maxsize = queue_maxsize
         self._subscribers: set[asyncio.Queue[_Event]] = set()
 
     # ------------------------------------------------------------------
@@ -210,7 +222,14 @@ class SSEEventEmitter:
         data = event.model_dump(mode="json")
         record = _Event(name=name, data=data)
         for queue in self._subscribers:
-            queue.put_nowait(record)
+            try:
+                queue.put_nowait(record)
+            except asyncio.QueueFull:
+                # A slow consumer's queue saturated — log and drop the
+                # event for that subscriber rather than blocking the
+                # producer. Live state is transient screen state, not
+                # history, per ALP-128 pre-resolved decision (G).
+                log.warning("SSE subscriber queue full; dropping event name=%s", name)
 
     def emit_heartbeat(self, now: datetime) -> None:
         """Convenience wrapper that constructs a :class:`HeartbeatEvent`."""
@@ -232,10 +251,11 @@ class SSEEventEmitter:
                 async for record in emitter.iter_events(queue=queue):
                     yield format_sse_record(record)
 
-        The queue has unbounded capacity; the connection is responsible
-        for draining at the rate it can sustain.
+        The queue is bounded by ``queue_maxsize`` (default 256). A slow
+        consumer that lets its queue saturate has subsequent events
+        dropped at the producer; the connection should drain promptly.
         """
-        queue: asyncio.Queue[_Event] = asyncio.Queue()
+        queue: asyncio.Queue[_Event] = asyncio.Queue(maxsize=self._queue_maxsize)
         self._subscribers.add(queue)
         try:
             yield queue
