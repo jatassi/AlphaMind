@@ -17,7 +17,12 @@ agents:
   analyst:
     model: claude-opus-4-7
     prompt: prompts/decision/analyst.md
-    latency_budget_seconds: 300
+    # 2026-05-25 debug-e2e: analyst hit budget_timeout at 305.07s — SDK trace
+    # shows continuous productive work (ThinkingBlocks 32s/50s/65s/68s
+    # interleaved with ~10 retrieve_brief + 2 validate_guardrail tool calls;
+    # no silent stall). Genuine extended-thinking + tool-loop latency under
+    # the production-faithful synthetic portfolio. Raised 300s → 500s.
+    latency_budget_seconds: 500
     context_token_budget: 8000
     # Each recommendation serializes to ~500–800 tokens with the rich nested
     # shape (instrument + entry_order + position_size + target +
