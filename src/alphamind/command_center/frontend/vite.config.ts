@@ -1,7 +1,7 @@
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 
 // FastAPI dev server runs on 127.0.0.1:8080 (config/command-center.yaml `bind`
 // block). Vite serves the SPA on 5173 and proxies the API + SSE + auth surfaces
@@ -30,5 +30,11 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     chunkSizeWarningLimit: 600,
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/__tests__/setup.ts'],
+    include: ['src/**/__tests__/**/*.test.{ts,tsx}'],
   },
 })
