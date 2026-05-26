@@ -330,12 +330,23 @@ def _check_short_borrow_cost(proposal: ProposedDelta) -> list[str]:
 
 
 def _check_notional_quantity(proposal: ProposedDelta) -> list[str]:
-    """``notional_usd >= 0``; ``quantity > 0``."""
+    """``notional_usd >= 0``; ``quantity > 0`` for exposure-changing actions only.
+
+    ADJUST and CANCEL are exposure-neutral pass-throughs by contract (see the
+    ``Action`` enum docstring and ``evaluate_proposals`` orchestration step 2)
+    — the proposal pre-processor's translator emits ``quantity=0.0,
+    notional_usd=0`` for them so the projection layer surfaces them as no-op
+    rule projections. The positive quantity check therefore only applies to
+    the documented exposure-changing set ``(OPEN, ADD, CLOSE)``.
+    """
     failures: list[str] = []
     if proposal.notional_usd < 0:
         failures.append(
             f"proposal {proposal.id!r}: notional_usd must be >= 0; got {proposal.notional_usd}"
         )
-    if proposal.quantity <= 0:
-        failures.append(f"proposal {proposal.id!r}: quantity must be > 0; got {proposal.quantity}")
+    if proposal.action in (Action.OPEN, Action.ADD, Action.CLOSE) and proposal.quantity <= 0:
+        failures.append(
+            f"proposal {proposal.id!r}: quantity must be > 0 for action "
+            f"{proposal.action.value}; got {proposal.quantity}"
+        )
     return failures
