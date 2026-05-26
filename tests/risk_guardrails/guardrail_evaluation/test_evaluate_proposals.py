@@ -716,7 +716,16 @@ def test_adjust_with_zero_quantity_and_zero_notional_validates() -> None:
     ``quantity > 0`` rule applies only to exposure-changing actions
     (OPEN/ADD/CLOSE). Per the ``Action`` enum docstring and
     ``evaluate_proposals`` orchestration step 2, ADJUST/CANCEL pass through
-    the rule projection layer as no-ops.
+    the validator as no-ops.
+
+    Note: the ``position_max_size_pct`` simulator's ADJUST branch treats
+    ``proposal.notional_usd`` as the new total notional for the position
+    (per ``exposure.py`` ``_simulate_post_batch_book`` docstring; tested by
+    ``test_rules_exposure.py::test_position_max_size_project_after_batch_adjust_*``).
+    The translator's adjust-bracket emission of ``notional_usd=0`` therefore
+    projects through as "position notional dropped to zero" — a known
+    downstream artifact of the validator unblocking, tracked separately;
+    this test asserts validator acceptance only.
     """
     existing = _existing_long_equity(position_id=PositionId("POS-1"), notional_usd=5_000.0)
     state = _snapshot(existing_positions={"POS-1": existing})
@@ -747,12 +756,15 @@ def test_adjust_with_zero_quantity_and_zero_notional_validates() -> None:
 
 
 def test_cancel_with_zero_quantity_and_zero_notional_validates() -> None:
-    """CANCEL is exposure-neutral on the rule-projection side; the production
-    contract permits ``quantity=0.0, notional_usd=0`` (parallel to ADJUST).
+    """CANCEL is exposure-neutral on the rule-projection side; the validator's
+    documented contract permits ``quantity=0.0, notional_usd=0`` (parallel to
+    ADJUST). The production translator does not emit CANCEL today (CANCEL is
+    OMS-side), but the validator must accept the shape — the ``Action`` enum
+    docstring and ``evaluate_proposals`` step 2 both treat CANCEL as a
+    pass-through.
 
-    ``evaluate_proposals`` must accept that shape — the validator's
-    ``quantity > 0`` rule applies only to exposure-changing actions
-    (OPEN/ADD/CLOSE). CANCEL's effect on ``pending_order_capital_pct``
+    The validator's ``quantity > 0`` rule applies only to exposure-changing
+    actions (OPEN/ADD/CLOSE). CANCEL's effect on ``pending_order_capital_pct``
     comes from the existing position's ``reserves_capital_usd``, not from
     the proposal's own notional.
     """
@@ -797,6 +809,35 @@ def test_cancel_with_zero_quantity_and_zero_notional_validates() -> None:
 
     rec1 = output.delta_adjusted["REC-1"]
     assert rec1.signed_notional_usd == 0.0
+
+
+def test_open_with_zero_quantity_still_raises() -> None:
+    """The validator's narrowed ``quantity > 0`` rule still rejects
+    exposure-changing actions with ``quantity=0`` — anchors the gating
+    boundary opposite to the ADJUST/CANCEL pass-through.
+    """
+    state = _snapshot()
+    proposal = ProposedDelta(
+        id="REC-1",
+        underlying="AAPL",
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.EQUITY,
+        notional_usd=money(1_000),
+        quantity=0.0,
+        option_legs=None,
+        action=Action.OPEN,
+        existing_position_id=None,
+        daily_borrow_cost_usd=None,
+        reserves_capital=False,
+    )
+    with pytest.raises(LibraryInputError, match="quantity must be > 0 for action OPEN"):
+        evaluate_proposals(
+            state=state,
+            proposals=(proposal,),
+            config=_full_config(),
+            market=_market(),
+        )
 
 
 # ---------------------------------------------------------------------------
