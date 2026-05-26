@@ -15,8 +15,6 @@ the conservative buffer is in ``[0, 100]``).
 
 from __future__ import annotations
 
-from types import MappingProxyType
-
 from alphamind.config.resolver import ResolvedConfig
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
     EscalationZones,
@@ -103,8 +101,8 @@ def from_resolved_config(resolved: ResolvedConfig) -> LibraryConfig:
     )
 
     return LibraryConfig(
-        effective_limits=MappingProxyType(dict(resolved.rule_values)),
-        escalation_zones=MappingProxyType(escalation_zones),
+        effective_limits=dict(resolved.rule_values),
+        escalation_zones=escalation_zones,
         feature_flags=FeatureFlagsView(
             options_enabled=resolved.feature_flags.options_enabled,
             short_selling_enabled=resolved.feature_flags.short_selling_enabled,

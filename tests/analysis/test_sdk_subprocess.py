@@ -203,6 +203,120 @@ def test_borrow_cost_resolver_pickles_with_data() -> None:
     assert round_trip("UNKN") is None
 
 
+def test_prepare_validation_state_round_trips_with_real_library_config() -> None:
+    """Regression for ALP-681. The adapter's output must be picklable so the
+    subprocess-isolated analyst, strategist, and PM wrappers can ship
+    ``ValidationToolState`` across the worker boundary via base64-pickle.
+    Exercises the real ``_prepare_validation_state_for_pickle`` +
+    ``_encode_pickle`` + ``_decode_pickle`` pipeline against a real
+    ``LibraryConfig`` from ``from_resolved_config`` — without the identity-shim
+    monkeypatch the other heavy-state smoke tests use.
+    """
+    from pathlib import Path
+    from typing import cast
+
+    import yaml
+
+    from alphamind.config.assets_views import SectorResolver
+    from alphamind.config.loaders import (
+        load_modes,
+        load_overlays,
+        load_profiles,
+        load_regimes,
+        load_run_types,
+    )
+    from alphamind.config.models import (
+        AgentsConfig,
+        AssetsConfig,
+        ContinuousMonitorConfig,
+        DigestConfig,
+        ExecutionConfig,
+        GuardrailsConfig,
+        LLMFailureConfig,
+        LoadedConfig,
+        MainConfig,
+        Mode,
+        Regime,
+        RuntimeDimensions,
+        RunType,
+        SchedulerConfig,
+        VenueConfig,
+        compose_config,
+    )
+    from alphamind.risk_guardrails.guardrail_evaluation import (
+        MarketInputs,
+        from_resolved_config,
+    )
+    from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import FixtureIvProvider
+    from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationToolState
+
+    config_dir = Path(__file__).resolve().parents[2] / "config"
+
+    def _read(name: str) -> dict[str, Any]:
+        return cast(dict[str, Any], yaml.safe_load((config_dir / name).read_text()))
+
+    inputs = LoadedConfig(
+        main=MainConfig.model_validate(_read("main.yaml")),
+        scheduler=SchedulerConfig.model_validate(_read("scheduler.yaml")),
+        venue=VenueConfig.model_validate(_read("venue.yaml")),
+        execution=ExecutionConfig.model_validate(_read("execution.yaml")),
+        guardrails=GuardrailsConfig.model_validate(_read("guardrails.yaml")),
+        llm_failure=LLMFailureConfig.model_validate(_read("llm_failure.yaml")),
+        digest=DigestConfig.model_validate(_read("digest.yaml")),
+        assets=AssetsConfig.model_validate(_read("assets.yaml")),
+        agents=AgentsConfig.model_validate(_read("agents.yaml")),
+        continuous_monitor=ContinuousMonitorConfig.model_validate(_read("continuous_monitor.yaml")),
+        profiles=dict(load_profiles(config_dir)),
+        regimes=dict(load_regimes(config_dir)),
+        modes=dict(load_modes(config_dir)),
+        overlays=dict(load_overlays(config_dir)),
+        run_types=dict(load_run_types(config_dir)),
+    )
+    runtime = RuntimeDimensions(
+        active_regime=Regime.normal,
+        active_mode=Mode.normal,
+        active_overlays=(),
+        firing_trigger=RunType.pre_open,
+    )
+    library_config = from_resolved_config(compose_config(inputs, runtime))
+    library_market = MarketInputs(
+        underlying_prices={"AAPL": 200.0},
+        risk_free_rate=0.04,
+        iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
+        as_of=datetime(2026, 5, 26, tzinfo=UTC),
+    )
+
+    # Pydantic's escape hatch — the non-LibraryConfig fields are out of scope for
+    # this regression gate; their own tests cover their construction. None values
+    # are picklable and let us stay focused on the LibraryConfig pickle path.
+    # ``model_construct`` also bypasses the feature-flags-agree validator on
+    # ``ValidationToolState``; we keep the two slots aligned manually so the
+    # invariant the validator would enforce holds at construction time too.
+    state = ValidationToolState.model_construct(
+        invocation_id="INV-1",
+        starting_snapshot=None,
+        starting_risk_budget=None,
+        starting_active_risk_parameters=None,
+        profile_feature_flags=library_config.feature_flags,
+        library_config=library_config,
+        library_market=library_market,
+        sector_resolver=SectorResolver({"AAPL": "tech"}),
+        borrow_cost_resolver=None,
+        accumulated_deltas=(),
+    )
+
+    prepared = sp._prepare_validation_state_for_pickle(state)
+    encoded = sp._encode_pickle(prepared)
+    decoded = sp._decode_pickle(encoded)
+
+    assert decoded.library_config == library_config
+    # Type-preservation: the bug shipped mappingproxy in these slots; verify
+    # the round-trip lands on plain ``dict`` (the contract ``from_resolved_config``
+    # now produces).
+    assert isinstance(decoded.library_config.effective_limits, dict)
+    assert isinstance(decoded.library_config.escalation_zones, dict)
+
+
 # ---------------------------------------------------------------------------
 # Synthesizer wrapper
 # ---------------------------------------------------------------------------
