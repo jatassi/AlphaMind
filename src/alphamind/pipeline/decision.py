@@ -104,6 +104,10 @@ from alphamind.state.config import StatePersistenceConfig
 # strategist, and PM consume.
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore  # isort: skip
 
+# Phase-output emission substrate (ALP-690 / ALP-692) — imported lazily below
+# inside ``_emit_phase_output`` so the top-level import graph never reaches
+# ``scheduler/debug_e2e/`` for production callers that pass ``archive_root=None``.
+
 __all__ = ["DecisionPipelineResult", "run_decision_pipeline"]
 
 
@@ -180,6 +184,54 @@ def _derive_cross_constraint_impact(
         available_capital_before_usd=available_capital_usd,
         available_capital_after_usd=available_capital_usd,
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase-output emission helper (ALP-692)
+# ---------------------------------------------------------------------------
+
+
+def _emit_decision_phase_output(
+    *,
+    archive_root: Path | None,
+    invocation_id: str,
+    phase: str,
+    result: AnalystResult | StrategistResult | PMResult,
+) -> None:
+    """Serialize ``result`` to
+    ``<archive_root>/invocations/<invocation_id>/phase_outputs/<phase>.json``.
+
+    No-op when ``archive_root is None`` (production callers always pass
+    ``None``; debug-e2e callers supply the root from
+    :attr:`alphamind.scheduler.run_context.RunInvocationContext.archive_root`).
+
+    Uses :func:`alphamind._kernel.atomic_io.atomic_write_text` directly so
+    this module never reaches ``scheduler/debug_e2e/`` — the import-linter
+    ``debug-e2e-forbidden-in-production`` contract forbids ``alphamind.pipeline``
+    from importing ``alphamind.scheduler.debug_e2e``.
+    """
+    if archive_root is None:
+        return
+
+    import pydantic
+
+    from alphamind._kernel.atomic_io import atomic_write_text
+    from alphamind.decision.analyst.models import AnalystResultModel
+    from alphamind.decision.portfolio_manager.models import PMResultModel
+    from alphamind.decision.strategist.models import StrategistResultModel
+
+    archive_dir = archive_root / "invocations" / invocation_id
+
+    boundary_model: pydantic.BaseModel
+    if isinstance(result, AnalystResult):
+        boundary_model = AnalystResultModel.from_domain(result)
+    elif isinstance(result, StrategistResult):
+        boundary_model = StrategistResultModel.from_domain(result)
+    else:
+        boundary_model = PMResultModel.from_domain(result)
+
+    target = archive_dir / "phase_outputs" / f"{phase}.json"
+    atomic_write_text(target, boundary_model.model_dump_json())
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +476,22 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     progress.phase_done("analyst")
     progress.phase_done("strategist")
 
+    # Emit phase outputs for analyst + strategist (ALP-692).  Both run in
+    # parallel (TaskGroup above) and both emit after the group completes,
+    # mirroring the 02a domain-researcher emission pattern.
+    _emit_decision_phase_output(
+        archive_root=archive_root,
+        invocation_id=invocation_id,
+        phase="analyst",
+        result=analyst_result,
+    )
+    _emit_decision_phase_output(
+        archive_root=archive_root,
+        invocation_id=invocation_id,
+        phase="strategist",
+        result=strategist_result,
+    )
+
     # 7. Run proposal pre-processor — pure (no I/O, no clock reads).
     progress.phase_start("pre_processor")
     pre_processor_bundle = run_proposal_pre_processor(
@@ -483,6 +551,14 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
         phase="pm",
     )
     progress.phase_done("pm")
+
+    # Emit phase output for PM (ALP-692).
+    _emit_decision_phase_output(
+        archive_root=archive_root,
+        invocation_id=invocation_id,
+        phase="pm",
+        result=pm_result,
+    )
 
     return DecisionPipelineResult(
         pydantic_snapshot=pydantic_snapshot,
