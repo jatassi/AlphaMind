@@ -27,7 +27,6 @@ Per the ALP-128 architectural invariants:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -148,8 +147,8 @@ async def run_uvicorn_server_task(*, app: FastAPI, host: str, port: int) -> None
     a third coroutine factory alongside ``apscheduler`` and
     ``emergency_receiver``.  The supervisor's outer TaskGroup owns the
     cancellation; on cancel the function sets ``server.should_exit =
-    True`` so Uvicorn drains in-flight connections, then awaits the
-    underlying ``server.serve()`` to completion.
+    True`` BEFORE re-raising so Uvicorn drains in-flight connections as
+    the await unwinds.
 
     Per the schema's § Scope, ``host`` MUST be a loopback address
     (``127.0.0.1``) in production; the parameter is left explicit so
@@ -163,17 +162,15 @@ async def run_uvicorn_server_task(*, app: FastAPI, host: str, port: int) -> None
         access_log=False,  # operator console traffic is low-volume; skip noise
     )
     server = uvicorn.Server(config=config)
-    serve_task = asyncio.create_task(server.serve(), name="control_uvicorn_serve")
+    # Uvicorn's ``Server.serve()`` is itself a coroutine; awaiting directly
+    # keeps this task within its parent TaskGroup's discipline (no bare
+    # ``asyncio.create_task`` — see module docstring). On cancellation, the
+    # ``BaseException``/``CancelledError`` is delivered to the in-flight
+    # ``await``; we catch it, set ``should_exit = True`` so Uvicorn's
+    # ``capture_signals`` exit + ``shutdown`` sequence observe the drain
+    # request, then re-raise so the supervisor sees the task finish.
     try:
-        await serve_task
-    except asyncio.CancelledError:
+        await server.serve()
+    except BaseException:
         server.should_exit = True
-        # Wait for the underlying serve() task to drain cleanly so the
-        # supervisor's TaskGroup observes a finished child rather than
-        # a still-running one.  Suppress any post-cancel exceptions from
-        # serve() itself; the daemon shutdown is the load-bearing event.
-        try:
-            await serve_task
-        except (asyncio.CancelledError, Exception) as exc:
-            log.debug("uvicorn serve() finished after cancel: %s", exc)
         raise
