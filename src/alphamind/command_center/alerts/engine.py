@@ -412,6 +412,21 @@ class AlertEngine:
             return EvaluationOutcome(rule_name=rule.name, fired=False)
         key = (rule.name, result.debounce_key)
         async with self._debounce_lock:
+            # Hot-reload race guard (Wave-6 finding #8): a concurrent
+            # :meth:`_apply_rule_diff_locked` may have removed this rule
+            # between the rules-snapshot at the top of
+            # :meth:`_evaluate_all` and the debounce write below. The
+            # removal also clears :attr:`_debounce_windows` for the rule
+            # and prunes its existing debounce entries, but without this
+            # guard the debounce-table write below would re-introduce
+            # an orphan entry that :meth:`_prune_expired_for_rule`
+            # cannot reap (its early-return on missing window leaves the
+            # entry permanently stranded). Skip the write entirely when
+            # the rule is no longer registered — the operator-visible
+            # outcome (no persisted alert, no channel dispatch) is the
+            # same as if the rule had been removed before the evaluate.
+            if rule.name not in self._debounce_windows:
+                return EvaluationOutcome(rule_name=rule.name, fired=False)
             # Opportunistic eviction — drop expired entries belonging to
             # this rule so PipelineAbortedCondition (one entry per
             # invocation_id) doesn't grow without bound. Bounding the

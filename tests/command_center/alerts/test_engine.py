@@ -861,6 +861,72 @@ class TestHotReload:
         assert len(outcomes) in {1, 2}
         assert diff is not None and diff.added == (alert_rule_name("b"),)
 
+    @pytest.mark.asyncio
+    async def test_no_debounce_orphan_on_hot_reload_race(
+        self,
+        cc_writer_factory: async_sessionmaker[AsyncSession],
+        fixed_clock: Any,
+        tmp_path: Any,
+    ) -> None:
+        """Wave-6 finding #8 — concurrent reload must not leave orphan entries.
+
+        Race: ``_evaluate_one`` snapshots rules under ``_rules_lock``,
+        then drops the lock and ``await``s ``rule.condition.evaluate``.
+        Meanwhile ``_apply_rule_diff_locked`` removes the rule and
+        clears its debounce entries. When ``_evaluate_one`` resumes it
+        re-acquires ``_debounce_lock`` and writes a fresh
+        ``_DebounceEntry`` for the now-removed rule. The entry is
+        unreachable to ``_prune_expired_for_rule`` (that helper
+        early-returns when the rule has no debounce_window).
+
+        Post-fix the debounce write checks ``rule.name in
+        _debounce_windows`` under the debounce lock; a concurrent
+        removal that already cleared the window short-circuits the
+        write, leaving the table consistent.
+        """
+        path = tmp_path / "alerts.yaml"
+        path.write_text(_alerts_yaml_with_rules([]), encoding="utf-8")
+
+        # Build a fires-once condition so the evaluate path reaches the
+        # debounce write.
+        cond = _AlwaysFiresCondition(debounce_key="invocation-X")
+        firing_rule = AlertRule(
+            name=alert_rule_name("temporary_rule"),
+            severity=AlertSeverity.CRITICAL,
+            debounce_window=timedelta(minutes=10),
+            channels=("in_app",),
+            condition=cond,
+        )
+
+        def _builder(_config: AlertsConfig) -> tuple[AlertRule, ...]:
+            return ()  # The reload removes ``temporary_rule``.
+
+        engine = AlertEngine(
+            rules=[firing_rule],
+            multiplexer=EventMultiplexer(),
+            cc_writer_factory=cc_writer_factory,
+            discord_channel=FakeDiscordChannel(),
+            clock=fixed_clock,
+            alerts_config_path=path,
+            rules_builder=_builder,
+        )
+        # Simulate the race by:
+        # 1. Manually applying the rule diff (rule removed,
+        #    _debounce_windows cleared, _debounce entries pruned).
+        # 2. Then invoking _evaluate_one for the still-snapshotted rule.
+        # Pre-fix the post-removal evaluate would write
+        # _debounce[(name, key)] = entry — an orphan. Post-fix the
+        # write is skipped.
+        async with engine._rules_lock:  # type: ignore[attr-defined]
+            engine._apply_rule_diff_locked(())  # type: ignore[attr-defined]
+        state = AlertEvaluatorState(now=_NOW, foreign_reader_factory=None)
+        outcome = await engine._evaluate_one(  # type: ignore[attr-defined]
+            firing_rule, event=None, state=state, now=_NOW
+        )
+        assert outcome.fired is False
+        # The debounce table must be empty — no orphan entry survived.
+        assert engine._debounce == {}  # type: ignore[attr-defined]
+
 
 # Suppress unused-symbol warning.
 _ = AlertRuleName
