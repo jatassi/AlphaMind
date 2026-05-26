@@ -217,7 +217,12 @@ async def _sse_iterator(
             except TimeoutError:
                 # Idle cadence — emit a heartbeat directly into the stream
                 # (not via the broadcaster, so it only reaches this subscriber).
-                heartbeat = HeartbeatEvent.model_validate({"timestamp": _now_iso_z()})
+                # F14: pass a datetime through Pydantic so the on-wire format
+                # is the same +00:00 shape every other event uses — no
+                # _now_iso_z helper, no Z-suffix-then-parse-back round trip.
+                from datetime import UTC, datetime
+
+                heartbeat = HeartbeatEvent(timestamp=datetime.now(UTC))
                 event = EmittedEvent(name="heartbeat", payload=heartbeat.model_dump(mode="json"))
             yield _render_sse_frame(event)
 
@@ -227,13 +232,6 @@ def _render_sse_frame(event: EmittedEvent) -> bytes:
     data = json.dumps(event.payload, separators=(",", ":"))
     frame = f"event: {event.name}\ndata: {data}\n\n"
     return frame.encode("utf-8")
-
-
-def _now_iso_z() -> str:
-    """ISO 8601 with ``Z`` suffix — the schema's documented timestamp shape."""
-    from datetime import UTC, datetime  # local import keeps the module load light
-
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 # ---------------------------------------------------------------------------

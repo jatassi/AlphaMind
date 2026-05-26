@@ -286,9 +286,13 @@ class SSEEventEmitter:
                 # Synthesize a heartbeat for this connection without
                 # touching siblings — every subscriber drives its own
                 # cadence per the schema's connection-scoped semantics.
+                # F14: route the timestamp through HeartbeatEvent so the
+                # on-wire payload uses Pydantic's default datetime
+                # serialization (matches every other event's +00:00 shape).
                 from datetime import UTC
 
+                heartbeat = HeartbeatEvent(timestamp=datetime.now(UTC))
                 yield _Event(
                     name="heartbeat",
-                    data={"timestamp": datetime.now(UTC).isoformat()},
+                    data=heartbeat.model_dump(mode="json"),
                 )
