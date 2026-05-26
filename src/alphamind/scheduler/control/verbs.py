@@ -21,6 +21,7 @@ from typing import Literal, Protocol
 
 from alphamind.config.control_handlers.profile_switch import (
     ProfileNotFoundError,
+    ProfileSwitchOutcome,
     switch_active_profile,
 )
 from alphamind.config.models.main import Profile
@@ -32,9 +33,11 @@ __all__ = [
     "EmergencyTrigger",
     "PreconditionFailedError",
     "ProfileNotFoundError",
+    "ProfileSwitchOutcome",
     "RunUniverseValidationResult",
     "RunningInfo",
     "SchedulerControl",
+    "SwitchProfileResult",
     "TriggerEmergencyInvocationResult",
     "UniverseValidationCriterionRecord",
     "UniverseValidationFailedError",
@@ -193,6 +196,18 @@ class RunUniverseValidationResult:
     report: UniverseValidationReportRecord
 
 
+@dataclass(frozen=True, slots=True)
+class SwitchProfileResult:
+    """Result of ``switch_profile`` — envelope ``applied_at`` plus the
+    underlying :class:`ProfileSwitchOutcome` so the route layer can emit the
+    ``PROFILE_SWITCHED`` activity-log entry (story 04a) without re-deriving
+    the previous / new profiles.
+    """
+
+    applied_at: datetime
+    outcome: ProfileSwitchOutcome
+
+
 # ---------------------------------------------------------------------------
 # Typed error signals — the route layer maps each to a ControlErrorEnvelope.
 # ---------------------------------------------------------------------------
@@ -309,7 +324,7 @@ async def trigger_emergency_invocation(
     )
 
 
-def switch_profile(*, profile_name: str, config_dir: Path, now: datetime) -> ControlResult:
+def switch_profile(*, profile_name: str, config_dir: Path, now: datetime) -> SwitchProfileResult:
     """``POST /control/switch_profile`` — rewrite ``main.yaml``'s ``active_profile``.
 
     Steps:
@@ -322,6 +337,11 @@ def switch_profile(*, profile_name: str, config_dir: Path, now: datetime) -> Con
        absent.  The route layer maps :class:`ProfileNotFoundError` to
        the ``not_found`` (HTTP 404) envelope.
 
+    Returns :class:`SwitchProfileResult` — the envelope ``applied_at``
+    plus the underlying :class:`ProfileSwitchOutcome`.  The outcome is
+    needed by story 04a's route handler to emit the ``PROFILE_SWITCHED``
+    activity-log entry without re-deriving the previous / new profiles.
+
     The ``now`` timestamp is the verb's ``applied_at`` value — the
     handler's no-op (idempotent same-profile) path returns ``accepted``
     with the request's ``now`` as well so the response is uniform.
@@ -332,8 +352,8 @@ def switch_profile(*, profile_name: str, config_dir: Path, now: datetime) -> Con
         raise ValidationFailedError(
             f"profile_name {profile_name!r} is not a member of the Profile enum"
         ) from exc
-    switch_active_profile(new_profile=profile, config_dir=config_dir)
-    return ControlResult(applied_at=now)
+    outcome = switch_active_profile(new_profile=profile, config_dir=config_dir)
+    return SwitchProfileResult(applied_at=now, outcome=outcome)
 
 
 def run_universe_validation(

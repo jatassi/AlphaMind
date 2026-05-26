@@ -213,9 +213,40 @@ class TestSwitchProfile:
             now=_NOW,
         )
         assert result.applied_at == _NOW
+        # The verb exposes the handler's outcome so the route layer can emit
+        # the PROFILE_SWITCHED activity-log entry without re-deriving the
+        # previous / new profiles (story 04a integration point).
+        assert result.outcome.previous_profile == Profile.medium
+        assert result.outcome.new_profile == Profile.large
+        assert result.outcome.is_no_op is False
         # main.yaml mutation occurred.
         new_text = (config_dir / "main.yaml").read_text()
         assert "active_profile: large" in new_text
+
+    def test_no_op_path_exposes_outcome(self, tmp_path: Path) -> None:
+        """A same-profile request still returns an outcome flagged ``is_no_op``."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "profiles").mkdir()
+        (config_dir / "profiles" / "medium.yaml").write_text("dummy: true\n")
+        (config_dir / "main.yaml").write_text(
+            "active_profile: medium\n"
+            "execution_mode: paper\n"
+            "paths:\n"
+            "  database: /tmp/db\n"
+            "  logs: /tmp/logs\n"
+            "  archive: /tmp/arch\n"
+            "  prompts: prompts/\n",
+        )
+        result = verbs.switch_profile(
+            profile_name="medium",
+            config_dir=config_dir,
+            now=_NOW,
+        )
+        assert result.applied_at == _NOW
+        assert result.outcome.is_no_op is True
+        assert result.outcome.previous_profile == Profile.medium
+        assert result.outcome.new_profile == Profile.medium
 
     def test_unknown_profile_value_raises_validation(self, tmp_path: Path) -> None:
         # Profile names outside the Profile StrEnum are rejected before
