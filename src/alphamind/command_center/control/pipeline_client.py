@@ -456,6 +456,20 @@ class FakePipelineClient:
     ``set_*_failure`` setters. The default response for each verb is a
     successful envelope with a fixed ``applied_at``; tests override
     selectively.
+
+    The ``current_profile`` field carries the fake's view of "the
+    pipeline's currently-active profile" so the default
+    :meth:`switch_profile` can synthesize a deterministic outcome —
+    a switch to the same profile is a no-op, a switch to a different
+    profile is a real transition. Tests that need to drive specific
+    previous→new transitions either:
+
+    * call :meth:`set_current_profile` to seed the fake's state, then
+      invoke :meth:`switch_profile` and let the default outcome
+      build itself; or
+    * call :meth:`set_switch_profile_response` with a fully-specified
+      :class:`PipelineSwitchProfileResult` to override the synthesis
+      entirely.
     """
 
     def __init__(self) -> None:
@@ -474,6 +488,13 @@ class FakePipelineClient:
         )
         self._switch_profile_response: PipelineSwitchProfileResult | None = None
         self._universe_validation_response: PipelineRunUniverseValidationResult | None = None
+        # F13: the fake's view of the pipeline's currently-active
+        # profile. Seeded to ``Profile.medium`` so the historical
+        # behaviour (default switch synthesizes prev=medium) is
+        # preserved without tests having to opt in. Tests can override
+        # via ``set_current_profile`` to drive different transitions
+        # deterministically.
+        self._current_profile: Profile = Profile.medium
 
     # ---- response setters --------------------------------------------------
 
@@ -494,6 +515,17 @@ class FakePipelineClient:
     ) -> None:
         self._universe_validation_response = response
 
+    def set_current_profile(self, profile: Profile) -> None:
+        """Seed the fake's view of the pipeline's currently-active profile (F13).
+
+        Lets tests drive both the no-op path (switch to current) and
+        the success path (switch to a different profile) deterministically
+        without having to construct a full
+        :class:`PipelineSwitchProfileResult` via
+        :meth:`set_switch_profile_response`.
+        """
+        self._current_profile = profile
+
     # ---- Protocol surface --------------------------------------------------
 
     async def pause(self, *, reason: str) -> ControlResult:
@@ -512,7 +544,8 @@ class FakePipelineClient:
         self.calls.append(("switch_profile", {"profile_name": profile_name}))
         if self._switch_profile_response is not None:
             return self._switch_profile_response
-        # Default: success with a synthesized non-no-op outcome.
+        # Default: success with a synthesized outcome from the fake's
+        # current_profile state.
         try:
             new_profile = Profile(profile_name)
         except ValueError:
@@ -524,18 +557,22 @@ class FakePipelineClient:
             )
         from pathlib import Path as _Path
 
-        # The default outcome treats every requested switch as a real
-        # transition from ``Profile.medium`` to the requested profile so
-        # tests of the proxy's emit_profile_switch_entry path get a
-        # non-no-op outcome by default. Tests that need a no-op or a
-        # different previous-profile call ``set_switch_profile_response``
-        # explicitly.
+        # F13: read previous_profile off the fake's state (defaults to
+        # Profile.medium per __init__) so tests can drive both no-op
+        # and success paths via set_current_profile rather than having
+        # to construct a full PipelineSwitchProfileResult via
+        # set_switch_profile_response.
+        previous_profile = self._current_profile
         outcome = ProfileSwitchOutcome(
-            previous_profile=Profile.medium,
+            previous_profile=previous_profile,
             new_profile=new_profile,
             main_yaml_path=_Path("config/main.yaml"),
-            is_no_op=new_profile == Profile.medium,
+            is_no_op=new_profile == previous_profile,
         )
+        # Reflect the successful transition in the fake's view of state
+        # so subsequent switch_profile calls within the same test see
+        # the post-switch baseline.
+        self._current_profile = new_profile
         return PipelineSwitchProfileResult(
             result=ControlResult.success(applied_at="2026-05-26T12:00:00Z"),
             outcome=outcome,

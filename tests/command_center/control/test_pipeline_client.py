@@ -299,6 +299,50 @@ class TestFakePipelineClient:
         assert out.report is not None
         assert out.report.tickers[0].ticker == "AAPL"
 
+    async def test_set_current_profile_drives_no_op_path(self) -> None:
+        # F13: seed the fake's view of state to ``large`` and confirm
+        # a switch to ``large`` synthesizes a no-op outcome.
+        client = FakePipelineClient()
+        client.set_current_profile(Profile.large)
+        out = await client.switch_profile(profile_name="large")
+        assert out.result.ok is True
+        assert out.outcome is not None
+        assert out.outcome.previous_profile == Profile.large
+        assert out.outcome.new_profile == Profile.large
+        assert out.outcome.is_no_op is True
+
+    async def test_set_current_profile_drives_non_default_transition(self) -> None:
+        # F13: switch from ``small`` (seeded) to ``large`` without
+        # constructing a full PipelineSwitchProfileResult.
+        client = FakePipelineClient()
+        client.set_current_profile(Profile.small)
+        out = await client.switch_profile(profile_name="large")
+        assert out.result.ok is True
+        assert out.outcome is not None
+        assert out.outcome.previous_profile == Profile.small
+        assert out.outcome.new_profile == Profile.large
+        assert out.outcome.is_no_op is False
+
+    async def test_successful_switch_updates_current_profile(self) -> None:
+        # F13: after a real transition, the fake's current_profile
+        # reflects the post-switch baseline so a subsequent switch
+        # synthesizes its outcome correctly.
+        client = FakePipelineClient()
+        # Initial: medium.
+        out_1 = await client.switch_profile(profile_name="large")
+        assert out_1.outcome is not None
+        assert out_1.outcome.previous_profile == Profile.medium
+        assert out_1.outcome.new_profile == Profile.large
+        # Now the fake's view is ``large``; switching to ``large`` is
+        # a no-op, switching to ``small`` is a real transition.
+        out_2 = await client.switch_profile(profile_name="large")
+        assert out_2.outcome is not None
+        assert out_2.outcome.is_no_op is True
+        out_3 = await client.switch_profile(profile_name="small")
+        assert out_3.outcome is not None
+        assert out_3.outcome.previous_profile == Profile.large
+        assert out_3.outcome.new_profile == Profile.small
+
 
 @pytest.fixture(autouse=True)
 def _anyio_backend() -> str:
