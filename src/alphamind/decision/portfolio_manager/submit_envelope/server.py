@@ -240,6 +240,10 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     # (ALP-700). The LLM occasionally hands in the wrapped form despite the
     # prompt's inlined examples; the unwrap lets a single retry of the tool
     # call succeed rather than burning attempts discovering the contract.
+    # ``raw_args_for_log`` preserves the LITERAL tool input (pre-unwrap) so
+    # an operator combing parse-failure rows can still tell whether the LLM
+    # mistakenly wrapped its payload — the unwrap is invisible to forensics.
+    raw_args_for_log = dict(args)
     args = _unwrap_envelope_args(args)
 
     # Step 1: Layer-1 — coerce to PMEnvelope.
@@ -254,7 +258,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
             attempt_seq=0,
         )
         failed_entry = FailedSubmissionEntry(
-            raw_args=dict(args),
+            raw_args=raw_args_for_log,
             validation_error_repr=str(exc),
             command_id=synthetic_command_id,
         )

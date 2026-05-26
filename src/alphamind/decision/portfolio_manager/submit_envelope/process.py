@@ -128,9 +128,9 @@ def _unwrap_envelope_args(args: dict[str, Any]) -> dict[str, Any]:
     occasionally hand in ``{"envelope": {<envelope fields>}}`` instead of
     inlining the envelope fields at the top level; the discriminated-union
     parse then fails with ``union_tag_not_found`` because ``source_provenance``
-    is one level below where Pydantic looks. Observed in the
-    ``inv-20260526T162454Z-f1a4362f`` debug-e2e run, where the PM agent
-    burned three tool calls discovering the contract.
+    is one level below where Pydantic looks. ALP-700 observed the PM agent
+    burning three tool calls discovering the contract before settling on
+    the inlined form.
 
     Trigger is intentionally narrow: only unwrap when ``envelope`` is the
     SOLE top-level key and its value is a dict. Payloads with sibling

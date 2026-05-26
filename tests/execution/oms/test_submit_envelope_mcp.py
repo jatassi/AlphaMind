@@ -1233,10 +1233,9 @@ async def test_layer_0_unwraps_envelope_wrapper_key() -> None:
     """ALP-700: when the LLM wraps the envelope under a single top-level
     ``envelope`` key (e.g. ``submit_envelope({"envelope": {...}})``) instead
     of inlining the envelope fields, the wrapper transparently unwraps so
-    the discriminated-union parse succeeds. Observed in the
-    ``inv-20260526T162454Z-f1a4362f`` debug-e2e run where the PM agent
-    burned three tool calls discovering the contract before settling on
-    the inlined form."""
+    the discriminated-union parse succeeds — the PM agent's contract
+    self-discovery loop (~3 wasted tool calls per invocation) collapses
+    to a single accepted submission."""
     envelope = _make_analyst_envelope()
     get_state, server, _ = _build_state_and_server(envelope_for_routing=envelope)
 
@@ -1262,8 +1261,10 @@ async def test_layer_0_unwrap_preserves_inner_envelope_id_on_invalid_payload() -
     """ALP-700: when the wrapped form's inner envelope still fails Pydantic
     parsing (e.g. an internal field has the wrong shape), the rejection's
     synthetic command_id carries the inner ``envelope_id`` rather than the
-    legacy ``ENV-REC-INVALID`` fallback. Verifies the unwrap path threads
-    the inner dict through both validation AND the failure-log entry."""
+    legacy ``ENV-REC-INVALID`` fallback — AND the failure log preserves
+    the literal pre-unwrap payload so an operator can still tell that the
+    LLM mistakenly wrapped its call. Verifies the unwrap path threads the
+    inner dict through validation while keeping forensics honest."""
     from alphamind.decision.portfolio_manager.submit_envelope import get_failed_submission_log
 
     get_state, server, _ = _build_state_and_server()
@@ -1286,6 +1287,9 @@ async def test_layer_0_unwrap_preserves_inner_envelope_id_on_invalid_payload() -
     failed_log = get_failed_submission_log(get_state())
     assert len(failed_log) == 1
     assert failed_log[0].command_id.endswith(".ENV-REC-7.0.0")
+    # Forensic fidelity — raw_args records the wrapped form the LLM actually
+    # sent, not the post-unwrap inner dict.
+    assert failed_log[0].raw_args == wrapped_bogus
 
 
 @pytest.mark.asyncio
