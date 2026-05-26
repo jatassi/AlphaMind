@@ -84,8 +84,47 @@ class SetupTokenGate:
         self._token = secrets.token_urlsafe(32)
         return self._token
 
+    def verify(self, presented: str) -> None:
+        """Verify *presented* matches the minted token WITHOUT consuming (F8).
+
+        Used by ``/auth/register/begin`` to gate enrollment without
+        burning the gate on a request that may not reach a successful
+        register/complete. The matching :meth:`lock` call runs only
+        after :func:`insert_credential` commits in register/complete.
+
+        Raises :class:`SetupTokenAlreadyConsumedError` if the gate is
+        locked. Raises :class:`SetupTokenMismatchError` on a wrong token.
+        Constant-time compare via :func:`hmac.compare_digest`.
+        """
+        if self._consumed:
+            msg = "setup token already consumed; further enrollments require an existing session"
+            raise SetupTokenAlreadyConsumedError(msg)
+        if self._token is None or not hmac.compare_digest(self._token, presented):
+            raise SetupTokenMismatchError("setup token does not match")
+
+    def lock(self) -> None:
+        """Lock the gate after a successful first registration (F8).
+
+        Called by ``/auth/register/complete`` after :func:`insert_credential`
+        commits — at that point the first credential exists in the DB
+        so the setup-token path is no longer reachable. Idempotent: a
+        second call is a no-op (the gate is already locked).
+
+        Distinct from :meth:`consume` because by this stage the
+        verify-then-lock split (F8) has already confirmed the token via
+        :meth:`verify`; the lock step doesn't need to re-check.
+        """
+        self._consumed = True
+        self._token = None
+
     def consume(self, presented: str) -> None:
-        """Consume the gate with *presented*; locks the gate on success.
+        """Verify-and-lock the gate atomically; legacy single-call form.
+
+        Equivalent to ``gate.verify(presented); gate.lock()``. Retained
+        for callers that perform the gate operation in a single critical
+        section (no failure window between verify + commit). The auth
+        route layer uses :meth:`verify` + :meth:`lock` separately (F8)
+        because the WebAuthn ceremony spans two HTTP requests.
 
         Raises :class:`SetupTokenMismatchError` if *presented* does not match
         the most recently minted token. Raises
@@ -94,13 +133,8 @@ class SetupTokenGate:
         Constant-time string compare so a timing-attack measurement of
         "is this token close" doesn't yield information.
         """
-        if self._consumed:
-            msg = "setup token already consumed; further enrollments require an existing session"
-            raise SetupTokenAlreadyConsumedError(msg)
-        if self._token is None or not hmac.compare_digest(self._token, presented):
-            raise SetupTokenMismatchError("setup token does not match")
-        self._consumed = True
-        self._token = None
+        self.verify(presented)
+        self.lock()
 
     def is_consumed(self) -> bool:
         """Return ``True`` iff the gate has been consumed."""

@@ -427,8 +427,8 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
         # Two enrollment modes:
         #
         # 1. First registration — no credentials in the DB. Setup token
-        #    must match the gate's minted value. Authenticated only by
-        #    the token; the session bearer is not yet possible.
+        #    must verify (NOT consume — F8). The matching lock() runs in
+        #    register/complete after insert_credential commits.
         # 2. Subsequent registration — already-credentialed operator
         #    adds another passkey. Must present a valid session cookie
         #    (current_session would 401 if invalid).
@@ -439,7 +439,7 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
                     detail="setup_token required for first registration",
                 )
             try:
-                gate.consume(body.setup_token)
+                gate.verify(body.setup_token)
             except (SetupTokenMismatchError, SetupTokenAlreadyConsumedError) as exc:
                 log.warning("register_begin: setup token rejected: %s", exc)
                 raise HTTPException(
@@ -525,6 +525,7 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
             ) from exc
         now_iso = request.app.state.clock().strftime("%Y-%m-%dT%H:%M:%SZ")
         cc_factory = request.app.state.cc_writer_session_factory
+        existing_before = await list_credentials(cc_factory)
         await insert_credential(
             cc_factory,
             WebauthnCredentialRecord(
@@ -535,6 +536,11 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
                 created_at=now_iso,
             ),
         )
+        # F8: lock the setup-token gate after the first credential
+        # commits. Idempotent on the gate; only the first registration
+        # transitions it from open → locked.
+        if not existing_before:
+            request.app.state.setup_token_gate.lock()
         # Issue session immediately so the freshly-enrolled operator is
         # logged in.
         sid, expires_at, csrf_token = _issue_session_cookies(

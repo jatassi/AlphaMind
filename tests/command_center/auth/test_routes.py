@@ -522,6 +522,76 @@ class TestCredentialCountAfterEnrollment:
         assert await count_credentials(cc_factory) == 1
 
 
+class TestSetupTokenGateDeferredConsume:
+    """F8: setup-token gate must not lock until register/complete succeeds.
+
+    Previously the gate locked on register/begin, so a failed
+    register/complete (verifier raised, browser closed mid-flow, network
+    glitch) left the operator locked out — no way to retry without a
+    daemon restart.
+    """
+
+    async def test_failed_complete_does_not_lock_gate(
+        self,
+        auth_app: FastAPI,
+        cc_factory: async_sessionmaker[AsyncSession],
+        setup_token_gate: SetupTokenGate,
+    ) -> None:
+        token = setup_token_gate.mint()
+        with TestClient(auth_app) as client:
+            # register/begin succeeds — gate is verified but NOT locked.
+            begin = client.post(
+                "/auth/register/begin",
+                json={"setup_token": token, "user_name": "operator"},
+            ).json()
+            # Send register/complete with a malformed challenge (the
+            # in-memory verifier raises ValueError → 400).
+            challenge_bytes = b"wrong-challenge"
+            response = client.post(
+                "/auth/register/complete",
+                json={
+                    "challenge_token": begin["challenge_token"],
+                    "credential_id": "cred-failed",
+                    "client_data_json": _b64url_encode(
+                        encode_inmemory_client_data_json(challenge_bytes)
+                    ),
+                    "attestation_object": _b64url_encode(
+                        encode_inmemory_attestation_object(
+                            public_key=b"fake-public-key", sign_count=0
+                        )
+                    ),
+                    "transports": ["internal"],
+                },
+                headers=_csrf_headers(client),
+            )
+            assert response.status_code == 400
+            # Gate is NOT locked — same token still works.
+            assert not setup_token_gate.is_consumed()
+            # Retry register/begin with the same token + a fresh ceremony.
+            client.cookies.clear()
+            retry = client.post(
+                "/auth/register/begin",
+                json={"setup_token": token, "user_name": "operator-retry"},
+            )
+            assert retry.status_code == 200
+
+    async def test_successful_complete_locks_gate(
+        self,
+        auth_app: FastAPI,
+        cc_factory: async_sessionmaker[AsyncSession],
+        setup_token_gate: SetupTokenGate,
+    ) -> None:
+        token = setup_token_gate.mint()
+        with TestClient(auth_app) as client:
+            begin = client.post(
+                "/auth/register/begin",
+                json={"setup_token": token, "user_name": "operator"},
+            ).json()
+            _complete_registration(client, begin=begin, credential_id="cred-locks-gate")
+        # After successful complete, the gate is locked.
+        assert setup_token_gate.is_consumed()
+
+
 class TestChallengeStoreEviction:
     """F7: _ChallengeStore must enforce TTL + max size.
 
