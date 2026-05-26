@@ -36,11 +36,12 @@ Per the architectural invariants:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final, cast
 
@@ -636,9 +637,16 @@ class DataDirectoryDiskPressureCondition:
         del event, state
         if not self.data_dir.is_dir():
             return AlertConditionResult(fired=False)
-        size = _directory_size_bytes(self.data_dir)
+        # ``_directory_size_bytes`` walks ``rglob('*')`` and stat()s every
+        # file under the data dir — tens of thousands of files in
+        # production. Run it on a worker thread so the engine's
+        # asyncio.TaskGroup doesn't block the event loop on every tick.
+        # The cache TTL collapses repeated polls within a 5-minute
+        # window onto a single walk; a disk-pressure alarm doesn't need
+        # higher resolution than that.
+        size = await _get_directory_size_cached(self.data_dir)
         try:
-            usage = shutil.disk_usage(self.data_dir)
+            usage = await asyncio.to_thread(shutil.disk_usage, self.data_dir)
         except OSError:
             log.warning(
                 "data_directory_disk_pressure: disk_usage(%s) raised OSError; "
@@ -967,6 +975,41 @@ def _directory_size_bytes(path: Path) -> int:
     except OSError as exc:
         log.debug("data_directory size walk failed at %s (%s)", path, exc)
     return total
+
+
+_DIRECTORY_SIZE_CACHE_TTL = timedelta(minutes=5)
+"""Cache horizon for the data-directory size walk.
+
+The walk stats tens of thousands of files; running it on every engine
+tick (event-driven OR periodic) would dominate disk I/O. A
+disk-pressure alarm doesn't need higher resolution than 5 minutes —
+that's the cadence on which actionable drift accumulates.
+"""
+
+_directory_size_cache: dict[Path, tuple[datetime, int]] = {}
+"""Module-level ``{resolved_path: (computed_at, size_bytes)}`` cache.
+
+Keyed by the resolved Path so two predicates sharing the same data dir
+(currently only one shipping rule, but the cache is shape-prepared)
+collapse to one walk.
+"""
+
+
+async def _get_directory_size_cached(path: Path) -> int:
+    """Return the recursive size of *path*; reuse cached value within TTL.
+
+    The walk runs on a worker thread (:func:`asyncio.to_thread`) so the
+    engine's event loop stays free for other rules' evaluations. Cache
+    misses populate the cache; cache hits inside the TTL return the
+    stored value without touching disk.
+    """
+    now = datetime.now(UTC)
+    cached = _directory_size_cache.get(path)
+    if cached is not None and (now - cached[0]) < _DIRECTORY_SIZE_CACHE_TTL:
+        return cached[1]
+    size = await asyncio.to_thread(_directory_size_bytes, path)
+    _directory_size_cache[path] = (now, size)
+    return size
 
 
 def build_default_rules(

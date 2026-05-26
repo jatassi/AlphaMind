@@ -428,6 +428,20 @@ class TestThesisResolvedCondition:
         assert result.fired is True
 
 
+@pytest.fixture(autouse=True)
+def _reset_directory_size_cache() -> None:
+    """Drop the module-level size cache before each test runs.
+
+    The cache key is a resolved Path; tests use ``tmp_path`` which is
+    unique per test so there's no cache hit hazard, but the dict still
+    accumulates entries. Clearing it on every test keeps the test-suite
+    memory footprint flat regardless of test count.
+    """
+    from alphamind.command_center.alerts import conditions
+
+    conditions._directory_size_cache.clear()
+
+
 class TestDataDirectoryDiskPressureCondition:
     @pytest.mark.asyncio
     async def test_fires_when_size_exceeds_threshold(
@@ -449,6 +463,47 @@ class TestDataDirectoryDiskPressureCondition:
         result = await cond.evaluate(event=None, state=state)
         assert result.fired is True
         assert result.context["size_bytes"] >= 1024
+
+    @pytest.mark.asyncio
+    async def test_cache_reuses_size_within_ttl(self, tmp_path: object) -> None:
+        """Regression for finding #14 (Wave-5 review).
+
+        ``_directory_size_bytes`` previously ran sync inside the async
+        ``evaluate`` and blocked the event loop on every tick. The fix
+        offloads it to a thread and caches the result for a 5-minute
+        TTL so the engine's recurring polls don't all rewalk. We assert
+        a second evaluation hits the cache by patching the walker to
+        raise — if the cache works, the second call still succeeds.
+        """
+        from pathlib import Path
+
+        from alphamind.command_center.alerts import conditions
+
+        data_dir = Path(str(tmp_path)) / "data"
+        data_dir.mkdir()
+        (data_dir / "x.bin").write_bytes(b"y" * 1024)
+        cond = DataDirectoryDiskPressureCondition(
+            data_dir=data_dir,
+            threshold_bytes=100,
+        )
+        state = AlertEvaluatorState(now=_NOW)
+        first = await cond.evaluate(event=None, state=state)
+        assert first.fired is True
+        # Replace the walker — if the cache works, second eval doesn't
+        # call it. If the cache fails, second eval raises.
+        original = conditions._directory_size_bytes
+
+        def boom(_path: Path) -> int:
+            msg = "walker invoked despite cache TTL not elapsed"
+            raise AssertionError(msg)
+
+        conditions._directory_size_bytes = boom  # type: ignore[assignment]
+        try:
+            second = await cond.evaluate(event=None, state=state)
+        finally:
+            conditions._directory_size_bytes = original  # type: ignore[assignment]
+        assert second.fired is True
+        assert second.context["size_bytes"] == first.context["size_bytes"]
 
     @pytest.mark.asyncio
     async def test_does_not_fire_when_under_threshold(self, tmp_path: object) -> None:
