@@ -76,8 +76,14 @@ class TestBindRulesFromConfig:
         assert len(rules) == 17
 
     def test_extra_keys_in_yaml_row_rejected(self) -> None:
-        config = AlertsConfig(
-            rules=[
+        # Story 06b typed ``AlertsConfig.rules`` as ``list[AlertRuleSpec]``
+        # (was ``list[dict[str, object]]``), so the rejection moves from
+        # :func:`bind_rules_from_config` (which used to re-validate via
+        # :class:`AlertRuleYaml`) to :class:`AlertsConfig` construction
+        # itself — the loader's ``extra='forbid'`` posture rejects the
+        # row before bind ever sees it.
+        payload = {
+            "rules": [
                 {
                     "name": "pipeline_aborted",
                     "severity": "critical",
@@ -86,12 +92,12 @@ class TestBindRulesFromConfig:
                     "unknown_key": "value",
                 },
             ],
-            channels=AlertsChannels(
-                discord=DiscordChannelConfig(webhook_url_env="ALPHAMIND_DISCORD_WEBHOOK")
-            ),
-        )
+            "channels": {
+                "discord": {"webhook_url_env": "ALPHAMIND_DISCORD_WEBHOOK"},
+            },
+        }
         with pytest.raises(Exception, match="unknown_key"):
-            bind_rules_from_config(config)
+            AlertsConfig.model_validate(payload)
 
 
 # ---------------------------------------------------------------------------

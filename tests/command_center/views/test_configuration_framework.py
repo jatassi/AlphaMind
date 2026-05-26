@@ -134,6 +134,23 @@ class TestReloadPolicyEnum:
         # Alert rule edits reload at next invocation per the design.
         assert reload_policy_of(AlertsConfig, "rules") is ReloadPolicy.INVOCATION_TIME
 
+    def test_webauthn_relying_party_id_is_deploy_time(self) -> None:
+        """Story 06b: WebAuthn relying-party ID requires restart.
+
+        The WebAuthn verifier resolves the relying-party hostname at
+        lifespan startup; a mid-flight edit does not re-bind already-
+        issued passkeys' relying-party scope.
+        """
+        from alphamind.command_center.config import WebauthnConfig
+
+        assert reload_policy_of(WebauthnConfig, "relying_party_id") is ReloadPolicy.DEPLOY_TIME
+
+    def test_webauthn_relying_party_name_is_invocation_time(self) -> None:
+        """The user-facing RP name only affects the browser passkey UI."""
+        from alphamind.command_center.config import WebauthnConfig
+
+        assert reload_policy_of(WebauthnConfig, "relying_party_name") is ReloadPolicy.INVOCATION_TIME
+
 
 class TestSchemaEndpoint:
     """``GET /api/views/config/schema/{config_file}``.
@@ -218,6 +235,54 @@ class TestSchemaEndpoint:
         body = response.json()
         paths = {field["path"] for field in body["fields"]}
         assert "channels.discord.webhook_url_env" in paths
+
+    def test_alerts_rules_carry_typed_object_array_columns(self) -> None:
+        """Story 06b: ``rules`` now typed ``list[AlertRuleSpec]``.
+
+        The framework's ``_element_columns`` walker emits one column per
+        sub-field of the row's Pydantic model — so the frontend's
+        :class:`ObjectArrayTableEditor` can render typed cells (name /
+        severity / debounce_minutes / channels) rather than inferring
+        columns from row data.
+        """
+        client = self._client()
+        response = client.get("/api/views/config/schema/alerts")
+        body = response.json()
+        rules_field = next(field for field in body["fields"] if field["path"] == "rules")
+        assert rules_field["control_type"] == "object-array"
+        columns = rules_field["columns"]
+        assert columns is not None
+        column_paths = {col["path"] for col in columns}
+        assert {"name", "severity", "debounce_minutes", "channels"} <= column_paths
+
+    def test_webauthn_relying_party_id_is_deploy_time(self) -> None:
+        """Story 06b: WebAuthn relying-party ID requires restart.
+
+        The verifier is constructed at lifespan startup against the
+        configured hostname; an in-flight edit only takes effect after
+        process restart. Surface as DEPLOY_TIME so the editor renders
+        the restart-required badge.
+        """
+        client = self._client()
+        response = client.get("/api/views/config/schema/security")
+        body = response.json()
+        rp_id_field = next(
+            field for field in body["fields"] if field["path"] == "webauthn.relying_party_id"
+        )
+        assert rp_id_field["reload_policy"] == "deploy_time"
+
+    def test_digest_schema_returned(self) -> None:
+        """Story 06b registers ``digest.yaml`` as an editor target."""
+        client = self._client()
+        response = client.get("/api/views/config/schema/digest")
+        assert response.status_code == 200
+        body = response.json()
+        paths = {field["path"] for field in body["fields"]}
+        # One field per per-detector block — pin a representative cross-
+        # section so the registration covers the shipped digest.yaml shape.
+        assert "anti_pattern_spike.baseline_window_weeks" in paths
+        assert "regime_change.enabled" in paths
+        assert "validation_window_end.days_before_due" in paths
 
     def test_db_path_carries_path_control_type(self) -> None:
         """Regression for finding #13 (Wave-5 review).

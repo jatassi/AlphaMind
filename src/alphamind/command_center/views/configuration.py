@@ -88,6 +88,7 @@ from alphamind.command_center.config import (
     ReloadPolicy,
     SecurityConfig,
 )
+from alphamind.config.models.digest import DigestConfig
 from alphamind.config.models.profiles import ProfileConfig
 from alphamind.config.models.regimes import RegimeConfig
 from alphamind.state.tables.invocations import InvocationRow
@@ -193,6 +194,15 @@ _REGISTRY: dict[str, ConfigFile] = {
         slug="alerts",
         model=AlertsConfig,
         filename="alerts.yaml",
+    ),
+    # Story 06b — notable-shift thresholds for the weekly digest. All
+    # fields are INVOCATION_TIME by default (no explicit annotation
+    # needed — the next weekly digest pick up edits at composition
+    # time).
+    "digest": ConfigFile(
+        slug="digest",
+        model=DigestConfig,
+        filename="digest.yaml",
     ),
     # Story 06a: profiles — one slug per YAML file in config/profiles/.
     "profiles/large": ConfigFile(

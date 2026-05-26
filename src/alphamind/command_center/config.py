@@ -74,6 +74,7 @@ class ControlHint(Enum):
 
 
 __all__ = [
+    "AlertRuleSpec",
     "AlertsChannels",
     "AlertsConfig",
     "BindConfig",
@@ -252,11 +253,16 @@ class WebauthnConfig(BaseModel):
     against (``localhost`` for v1 loopback; ``commandcenter.atassi.org``
     after the remote-access follow-on lands). The relying-party name
     is the user-facing string the browser's passkey UI displays.
+
+    ``relying_party_id`` is DEPLOY_TIME — the WebAuthn verifier is
+    constructed at lifespan startup against this hostname; an in-flight
+    edit only takes effect after a process restart (already-issued
+    passkeys remain bound to the previous hostname).
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    relying_party_id: str = Field(min_length=1)
+    relying_party_id: Annotated[str, ReloadPolicy.DEPLOY_TIME] = Field(min_length=1)
     relying_party_name: str = Field(min_length=1)
 
 
@@ -308,18 +314,49 @@ class AlertsChannels(BaseModel):
     discord: DiscordChannelConfig
 
 
-class AlertsConfig(BaseModel):
-    """Top-level ``alerts.yaml`` model.
+class AlertRuleSpec(BaseModel):
+    """Per-rule YAML row — the typed schema the config editor surfaces.
 
-    The ``rules`` list is empty at story 02; story 05a populates it with
-    the 17 default rules per parent issue's pre-resolved F. The rule
-    item schema is owned by story 05a — story 02 ships the list
-    container so the loader has a target to validate against.
+    Mirrors :class:`alphamind.command_center.alerts.config.AlertRuleYaml`
+    (story 05a's per-rule validation surface). Hoisting the model here
+    lets :class:`AlertsConfig.rules` carry a typed ``list[AlertRuleSpec]``
+    rather than ``list[dict[str, object]]``, which in turn lets the
+    config-editor framework's ``_element_columns`` walker derive typed
+    columns for the rules table (one column per field below).
+
+    The four fields match the YAML row shape:
+
+    * ``name`` — names one of the 17 default rule names (validated as
+      a member of the registry at engine construction in
+      :func:`alphamind.command_center.alerts.config.bind_rules_from_config`).
+    * ``severity`` — Critical / Important / Operational tier.
+    * ``debounce_minutes`` — positive integer; rendered into a
+      :class:`datetime.timedelta` by the engine.
+    * ``channels`` — list of channel names; ``in_app`` and ``discord``
+      are accepted in v1.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    rules: list[dict[str, object]] = Field(default_factory=list)
+    name: str = Field(min_length=1)
+    severity: str = Field(min_length=1)
+    debounce_minutes: int = Field(ge=1)
+    channels: list[str] = Field(min_length=1)
+
+
+class AlertsConfig(BaseModel):
+    """Top-level ``alerts.yaml`` model.
+
+    The ``rules`` list carries the operator-edited overlay over the 17
+    default rules (story 05a populates the shipped values). Typed as
+    ``list[AlertRuleSpec]`` so the config editor's
+    :class:`ObjectArrayTableEditor` receives typed column metadata
+    from the schema endpoint.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    rules: list[AlertRuleSpec] = Field(default_factory=list)
     channels: AlertsChannels
 
 

@@ -89,7 +89,13 @@ def bind_rules_from_config(
     4. Reject unknown rule names — every YAML entry MUST map onto one
        of the 17 default rule names.
     """
-    validated = tuple(AlertRuleYaml.model_validate(row) for row in config.rules)
+    # ``AlertsConfig.rules`` is now typed ``list[AlertRuleSpec]`` (story
+    # 06b), so the rows already passed name / debounce / channels parse
+    # validation at YAML load. Re-validate through :class:`AlertRuleYaml`
+    # to apply the additional :class:`AlertSeverity` enum coercion the
+    # engine needs; the round-trip is cheap and keeps the two surfaces'
+    # invariants colocated.
+    validated = tuple(AlertRuleYaml.model_validate(row.model_dump()) for row in config.rules)
     debounce_overrides: dict[AlertRuleName, timedelta] = {}
     severity_overrides: dict[AlertRuleName, AlertSeverity] = {}
     channel_overrides: dict[AlertRuleName, tuple[str, ...]] = {}

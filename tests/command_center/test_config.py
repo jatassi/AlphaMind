@@ -132,8 +132,10 @@ class TestAlertsConfig:
     def test_rules_populated_with_default_set(self, config_dir: Path) -> None:
         config = load_alerts_config(config_dir)
         # Story 05a populated the rule list with the 17 default rules.
+        # Story 06b typed the rows as :class:`AlertRuleSpec`; access via
+        # attribute rather than the previous ``.get('name')`` dict path.
         assert len(config.rules) == 17
-        names = [row.get("name") for row in config.rules]
+        names = [row.name for row in config.rules]
         assert "pipeline_aborted" in names
         assert "monitor_websocket_disconnected" in names
         assert "thesis_resolved" in names
