@@ -302,27 +302,22 @@ class TestPositionDetailEndpoint:
         assert entry["event_type"] == "POSITION_OPENED"
         assert entry["source"] == "FILL_PROCESSOR"
 
-    def test_no_thesis_returns_null(self, db_path: str) -> None:
+    async def test_no_thesis_returns_null(self, db_path: str) -> None:
         """A position without a thesis returns thesis: null."""
-        import asyncio
-
-        async def _seed_no_thesis() -> None:
-            engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
-            await _create_tables(engine)
-            async with engine.begin() as conn:
-                await conn.execute(
-                    text(
-                        "INSERT INTO positions"
-                        "    (position_id, status, instrument_type, direction, details_json,"
-                        "     execution_history_json, corporate_action_adjustment_needed)"
-                        " VALUES"
-                        "    ('pos-no-thesis', 'OPEN', 'EQUITY', 'LONG',"
-                        "     '{\"ticker\": \"NVDA\"}', '[]', 0)"
-                    )
+        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        await _create_tables(engine)
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO positions"
+                    "    (position_id, status, instrument_type, direction, details_json,"
+                    "     execution_history_json, corporate_action_adjustment_needed)"
+                    " VALUES"
+                    "    ('pos-no-thesis', 'OPEN', 'EQUITY', 'LONG',"
+                    "     '{\"ticker\": \"NVDA\"}', '[]', 0)"
                 )
-            await engine.dispose()
-
-        asyncio.get_event_loop().run_until_complete(_seed_no_thesis())
+            )
+        await engine.dispose()
 
         reader = build_foreign_reader_session_factory(db_path)
         app = _app_with_reader(reader)
