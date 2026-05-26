@@ -29,7 +29,12 @@ class ProcessSession(BaseModel):
     start timestamp for log-line provenance.
     """
 
-    model_config = ConfigDict(frozen=True, strict=True)
+    # ``extra='forbid'`` matches the other Pydantic models in the
+    # package (config.py, etc.) so a typo'd field in a caller's
+    # construction (``ProcessSession(process_lifetimes_id=..., ...)``
+    # — note the trailing s) fails loud instead of being silently
+    # dropped (F14).
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     process_lifetime_id: str
     started_at: datetime

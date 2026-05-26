@@ -31,6 +31,17 @@ class TestProcessSession:
         with pytest.raises(ValidationError):
             session.process_lifetime_id = "plt-y"
 
+    def test_rejects_unknown_fields(self) -> None:
+        # F14: extra='forbid' catches a caller's typo
+        # (``process_lifetimes_id`` rather than ``process_lifetime_id``)
+        # at construction rather than silently dropping it.
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            ProcessSession(
+                process_lifetime_id="plt-x",
+                started_at=datetime.now(UTC),
+                unexpected_field="oops",  # type: ignore[call-arg]
+            )
+
 
 class TestNewSession:
     def test_stamps_current_utc_time(self) -> None:
