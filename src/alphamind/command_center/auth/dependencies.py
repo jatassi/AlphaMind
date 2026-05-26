@@ -37,7 +37,7 @@ import hmac
 import logging
 from typing import Annotated
 
-from fastapi import Cookie, Header, HTTPException, Request, status
+from fastapi import Header, HTTPException, Request, status
 
 from alphamind.command_center._kernel.ids import OperatorSessionId
 from alphamind.command_center.auth.repository import load_session
@@ -124,14 +124,20 @@ async def current_session(
 
 async def csrf_required(
     request: Request,
-    cc_csrf: Annotated[str | None, Cookie()] = None,
     x_csrf_token: Annotated[str | None, Header()] = None,
 ) -> None:
     """Verify the double-submit CSRF token.
 
+    Reads the CSRF cookie by its configured name from ``request.cookies``
+    (F5) — previously the cookie name was hardcoded as ``cc_csrf`` via
+    the ``Cookie()`` injector, which diverged from the configured name
+    in :class:`CsrfConfig.cookie_name`. Issuance + verification now
+    share the single config-driven lookup, mirroring the
+    :func:`current_session` pattern (F11).
+
     Raises :exc:`HTTPException(403)` if:
 
-    * ``cc_csrf`` cookie is absent.
+    * Configured CSRF cookie is absent.
     * ``X-CSRF-Token`` header is absent.
     * The two values don't match (constant-time compare).
     * The cookie value doesn't match the hash on the session row (so a
@@ -141,6 +147,8 @@ async def csrf_required(
     endpoints don't. Logged-out users hit 401 from
     :func:`current_session` first; this is the second line of defense.
     """
+    csrf_cookie_name = request.app.state.security_config.csrf.cookie_name
+    cc_csrf = request.cookies.get(csrf_cookie_name)
     if cc_csrf is None or x_csrf_token is None:
         log.debug("csrf_required: cookie or header missing")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL)
@@ -178,7 +186,7 @@ async def csrf_required(
 
 
 async def csrf_required_pre_session(
-    cc_csrf: Annotated[str | None, Cookie()] = None,
+    request: Request,
     x_csrf_token: Annotated[str | None, Header()] = None,
 ) -> None:
     """Verify double-submit CSRF without a session-row binding.
@@ -187,13 +195,18 @@ async def csrf_required_pre_session(
     (``/auth/register/complete``, ``/auth/login/complete``) where the
     session doesn't exist yet at the time of the call. The corresponding
     begin endpoints (``/auth/register/begin``, ``/auth/login/begin``)
-    set the ``cc_csrf`` cookie so the browser's JS layer can echo it via
-    the ``X-CSRF-Token`` header on the matching complete request.
+    set the configured CSRF cookie so the browser's JS layer can echo it
+    via the ``X-CSRF-Token`` header on the matching complete request.
+
+    Reads the CSRF cookie by its configured name from ``request.cookies``
+    (F5) so issuance + verification share the same config-driven lookup.
 
     Same double-submit comparison as :func:`csrf_required` — constant-
     time via :func:`hmac.compare_digest`. Raises ``HTTPException(403)``
     on any rejection path with the generic CSRF detail.
     """
+    csrf_cookie_name = request.app.state.security_config.csrf.cookie_name
+    cc_csrf = request.cookies.get(csrf_cookie_name)
     if cc_csrf is None or x_csrf_token is None:
         log.debug("csrf_required_pre_session: cookie or header missing")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL)
