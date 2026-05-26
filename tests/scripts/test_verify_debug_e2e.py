@@ -660,10 +660,13 @@ def test_check_jsonl_ordering_fails_when_agent_response_missing_required_field(
 def test_check_jsonl_ordering_fails_when_required_field_is_null(
     verify_module: ModuleType, tmp_path: Path
 ) -> None:
-    """The non-stop_reason 4 fields must be non-null.
+    """The non-stop_reason 6 fields must be non-null.
 
     ``stop_reason`` is allowed to be null (it's optional per the
-    Anthropic SDK); the other four are load-bearing for the report.
+    Anthropic SDK); the other six (``duration_s``, ``input_tokens``,
+    ``cache_read_tokens``, ``cache_write_tokens``, ``output_tokens``,
+    ``tool_calls``) are load-bearing for the report. Cache split per
+    ALP-701.
     """
     stream = _canonical_event_stream()
     mutated: list[dict[str, Any]] = []

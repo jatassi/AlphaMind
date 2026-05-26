@@ -522,20 +522,25 @@ A clean debug-e2e run wires one Sonnet pass through the analysis layer
 calls; distillation is deterministic and emits no SDK call) and one
 Opus pass through the four decision agents (analyst + strategist + PM
 = 3 Opus calls; the proposal pre-processor is deterministic and emits
-no SDK call). Approximate cost (the "Input tokens" column is the *total*
-input volume — `input_tokens + cache_read_tokens + cache_write_tokens`):
+no SDK call). Approximate cost — the *Total input* column below is the
+sum `input_tokens + cache_read_tokens + cache_write_tokens` across all
+SDK calls in the layer, NOT the value of any single `agent_response`
+field. The HTML report's "Input tokens" column is the bare
+`input_tokens` (non-cached delta) only — see disambiguation below.
 
-| Layer    | Model  | Input tokens | Output tokens |
-|----------|--------|--------------|---------------|
-| analysis | Sonnet | ~54K–70K     | ~7.6K–13.6K   |
-| decision | Opus   | ~68K–102K    | ~57K–100K     |
+| Layer    | Model  | Total input | Output tokens |
+|----------|--------|-------------|---------------|
+| analysis | Sonnet | ~54K–70K    | ~7.6K–13.6K   |
+| decision | Opus   | ~68K–102K   | ~57K–100K     |
 
 Most AlphaMind prompts hit the cache, so in a healthy run the bulk of
-the input volume lands in `cache_read_tokens` and the bare
+the per-call input volume lands in `cache_read_tokens` and the bare
 `input_tokens` field shows the non-cached delta only (single-to-low-
-double-digit). If `input_tokens` looks "tiny" in `progress.jsonl`, that
-is the SDK's cache-hit signature — check `cache_read_tokens` for the
-real prompt volume (ALP-701).
+double-digit). The HTML report renders these as three separate columns
+("Input tokens" / "Cache read" / "Cache write") so the operator sees
+the split directly. If `input_tokens` looks "tiny" in `progress.jsonl`,
+that is the SDK's cache-hit signature — check `cache_read_tokens` for
+the real prompt volume (ALP-701).
 
 Roughly 10–15% of the nominal weekly Sonnet cap and a smaller slice of
 the Opus cap per `docs/design/cost-and-rate-limit-modeling.md`. Don't

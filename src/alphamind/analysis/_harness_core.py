@@ -561,7 +561,14 @@ def _describe_sdk_message(message: Any) -> dict[str, Any]:
         usage = getattr(message, "usage", None)
         if isinstance(usage, dict):
             detail["usage"] = {
-                key: usage[key] for key in ("input_tokens", "output_tokens") if key in usage
+                key: usage[key]
+                for key in (
+                    "input_tokens",
+                    "cache_read_input_tokens",
+                    "cache_creation_input_tokens",
+                    "output_tokens",
+                )
+                if key in usage
             }
     except (TypeError, AttributeError, ValueError) as exc:
         detail["describe_error"] = repr(exc)
@@ -855,14 +862,19 @@ async def invoke_sdk(  # noqa: C901,PLR0913 - all kw-only; each name documents o
       before opening the SDK call.
     * Emits ``progress.agent_response(phase, agent, model, duration_s,
       input_tokens, cache_read_tokens, cache_write_tokens, output_tokens,
-      tool_calls, stop_reason)`` after the call settles — on the happy
-      path with the outcome's fields, and on every terminal failure path
-      with whatever cost the SDK accumulated before raising (zero tokens
-      / no stop_reason for stalls and auth failures; partial tokens /
-      stop_reason for ``_CLIResultError``). The three input-side counts
-      mirror the SDK ``usage`` split so the operator can tell apart a
-      cache-hit prompt (bulk in ``cache_read_tokens``) from a broken
-      context-assembly path (ALP-701).
+      tool_calls, stop_reason)`` after the call settles. Happy path
+      forwards the outcome's accumulated token counts; every terminal
+      failure path emits zero tokens because ``_collect_response``'s
+      local accumulator is not threaded through the exception types
+      that the failure arms catch (``_CLIResultError`` /
+      ``_StuckSDKCall`` / ``CLIConnectionError`` / ``ClaudeSDKError``
+      carry only error/stop-reason context, not partial usage).
+      ``stop_reason`` is forwarded on ``_CLIResultError`` (the SDK
+      surfaces it on the error result) and ``None`` elsewhere. The
+      three input-side counts mirror the SDK ``usage`` split so the
+      operator can tell apart a cache-hit prompt (bulk in
+      ``cache_read_tokens``) from a broken context-assembly path
+      (ALP-701).
 
     ``progress`` defaults to :class:`NoOpProgressEmitter` so production
     callers keep their original signature; ``phase`` is required and

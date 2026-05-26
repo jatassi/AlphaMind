@@ -53,7 +53,7 @@ class ProgressEmitter(Protocol):
 
     def agent_request(self, *, phase: str, agent: str, model: str) -> None: ...
 
-    def agent_response(  # noqa: PLR0913 - kwargs-only Protocol contract; the 10-field set is fixed by parent issue ALP-493 § (B) + the SDK ``usage`` split (ALP-701)
+    def agent_response(  # noqa: PLR0913 - kwargs-only Protocol contract: 3 routing kwargs (phase/agent/model) + the 7-field response set fixed by ALP-493 § (B) and the SDK ``usage`` split (ALP-701)
         self,
         *,
         phase: str,
