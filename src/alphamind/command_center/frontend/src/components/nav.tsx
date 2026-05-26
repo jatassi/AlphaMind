@@ -7,6 +7,23 @@ import { Link } from '@tanstack/react-router'
 // Intentionally restrained — the command center is an operator console, not
 // a marketing surface. Visual depth comes from the per-view layouts.
 
+const HISTORY_SEARCH = {
+  date_from: undefined,
+  date_to: undefined,
+  run_type: undefined,
+  status: undefined,
+  page: undefined,
+  page_size: undefined,
+}
+
+const FAILURES_SEARCH = {
+  date_from: undefined,
+  date_to: undefined,
+  run_type: undefined,
+  page: undefined,
+  page_size: undefined,
+}
+
 function NavLinks(): React.JSX.Element {
   return (
     <nav className="flex items-center gap-4 text-sm">
@@ -15,31 +32,10 @@ function NavLinks(): React.JSX.Element {
         Live
       </Link>
       {/* Story 05c (ALP-673) — run history. */}
-      <Link
-        to="/history"
-        search={{
-          date_from: undefined,
-          date_to: undefined,
-          run_type: undefined,
-          status: undefined,
-          page: undefined,
-          page_size: undefined,
-        }}
-        className="hover:underline"
-      >
+      <Link to="/history" search={HISTORY_SEARCH} className="hover:underline">
         Run history
       </Link>
-      <Link
-        to="/history/failures"
-        search={{
-          date_from: undefined,
-          date_to: undefined,
-          run_type: undefined,
-          page: undefined,
-          page_size: undefined,
-        }}
-        className="hover:underline"
-      >
+      <Link to="/history/failures" search={FAILURES_SEARCH} className="hover:underline">
         Failure log
       </Link>
       {/* Story 05e (ALP-675) — activity log. */}
@@ -52,6 +48,19 @@ function NavLinks(): React.JSX.Element {
         className="text-muted-foreground hover:text-foreground transition-colors"
       >
         Portfolio
+      </Link>
+      {/* Story 06c (ALP-684) — config diagnostic views. */}
+      <Link
+        to="/config/resolved"
+        className="text-muted-foreground hover:text-foreground transition-colors"
+      >
+        Config
+      </Link>
+      <Link
+        to="/config/history"
+        className="text-muted-foreground hover:text-foreground transition-colors"
+      >
+        Config history
       </Link>
     </nav>
   )

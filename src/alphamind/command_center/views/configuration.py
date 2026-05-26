@@ -1,6 +1,8 @@
-"""Config editor framework (story 05i / ALP-679) + profiles/regimes editors (06a / ALP-682).
+"""Config editor framework (05i / ALP-679) + profiles/regimes editors
+(06a / ALP-682) + resolved-config / git-history diagnostic views
+(06c / ALP-684).
 
-Three surfaces:
+Editor surfaces (05i + 06a):
 
 * ``GET /api/views/config/schema/{config_file}`` — form-schema metadata
   derived from the file's Pydantic model + per-field reload-policy
@@ -16,6 +18,20 @@ The framework is generic; per-file editor pages (06a profiles+regimes,
 06b alerts+security+other, 06c resolved viewer + diff) instantiate it
 against their respective Pydantic models.
 
+Read-only diagnostic views (06c):
+
+* ``GET /api/views/config/resolved`` — per-invocation resolved-config
+  bundle + source-file side-panel.  Reads the snapshot written by the
+  composition resolver at invocation start.
+* ``GET /api/views/config/resolved/diff`` — structured diff between two
+  invocations' resolved configs.
+* ``GET /api/views/config/git/history`` — git log for a tracked config
+  file.
+* ``GET /api/views/config/git/diff`` — text diff between two SHAs for a
+  tracked config file.
+* ``GET /api/views/config/git/status`` — tracked / untracked + uncommitted
+  state for a config file.
+
 Per ``docs/design/command-center.md`` § Config editor:
 * Each leaf renders as a type-matched control (number, boolean, enum,
   string, string-array, object-array, cron, path).
@@ -30,10 +46,25 @@ Story 05i decorates :class:`CommandCenterConfig` / :class:`SecurityConfig`
 (``regimes/normal``, ``regimes/crisis``, etc.) using
 :class:`alphamind.config.models.profiles.ProfileConfig` and
 :class:`alphamind.config.models.regimes.RegimeConfig`.
+
+Security notes for git endpoints (06c):
+
+* All ``file=`` query params are validated against an allowlist: the
+  value must resolve to a path inside ``config_dir`` (same sandbox as
+  ``/path-exists``).  Path traversal (``../``, absolute paths outside
+  config/) returns 400.
+* Git invocations use ``asyncio.create_subprocess_exec`` (no
+  ``shell=True``); ``cwd`` is the resolved repo root (``config_dir``
+  parent on the POSIX/Windows layout used in production).  No write
+  operations are issued — every git command is read-only.
 """
 
 from __future__ import annotations
 
+import asyncio
+import difflib
+import json
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -41,9 +72,12 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, get_args, get_origin, get_type_hints
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, ValidationError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.archive_layout import RESOLVED_CONFIG_FILENAME, find_invocation_archive_dir
 from alphamind._kernel.atomic_io import atomic_write_text
 from alphamind.command_center._kernel.ids import OperatorSessionId
 from alphamind.command_center.auth.dependencies import csrf_required, current_session
@@ -56,6 +90,7 @@ from alphamind.command_center.config import (
 )
 from alphamind.config.models.profiles import ProfileConfig
 from alphamind.config.models.regimes import RegimeConfig
+from alphamind.state.tables.invocations import InvocationRow
 
 __all__ = [
     "ConfigFile",
@@ -64,7 +99,13 @@ __all__ = [
     "ConfigUpdateResponse",
     "FormFieldSchema",
     "FormSchema",
+    "GitCommitEntry",
+    "GitDiffResponse",
+    "GitHistoryResponse",
+    "GitStatusResponse",
     "ReloadPolicy",
+    "ResolvedConfigBundle",
+    "ResolvedConfigDiff",
     "ValidationLayerError",
     "ValidationReport",
     "build_configuration_router",
@@ -777,6 +818,276 @@ def _deploy_time_field_changed(
 
 
 # ----------------------------------------------------------------------------
+# 06c — Resolved-config and git-history models
+# ----------------------------------------------------------------------------
+
+
+class ResolvedConfigBundle(BaseModel):
+    """Per-invocation resolved-config response (``GET /resolved``).
+
+    * ``invocation_id``: the invocation whose snapshot was read.
+    * ``bundle``: the full JSON payload from ``resolved_config.json``.
+    * ``source_files``: per-source-file content side-panel (profile,
+      regime, active overlays, mode files from ``config/``).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    invocation_id: str
+    bundle: dict[str, Any]
+    source_files: dict[str, str]
+
+
+class ResolvedConfigDiff(BaseModel):
+    """Structured diff between two invocations' resolved configs
+    (``GET /resolved/diff``).
+
+    * ``from_invocation_id`` / ``to_invocation_id``: the two snapshots
+      compared.
+    * ``diff_lines``: unified-diff text lines (``+``/``-``/`` ``
+      prefixed).  Empty when the two snapshots are byte-identical.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    from_invocation_id: str
+    to_invocation_id: str
+    diff_lines: list[str]
+
+
+class GitCommitEntry(BaseModel):
+    """One ``git log`` entry for a config file."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    sha: str
+    short_sha: str
+    author: str
+    date: str
+    subject: str
+
+
+class GitHistoryResponse(BaseModel):
+    """Response for ``GET /git/history?file=``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    file: str
+    commits: list[GitCommitEntry]
+
+
+class GitDiffResponse(BaseModel):
+    """Response for ``GET /git/diff?file=&from_sha=&to_sha=``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    file: str
+    from_sha: str
+    to_sha: str
+    diff_text: str
+
+
+class GitStatusResponse(BaseModel):
+    """Response for ``GET /git/status?file=``.
+
+    * ``tracked``: ``True`` when the file appears in git's index (i.e.
+      has been ``git add``-ed at least once).
+    * ``has_uncommitted_changes``: ``True`` when ``git status --porcelain``
+      shows the file as modified/added/deleted compared to HEAD.
+    * ``untracked``: ``True`` when the file exists on disk but has never
+      been added to git.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    file: str
+    tracked: bool
+    has_uncommitted_changes: bool
+    untracked: bool
+
+
+# ----------------------------------------------------------------------------
+# 06c — Git subprocess helpers
+# ----------------------------------------------------------------------------
+
+_GIT_TIMEOUT: int = 10
+"""Seconds to wait for a git subprocess before raising ``HTTPException(503)``."""
+
+
+def _repo_root_from_config_dir(config_dir: Path) -> Path:
+    """Return the git repo root from the config directory.
+
+    In production the config dir is ``<repo_root>/config``, so the repo
+    root is one level up.  We verify the parent contains a ``.git`` entry
+    before returning; if not we fall back to using ``config_dir`` itself
+    so tests that point ``config_dir`` at the repo root still work.
+    """
+    parent = config_dir.resolve().parent
+    if (parent / ".git").exists():
+        return parent
+    # Fallback: config_dir is already a git root (e.g. in tests).
+    return config_dir.resolve()
+
+
+def _validate_config_file_param(file_param: str, config_dir: Path) -> Path:
+    """Validate that *file_param* names a file inside *config_dir*.
+
+    Returns the resolved :class:`Path`; raises :class:`HTTPException`
+    (400) on path-traversal attempts or if the value is absolute.
+    """
+    if Path(file_param).is_absolute():
+        raise HTTPException(status_code=400, detail="file parameter must be a relative path")
+    resolved_config_dir = config_dir.resolve()
+    candidate = (resolved_config_dir / file_param).resolve()
+    if not candidate.is_relative_to(resolved_config_dir):
+        raise HTTPException(
+            status_code=400,
+            detail="file parameter must resolve to a path inside config/",
+        )
+    return candidate
+
+
+async def _run_git(
+    *args: str,
+    cwd: Path,
+) -> tuple[int, str, str]:
+    """Run a read-only git command via ``asyncio.create_subprocess_exec``.
+
+    Returns ``(returncode, stdout, stderr)``.  Raises
+    :class:`HTTPException(503)` on timeout.
+
+    Explicitly not ``shell=True`` — security requirement.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=str(cwd),  # already resolved by callers
+    )
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(), timeout=_GIT_TIMEOUT
+        )
+    except TimeoutError as exc:
+        proc.kill()
+        raise HTTPException(status_code=503, detail="git operation timed out") from exc
+    return (
+        proc.returncode or 0,
+        stdout_bytes.decode("utf-8", errors="replace"),
+        stderr_bytes.decode("utf-8", errors="replace"),
+    )
+
+
+# ----------------------------------------------------------------------------
+# 06c — Resolved-config helpers
+# ----------------------------------------------------------------------------
+
+
+def _archive_base_dir() -> Path:
+    """Return ``%USERPROFILE%/AlphaMind/archive`` (cross-platform)."""
+    profile = os.environ.get("USERPROFILE") or os.environ.get("HOME") or ""
+    return Path(profile) / "AlphaMind" / "archive"
+
+
+def _load_resolved_config_for_invocation(invocation_id: str) -> dict[str, Any] | None:
+    """Load ``resolved_config.json`` for *invocation_id*; return ``None`` if absent."""
+    archive_dir = find_invocation_archive_dir(
+        archive_root=_archive_base_dir(), invocation_id=invocation_id
+    )
+    if archive_dir is None:
+        return None
+    snapshot_path = archive_dir / RESOLVED_CONFIG_FILENAME
+    if not snapshot_path.is_file():
+        return None
+    try:
+        return json.loads(snapshot_path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _source_files_for_bundle(bundle: dict[str, Any], config_dir: Path) -> dict[str, str]:
+    """Read the source YAML files referenced by the resolved-config bundle.
+
+    Reads profile base, active regime, active overlays, and active mode
+    files from ``config_dir``.  Missing or unreadable files produce an
+    empty string placeholder.
+    """
+    sources: dict[str, str] = {}
+
+    def _read(rel: str) -> str:
+        p = config_dir / rel
+        try:
+            return p.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
+    # Profile base.
+    profile = bundle.get("profile")
+    if isinstance(profile, str) and profile:
+        sources[f"profiles/{profile}.yaml"] = _read(f"profiles/{profile}.yaml")
+
+    # Active regime.
+    regime = bundle.get("regime")
+    if isinstance(regime, str) and regime:
+        sources[f"regimes/{regime}.yaml"] = _read(f"regimes/{regime}.yaml")
+
+    # Active overlays.
+    overlays = bundle.get("active_overlays")
+    if isinstance(overlays, list):
+        for overlay in overlays:
+            if isinstance(overlay, str) and overlay:
+                sources[f"overlays/{overlay}.yaml"] = _read(f"overlays/{overlay}.yaml")
+
+    # Active mode.
+    mode = bundle.get("mode")
+    if isinstance(mode, str) and mode:
+        sources[f"modes/{mode}.yaml"] = _read(f"modes/{mode}.yaml")
+
+    return sources
+
+
+def _diff_bundles(
+    from_id: str,
+    to_id: str,
+    from_bundle: dict[str, Any],
+    to_bundle: dict[str, Any],
+) -> list[str]:
+    """Produce unified-diff lines between two resolved-config dicts."""
+    from_text = json.dumps(from_bundle, sort_keys=True, indent=2)
+    to_text = json.dumps(to_bundle, sort_keys=True, indent=2)
+    return list(
+        difflib.unified_diff(
+            from_text.splitlines(keepends=True),
+            to_text.splitlines(keepends=True),
+            fromfile=f"{from_id}/resolved_config.json",
+            tofile=f"{to_id}/resolved_config.json",
+        )
+    )
+
+
+# ----------------------------------------------------------------------------
+# 06c — DB session helper
+# ----------------------------------------------------------------------------
+
+
+def _reader_factory_config(request: Request) -> async_sessionmaker[AsyncSession]:
+    """Pull the foreign-reader session factory off ``app.state``."""
+    factory: async_sessionmaker[AsyncSession] = request.app.state.foreign_reader_session_factory
+    return factory
+
+
+async def _most_recent_invocation_id(
+    session: AsyncSession,
+) -> str | None:
+    """Return the invocation_id of the most recently started invocation."""
+    result = await session.execute(
+        select(InvocationRow.invocation_id).order_by(InvocationRow.start_at.desc()).limit(1)
+    )
+    return result.scalars().first()
+
+
+# ----------------------------------------------------------------------------
 # FastAPI router
 # ----------------------------------------------------------------------------
 
@@ -797,146 +1108,8 @@ def _resolve_config_dir(request: Request) -> Path:
     return Path(cfg_dir)
 
 
-def _handle_get_files(
-    family: str,
-    _session: Annotated[OperatorSessionId, Depends(current_session)],
-) -> ConfigFileListResponse:
-    """Return the ordered list of registered slugs for a config-file family.
-
-    family must be one of the keys in :data:`_FAMILY_SLUGS`
-    (profiles or regimes). 404 for unknown families.
-
-    Requires a valid session cookie — the slug list reveals the
-    on-disk file inventory, which is operator-only information.
-    """
-    del _session
-    slugs = _FAMILY_SLUGS.get(family)
-    if slugs is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Unknown config file family: {family!r}",
-        )
-    return ConfigFileListResponse(family=family, slugs=slugs)
-
-
-def _handle_get_path_exists(
-    path: str,
-    request: Request,
-    _session: Annotated[OperatorSessionId, Depends(current_session)],
-) -> dict[str, bool]:
-    """Backend probe for the :class:`PathInput` control (story 05i).
-
-    Returns ``{"exists": true|false}``. Used by the frontend
-    :class:`PathInput` component to render an inline file-existence
-    indicator so the operator catches typos before saving.
-
-    Two security layers (findings #1 and #2 from Wave-5 review):
-
-    * Authentication: the route requires a valid session cookie
-      (current_session dependency). Without it the endpoint was
-      a filesystem oracle that any unauthenticated curl could use
-      to probe arbitrary paths on the host.
-
-    * Path sandboxing: the requested path is resolved and checked
-      against the configured config_dir ancestor. Paths outside
-      (including ..-traversal escapes) return 400. The probe is
-      only useful for PathInput controls editing config-tree values
-      anyway; the sandbox closes the broader filesystem-oracle
-      surface without losing functionality.
-    """
-    del _session
-    config_dir = _resolve_config_dir(request).resolve()
-    candidate = Path(path)
-    # Path.resolve on a non-existent path returns a normalized
-    # absolute path on POSIX but on Windows can still surface the
-    # original — normalize via absolute().resolve(strict=False)
-    # so the is_relative_to check works uniformly.
-    resolved = candidate.absolute().resolve(strict=False)
-    if not resolved.is_relative_to(config_dir):
-        raise HTTPException(
-            status_code=400,
-            detail="path must be inside the configured config directory",
-        )
-    return {"exists": resolved.exists()}
-
-
-def _handle_get_schema(
-    config_file: str,
-    _session: Annotated[OperatorSessionId, Depends(current_session)],
-) -> FormSchema:
-    """Return the form-schema metadata for the named config file.
-
-    404 when the slug is not registered — the operator chose a config
-    file the framework does not yet support.
-
-    Requires a valid session cookie (finding #1, Wave-5 review) —
-    the schema reveals the config tree shape, which is not
-    operator-secret material but is still operator-only.
-    """
-    del _session
-    entry = _REGISTRY.get(config_file)
-    if entry is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Unknown config file: {config_file!r}",
-        )
-    return derive_form_schema(entry)
-
-
-def _handle_put_config(
-    config_file: str,
-    request: Request,
-    body: ConfigUpdateRequest,
-    _session: Annotated[OperatorSessionId, Depends(current_session)],
-    _csrf: Annotated[None, Depends(csrf_required)],
-) -> ConfigUpdateResponse:
-    """Atomically replace the named YAML file after layered validation.
-
-    Validation order: parse → cross-reference → semantic. The first
-    failing layer errors surface in the layered envelope
-    (detail carries the :class:`ValidationReport` shape); the
-    atomic write only fires after all three pass.
-
-    Atomic write semantics inherited from
-    :func:`alphamind._kernel.atomic_io.atomic_write_text`: writes
-    {path}.tmp, fsyncs, renames onto {path}, fsyncs parent
-    directory on non-Windows hosts.
-
-    Gated by both current_session (finding #1, Wave-5 review)
-    and csrf_required per the projects auth contract for
-    mutating verbs (see alerts/routes.py:225 and
-    control/routes.py:332 for the same pattern).
-    """
-    del _session, _csrf
-    entry = _REGISTRY.get(config_file)
-    if entry is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Unknown config file: {config_file!r}",
-        )
-    config_dir = _resolve_config_dir(request)
-    target_path = config_dir / entry.filename
-    _model, report = run_validation(entry, body.yaml)
-    if report.parse or report.cross_reference or report.semantic:
-        raise HTTPException(status_code=422, detail=report.model_dump())
-    existing_text: str | None = None
-    if target_path.exists():
-        existing_text = target_path.read_text(encoding="utf-8")
-    atomic_write_text(target_path, body.yaml)
-    deploy_changed = _deploy_time_field_changed(
-        entry,
-        existing_text=existing_text,
-        proposed_text=body.yaml,
-    )
-    return ConfigUpdateResponse(
-        slug=entry.slug,
-        filename=entry.filename,
-        deploy_time_fields_changed=deploy_changed,
-    )
-
-
-def build_configuration_router() -> APIRouter:
-    """Return a fresh APIRouter for the config editor framework.
+def build_configuration_router() -> APIRouter:  # noqa: C901, PLR0915
+    """Return a fresh ``APIRouter`` for the config editor framework.
 
     Mount under /api/views/config in :mod:`app`. The router carries:
 
@@ -944,14 +1117,386 @@ def build_configuration_router() -> APIRouter:
     * GET /schema/{config_file} — form-schema metadata.
     * PUT /{config_file} — atomic file write after three-layer
       validation passes.
+    * ``GET /resolved`` — per-invocation resolved-config bundle (06c).
+    * ``GET /resolved/diff`` — diff between two invocations (06c).
+    * ``GET /git/history`` — git log for a config file (06c).
+    * ``GET /git/diff`` — git diff between two SHAs (06c).
+    * ``GET /git/status`` — tracked/untracked + uncommitted state (06c).
+
+    The noqa suppression (C901 complexity + PLR0915 statements) is
+    warranted: this is the composition root for all config-view routes;
+    each inner ``@router.get/put`` closure is a distinct HTTP surface,
+    not a logical branch in a single algorithm.
     """
     router = APIRouter(tags=["views:configuration"])
-    router.get("/files", response_model=ConfigFileListResponse)(_handle_get_files)
-    router.get("/path-exists")(_handle_get_path_exists)
-    # ``{config_file:path}`` captures slashes so slug ``profiles/small`` is
-    # routed correctly. The ``/schema/`` and ``/`` (PUT) prefixes remain
-    # unambiguous because ``/files`` and ``/path-exists`` are registered
-    # first as concrete paths.
-    router.get("/schema/{config_file:path}", response_model=FormSchema)(_handle_get_schema)
-    router.put("/{config_file:path}", response_model=ConfigUpdateResponse)(_handle_put_config)
+
+    @router.get("/files", response_model=ConfigFileListResponse)
+    def get_config_files(
+        family: str,
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+    ) -> ConfigFileListResponse:
+        """Return the ordered list of registered slugs for a config-file family.
+
+        ``family`` must be one of the keys in :data:`_FAMILY_SLUGS`
+        (``profiles`` or ``regimes``). 404 for unknown families.
+
+        Requires a valid session cookie — the slug list reveals the
+        on-disk file inventory, which is operator-only information.
+        """
+        del _session
+        slugs = _FAMILY_SLUGS.get(family)
+        if slugs is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown config file family: {family!r}",
+            )
+        return ConfigFileListResponse(family=family, slugs=slugs)
+
+    @router.get("/path-exists")
+    def get_path_exists(
+        path: str,
+        request: Request,
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+    ) -> dict[str, bool]:
+        """Backend probe for the :class:`PathInput` control (story 05i).
+
+        Returns ``{"exists": true|false}``. Used by the frontend
+        :class:`PathInput` component to render an inline file-existence
+        indicator so the operator catches typos before saving.
+
+        Two security layers (findings #1 and #2 from Wave-5 review):
+
+        * Authentication: the route requires a valid session cookie
+          (``current_session`` dependency). Without it the endpoint was
+          a filesystem oracle that any unauthenticated curl could use
+          to probe arbitrary paths on the host.
+
+        * Path sandboxing: the requested path is resolved and checked
+          against the configured ``config_dir`` ancestor. Paths outside
+          (including ``..``-traversal escapes) return 400. The probe is
+          only useful for PathInput controls editing config-tree values
+          anyway; the sandbox closes the broader filesystem-oracle
+          surface without losing functionality.
+        """
+        del _session
+        config_dir = _resolve_config_dir(request).resolve()
+        candidate = Path(path)
+        # ``Path.resolve`` is on a non-existent path returns a normalized
+        # absolute path on POSIX but on Windows can still surface the
+        # original — normalize via ``absolute().resolve(strict=False)``
+        # so the ``is_relative_to`` check works uniformly.
+        resolved = candidate.absolute().resolve(strict=False)
+        if not resolved.is_relative_to(config_dir):
+            raise HTTPException(
+                status_code=400,
+                detail="path must be inside the configured config directory",
+            )
+        return {"exists": resolved.exists()}
+
+    # ``{config_file:path}`` captures slashes so slugs like ``profiles/small``
+    # (story 06a) are routed correctly. ``/files``, ``/path-exists``,
+    # ``/resolved``, ``/resolved/diff``, and ``/git/*`` are registered as
+    # concrete paths above, so the path-converter routes remain unambiguous.
+    @router.get("/schema/{config_file:path}", response_model=FormSchema)
+    def get_schema(
+        config_file: str,
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+    ) -> FormSchema:
+        """Return the form-schema metadata for the named config file.
+
+        404 when the slug is not registered — the operator chose a config
+        file the framework doesn't yet support.
+
+        Requires a valid session cookie (finding #1, Wave-5 review) —
+        the schema reveals the config tree's shape, which is not
+        operator-secret material but is still operator-only.
+        """
+        del _session
+        entry = _REGISTRY.get(config_file)
+        if entry is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown config file: {config_file!r}",
+            )
+        return derive_form_schema(entry)
+
+    @router.put("/{config_file:path}", response_model=ConfigUpdateResponse)
+    def put_config(
+        config_file: str,
+        request: Request,
+        body: ConfigUpdateRequest,
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+        _csrf: Annotated[None, Depends(csrf_required)],
+    ) -> ConfigUpdateResponse:
+        """Atomically replace the named YAML file after layered validation.
+
+        Validation order: parse → cross-reference → semantic. The first
+        failing layer's errors are surfaced in the layered envelope
+        (``detail`` carries the :class:`ValidationReport` shape); the
+        atomic write only fires after all three pass.
+
+        Atomic write semantics inherited from
+        :func:`alphamind._kernel.atomic_io.atomic_write_text`: writes
+        ``{path}.tmp``, fsyncs, renames onto ``{path}``, fsyncs parent
+        directory on non-Windows hosts.
+
+        Gated by both ``current_session`` (finding #1, Wave-5 review)
+        and ``csrf_required`` per the project's auth contract for
+        mutating verbs (see ``alerts/routes.py:225`` and
+        ``control/routes.py:332`` for the same pattern).
+        """
+        del _session, _csrf
+        entry = _REGISTRY.get(config_file)
+        if entry is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown config file: {config_file!r}",
+            )
+
+        config_dir = _resolve_config_dir(request)
+        target_path = config_dir / entry.filename
+
+        _model, report = run_validation(entry, body.yaml)
+        if report.parse or report.cross_reference or report.semantic:
+            raise HTTPException(status_code=422, detail=report.model_dump())
+
+        existing_text: str | None = None
+        if target_path.exists():
+            existing_text = target_path.read_text(encoding="utf-8")
+
+        atomic_write_text(target_path, body.yaml)
+
+        deploy_changed = _deploy_time_field_changed(
+            entry,
+            existing_text=existing_text,
+            proposed_text=body.yaml,
+        )
+
+        return ConfigUpdateResponse(
+            slug=entry.slug,
+            filename=entry.filename,
+            deploy_time_fields_changed=deploy_changed,
+        )
+
+    # -----------------------------------------------------------------------
+    # 06c: Resolved-config viewer
+    # -----------------------------------------------------------------------
+
+    @router.get("/resolved", response_model=ResolvedConfigBundle)
+    async def get_resolved_config(
+        request: Request,
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+        invocation_id: Annotated[str | None, Query()] = None,
+        reader: Annotated[
+            async_sessionmaker[AsyncSession],
+            Depends(_reader_factory_config),
+        ] = ...,  # type: ignore[assignment]
+    ) -> ResolvedConfigBundle:
+        """Return the resolved-config bundle for *invocation_id*.
+
+        When ``invocation_id`` is omitted, the most-recent invocation row
+        is used (latest ``start_at``).  Returns 404 when no invocation is
+        found or the snapshot file is absent.
+        """
+        del _session
+        config_dir = _resolve_config_dir(request)
+
+        resolved_id = invocation_id
+        if resolved_id is None:
+            async with reader() as db:
+                resolved_id = await _most_recent_invocation_id(db)
+            if resolved_id is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=("No invocation_id specified and no most-recent invocation found."),
+                )
+
+        bundle = _load_resolved_config_for_invocation(resolved_id)
+        if bundle is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(f"Resolved-config snapshot not found for invocation {resolved_id!r}."),
+            )
+
+        source_files = _source_files_for_bundle(bundle, config_dir)
+        return ResolvedConfigBundle(
+            invocation_id=resolved_id,
+            bundle=bundle,
+            source_files=source_files,
+        )
+
+    @router.get("/resolved/diff", response_model=ResolvedConfigDiff)
+    async def get_resolved_config_diff(
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+        from_invocation_id: Annotated[str, Query()],
+        to_invocation_id: Annotated[str, Query()],
+    ) -> ResolvedConfigDiff:
+        """Return a unified diff between two invocations' resolved configs.
+
+        Both ``from_invocation_id`` and ``to_invocation_id`` are required.
+        Returns 404 when either snapshot is absent.
+        """
+        del _session
+
+        from_bundle = _load_resolved_config_for_invocation(from_invocation_id)
+        if from_bundle is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Snapshot not found for from_invocation_id={from_invocation_id!r}",
+            )
+        to_bundle = _load_resolved_config_for_invocation(to_invocation_id)
+        if to_bundle is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Snapshot not found for to_invocation_id={to_invocation_id!r}",
+            )
+
+        diff_lines = _diff_bundles(from_invocation_id, to_invocation_id, from_bundle, to_bundle)
+        return ResolvedConfigDiff(
+            from_invocation_id=from_invocation_id,
+            to_invocation_id=to_invocation_id,
+            diff_lines=diff_lines,
+        )
+
+    # -----------------------------------------------------------------------
+    # 06c: Git history / diff / status
+    # -----------------------------------------------------------------------
+
+    @router.get("/git/history", response_model=GitHistoryResponse)
+    async def get_git_history(
+        request: Request,
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+        file: Annotated[str, Query(description="Config file relative to config/")],
+    ) -> GitHistoryResponse:
+        """Return the git commit history for a tracked config file.
+
+        ``file`` must be a path relative to ``config/`` (e.g.
+        ``guardrails.yaml`` or ``profiles/default.yaml``).  Path
+        traversal returns 400.
+
+        Returns an empty commits list when the file is untracked or git
+        returns a non-zero exit code.
+        """
+        del _session
+        config_dir = _resolve_config_dir(request)
+        _validate_config_file_param(file, config_dir)
+        repo_root = _repo_root_from_config_dir(config_dir)
+
+        # Relative path from repo root so git log output is clean.
+        rel_path = f"config/{file}"
+        rc, stdout, _stderr = await _run_git(
+            "log",
+            "--format=%H\x1f%h\x1f%an\x1f%ai\x1f%s",
+            "--",
+            rel_path,
+            cwd=repo_root,
+        )
+        commits: list[GitCommitEntry] = []
+        if rc == 0:
+            for line in stdout.splitlines():
+                parts = line.split("\x1f", 4)
+                if len(parts) == 5:
+                    commits.append(
+                        GitCommitEntry(
+                            sha=parts[0],
+                            short_sha=parts[1],
+                            author=parts[2],
+                            date=parts[3],
+                            subject=parts[4],
+                        )
+                    )
+        return GitHistoryResponse(file=file, commits=commits)
+
+    @router.get("/git/diff", response_model=GitDiffResponse)
+    async def get_git_diff(
+        request: Request,
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+        file: Annotated[str, Query(description="Config file relative to config/")],
+        from_sha: Annotated[str, Query(description="Base commit SHA")],
+        to_sha: Annotated[str, Query(description="Target commit SHA")],
+    ) -> GitDiffResponse:
+        """Return the unified text diff for a config file between two SHAs.
+
+        Uses ``git diff <from_sha>..<to_sha> -- config/<file>``.  Returns
+        an empty ``diff_text`` when git produces no output (identical
+        contents) or on a non-zero exit code (e.g. invalid SHAs — caller
+        should check the response).
+        """
+        del _session
+        config_dir = _resolve_config_dir(request)
+        _validate_config_file_param(file, config_dir)
+        repo_root = _repo_root_from_config_dir(config_dir)
+
+        rel_path = f"config/{file}"
+        rc, stdout, _stderr = await _run_git(
+            "diff",
+            f"{from_sha}..{to_sha}",
+            "--",
+            rel_path,
+            cwd=repo_root,
+        )
+        return GitDiffResponse(
+            file=file,
+            from_sha=from_sha,
+            to_sha=to_sha,
+            diff_text=stdout if rc == 0 else "",
+        )
+
+    @router.get("/git/status", response_model=GitStatusResponse)
+    async def get_git_status(
+        request: Request,
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+        file: Annotated[str, Query(description="Config file relative to config/")],
+    ) -> GitStatusResponse:
+        """Return the git tracking state for a config file.
+
+        * ``tracked``: the file appears in git's index.
+        * ``has_uncommitted_changes``: the file has local modifications
+          not yet committed.
+        * ``untracked``: the file exists on disk but has never been added
+          to git.
+
+        The three flags are derived from a single ``git status --porcelain``
+        invocation so the cost is O(1) subprocess call regardless of the
+        repo size (the ``-- <path>`` suffix scopes git's output).
+        """
+        del _session
+        config_dir = _resolve_config_dir(request)
+        validated_path = _validate_config_file_param(file, config_dir)
+        repo_root = _repo_root_from_config_dir(config_dir)
+
+        rel_path = f"config/{file}"
+
+        # ``git ls-files --error-unmatch`` exits 1 when the file is not
+        # tracked, 0 when it is.
+        rc_tracked, _out, _err = await _run_git(
+            "ls-files",
+            "--error-unmatch",
+            "--",
+            rel_path,
+            cwd=repo_root,
+        )
+        tracked = rc_tracked == 0
+
+        # ``git status --porcelain -- <path>`` produces one or two-char
+        # status codes followed by the path.  Non-empty output means
+        # either modifications or an untracked file.
+        _rc_status, status_out, _serr = await _run_git(
+            "status",
+            "--porcelain",
+            "--",
+            rel_path,
+            cwd=repo_root,
+        )
+        status_lines = [ln for ln in status_out.splitlines() if ln.strip()]
+        has_uncommitted = bool(status_lines) and tracked
+        untracked_flag = bool(status_lines) and not tracked and validated_path.exists()
+
+        return GitStatusResponse(
+            file=file,
+            tracked=tracked,
+            has_uncommitted_changes=has_uncommitted,
+            untracked=untracked_flag,
+        )
+
     return router
