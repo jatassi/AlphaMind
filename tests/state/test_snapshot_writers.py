@@ -14,6 +14,7 @@ and § Invocation records.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,9 @@ from alphamind.state.invocation_context.snapshots import (
     write_invocation_provenance_snapshots,
     write_pip_freeze_snapshot,
 )
+
+# Canonical test invocation timestamp; date partition is "2026-01-15".
+_AS_OF = datetime(2026, 1, 15, 9, 0, 0, tzinfo=UTC)
 
 
 class TestWritePipFreezeSnapshot:
@@ -68,6 +72,7 @@ class TestWriteInvocationProvenanceSnapshots:
         root = tmp_path / "provenance"
         config_path, calibration_path = write_invocation_provenance_snapshots(
             invocation_id="inv-A",
+            as_of=_AS_OF,
             resolved_config={"profile": "medium", "regime": "normal"},
             data_calibration_state={"vix_baseline": 18.5},
             root=str(root),
@@ -75,8 +80,8 @@ class TestWriteInvocationProvenanceSnapshots:
 
         config_p = Path(config_path)
         calibration_p = Path(calibration_path)
-        assert config_p == root / "invocations" / "inv-A" / "resolved_config.json"
-        assert calibration_p == root / "invocations" / "inv-A" / "data_calibration_state.json"
+        assert config_p == root / "2026-01-15" / "inv-A" / "resolved_config.json"
+        assert calibration_p == root / "2026-01-15" / "inv-A" / "data_calibration_state.json"
 
         assert json.loads(config_p.read_text()) == {"profile": "medium", "regime": "normal"}
         assert json.loads(calibration_p.read_text()) == {"vix_baseline": 18.5}
@@ -85,11 +90,12 @@ class TestWriteInvocationProvenanceSnapshots:
         root = tmp_path / "provenance"
         write_invocation_provenance_snapshots(
             invocation_id="inv-B",
+            as_of=_AS_OF,
             resolved_config={},
             data_calibration_state={},
             root=str(root),
         )
-        invocation_dir = root / "invocations" / "inv-B"
+        invocation_dir = root / "2026-01-15" / "inv-B"
         assert invocation_dir.is_dir()
         assert (invocation_dir / "resolved_config.json").exists()
         assert (invocation_dir / "data_calibration_state.json").exists()
@@ -98,12 +104,14 @@ class TestWriteInvocationProvenanceSnapshots:
         root = tmp_path / "provenance"
         write_invocation_provenance_snapshots(
             invocation_id="inv-C",
+            as_of=_AS_OF,
             resolved_config={"old": True},
             data_calibration_state={"old": True},
             root=str(root),
         )
         config_path, calibration_path = write_invocation_provenance_snapshots(
             invocation_id="inv-C",
+            as_of=_AS_OF,
             resolved_config={"new": True},
             data_calibration_state={"new": True},
             root=str(root),
@@ -116,6 +124,7 @@ class TestWriteInvocationProvenanceSnapshots:
         with pytest.raises(TypeError):
             write_invocation_provenance_snapshots(
                 invocation_id="inv-bad",
+                as_of=_AS_OF,
                 resolved_config={"set": {1, 2, 3}},
                 data_calibration_state={},
                 root=str(root),

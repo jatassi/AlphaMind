@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -83,6 +83,7 @@ __all__ = [
     "RuleProjection",
     "Sector",
     "StrategistOutput",
+    "StrategistResultModel",
     "ThesisComponentUpdate",
     "ThesisStatus",
 ]
@@ -597,3 +598,162 @@ class StrategistOutput(BaseModel):
                         f"recommended_action=add (assessment {pa.assessment_id})"
                     )
         return self
+
+
+# ---------------------------------------------------------------------------
+# Phase-output boundary model — ALP-692
+# ---------------------------------------------------------------------------
+
+
+class _TokensUsedModel(BaseModel):
+    """Inline Pydantic projection of :class:`alphamind.analysis._shared.TokensUsed`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+
+
+class _ValidationErrorModel(BaseModel):
+    """Pydantic projection of :class:`alphamind.commands.validation_results.ValidationError`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    field_path: str
+    message: str
+    rule: str = ""
+    criterion: str | None = None
+
+
+class _ValidationWarningModel(BaseModel):
+    """Pydantic projection of :class:`alphamind.commands.validation_results.ValidationWarning`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    field_path: str
+    message: str
+    rule: str = ""
+    criterion: str | None = None
+
+
+class _ValidationResultModel(BaseModel):
+    """Pydantic projection of :class:`alphamind.commands.validation_results.ValidationResult`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    errors: tuple[_ValidationErrorModel, ...]
+    warnings: tuple[_ValidationWarningModel, ...] = ()
+    envelope_id: str | None = None
+
+
+class StrategistResultModel(BaseModel):
+    """Frozen Pydantic boundary model for
+    :class:`alphamind.decision.strategist.runner.StrategistResult`.
+
+    Wraps the existing :class:`StrategistOutput` Pydantic field directly (it is
+    already a Pydantic model) and models the metadata fields explicitly.
+
+    Used by ``run_decision_pipeline`` to emit ``strategist.json`` under
+    ``<archive>/invocations/<id>/phase_outputs/`` when running in
+    debug-e2e mode (ALP-692).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    output: StrategistOutput
+    validation_result: _ValidationResultModel
+    tokens_used: _TokensUsedModel
+    metadata: dict[str, object]
+
+    @classmethod
+    def from_domain(cls, dc: object) -> StrategistResultModel:
+        """Construct from a :class:`StrategistResult` dataclass instance."""
+        import importlib
+
+        _runner = importlib.import_module("alphamind.decision.strategist.runner")
+        StrategistResult = _runner.StrategistResult  # noqa: N806
+
+        if not isinstance(dc, StrategistResult):
+            raise TypeError(f"Expected StrategistResult, got {type(dc).__name__}")
+        vr = dc.validation_result
+        tu = dc.tokens_used
+        return cls(
+            output=dc.output,
+            validation_result=_ValidationResultModel(
+                errors=tuple(
+                    _ValidationErrorModel(
+                        field_path=e.field_path,
+                        message=e.message,
+                        rule=e.rule,
+                        criterion=e.criterion,
+                    )
+                    for e in vr.errors
+                ),
+                warnings=tuple(
+                    _ValidationWarningModel(
+                        field_path=w.field_path,
+                        message=w.message,
+                        rule=w.rule,
+                        criterion=w.criterion,
+                    )
+                    for w in vr.warnings
+                ),
+                envelope_id=vr.envelope_id,
+            ),
+            tokens_used=_TokensUsedModel(
+                input_tokens=tu.input_tokens,
+                output_tokens=tu.output_tokens,
+                cache_read_tokens=tu.cache_read_tokens,
+                cache_write_tokens=tu.cache_write_tokens,
+            ),
+            metadata=dc.metadata,
+        )
+
+    def to_domain(self) -> Any:
+        """Reconstruct a :class:`StrategistResult` from this model."""
+        import importlib
+
+        from alphamind.analysis._shared import TokensUsed
+        from alphamind.commands.validation_results import (
+            ValidationError,
+            ValidationResult,
+            ValidationWarning,
+        )
+
+        _runner = importlib.import_module("alphamind.decision.strategist.runner")
+        StrategistResult = _runner.StrategistResult  # noqa: N806
+
+        vr_model = self.validation_result
+        return StrategistResult(
+            output=self.output,
+            validation_result=ValidationResult(
+                errors=tuple(
+                    ValidationError(
+                        field_path=e.field_path,
+                        message=e.message,
+                        rule=e.rule,
+                        criterion=e.criterion,
+                    )
+                    for e in vr_model.errors
+                ),
+                warnings=tuple(
+                    ValidationWarning(
+                        field_path=w.field_path,
+                        message=w.message,
+                        rule=w.rule,
+                        criterion=w.criterion,
+                    )
+                    for w in vr_model.warnings
+                ),
+                envelope_id=vr_model.envelope_id,  # type: ignore[arg-type]
+            ),
+            tokens_used=TokensUsed(
+                input_tokens=self.tokens_used.input_tokens,
+                output_tokens=self.tokens_used.output_tokens,
+                cache_read_tokens=self.tokens_used.cache_read_tokens,
+                cache_write_tokens=self.tokens_used.cache_write_tokens,
+            ),
+            metadata=dict(self.metadata),
+        )

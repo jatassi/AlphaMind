@@ -658,7 +658,7 @@ def test_orchestrator_writes_calibration_state_snapshot(
         provenance_root=provenance_root,
     )
 
-    snapshot_path = provenance_root / "invocations" / invocation_id / "data_calibration_state.json"
+    snapshot_path = provenance_root / "2026-04-25" / invocation_id / "data_calibration_state.json"
     assert snapshot_path.exists()
     assert snapshot_path.stat().st_size > 0
 

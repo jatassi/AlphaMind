@@ -25,10 +25,11 @@ import json
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
+from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._harness_core import (
     ContextOverflowFailure,
@@ -179,6 +180,7 @@ class _DiagState:
     model: str
     archive_root: Path | None
     agent_config_snapshot: dict[str, Any]
+    as_of: datetime | None = None
 
     response_initial: str = ""
     response_retry: str | None = None
@@ -201,16 +203,20 @@ class _DiagState:
     ) -> None:
         """Flush the diagnostic record to disk if archive_root is set.
 
-        Path: ``<archive_root>/invocations/<invocation_id>/decision/strategist/``
-        — mirrors the analyst pattern with the agent segment switched to
-        ``strategist``.
+        Path: ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/decision/strategist/``
+        — date-partitioned canonical layout per ALP-689 followup.
         """
         if self.archive_root is None:
             return
+        if self.as_of is None:
+            msg = "_DiagState.as_of must be set when archive_root is provided"
+            raise ValueError(msg)
         diag_dir = (
-            self.archive_root
-            / INVOCATIONS_DIRNAME
-            / self.invocation_id
+            invocation_archive_dir(
+                archive_root=self.archive_root,
+                as_of=self.as_of,
+                invocation_id=self.invocation_id,
+            )
             / "decision"
             / self.agent_name
         )
@@ -542,6 +548,7 @@ async def run_strategist_harness(  # noqa: PLR0913 — public signature is fixed
     validation_state: ValidationToolState,
     retrieval_store: RetrievalStore,
     active_sectors: frozenset[str],
+    as_of: datetime | None = None,
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
@@ -618,6 +625,7 @@ async def run_strategist_harness(  # noqa: PLR0913 — public signature is fixed
             options=options,
             sdk_query_fn=sdk_query_fn,
             validator=validator,
+            as_of=as_of,
             archive_root=archive_root,
             progress=progress,
             phase=phase,
@@ -634,6 +642,7 @@ async def _run_invocation(  # noqa: PLR0913 — internal helper threading runner
     options: Any,
     sdk_query_fn: Callable[..., AsyncIterator[Any]],
     validator: _ValidatorContext,
+    as_of: datetime | None,
     archive_root: Path | None,
     progress: ProgressEmitter,
     phase: str,
@@ -655,6 +664,7 @@ async def _run_invocation(  # noqa: PLR0913 — internal helper threading runner
         model=str(agent_config.model),
         archive_root=archive_root,
         agent_config_snapshot=_agent_config_snapshot(agent_config),
+        as_of=as_of,
     )
     wall_start = time.monotonic()
 

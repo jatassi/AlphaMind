@@ -32,9 +32,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import alphamind.state.tables  # noqa: F401  # registers every state table on Base.metadata
+from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind.persistence.models import Base
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "verify_debug_e2e.py"
+_INVOCATION_AS_OF = datetime(2026, 5, 26, tzinfo=UTC)
 
 
 @pytest.fixture(scope="module")
@@ -98,8 +100,12 @@ def test_check_auth_does_not_require_alpaca_creds(
 def test_check_archive_directory_passes_with_required_files(
     verify_module: ModuleType, tmp_path: Path
 ) -> None:
-    """PASS when ``<archive>/invocations/<id>/`` carries the two required files."""
-    invocation_dir = tmp_path / "invocations" / "20260516T000000Z-debug-e2e"
+    """PASS when the date-partitioned invocation dir carries the two required files."""
+    invocation_dir = invocation_archive_dir(
+        archive_root=tmp_path,
+        as_of=_INVOCATION_AS_OF,
+        invocation_id="20260516T000000Z-debug-e2e",
+    )
     invocation_dir.mkdir(parents=True)
     (invocation_dir / "resolved_config.json").write_text("{}", encoding="utf-8")
     (invocation_dir / "progress.jsonl").write_text("", encoding="utf-8")
@@ -126,7 +132,9 @@ def test_check_archive_directory_fails_when_resolved_config_missing(
     verify_module: ModuleType, tmp_path: Path
 ) -> None:
     """FAIL when ``resolved_config.json`` is absent."""
-    invocation_dir = tmp_path / "invocations" / "iid"
+    invocation_dir = invocation_archive_dir(
+        archive_root=tmp_path, as_of=_INVOCATION_AS_OF, invocation_id="iid"
+    )
     invocation_dir.mkdir(parents=True)
     (invocation_dir / "progress.jsonl").write_text("", encoding="utf-8")
 
@@ -139,7 +147,9 @@ def test_check_archive_directory_fails_when_progress_jsonl_missing(
     verify_module: ModuleType, tmp_path: Path
 ) -> None:
     """FAIL when ``progress.jsonl`` is absent."""
-    invocation_dir = tmp_path / "invocations" / "iid"
+    invocation_dir = invocation_archive_dir(
+        archive_root=tmp_path, as_of=_INVOCATION_AS_OF, invocation_id="iid"
+    )
     invocation_dir.mkdir(parents=True)
     (invocation_dir / "resolved_config.json").write_text("{}", encoding="utf-8")
 
@@ -1292,12 +1302,21 @@ def _stub_main_dependencies(
     monkeypatch.setattr(verify_module.subprocess, "run", _stub_run)
 
     def _passing_archive(*, archive_root: Path, invocation_id: str) -> Any:
-        # main() reads progress_path.is_file() directly before dispatching
-        # to check_jsonl_ordering, so the stub must touch the JSONL file
-        # (otherwise the missing-file branch fires and the monkey-patched
-        # ordering check never runs).
-        inv_dir = archive_root / "invocations" / invocation_id
-        inv_dir.mkdir(parents=True, exist_ok=True)
+        # main() resolves progress_path via find_invocation_archive_dir so
+        # the stub must touch the JSONL file inside the same directory the
+        # glob would locate — create the date-partitioned path if none exists yet.
+        from alphamind._kernel.archive_layout import find_invocation_archive_dir
+
+        inv_dir = find_invocation_archive_dir(
+            archive_root=archive_root, invocation_id=invocation_id
+        )
+        if inv_dir is None:
+            inv_dir = invocation_archive_dir(
+                archive_root=archive_root,
+                as_of=_INVOCATION_AS_OF,
+                invocation_id=invocation_id,
+            )
+            inv_dir.mkdir(parents=True, exist_ok=True)
         (inv_dir / "progress.jsonl").touch()
         return verify_module.CheckResult(label="archive_directory", passed=True, message="stub")
 

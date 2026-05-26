@@ -292,6 +292,7 @@ async def run_qualitative_researcher(  # noqa: PLR0913 — signature dictated by
             user_message=user_message,
             invocation_id=invocation_id,
             universe=universe,
+            as_of=as_of,
             archive_root=archive_root,
             progress=progress,
             phase=phase,

@@ -138,7 +138,7 @@ def test_writer_emits_schema_version_two(tmp_path: Path) -> None:
     )
 
     expected_path = (
-        tmp_path / "invocations" / "20260425T120000Z-test" / "data_calibration_state.json"
+        tmp_path / "2026-04-25" / "20260425T120000Z-test" / "data_calibration_state.json"
     )
     assert path == expected_path
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -713,14 +713,14 @@ def test_operator_summary_counts_match_per_state_array_lengths(tmp_path: Path) -
 
 
 def test_operator_summary_writes_to_archive_root_invocation_path(tmp_path: Path) -> None:
-    """The operator summary lands at <archive_root>/invocations/<id>/data_calibration_state.json."""
+    """Operator summary lands at <archive_root>/<YYYY-MM-DD>/<id>/data_calibration_state.json."""
     outputs = _build_outputs(blocks=())
     path = write_operator_data_health_summary(
         outputs=outputs,
         invocation_id="inv-XYZ",
         archive_root=tmp_path,
     )
-    assert path == tmp_path / "invocations" / "inv-XYZ" / "data_calibration_state.json"
+    assert path == tmp_path / "2026-04-25" / "inv-XYZ" / "data_calibration_state.json"
     assert path.exists()
 
 

@@ -58,6 +58,9 @@ from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
 
+# Canonical test invocation timestamp; date partition is "2026-05-01".
+_AS_OF = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
+
 # ---------------------------------------------------------------------------
 # Verbatim minimal-valid wire text
 # ---------------------------------------------------------------------------
@@ -392,6 +395,7 @@ async def test_happy_path_returns_harness_success(
         qualitative_brief=qualitative_brief,
         correlation_regime_brief=correlation_regime_brief,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
@@ -446,6 +450,7 @@ async def test_parse_failure_retry_recovers(
         qualitative_brief=qualitative_brief,
         correlation_regime_brief=correlation_regime_brief,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_stub,
     )
 
@@ -499,6 +504,7 @@ async def test_retry_call_passes_session_id_for_resume(
         qualitative_brief=qualitative_brief,
         correlation_regime_brief=correlation_regime_brief,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_stub,
     )
 
@@ -555,6 +561,7 @@ async def test_validation_failure_retry_recovers(
         qualitative_brief=qualitative_brief,
         correlation_regime_brief=correlation_regime_brief,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_stub,
     )
 
@@ -599,6 +606,7 @@ async def test_both_attempts_malformed_raises_with_both_raw_responses(
             qualitative_brief=qualitative_brief,
             correlation_regime_brief=correlation_regime_brief,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
 
@@ -653,6 +661,7 @@ async def test_max_tokens_with_parse_error_raises_context_overflow_no_retry(
             qualitative_brief=qualitative_brief,
             correlation_regime_brief=correlation_regime_brief,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_stub,
         )
 
@@ -709,6 +718,7 @@ async def test_tool_allowlist_drift_raises_sdk_failure_at_startup(
             qualitative_brief=qualitative_brief,
             correlation_regime_brief=correlation_regime_brief,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_stub,
         )
 
@@ -758,6 +768,7 @@ async def test_slow_sdk_stub_raises_timeout_failure(
             qualitative_brief=qualitative_brief,
             correlation_regime_brief=correlation_regime_brief,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_slow_stub,
         )
 
@@ -795,6 +806,7 @@ async def test_auth_failure_raises_sdk_failure_naming_env_var(
             qualitative_brief=qualitative_brief,
             correlation_regime_brief=correlation_regime_brief,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_auth_fail_stub,
         )
 
@@ -829,10 +841,11 @@ async def test_diagnostic_files_written_when_archive_root_provided(
         qualitative_brief=qualitative_brief,
         correlation_regime_brief=correlation_regime_brief,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
-    diag_dir = archive_root / "invocations" / "inv-diag-001" / "analysis" / "adaptive_researcher"
+    diag_dir = archive_root / "2026-05-01" / "inv-diag-001" / "analysis" / "adaptive_researcher"
     assert (diag_dir / "prompt.md").exists()
     assert (diag_dir / "user_message.md").exists()
     assert (diag_dir / "response_initial.md").exists()
@@ -905,10 +918,11 @@ async def test_diagnostic_files_include_retry_on_corrective_loop(
         qualitative_brief=qualitative_brief,
         correlation_regime_brief=correlation_regime_brief,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
-    diag_dir = archive_root / "invocations" / "inv-retry-001" / "analysis" / "adaptive_researcher"
+    diag_dir = archive_root / "2026-05-01" / "inv-retry-001" / "analysis" / "adaptive_researcher"
     initial_text = (diag_dir / "response_initial.md").read_text(encoding="utf-8")
     retry_text = (diag_dir / "response_retry.md").read_text(encoding="utf-8")
     # The initial attempt's structured_output was None — the diagnostic
@@ -950,6 +964,7 @@ async def test_tool_calls_used_counts_tool_use_blocks(
         qualitative_brief=qualitative_brief,
         correlation_regime_brief=correlation_regime_brief,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
@@ -984,6 +999,7 @@ async def test_tool_calls_used_accumulates_across_retry(
         qualitative_brief=qualitative_brief,
         correlation_regime_brief=correlation_regime_brief,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
@@ -1035,6 +1051,7 @@ async def test_pseudo_event_tool_blocks_excluded_from_count(
         qualitative_brief=qualitative_brief,
         correlation_regime_brief=correlation_regime_brief,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
@@ -1087,6 +1104,7 @@ async def test_claude_agent_options_structure_uses_alphamind_adaptive_server(
         qualitative_brief=qualitative_brief,
         correlation_regime_brief=correlation_regime_brief,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_capturing_stub,
     )
 
@@ -1159,6 +1177,7 @@ async def test_mcp_servers_empty_when_no_tools_configured(
         qualitative_brief=qualitative_brief,
         correlation_regime_brief=correlation_regime_brief,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_capturing_stub,
     )
 
@@ -1196,6 +1215,7 @@ async def test_sdk_query_fn_is_used_real_query_never_called(
             qualitative_brief=qualitative_brief,
             correlation_regime_brief=correlation_regime_brief,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
         mock_real.assert_not_called()
@@ -1239,6 +1259,7 @@ async def test_system_prompt_cached_per_process(
             qualitative_brief=qualitative_brief,
             correlation_regime_brief=correlation_regime_brief,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_make_stub_query(
                 [_make_sdk_response(_minimal_brief_payload("inv-cache-001"))]
             ),
@@ -1253,6 +1274,7 @@ async def test_system_prompt_cached_per_process(
             qualitative_brief=qualitative_brief,
             correlation_regime_brief=correlation_regime_brief,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_make_stub_query(
                 [_make_sdk_response(_minimal_brief_payload("inv-cache-002"))]
             ),

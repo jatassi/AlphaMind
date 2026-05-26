@@ -166,6 +166,16 @@ Argparse surface:
   `FRESH_START_PORTFOLIO` fixture (0 positions / 0 theses / $100,000
   cash). Forwards to the scheduler subprocess and reparameterizes the
   `synthetic_portfolio` check (ALP-618). See the subsection below.
+- `--resume-from INVOCATION_ID:PHASE` (default unset) — forward
+  `--resume-from` to the scheduler subprocess so it hydrates SDK-phase
+  outputs from the named source invocation and re-runs from `<phase>`
+  onward (ALP-693 / ALP-696). The wrapper does no validation — the
+  scheduler CLI is the source of truth on validity. Mutually exclusive
+  with `--fresh-start` (enforced at the scheduler CLI's argparse
+  layer). When set, the wrapper also runs the post-resume
+  `check_deterministic_prefix` check that hashes the distillation
+  outputs against the source archive. See the "Resuming a failed run"
+  section below.
 
 `check_no_alpaca` scans the captured subprocess stderr stream directly — no
 separate `--pipeline-log` flag is needed.
@@ -502,6 +512,66 @@ Wall-clock: ~5–15 minutes end-to-end; the strategist scenario is the
 typical long pole. See the archive's `progress.jsonl` for per-phase
 timings.
 
+## Resuming a failed run
+
+The motivating shape: the analyst SDK call hits its latency budget 9
+minutes into a debug-e2e run, the operator bumps
+`decision.analyst.latency_budget_s` in `config/run_types/<trigger>.yaml`,
+and re-invokes the verify wrapper with `--resume-from <inv-id>:<phase>`.
+The new invocation re-runs the deterministic prefix (phase1 +
+snapshot_assembly + distillation — all cheap, all deterministic against
+the synthetic portfolio fixture) and hydrates the upstream SDK-phase
+outputs from the prior archive, then runs the named target phase and
+everything downstream with the new budget. Saves ~10–12 minutes of
+wall-clock and ~6 Sonnet calls per iteration.
+
+`--resume-from` is the verify wrapper's pass-through to the scheduler
+CLI's [ALP-693](https://linear.app/alphamind-jatassi/issue/ALP-693)
+flag. The wrapper does no validation — the underlying CLI is the
+source of truth on `<invocation-id>:<phase>` validity and exits 2 with
+a named-cause stderr message on rejection. Mutually exclusive with
+`--fresh-start` (a different portfolio fixture would invalidate the
+prior archive's outputs — surfaced at argparse-time by the underlying
+CLI).
+
+```bash
+set -a && source <(tr -d '\r' < .env) && set +a && \
+    uv run python scripts/verify_debug_e2e.py \
+        --archive-root .archive/verify-debug-e2e \
+        --resume-from <inv-id>:<phase>
+```
+
+**Reading the resume target out of a failed run.** Open the source
+invocation's `progress.jsonl` and look for the last `phase_done`
+event; the next `phase_start` with no matching `phase_done` is the
+phase the original run died on. That is your resume target. The 9
+SDK-phase names recognized by `--resume-from` are: `tech_semis`,
+`financials`, `energy`, `qualitative`, `adaptive`, `synthesizer`,
+`analyst`, `strategist`, `pm`. The deterministic phases (`phase1`,
+`snapshot_assembly`, `distillation`, `pre_processor`, `phase2`) are
+always re-run from scratch on resume and cannot be named as the
+target — they are cheap and produce identical outputs against the
+synthetic fixture, so the resume contract does not need to
+special-case them.
+
+**Deterministic-prefix check.** On every resume run the verify
+wrapper adds one extra check (`check_deterministic_prefix`) that
+hashes the source-archive vs new-archive distillation outputs
+pairwise and FAILs on the first byte mismatch. A clean resume run
+shows 8 PASS lines (the existing 7 plus this one) and the summary
+reads `8/8 checks passed`; a FAIL surfaces as `7/8 checks passed`.
+The check fires ONLY on resume — fresh debug-e2e invocations stay at
+`7/7 checks passed` with no extra line emitted.
+
+A FAIL of this check means the upstream-replayed SDK phases are now
+operating against a different deterministic prefix than they
+originally saw — a silent correctness bug. Do not trust the run's
+downstream output.
+
+```
+PASS: deterministic_prefix — 5 distillation file(s) byte-identical (N bytes hashed) vs source archive
+```
+
 ## Failure-mode triage
 
 | `verify_debug_e2e.py` FAIL line                          | Likely cause | First fix to try |
@@ -523,6 +593,7 @@ timings.
 | `FAIL: invocation_summary — staleness_flag expected false` | Phase 1 saw a stale data source | Inspect the staleness logger output in the pipeline log; debug-e2e seeds fresh state so this is a real regression |
 | `FAIL: invocation_summary — trigger_source expected 'debug_e2e_cli'` | CLI dispatch routed to `_run_once` instead of `_run_debug_e2e` | The `--debug-e2e` argparse branch in `__main__.py` regressed |
 | `FAIL: invocation_summary — commands_submitted` | The orchestrator's typed return shape changed | Inspect `InvocationSummary` against `scheduler/orchestrator.py` |
+| `FAIL: deterministic_prefix — distillation file <name> differs` (resume only) | Non-determinism regression in phase1 / snapshot_assembly / distillation, OR the synthetic portfolio fixture changed between runs | First re-snapshot the debug DB (`scripts/snapshot_prod_for_debug_e2e.py --force`) in case the source archive's distillation was computed against drifted upstream state; if the FAIL repeats, `git bisect` for the regression starting from the source archive's commit |
 
 For deeper investigation: every agent harness writes its own diagnostic
 archive under `<archive>/invocations/<id>/analysis/<agent>/` (and

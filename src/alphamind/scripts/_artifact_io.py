@@ -2,7 +2,7 @@
 
 Each phase 2-5 verification script writes its parsed result(s) to a
 canonical per-invocation directory under
-``<archive_root>/invocations/<invocation_id>/stage_artifacts/``, and the
+``<archive_root>/<YYYY-MM-DD>/<invocation_id>/stage_artifacts/``, and the
 downstream scripts read those artifacts when given ``--upstream-from``.
 That replaces the hand-constructed fixture upstream the phase 4 + 5
 scripts used to consume, so a green end-to-end run proves today's actual
@@ -33,7 +33,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
+from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind.analysis.adaptive_research.models import AdaptiveBrief
 from alphamind.analysis.domain_researchers.models import SectorBrief
 from alphamind.analysis.qualitative_research.models import QualitativeBrief
@@ -93,15 +93,18 @@ ADAPTIVE_BRIEF_FILENAME = "adaptive_brief.json"
 RETRIEVAL_STORE_FILENAME = "retrieval_store.json"
 
 
-def stage_artifacts_dir(archive_root: Path, invocation_id: str) -> Path:
-    """Return ``<archive_root>/invocations/<invocation_id>/stage_artifacts/``.
+def stage_artifacts_dir(archive_root: Path, invocation_id: str, as_of: datetime) -> Path:
+    """Return ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/stage_artifacts/``.
 
-    Mirrors the layout under which the analysis-layer agent harnesses
-    already write per-invocation diagnostics (``invocations/<id>/analysis/``),
-    so the stage-artifact directory sits as a sibling of those existing
+    Date-partitioned canonical layout per ALP-689 followup. Mirrors the layout
+    under which the analysis-layer agent harnesses write per-invocation
+    diagnostics, so the stage-artifact directory sits as a sibling of those
     per-agent archives.
     """
-    return archive_root / INVOCATIONS_DIRNAME / invocation_id / STAGE_ARTIFACTS_SUBDIR
+    return (
+        invocation_archive_dir(archive_root=archive_root, as_of=as_of, invocation_id=invocation_id)
+        / STAGE_ARTIFACTS_SUBDIR
+    )
 
 
 # ---------------------------------------------------------------------------

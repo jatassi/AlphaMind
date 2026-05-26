@@ -49,7 +49,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
-from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
+from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._shared import TokensUsed
 
@@ -419,6 +419,7 @@ class DiagState:
     user_message: str
     model: str
     archive_root: Path | None
+    as_of: datetime | None = None
 
     response_initial: str = ""
     response_retry: str | None = None
@@ -447,10 +448,15 @@ class DiagState:
         """
         if self.archive_root is None:
             return None
+        if self.as_of is None:
+            msg = "DiagState.as_of must be set when archive_root is provided"
+            raise ValueError(msg)
         return (
-            self.archive_root
-            / INVOCATIONS_DIRNAME
-            / self.invocation_id
+            invocation_archive_dir(
+                archive_root=self.archive_root,
+                as_of=self.as_of,
+                invocation_id=self.invocation_id,
+            )
             / self.archive_layer
             / self.agent_name
         )

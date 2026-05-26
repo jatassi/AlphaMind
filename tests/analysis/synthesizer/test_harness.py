@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -33,6 +34,9 @@ from alphamind.portfolio_state.consumers.synthesizer import (
     SynthesizerPositionSummary,
     SynthesizerThesisSummary,
 )
+
+# Canonical test invocation timestamp; date partition is "2026-05-01".
+_AS_OF = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
 
 # ---------------------------------------------------------------------------
 # Shared fixtures and helpers
@@ -196,6 +200,7 @@ async def test_happy_path_returns_success(
         invocation_id="inv-test-001",
         portfolio_reader=portfolio_reader,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
@@ -228,6 +233,7 @@ async def test_empty_end_turn_raises_empty_response(
             invocation_id="inv-empty-001",
             portfolio_reader=portfolio_reader,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
 
@@ -265,6 +271,7 @@ async def test_empty_max_tokens_raises_context_overflow(
             invocation_id="inv-overflow-001",
             portfolio_reader=portfolio_reader,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_stub,
         )
 
@@ -292,6 +299,7 @@ async def test_nonempty_max_tokens_returns_success(
         invocation_id="inv-trunc-001",
         portfolio_reader=portfolio_reader,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
@@ -323,6 +331,7 @@ async def test_auth_failure_raises_sdk_failure(
             invocation_id="inv-auth-001",
             portfolio_reader=portfolio_reader,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_auth_fail_stub,
         )
 
@@ -359,6 +368,7 @@ async def test_timeout_raises_timeout_failure(
             invocation_id="inv-timeout-001",
             portfolio_reader=portfolio_reader,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_slow_stub,
         )
 
@@ -388,6 +398,7 @@ async def test_portfolio_tools_wired_into_options(
         invocation_id="inv-tools-001",
         portfolio_reader=portfolio_reader,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=_capturing_stub,
     )
 
@@ -423,10 +434,11 @@ async def test_diagnostic_archive_written_on_success(
         invocation_id="inv-archive-success",
         portfolio_reader=portfolio_reader,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
-    diag_dir = archive_root / "invocations" / "inv-archive-success" / "analysis" / "synthesizer"
+    diag_dir = archive_root / "2026-05-01" / "inv-archive-success" / "analysis" / "synthesizer"
     assert (diag_dir / "prompt.md").exists()
     assert (diag_dir / "user_message.md").exists()
     assert (diag_dir / "response.md").exists()
@@ -455,10 +467,11 @@ async def test_diagnostic_archive_written_on_failure(
             invocation_id="inv-archive-failure",
             portfolio_reader=portfolio_reader,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
 
-    diag_dir = archive_root / "invocations" / "inv-archive-failure" / "analysis" / "synthesizer"
+    diag_dir = archive_root / "2026-05-01" / "inv-archive-failure" / "analysis" / "synthesizer"
     assert (diag_dir / "prompt.md").exists()
     assert (diag_dir / "user_message.md").exists()
     assert (diag_dir / "response.md").exists()
@@ -489,10 +502,11 @@ async def test_metadata_json_carries_required_fields(
         invocation_id="inv-meta-001",
         portfolio_reader=portfolio_reader,
         archive_root=archive_root,
+        as_of=_AS_OF,
         sdk_query_fn=stub,
     )
 
-    meta_path = archive_root / "invocations" / "inv-meta-001" / "analysis" / "synthesizer"
+    meta_path = archive_root / "2026-05-01" / "inv-meta-001" / "analysis" / "synthesizer"
     meta = json.loads((meta_path / "metadata.json").read_text(encoding="utf-8"))
     assert meta["tool_calls_used"] == 2
     assert "tokens_used" in meta
@@ -532,6 +546,7 @@ async def test_system_prompt_cached_per_process(
             invocation_id="inv-cache-001",
             portfolio_reader=portfolio_reader,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_make_stub_query([_make_sdk_response(_SYNTHESIS_TEXT)]),
         )
         await invoke_synthesizer(
@@ -540,6 +555,7 @@ async def test_system_prompt_cached_per_process(
             invocation_id="inv-cache-002",
             portfolio_reader=portfolio_reader,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_make_stub_query([_make_sdk_response(_SYNTHESIS_TEXT)]),
         )
 
@@ -576,6 +592,7 @@ async def test_no_corrective_retry_path(
             invocation_id="inv-no-retry-001",
             portfolio_reader=portfolio_reader,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=_stub,
         )
 
@@ -602,6 +619,7 @@ async def test_real_sdk_never_called_when_stub_supplied(
             invocation_id="inv-stub-001",
             portfolio_reader=portfolio_reader,
             archive_root=archive_root,
+            as_of=_AS_OF,
             sdk_query_fn=stub,
         )
         mock_real.assert_not_called()

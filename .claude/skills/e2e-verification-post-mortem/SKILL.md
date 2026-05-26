@@ -21,16 +21,27 @@ These all manifested in inv-20260518T111140Z-7b54d0d6 and produced ALP-535 throu
 
 ## Inputs the operator provides
 
-- An invocation directory path, typically under `/Volumes/Users/jacks/AlphaMind/.archive/verify-debug-e2e/invocations/inv-YYYYMMDDTHHMMSS-<hash>/` on the dev machine (or `C:\Users\jacks\AlphaMind\.archive\...` on the production server).
+- An invocation directory path, typically under `/Volumes/Users/jacks/AlphaMind/.archive/verify-debug-e2e/<YYYY-MM-DD>/inv-YYYYMMDDTHHMMSS-<hash>/` on the dev machine (or `C:\Users\jacks\AlphaMind\.archive\...` on the production server). Per-invocation artifacts are date-partitioned under the archive root (ALP-689 unified the layout — the older `invocations/<inv-id>/` subdir is legacy and only contains pre-cutover runs).
 - Sometimes a hint about where to focus ("the strategist looks weird" — start there but still walk every layer).
 
 Invocation directory layout (every file is load-bearing):
 
 ```
-inv-YYYYMMDDTHHMMSS-<hash>/
+<archive_root>/<YYYY-MM-DD>/inv-YYYYMMDDTHHMMSS-<hash>/
 ├── progress.jsonl              ← phase timing, per-agent tool calls / tokens / latency / stop reason
 ├── resolved_config.json        ← active universe, risk profile, agent configs, model assignments
 ├── data_calibration_state.json ← currently {} empty — see ALP-540; will be populated once that lands
+├── phase_outputs/              ← per-SDK-phase Pydantic boundary models (ALP-689 resume); 6 analysis + 3 decision files in debug-e2e mode
+│   ├── tech_semis.json
+│   ├── financials.json
+│   ├── energy.json
+│   ├── qualitative.json
+│   ├── adaptive.json
+│   ├── synthesizer.json
+│   ├── analyst.json
+│   ├── strategist.json
+│   └── pm.json
+├── distillation/               ← phase outputs from the deterministic distillation prefix (sector briefs, regime, correlation-regime brief)
 ├── analysis/
 │   ├── qualitative_researcher/
 │   │   ├── prompt.md           ← system prompt the agent ran with

@@ -45,6 +45,7 @@ import pickle
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -108,6 +109,13 @@ logger = logging.getLogger(__name__)
 # module so the subprocess can import all of alphamind's harness machinery
 # the same way the parent does.
 _WORKER_MODULE = "alphamind.analysis._sdk_subprocess_worker"
+
+
+def _as_of_to_str(as_of: datetime | None) -> str | None:
+    """Serialize an optional datetime to ISO 8601 UTC string for the payload."""
+    if as_of is None:
+        return None
+    return as_of.astimezone(UTC).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -351,12 +359,13 @@ async def _drive_worker(
     return parsed
 
 
-async def invoke_domain_researcher_in_subprocess(
+async def invoke_domain_researcher_in_subprocess(  # noqa: PLR0913 — signature parity with ``invoke_domain_researcher``
     *,
     agent_config: BaseAgentConfig,
     sector: Sector,
     user_message: str,
     invocation_id: str,
+    as_of: datetime | None = None,
     archive_root: Path | None = None,
     sdk_query_fn: Any = None,  # noqa: ARG001 — signature parity; subprocess uses its own SDK call
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
@@ -373,6 +382,7 @@ async def invoke_domain_researcher_in_subprocess(
         "sector": sector.value,
         "user_message": user_message,
         "invocation_id": invocation_id,
+        "as_of": _as_of_to_str(as_of),
         "archive_root": str(archive_root) if archive_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
@@ -390,12 +400,13 @@ async def invoke_domain_researcher_in_subprocess(
     )
 
 
-async def invoke_qualitative_researcher_in_subprocess(
+async def invoke_qualitative_researcher_in_subprocess(  # noqa: PLR0913 — signature parity with ``invoke_qualitative_researcher``
     *,
     agent_config: BaseAgentConfig,
     user_message: str,
     invocation_id: str,
     universe: frozenset[str],
+    as_of: datetime | None = None,
     archive_root: Path | None = None,
     sdk_query_fn: Any = None,  # noqa: ARG001 — signature parity; subprocess uses its own SDK call
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
@@ -418,6 +429,7 @@ async def invoke_qualitative_researcher_in_subprocess(
         "user_message": user_message,
         "invocation_id": invocation_id,
         "universe": sorted(universe),
+        "as_of": _as_of_to_str(as_of),
         "archive_root": str(archive_root) if archive_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
@@ -441,12 +453,13 @@ async def invoke_qualitative_researcher_in_subprocess(
 # ---------------------------------------------------------------------------
 
 
-async def invoke_synthesizer_in_subprocess(
+async def invoke_synthesizer_in_subprocess(  # noqa: PLR0913 — signature parity with ``invoke_synthesizer``
     *,
     agent_config: BaseAgentConfig,
     user_message: str,
     invocation_id: str,
     portfolio_reader: SynthesizerPortfolioStateReader,
+    as_of: datetime | None = None,
     archive_root: Path | None = None,
     sdk_query_fn: Any = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
@@ -473,6 +486,7 @@ async def invoke_synthesizer_in_subprocess(
             user_message=user_message,
             invocation_id=invocation_id,
             portfolio_reader=portfolio_reader,
+            as_of=as_of,
             archive_root=archive_root,
             sdk_query_fn=sdk_query_fn,
             progress=progress,
@@ -485,6 +499,7 @@ async def invoke_synthesizer_in_subprocess(
         "user_message": user_message,
         "invocation_id": invocation_id,
         "portfolio_reader_pickle": _encode_pickle(portfolio_reader),
+        "as_of": _as_of_to_str(as_of),
         "archive_root": str(archive_root) if archive_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
@@ -510,6 +525,7 @@ async def invoke_adaptive_researcher_in_subprocess(  # noqa: PLR0913 — signatu
     sector_briefs: tuple[SectorBrief, ...],
     qualitative_brief: QualitativeBrief,
     correlation_regime_brief: Any,  # CorrelationRegimeBrief — typed Pydantic at the worker boundary
+    as_of: datetime | None = None,
     archive_root: Path | None = None,
     sdk_query_fn: Any = None,  # noqa: ARG001 — signature parity; subprocess uses its own SDK call
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
@@ -530,6 +546,7 @@ async def invoke_adaptive_researcher_in_subprocess(  # noqa: PLR0913 — signatu
         "sector_briefs_pickle": _encode_pickle(sector_briefs),
         "qualitative_brief_pickle": _encode_pickle(qualitative_brief),
         "correlation_regime_brief_pickle": _encode_pickle(correlation_regime_brief),
+        "as_of": _as_of_to_str(as_of),
         "archive_root": str(archive_root) if archive_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
@@ -554,6 +571,7 @@ async def invoke_analyst_in_subprocess(  # noqa: PLR0913 — signature parity wi
     initial_validation_state: ValidationToolState,
     retrieval_store: RetrievalStore,
     active_sectors: frozenset[str],
+    as_of: datetime | None = None,
     archive_root: Path | None = None,
     sdk_query_fn: Any = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
@@ -582,6 +600,7 @@ async def invoke_analyst_in_subprocess(  # noqa: PLR0913 — signature parity wi
             initial_validation_state=initial_validation_state,
             retrieval_store=retrieval_store,
             active_sectors=active_sectors,
+            as_of=as_of,
             archive_root=archive_root,
             sdk_query_fn=sdk_query_fn,
             progress=progress,
@@ -598,6 +617,7 @@ async def invoke_analyst_in_subprocess(  # noqa: PLR0913 — signature parity wi
         ),
         "retrieval_store_pickle": _encode_pickle(retrieval_store),
         "active_sectors": sorted(active_sectors),
+        "as_of": _as_of_to_str(as_of),
         "archive_root": str(archive_root) if archive_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
@@ -623,6 +643,7 @@ async def invoke_strategist_in_subprocess(  # noqa: PLR0913 — signature parity
     validation_state: ValidationToolState,
     retrieval_store: RetrievalStore,
     active_sectors: frozenset[str],
+    as_of: datetime | None = None,
     archive_root: Path | None = None,
     sdk_query_fn: Any = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
@@ -646,6 +667,7 @@ async def invoke_strategist_in_subprocess(  # noqa: PLR0913 — signature parity
             validation_state=validation_state,
             retrieval_store=retrieval_store,
             active_sectors=active_sectors,
+            as_of=as_of,
             archive_root=archive_root,
             sdk_query_fn=sdk_query_fn,
             progress=progress,
@@ -663,6 +685,7 @@ async def invoke_strategist_in_subprocess(  # noqa: PLR0913 — signature parity
         ),
         "retrieval_store_pickle": _encode_pickle(retrieval_store),
         "active_sectors": sorted(active_sectors),
+        "as_of": _as_of_to_str(as_of),
         "archive_root": str(archive_root) if archive_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
@@ -696,6 +719,7 @@ async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature
     library_config: Any,  # LibraryConfig — frozen dataclass, picklable
     library_market: MarketInputs,
     state_persistence_config: StatePersistenceConfig,
+    as_of: datetime | None = None,
     archive_root: Path | None = None,
     sdk_query_fn: Any = None,
     broker_dispatch: Any = None,
@@ -751,6 +775,7 @@ async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature
             library_config=library_config,
             library_market=library_market,
             state_persistence_config=state_persistence_config,
+            as_of=as_of,
             archive_root=archive_root,
             sdk_query_fn=sdk_query_fn,
             broker_dispatch=None,
@@ -779,6 +804,7 @@ async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature
         "library_config_pickle": _encode_pickle(library_config),
         "library_market_pickle": _encode_pickle(_prepare_market_inputs_for_pickle(library_market)),
         "state_persistence_config": state_persistence_config.model_dump(mode="json"),
+        "as_of": _as_of_to_str(as_of),
         "archive_root": str(archive_root) if archive_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,

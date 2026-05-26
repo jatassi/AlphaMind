@@ -24,6 +24,8 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.archive_layout import invocation_archive_dir
+
 _SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "build_e2e_report.py"
 
 
@@ -45,6 +47,7 @@ def report_module() -> ModuleType:
 
 
 _T0 = datetime(2026, 5, 16, 12, 0, 0, tzinfo=UTC)
+_INVOCATION_AS_OF = datetime(2026, 5, 26, tzinfo=UTC)
 
 
 def _ts(offset_s: float) -> str:
@@ -242,7 +245,11 @@ def _make_archive(
     pipeline_log: str | None = None,
 ) -> tuple[Path, str]:
     """Build a synthetic archive layout under ``tmp_path``."""
-    inv_dir = tmp_path / "invocations" / invocation_id
+    inv_dir = invocation_archive_dir(
+        archive_root=tmp_path,
+        as_of=_INVOCATION_AS_OF,
+        invocation_id=invocation_id,
+    )
     inv_dir.mkdir(parents=True)
 
     progress = inv_dir / "progress.jsonl"
@@ -333,7 +340,7 @@ def test_discover_invocation_id_raises_on_multiple(
 
 def test_discover_invocation_id_raises_on_zero(report_module: ModuleType, tmp_path: Path) -> None:
     """An empty archive root yields a clear error."""
-    (tmp_path / "invocations").mkdir()
+    (tmp_path / "2026-05-26").mkdir()
     with pytest.raises(ValueError, match="no invocations"):
         report_module.discover_invocation_id(tmp_path)
 
@@ -350,7 +357,8 @@ def test_discover_invocation_id_excludes_leading_underscore_dirs(
     "multiple invocations" and breaks the auto-discovery contract.
     """
     archive_root, invocation_id = _make_archive(tmp_path)
-    (tmp_path / "invocations" / "_pre_invocation").mkdir()
+    date_part = _INVOCATION_AS_OF.strftime("%Y-%m-%d")
+    (tmp_path / date_part / "_pre_invocation").mkdir()
 
     found = report_module.discover_invocation_id(archive_root)
     assert found == invocation_id

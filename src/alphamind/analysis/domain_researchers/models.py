@@ -19,10 +19,17 @@ stand by design; they share the ``severity`` vocabulary via the shared
 from __future__ import annotations
 
 import enum
+from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from alphamind.analysis._shared import AnomalySeverity, Sector, SignalQuality
+from alphamind.analysis._shared import AnomalySeverity, Sector, SignalQuality, TokensUsed
+
+# Note: ``Any`` is imported for the boundary-model converter signatures;
+# the previous ``if TYPE_CHECKING: from .input_bundle import InputBundle``
+# block was removed because it created a static-analysis cycle without
+# materially helping mypy (the converter takes ``object`` semantics anyway).
 
 __all__ = [
     "SECTOR_PREFIX",
@@ -30,6 +37,7 @@ __all__ = [
     "AnomalyType",
     "ConvictionSketch",
     "Direction",
+    "DomainResearcherOutputModel",
     "Finding",
     "SectorBrief",
     "SetupType",
@@ -200,3 +208,99 @@ SECTOR_PREFIX: dict[Sector, str] = {
     Sector.FINANCIALS: "SA-FIN",
     Sector.ENERGY: "SA-ENERGY",
 }
+
+
+# ---------------------------------------------------------------------------
+# Phase-output boundary model — story ALP-691
+# ---------------------------------------------------------------------------
+
+
+class _InputBundleModel(BaseModel, frozen=True):
+    """Pydantic mirror of the domain-researcher :class:`InputBundle` dataclass."""
+
+    sector: Sector
+    invocation_id: str
+    as_of: datetime
+    distillation_text: str
+    qualitative_text: str
+    bundle_text: str
+
+    @classmethod
+    def _from_domain(
+        cls,
+        dc: Any,
+    ) -> _InputBundleModel:
+        return cls(
+            sector=dc.sector,
+            invocation_id=dc.invocation_id,
+            as_of=dc.as_of,
+            distillation_text=dc.distillation_text,
+            qualitative_text=dc.qualitative_text,
+            bundle_text=dc.bundle_text,
+        )
+
+    def _to_domain(self) -> Any:
+        import importlib
+
+        _mod = "alphamind.analysis.domain_researchers.input_bundle"
+        _input_bundle = importlib.import_module(_mod)
+        InputBundle = _input_bundle.InputBundle  # noqa: N806
+
+        return InputBundle(
+            sector=self.sector,
+            invocation_id=self.invocation_id,
+            as_of=self.as_of,
+            distillation_text=self.distillation_text,
+            qualitative_text=self.qualitative_text,
+            bundle_text=self.bundle_text,
+        )
+
+
+class DomainResearcherOutputModel(BaseModel, frozen=True):
+    """Frozen Pydantic boundary model for :class:`DomainResearcherResult`.
+
+    Used by the debug-e2e phase-output persistence layer (story ALP-691).
+    One model class is shared across the three sector phases
+    (``tech_semis``, ``financials``, ``energy``) per parent decision (E).
+
+    ``from_domain`` / ``to_domain`` provide lossless round-trip through the
+    underlying :class:`~alphamind.analysis.domain_researchers.runner.DomainResearcherResult`
+    frozen dataclass.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    sector: Sector
+    brief: SectorBrief
+    input_bundle: _InputBundleModel
+    tokens_used: TokensUsed
+    wall_clock_seconds: float
+    retry_count: int
+
+    @classmethod
+    def from_domain(cls, dc: object) -> DomainResearcherOutputModel:
+        """Project a :class:`DomainResearcherResult` onto this model."""
+        return cls(
+            sector=dc.sector,  # type: ignore[attr-defined]
+            brief=dc.brief,  # type: ignore[attr-defined]
+            input_bundle=_InputBundleModel._from_domain(dc.input_bundle),  # type: ignore[attr-defined]
+            tokens_used=dc.tokens_used,  # type: ignore[attr-defined]
+            wall_clock_seconds=dc.wall_clock_seconds,  # type: ignore[attr-defined]
+            retry_count=dc.retry_count,  # type: ignore[attr-defined]
+        )
+
+    def to_domain(self) -> Any:
+        """Recover the original :class:`DomainResearcherResult`."""
+        import importlib
+
+        _runner = importlib.import_module("alphamind.analysis.domain_researchers.runner")
+        DomainResearcherResult = _runner.DomainResearcherResult  # noqa: N806
+
+        return DomainResearcherResult(
+            sector=self.sector,
+            brief=self.brief,
+            input_bundle=self.input_bundle._to_domain(),
+            tokens_used=self.tokens_used,
+            wall_clock_seconds=self.wall_clock_seconds,
+            retry_count=self.retry_count,
+        )
