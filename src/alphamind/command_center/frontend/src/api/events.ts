@@ -10,13 +10,57 @@ import { useEffect, useRef } from 'react'
 // overflow drops the oldest event and surfaces a one-time warning via the
 // optional `onOverflow` callback (view stories wire this to a toast).
 //
-// Story 04b ships the server side of /api/events; until that lands the
-// hook is wired but won't receive events. The shape is locked here so
-// view stories can subscribe against a stable API.
+// SSE wire shape: the backend (`command_center/events/routes.py`) emits
+// each frame with a NAMED ``event:`` line — ``pipeline:<event_name>``,
+// ``monitor:<event_name>``, or the unqualified ``heartbeat`` — and the
+// ``data:`` line is a JSON envelope whose ``event`` field carries the
+// upstream event name (e.g. ``invocation_started``). Browser
+// ``EventSource`` fires the ``'message'`` listener ONLY for unnamed
+// frames; for named frames we must register one listener per event-name
+// the server emits (F1). The envelope's JSON field is ``event`` (not
+// ``event_name``) — that mismatch is F2.
 
 const RECONNECT_INITIAL_MS = 500
 const RECONNECT_MAX_MS = 30_000
 const DEFAULT_QUEUE_CAP = 100
+
+// Wire-event names the backend emits as the SSE ``event:`` field.
+// Pipeline + monitor frames carry the ``<source>:<event_name>`` shape; the
+// backend's own keep-alive carries the unqualified ``heartbeat`` shape.
+// See ``alphamind.command_center._kernel.events`` for the StrEnum sources
+// of truth.
+
+const PIPELINE_EVENT_NAMES = [
+  'invocation_started',
+  'phase_transition',
+  'agent_started',
+  'agent_succeeded',
+  'agent_retrying',
+  'agent_failed',
+  'invocation_ended',
+  'next_trigger_changed',
+  'heartbeat',
+] as const
+
+const MONITOR_EVENT_NAMES = [
+  'websocket_connected',
+  'websocket_disconnected',
+  'fill_received',
+  'breach_detected',
+  'emergency_invocation_triggered',
+  'greeks_refreshed',
+  'heartbeat',
+] as const
+
+const BACKEND_HEARTBEAT_EVENT_NAME = 'heartbeat'
+
+// All SSE ``event:`` field values the backend emits. Iteration target for
+// ``addEventListener`` registration (F1).
+export const SSE_EVENT_NAMES: readonly string[] = [
+  ...PIPELINE_EVENT_NAMES.map((name) => `pipeline:${name}`),
+  ...MONITOR_EVENT_NAMES.map((name) => `monitor:${name}`),
+  BACKEND_HEARTBEAT_EVENT_NAME,
+]
 
 export type EventStreamMessage = {
   source: string
@@ -59,20 +103,50 @@ function matchesSubscription(key: string, source: string, eventName: string): bo
   return sourceMatch && eventMatch
 }
 
-function parseMessage(rawData: string): EventStreamMessage | null {
+// Backend's own keep-alive frame: SSE ``event: heartbeat`` (unqualified)
+// with a JSON envelope that does NOT carry source/event fields. We surface
+// these to subscribers under the synthetic ``backend`` source so views can
+// distinguish "command-center alive" from "upstream alive".
+const BACKEND_SOURCE = 'backend'
+
+function parseUpstreamMessage(rawData: string): EventStreamMessage | null {
   try {
     const parsed: unknown = JSON.parse(rawData)
     if (typeof parsed !== 'object' || parsed === null) {
       return null
     }
     const obj = parsed as Record<string, unknown>
-    if (typeof obj.source !== 'string' || typeof obj.event_name !== 'string') {
+    // The envelope's wire field is ``event`` (F2 — was previously read as
+    // ``event_name`` which never matched the server's serialization). The
+    // ``source`` and ``data`` fields are likewise the wire names.
+    const source = obj.source
+    const eventName = obj.event
+    if (typeof source !== 'string' || typeof eventName !== 'string') {
       return null
     }
     return {
-      source: obj.source,
-      event_name: obj.event_name,
-      payload: obj.payload,
+      source,
+      event_name: eventName,
+      payload: obj.data,
+    }
+  } catch {
+    return null
+  }
+}
+
+function parseBackendHeartbeat(rawData: string): EventStreamMessage | null {
+  // The backend's keep-alive carries only ``{"timestamp": "..."}``; surface
+  // it as a synthetic ``backend:heartbeat`` message so view layers can
+  // subscribe.
+  try {
+    const parsed: unknown = JSON.parse(rawData)
+    if (typeof parsed !== 'object' || parsed === null) {
+      return null
+    }
+    return {
+      source: BACKEND_SOURCE,
+      event_name: BACKEND_HEARTBEAT_EVENT_NAME,
+      payload: parsed,
     }
   } catch {
     return null
@@ -116,18 +190,45 @@ type BindContext = {
   reconnect: () => void
 }
 
+function handleNamedEvent(e: MessageEvent<string>, ctx: DispatchContext): void {
+  const message = parseUpstreamMessage(e.data)
+  if (message === null) {
+    return
+  }
+  dispatchToSubscribers(message, ctx)
+}
+
+function handleBackendHeartbeat(e: MessageEvent<string>, ctx: DispatchContext): void {
+  const message = parseBackendHeartbeat(e.data)
+  if (message === null) {
+    return
+  }
+  dispatchToSubscribers(message, ctx)
+}
+
 function bindSource(ctx: BindContext): void {
   const { source, state, buildCtx, reconnect } = ctx
   source.addEventListener('open', () => {
     state.reconnectDelay = RECONNECT_INITIAL_MS
   })
-  source.addEventListener('message', (e) => {
-    const message = parseMessage((e as MessageEvent<string>).data)
-    if (message === null) {
-      return
+  // Register one listener per server-emitted event name (F1). Browser
+  // ``EventSource`` dispatches the listener whose name matches the
+  // frame's ``event:`` field exactly; the catch-all ``'message'``
+  // listener fires only on unnamed frames (which our backend never
+  // emits), so a single ``'message'`` registration would receive zero
+  // frames. The unqualified ``heartbeat`` frame uses the backend-source
+  // parser; everything else uses the upstream envelope parser.
+  for (const name of SSE_EVENT_NAMES) {
+    const handler = (e: Event): void => {
+      const messageEvent = e as MessageEvent<string>
+      if (name === BACKEND_HEARTBEAT_EVENT_NAME) {
+        handleBackendHeartbeat(messageEvent, buildCtx())
+      } else {
+        handleNamedEvent(messageEvent, buildCtx())
+      }
     }
-    dispatchToSubscribers(message, buildCtx())
-  })
+    source.addEventListener(name, handler)
+  }
   source.addEventListener('error', () => {
     state.source?.close()
     state.source = null
