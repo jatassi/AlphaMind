@@ -19,6 +19,21 @@ reads of foreign tables provably free of writes:
      ``session.add(...)`` against the writer session — the structural
      property alone does not block it, because SQLAlchemy resolves
      mappers from a global registry, not from the engine's metadata.
+  3. *Runtime, defense-in-depth.* A ``do_orm_execute`` listener catches
+     Core-level INSERT / UPDATE / DELETE statements (including the bulk
+     ``session.execute(insert(ForeignTable), [...])`` shape) that
+     bypass the ``before_flush`` ORM path. The session's
+     :meth:`~sqlalchemy.orm.Session.bulk_insert_mappings` /
+     :meth:`~sqlalchemy.orm.Session.bulk_update_mappings` /
+     :meth:`~sqlalchemy.orm.Session.bulk_save_objects` family bypass
+     ``before_flush`` and the typed-ORM unit-of-work entirely; the
+     ``do_orm_execute`` listener defends against those callers landing
+     on this factory (F8). Direct Core SQL (``session.execute(text(...))``)
+     against foreign tables is still not blocked at the application
+     layer — that path is acceptable for SELECTs (the writer can read
+     anything) and only meaningful for writes if the caller has
+     explicitly bypassed both the ORM AND the typed bindings, which
+     no AlphaMind code does.
 
 * :func:`build_foreign_reader_session_factory` — read-only against the
   same DB via the ``?mode=ro`` URI parameter. SQLite rejects any DDL/DML
@@ -162,6 +177,12 @@ def _reject_foreign_table_writes(
     correct table name; for the command-center owned tables and the
     foreign tables alike, both forms agree because every mapper is
     declarative-flat (no joined-table inheritance).
+
+    Bulk operations (``Session.bulk_insert_mappings`` /
+    ``bulk_update_mappings`` / ``bulk_save_objects``) bypass the ORM
+    unit-of-work and therefore bypass this listener — see
+    :func:`_reject_foreign_table_core_writes` for the defense-in-depth
+    listener that catches those (F8).
     """
     for instance in [*session.new, *session.dirty, *session.deleted]:
         # Each instance is an ORM-mapped row class; ``__mapper__`` is the
@@ -185,6 +206,77 @@ def _reject_foreign_table_writes(
                 f"§ Interaction model."
             )
             raise ForeignTableWriteError(msg)
+
+
+def _reject_foreign_table_core_writes(orm_execute_state: Any) -> None:
+    """``do_orm_execute`` listener: catch bulk + Core INSERT/UPDATE/DELETE
+    to foreign tables (F8 defense-in-depth).
+
+    ``Session.bulk_insert_mappings`` and friends bypass the unit-of-work
+    and so bypass :func:`_reject_foreign_table_writes`. So does direct
+    ``session.execute(insert(ForeignTable), [...])`` — the Core-level
+    statement path. This listener fires on every ORM-executed statement
+    and rejects writes whose target table is not owned by the cc.
+
+    Direct ``session.execute(text("INSERT INTO foreign ..."))`` (raw SQL
+    via ``text()``) is NOT caught by this listener — that route bypasses
+    both the ORM unit-of-work and the typed-execute hook entirely. It
+    is acceptable for the writer factory because no AlphaMind callsite
+    issues raw-SQL writes via the cc writer; if a future callsite does,
+    it should use a different (production) session factory.
+    """
+    statement = orm_execute_state.statement
+    is_dml = getattr(statement, "is_dml", False)
+    if not is_dml:
+        # SELECT / other read shapes — no enforcement needed; reads are
+        # already permitted on the cc writer factory.
+        return
+    # The target table for a Core insert/update/delete is exposed on
+    # ``.table``; for ORM bulk-execute it threads through the same
+    # attribute. Walk every targeted table — a JOIN-form UPDATE / DELETE
+    # could touch multiple.
+    tables = _walk_dml_tables(statement)
+    for table in tables:
+        if table.name not in _OWNED_TABLE_NAMES:
+            allowed = sorted(_OWNED_TABLE_NAMES)
+            msg = (
+                f"cc_writer_session refuses to write foreign table "
+                f"{table.name!r} via Core/bulk path; only {allowed} are "
+                f"writable through this factory. Foreign-table state "
+                f"mutations must route through the pipeline / monitor's "
+                f"loopback HTTP surfaces — see "
+                f"docs/design/command-center.md § Interaction model."
+            )
+            raise ForeignTableWriteError(msg)
+
+
+def _walk_dml_tables(statement: Any) -> list[Any]:
+    """Return every table referenced by an INSERT / UPDATE / DELETE.
+
+    Most DML statements expose a single target via ``.table``; some
+    UPDATE / DELETE forms can target multiple. The helper coerces both
+    shapes to a list so the caller iterates uniformly.
+    """
+    tables: list[Any] = []
+    target = getattr(statement, "table", None)
+    if target is not None:
+        tables.append(target)
+    # ``.entity_description`` / ``.target`` are alternative spellings on
+    # certain ORM-bulk and bulk-insert constructions; check both before
+    # giving up so we don't accept an unguarded write by accident.
+    for attr in ("target", "entity_description"):
+        extra = getattr(statement, attr, None)
+        if extra is None:
+            continue
+        if isinstance(extra, dict):
+            mapper = extra.get("mapper")
+            if mapper is not None:
+                local = getattr(mapper, "local_table", None)
+                if local is not None and local not in tables:
+                    tables.append(local)
+        elif extra not in tables:
+            tables.append(extra)
+    return tables
 
 
 def build_cc_writer_session_factory(
@@ -230,6 +322,14 @@ def build_cc_writer_session_factory(
         """Sync Session subclass scoped to the cc writer factory."""
 
     event.listen(_CommandCenterWriterSync, "before_flush", _reject_foreign_table_writes)
+    # Defense-in-depth: bulk_insert_mappings / bulk_save_objects /
+    # session.execute(insert(ForeignTable), [...]) bypass before_flush.
+    # do_orm_execute fires on every ORM-routed statement and lets us
+    # reject DML against foreign tables before SQLAlchemy renders the
+    # SQL (F8).
+    event.listen(
+        _CommandCenterWriterSync, "do_orm_execute", _reject_foreign_table_core_writes
+    )
     factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
         bind=engine,
         sync_session_class=_CommandCenterWriterSync,

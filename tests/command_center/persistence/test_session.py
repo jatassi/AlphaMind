@@ -158,6 +158,81 @@ class TestWriterSessionFactory:
         finally:
             await _dispose_factory(factory)
 
+    async def test_rejects_core_insert_against_foreign_table(self, populated_db: Path) -> None:
+        """F8 defense-in-depth: Core-level insert against a foreign
+        table raises via the ``do_orm_execute`` listener.
+
+        ``session.execute(insert(ForeignTable), [...])`` bypasses the
+        ORM unit-of-work and therefore bypasses ``before_flush``. The
+        ``do_orm_execute`` listener catches it before SQLAlchemy renders
+        the SQL.
+        """
+        from sqlalchemy import insert
+
+        from alphamind.command_center.persistence.session import (
+            ForeignTableWriteError,
+        )
+        from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
+
+        factory = build_cc_writer_session_factory(str(populated_db))
+        try:
+            async with factory() as session:
+                with pytest.raises(ForeignTableWriteError, match="process_lifetimes"):
+                    await session.execute(
+                        insert(ProcessLifetimeRow),
+                        [
+                            {
+                                "process_lifetime_id": "plt-bulk",
+                                "process_role": "pipeline",
+                                "process_start_at": "2026-05-26T00:00:00Z",
+                                "process_pid": 1,
+                                "hostname": "h",
+                                "git_sha": "sha",
+                                "git_branch": "b",
+                                "git_dirty": 0,
+                                "python_version": "3.13",
+                                "pip_freeze_hash": "0",
+                                "pip_freeze_snapshot_path": "/p",
+                                "anthropic_sdk_version": "na",
+                                "claude_agent_sdk_version": "na",
+                                "os_release": "os",
+                            }
+                        ],
+                    )
+        finally:
+            await _dispose_factory(factory)
+
+    async def test_core_insert_against_owned_table_allowed(self, populated_db: Path) -> None:
+        """Sanity-check counterpart: Core insert against an owned table
+        still flushes successfully.
+        """
+        from sqlalchemy import insert
+
+        factory = build_cc_writer_session_factory(str(populated_db))
+        try:
+            async with factory() as session:
+                await session.execute(
+                    insert(AlertRow),
+                    [
+                        {
+                            "alert_id": "alert-bulk",
+                            "rule_name": "pipeline_aborted",
+                            "severity": AlertSeverity.CRITICAL.value,
+                            "status": AlertStatus.FIRING.value,
+                            "fired_at": "2026-05-26T00:00:00Z",
+                            "acknowledged_at": None,
+                            "snoozed_until": None,
+                            "context_json": "{}",
+                        }
+                    ],
+                )
+                await session.commit()
+            async with factory() as session:
+                row = await session.get(AlertRow, "alert-bulk")
+                assert row is not None
+        finally:
+            await _dispose_factory(factory)
+
     async def test_other_async_sessions_not_affected(self, populated_db: Path) -> None:
         """The foreign-table guard is scoped to the cc writer factory.
 
