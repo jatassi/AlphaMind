@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # ResumeContext shape
 # ---------------------------------------------------------------------------
@@ -295,6 +294,8 @@ def test_load_resume_context_missing_upstream_raises(tmp_path: Path) -> None:
     )
 
     invocation_id = "inv-missing-synthesizer"
+    # Five of the six upstream phases — ``synthesizer`` is omitted on
+    # purpose so the loader's missing-upstream arm fires.
     _seed_source_archive(
         archive_root=tmp_path,
         invocation_id=invocation_id,
@@ -304,7 +305,6 @@ def test_load_resume_context_missing_upstream_raises(tmp_path: Path) -> None:
             "energy",
             "qualitative",
             "adaptive",
-            # missing: synthesizer
         ],
     )
 

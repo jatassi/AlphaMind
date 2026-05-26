@@ -121,6 +121,20 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             "under the operator-chosen verification archive."
         ),
     )
+    run_p.add_argument(
+        "--resume-from",
+        metavar="INVOCATION_ID:PHASE",
+        default=None,
+        help=(
+            "Hydrate SDK-phase outputs from a prior invocation's archive and "
+            "re-run from <phase> onward (debug-e2e only, ALP-693). Both the "
+            "source invocation id and the target phase are required and "
+            "colon-separated; neither side may be empty. Requires --debug-e2e "
+            "and is mutually exclusive with --fresh-start. The CLI validates "
+            "the source archive at argparse-time and exits 2 with a "
+            "named-cause stderr message on failure — no DB writes."
+        ),
+    )
 
     args = parser.parse_args(argv)
     if args.subcommand == "run" and args.once is not None and not args.reason:
@@ -136,6 +150,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             parser.error("--debug-e2e requires --once <run_type> --reason <text>")
     if args.subcommand == "run" and args.archive_root is not None and not args.debug_e2e:
         parser.error("--archive-root is only valid with --debug-e2e")
+    if args.subcommand == "run" and args.resume_from is not None:
+        _validate_resume_from_argparse(parser, args)
     # --fresh-start has two distinct shapes:
     #   • with --debug-e2e: swap to the FRESH_START_PORTFOLIO fixture (ALP-618).
     #   • without --debug-e2e: production cold-start bootstrap from Alpaca
@@ -152,6 +168,53 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         if args.mode == "live":
             parser.error("--fresh-start (production bootstrap) is incompatible with --mode live")
     return args
+
+
+def _validate_resume_from_argparse(
+    parser: argparse.ArgumentParser, args: argparse.Namespace
+) -> None:
+    """Argparse-level validation for ``--resume-from`` (ALP-693).
+
+    Rejects, via ``parser.error()`` (exit code 2), the four syntactic /
+    mutual-exclusion arms the parse layer can see without touching disk:
+
+    * ``--resume-from`` without ``--debug-e2e``;
+    * ``--resume-from`` with ``--fresh-start`` (parent decision (F):
+      resume against a different portfolio fixture is a category error);
+    * value missing the colon;
+    * value with an empty side (empty ``<invocation-id>`` or empty
+      ``<phase>``).
+
+    The filesystem-level rejections (source dir missing, unknown phase,
+    upstream output missing) live in
+    :func:`alphamind.scheduler.debug_e2e.resume.load_resume_context` and
+    fire inside :func:`_run_debug_e2e` before ``wipe_and_seed`` runs.
+    Extracted from :func:`_parse_args` to keep the parser body below
+    the linter's complexity threshold.
+    """
+    if not args.debug_e2e:
+        parser.error("--resume-from requires --debug-e2e")
+    if args.fresh_start:
+        parser.error("--resume-from is mutually exclusive with --fresh-start")
+    # Format: ``<invocation-id>:<phase>`` — both sides required.
+    # Use ``partition`` rather than ``split`` so an empty side surfaces
+    # as an empty string rather than passing-through unchanged.
+    invocation_id, sep, phase = args.resume_from.partition(":")
+    if not sep:
+        parser.error(
+            f"--resume-from value {args.resume_from!r} must be "
+            "<invocation-id>:<phase> (colon-separated, both required)"
+        )
+    if not invocation_id:
+        parser.error(
+            f"--resume-from value {args.resume_from!r} has empty <invocation-id>; "
+            "expected <invocation-id>:<phase>"
+        )
+    if not phase:
+        parser.error(
+            f"--resume-from value {args.resume_from!r} has empty <phase>; "
+            "expected <invocation-id>:<phase>"
+        )
 
 
 def _load_venue_config(config_dir: Path) -> VenueConfig:
@@ -258,6 +321,7 @@ async def _run_debug_e2e(args: argparse.Namespace) -> None:
     debug_e2e_settings = importlib.import_module("alphamind.scheduler.debug_e2e.settings")
     debug_e2e_seed = importlib.import_module("alphamind.scheduler.debug_e2e.seed")
     debug_e2e_portfolio = importlib.import_module("alphamind.scheduler.debug_e2e.portfolio")
+    debug_e2e_resume = importlib.import_module("alphamind.scheduler.debug_e2e.resume")
     configure_debug_e2e = debug_e2e_settings.configure_debug_e2e
     wipe_and_seed = debug_e2e_seed.wipe_and_seed
     portfolio = (
@@ -266,7 +330,30 @@ async def _run_debug_e2e(args: argparse.Namespace) -> None:
         else debug_e2e_portfolio.SYNTHETIC_PORTFOLIO
     )
 
-    debug_settings = configure_debug_e2e(archive_root=archive_root, portfolio=portfolio)
+    # --resume-from (ALP-693) — validate the source archive against the
+    # phase-dependency DAG BEFORE wipe_and_seed runs.  A
+    # ResumeValidationError surfaces as ``sys.exit(2)`` with the
+    # operator-facing message on stderr; the outer ``BaseException``
+    # frame in ``__main__`` is bypassed because ``SystemExit`` is
+    # re-raised unchanged there.
+    resume_context = None
+    if args.resume_from is not None:
+        invocation_id, _, phase = args.resume_from.partition(":")
+        try:
+            resume_context = debug_e2e_resume.load_resume_context(
+                archive_root=archive_root,
+                invocation_id=invocation_id,
+                phase=phase,
+            )
+        except debug_e2e_resume.ResumeValidationError as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(2)
+
+    debug_settings = configure_debug_e2e(
+        archive_root=archive_root,
+        portfolio=portfolio,
+        resume_context=resume_context,
+    )
     venue_config = _load_venue_config(_CONFIG_DIR)
     execution_mode = ExecutionMode.paper
     now = datetime.now(UTC)

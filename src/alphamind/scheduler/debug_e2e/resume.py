@@ -221,10 +221,7 @@ def load_resume_context(
         raise ResumeValidationError(msg)
 
     if phase not in SDK_PHASE_NAMES:
-        msg = (
-            f"--resume-from: unknown SDK phase {phase!r}. "
-            f"Valid phases: {sorted(SDK_PHASE_NAMES)}"
-        )
+        msg = f"--resume-from: unknown SDK phase {phase!r}. Valid phases: {sorted(SDK_PHASE_NAMES)}"
         raise ResumeValidationError(msg)
 
     required_upstreams = phases_to_replay(phase)
