@@ -188,7 +188,7 @@ class QualitativeBrief(BaseModel, frozen=True):
 
 
 class _QualInputBundleModel(BaseModel, frozen=True):
-    """Pydantic mirror of :class:`~alphamind.analysis.qualitative_research.input_bundle.InputBundle`."""
+    """Pydantic mirror of the qualitative-researcher :class:`InputBundle` dataclass."""
 
     invocation_id: str
     as_of: datetime
@@ -231,7 +231,7 @@ class _QualInputBundleModel(BaseModel, frozen=True):
 
 
 class QualitativeResearcherResultModel(BaseModel, frozen=True):
-    """Frozen Pydantic boundary model for :class:`~alphamind.analysis.qualitative_research.runner.QualitativeResearcherResult`.
+    """Frozen Pydantic boundary model for the qualitative researcher result.
 
     Used by the debug-e2e phase-output persistence layer (story ALP-691).
     ``from_domain`` / ``to_domain`` provide lossless round-trip.
@@ -244,17 +244,15 @@ class QualitativeResearcherResultModel(BaseModel, frozen=True):
     # NewsDigest is a frozen Pydantic BaseModel imported lazily to avoid
     # pulling the SQLAlchemy-heavy news_digest module at models.py load time.
     # The type annotation uses a string so Pydantic resolves it on first use.
-    news_digest: NewsDigest  # type: ignore[name-defined]  # resolved lazily
+    news_digest: NewsDigest  # resolved lazily via _rebuild_qualitative_models()
     tokens_used: TokensUsed
     tool_calls_used: int
     wall_clock_seconds: float
     retry_count: int
 
     @classmethod
-    def from_domain(
-        cls, dc: QualitativeResearcherResult
-    ) -> QualitativeResearcherResultModel:
-        """Project a :class:`~alphamind.analysis.qualitative_research.runner.QualitativeResearcherResult` onto this model."""
+    def from_domain(cls, dc: QualitativeResearcherResult) -> QualitativeResearcherResultModel:
+        """Project a :class:`QualitativeResearcherResult` onto this model."""
         return cls(
             brief=dc.brief,
             input_bundle=_QualInputBundleModel._from_domain(dc.input_bundle),
@@ -266,7 +264,7 @@ class QualitativeResearcherResultModel(BaseModel, frozen=True):
         )
 
     def to_domain(self) -> QualitativeResearcherResult:
-        """Recover the original :class:`~alphamind.analysis.qualitative_research.runner.QualitativeResearcherResult`."""
+        """Recover the original :class:`QualitativeResearcherResult`."""
         from alphamind.analysis.qualitative_research.runner import QualitativeResearcherResult
 
         return QualitativeResearcherResult(

@@ -19,6 +19,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from pydantic import ValidationError
 
 from alphamind.analysis._shared import Sector, SignalQuality, TokensUsed
 from alphamind.analysis.adaptive_research.input_bundle import (
@@ -361,8 +362,8 @@ class TestDomainResearcherOutputModel:
 
         dc = _domain_result(Sector.TECH_SEMIS)
         model = DomainResearcherOutputModel.from_domain(dc)
-        with pytest.raises(Exception):
-            model.sector = "energy"  # type: ignore[misc]
+        with pytest.raises(ValidationError):
+            model.sector = "energy"  # type: ignore[assignment, misc]
 
 
 # ===========================================================================
@@ -401,7 +402,7 @@ class TestQualitativeResearcherResultModel:
 
         dc = _qualitative_result()
         model = QualitativeResearcherResultModel.from_domain(dc)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             model.retry_count = 99  # type: ignore[misc]
 
 
@@ -435,7 +436,7 @@ class TestAdaptiveResearcherResultModel:
 
         dc = _adaptive_result()
         model = AdaptiveResearcherResultModel.from_domain(dc)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             model.tool_calls_used = 99  # type: ignore[misc]
 
 
@@ -496,5 +497,5 @@ class TestSynthesizerResultModel:
 
         dc = _synthesizer_result()
         model = SynthesizerResultModel.from_domain(dc)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             model.stop_reason = "mutated"  # type: ignore[misc]

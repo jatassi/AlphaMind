@@ -174,7 +174,7 @@ class AdaptiveBrief(BaseModel, frozen=True):
 
 
 class _DistillationAnomalyRecordModel(BaseModel, frozen=True):
-    """Pydantic mirror of :class:`~alphamind.analysis.adaptive_research.loaders.DistillationAnomalyRecord`."""
+    """Pydantic mirror of the :class:`DistillationAnomalyRecord` loader dataclass."""
 
     block_id: str
     flag_name: str
@@ -208,7 +208,7 @@ class _DistillationAnomalyRecordModel(BaseModel, frozen=True):
 
 
 class _SectorAnomalyRecordModel(BaseModel, frozen=True):
-    """Pydantic mirror of :class:`~alphamind.analysis.adaptive_research.loaders.SectorAnomalyRecord`."""
+    """Pydantic mirror of the :class:`SectorAnomalyRecord` loader dataclass."""
 
     anomaly_id: str
     description: str
@@ -245,7 +245,7 @@ class _SectorAnomalyRecordModel(BaseModel, frozen=True):
 
 
 class _AdaptiveAnomalyInputsModel(BaseModel, frozen=True):
-    """Pydantic mirror of :class:`~alphamind.analysis.adaptive_research.loaders.AdaptiveAnomalyInputs`."""
+    """Pydantic mirror of the :class:`AdaptiveAnomalyInputs` loader dataclass."""
 
     distillation: tuple[_DistillationAnomalyRecordModel, ...]
     sector: tuple[_SectorAnomalyRecordModel, ...]
@@ -265,14 +265,14 @@ class _AdaptiveAnomalyInputsModel(BaseModel, frozen=True):
         from alphamind.analysis.adaptive_research.loaders import AdaptiveAnomalyInputs
 
         return AdaptiveAnomalyInputs(
-            distillation=tuple(r._to_domain() for r in self.distillation),  # type: ignore[arg-type]
-            sector=tuple(r._to_domain() for r in self.sector),  # type: ignore[arg-type]
+            distillation=tuple(r._to_domain() for r in self.distillation),  # type: ignore[misc]
+            sector=tuple(r._to_domain() for r in self.sector),  # type: ignore[misc]
             data_freshness=self.data_freshness,
         )
 
 
 class _AdaptiveInputBundleModel(BaseModel, frozen=True):
-    """Pydantic mirror of :class:`~alphamind.analysis.adaptive_research.input_bundle.InputBundle`."""
+    """Pydantic mirror of the adaptive-researcher :class:`InputBundle` dataclass."""
 
     invocation_id: str
     as_of: datetime
@@ -306,7 +306,7 @@ class _AdaptiveInputBundleModel(BaseModel, frozen=True):
 
 
 class AdaptiveResearcherResultModel(BaseModel, frozen=True):
-    """Frozen Pydantic boundary model for :class:`~alphamind.analysis.adaptive_research.runner.AdaptiveResearcherResult`.
+    """Frozen Pydantic boundary model for the adaptive researcher result.
 
     Used by the debug-e2e phase-output persistence layer (story ALP-691).
     ``from_domain`` / ``to_domain`` provide lossless round-trip.
@@ -324,7 +324,7 @@ class AdaptiveResearcherResultModel(BaseModel, frozen=True):
 
     @classmethod
     def from_domain(cls, dc: AdaptiveResearcherResult) -> AdaptiveResearcherResultModel:
-        """Project a :class:`~alphamind.analysis.adaptive_research.runner.AdaptiveResearcherResult` onto this model."""
+        """Project a :class:`AdaptiveResearcherResult` onto this model."""
         return cls(
             brief=dc.brief,
             input_bundle=_AdaptiveInputBundleModel._from_domain(dc.input_bundle),
@@ -336,7 +336,7 @@ class AdaptiveResearcherResultModel(BaseModel, frozen=True):
         )
 
     def to_domain(self) -> AdaptiveResearcherResult:
-        """Recover the original :class:`~alphamind.analysis.adaptive_research.runner.AdaptiveResearcherResult`."""
+        """Recover the original :class:`AdaptiveResearcherResult`."""
         from alphamind.analysis.adaptive_research.runner import AdaptiveResearcherResult
 
         return AdaptiveResearcherResult(

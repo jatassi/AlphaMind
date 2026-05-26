@@ -245,7 +245,7 @@ def find_bare_prefix_citations(text: str) -> tuple[str, ...]:
 
 
 class RetrievalStoreModel(BaseModel, frozen=True):
-    """Frozen Pydantic boundary model for :class:`~alphamind.analysis.synthesizer.retrieval.RetrievalStore`.
+    """Frozen Pydantic boundary model for :class:`RetrievalStore`.
 
     ``freshness_by_source`` serializes :class:`BriefSource` enum keys as their
     string values (via ``dict[str, datetime]`` on the wire); ``from_domain``
@@ -261,7 +261,7 @@ class RetrievalStoreModel(BaseModel, frozen=True):
 
     @classmethod
     def from_domain(cls, store: RetrievalStore) -> RetrievalStoreModel:
-        """Project a :class:`~alphamind.analysis.synthesizer.retrieval.RetrievalStore` onto this model."""
+        """Project a :class:`RetrievalStore` onto this model."""
         return cls(
             entries=dict(store.entries),
             freshness_by_source={
@@ -270,7 +270,7 @@ class RetrievalStoreModel(BaseModel, frozen=True):
         )
 
     def to_domain(self) -> RetrievalStore:
-        """Recover the original :class:`~alphamind.analysis.synthesizer.retrieval.RetrievalStore`."""
+        """Recover the original :class:`RetrievalStore`."""
         from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 
         return RetrievalStore(
@@ -282,7 +282,7 @@ class RetrievalStoreModel(BaseModel, frozen=True):
 
 
 class SynthesizerResultModel(BaseModel, frozen=True):
-    """Frozen Pydantic boundary model for :class:`~alphamind.analysis.synthesizer.runner.SynthesizerResult`.
+    """Frozen Pydantic boundary model for the synthesizer result.
 
     Used by the debug-e2e phase-output persistence layer (story ALP-691).
     ``from_domain`` / ``to_domain`` provide lossless round-trip.
@@ -299,7 +299,7 @@ class SynthesizerResultModel(BaseModel, frozen=True):
 
     @classmethod
     def from_domain(cls, dc: SynthesizerResult) -> SynthesizerResultModel:
-        """Project a :class:`~alphamind.analysis.synthesizer.runner.SynthesizerResult` onto this model."""
+        """Project a :class:`SynthesizerResult` onto this model."""
         return cls(
             synthesis_text=dc.synthesis_text,
             retrieval_store=RetrievalStoreModel.from_domain(dc.retrieval_store),
@@ -310,7 +310,7 @@ class SynthesizerResultModel(BaseModel, frozen=True):
         )
 
     def to_domain(self) -> SynthesizerResult:
-        """Recover the original :class:`~alphamind.analysis.synthesizer.runner.SynthesizerResult`."""
+        """Recover the original :class:`SynthesizerResult`."""
         from alphamind.analysis.synthesizer.runner import SynthesizerResult
 
         return SynthesizerResult(

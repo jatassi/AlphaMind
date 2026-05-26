@@ -34,9 +34,9 @@ __all__ = [
     "SECTOR_PREFIX",
     "Anomaly",
     "AnomalyType",
-    "DomainResearcherOutputModel",
     "ConvictionSketch",
     "Direction",
+    "DomainResearcherOutputModel",
     "Finding",
     "SectorBrief",
     "SetupType",
@@ -215,7 +215,7 @@ SECTOR_PREFIX: dict[Sector, str] = {
 
 
 class _InputBundleModel(BaseModel, frozen=True):
-    """Pydantic mirror of :class:`~alphamind.analysis.domain_researchers.input_bundle.InputBundle`."""
+    """Pydantic mirror of the domain-researcher :class:`InputBundle` dataclass."""
 
     sector: Sector
     invocation_id: str
@@ -252,7 +252,7 @@ class _InputBundleModel(BaseModel, frozen=True):
 
 
 class DomainResearcherOutputModel(BaseModel, frozen=True):
-    """Frozen Pydantic boundary model for :class:`~alphamind.analysis.domain_researchers.runner.DomainResearcherResult`.
+    """Frozen Pydantic boundary model for :class:`DomainResearcherResult`.
 
     Used by the debug-e2e phase-output persistence layer (story ALP-691).
     One model class is shared across the three sector phases
@@ -274,7 +274,7 @@ class DomainResearcherOutputModel(BaseModel, frozen=True):
 
     @classmethod
     def from_domain(cls, dc: DomainResearcherResult) -> DomainResearcherOutputModel:
-        """Project a :class:`~alphamind.analysis.domain_researchers.runner.DomainResearcherResult` onto this model."""
+        """Project a :class:`DomainResearcherResult` onto this model."""
         return cls(
             sector=dc.sector,
             brief=dc.brief,
@@ -285,7 +285,7 @@ class DomainResearcherOutputModel(BaseModel, frozen=True):
         )
 
     def to_domain(self) -> DomainResearcherResult:
-        """Recover the original :class:`~alphamind.analysis.domain_researchers.runner.DomainResearcherResult`."""
+        """Recover the original :class:`DomainResearcherResult`."""
         from alphamind.analysis.domain_researchers.runner import DomainResearcherResult
 
         return DomainResearcherResult(
