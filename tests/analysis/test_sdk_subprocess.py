@@ -204,15 +204,14 @@ def test_borrow_cost_resolver_pickles_with_data() -> None:
 
 
 def test_prepare_validation_state_round_trips_with_real_library_config() -> None:
-    """Regression for ALP-681. A ``ValidationToolState`` carrying a
-    ``LibraryConfig`` produced by the production adapter
-    (``from_resolved_config``) must survive ``_prepare_validation_state_for_pickle``
-    + ``_encode_pickle`` + ``_decode_pickle``. The original bug shipped
-    ``mappingproxy`` objects across the slots, crashing the analyst subprocess
-    at the pickle boundary; this test exercises the real pickle path without
-    the identity-shim monkeypatch that the other heavy-state smoke tests use.
+    """Regression for ALP-681. The adapter's output must be picklable so the
+    subprocess-isolated analyst, strategist, and PM wrappers can ship
+    ``ValidationToolState`` across the worker boundary via base64-pickle.
+    Exercises the real ``_prepare_validation_state_for_pickle`` +
+    ``_encode_pickle`` + ``_decode_pickle`` pipeline against a real
+    ``LibraryConfig`` from ``from_resolved_config`` — without the identity-shim
+    monkeypatch the other heavy-state smoke tests use.
     """
-    from datetime import UTC, datetime
     from pathlib import Path
     from typing import cast
 
@@ -290,6 +289,9 @@ def test_prepare_validation_state_round_trips_with_real_library_config() -> None
     # Pydantic's escape hatch — the non-LibraryConfig fields are out of scope for
     # this regression gate; their own tests cover their construction. None values
     # are picklable and let us stay focused on the LibraryConfig pickle path.
+    # ``model_construct`` also bypasses the feature-flags-agree validator on
+    # ``ValidationToolState``; we keep the two slots aligned manually so the
+    # invariant the validator would enforce holds at construction time too.
     state = ValidationToolState.model_construct(
         invocation_id="INV-1",
         starting_snapshot=None,
@@ -308,8 +310,11 @@ def test_prepare_validation_state_round_trips_with_real_library_config() -> None
     decoded = sp._decode_pickle(encoded)
 
     assert decoded.library_config == library_config
-    assert dict(decoded.library_config.effective_limits) == dict(library_config.effective_limits)
-    assert dict(decoded.library_config.escalation_zones) == dict(library_config.escalation_zones)
+    # Type-preservation: the bug shipped mappingproxy in these slots; verify
+    # the round-trip lands on plain ``dict`` (the contract ``from_resolved_config``
+    # now produces).
+    assert isinstance(decoded.library_config.effective_limits, dict)
+    assert isinstance(decoded.library_config.escalation_zones, dict)
 
 
 # ---------------------------------------------------------------------------

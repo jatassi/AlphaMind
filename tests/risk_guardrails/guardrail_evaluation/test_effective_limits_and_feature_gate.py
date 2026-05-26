@@ -250,12 +250,11 @@ def test_adapter_raises_when_conservative_buffer_pct_is_out_of_range(
 
 def test_adapter_output_round_trips_through_pickle() -> None:
     """Regression for ALP-681. A ``LibraryConfig`` produced by
-    ``from_resolved_config`` must survive ``pickle.dumps`` / ``pickle.loads``
-    intact. Subprocess-isolated agents (``invoke_analyst_in_subprocess``,
+    ``from_resolved_config`` survives ``pickle.dumps`` / ``pickle.loads``
+    intact. The subprocess-isolated agents (``invoke_analyst_in_subprocess``,
     ``invoke_strategist_in_subprocess``, ``invoke_portfolio_manager_in_subprocess``;
     PR #179 / ALP-650) ship the carrying ``ValidationToolState`` across a
-    process boundary via base64-pickle — the adapter must not insert wrappers
-    (e.g. ``types.MappingProxyType``) that CPython refuses to pickle."""
+    process boundary via base64-pickle and rely on this property."""
     resolved = _compose(profile_override=Profile.medium)
 
     config = from_resolved_config(resolved)
