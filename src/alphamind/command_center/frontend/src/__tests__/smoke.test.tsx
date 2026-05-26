@@ -29,6 +29,10 @@ function buildNavRouter() {
   })
 }
 
+function expectNavText(): void {
+  expect(screen.getByText('AlphaMind Command Center')).toBeInTheDocument()
+}
+
 function buildQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -42,9 +46,7 @@ describe('frontend smoke', () => {
 
   it('renders the Nav shell standalone', async () => {
     render(<RouterProvider router={buildNavRouter()} />)
-    await waitFor(() => {
-      expect(screen.getByText('AlphaMind Command Center')).toBeInTheDocument()
-    })
+    await waitFor(expectNavText)
   })
 
   it('mounts the login form against a QueryClient', () => {
