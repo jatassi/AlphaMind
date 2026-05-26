@@ -144,6 +144,7 @@ async def _run(config: CommandCenterConfig) -> None:
             security_config=security_config,
             alerts_config=alerts_config,
             production_session_factory=engines.async_session_factory,
+            process_lifetime_id=process_lifetime_id,
         )
 
         supervisor = CommandCenterSupervisor(

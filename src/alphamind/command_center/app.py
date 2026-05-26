@@ -3,12 +3,12 @@
 This is the composition root for the command-center FastAPI app —
 the only module that wires routers, lifespan, and dependencies. Every
 downstream story includes its routers here via ``app.include_router(...)``;
-story 03 wires the auth router, with documented include points for the
-remaining stories:
+story 03 wires the auth router, story 04a wires the control router,
+with documented include points for the remaining stories:
 
 * Story 03 (WebAuthn + sessions + CSRF) — auth router included here.
-* Story 04a (``/api/control/*`` proxy + audit) —
-  ``app.include_router(control_router, prefix="/api/control")``.
+* Story 04a (``/api/control/*`` proxy + audit) — control router
+  included here.
 * Story 04b (``/api/events`` SSE multiplexer) —
   ``app.include_router(events_router, prefix="/api")``.
 * Story 04c (frontend bundling / static mount) —
@@ -17,9 +17,9 @@ remaining stories:
 * Story 05a (alerts) — ``app.include_router(alerts_router, prefix="/api/alerts")``.
 * View stories (05b-05j, 06a-06c) — included under ``/api/views/...``.
 
-This story ships ``/healthz`` (a trivial liveness probe) and the
-``/auth/*`` router with five endpoints (register begin/complete, login
-begin/complete, logout).
+This story ships ``/healthz`` (a trivial liveness probe), the
+``/auth/*`` router (story 03), and the ``/api/control/*`` router
+(story 04a — this story).
 
 Per the parent-issue architectural invariants:
 
@@ -52,6 +52,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -67,6 +68,15 @@ from alphamind.command_center.config import (
     CommandCenterConfig,
     SecurityConfig,
 )
+from alphamind.command_center.control.monitor_client import (
+    MonitorClient,
+    RealMonitorClient,
+)
+from alphamind.command_center.control.pipeline_client import (
+    PipelineClient,
+    RealPipelineClient,
+)
+from alphamind.command_center.control.routes import build_control_router
 from alphamind.command_center.events.clients import (
     HttpxMonitorEventsClient,
     HttpxPipelineEventsClient,
@@ -85,7 +95,7 @@ from alphamind.command_center.persistence.session import (
 )
 from alphamind.command_center.session import ProcessSession
 
-__all__ = ["AuthOverrides", "EventsOverrides", "build_app"]
+__all__ = ["AuthOverrides", "ControlOverrides", "EventsOverrides", "build_app"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +154,24 @@ class AuthOverrides:
     session_signing_secret: bytes | None = None
     cookies_secure: bool = False
     clock: Callable[[], datetime] | None = field(default=None)
+
+
+@dataclass(frozen=True, slots=True)
+class ControlOverrides:
+    """Test-time overrides for the control surface (story 04a / ALP-668).
+
+    Production callers leave every field ``None``; the lifespan
+    constructs a shared :class:`httpx.AsyncClient` + the two
+    :class:`Real*Client` implementations against the URLs pinned in
+    :class:`CommandCenterConfig.pipeline.control_url` /
+    ``monitor.control_url``. Tests pass :class:`FakePipelineClient` +
+    :class:`FakeMonitorClient` so the route layer is exercised without
+    booting the upstream surfaces.
+    """
+
+    pipeline_client: PipelineClient | None = None
+    monitor_client: MonitorClient | None = None
+    process_lifetime_id: str | None = None
 
 
 _SESSION_SECRET_ENV = "COMMAND_CENTER_SESSION_SECRET"
@@ -306,14 +334,45 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     foreign_reader = build_foreign_reader_session_factory(db_path)
     app.state.cc_writer_session_factory = cc_writer
     app.state.foreign_reader_session_factory = foreign_reader
+
+    # Construct the loopback HTTP client + Real* control clients only
+    # when the build_app caller did NOT pre-inject overrides. The
+    # client's lifetime is owned by this lifespan so the connection
+    # pool is shared across all /api/control/* dispatches.
+    http_client: httpx.AsyncClient | None = None
+    if getattr(app.state, "pipeline_client", None) is None:
+        if http_client is None:
+            http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+        app.state.pipeline_client = RealPipelineClient(
+            base_url=app.state.command_center_config.pipeline.control_url,
+            http_client=http_client,
+        )
+    if getattr(app.state, "monitor_client", None) is None:
+        if http_client is None:
+            http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+        app.state.monitor_client = RealMonitorClient(
+            base_url=app.state.command_center_config.monitor.control_url,
+            http_client=http_client,
+        )
+    app.state.control_http_client = http_client
+
     try:
         yield
     finally:
-        # Dispose engines so SQLite file handles release cleanly. Each
+        # Dispose engines + the shared httpx client so SQLite file
+        # handles release cleanly and the pool is drained. Each
         # dispose runs in its own try/except so a failure on one does
         # not skip the rest (F6). The production engine is NOT disposed
         # here — its lifetime is owned by the composition root's
         # engine_pair_context.
+        if http_client is not None:
+            try:
+                await http_client.aclose()
+            except Exception as exc:
+                log.warning(
+                    "command_center lifespan: control httpx client close failed: %s",
+                    exc,
+                )
         for engine_name, engine in (
             ("cc_writer", cc_writer.kw["bind"]),
             ("foreign_reader", foreign_reader.kw["bind"]),
@@ -334,7 +393,9 @@ def build_app(
     security_config: SecurityConfig,
     alerts_config: AlertsConfig,
     production_session_factory: async_sessionmaker[AsyncSession] | None = None,
+    process_lifetime_id: str | None = None,
     auth_overrides: AuthOverrides | None = None,
+    control_overrides: ControlOverrides | None = None,
     events_overrides: EventsOverrides | None = None,
 ) -> FastAPI:
     """Construct the FastAPI app composition root.
@@ -367,6 +428,15 @@ def build_app(
         operator-action bridge; production callers (``__main__``) always
         thread it in. The lifespan does NOT own the engine's lifetime;
         ``engine_pair_context`` in the composition root does.
+    process_lifetime_id:
+        FK target the control router threads into
+        :func:`operator_invocation` (story 04a / ALP-668). Production
+        callers thread the value :func:`record_process_lifetime`
+        returned at daemon startup; tests may omit it when not
+        exercising the control surface (the routes' dependency on
+        ``app.state.process_lifetime_id`` is read at request time, not
+        at app construction, so a missing value surfaces as an
+        ``AttributeError`` only when a control verb is invoked).
     auth_overrides:
         Optional :class:`AuthOverrides` bundle for test / deploy-time
         injection of the auth collaborators (WebAuthn verifier, setup-
@@ -375,8 +445,18 @@ def build_app(
         :class:`InMemoryWebauthnVerifier` + fixed signing secret +
         frozen clock to make the auth flow deterministic. See
         :class:`AuthOverrides` for the per-field semantics.
+    control_overrides:
+        Optional :class:`ControlOverrides` bundle for test injection of
+        the control-surface clients (story 04a / ALP-668). Production
+        callers leave this ``None`` and the lifespan constructs the
+        :class:`RealPipelineClient` / :class:`RealMonitorClient` against
+        the URLs pinned in :class:`CommandCenterConfig`. Tests pass
+        :class:`FakePipelineClient` / :class:`FakeMonitorClient` so the
+        proxy + route layer is exercised without booting the upstream
+        surfaces.
     """
     overrides = auth_overrides if auth_overrides is not None else AuthOverrides()
+    cc_control = control_overrides if control_overrides is not None else ControlOverrides()
     events = events_overrides if events_overrides is not None else EventsOverrides()
     app = FastAPI(
         title="AlphaMind command center",
@@ -391,6 +471,21 @@ def build_app(
     app.state.security_config = security_config
     app.state.alerts_config = alerts_config
     app.state.production_session_factory = production_session_factory
+    app.state.process_lifetime_id = (
+        cc_control.process_lifetime_id
+        if cc_control.process_lifetime_id is not None
+        else process_lifetime_id
+    )
+
+    # Control-surface wiring (story 04a / ALP-668). Test fakes are
+    # threaded in via ControlOverrides; production Real* clients are
+    # constructed inside the lifespan (the shared httpx client's
+    # lifetime belongs there). The lifespan checks app.state for a
+    # pre-existing client before constructing its own.
+    if cc_control.pipeline_client is not None:
+        app.state.pipeline_client = cc_control.pipeline_client
+    if cc_control.monitor_client is not None:
+        app.state.monitor_client = cc_control.monitor_client
 
     # Auth-state wiring (story 03 / ALP-667). The cc_writer +
     # foreign_reader factories are wired by the lifespan (above); the
@@ -418,21 +513,24 @@ def build_app(
     # EventsOverrides.
     event_multiplexer = EventMultiplexer()
     app.state.event_multiplexer = event_multiplexer
-    pipeline_client = events.pipeline_events_client or HttpxPipelineEventsClient(
+    events_pipeline_client = events.pipeline_events_client or HttpxPipelineEventsClient(
         base_url=command_center_config.pipeline.events_url,
     )
-    monitor_client = events.monitor_events_client or HttpxMonitorEventsClient(
+    events_monitor_client = events.monitor_events_client or HttpxMonitorEventsClient(
         base_url=command_center_config.monitor.events_url,
     )
     app.state.event_consumer_task_factories = {
         "events_pipeline_consumer": _make_pipeline_consumer_factory(
-            client=pipeline_client, multiplexer=event_multiplexer
+            client=events_pipeline_client, multiplexer=event_multiplexer
         ),
         "events_monitor_consumer": _make_monitor_consumer_factory(
-            client=monitor_client, multiplexer=event_multiplexer
+            client=events_monitor_client, multiplexer=event_multiplexer
         ),
     }
     app.include_router(build_events_router())
+
+    # Mount the control router (story 04a / ALP-668) under /api/control.
+    app.include_router(build_control_router(), prefix="/api/control")
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

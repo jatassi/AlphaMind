@@ -158,11 +158,12 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     """
     resolved = _fixture_resolved()
     digest = compute_snapshot_hash(serialize_resolved_config(resolved))
-    # Pin updated 2026-05-26 (ALP-664): scheduler.yaml gained the
-    # ``control_port`` field (default 8765) so the canonical bytes
-    # shifted; the YAML default preserves the historical behaviour but
-    # the serialised form now carries the extra key.
-    expected = "dcae35c62ba30b82f5f08614c9ff5640676bc6f4221865e65f048146663d0002"
+    # Pin updated 2026-05-26 (ALP-668 rebase): the base branch added
+    # scheduler.yaml.control_port (ALP-664) and main raised
+    # agents.yaml.analyst.latency_budget_seconds from 300 to 500 (#200);
+    # the combined canonical form on the ALP-128 work tree shifts the
+    # hash. Pin reflects the merged state.
+    expected = "2b973263dbd53b290b32ed2a68453f7f3a70b17541db51d668af64cd70ba6a49"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

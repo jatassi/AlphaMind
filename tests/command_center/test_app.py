@@ -56,8 +56,10 @@ db:
 frontend:
   dist_path: "{tmp_path}/dist-does-not-exist"
 pipeline:
+  control_url: "http://127.0.0.1:8765"
   events_url: "http://127.0.0.1:8765"
 monitor:
+  control_url: "http://127.0.0.1:8766"
   events_url: "http://127.0.0.1:8766"
 """,
         encoding="utf-8",
@@ -181,16 +183,18 @@ class TestLifespanWiresEventMultiplexer:
 
 
 class TestRegisteredRoutes:
-    """Story 02 ships /healthz; story 03 (ALP-667) adds /auth/*; story
-    04b (ALP-669) adds GET /api/events; story 04d (ALP-670) adds
-    /auth/me + the StaticFiles mount at /.
+    """Story 02 ships /healthz; story 03 (ALP-667) adds /auth/*; story 04a
+    (ALP-668) adds /api/control/*; story 04b (ALP-669) adds /api/events;
+    story 04d (ALP-670) adds /auth/me + the StaticFiles mount at /.
 
     Asserts that only the routes belonging to the merged stories are
-    present at this point — stories 04a (control proxy) / 05a
-    (alerts) / 05b-05j / 06a-06c register their routers later.
+    present at this point — stories 05a (alerts) / 05b-05j / 06a-06c
+    register their routers later.
     """
 
-    def test_includes_healthz_auth_and_events_routes(self, configs: tuple[Path, Path]) -> None:
+    def test_includes_healthz_auth_control_and_events_routes(
+        self, configs: tuple[Path, Path]
+    ) -> None:
         config_dir, _ = configs
         app = build_app(
             command_center_config=load_command_center_config(config_dir),
@@ -224,12 +228,20 @@ class TestRegisteredRoutes:
                 "/auth/login/complete",
                 "/auth/me",
                 "/auth/logout",
+                "/api/control/pause",
+                "/api/control/resume",
+                "/api/control/trigger_emergency_invocation",
+                "/api/control/switch_profile",
+                "/api/control/run_universe_validation",
+                "/api/control/cancel_order",
+                "/api/control/force_close_position",
+                "/api/control/set_halt_mode",
                 "/api/events",
             ]
         )
         assert own_routes == expected, (
-            f"unexpected routes registered after stories 02 + 03 + 04b + 04d — "
-            f"found {own_routes}; expected {expected}. Stories 04a / 05a / "
+            f"unexpected routes registered after stories 02 + 03 + 04a + 04b + 04d — "
+            f"found {own_routes}; expected {expected}. Stories 05a / "
             f"view stories register their routers later."
         )
 
