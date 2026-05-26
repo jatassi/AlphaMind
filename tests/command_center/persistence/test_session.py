@@ -404,7 +404,7 @@ class TestEngineDisposal:
 
 @pytest.mark.skipif(
     os.name == "nt",
-    reason="POSIX-shaped paths in these resolver tests; Windows runs the same helper through a separate path-expansion suite.",
+    reason="POSIX-shaped paths; Windows uses separate path-expansion tests.",
 )
 class TestResolveDbPath:
     """``_resolve_db_path`` mirrors production's path-expansion helper.

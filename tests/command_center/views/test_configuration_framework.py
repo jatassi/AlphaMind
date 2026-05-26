@@ -783,7 +783,7 @@ class TestLayeredValidationHooks:
             .read_text(encoding="utf-8")
             .replace(
                 '"%USERPROFILE%/AlphaMind/data/alphamind.db"',
-                f'"{tmp_path}/alphamind.db"',
+                f"'{tmp_path}/alphamind.db'",
             )
         )
         cc_yaml.write_text(cc_text, encoding="utf-8")
