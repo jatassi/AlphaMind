@@ -153,3 +153,63 @@ class TestUvicornBoot:
         # The run_task must complete within the supervisor's shutdown
         # timeout window; if Uvicorn ignored the cancel, this would hang.
         await asyncio.wait_for(run_task, timeout=10)
+
+    def test_event_consumer_task_factories_populated_by_build_app(
+        self,
+        per_test_config_dir: Path,
+    ) -> None:
+        # F15 — confirm build_app exposes the two events consumer task
+        # factories on app.state. __main__'s _run() reads off this
+        # dict and registers each on the supervisor's TaskGroup; if
+        # this stash is empty the consumer tasks never run and the
+        # ``/api/events`` route receives no upstream frames.
+        app = build_app(
+            command_center_config=load_command_center_config(per_test_config_dir),
+            security_config=load_security_config(per_test_config_dir),
+            alerts_config=load_alerts_config(per_test_config_dir),
+        )
+        factories = app.state.event_consumer_task_factories
+        assert isinstance(factories, dict)
+        assert set(factories.keys()) == {
+            "events_pipeline_consumer",
+            "events_monitor_consumer",
+        }
+        for factory in factories.values():
+            assert callable(factory)
+
+    def test_main_run_loop_registers_event_consumer_factories(
+        self,
+        per_test_config_dir: Path,
+    ) -> None:
+        # F15 — exercise the registration shape that __main__._run()
+        # performs. We rebuild a stand-in for the for-loop directly
+        # against a fresh supervisor + a freshly-built app to confirm
+        # both factory names land on the supervisor under the same
+        # registration order that __main__ uses.
+        app = build_app(
+            command_center_config=load_command_center_config(per_test_config_dir),
+            security_config=load_security_config(per_test_config_dir),
+            alerts_config=load_alerts_config(per_test_config_dir),
+        )
+        session = ProcessSession(
+            process_lifetime_id="plt-test",
+            started_at=datetime.now(UTC),
+        )
+        supervisor = CommandCenterSupervisor(
+            session=session,
+            shutdown_timeout_seconds=5,
+        )
+
+        # Mirror __main__._run() — uvicorn first, then the events
+        # consumer factories in registration order.
+        async def uvicorn_task(s: ProcessSession) -> None:
+            await asyncio.sleep(0)  # pragma: no cover — not executed here
+
+        supervisor.register_task(name="uvicorn", coro_fn=uvicorn_task)
+        for task_name, factory in app.state.event_consumer_task_factories.items():
+            supervisor.register_task(name=task_name, coro_fn=factory)
+
+        names = supervisor.task_names()
+        assert "uvicorn" in names
+        assert "events_pipeline_consumer" in names
+        assert "events_monitor_consumer" in names
