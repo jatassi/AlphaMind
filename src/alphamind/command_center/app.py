@@ -464,6 +464,19 @@ def build_app(
         :class:`FakePipelineClient` / :class:`FakeMonitorClient` so the
         proxy + route layer is exercised without booting the upstream
         surfaces.
+    events_overrides:
+        Optional :class:`EventsOverrides` bundle for test / deploy-time
+        injection of the events-surface clients (story 04b / ALP-669).
+        Production callers leave this ``None`` and ``build_app``
+        constructs the :class:`HttpxPipelineEventsClient` /
+        :class:`HttpxMonitorEventsClient` against the URLs pinned in
+        :class:`CommandCenterConfig.pipeline.events_url` /
+        ``monitor.events_url``, sharing one ``httpx.AsyncClient`` for
+        both upstreams (F10) — the shared client's lifetime is owned
+        by the lifespan. Tests pass :class:`FakePipelineEventsClient` /
+        :class:`FakeMonitorEventsClient` so the consumer-task
+        plumbing + the SSE multiplexer + the ``/api/events`` route are
+        exercised without booting real loopback SSE surfaces.
     """
     overrides = auth_overrides if auth_overrides is not None else AuthOverrides()
     cc_control = control_overrides if control_overrides is not None else ControlOverrides()
