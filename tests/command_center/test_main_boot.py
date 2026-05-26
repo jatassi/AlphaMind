@@ -170,9 +170,11 @@ class TestUvicornBoot:
         )
         factories = app.state.event_consumer_task_factories
         assert isinstance(factories, dict)
+        # Story 05b (ALP-672) adds a third factory for the schedule-cache drain.
         assert set(factories.keys()) == {
             "events_pipeline_consumer",
             "events_monitor_consumer",
+            "views_schedule_cache_drain",
         }
         for factory in factories.values():
             assert callable(factory)

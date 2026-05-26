@@ -46,6 +46,8 @@ Per the parent-issue architectural invariants:
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import os
 import secrets
@@ -98,6 +100,10 @@ from alphamind.command_center.persistence.session import (
     build_foreign_reader_session_factory,
 )
 from alphamind.command_center.session import ProcessSession
+from alphamind.command_center.views.live_operations import (
+    build_live_operations_router,
+    make_schedule_cache_subscriber,
+)
 
 __all__ = ["AuthOverrides", "ControlOverrides", "EventsOverrides", "build_app"]
 
@@ -298,6 +304,42 @@ def _make_monitor_consumer_factory(
 
     async def factory(_session: ProcessSession) -> None:
         await monitor_consumer_task(client=client, multiplexer=multiplexer)
+
+    return factory
+
+
+def _make_schedule_cache_drain_factory(
+    *,
+    multiplexer: EventMultiplexer,
+) -> Callable[[ProcessSession], Coroutine[Any, Any, None]]:
+    """Bind the schedule-cache drain task to the live multiplexer (story 05b / ALP-672).
+
+    Returns a supervisor-compatible factory that subscribes to the multiplexer
+    and forwards events to the per-module schedule-cache subscriber queue for
+    the daemon's entire lifetime.
+
+    Using :meth:`EventMultiplexer.subscribe` (async context manager) ensures
+    the queue is deregistered automatically if the task exits — no leaked
+    queues on supervisor restart.
+    """
+
+    async def factory(_session: ProcessSession) -> None:
+        # Allocate a schedule-cache queue + bind its drain coroutine.
+        subscriber_queue = make_schedule_cache_subscriber()
+        drain = subscriber_queue._drain_coroutine  # type: ignore[attr-defined]
+        # Drain task runs concurrently; the outer loop feeds events from the
+        # multiplexer queue into the subscriber queue so the drain sees them.
+        drain_task = asyncio.create_task(drain())
+        try:
+            async with multiplexer.subscribe() as mux_queue:
+                while True:
+                    event = await mux_queue.get()
+                    with contextlib.suppress(asyncio.QueueFull):
+                        subscriber_queue.put_nowait(event)
+        finally:
+            drain_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await drain_task
 
     return factory
 
@@ -559,6 +601,7 @@ def build_app(
         http_client=events_http_client,
     )
     app.state.events_http_client = events_http_client
+
     app.state.event_consumer_task_factories = {
         "events_pipeline_consumer": _make_pipeline_consumer_factory(
             client=events_pipeline_client, multiplexer=event_multiplexer
@@ -566,11 +609,18 @@ def build_app(
         "events_monitor_consumer": _make_monitor_consumer_factory(
             client=events_monitor_client, multiplexer=event_multiplexer
         ),
+        "views_schedule_cache_drain": _make_schedule_cache_drain_factory(
+            multiplexer=event_multiplexer,
+        ),
     }
     app.include_router(build_events_router())
 
     # Mount the control router (story 04a / ALP-668) under /api/control.
     app.include_router(build_control_router(), prefix="/api/control")
+
+    # Mount the live-operations view router (story 05b / ALP-672).
+    # The router bakes its own ``/api/views`` prefix.
+    app.include_router(build_live_operations_router())
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

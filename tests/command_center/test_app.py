@@ -165,9 +165,10 @@ class TestLifespanWiresEventMultiplexer:
     def test_consumer_task_factories_attached_to_app_state(
         self, configs: tuple[Path, Path]
     ) -> None:
-        """The two upstream-consumer task factories are exposed so the
+        """The upstream-consumer task factories are exposed so the
         composition root can register them on the supervisor's
-        TaskGroup at process startup.
+        TaskGroup at process startup. Story 05b (ALP-672) adds a third
+        factory for the schedule-cache drain.
         """
         config_dir, _ = configs
         app = build_app(
@@ -177,22 +178,24 @@ class TestLifespanWiresEventMultiplexer:
         )
         with TestClient(app):
             factories = app.state.event_consumer_task_factories
-            assert set(factories) == {"events_pipeline_consumer", "events_monitor_consumer"}
+            assert set(factories) == {
+                "events_pipeline_consumer",
+                "events_monitor_consumer",
+                "views_schedule_cache_drain",
+            }
             assert callable(factories["events_pipeline_consumer"])
             assert callable(factories["events_monitor_consumer"])
+            assert callable(factories["views_schedule_cache_drain"])
 
 
 class TestRegisteredRoutes:
     """Story 02 ships /healthz; story 03 (ALP-667) adds /auth/*; story 04a
     (ALP-668) adds /api/control/*; story 04b (ALP-669) adds /api/events;
-    story 04d (ALP-670) adds /auth/me + the StaticFiles mount at /.
-
-    Asserts that only the routes belonging to the merged stories are
-    present at this point — stories 05a (alerts) / 05b-05j / 06a-06c
-    register their routers later.
+    story 04d (ALP-670) adds /auth/me + the StaticFiles mount at /;
+    story 05b (ALP-672) adds /api/views/live + /api/views/schedule.
     """
 
-    def test_includes_healthz_auth_control_and_events_routes(
+    def test_includes_healthz_auth_control_events_and_view_routes(
         self, configs: tuple[Path, Path]
     ) -> None:
         config_dir, _ = configs
@@ -237,12 +240,12 @@ class TestRegisteredRoutes:
                 "/api/control/force_close_position",
                 "/api/control/set_halt_mode",
                 "/api/events",
+                "/api/views/live",
+                "/api/views/schedule",
             ]
         )
         assert own_routes == expected, (
-            f"unexpected routes registered after stories 02 + 03 + 04a + 04b + 04d — "
-            f"found {own_routes}; expected {expected}. Stories 05a / "
-            f"view stories register their routers later."
+            f"unexpected routes — found {own_routes}; expected {expected}."
         )
 
 
