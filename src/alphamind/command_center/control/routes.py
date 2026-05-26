@@ -109,9 +109,7 @@ def _build_error_envelope(result: ControlResult) -> ControlErrorEnvelope:
     # string value so the Pydantic boundary type doesn't see a StrEnum
     # instance that mypy considers a wider type.
     return ControlErrorEnvelope(
-        error=ControlError.model_validate(
-            {"code": code.value, "detail": detail, "details": None}
-        )
+        error=ControlError.model_validate({"code": code.value, "detail": detail, "details": None})
     )
 
 
