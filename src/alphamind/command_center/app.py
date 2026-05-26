@@ -29,6 +29,9 @@ module currently composes:
 * ``/api/views/portfolio/dashboard`` — the portfolio dashboard (story 05f /
   ALP-676) via
   :func:`alphamind.command_center.views.portfolio.build_portfolio_router`.
+* ``/api/views/risk/*`` — the risk views (story 05j / ALP-680): guardrail
+  dashboard, regime timeline, calibration mix via
+  :func:`alphamind.command_center.views.risk.build_risk_router`.
 * ``/`` static mount — serves the Vite-built SPA bundle from
   ``config.frontend.dist_path`` (story 04c). Mounted LAST so
   ``/api/*`` routes match first; skipped in dev mode (when
@@ -133,6 +136,7 @@ from alphamind.command_center.views.live_operations import (
     update_schedule_cache,
 )
 from alphamind.command_center.views.portfolio import build_portfolio_router
+from alphamind.command_center.views.risk import build_risk_router
 
 __all__ = [
     "AlertsOverrides",
@@ -791,6 +795,9 @@ def build_app(  # noqa: PLR0913, PLR0915 — composition root wires four overrid
     # target; production callers thread the daemon's resolved ``config/``
     # directory via the ``config_dir`` build_app kwarg.
     app.include_router(build_configuration_router(), prefix="/api/views/config")
+
+    # Mount the risk views router (story 05j / ALP-680).
+    app.include_router(build_risk_router(), prefix="/api/views/risk")
 
     # Alerts wiring (story 05a / ALP-671). The engine itself is
     # constructed inside the lifespan (it needs the cc_writer +
