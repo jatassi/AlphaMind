@@ -29,8 +29,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import pydantic
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.atomic_io import atomic_write_text
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis.adaptive_research.runner import (
     AdaptiveResearcherResult,
@@ -65,6 +67,33 @@ __all__ = [
     "apply_agent_overrides",
     "run_analysis_pipeline",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Phase-output emission helper (ALP-691)
+# ---------------------------------------------------------------------------
+
+
+def _emit_phase_output(
+    *,
+    archive_root: Path,
+    invocation_id: str,
+    phase: str,
+    model: pydantic.BaseModel,
+) -> None:
+    """Atomically write *model* to ``<archive_root>/invocations/<id>/phase_outputs/<phase>.json``.
+
+    Uses :func:`alphamind._kernel.atomic_io.atomic_write_text` for the
+    staging-and-rename guarantee. The ``phase_outputs/`` subdirectory is
+    created by ``atomic_write_text`` if absent (it calls
+    ``target.parent.mkdir(parents=True, exist_ok=True)``).
+
+    This helper mirrors :func:`alphamind.scheduler.debug_e2e.phase_outputs.write_phase_output`
+    but lives here to respect the import-linter layering rule that forbids
+    ``alphamind.pipeline`` from importing ``alphamind.scheduler``.
+    """
+    target = archive_root / "invocations" / invocation_id / "phase_outputs" / f"{phase}.json"
+    atomic_write_text(target, model.model_dump_json())
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +135,7 @@ def _extract_regime_label(distillation_outputs: DistillationOutputs) -> str:
     return str(label)
 
 
-async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface threads typed inputs through every stage plus ALP-497 progress
+async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface threads typed inputs through every stage plus ALP-497 progress + ALP-691 debug_e2e
     *,
     session: Session,
     invocation_id: str,
@@ -121,6 +150,7 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
     archive_root: Path | None = None,
     provenance_root: Path | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    debug_e2e: object | None = None,
 ) -> AnalysisPipelineResult:
     """Run the distillation → analysis-layer composition end-to-end.
 
@@ -147,6 +177,11 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
     call. Defaults to a no-op emitter for production callers that don't
     set ``--debug-e2e``.
     """
+    # Phase-output emission is active when both conditions hold (ALP-691):
+    # archive_root is set AND debug_e2e is not None (i.e. a debug-e2e invocation).
+    # Production daemon callers leave debug_e2e=None so no files are ever written.
+    _emit = archive_root is not None and debug_e2e is not None
+
     # Project the Pydantic ``DistillationConfig`` boundary type onto its
     # frozen-dataclass mirror (ALP-471) before the orchestrator runs — the
     # orchestrator's compute path consumes the dataclass form.
@@ -205,6 +240,39 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
     progress.phase_done("domain_researchers")
     progress.phase_done("qualitative")
 
+    # Emit per-sector phase outputs (ALP-691): 3 files for the 3 domain researchers.
+    if _emit:
+        assert archive_root is not None  # narrowed by _emit guard above
+        from alphamind.analysis.domain_researchers.models import DomainResearcherOutputModel
+        from alphamind.analysis.qualitative_research.models import (
+            QualitativeResearcherResultModel,
+        )
+
+        _emit_phase_output(
+            archive_root=archive_root,
+            invocation_id=invocation_id,
+            phase="tech_semis",
+            model=DomainResearcherOutputModel.from_domain(domain_researchers_output.tech_semis),
+        )
+        _emit_phase_output(
+            archive_root=archive_root,
+            invocation_id=invocation_id,
+            phase="financials",
+            model=DomainResearcherOutputModel.from_domain(domain_researchers_output.financials),
+        )
+        _emit_phase_output(
+            archive_root=archive_root,
+            invocation_id=invocation_id,
+            phase="energy",
+            model=DomainResearcherOutputModel.from_domain(domain_researchers_output.energy),
+        )
+        _emit_phase_output(
+            archive_root=archive_root,
+            invocation_id=invocation_id,
+            phase="qualitative",
+            model=QualitativeResearcherResultModel.from_domain(qualitative_result),
+        )
+
     sector_briefs: tuple[SectorBrief, ...] = (
         domain_researchers_output.tech_semis.brief,
         domain_researchers_output.financials.brief,
@@ -229,6 +297,18 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
     )
     progress.phase_done("adaptive")
 
+    # Emit adaptive phase output (ALP-691).
+    if _emit:
+        assert archive_root is not None  # narrowed by _emit guard above
+        from alphamind.analysis.adaptive_research.models import AdaptiveResearcherResultModel
+
+        _emit_phase_output(
+            archive_root=archive_root,
+            invocation_id=invocation_id,
+            phase="adaptive",
+            model=AdaptiveResearcherResultModel.from_domain(adaptive_result),
+        )
+
     progress.phase_start("synthesizer")
     synthesizer_result = await run_synthesizer(
         regime_label=_extract_regime_label(distillation_outputs),
@@ -245,6 +325,18 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
         phase="synthesizer",
     )
     progress.phase_done("synthesizer")
+
+    # Emit synthesizer phase output (ALP-691).
+    if _emit:
+        assert archive_root is not None  # narrowed by _emit guard above
+        from alphamind.analysis.synthesizer.models import SynthesizerResultModel
+
+        _emit_phase_output(
+            archive_root=archive_root,
+            invocation_id=invocation_id,
+            phase="synthesizer",
+            model=SynthesizerResultModel.from_domain(synthesizer_result),
+        )
 
     return AnalysisPipelineResult(
         distillation_outputs=distillation_outputs,
