@@ -319,3 +319,106 @@ export function savedFiltersQueryOptions(): ReturnType<typeof queryOptions<Saved
 export function useSavedFilters(): UseQueryResult<SavedFiltersResponse> {
   return useQuery(savedFiltersQueryOptions())
 }
+
+// ---------------------------------------------------------------------------
+// Invocation detail hooks (story 05d / ALP-674)
+// ---------------------------------------------------------------------------
+
+export type ArchiveSection = {
+  section: string
+  files: string[]
+}
+
+export type InvocationDetailHeader = {
+  invocation_id: string
+  run_type: string
+  started_at: string
+  ended_at: string | null
+  status: string
+  phase1_completed_at: string | null
+  phase2_completed_at: string | null
+  duration_seconds: number | null
+  trigger_type: string
+  trigger_reason: string
+  git_sha: string
+  active_profile: string
+  active_regime: string
+  active_mode: string
+  abort_reason: string | null
+  error_summary: string | null
+}
+
+export type InvocationActivityEntry = {
+  entry_id: string
+  entry_at: string
+  event_type: string
+  event_group: string
+  position_id: string | null
+  order_id: string | null
+  thesis_id: string | null
+  source: string
+  detail_json: string
+}
+
+export type InvocationDetailResponse = {
+  header: InvocationDetailHeader
+  archive_root: string | null
+  archive_sections: ArchiveSection[]
+  pm_entries: InvocationActivityEntry[]
+  command_fill_entries: InvocationActivityEntry[]
+}
+
+export type BriefSection = {
+  ref_id: string
+  content: string
+}
+
+export type BriefRetrievalResponse = {
+  invocation_id: string
+  ref_prefix: string
+  sections: BriefSection[]
+}
+
+export function invocationDetailQueryOptions(
+  invocationId: string,
+): ReturnType<typeof queryOptions<InvocationDetailResponse>> {
+  return queryOptions<InvocationDetailResponse>({
+    queryKey: ['invocation-detail', invocationId],
+    queryFn: () =>
+      api.get<InvocationDetailResponse>(
+        `/api/views/history/runs/${encodeURIComponent(invocationId)}`,
+      ),
+    staleTime: 60 * 1000,
+    retry: 1,
+  })
+}
+
+export function useInvocationDetail(
+  invocationId: string,
+): UseQueryResult<InvocationDetailResponse> {
+  return useQuery(invocationDetailQueryOptions(invocationId))
+}
+
+export function briefRetrievalQueryOptions(
+  invocationId: string,
+  refPrefix: string,
+): ReturnType<typeof queryOptions<BriefRetrievalResponse>> {
+  const params = new URLSearchParams({
+    invocation_id: invocationId,
+    ref_prefix: refPrefix,
+  })
+  return queryOptions<BriefRetrievalResponse>({
+    queryKey: ['brief-retrieval', invocationId, refPrefix],
+    queryFn: () =>
+      api.get<BriefRetrievalResponse>(`/api/views/history/brief-retrieval?${params.toString()}`),
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  })
+}
+
+export function useBriefRetrieval(
+  invocationId: string,
+  refPrefix: string,
+): UseQueryResult<BriefRetrievalResponse> {
+  return useQuery(briefRetrievalQueryOptions(invocationId, refPrefix))
+}

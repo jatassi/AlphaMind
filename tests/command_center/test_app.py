@@ -254,8 +254,11 @@ class TestRegisteredRoutes:
                 "/api/views/activity-log",
                 "/api/views/activity-log/event-types",
                 "/api/views/activity-log/saved-filters",
+                "/api/views/history/brief-retrieval",
                 "/api/views/history/runs",
                 "/api/views/history/runs/preset/failure-log",
+                "/api/views/history/runs/{invocation_id}",
+                "/api/views/history/runs/{invocation_id}/archive/{section}/{filename}",
                 "/api/views/live",
                 # Story 05f (ALP-676) — portfolio dashboard.
                 "/api/views/portfolio/dashboard",
@@ -264,8 +267,8 @@ class TestRegisteredRoutes:
         )
         assert own_routes == expected, (
             f"unexpected routes registered after stories "
-            f"02 + 03 + 04a + 04b + 04d + 05a + 05b + 05c + 05e + 05f — "
-            f"found {own_routes}; expected {expected}. Stories 05d/05g-05j/"
+            f"02 + 03 + 04a + 04b + 04d + 05a + 05b + 05c + 05d + 05e + 05f — "
+            f"found {own_routes}; expected {expected}. Stories 05g-05j/"
             f"06a-06c register their routers later."
         )
 

@@ -2,6 +2,8 @@ import { createRouter } from '@tanstack/react-router'
 
 import { Route as RootRoute } from './routes/__root'
 import { Route as AuthedRoute } from './routes/_authed'
+import { Route as InvocationDetailRoute } from './routes/_authed/history/$invocation-id'
+import { Route as BriefViewerRoute } from './routes/_authed/history/brief-viewer'
 import { Route as FailuresRoute } from './routes/_authed/history/failures'
 import { Route as HistoryRoute } from './routes/_authed/history/index'
 import { Route as LiveRoute } from './routes/_authed/live'
@@ -19,7 +21,11 @@ const routeTree = RootRoute.addChildren([
     IndexRoute,
     LiveRoute,
     HistoryRoute,
+    // 05d: brief-viewer registered before the $invocationId catch-all so the
+    // static path /history/brief-viewer is matched first.
+    BriefViewerRoute,
     FailuresRoute,
+    InvocationDetailRoute,
     ActivityLogRoute,
     PortfolioRoute,
     PositionDetailRoute,

@@ -241,7 +241,7 @@ def client(configs: tuple[Path, Path]) -> Generator[TestClient]:
 
 
 # ---------------------------------------------------------------------------
-# Tests: GET /api/views/history/runs/{invocation_id}
+# Invocation detail endpoint tests
 # ---------------------------------------------------------------------------
 
 
@@ -414,7 +414,7 @@ class TestArchiveFileStreaming:
 
 
 # ---------------------------------------------------------------------------
-# Tests: GET /api/views/brief-retrieval
+# Brief-retrieval endpoint tests
 # ---------------------------------------------------------------------------
 
 

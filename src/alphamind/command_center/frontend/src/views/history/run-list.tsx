@@ -184,18 +184,10 @@ function DataRow({ row, navigate }: DataRowProps): React.JSX.Element {
     <tr
       className="hover:bg-muted/30 cursor-pointer border-b"
       onClick={() => {
-        // Story 05d will add /history/$invocationId; stub uses run_type
-        // search param until the detail route is registered.
+        // Navigate to the per-invocation detail page (story 05d / ALP-674).
         void navigate({
-          to: '/history',
-          search: {
-            date_from: undefined,
-            date_to: undefined,
-            run_type: row.original.invocation_id,
-            status: undefined,
-            page: undefined,
-            page_size: undefined,
-          },
+          to: '/history/$invocationId',
+          params: { invocationId: row.original.invocation_id },
         })
       }}
     >
