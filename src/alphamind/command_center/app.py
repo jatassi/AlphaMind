@@ -9,17 +9,20 @@ with documented include points for the remaining stories:
 * Story 03 (WebAuthn + sessions + CSRF) — auth router included here.
 * Story 04a (``/api/control/*`` proxy + audit) — control router
   included here.
-* Story 04b (``/api/events`` SSE multiplexer) —
-  ``app.include_router(events_router, prefix="/api")``.
+* Story 04b (``/api/events`` SSE multiplexer) — events router
+  included via ``app.include_router(build_events_router())``;
+  ``build_events_router`` already bakes the ``/api`` prefix, so no
+  ``prefix=`` kwarg is passed at the include site (F9).
 * Story 04c (frontend bundling / static mount) —
   ``app.mount("/", StaticFiles(...))`` (mounted last so ``/api/*``
   takes precedence).
 * Story 05a (alerts) — ``app.include_router(alerts_router, prefix="/api/alerts")``.
 * View stories (05b-05j, 06a-06c) — included under ``/api/views/...``.
 
-This story ships ``/healthz`` (a trivial liveness probe), the
-``/auth/*`` router (story 03), and the ``/api/control/*`` router
-(story 04a — this story).
+This module ships ``/healthz`` (a trivial liveness probe), the
+``/auth/*`` router (story 03), the ``/api/control/*`` router
+(story 04a), the ``/api/events`` SSE router (story 04b), and the
+static-files mount for the Vite-built SPA (story 04c).
 
 Per the parent-issue architectural invariants:
 
