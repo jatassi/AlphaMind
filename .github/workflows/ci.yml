@@ -73,6 +73,32 @@ jobs:
       - name: lint-imports
         run: uv run lint-imports
 
+  frontend-lint:
+    name: bun lint + format-check (frontend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only run when frontend files change — saves CI minutes on Python-only PRs.
+    # Note: on `pull_request` this filter evaluates the PR's full diff, not just
+    # the triggering commit. A PR that started as Python-only stays fast even if
+    # a docs follow-up is pushed.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend dependencies
+        working-directory: src/alphamind/command_center/frontend
+        run: bun install --frozen-lockfile
+
+      - name: ESLint
+        working-directory: src/alphamind/command_center/frontend
+        run: bun run lint
+
+      - name: Prettier (format check)
+        working-directory: src/alphamind/command_center/frontend
+        run: bun run format:check
+
   test:
     name: pytest (windows)
     runs-on: windows-latest
