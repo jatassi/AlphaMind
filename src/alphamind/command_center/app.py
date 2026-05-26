@@ -26,6 +26,9 @@ module currently composes:
 * ``/api/views/activity-log`` — the activity log explorer (story 05e /
   ALP-675) via
   :func:`alphamind.command_center.views.activity_log.build_activity_log_router`.
+* ``/api/views/portfolio/dashboard`` — the portfolio dashboard (story 05f /
+  ALP-676) via
+  :func:`alphamind.command_center.views.portfolio.build_portfolio_router`.
 * ``/`` static mount — serves the Vite-built SPA bundle from
   ``config.frontend.dist_path`` (story 04c). Mounted LAST so
   ``/api/*`` routes match first; skipped in dev mode (when
@@ -35,7 +38,7 @@ module currently composes:
 Documented include points for future stories:
 
 * Story 05a (alerts) — ``app.include_router(alerts_router, prefix="/api/alerts")``.
-* View stories (05d, 05f-05j, 06a-06c) — included under ``/api/views/...``.
+* View stories (05d, 05g-05j, 06a-06c) — included under ``/api/views/...``.
 * Story 05d (per-invocation detail) will extend ``/api/views/history``.
 
 Per the parent-issue architectural invariants:
@@ -117,6 +120,7 @@ from alphamind.command_center.views.live_operations import (
     build_views_router,
     update_schedule_cache,
 )
+from alphamind.command_center.views.portfolio import build_portfolio_router
 
 __all__ = ["AuthOverrides", "ControlOverrides", "EventsOverrides", "build_app"]
 
@@ -636,6 +640,9 @@ def build_app(
 
     # Mount the activity-log view router (story 05e / ALP-675).
     app.include_router(build_activity_log_router(), prefix="/api/views/activity-log")
+
+    # Mount the portfolio dashboard router (story 05f / ALP-676).
+    app.include_router(build_portfolio_router(), prefix="/api/views/portfolio")
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
