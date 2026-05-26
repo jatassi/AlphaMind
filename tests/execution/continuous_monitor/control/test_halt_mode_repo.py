@@ -8,7 +8,8 @@ portfolio state field per ``docs/design/monitor-control-and-events-schema.md``
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import asyncio
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -69,3 +70,58 @@ class TestHaltModeRepository:
         record = await repository.read()
         assert record.enabled is False
         assert record.reason == "lifted"
+
+    async def test_write_idempotent_on_same_value_preserves_applied_at(
+        self, repository: HaltModeRepository
+    ) -> None:
+        """A no-op write (same enabled + reason) leaves applied_at anchored to
+        the original transition rather than overwriting with the request's
+        timestamp.
+        """
+        first_at = datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC)
+        await repository.write(
+            HaltModeRecord(enabled=True, reason="circuit breaker", applied_at=first_at)
+        )
+        # Second write with same enabled + reason but a later timestamp must
+        # preserve the original applied_at.
+        later_at = first_at + timedelta(minutes=5)
+        await repository.write(
+            HaltModeRecord(enabled=True, reason="circuit breaker", applied_at=later_at)
+        )
+        record = await repository.read()
+        assert record.enabled is True
+        assert record.reason == "circuit breaker"
+        assert record.applied_at == first_at
+
+    async def test_write_state_transition_updates_applied_at(
+        self, repository: HaltModeRepository
+    ) -> None:
+        """A real state transition (different enabled OR different reason)
+        adopts the new applied_at.
+        """
+        first_at = datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC)
+        await repository.write(HaltModeRecord(enabled=True, reason="r1", applied_at=first_at))
+        later_at = first_at + timedelta(minutes=5)
+        await repository.write(HaltModeRecord(enabled=True, reason="r2", applied_at=later_at))
+        record = await repository.read()
+        assert record.reason == "r2"
+        assert record.applied_at == later_at
+
+    async def test_concurrent_writes_do_not_raise_integrity_error(
+        self, repository: HaltModeRepository
+    ) -> None:
+        """The atomic upsert eliminates the prior select-then-insert TOCTOU
+        race; two concurrent writes both reach a coherent final state without
+        IntegrityError (F5).
+        """
+        ts = datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC)
+        # Concurrently write two distinct values; the upsert serializes them
+        # into a single final row.
+        await asyncio.gather(
+            repository.write(HaltModeRecord(enabled=True, reason="a", applied_at=ts)),
+            repository.write(HaltModeRecord(enabled=True, reason="b", applied_at=ts)),
+        )
+        record = await repository.read()
+        assert record.enabled is True
+        # Whichever write committed last wins; both reasons are valid finals.
+        assert record.reason in {"a", "b"}
