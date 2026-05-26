@@ -510,9 +510,10 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
         try:
             cred_id_typed = webauthn_credential_id(body.credential_id)
         except ValueError as exc:
+            log.warning("invalid credential_id presented: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"invalid credential_id: {exc}",
+                detail="invalid credential_id",
             ) from exc
         verifier = request.app.state.webauthn_verifier
         try:
@@ -622,9 +623,10 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
         try:
             cred_id_typed = webauthn_credential_id(body.credential_id)
         except ValueError as exc:
+            log.warning("invalid credential_id presented: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"invalid credential_id: {exc}",
+                detail="invalid credential_id",
             ) from exc
         cc_factory = request.app.state.cc_writer_session_factory
         stored = await load_credential(cc_factory, credential_id=cred_id_typed)
