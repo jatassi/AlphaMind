@@ -1,6 +1,6 @@
-"""Portfolio dashboard view — GET /api/views/portfolio/dashboard (ALP-676).
+"""Portfolio views — dashboard + position detail (ALP-676, ALP-677).
 
-Composed read of five panes from the foreign-reader session:
+Dashboard (GET /api/views/portfolio/dashboard) — five panes:
 
 * ``equity_and_pl``    — total value, HWM, drawdown, daily/cumulative/total
                           unrealized P/L from ``drawdown_state`` +
@@ -15,8 +15,18 @@ Composed read of five panes from the foreign-reader session:
 * ``positions``        — one row per ``OPEN`` position joined to ``theses``.
 * ``pending_orders``   — one row per ``PENDING`` / ``PARTIALLY_FILLED`` order.
 
+Position detail (GET /api/views/portfolio/positions/{position_id}) — full
+per-position detail for view C-2:
+
+* position row fields
+* bracket legs for the position's bracket
+* fill history (fills joined through the position's orders)
+* linked thesis with all components
+* activity_log entries filtered by position_id
+
 Design references:
   docs/design/command-center.md § Portfolio dashboard
+  docs/design/command-center.md § Position detail
   docs/design/05-execution-layer/regt-margin-attribution.md
 """
 
@@ -29,7 +39,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -586,7 +596,7 @@ async def _read_pending_orders(session: AsyncSession) -> list[PendingOrderRow]:
 
     for (
         order_id,
-        status,
+        order_status,
         instrument_spec_json,
         order_type,
         order_role,
@@ -611,7 +621,7 @@ async def _read_pending_orders(session: AsyncSession) -> list[PendingOrderRow]:
         out.append(
             PendingOrderRow(
                 order_id=str(order_id),
-                status=str(status),
+                status=str(order_status),
                 instrument_spec=instrument_spec,
                 order_type=str(order_type),
                 order_role=str(order_role),
@@ -625,6 +635,507 @@ async def _read_pending_orders(session: AsyncSession) -> list[PendingOrderRow]:
         )
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# Position detail — Pydantic response models (ALP-677)
+# ---------------------------------------------------------------------------
+
+
+class BracketLegDetail(BaseModel):
+    """One bracket leg row for the position detail view."""
+
+    bracket_leg_id: str
+    leg_index: int
+    leg_type: str
+    trigger_kind: str
+    trigger_payload: dict[str, Any]
+    pl_anchor: dict[str, Any] | None
+    enforcement: str
+    leg_status: str
+    order_id: str | None
+
+
+class FillDetail(BaseModel):
+    """One fill record row for the position detail view."""
+
+    fill_id: str
+    order_id: str
+    fill_timestamp: str
+    fill_price: str
+    fill_quantity: float
+    remaining_quantity_after: float
+    order_status_after: str
+    slippage_usd: str | None
+    fees_usd: str
+    execution_venue: str | None
+
+
+class ThesisComponentDetail(BaseModel):
+    """One thesis component for the position detail view."""
+
+    component_id: str
+    component_type: str
+    linked_bracket_leg: str | None
+    instrument_reference: str | None
+    narrative: str
+    key_assumptions: list[str]
+    supporting_signals: list[str]
+    resolution_outcome: str | None
+    resolution_notes: str | None
+
+
+class ThesisDetail(BaseModel):
+    """Full thesis for the position detail view."""
+
+    thesis_id: str
+    status: str
+    summary: str
+    time_expectation_hours: float | None
+    position_size_rationale: str | None
+    generation_timestamp: str
+    resolution_timestamp: str | None
+    resolution_category: str | None
+    components: list[ThesisComponentDetail]
+
+
+class ActivityLogEntry(BaseModel):
+    """One activity log row for the position detail history tab."""
+
+    entry_id: str
+    invocation_id: str
+    entry_at: str
+    event_type: str
+    event_group: str
+    order_id: str | None
+    thesis_id: str | None
+    source: str
+    detail_json: str
+
+
+class PositionDetail(BaseModel):
+    """Full position detail response (ALP-677 view C-2).
+
+    Aggregates: position fields, bracket legs, fill history, thesis +
+    components, activity_log entries filtered by position_id.
+    """
+
+    position_id: str
+    ticker: str
+    instrument_type: str
+    direction: str | None
+    status: str
+    quantity: float
+    market_value_usd: str
+    unrealized_pl_usd: str
+    realized_pl_usd: str | None
+    age_hours: float
+    distance_to_target_pct: float | None
+    distance_to_nearest_invalidation_pct: float | None
+    bracket_id: str | None
+    bracket_legs: list[BracketLegDetail]
+    fills: list[FillDetail]
+    thesis: ThesisDetail | None
+    activity_log: list[ActivityLogEntry]
+
+
+# ---------------------------------------------------------------------------
+# Position detail — internal read helpers (ALP-677)
+# ---------------------------------------------------------------------------
+
+
+async def _read_bracket_legs(
+    session: AsyncSession,
+    bracket_id: str,
+) -> list[BracketLegDetail]:
+    """Read all bracket legs for the given bracket_id ordered by leg_index."""
+    result = await session.execute(
+        text("""
+            SELECT
+                bracket_leg_id,
+                leg_index,
+                leg_type,
+                trigger_kind,
+                trigger_payload_json,
+                pl_anchor_json,
+                enforcement,
+                leg_status,
+                order_id
+            FROM bracket_legs
+            WHERE bracket_id = :bracket_id
+            ORDER BY leg_index
+        """),
+        {"bracket_id": bracket_id},
+    )
+    rows = result.fetchall()
+    legs: list[BracketLegDetail] = []
+    for (
+        bracket_leg_id,
+        leg_index,
+        leg_type,
+        trigger_kind,
+        trigger_payload_json,
+        pl_anchor_json,
+        enforcement,
+        leg_status,
+        order_id,
+    ) in rows:
+        try:
+            trigger_payload: dict[str, Any] = json.loads(trigger_payload_json)
+        except (json.JSONDecodeError, TypeError):
+            trigger_payload = {}
+        pl_anchor: dict[str, Any] | None = None
+        if pl_anchor_json is not None:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
+                pl_anchor = json.loads(pl_anchor_json)
+        legs.append(
+            BracketLegDetail(
+                bracket_leg_id=str(bracket_leg_id),
+                leg_index=int(leg_index),
+                leg_type=str(leg_type),
+                trigger_kind=str(trigger_kind),
+                trigger_payload=trigger_payload,
+                pl_anchor=pl_anchor,
+                enforcement=str(enforcement),
+                leg_status=str(leg_status),
+                order_id=str(order_id) if order_id is not None else None,
+            )
+        )
+    return legs
+
+
+async def _read_fills_for_position(
+    session: AsyncSession,
+    position_id: str,
+) -> list[FillDetail]:
+    """Read fill records joined through orders for the given position_id."""
+    result = await session.execute(
+        text("""
+            SELECT
+                fr.fill_id,
+                fr.order_id,
+                fr.fill_timestamp,
+                fr.fill_price,
+                fr.fill_quantity,
+                fr.remaining_quantity_after,
+                fr.order_status_after,
+                fr.slippage_usd,
+                fr.fees_usd,
+                fr.execution_venue
+            FROM fill_records fr
+            INNER JOIN orders o ON o.order_id = fr.order_id
+            WHERE o.position_id = :position_id
+            ORDER BY fr.fill_timestamp
+        """),
+        {"position_id": position_id},
+    )
+    rows = result.fetchall()
+    fills: list[FillDetail] = []
+    for (
+        fill_id,
+        order_id,
+        fill_timestamp,
+        fill_price,
+        fill_quantity,
+        remaining_quantity_after,
+        order_status_after,
+        slippage_usd,
+        fees_usd,
+        execution_venue,
+    ) in rows:
+        fills.append(
+            FillDetail(
+                fill_id=str(fill_id),
+                order_id=str(order_id),
+                fill_timestamp=str(fill_timestamp),
+                fill_price=str(fill_price),
+                fill_quantity=float(fill_quantity),
+                remaining_quantity_after=float(remaining_quantity_after),
+                order_status_after=str(order_status_after),
+                slippage_usd=str(slippage_usd) if slippage_usd is not None else None,
+                fees_usd=str(fees_usd),
+                execution_venue=str(execution_venue) if execution_venue is not None else None,
+            )
+        )
+    return fills
+
+
+def _parse_json_list(raw: str | None) -> list[str]:
+    """Deserialize a JSON array column to a list of strings.
+
+    Falls back to empty list on any parse error or non-array result.
+    """
+    if raw is None:
+        return []
+    with contextlib.suppress(json.JSONDecodeError, TypeError, AttributeError):
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed]
+    return []
+
+
+async def _read_thesis_for_position(
+    session: AsyncSession,
+    position_id: str,
+) -> ThesisDetail | None:
+    """Read the thesis + all components for the given position_id.
+
+    Returns ``None`` if no thesis exists for this position.
+    """
+    thesis_result = await session.execute(
+        text("""
+            SELECT
+                thesis_id,
+                status,
+                summary,
+                time_expectation_hours,
+                position_size_rationale,
+                generation_timestamp,
+                resolution_timestamp,
+                resolution_category
+            FROM theses
+            WHERE position_id = :position_id
+            LIMIT 1
+        """),
+        {"position_id": position_id},
+    )
+    thesis_row = thesis_result.fetchone()
+    if thesis_row is None:
+        return None
+
+    (
+        thesis_id,
+        status,
+        summary,
+        time_expectation_hours,
+        position_size_rationale,
+        generation_timestamp,
+        resolution_timestamp,
+        resolution_category,
+    ) = thesis_row
+
+    components_result = await session.execute(
+        text("""
+            SELECT
+                component_id,
+                component_type,
+                linked_bracket_leg,
+                instrument_reference,
+                narrative,
+                key_assumptions_json,
+                supporting_signals_json,
+                resolution_outcome,
+                resolution_notes
+            FROM thesis_components
+            WHERE thesis_id = :thesis_id
+            ORDER BY component_id
+        """),
+        {"thesis_id": thesis_id},
+    )
+    components_rows = components_result.fetchall()
+
+    components: list[ThesisComponentDetail] = []
+    for (
+        component_id,
+        component_type,
+        linked_bracket_leg,
+        instrument_reference,
+        narrative,
+        key_assumptions_json,
+        supporting_signals_json,
+        resolution_outcome,
+        resolution_notes,
+    ) in components_rows:
+        components.append(
+            ThesisComponentDetail(
+                component_id=str(component_id),
+                component_type=str(component_type),
+                linked_bracket_leg=str(linked_bracket_leg) if linked_bracket_leg else None,
+                instrument_reference=str(instrument_reference) if instrument_reference else None,
+                narrative=str(narrative),
+                key_assumptions=_parse_json_list(key_assumptions_json),
+                supporting_signals=_parse_json_list(supporting_signals_json),
+                resolution_outcome=str(resolution_outcome) if resolution_outcome else None,
+                resolution_notes=str(resolution_notes) if resolution_notes else None,
+            )
+        )
+
+    return ThesisDetail(
+        thesis_id=str(thesis_id),
+        status=str(status),
+        summary=str(summary),
+        time_expectation_hours=float(time_expectation_hours)
+        if time_expectation_hours is not None
+        else None,
+        position_size_rationale=str(position_size_rationale) if position_size_rationale else None,
+        generation_timestamp=str(generation_timestamp),
+        resolution_timestamp=str(resolution_timestamp) if resolution_timestamp else None,
+        resolution_category=str(resolution_category) if resolution_category else None,
+        components=components,
+    )
+
+
+async def _read_activity_log_for_position(
+    session: AsyncSession,
+    position_id: str,
+) -> list[ActivityLogEntry]:
+    """Read activity_log rows filtered by position_id, newest first."""
+    result = await session.execute(
+        text("""
+            SELECT
+                entry_id,
+                invocation_id,
+                entry_at,
+                event_type,
+                event_group,
+                order_id,
+                thesis_id,
+                source,
+                detail_json
+            FROM activity_log
+            WHERE position_id = :position_id
+            ORDER BY entry_at DESC
+        """),
+        {"position_id": position_id},
+    )
+    rows = result.fetchall()
+    entries: list[ActivityLogEntry] = []
+    for (
+        entry_id,
+        invocation_id,
+        entry_at,
+        event_type,
+        event_group,
+        order_id,
+        thesis_id,
+        source,
+        detail_json,
+    ) in rows:
+        entries.append(
+            ActivityLogEntry(
+                entry_id=str(entry_id),
+                invocation_id=str(invocation_id),
+                entry_at=str(entry_at),
+                event_type=str(event_type),
+                event_group=str(event_group),
+                order_id=str(order_id) if order_id is not None else None,
+                thesis_id=str(thesis_id) if thesis_id is not None else None,
+                source=str(source),
+                detail_json=str(detail_json),
+            )
+        )
+    return entries
+
+
+async def _read_position_detail(
+    session: AsyncSession,
+    position_id: str,
+    now: datetime,
+) -> PositionDetail:
+    """Read the full position detail for view C-2.
+
+    Raises ``HTTPException(404)`` if the position does not exist.
+    """
+    pos_result = await session.execute(
+        text("""
+            SELECT
+                position_id,
+                instrument_type,
+                direction,
+                status,
+                details_json,
+                entry_timestamp,
+                realized_pnl_to_date_usd,
+                bracket_id
+            FROM positions
+            WHERE position_id = :position_id
+        """),
+        {"position_id": position_id},
+    )
+    pos_row = pos_result.fetchone()
+    if pos_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Position {position_id!r} not found",
+        )
+
+    (
+        pos_id,
+        instrument_type,
+        direction,
+        pos_status,
+        details_json_str,
+        entry_ts_str,
+        realized_pnl_raw,
+        bracket_id,
+    ) = pos_row
+
+    try:
+        details: dict[str, Any] = json.loads(details_json_str)
+    except (json.JSONDecodeError, TypeError):
+        details = {}
+
+    ticker = str(
+        details.get("ticker") or details.get("underlying") or details.get("symbol") or "Unknown"
+    )
+    mv_raw = details.get("market_value_usd") or details.get("current_market_value_usd") or "0"
+    mv = Decimal(0)
+    with contextlib.suppress(Exception):
+        mv = Decimal(str(mv_raw))
+
+    unreal_raw = details.get("unrealized_pnl_usd") or details.get("unrealized_pl_usd") or "0"
+    unreal = Decimal(0)
+    with contextlib.suppress(Exception):
+        unreal = Decimal(str(unreal_raw))
+
+    qty = 0.0
+    with contextlib.suppress(Exception):
+        qty = float(details.get("quantity") or details.get("qty") or 0)
+
+    age_hours = 0.0
+    if entry_ts_str is not None:
+        entry_dt = _parse_fill_ts(entry_ts_str)
+        if entry_dt is not None:
+            age_hours = (now - entry_dt).total_seconds() / 3600.0
+
+    dist_target: float | None = None
+    dist_inval: float | None = None
+    if (raw_target := details.get("distance_to_target_pct")) is not None:
+        with contextlib.suppress(Exception):
+            dist_target = float(raw_target)
+    if (raw_inval := details.get("distance_to_nearest_invalidation_pct")) is not None:
+        with contextlib.suppress(Exception):
+            dist_inval = float(raw_inval)
+
+    bracket_legs: list[BracketLegDetail] = []
+    if bracket_id is not None:
+        bracket_legs = await _read_bracket_legs(session, str(bracket_id))
+
+    fills = await _read_fills_for_position(session, position_id)
+    thesis = await _read_thesis_for_position(session, position_id)
+    activity_log = await _read_activity_log_for_position(session, position_id)
+
+    return PositionDetail(
+        position_id=str(pos_id),
+        ticker=ticker,
+        instrument_type=str(instrument_type),
+        direction=str(direction) if direction else None,
+        status=str(pos_status),
+        quantity=qty,
+        market_value_usd=str(mv),
+        unrealized_pl_usd=str(unreal),
+        realized_pl_usd=(
+            str(Decimal(str(realized_pnl_raw))) if realized_pnl_raw is not None else None
+        ),
+        age_hours=age_hours,
+        distance_to_target_pct=dist_target,
+        distance_to_nearest_invalidation_pct=dist_inval,
+        bracket_id=str(bracket_id) if bracket_id is not None else None,
+        bracket_legs=bracket_legs,
+        fills=fills,
+        thesis=thesis,
+        activity_log=activity_log,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -677,5 +1188,22 @@ def build_portfolio_router() -> APIRouter:
             positions=positions,
             pending_orders=pending_orders,
         )
+
+    @router.get("/positions/{position_id}", response_model=PositionDetail)
+    async def get_position_detail(
+        position_id: str,
+        session_factory: Annotated[
+            async_sessionmaker[AsyncSession], Depends(_foreign_reader_session)
+        ],
+    ) -> PositionDetail:
+        """Return full detail for a single position (view C-2, ALP-677).
+
+        Aggregates: position fields, bracket legs, fill history, thesis +
+        components, activity_log entries filtered by ``position_id``.
+        Returns 404 when the position does not exist.
+        """
+        now = datetime.now(UTC)
+        async with session_factory() as session:
+            return await _read_position_detail(session, position_id, now)
 
     return router
