@@ -662,7 +662,7 @@ class TestHotReload:
         path.write_text(_alerts_yaml_with_rules([]), encoding="utf-8")
         baseline = _make_test_rule("baseline")
         addition = _make_test_rule("addition")
-        builder_state = {"return": (baseline,)}
+        builder_state: dict[str, tuple[AlertRule, ...]] = {"return": (baseline,)}
 
         def _builder(_config: AlertsConfig) -> tuple[AlertRule, ...]:
             return builder_state["return"]
@@ -700,7 +700,7 @@ class TestHotReload:
         path.write_text(_alerts_yaml_with_rules([]), encoding="utf-8")
         keep = _make_test_rule("keep")
         drop = _make_test_rule("drop")
-        builder_state = {"return": (keep, drop)}
+        builder_state: dict[str, tuple[AlertRule, ...]] = {"return": (keep, drop)}
 
         def _builder(_config: AlertsConfig) -> tuple[AlertRule, ...]:
             return builder_state["return"]
@@ -741,7 +741,7 @@ class TestHotReload:
         path.write_text(_alerts_yaml_with_rules([]), encoding="utf-8")
         original = _make_test_rule("tunable", debounce_minutes=10)
         updated = _make_test_rule("tunable", debounce_minutes=99)
-        builder_state = {"return": (original,)}
+        builder_state: dict[str, tuple[AlertRule, ...]] = {"return": (original,)}
 
         def _builder(_config: AlertsConfig) -> tuple[AlertRule, ...]:
             return builder_state["return"]
@@ -834,7 +834,7 @@ class TestHotReload:
         path.write_text(_alerts_yaml_with_rules([]), encoding="utf-8")
         rule_a = _make_test_rule("a")
         rule_b = _make_test_rule("b")
-        builder_state = {"return": (rule_a,)}
+        builder_state: dict[str, tuple[AlertRule, ...]] = {"return": (rule_a,)}
 
         def _builder(_config: AlertsConfig) -> tuple[AlertRule, ...]:
             return builder_state["return"]

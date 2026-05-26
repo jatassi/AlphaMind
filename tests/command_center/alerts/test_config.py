@@ -29,18 +29,21 @@ _CONFIG_DIR = Path(__file__).parents[3] / "config"
 
 class TestBindRulesFromConfig:
     def test_yaml_overrides_apply(self) -> None:
-        config = AlertsConfig(
-            rules=[
-                {
-                    "name": "pipeline_aborted",
-                    "severity": "critical",
-                    "debounce_minutes": 99,
-                    "channels": ["in_app"],
-                },
-            ],
-            channels=AlertsChannels(
-                discord=DiscordChannelConfig(webhook_url_env="ALPHAMIND_DISCORD_WEBHOOK")
-            ),
+        # Story 06b typed ``AlertsConfig.rules`` as ``list[AlertRuleSpec]``,
+        # so dict rows must round-trip through :meth:`model_validate` to
+        # carry the right element type without a mypy ``list-item`` error.
+        config = AlertsConfig.model_validate(
+            {
+                "rules": [
+                    {
+                        "name": "pipeline_aborted",
+                        "severity": "critical",
+                        "debounce_minutes": 99,
+                        "channels": ["in_app"],
+                    },
+                ],
+                "channels": {"discord": {"webhook_url_env": "ALPHAMIND_DISCORD_WEBHOOK"}},
+            }
         )
         rules = bind_rules_from_config(config)
         match = next(r for r in rules if str(r.name) == "pipeline_aborted")
@@ -49,18 +52,18 @@ class TestBindRulesFromConfig:
         assert match.severity == AlertSeverity.CRITICAL
 
     def test_unknown_yaml_rule_name_raises(self) -> None:
-        config = AlertsConfig(
-            rules=[
-                {
-                    "name": "not_a_real_rule",
-                    "severity": "critical",
-                    "debounce_minutes": 1,
-                    "channels": ["in_app"],
-                },
-            ],
-            channels=AlertsChannels(
-                discord=DiscordChannelConfig(webhook_url_env="ALPHAMIND_DISCORD_WEBHOOK")
-            ),
+        config = AlertsConfig.model_validate(
+            {
+                "rules": [
+                    {
+                        "name": "not_a_real_rule",
+                        "severity": "critical",
+                        "debounce_minutes": 1,
+                        "channels": ["in_app"],
+                    },
+                ],
+                "channels": {"discord": {"webhook_url_env": "ALPHAMIND_DISCORD_WEBHOOK"}},
+            }
         )
         with pytest.raises(ValueError, match="not_a_real_rule"):
             bind_rules_from_config(config)

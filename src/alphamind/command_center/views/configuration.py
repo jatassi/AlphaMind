@@ -1137,6 +1137,57 @@ def _resolve_config_dir(request: Request) -> Path:
     return Path(cfg_dir)
 
 
+def _require_registered(config_file: str) -> ConfigFile:
+    """Return the registered :class:`ConfigFile` or raise 404.
+
+    Centralizes the registry-miss branch shared by the three route
+    handlers so :func:`build_configuration_router` stays under the
+    lint chain's complexity ceiling.
+    """
+    entry = _REGISTRY.get(config_file)
+    if entry is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown config file: {config_file!r}",
+        )
+    return entry
+
+
+def _load_config_contents(entry: ConfigFile, config_dir: Path) -> ConfigContentResponse:
+    """Read + parse the YAML for a registered :class:`ConfigFile`.
+
+    Hoisted out of :func:`build_configuration_router`'s GET handler so the
+    handler stays under the lint chain's complexity ceiling. Raises
+    :class:`HTTPException` for the same four failure modes the handler
+    used to surface inline.
+    """
+    target_path = config_dir / entry.filename
+    if not target_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Config file not found on disk: {entry.filename}",
+        )
+    yaml_text = target_path.read_text(encoding="utf-8")
+    try:
+        values = yaml.safe_load(yaml_text) or {}
+    except yaml.YAMLError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to parse {entry.filename}: {exc}",
+        ) from exc
+    if not isinstance(values, dict):
+        raise HTTPException(
+            status_code=500,
+            detail=f"Top-level YAML in {entry.filename} must be a mapping",
+        )
+    return ConfigContentResponse(
+        slug=entry.slug,
+        filename=entry.filename,
+        yaml=yaml_text,
+        values=values,
+    )
+
+
 def build_configuration_router() -> APIRouter:  # noqa: C901, PLR0915
     """Return a fresh ``APIRouter`` for the config editor framework.
 
@@ -1241,13 +1292,7 @@ def build_configuration_router() -> APIRouter:  # noqa: C901, PLR0915
         operator-secret material but is still operator-only.
         """
         del _session
-        entry = _REGISTRY.get(config_file)
-        if entry is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Unknown config file: {config_file!r}",
-            )
-        return derive_form_schema(entry)
+        return derive_form_schema(_require_registered(config_file))
 
     @router.get("/{config_file:path}", response_model=ConfigContentResponse)
     def get_config_contents(
@@ -1266,37 +1311,9 @@ def build_configuration_router() -> APIRouter:  # noqa: C901, PLR0915
         contents; operator-only material).
         """
         del _session
-        entry = _REGISTRY.get(config_file)
-        if entry is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Unknown config file: {config_file!r}",
-            )
-        config_dir = _resolve_config_dir(request)
-        target_path = config_dir / entry.filename
-        if not target_path.exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Config file not found on disk: {entry.filename}",
-            )
-        yaml_text = target_path.read_text(encoding="utf-8")
-        try:
-            values = yaml.safe_load(yaml_text) or {}
-        except yaml.YAMLError as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to parse {entry.filename}: {exc}",
-            ) from exc
-        if not isinstance(values, dict):
-            raise HTTPException(
-                status_code=500,
-                detail=f"Top-level YAML in {entry.filename} must be a mapping",
-            )
-        return ConfigContentResponse(
-            slug=entry.slug,
-            filename=entry.filename,
-            yaml=yaml_text,
-            values=values,
+        return _load_config_contents(
+            _require_registered(config_file),
+            _resolve_config_dir(request),
         )
 
     @router.put("/{config_file:path}", response_model=ConfigUpdateResponse)
@@ -1325,13 +1342,7 @@ def build_configuration_router() -> APIRouter:  # noqa: C901, PLR0915
         ``control/routes.py:332`` for the same pattern).
         """
         del _session, _csrf
-        entry = _REGISTRY.get(config_file)
-        if entry is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Unknown config file: {config_file!r}",
-            )
-
+        entry = _require_registered(config_file)
         config_dir = _resolve_config_dir(request)
         target_path = config_dir / entry.filename
 

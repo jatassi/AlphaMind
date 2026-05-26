@@ -271,6 +271,10 @@ class TestRegisteredRoutes:
                 # Story 05i (ALP-679) — config editor framework.
                 "/api/views/config/path-exists",
                 "/api/views/config/schema/{config_file}",
+                # Story 06b (ALP-683) registers GET on the same dotted-path
+                # as story 05i's PUT — two FastAPI route objects share the
+                # same ``path`` string; the sorted list materializes both.
+                "/api/views/config/{config_file}",
                 "/api/views/config/{config_file}",
                 # Story 05j (ALP-680) — risk views.
                 "/api/views/risk/calibration-mix",
