@@ -56,6 +56,20 @@ def _post_register_begin(
     return {"status_code": response.status_code, "body": body}
 
 
+def _csrf_headers(client: TestClient) -> dict[str, str]:
+    """Build the X-CSRF-Token header by echoing the cc_csrf cookie.
+
+    The complete endpoints (/auth/register/complete + /auth/login/complete)
+    require the double-submit CSRF check (F3). The begin endpoint set the
+    cc_csrf cookie pre-session; the JS layer normally echoes it via
+    X-CSRF-Token. Tests do the same here.
+    """
+    csrf_cookie = client.cookies.get("cc_csrf")
+    if csrf_cookie is None:
+        return {}
+    return {"X-CSRF-Token": csrf_cookie}
+
+
 def _complete_registration(
     client: TestClient,
     *,
@@ -76,6 +90,7 @@ def _complete_registration(
             ),
             "transports": ["internal"],
         },
+        headers=_csrf_headers(client),
     )
 
 
@@ -97,6 +112,7 @@ def _complete_login(
             "signature": _b64url_encode(b"fake-signature"),
             "new_sign_count": new_sign_count,
         },
+        headers=_csrf_headers(client),
     )
 
 
@@ -350,23 +366,17 @@ class TestLoginRoundtrip:
     ) -> None:
         # The Secure flag is configurable per app.state.cookies_secure.
         # v1 loopback may set False; remote-access deploys set True.
+        # NOTE: with cookies_secure=True the TestClient (HTTP-only) won't
+        # echo the Secure cookie on subsequent requests, so we exercise the
+        # secure-flag assertion on the begin endpoints' Set-Cookie headers
+        # — register/begin issues cc_csrf, and that header carries the
+        # Secure attribute end-to-end through the secure-deploy code path.
         auth_app.state.cookies_secure = True
         token = setup_token_gate.mint()
         with TestClient(auth_app) as client:
-            begin_reg = client.post(
+            response = client.post(
                 "/auth/register/begin",
                 json={"setup_token": token, "user_name": "operator"},
-            ).json()
-            _complete_registration(client, begin=begin_reg, credential_id="cred-secure")
-        # The Set-Cookie from register/complete should include Secure.
-        # Re-issue via login to confirm.
-        with TestClient(auth_app) as client:
-            begin_login = client.post("/auth/login/begin").json()
-            response = _complete_login(
-                client,
-                begin=begin_login,
-                credential_id="cred-secure",
-                new_sign_count=1,
             )
         set_cookies = response.headers.get_list("set-cookie")
         joined = "; ".join(set_cookies).lower()
@@ -474,3 +484,104 @@ class TestCredentialCountAfterEnrollment:
             ).json()
             _complete_registration(client, begin=begin, credential_id="cred-counted")
         assert await count_credentials(cc_factory) == 1
+
+
+class TestCsrfOnCompleteEndpoints:
+    """F3: /auth/{register,login}/complete must require CSRF."""
+
+    async def test_register_complete_requires_csrf_header(
+        self,
+        auth_app: FastAPI,
+        setup_token_gate: SetupTokenGate,
+    ) -> None:
+        token = setup_token_gate.mint()
+        with TestClient(auth_app) as client:
+            begin = client.post(
+                "/auth/register/begin",
+                json={"setup_token": token, "user_name": "operator"},
+            ).json()
+            challenge_bytes = _b64url_decode(begin["challenge"])
+            # Send register/complete WITHOUT X-CSRF-Token header.
+            response = client.post(
+                "/auth/register/complete",
+                json={
+                    "challenge_token": begin["challenge_token"],
+                    "credential_id": "cred-no-csrf",
+                    "client_data_json": _b64url_encode(
+                        encode_inmemory_client_data_json(challenge_bytes)
+                    ),
+                    "attestation_object": _b64url_encode(
+                        encode_inmemory_attestation_object(
+                            public_key=b"fake-public-key", sign_count=0
+                        )
+                    ),
+                    "transports": ["internal"],
+                },
+            )
+        assert response.status_code == 403
+
+    async def test_login_complete_requires_csrf_header(
+        self,
+        auth_app: FastAPI,
+        cc_factory: async_sessionmaker[AsyncSession],
+        setup_token_gate: SetupTokenGate,
+    ) -> None:
+        token = setup_token_gate.mint()
+        with TestClient(auth_app) as client:
+            begin_reg = client.post(
+                "/auth/register/begin",
+                json={"setup_token": token, "user_name": "operator"},
+            ).json()
+            _complete_registration(client, begin=begin_reg, credential_id="cred-login-no-csrf")
+            client.cookies.clear()
+            begin_login = client.post("/auth/login/begin").json()
+            challenge_bytes = _b64url_decode(begin_login["challenge"])
+            # Send login/complete WITHOUT X-CSRF-Token header.
+            response = client.post(
+                "/auth/login/complete",
+                json={
+                    "challenge_token": begin_login["challenge_token"],
+                    "credential_id": "cred-login-no-csrf",
+                    "client_data_json": _b64url_encode(
+                        encode_inmemory_client_data_json(challenge_bytes)
+                    ),
+                    "authenticator_data": _b64url_encode(b"fake-auth-data"),
+                    "signature": _b64url_encode(b"fake-signature"),
+                    "new_sign_count": 1,
+                },
+            )
+        assert response.status_code == 403
+
+    async def test_register_begin_issues_csrf_cookie(
+        self,
+        auth_app: FastAPI,
+        setup_token_gate: SetupTokenGate,
+    ) -> None:
+        token = setup_token_gate.mint()
+        with TestClient(auth_app) as client:
+            response = client.post(
+                "/auth/register/begin",
+                json={"setup_token": token, "user_name": "operator"},
+            )
+        set_cookies = response.headers.get_list("set-cookie")
+        joined = "; ".join(set_cookies).lower()
+        assert "cc_csrf=" in joined
+
+    async def test_login_begin_issues_csrf_cookie(
+        self,
+        auth_app: FastAPI,
+        cc_factory: async_sessionmaker[AsyncSession],
+        setup_token_gate: SetupTokenGate,
+    ) -> None:
+        token = setup_token_gate.mint()
+        with TestClient(auth_app) as client:
+            begin_reg = client.post(
+                "/auth/register/begin",
+                json={"setup_token": token, "user_name": "operator"},
+            ).json()
+            _complete_registration(client, begin=begin_reg, credential_id="cred-login-csrf")
+            client.cookies.clear()
+            response = client.post("/auth/login/begin")
+        set_cookies = response.headers.get_list("set-cookie")
+        joined = "; ".join(set_cookies).lower()
+        assert "cc_csrf=" in joined

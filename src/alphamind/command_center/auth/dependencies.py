@@ -7,7 +7,7 @@ DELETE). The dependency contract is documented in
 :mod:`alphamind.command_center.auth.__init__` so subsequent stories
 find it without re-reading the design doc.
 
-Two dependencies:
+Three dependencies:
 
 * :func:`current_session` — reads the ``cc_session`` cookie, verifies
   the signature against ``app.state.session_signing_secret``, checks
@@ -16,8 +16,15 @@ Two dependencies:
   state, and returns the :class:`OperatorSessionId`. Any failure
   results in ``401 Unauthorized`` with a generic message.
 * :func:`csrf_required` — reads the ``cc_csrf`` cookie + the
-  ``X-CSRF-Token`` header; both must be present and must match. Any
-  failure results in ``403 Forbidden``.
+  ``X-CSRF-Token`` header; both must be present and must match; the
+  cookie value must hash to the session row's stored CSRF hash. Any
+  failure results in ``403 Forbidden``. Used on session-bound mutating
+  endpoints.
+* :func:`csrf_required_pre_session` — same double-submit check WITHOUT
+  the session-row hash binding. Used on ``/auth/register/complete`` and
+  ``/auth/login/complete`` where the session doesn't exist yet at call
+  time. The begin endpoints (which initiate the ceremony) set the
+  ``cc_csrf`` cookie so the browser's JS layer can echo it on complete.
 
 The dependencies pull their collaborators off ``request.app.state`` so
 the production composition root wires them once at lifespan and tests
@@ -26,6 +33,7 @@ swap them via the shared conftest fixture.
 
 from __future__ import annotations
 
+import hmac
 import logging
 from typing import Annotated
 
@@ -42,6 +50,7 @@ from alphamind.command_center.auth.sessions import (
 
 __all__ = [
     "csrf_required",
+    "csrf_required_pre_session",
     "current_session",
 ]
 
@@ -127,10 +136,10 @@ async def csrf_required(
     if cc_csrf is None or x_csrf_token is None:
         log.debug("csrf_required: cookie or header missing")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL)
-    # Double-submit baseline: header must match cookie. Then verify
-    # against the session row's stored hash so a leaked cookie from
-    # another session can't be replayed.
-    if cc_csrf != x_csrf_token:
+    # Double-submit baseline: header must match cookie. Constant-time
+    # compare so a timing-attack measurement of "is this prefix right"
+    # doesn't leak information (F6).
+    if not hmac.compare_digest(cc_csrf, x_csrf_token):
         log.debug("csrf_required: header does not match cookie")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL)
     # Bind the CSRF check to the session row's stored hash. Pull the
@@ -157,4 +166,29 @@ async def csrf_required(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL)
     if not verify_csrf_token(cc_csrf, stored_hash=session_record.csrf_token_hash):
         log.debug("csrf_required: token does not hash to stored value")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL)
+
+
+async def csrf_required_pre_session(
+    cc_csrf: Annotated[str | None, Cookie()] = None,
+    x_csrf_token: Annotated[str | None, Header()] = None,
+) -> None:
+    """Verify double-submit CSRF without a session-row binding.
+
+    Used on the WebAuthn ceremony-complete endpoints
+    (``/auth/register/complete``, ``/auth/login/complete``) where the
+    session doesn't exist yet at the time of the call. The corresponding
+    begin endpoints (``/auth/register/begin``, ``/auth/login/begin``)
+    set the ``cc_csrf`` cookie so the browser's JS layer can echo it via
+    the ``X-CSRF-Token`` header on the matching complete request.
+
+    Same double-submit comparison as :func:`csrf_required` — constant-
+    time via :func:`hmac.compare_digest`. Raises ``HTTPException(403)``
+    on any rejection path with the generic CSRF detail.
+    """
+    if cc_csrf is None or x_csrf_token is None:
+        log.debug("csrf_required_pre_session: cookie or header missing")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL)
+    if not hmac.compare_digest(cc_csrf, x_csrf_token):
+        log.debug("csrf_required_pre_session: header does not match cookie")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL)

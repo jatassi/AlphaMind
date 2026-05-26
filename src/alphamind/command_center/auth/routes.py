@@ -53,6 +53,7 @@ from alphamind.command_center._kernel.ids import (
 )
 from alphamind.command_center.auth.dependencies import (
     csrf_required,
+    csrf_required_pre_session,
     current_session,
 )
 from alphamind.command_center.auth.repository import (
@@ -255,6 +256,32 @@ def _get_challenge_store(request: Request) -> _ChallengeStore:
     return store
 
 
+def _issue_pre_session_csrf_cookie(*, response: Response, request: Request) -> str:
+    """Mint a fresh CSRF token and set the ``cc_csrf`` cookie pre-session.
+
+    Used by ``/auth/register/begin`` + ``/auth/login/begin`` so the
+    browser's JS layer has a cookie to echo via ``X-CSRF-Token`` on the
+    matching complete request. The complete endpoint then verifies the
+    double-submit via :func:`csrf_required_pre_session`.
+
+    The returned token also flows back in the begin response body so
+    the JS can grab it directly without needing to read the cookie (the
+    cookie is NOT HttpOnly anyway, but the response-body path keeps the
+    JS simpler).
+    """
+    csrf_token = mint_csrf_token()
+    cookies_secure = bool(getattr(request.app.state, "cookies_secure", False))
+    csrf_cookie_name = request.app.state.security_config.csrf.cookie_name
+    response.set_cookie(
+        csrf_cookie_name,
+        csrf_token,
+        httponly=False,
+        samesite="strict",
+        secure=cookies_secure,
+    )
+    return csrf_token
+
+
 def _issue_session_cookies(
     *,
     response: Response,
@@ -330,6 +357,7 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
     async def register_begin(
         body: RegisterBeginRequest,
         request: Request,
+        response: Response,
         cc_session: Annotated[str | None, Cookie()] = None,
     ) -> RegisterBeginResponse:
         cc_factory = request.app.state.cc_writer_session_factory
@@ -368,12 +396,15 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
             user_name=body.user_name,
             existing_credentials=existing,
         )
-        challenge_token = secrets.token_urlsafe(16)
+        challenge_token = secrets.token_urlsafe(32)
         _get_challenge_store(request).stash_registration(
             token=challenge_token,
             challenge=options.challenge,
             user_id=user_id,
         )
+        # Issue cc_csrf pre-session so the matching /register/complete
+        # call (which is CSRF-required, F3) can verify double-submit.
+        _issue_pre_session_csrf_cookie(response=response, request=request)
         return RegisterBeginResponse(
             challenge_token=challenge_token,
             challenge=_b64url_encode(options.challenge),
@@ -384,7 +415,10 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
             existing_credentials=[str(c) for c in options.existing_credentials],
         )
 
-    @router.post("/register/complete")
+    @router.post(
+        "/register/complete",
+        dependencies=[Depends(csrf_required_pre_session)],
+    )
     async def register_complete(
         body: RegisterCompleteRequest,
         request: Request,
@@ -464,7 +498,7 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
         )
 
     @router.post("/login/begin")
-    async def login_begin(request: Request) -> LoginBeginResponse:
+    async def login_begin(request: Request, response: Response) -> LoginBeginResponse:
         cc_factory = request.app.state.cc_writer_session_factory
         creds = await list_credentials(cc_factory)
         if not creds:
@@ -474,10 +508,13 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
             )
         verifier = request.app.state.webauthn_verifier
         options = verifier.generate_authentication_options(allow_credentials=creds)
-        challenge_token = secrets.token_urlsafe(16)
+        challenge_token = secrets.token_urlsafe(32)
         _get_challenge_store(request).stash_authentication(
             token=challenge_token, challenge=options.challenge
         )
+        # Issue cc_csrf pre-session so the matching /login/complete call
+        # (which is CSRF-required, F3) can verify double-submit.
+        _issue_pre_session_csrf_cookie(response=response, request=request)
         return LoginBeginResponse(
             challenge_token=challenge_token,
             challenge=_b64url_encode(options.challenge),
@@ -485,7 +522,10 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
             allow_credentials=[str(c) for c in options.allow_credentials],
         )
 
-    @router.post("/login/complete")
+    @router.post(
+        "/login/complete",
+        dependencies=[Depends(csrf_required_pre_session)],
+    )
     async def login_complete(
         body: LoginCompleteRequest,
         request: Request,
