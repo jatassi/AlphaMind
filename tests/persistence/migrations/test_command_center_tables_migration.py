@@ -157,9 +157,9 @@ class TestCommandCenterTablesMigration:
 
 
 class TestMigrationGraphStaysLinear:
-    """Single-head invariant — the new migration chains off the Wave 1
-    merge head, so ``ScriptDirectory.get_heads()`` remains a one-element
-    list."""
+    """Single-head invariant — every new migration must chain off the
+    previous head so ``ScriptDirectory.get_heads()`` remains a
+    one-element list."""
 
     def test_single_head_after_new_migration(self) -> None:
         from alembic.script import ScriptDirectory
@@ -167,4 +167,7 @@ class TestMigrationGraphStaysLinear:
         repo_root = Path(__file__).parents[3]
         cfg = Config(repo_root / "alembic.ini")
         heads = ScriptDirectory.from_config(cfg).get_heads()
-        assert list(heads) == [_REVISION]
+        # The Wave-2 ALP-128 fixups extended past _REVISION with
+        # additional migrations (F15 trigger_source CHECK), so the head
+        # may be a descendant. Only the single-head invariant matters.
+        assert len(list(heads)) == 1, f"expected a single migration head; got {heads}"
