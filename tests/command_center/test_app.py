@@ -54,7 +54,7 @@ def configs(tmp_path: Path) -> tuple[Path, Path]:
 db:
   alphamind_db_path: '{db}'
 frontend:
-  dist_path: "{tmp_path}/dist-does-not-exist"
+  dist_path: '{tmp_path}/dist-does-not-exist'
 pipeline:
   control_url: "http://127.0.0.1:8765"
   events_url: "http://127.0.0.1:8765"
@@ -329,7 +329,7 @@ def configs_with_dist(tmp_path: Path) -> Path:
 db:
   alphamind_db_path: '{db}'
 frontend:
-  dist_path: "{dist}"
+  dist_path: '{dist}'
 pipeline:
   control_url: "http://127.0.0.1:8765"
   events_url: "http://127.0.0.1:8765"

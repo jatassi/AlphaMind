@@ -213,7 +213,7 @@ def configs(tmp_path: Path, seeded_db: Path) -> tuple[Path, Path]:
 db:
   alphamind_db_path: '{seeded_db}'
 frontend:
-  dist_path: "{tmp_path}/dist-does-not-exist"
+  dist_path: '{tmp_path}/dist-does-not-exist'
 pipeline:
   control_url: "http://127.0.0.1:8765"
   events_url: "http://127.0.0.1:8765"

@@ -58,7 +58,7 @@ def _make_config_dir(tmp_path: pathlib.Path) -> pathlib.Path:
 db:
   alphamind_db_path: '{db}'
 frontend:
-  dist_path: "{tmp_path}/dist-does-not-exist"
+  dist_path: '{tmp_path}/dist-does-not-exist'
 pipeline:
   control_url: "http://127.0.0.1:8765"
   events_url: "http://127.0.0.1:8765"
