@@ -622,19 +622,28 @@ def test_reduce_emits_close_with_partial_notional() -> None:
 
 
 # ===========================================================================
-# AC-9: Adjust-bracket → Action.ADJUST with 0/0
+# AC-9: Adjust-bracket → Action.ADJUST carrying the existing position total
 # ===========================================================================
 
 
-def test_adjust_bracket_emits_adjust_with_zero_exposure() -> None:
-    """AC-9: adjust-bracket → Action.ADJUST, notional=0.0, quantity=0.0."""
-    snap = _snapshot_with_position()
+def test_adjust_bracket_emits_adjust_with_existing_total_exposure() -> None:
+    """ALP-698: adjust-bracket → Action.ADJUST with notional/quantity equal
+    to the existing position's totals.
+
+    The strategist's adjust-bracket action is exposure-neutral, but the
+    ``position_max_size_pct`` simulator's ADJUST branch reads
+    ``proposal.notional_usd`` as the *new total* for the position. Emitting
+    the existing totals makes the simulator's "set new total" a no-op for
+    bracket adjustments, preserving the exposure-neutral semantic at the
+    rule-projection level (``delta_adjusted._exposure_neutral`` short-circuits
+    ADJUST regardless of the proposal's notional/quantity)."""
+    snap = _snapshot_with_position(notional_usd=15_000.0, quantity=100.0)
     assessment = _adjust_bracket_assessment()
     delta = translate_position_assessment_to_proposed_delta(assessment, snapshot=snap)
 
     assert delta.action == Action.ADJUST
-    assert delta.notional_usd == 0.0
-    assert delta.quantity == 0.0
+    assert delta.notional_usd == 15_000.0
+    assert delta.quantity == 100.0
     assert delta.existing_position_id == "POS-1"
 
 
@@ -697,6 +706,7 @@ def test_translator_output_accepted_by_evaluate_proposals() -> None:
         LibraryConfig,
         LibraryInputError,
         MarketInputs,
+        build_active_specs,
         evaluate_proposals,
     )
 
@@ -802,16 +812,18 @@ def test_translator_output_accepted_by_evaluate_proposals() -> None:
     )
     close_delta = translate_position_assessment_to_proposed_delta(close_assessment, snapshot=snap)
 
-    # Adjust-bracket is exposure-neutral — translator emits quantity=0,
-    # notional_usd=0; evaluate_proposals must accept that shape.
+    # Adjust-bracket is exposure-neutral — translator emits the existing
+    # position's totals (ALP-698) so the position_max_size_pct simulator's
+    # "set new total" branch is a no-op; evaluate_proposals must accept that
+    # shape and project the max as unchanged.
     adjust_assessment = _adjust_bracket_assessment(sa_id="SA-2", position_id="POS-1")
     adjust_delta = translate_position_assessment_to_proposed_delta(adjust_assessment, snapshot=snap)
     assert adjust_delta.action == Action.ADJUST
-    assert adjust_delta.quantity == 0.0
-    assert adjust_delta.notional_usd == 0.0
+    assert adjust_delta.quantity == existing.quantity
+    assert adjust_delta.notional_usd == existing.notional_usd
 
     try:
-        evaluate_proposals(
+        output = evaluate_proposals(
             state=snap,
             proposals=[open_delta, close_delta, adjust_delta],
             config=lib_config,
@@ -819,3 +831,17 @@ def test_translator_output_accepted_by_evaluate_proposals() -> None:
         )
     except LibraryInputError as exc:
         pytest.fail(f"evaluate_proposals raised LibraryInputError: {exc}")
+
+    # ALP-698 integration: feed the translator-emitted adjust_delta back into
+    # the position_max_size_pct projector and confirm the projected max equals
+    # the actual current max (POS-1 at 15% of $100k) — closes the actual
+    # translator → simulator loop the bug lived in. close_delta would shrink
+    # POS-1's notional, so project the adjust_delta in isolation.
+    assert output.delta_adjusted["SA-2"].signed_notional_usd == 0.0
+    spec = next(s for s in build_active_specs(lib_config) if s.rule_id == "position_max_size_pct")
+    assert spec.project_after_batch is not None
+    projected = spec.project_after_batch(
+        [(adjust_delta, output.delta_adjusted["SA-2"])], snap, lib_config
+    )
+    expected_max_pct = existing.notional_usd / snap.portfolio_value_usd * 100.0
+    assert projected == pytest.approx(expected_max_pct)

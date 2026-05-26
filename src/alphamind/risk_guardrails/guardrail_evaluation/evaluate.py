@@ -334,10 +334,13 @@ def _check_notional_quantity(proposal: ProposedDelta) -> list[str]:
 
     ADJUST and CANCEL are exposure-neutral pass-throughs by contract (see the
     ``Action`` enum docstring and ``evaluate_proposals`` orchestration step 2)
-    — the proposal pre-processor's translator emits ``quantity=0.0,
-    notional_usd=0`` for them so the projection layer surfaces them as no-op
-    rule projections. The positive quantity check therefore only applies to
-    the documented exposure-changing set ``(OPEN, ADD, CLOSE)``.
+    — the ``quantity > 0`` rule applies only to the documented
+    exposure-changing set ``(OPEN, ADD, CLOSE)``. Producers may emit either
+    zero or non-zero notional/quantity for ADJUST/CANCEL; the validator's
+    gate is by-contract, not by-producer (today's translator emits the
+    existing position's totals for adjust-bracket per ALP-698 so the
+    ``position_max_size_pct`` simulator's ADJUST branch is a no-op; CANCEL
+    today has no in-tree producer).
     """
     failures: list[str] = []
     if proposal.notional_usd < 0:
