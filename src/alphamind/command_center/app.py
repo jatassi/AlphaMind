@@ -23,10 +23,10 @@ module currently composes:
 Documented include points for future stories:
 
 * Story 05a (alerts) — ``app.include_router(alerts_router, prefix="/api/alerts")``.
-* Story 05c (ALP-673) — run-history view via
-  :func:`alphamind.command_center.views.history.build_history_router`
-  included under ``/api/views/history``.
-* Remaining view stories (05b, 05d-05j, 06a-06c) -- included under ``/api/views/...``.
+* Story 05b (ALP-672) — live-operations view at ``/api/views/live`` and ``/api/views/schedule``.
+* Story 05c (ALP-673) — run-history view at ``/api/views/history``.
+* Story 05e (ALP-675) — activity-log view at ``/api/views/activity-log``.
+* Remaining view stories (05d, 05f-05j, 06a-06c) — included under ``/api/views/...``.
 
 Per the parent-issue architectural invariants:
 
@@ -103,6 +103,7 @@ from alphamind.command_center.persistence.session import (
     build_foreign_reader_session_factory,
 )
 from alphamind.command_center.session import ProcessSession
+from alphamind.command_center.views.activity_log import build_activity_log_router
 from alphamind.command_center.views.history import build_history_router
 from alphamind.command_center.views.live_operations import (
     build_live_operations_router,
@@ -622,9 +623,10 @@ def build_app(
     # Mount the control router (story 04a / ALP-668) under /api/control.
     app.include_router(build_control_router(), prefix="/api/control")
 
-    # Mount view routers under /api/views (story 05b+ — live ops, history, ...).
+    # Mount view routers under /api/views (story 05b+ — live ops, history, activity log).
     app.include_router(build_live_operations_router())
     app.include_router(build_history_router(), prefix="/api/views/history")
+    app.include_router(build_activity_log_router(), prefix="/api/views/activity-log")
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
