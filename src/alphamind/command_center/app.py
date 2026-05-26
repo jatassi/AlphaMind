@@ -69,7 +69,7 @@ import asyncio
 import logging
 import os
 import secrets
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -378,6 +378,22 @@ def _wire_alert_engine(
         # returns immediately when ``app.state.alert_engine`` is None.
         app.state.alert_engine = None
         return
+    # Hot-reload wiring (story 06b / ALP-683). Only enabled when
+    # ``config_dir`` was threaded into build_app (production callers
+    # always do; tests opt in by setting it). The engine's watcher
+    # task observes ``config/alerts.yaml`` mtime + reloads on change.
+    config_dir = getattr(app.state, "config_dir", None)
+    alerts_config_path: Path | None = None
+    rules_builder: Callable[[AlertsConfig], Sequence[AlertRule]] | None = None
+    initial_config = app.state.alerts_config
+    if config_dir is not None:
+        alerts_config_path = Path(config_dir) / "alerts.yaml"
+        alerts_data_dir = getattr(app.state, "alerts_data_dir", None)
+
+        def _rules_builder(config: AlertsConfig) -> tuple[AlertRule, ...]:
+            return bind_rules_from_config(config, data_dir=alerts_data_dir)
+
+        rules_builder = _rules_builder
     app.state.alert_engine = AlertEngine(
         rules=rules,
         multiplexer=app.state.event_multiplexer,
@@ -385,6 +401,9 @@ def _wire_alert_engine(
         discord_channel=discord_channel,
         foreign_reader_factory=foreign_reader,
         clock=getattr(app.state, "alerts_clock", None) or app.state.clock,
+        alerts_config_path=alerts_config_path,
+        rules_builder=rules_builder,
+        initial_config=initial_config,
     )
 
 

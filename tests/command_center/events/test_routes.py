@@ -35,6 +35,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from alphamind.command_center._kernel.events import (
+    AlertFiredEvent,
+    ConfigReloadRequiresRestartEvent,
     MonitorEvent,
     MonitorEventType,
     PipelineEvent,
@@ -44,6 +46,7 @@ from alphamind.command_center.events.models import BrowserEventEnvelope
 from alphamind.command_center.events.multiplexer import EventMultiplexer
 from alphamind.command_center.events.routes import (
     HEARTBEAT_SSE_EVENT,
+    _envelope_for,
     format_heartbeat_frame,
     format_sse_frame,
 )
@@ -82,6 +85,58 @@ class TestFormatSseFrame:
             "data": {"order_id": "ord-1", "fill_qty": 100, "fill_price": 1.5},
         }
         assert data_lines[0] == json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+class TestEnvelopeForDispatch:
+    """Per-event-variant envelope dispatch (story 06b added the restart event)."""
+
+    def test_pipeline_event_maps_to_pipeline_source(self) -> None:
+        envelope = _envelope_for(
+            PipelineEvent(
+                event_type=PipelineEventType.INVOCATION_STARTED,
+                payload={"invocation_id": "inv-1"},
+            )
+        )
+        assert envelope.source == "pipeline"
+        assert envelope.event == "invocation_started"
+
+    def test_monitor_event_maps_to_monitor_source(self) -> None:
+        envelope = _envelope_for(
+            MonitorEvent(
+                event_type=MonitorEventType.HEARTBEAT,
+                payload={},
+            )
+        )
+        assert envelope.source == "monitor"
+        assert envelope.event == "heartbeat"
+
+    def test_alert_fired_event_maps_to_cc_source(self) -> None:
+        envelope = _envelope_for(
+            AlertFiredEvent(
+                alert_id="alrt-1",
+                rule_name="pipeline_aborted",
+                severity="critical",
+                payload={"invocation_id": "inv-1"},
+            )
+        )
+        assert envelope.source == "cc"
+        assert envelope.event == "alert_fired"
+        assert envelope.data["alert_id"] == "alrt-1"
+
+    def test_config_reload_restart_event_maps_to_cc_source(self) -> None:
+        """Story 06b: alerts.yaml channels-section change surfaces as a banner."""
+        envelope = _envelope_for(
+            ConfigReloadRequiresRestartEvent(
+                filename="alerts.yaml",
+                reason="channels section changed",
+            )
+        )
+        assert envelope.source == "cc"
+        assert envelope.event == "config_reload_requires_restart"
+        assert envelope.data == {
+            "filename": "alerts.yaml",
+            "reason": "channels section changed",
+        }
 
 
 class TestFormatHeartbeatFrame:

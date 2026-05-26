@@ -38,6 +38,7 @@ from alphamind.command_center.alerts.rules import (
     AlertRule,
     AlertSeverity,
 )
+from alphamind.command_center.config import AlertsConfig
 from alphamind.command_center.events.multiplexer import (
     CombinedEvent,
     EventMultiplexer,
@@ -566,6 +567,299 @@ def test_evaluation_outcome_default_fields() -> None:
     assert outcome.alert_id_ is None
     assert outcome.suppressed_by_debounce is False
     assert outcome.context == {}
+
+
+# ---------------------------------------------------------------------------
+# Hot-reload — story 06b / ALP-683.
+# ---------------------------------------------------------------------------
+
+
+def _alerts_yaml_with_rules(rules: list[dict[str, Any]]) -> str:
+    """Render an alerts.yaml payload for the hot-reload tests.
+
+    The channels block is held fixed; the rules list is the only knob
+    the per-test fixtures vary. ``yaml.safe_dump`` would also work
+    but a hand-rolled multi-line string keeps the field ordering
+    obvious in the failure trace.
+    """
+    import yaml as _yaml
+
+    payload = {
+        "rules": rules,
+        "channels": {"discord": {"webhook_url_env": "ALPHAMIND_DISCORD_WEBHOOK"}},
+    }
+    return _yaml.safe_dump(payload, sort_keys=False)
+
+
+def _make_test_rule(name: str, debounce_minutes: int = 10) -> AlertRule:
+    return AlertRule(
+        name=alert_rule_name(name),
+        severity=AlertSeverity.CRITICAL,
+        debounce_window=timedelta(minutes=debounce_minutes),
+        channels=("in_app",),
+        condition=_NeverFiresCondition(),
+    )
+
+
+class TestHotReload:
+    @pytest.mark.asyncio
+    async def test_constructor_requires_both_path_and_builder(
+        self,
+        cc_writer_factory: async_sessionmaker[AsyncSession],
+        fixed_clock: Any,
+        tmp_path: Any,
+    ) -> None:
+        # Wiring only the path without the builder is a configuration
+        # mistake — fail loud at construction.
+        rule = _make_test_rule("only_path")
+        path = tmp_path / "alerts.yaml"
+        path.write_text(_alerts_yaml_with_rules([]), encoding="utf-8")
+        with pytest.raises(ValueError, match="alerts_config_path"):
+            AlertEngine(
+                rules=[rule],
+                multiplexer=EventMultiplexer(),
+                cc_writer_factory=cc_writer_factory,
+                discord_channel=FakeDiscordChannel(),
+                clock=fixed_clock,
+                alerts_config_path=path,
+            )
+
+    @pytest.mark.asyncio
+    async def test_unchanged_mtime_returns_none(
+        self,
+        cc_writer_factory: async_sessionmaker[AsyncSession],
+        fixed_clock: Any,
+        tmp_path: Any,
+    ) -> None:
+        # First call records the mtime; second call (no edit) is a no-op.
+        path = tmp_path / "alerts.yaml"
+        path.write_text(_alerts_yaml_with_rules([]), encoding="utf-8")
+        rule = _make_test_rule("baseline")
+
+        def _builder(_config: AlertsConfig) -> tuple[AlertRule, ...]:
+            return (rule,)
+
+        engine = AlertEngine(
+            rules=[rule],
+            multiplexer=EventMultiplexer(),
+            cc_writer_factory=cc_writer_factory,
+            discord_channel=FakeDiscordChannel(),
+            clock=fixed_clock,
+            alerts_config_path=path,
+            rules_builder=_builder,
+        )
+        diff = await engine._reload_rules_from_file_if_changed()
+        assert diff is None
+
+    @pytest.mark.asyncio
+    async def test_added_rule_appears_in_rule_set(
+        self,
+        cc_writer_factory: async_sessionmaker[AsyncSession],
+        fixed_clock: Any,
+        tmp_path: Any,
+    ) -> None:
+        path = tmp_path / "alerts.yaml"
+        path.write_text(_alerts_yaml_with_rules([]), encoding="utf-8")
+        baseline = _make_test_rule("baseline")
+        addition = _make_test_rule("addition")
+        builder_state = {"return": (baseline,)}
+
+        def _builder(_config: AlertsConfig) -> tuple[AlertRule, ...]:
+            return builder_state["return"]
+
+        engine = AlertEngine(
+            rules=[baseline],
+            multiplexer=EventMultiplexer(),
+            cc_writer_factory=cc_writer_factory,
+            discord_channel=FakeDiscordChannel(),
+            clock=fixed_clock,
+            alerts_config_path=path,
+            rules_builder=_builder,
+        )
+        # Mutate YAML mtime + arrange builder to surface the new rule.
+        builder_state["return"] = (baseline, addition)
+        # ``Path.touch`` advances mtime; sleep gives mtime_ns room to
+        # tick past the constructor's stat() snapshot.
+        await asyncio.sleep(0.01)
+        path.touch()
+        diff = await engine._reload_rules_from_file_if_changed()
+        assert diff is not None
+        assert diff.added == (alert_rule_name("addition"),)
+        assert diff.removed == ()
+        assert diff.updated == ()
+        assert {str(r.name) for r in engine.rules} == {"baseline", "addition"}
+
+    @pytest.mark.asyncio
+    async def test_removed_rule_drops_debounce_entries(
+        self,
+        cc_writer_factory: async_sessionmaker[AsyncSession],
+        fixed_clock: Any,
+        tmp_path: Any,
+    ) -> None:
+        path = tmp_path / "alerts.yaml"
+        path.write_text(_alerts_yaml_with_rules([]), encoding="utf-8")
+        keep = _make_test_rule("keep")
+        drop = _make_test_rule("drop")
+        builder_state = {"return": (keep, drop)}
+
+        def _builder(_config: AlertsConfig) -> tuple[AlertRule, ...]:
+            return builder_state["return"]
+
+        engine = AlertEngine(
+            rules=[keep, drop],
+            multiplexer=EventMultiplexer(),
+            cc_writer_factory=cc_writer_factory,
+            discord_channel=FakeDiscordChannel(),
+            clock=fixed_clock,
+            alerts_config_path=path,
+            rules_builder=_builder,
+        )
+        # Seed a debounce entry on the rule we're about to remove.
+        from alphamind.command_center.alerts.engine import _DebounceEntry
+
+        engine._debounce[(drop.name, "key1")] = _DebounceEntry(last_fired_at=_NOW)
+        # Edit YAML — builder now returns only ``keep``.
+        builder_state["return"] = (keep,)
+        await asyncio.sleep(0.01)
+        path.touch()
+        diff = await engine._reload_rules_from_file_if_changed()
+        assert diff is not None
+        assert diff.removed == (alert_rule_name("drop"),)
+        # Debounce entry for the dropped rule is evicted.
+        assert (drop.name, "key1") not in engine._debounce
+        # Window registry no longer carries the dropped rule.
+        assert drop.name not in engine._debounce_windows
+
+    @pytest.mark.asyncio
+    async def test_updated_rule_preserves_last_fired_at(
+        self,
+        cc_writer_factory: async_sessionmaker[AsyncSession],
+        fixed_clock: Any,
+        tmp_path: Any,
+    ) -> None:
+        path = tmp_path / "alerts.yaml"
+        path.write_text(_alerts_yaml_with_rules([]), encoding="utf-8")
+        original = _make_test_rule("tunable", debounce_minutes=10)
+        updated = _make_test_rule("tunable", debounce_minutes=99)
+        builder_state = {"return": (original,)}
+
+        def _builder(_config: AlertsConfig) -> tuple[AlertRule, ...]:
+            return builder_state["return"]
+
+        engine = AlertEngine(
+            rules=[original],
+            multiplexer=EventMultiplexer(),
+            cc_writer_factory=cc_writer_factory,
+            discord_channel=FakeDiscordChannel(),
+            clock=fixed_clock,
+            alerts_config_path=path,
+            rules_builder=_builder,
+        )
+        from alphamind.command_center.alerts.engine import _DebounceEntry
+
+        engine._debounce[(original.name, "key1")] = _DebounceEntry(last_fired_at=_NOW)
+        builder_state["return"] = (updated,)
+        await asyncio.sleep(0.01)
+        path.touch()
+        diff = await engine._reload_rules_from_file_if_changed()
+        assert diff is not None
+        assert diff.updated == (alert_rule_name("tunable"),)
+        # Last-fired-at is preserved — the debounce key still resolves
+        # to the seeded entry.
+        assert (original.name, "key1") in engine._debounce
+        # Debounce window updated to the new value.
+        assert engine._debounce_windows[updated.name] == timedelta(minutes=99)
+
+    @pytest.mark.asyncio
+    async def test_channels_section_change_publishes_restart_event(
+        self,
+        cc_writer_factory: async_sessionmaker[AsyncSession],
+        fixed_clock: Any,
+        tmp_path: Any,
+    ) -> None:
+        from alphamind.command_center._kernel.events import ConfigReloadRequiresRestartEvent
+        from alphamind.command_center.config import (
+            AlertsChannels,
+            AlertsConfig,
+            DiscordChannelConfig,
+        )
+
+        path = tmp_path / "alerts.yaml"
+        path.write_text(_alerts_yaml_with_rules([]), encoding="utf-8")
+        rule = _make_test_rule("baseline")
+        initial_config = AlertsConfig(
+            rules=[],
+            channels=AlertsChannels(discord=DiscordChannelConfig(webhook_url_env="ORIGINAL")),
+        )
+
+        def _builder(_config: AlertsConfig) -> tuple[AlertRule, ...]:
+            return (rule,)
+
+        multiplexer = EventMultiplexer()
+        engine = AlertEngine(
+            rules=[rule],
+            multiplexer=multiplexer,
+            cc_writer_factory=cc_writer_factory,
+            discord_channel=FakeDiscordChannel(),
+            clock=fixed_clock,
+            alerts_config_path=path,
+            rules_builder=_builder,
+            initial_config=initial_config,
+        )
+        # Edit YAML to rename the env var — the rules list is identical
+        # but the channels section changed.
+        new_yaml = _alerts_yaml_with_rules([])
+        new_yaml = new_yaml.replace("ALPHAMIND_DISCORD_WEBHOOK", "DIFFERENT_ENV")
+        path.write_text(new_yaml, encoding="utf-8")
+        await asyncio.sleep(0.01)
+        path.touch()
+        # Subscribe before triggering reload so the published event lands.
+        async with multiplexer.subscribe() as queue:
+            diff = await engine._reload_rules_from_file_if_changed()
+            event = await asyncio.wait_for(queue.get(), timeout=1.0)
+        assert diff is not None
+        assert diff.non_rules_section_changed is True
+        assert isinstance(event, ConfigReloadRequiresRestartEvent)
+        assert event.filename == "alerts.yaml"
+
+    @pytest.mark.asyncio
+    async def test_concurrent_evaluate_sees_consistent_rule_set(
+        self,
+        cc_writer_factory: async_sessionmaker[AsyncSession],
+        fixed_clock: Any,
+        tmp_path: Any,
+    ) -> None:
+        """Hot-reload must not race with evaluate-all rule iteration."""
+        path = tmp_path / "alerts.yaml"
+        path.write_text(_alerts_yaml_with_rules([]), encoding="utf-8")
+        rule_a = _make_test_rule("a")
+        rule_b = _make_test_rule("b")
+        builder_state = {"return": (rule_a,)}
+
+        def _builder(_config: AlertsConfig) -> tuple[AlertRule, ...]:
+            return builder_state["return"]
+
+        engine = AlertEngine(
+            rules=[rule_a],
+            multiplexer=EventMultiplexer(),
+            cc_writer_factory=cc_writer_factory,
+            discord_channel=FakeDiscordChannel(),
+            clock=fixed_clock,
+            alerts_config_path=path,
+            rules_builder=_builder,
+        )
+        builder_state["return"] = (rule_a, rule_b)
+        await asyncio.sleep(0.01)
+        path.touch()
+
+        # Reload + evaluate concurrently; the outcome list must reflect
+        # one consistent snapshot (either one or two rules), never a
+        # mid-mutation tear (a count that doesn't match either side).
+        outcomes_task = asyncio.create_task(engine.evaluate_once())
+        reload_task = asyncio.create_task(engine._reload_rules_from_file_if_changed())
+        outcomes, diff = await asyncio.gather(outcomes_task, reload_task)
+        assert len(outcomes) in {1, 2}
+        assert diff is not None and diff.added == (alert_rule_name("b"),)
 
 
 # Suppress unused-symbol warning.

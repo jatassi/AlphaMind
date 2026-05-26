@@ -38,13 +38,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Final
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind.command_center._kernel.events import ConfigReloadRequiresRestartEvent
 from alphamind.command_center._kernel.ids import AlertId, AlertRuleName
 from alphamind.command_center.alerts.channels.discord import DiscordChannel
 from alphamind.command_center.alerts.channels.in_app import InAppChannel
@@ -56,15 +58,18 @@ from alphamind.command_center.alerts.rules import (
     AlertRule,
     AlertSeverity,
 )
+from alphamind.command_center.config import AlertsConfig
 from alphamind.command_center.events.multiplexer import (
     CombinedEvent,
     EventMultiplexer,
 )
 
 __all__ = [
+    "DEFAULT_CONFIG_WATCH_INTERVAL_SECONDS",
     "DEFAULT_POLL_INTERVAL_SECONDS",
     "AlertEngine",
     "EvaluationOutcome",
+    "ReloadDiff",
 ]
 
 log = logging.getLogger(__name__)
@@ -73,6 +78,17 @@ log = logging.getLogger(__name__)
 DEFAULT_POLL_INTERVAL_SECONDS: Final = 60.0
 """Engine timer interval — matches the parent issue's pre-resolved F
 ("60s fallback alongside SSE primary")."""
+
+
+DEFAULT_CONFIG_WATCH_INTERVAL_SECONDS: Final = 5.0
+"""Hot-reload watcher cadence (story 06b / ALP-683).
+
+Polls ``config/alerts.yaml``'s mtime every 5 seconds. The watcher is a
+peer task to :meth:`_consume_events` + :meth:`_poll_state` under the
+engine's :class:`asyncio.TaskGroup` — no bare ``asyncio.create_task``.
+Five seconds is short enough that an operator-edit-then-trigger flow
+feels live, long enough that ``os.stat`` on a stable filesystem is
+free."""
 
 
 _DEFAULT_DEEP_LINK_TEMPLATE = "/#/alerts/{alert_id}"
@@ -109,6 +125,38 @@ class _DebounceEntry:
     last_fired_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class ReloadDiff:
+    """Outcome of one :meth:`AlertEngine._reload_rules_from_file` call.
+
+    Surfaces for tests + the per-reload INFO log line so a developer can
+    pin "the engine picked up *N* additions, *M* removals" from a
+    deterministic in-process fake without scraping log output.
+
+    Three name-buckets:
+
+    * ``added`` — rule names present in the freshly-parsed config but
+      not in the running engine; appended in the engine's order.
+    * ``removed`` — rule names present in the running engine but no
+      longer in the YAML; dropped along with their debounce entries.
+    * ``updated`` — rule names present in both, but with at least one
+      field (severity / debounce_window / channels) changed; replaced
+      in place. Last-fired-at debounce state is preserved.
+
+    ``non_rules_section_changed`` is ``True`` when the freshly-parsed
+    :class:`AlertsConfig`'s non-rules section (currently
+    :attr:`AlertsConfig.channels`) differs from the previously-loaded
+    snapshot. The engine cannot hot-apply those edits — the Discord
+    channel + multiplexer wiring is established at lifespan startup —
+    so a ``ConfigReloadRequiresRestartEvent`` is published instead.
+    """
+
+    added: tuple[AlertRuleName, ...]
+    removed: tuple[AlertRuleName, ...]
+    updated: tuple[AlertRuleName, ...]
+    non_rules_section_changed: bool
+
+
 class AlertEngine:
     """Long-running task evaluating + dispatching the alert rule registry.
 
@@ -126,7 +174,7 @@ class AlertEngine:
     * ``rules`` as the registered :class:`AlertRule` list.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 — composition root wires alerts dependencies + hot-reload knobs; collapsing under one kwargs bundle hides the contract.
         self,
         *,
         rules: Sequence[AlertRule],
@@ -137,14 +185,34 @@ class AlertEngine:
         poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
         deep_link_template: str = _DEFAULT_DEEP_LINK_TEMPLATE,
         clock: Any = None,
+        alerts_config_path: Path | None = None,
+        rules_builder: Callable[[AlertsConfig], Sequence[AlertRule]] | None = None,
+        initial_config: AlertsConfig | None = None,
+        config_watch_interval_seconds: float = DEFAULT_CONFIG_WATCH_INTERVAL_SECONDS,
     ) -> None:
         if poll_interval_seconds <= 0:
             msg = "poll_interval_seconds must be positive"
             raise ValueError(msg)
+        if config_watch_interval_seconds <= 0:
+            msg = "config_watch_interval_seconds must be positive"
+            raise ValueError(msg)
         if not rules:
             msg = "rules must be non-empty"
             raise ValueError(msg)
-        self._rules = tuple(rules)
+        # Hot-reload (story 06b / ALP-683) requires both the on-disk
+        # YAML path AND a builder that re-renders rules from a fresh
+        # :class:`AlertsConfig`. Either alone is incomplete; rather
+        # than silently degrading to "no hot-reload" the constructor
+        # demands both-or-neither so a wiring mistake fails loud.
+        if (alerts_config_path is None) ^ (rules_builder is None):
+            msg = "alerts_config_path and rules_builder must be wired together (both or neither)"
+            raise ValueError(msg)
+        # The list is mutated under :attr:`_rules_lock` by
+        # :meth:`_reload_rules_from_file`; rule-set evaluation acquires
+        # the same lock around the per-tick rule iteration so the
+        # mutation is invisible to in-flight evaluation.
+        self._rules: list[AlertRule] = list(rules)
+        self._rules_lock = asyncio.Lock()
         self._multiplexer = multiplexer
         self._cc_writer_factory = cc_writer_factory
         self._foreign_reader_factory = foreign_reader_factory
@@ -169,10 +237,24 @@ class AlertEngine:
             rule.name: rule.debounce_window for rule in self._rules
         }
         self._stop_event: asyncio.Event | None = None
+        # Hot-reload state.
+        self._alerts_config_path = alerts_config_path
+        self._rules_builder = rules_builder
+        self._previous_config: AlertsConfig | None = initial_config
+        self._config_watch_interval = config_watch_interval_seconds
+        self._last_mtime_ns: int | None = (
+            alerts_config_path.stat().st_mtime_ns
+            if alerts_config_path is not None and alerts_config_path.exists()
+            else None
+        )
 
     @property
     def rules(self) -> tuple[AlertRule, ...]:
-        return self._rules
+        # External read returns an immutable snapshot — the engine
+        # mutates :attr:`_rules` in place under :attr:`_rules_lock`
+        # during hot-reload; callers see a coherent view at the moment
+        # they ask.
+        return tuple(self._rules)
 
     def request_stop(self) -> None:
         """Signal :meth:`run` to begin orderly shutdown."""
@@ -199,25 +281,33 @@ class AlertEngine:
             log_method()
 
     async def run(self) -> None:
-        """Subscribe + run the 60s timer until stop.
+        """Subscribe + run the periodic timer + hot-reload watcher until stop.
 
-        Two cooperating async loops:
+        Cooperating async loops, all peers under one :class:`asyncio.TaskGroup`:
 
         * Event consumer: ``async for event in multiplexer.subscribe()``
           → evaluate every rule against the event.
         * Periodic timer: every ``poll_interval_seconds`` →
-          :meth:`evaluate_state_polling`.
+          :meth:`_evaluate_all`.
+        * Hot-reload watcher (story 06b / ALP-683): every
+          ``config_watch_interval_seconds`` → check
+          ``config/alerts.yaml`` mtime; on change, re-parse + diff +
+          apply per :meth:`_reload_rules_from_file`. Only spawned when
+          :attr:`_alerts_config_path` + :attr:`_rules_builder` were
+          both wired at construction.
 
         Cancellation: the supervisor delivers ``CancelledError`` to
-        :meth:`run`; the consumer + timer both honor the
-        cancellation and return cleanly. The engine returns from
-        :meth:`run` once both sub-coroutines exit.
+        :meth:`run`; every loop honors the cancellation and returns
+        cleanly. The engine returns from :meth:`run` once all sub-
+        coroutines exit.
         """
         self._stop_event = asyncio.Event()
         self.log_dormant_startup_warnings()
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self._consume_events(), name="alerts_event_consumer")
             tg.create_task(self._poll_state(), name="alerts_state_poller")
+            if self._alerts_config_path is not None and self._rules_builder is not None:
+                tg.create_task(self._watch_config_mtime(), name="alerts_config_watcher")
 
     async def _consume_events(self) -> None:
         """Subscribe to the multiplexer + evaluate every event."""
@@ -279,14 +369,24 @@ class AlertEngine:
         *,
         event: CombinedEvent | None,
     ) -> tuple[EvaluationOutcome, ...]:
-        """Evaluate every rule against one event tick OR one timer tick."""
+        """Evaluate every rule against one event tick OR one timer tick.
+
+        Snapshots ``self._rules`` under :attr:`_rules_lock` so a
+        concurrent hot-reload (story 06b) doesn't mutate the iteration.
+        Per-rule evaluation runs outside the snapshot lock — its own
+        debounce critical section uses :attr:`_debounce_lock`. Holding
+        the rules lock only for the snapshot keeps reload latency
+        bounded.
+        """
         now = self._clock()
         state = AlertEvaluatorState(
             now=now,
             foreign_reader_factory=self._foreign_reader_factory,
         )
+        async with self._rules_lock:
+            rules_snapshot: tuple[AlertRule, ...] = tuple(self._rules)
         outcomes: list[EvaluationOutcome] = []
-        for rule in self._rules:
+        for rule in rules_snapshot:
             outcome = await self._evaluate_one(rule, event=event, state=state, now=now)
             outcomes.append(outcome)
         return tuple(outcomes)
@@ -414,6 +514,195 @@ class AlertEngine:
                     str(rule.name),
                 )
         return new_id
+
+    # ------------------------------------------------------------------
+    # Hot-reload (story 06b / ALP-683)
+    # ------------------------------------------------------------------
+
+    async def _watch_config_mtime(self) -> None:
+        """Poll ``alerts.yaml`` mtime; trigger reload on change.
+
+        Peer task to :meth:`_consume_events` + :meth:`_poll_state` under
+        :meth:`run`'s :class:`asyncio.TaskGroup`. Sleeps
+        ``config_watch_interval_seconds`` between polls; honors the
+        shared :attr:`_stop_event` for orderly shutdown.
+
+        Any exception raised by the reload (YAML parse error, rule
+        builder failure, etc.) is logged and absorbed — the engine
+        keeps running on the previous rule set rather than crashing
+        the whole TaskGroup over an operator's malformed edit. A
+        subsequent good edit drops the broken state.
+        """
+        if self._stop_event is None:  # pragma: no cover — set in run()
+            return
+        if self._alerts_config_path is None:  # pragma: no cover — gated in run()
+            return
+        while not self._stop_event.is_set():
+            stopped = await self._sleep_until_config_check_or_stop()
+            if stopped:
+                return
+            try:
+                await self._reload_rules_from_file_if_changed()
+            except Exception as exc:  # pragma: no cover — defensive
+                log.warning(
+                    "alert engine: alerts.yaml hot-reload raised %s; keeping existing rule set",
+                    exc,
+                )
+
+    async def _sleep_until_config_check_or_stop(self) -> bool:
+        """Sleep one watch interval OR until stop signalled."""
+        if self._stop_event is None:  # pragma: no cover — set in run()
+            return True
+        try:
+            await asyncio.wait_for(
+                self._stop_event.wait(),
+                timeout=self._config_watch_interval,
+            )
+        except TimeoutError:
+            return False
+        except asyncio.CancelledError:
+            return True
+        return True
+
+    async def _reload_rules_from_file_if_changed(self) -> ReloadDiff | None:
+        """Reload alerts.yaml when mtime advances; return diff or ``None``.
+
+        ``None`` is returned when the file's mtime is unchanged (no
+        work to do) — the watcher uses the sentinel to skip the
+        re-parse + diff overhead on every tick.
+        """
+        if self._alerts_config_path is None:
+            return None
+        try:
+            mtime_ns = self._alerts_config_path.stat().st_mtime_ns
+        except FileNotFoundError:
+            return None
+        if self._last_mtime_ns is not None and mtime_ns == self._last_mtime_ns:
+            return None
+        self._last_mtime_ns = mtime_ns
+        return await self._reload_rules_from_file()
+
+    async def _reload_rules_from_file(self) -> ReloadDiff:
+        """Re-parse alerts.yaml + diff against current rule set + apply.
+
+        Steps:
+
+        1. ``load_alerts_config`` re-parses the YAML (Pydantic ``extra='forbid'``
+           catches typos).
+        2. ``self._rules_builder`` renders the new
+           :class:`AlertsConfig` into a fresh tuple of
+           :class:`AlertRule`.
+        3. Diff against ``self._rules`` by name → added / removed /
+           updated / unchanged.
+        4. Under :attr:`_rules_lock`: apply removals (drop from
+           :attr:`_rules` + drop matching :attr:`_debounce` entries),
+           apply additions, replace in-place for updates.
+        5. If the non-rules section changed (``channels`` block), publish a
+           :class:`ConfigReloadRequiresRestartEvent` on the multiplexer
+           — the operator-facing banner surfaces the need for restart.
+
+        Errors propagate to the caller; the watcher absorbs them so
+        a malformed edit doesn't kill the engine.
+        """
+        if self._alerts_config_path is None or self._rules_builder is None:
+            msg = "hot-reload requires alerts_config_path + rules_builder"
+            raise RuntimeError(msg)
+        # Import here so the engine module doesn't take a load-time
+        # dependency on the loader (and through it, the alphamind.config
+        # loader chain).
+        from alphamind.command_center.config import load_alerts_config
+
+        new_config = load_alerts_config(self._alerts_config_path.parent)
+        new_rules = tuple(self._rules_builder(new_config))
+        non_rules_changed = self._non_rules_section_differs(new_config)
+        async with self._rules_lock:
+            diff = self._apply_rule_diff_locked(new_rules)
+        self._previous_config = new_config
+        diff_full = ReloadDiff(
+            added=diff.added,
+            removed=diff.removed,
+            updated=diff.updated,
+            non_rules_section_changed=non_rules_changed,
+        )
+        if non_rules_changed:
+            await self._multiplexer.publish(
+                ConfigReloadRequiresRestartEvent(
+                    filename=self._alerts_config_path.name,
+                    reason="alerts.yaml channels section changed; restart required",
+                ),
+            )
+        log.info(
+            "alert engine: hot-reload diff added=%s removed=%s updated=%s non_rules=%s",
+            diff_full.added,
+            diff_full.removed,
+            diff_full.updated,
+            diff_full.non_rules_section_changed,
+        )
+        return diff_full
+
+    def _non_rules_section_differs(self, new_config: AlertsConfig) -> bool:
+        """Return ``True`` when the previous + new configs' channels differ."""
+        if self._previous_config is None:
+            # First load with no prior snapshot — engine was started
+            # against ``new_config`` itself, so by definition nothing
+            # changed.
+            return False
+        return self._previous_config.channels != new_config.channels
+
+    def _apply_rule_diff_locked(self, new_rules: Sequence[AlertRule]) -> ReloadDiff:
+        """Mutate :attr:`_rules` + :attr:`_debounce` to match *new_rules*.
+
+        Caller holds :attr:`_rules_lock`. Returns the per-bucket name
+        list so the watcher can publish + log the change set.
+        """
+        current_by_name: dict[AlertRuleName, AlertRule] = {r.name: r for r in self._rules}
+        new_by_name: dict[AlertRuleName, AlertRule] = {r.name: r for r in new_rules}
+        added: list[AlertRuleName] = []
+        removed: list[AlertRuleName] = []
+        updated: list[AlertRuleName] = []
+        # Detect adds + updates.
+        for name, new_rule in new_by_name.items():
+            existing = current_by_name.get(name)
+            if existing is None:
+                added.append(name)
+            elif _rule_tunables_differ(existing, new_rule):
+                updated.append(name)
+        # Detect removes.
+        for name in current_by_name:
+            if name not in new_by_name:
+                removed.append(name)
+        # Apply: preserve the engine's iteration order by rebuilding
+        # :attr:`_rules` to match *new_rules* exactly.
+        self._rules = list(new_rules)
+        self._debounce_windows = {r.name: r.debounce_window for r in self._rules}
+        # Drop debounce entries for removed rules — leaving them would
+        # block re-additions from firing.
+        if removed:
+            removed_set = set(removed)
+            keys_to_drop = [key for key in self._debounce if key[0] in removed_set]
+            for key in keys_to_drop:
+                del self._debounce[key]
+        return ReloadDiff(
+            added=tuple(added),
+            removed=tuple(removed),
+            updated=tuple(updated),
+            non_rules_section_changed=False,  # caller fills the field
+        )
+
+
+def _rule_tunables_differ(left: AlertRule, right: AlertRule) -> bool:
+    """Return True when two rules with the same name carry different tunables.
+
+    Compares the YAML-overridable surface — severity, debounce window,
+    channels. The condition predicate is rebuilt from scratch by
+    :func:`build_default_rules` on every reload, so a different
+    condition identity is expected and does not count as a change.
+    """
+    return (
+        left.severity != right.severity
+        or left.debounce_window != right.debounce_window
+        or left.channels != right.channels
+    )
 
 
 def _default_clock() -> datetime:

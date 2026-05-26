@@ -40,6 +40,7 @@ from typing import Any
 
 __all__ = [
     "AlertFiredEvent",
+    "ConfigReloadRequiresRestartEvent",
     "MonitorEvent",
     "MonitorEventType",
     "PipelineEvent",
@@ -141,6 +142,29 @@ class MonitorEvent:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "payload", _freeze_payload(self.payload))
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigReloadRequiresRestartEvent:
+    """Synthetic event published when a config-file edit can't be hot-applied.
+
+    Story 06b / ALP-683 — the :class:`AlertEngine` watches
+    ``config/alerts.yaml`` mtime and hot-reloads the ``rules:`` section
+    on change. When the *non-rules* section of the YAML changes (e.g.
+    a channel webhook env var rename), the engine cannot apply the
+    edit without restarting (the Discord channel + multiplexer wiring
+    happens at lifespan startup against the resolved config). The
+    engine publishes this event so the SSE multiplexer fans it to
+    every connected browser; the UI surfaces a banner prompting the
+    operator to restart the daemon.
+
+    ``filename`` names the YAML file whose non-hot-reloadable section
+    changed (e.g. ``"alerts.yaml"``); ``reason`` carries a short
+    operator-facing string the banner displays.
+    """
+
+    filename: str
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)

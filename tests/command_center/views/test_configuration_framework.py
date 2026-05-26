@@ -149,7 +149,9 @@ class TestReloadPolicyEnum:
         """The user-facing RP name only affects the browser passkey UI."""
         from alphamind.command_center.config import WebauthnConfig
 
-        assert reload_policy_of(WebauthnConfig, "relying_party_name") is ReloadPolicy.INVOCATION_TIME
+        assert (
+            reload_policy_of(WebauthnConfig, "relying_party_name") is ReloadPolicy.INVOCATION_TIME
+        )
 
 
 class TestSchemaEndpoint:

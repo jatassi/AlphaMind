@@ -46,6 +46,7 @@ from fastapi.responses import StreamingResponse
 
 from alphamind.command_center._kernel.events import (
     AlertFiredEvent,
+    ConfigReloadRequiresRestartEvent,
     MonitorEvent,
     PipelineEvent,
 )
@@ -117,6 +118,16 @@ def _envelope_for(event: CombinedEvent) -> BrowserEventEnvelope:
             "rule_name": event.rule_name,
             "severity": event.severity,
             **dict(event.payload),
+        }
+    elif isinstance(event, ConfigReloadRequiresRestartEvent):
+        # Story 06b — engine published this when the non-rules section
+        # of a watched YAML changed; UI surfaces a "restart required"
+        # banner so the operator triggers the daemon restart.
+        source = "cc"
+        event_name = "config_reload_requires_restart"
+        payload = {
+            "filename": event.filename,
+            "reason": event.reason,
         }
     else:  # pragma: no cover — CombinedEvent is closed
         msg = f"unsupported CombinedEvent variant: {type(event).__name__}"
