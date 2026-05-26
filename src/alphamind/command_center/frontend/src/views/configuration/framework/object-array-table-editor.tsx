@@ -2,6 +2,12 @@
 // Per-cell controls dispatch on the column's declared control type. Row add /
 // remove via toolbar buttons; the inner cell controls are intentionally narrow
 // (string + number for v1) and per-file editors in 06a/06b can extend.
+//
+// Column ``key`` may be a dotted path (e.g. ``value.context_lower``) when the
+// backend unfurls a ``dict[str, BaseModel]`` field — the cell then reads /
+// writes through the nested object. The read + write helpers below treat a
+// dotted ``key`` as path segments and a non-dotted ``key`` as a top-level
+// property.
 
 import { cn } from '@/lib/utils'
 
@@ -9,6 +15,53 @@ export type ObjectArrayColumn = {
   key: string
   label: string
   controlType: 'string' | 'number'
+}
+
+// Treat a dotted ``key`` as a sequence of object descents. ``key.split('.')``
+// for ``value.context_lower`` yields ``['value', 'context_lower']``; the read
+// helper walks the row following each segment.
+function _readDottedCell(row: Record<string, unknown>, key: string): unknown {
+  if (!key.includes('.')) {
+    return row[key]
+  }
+  const segments = key.split('.')
+  let current: unknown = row
+  for (const seg of segments) {
+    if (current === null || typeof current !== 'object') {
+      return undefined
+    }
+    current = (current as Record<string, unknown>)[seg]
+  }
+  return current
+}
+
+// Immutably write a value into a (possibly nested) cell. Cloning each
+// intermediate level mirrors the parent ``onChange`` contract — callers rely
+// on referential inequality between successive row snapshots to drive
+// re-render.
+function _writeDottedCell(
+  row: Record<string, unknown>,
+  key: string,
+  next: unknown,
+): Record<string, unknown> {
+  if (!key.includes('.')) {
+    return { ...row, [key]: next }
+  }
+  const segments = key.split('.')
+  const clone: Record<string, unknown> = { ...row }
+  let cursor: Record<string, unknown> = clone
+  for (let i = 0; i < segments.length - 1; i += 1) {
+    const seg = segments[i]
+    const existing = cursor[seg]
+    const branch =
+      existing !== null && typeof existing === 'object' && !Array.isArray(existing)
+        ? { ...(existing as Record<string, unknown>) }
+        : {}
+    cursor[seg] = branch
+    cursor = branch
+  }
+  cursor[segments.at(-1) ?? ''] = next
+  return clone
 }
 
 type ObjectArrayTableEditorProps = {
@@ -22,9 +75,10 @@ type ObjectArrayTableEditorProps = {
 }
 
 function emptyRow(columns: readonly ObjectArrayColumn[]): Record<string, unknown> {
-  const row: Record<string, unknown> = {}
+  let row: Record<string, unknown> = {}
   for (const col of columns) {
-    row[col.key] = col.controlType === 'number' ? 0 : ''
+    const initial = col.controlType === 'number' ? 0 : ''
+    row = _writeDottedCell(row, col.key, initial)
   }
   return row
 }
@@ -140,7 +194,7 @@ function TableRow({
         <td key={col.key} className="px-2 py-1">
           <CellInput
             column={col}
-            cellValue={row[col.key]}
+            cellValue={_readDottedCell(row, col.key)}
             disabled={disabled}
             onCellChange={(next) => {
               onCellChange(col, next)
@@ -241,7 +295,9 @@ export function ObjectArrayTableEditor({
     onChange(value.filter((_, idx) => idx !== rowIndex))
   }
   const handleCellChange = (rowIndex: number, column: ObjectArrayColumn, next: unknown): void => {
-    onChange(value.map((row, idx) => (idx === rowIndex ? { ...row, [column.key]: next } : row)))
+    onChange(
+      value.map((row, idx) => (idx === rowIndex ? _writeDottedCell(row, column.key, next) : row)),
+    )
   }
   return (
     <div className={cn('flex flex-col gap-2', className)}>

@@ -570,32 +570,56 @@ def _element_columns(field_type: Any) -> list[FormFieldSchema] | None:
     return None
 
 
+def _key_column() -> FormFieldSchema:
+    """Build the ``key`` column shared by every ``dict[str, T]`` editor."""
+    return FormFieldSchema(
+        path="key",
+        control_type="string",
+        reload_policy=ReloadPolicy.INVOCATION_TIME.value,
+        constraints={},
+    )
+
+
 def _dict_columns(field_type: Any) -> list[FormFieldSchema] | None:
     """Derive ``key`` + ``value`` columns for a ``dict[str, T]`` field.
 
-    ``rule_values`` (profiles) and ``multipliers`` (regimes) are
-    ``dict[str, float]``; the table editor renders them as a two-column
-    key/value table. The columns carry no ``reload_policy`` or
-    ``constraints`` of their own — those live on the enclosing field.
-    Returns ``None`` for non-dict types.
+    Three branches keyed off the dict's value type ``T``:
+
+    * Scalar (``int`` / ``float`` / ``str``): one ``value`` column
+      typed accordingly.  This covers ``rule_values: dict[str, float]``
+      (profiles) and ``multipliers: dict[str, float]`` (regimes).
+    * Pydantic :class:`BaseModel`: walk the model's leaf fields and
+      emit one column per scalar field with a dotted path
+      (``value.<field>``).  Frontend's :class:`ObjectArrayTableEditor`
+      reads ``row[col.key]``; the dotted path supports nested values
+      via the small helper added in this fix — ``row.value.<field>``.
+      Wave-6 finding #12: pre-fix the BaseModel branch fell through to
+      a single ``value`` string column, so ``agent_token_budgets:
+      dict[str, TokenBudgetRange]`` could not be edited.
+    * Anything else (``tuple``, ``list``, etc.): fall back to a single
+      ``value`` string column.  Non-scalar leaves don't surface in the
+      table cells but the row is still editable as raw JSON / YAML in
+      a future iteration.
+
+    Columns carry no ``reload_policy`` or ``constraints`` of their own —
+    those live on the enclosing field.  Returns ``None`` for non-dict
+    types.
     """
     inner = _strip_annotated(field_type)
     if get_origin(inner) is not dict:
         return None
     args = get_args(inner)
-    # Determine the value column's control type from the dict's value type.
-    # dict[str, float] → number; anything else → string.
     value_type = _strip_annotated(args[1]) if len(args) >= 2 else None
+    # BaseModel value → recurse into per-field sub-columns.
+    if isinstance(value_type, type) and issubclass(value_type, BaseModel):
+        sub_fields = _walk_fields(value_type, prefix="value")
+        return [_key_column(), *sub_fields]
+    # Scalar value → single typed column.
     value_control: ControlType = (
         "number" if value_type is not None and value_type in (int, float) else "string"
     )
     return [
-        FormFieldSchema(
-            path="key",
-            control_type="string",
-            reload_policy=ReloadPolicy.INVOCATION_TIME.value,
-            constraints={},
-        ),
+        _key_column(),
         FormFieldSchema(
             path="value",
             control_type=value_control,

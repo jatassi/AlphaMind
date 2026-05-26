@@ -68,6 +68,28 @@ class _RulesContainer(BaseModel):
     rules: list[_Rule]
 
 
+class _BudgetSpec(BaseModel):
+    """Module-scope inner element for the dict-of-BaseModel columns test."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context_lower: int
+    context_upper: int
+    output_lower: int
+    output_upper: int
+
+
+class _BudgetsContainer(BaseModel):
+    """Module-scope outer model with a ``dict[str, BaseModel]`` field.
+
+    Used by the Wave-6 #12 regression test — the framework must unfurl
+    the BaseModel value into per-field sub-columns instead of returning
+    a single ``value`` string column.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    budgets: dict[str, _BudgetSpec]
+
+
 _TEST_SESSION_ID = operator_session_id("sess-config-test")
 
 
@@ -355,6 +377,40 @@ class TestSchemaEndpoint:
         types_by_path = {c.path: c.control_type for c in rules_field.columns}
         assert types_by_path["name"] == "string"
         assert types_by_path["severity"] == "number"
+
+    def test_dict_of_basemodel_unfurls_per_field_columns(self) -> None:
+        """Wave-6 finding #12 — dict[str, BaseModel] emits sub-columns.
+
+        Pre-fix the BaseModel branch fell through to a single ``value``
+        string column, so ``agent_token_budgets: dict[str, TokenBudgetRange]``
+        could not be edited. Post-fix the framework walks the BaseModel's
+        scalar fields and emits ``value.<field>`` columns; the frontend's
+        ObjectArrayTableEditor reads/writes through the dotted paths.
+        """
+        from alphamind.command_center.views.configuration import (
+            ConfigFile,
+            derive_form_schema,
+        )
+
+        entry = ConfigFile(slug="t", model=_BudgetsContainer, filename="t.yaml")
+        schema = derive_form_schema(entry)
+        (budgets_field,) = schema.fields
+        assert budgets_field.control_type == "object-array"
+        assert budgets_field.columns is not None
+        column_paths = [c.path for c in budgets_field.columns]
+        # key + one column per scalar field of the BaseModel value.
+        assert column_paths == [
+            "key",
+            "value.context_lower",
+            "value.context_upper",
+            "value.output_lower",
+            "value.output_upper",
+        ]
+        types_by_path = {c.path: c.control_type for c in budgets_field.columns}
+        assert types_by_path["key"] == "string"
+        # All four scalar fields are int → number control.
+        assert types_by_path["value.context_lower"] == "number"
+        assert types_by_path["value.output_upper"] == "number"
 
 
 class TestGetConfigContents:
