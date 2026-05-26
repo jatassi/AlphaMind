@@ -50,6 +50,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import Greeks, RuleProjectio
 
 __all__ = [
     "AnalystOutput",
+    "AnalystResultModel",
     "EntryOrder",
     "EntryWindow",
     "EventCondition",
@@ -513,3 +514,87 @@ class AnalystOutput(BaseModel):
             if self.recommendations is not None:
                 raise ValueError("mode=watchlist forbids recommendations")
         return self
+
+
+# ---------------------------------------------------------------------------
+# Phase-output boundary model — ALP-692
+# ---------------------------------------------------------------------------
+
+
+class _TokensUsedModel(BaseModel):
+    """Inline Pydantic projection of :class:`alphamind.analysis._shared.TokensUsed`.
+
+    Kept module-private; only ``AnalystResultModel`` (and its siblings in the
+    strategist / PM modules) use it. The fields mirror :class:`TokensUsed`
+    exactly so round-trip equality holds without a conversion helper.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+
+
+class AnalystResultModel(BaseModel):
+    """Frozen Pydantic boundary model for :class:`alphamind.decision.analyst.runner.AnalystResult`.
+
+    Wraps the existing :class:`AnalystOutput` Pydantic field directly (it is
+    already a Pydantic model) and models the four metadata fields explicitly.
+
+    Used by ``run_decision_pipeline`` to emit ``analyst.json`` under
+    ``<archive>/invocations/<id>/phase_outputs/`` when running in
+    debug-e2e mode (ALP-692).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    output: AnalystOutput
+    retry_count: int
+    tokens_used: _TokensUsedModel
+    tool_calls_used: int
+    wall_clock_seconds: float
+    stop_reason: str | None
+
+    @classmethod
+    def from_domain(cls, dc: object) -> "AnalystResultModel":
+        """Construct from an :class:`AnalystResult` dataclass instance."""
+        # Imported here to avoid a circular import — runner imports models.
+        from alphamind.decision.analyst.runner import AnalystResult  # noqa: PLC0415
+
+        if not isinstance(dc, AnalystResult):
+            raise TypeError(f"Expected AnalystResult, got {type(dc).__name__}")
+        tu = dc.tokens_used
+        return cls(
+            output=dc.output,
+            retry_count=dc.retry_count,
+            tokens_used=_TokensUsedModel(
+                input_tokens=tu.input_tokens,
+                output_tokens=tu.output_tokens,
+                cache_read_tokens=tu.cache_read_tokens,
+                cache_write_tokens=tu.cache_write_tokens,
+            ),
+            tool_calls_used=dc.tool_calls_used,
+            wall_clock_seconds=dc.wall_clock_seconds,
+            stop_reason=dc.stop_reason,
+        )
+
+    def to_domain(self) -> object:
+        """Reconstruct an :class:`AnalystResult` from this model."""
+        from alphamind.analysis._shared import TokensUsed  # noqa: PLC0415
+        from alphamind.decision.analyst.runner import AnalystResult  # noqa: PLC0415
+
+        return AnalystResult(
+            output=self.output,
+            retry_count=self.retry_count,
+            tokens_used=TokensUsed(
+                input_tokens=self.tokens_used.input_tokens,
+                output_tokens=self.tokens_used.output_tokens,
+                cache_read_tokens=self.tokens_used.cache_read_tokens,
+                cache_write_tokens=self.tokens_used.cache_write_tokens,
+            ),
+            tool_calls_used=self.tool_calls_used,
+            wall_clock_seconds=self.wall_clock_seconds,
+            stop_reason=self.stop_reason,
+        )
