@@ -32,9 +32,31 @@ const CONFIG_LINKS: readonly { to: string; label: string }[] = [
   { to: '/config/security', label: 'Security' },
   { to: '/config/command-center', label: 'Command center' },
   { to: '/config/digest', label: 'Digest thresholds' },
+  // Story 06a (ALP-682) — family landing pages with FilePicker.
+  // Direct ``$name`` routes need an operator-chosen slug; the index
+  // routes added with Wave-6 finding #13 render the picker as a
+  // landing page so the menu can deep-link operators in.
+  { to: '/config/profiles', label: 'Profiles' },
+  { to: '/config/regimes', label: 'Regimes' },
 ]
 
-function ConfigNavMenu(): React.JSX.Element {
+const RISK_LINKS: readonly { to: string; label: string }[] = [
+  // Story 05j (ALP-680) — guardrail dashboard + regime timeline +
+  // calibration mix. Added as a dropdown so the top bar doesn't bloat.
+  { to: '/risk', label: 'Guardrail dashboard' },
+  { to: '/risk/timeline', label: 'Regime timeline' },
+  { to: '/risk/calibration-mix', label: 'Calibration mix' },
+]
+
+type DropdownLink = { to: string; label: string }
+
+function DropdownMenu({
+  label,
+  links,
+}: {
+  label: string
+  links: readonly DropdownLink[]
+}): React.JSX.Element {
   const [open, setOpen] = useState(false)
   return (
     <div className="relative" onMouseLeave={() => setOpen(false)}>
@@ -46,14 +68,14 @@ function ConfigNavMenu(): React.JSX.Element {
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        Configuration
+        {label}
       </button>
       {open ? (
         <div
           className="bg-popover absolute right-0 z-10 mt-2 flex w-48 flex-col gap-1 rounded-md border p-2 text-sm shadow-md"
           role="menu"
         >
-          {CONFIG_LINKS.map((entry) => (
+          {links.map((entry) => (
             <Link
               key={entry.to}
               to={entry.to}
@@ -69,9 +91,9 @@ function ConfigNavMenu(): React.JSX.Element {
   )
 }
 
-function NavLinks(): React.JSX.Element {
+function PrimaryNavLinks(): React.JSX.Element {
   return (
-    <nav className="flex items-center gap-4 text-sm">
+    <>
       {/* Story 05b (ALP-672) — live run watcher. */}
       <Link to="/live" className="hover:text-foreground/80 transition-colors">
         Live
@@ -94,8 +116,20 @@ function NavLinks(): React.JSX.Element {
       >
         Portfolio
       </Link>
-      {/* Story 06b (ALP-683) — config editor dropdown. */}
-      <ConfigNavMenu />
+      {/* Story 05f.ext (ALP-697) — theses index. */}
+      <Link
+        to="/portfolio/theses"
+        className="text-muted-foreground hover:text-foreground transition-colors"
+      >
+        Theses
+      </Link>
+    </>
+  )
+}
+
+function DiagnosticNavLinks(): React.JSX.Element {
+  return (
+    <>
       {/* Story 06c (ALP-684) — config diagnostic views. */}
       <Link
         to="/config/resolved"
@@ -109,6 +143,19 @@ function NavLinks(): React.JSX.Element {
       >
         Config history
       </Link>
+    </>
+  )
+}
+
+function NavLinks(): React.JSX.Element {
+  return (
+    <nav className="flex items-center gap-4 text-sm">
+      <PrimaryNavLinks />
+      {/* Story 05j (ALP-680) — risk views dropdown. */}
+      <DropdownMenu label="Risk" links={RISK_LINKS} />
+      {/* Story 06b (ALP-683) — config editor dropdown. */}
+      <DropdownMenu label="Configuration" links={CONFIG_LINKS} />
+      <DiagnosticNavLinks />
     </nav>
   )
 }

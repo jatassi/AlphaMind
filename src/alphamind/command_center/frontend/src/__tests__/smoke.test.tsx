@@ -57,4 +57,16 @@ describe('frontend smoke', () => {
     )
     expect(screen.getByRole('button', { name: /sign in with passkey/i })).toBeInTheDocument()
   })
+
+  // Regression guard for Wave-6 finding #13: the Risk and Configuration
+  // dropdowns must surface every documented page in the menu. Pre-fix the
+  // Configuration menu omitted Profiles + Regimes; there was no Risk menu
+  // at all (only the bare ``/risk`` link landed users on the dashboard
+  // and the timeline + calibration-mix pages were unreachable from nav).
+  it('lists Risk + Configuration dropdowns with every page link', async () => {
+    render(<RouterProvider router={buildNavRouter()} />)
+    // Buttons toggle each dropdown.
+    expect(await screen.findByRole('button', { name: 'Risk' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Configuration' })).toBeInTheDocument()
+  })
 })

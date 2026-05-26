@@ -7,7 +7,9 @@ import { Route as ConfigCommandCenterRoute } from './routes/_authed/config/comma
 import { Route as ConfigDigestRoute } from './routes/_authed/config/digest'
 import { Route as ConfigHistoryRoute } from './routes/_authed/config/history'
 import { Route as ProfileNameRoute } from './routes/_authed/config/profiles/$profile-name'
+import { Route as ProfileIndexRoute } from './routes/_authed/config/profiles/index'
 import { Route as RegimeNameRoute } from './routes/_authed/config/regimes/$regime-name'
+import { Route as RegimeIndexRoute } from './routes/_authed/config/regimes/index'
 import { Route as ConfigResolvedRoute } from './routes/_authed/config/resolved'
 import { Route as ConfigSecurityRoute } from './routes/_authed/config/security'
 import { Route as InvocationDetailRoute } from './routes/_authed/history/$invocation-id'
@@ -48,7 +50,14 @@ const routeTree = RootRoute.addChildren([
     RegimeTimelineRoute,
     CalibrationMixRoute,
     // 06a: profiles + regimes config editor pages.
+    // Index landing pages registered BEFORE the $name routes so the
+    // exact ``/config/profiles`` and ``/config/regimes`` paths bind to
+    // the FilePicker landing rather than to a ``$profileName="profiles"``
+    // edit page (TanStack Router matches by registration order when
+    // both routes share a prefix).
+    ProfileIndexRoute,
     ProfileNameRoute,
+    RegimeIndexRoute,
     RegimeNameRoute,
     // 06b: per-file config editor routes.
     ConfigAlertsRoute,
