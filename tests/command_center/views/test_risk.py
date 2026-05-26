@@ -31,8 +31,10 @@ from alphamind.command_center.persistence.session import (
 )
 from alphamind.command_center.views.risk import (
     WARMUP_DURATION_ESTIMATE,
+    _build_exposure_rules,
     _classify_drawdown_tier,
     _classify_zone,
+    _extract_market_value,
     build_risk_router,
 )
 from alphamind.persistence.models import Base
@@ -229,6 +231,80 @@ class TestClassifyDrawdownTier:
     def test_tier_3(self) -> None:
         assert _classify_drawdown_tier(12.0) == 3
         assert _classify_drawdown_tier(20.0) == 3
+
+
+# ---------------------------------------------------------------------------
+# _extract_market_value + _build_exposure_rules unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestExtractMarketValue:
+    def test_returns_zero_for_non_dict_json(self) -> None:
+        """Regression for finding #15 (Wave-5 review).
+
+        ``json.loads`` accepts arrays, scalars, and ``null`` — the
+        downstream ``.get(...)`` raised :exc:`AttributeError` past the
+        outer try/except that only caught :exc:`JSONDecodeError` /
+        :exc:`TypeError` on the loads itself. The isinstance(dict) guard
+        returns the miss sentinel (0.0) for any non-dict payload.
+        """
+        assert _extract_market_value("[1, 2, 3]") == 0.0
+        assert _extract_market_value("42") == 0.0
+        assert _extract_market_value("null") == 0.0
+        assert _extract_market_value('"a string"') == 0.0
+
+    def test_returns_value_for_dict_json(self) -> None:
+        payload = json.dumps({"current_market_value_usd": -1234.5})
+        assert _extract_market_value(payload) == -1234.5
+
+    def test_falls_back_through_keys(self) -> None:
+        payload = json.dumps({"entry_value_usd": 7.0})
+        assert _extract_market_value(payload) == 7.0
+
+
+class TestBuildExposureRules:
+    """Regression for finding #6 (Wave-5 review).
+
+    SHORT positions report a negative ``current_market_value_usd``
+    (held-short equity); accumulating the signed value into the gross
+    exposure caused a delta-neutral book to surface as 0 % gross
+    exposure — silent under-reporting of the rollup the guardrail
+    dashboard surfaces. The fix applies :func:`abs` to the
+    per-position market value before summing.
+    """
+
+    @staticmethod
+    def _position(direction: str, market_value: float) -> dict[str, Any]:
+        return {
+            "direction": direction,
+            "details_json": json.dumps({"current_market_value_usd": market_value}),
+        }
+
+    def test_delta_neutral_book_reports_full_gross(self) -> None:
+        positions = [
+            self._position("LONG", 80_000.0),
+            self._position("SHORT", -80_000.0),
+        ]
+        rules = {r.rule_name: r for r in _build_exposure_rules(positions, 100_000.0)}
+        # gross_notional = 80k + 80k = 160k; pv = 100k → 160 %.
+        assert rules["gross_exposure"].current_value == pytest.approx(160.0)
+        # Headroom against the 120 % limit is fully consumed.
+        assert rules["gross_exposure"].headroom_pct == 0.0
+        # Net-long / net-short each surface as positive percentages.
+        assert rules["net_long_exposure"].current_value == pytest.approx(80.0)
+        assert rules["net_short_exposure"].current_value == pytest.approx(80.0)
+
+    def test_short_positions_with_negative_market_value(self) -> None:
+        positions = [
+            self._position("SHORT", -50_000.0),
+        ]
+        rules = {r.rule_name: r for r in _build_exposure_rules(positions, 100_000.0)}
+        # Without abs() this would surface as -50 % gross, which is nonsense.
+        assert rules["gross_exposure"].current_value == pytest.approx(50.0)
+        assert rules["net_short_exposure"].current_value == pytest.approx(50.0)
+
+    def test_empty_positions_returns_empty_when_pv_zero(self) -> None:
+        assert _build_exposure_rules([], 0.0) == []
 
 
 # ---------------------------------------------------------------------------

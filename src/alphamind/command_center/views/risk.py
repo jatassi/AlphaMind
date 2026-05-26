@@ -355,10 +355,17 @@ def _extract_market_value(details_json: str) -> float:
     ``current_market_value_usd``, ``market_value_usd``, ``net_premium_usd``,
     ``entry_value_usd``.  Returns 0.0 when no recognized field is found or
     parsing fails.
+
+    Guard against non-dict JSON values (lists, scalars, null) before
+    dereferencing — :func:`json.loads` accepts those too and a downstream
+    ``.get(...)`` would otherwise raise :exc:`AttributeError` past the
+    outer try block.
     """
     try:
         obj = json.loads(details_json)
     except (json.JSONDecodeError, TypeError):
+        return 0.0
+    if not isinstance(obj, dict):
         return 0.0
     for key in (
         "current_market_value_usd",
@@ -388,6 +395,15 @@ def _build_exposure_rules(
 
     Uses best-effort market-value extraction from ``details_json``.
     direction=LONG → long side, SHORT → short side.
+
+    The market-value reader returns signed values for short positions
+    (``current_market_value_usd`` is negative for a held-short equity), so
+    every accumulation here passes the value through :func:`abs` before
+    summing into the long / short notional totals. Without the
+    normalization, a delta-neutral $80k long / $80k short book would
+    surface as 0 % gross exposure (the signed sum cancels) — a
+    silent under-reporting of the exposure the guardrail dashboard is
+    supposed to surface.
     """
     if portfolio_value_usd <= 0:
         return []
@@ -395,7 +411,7 @@ def _build_exposure_rules(
     total_long = 0.0
     total_short = 0.0
     for pos in positions:
-        mv = _extract_market_value(pos.get("details_json") or "{}")
+        mv = abs(_extract_market_value(pos.get("details_json") or "{}"))
         direction = (pos.get("direction") or "").upper()
         if direction == "LONG":
             total_long += mv
@@ -403,7 +419,8 @@ def _build_exposure_rules(
             total_short += mv
 
     pv = portfolio_value_usd
-    gross_pct = ((total_long + total_short) / pv) * 100.0
+    gross_notional = total_long + total_short
+    gross_pct = (gross_notional / pv) * 100.0
     net_long_pct = (total_long / pv) * 100.0
     net_short_pct = (total_short / pv) * 100.0
 

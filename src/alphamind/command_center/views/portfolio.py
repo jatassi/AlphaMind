@@ -184,6 +184,28 @@ class _CashRow:
 _NOW_FMT = "%Y-%m-%dT%H:%M:%S"
 
 
+def _safe_json_dict(raw: str | None) -> dict[str, Any]:
+    """Parse ``raw`` as JSON and return it iff it's a dict; else ``{}``.
+
+    Centralizes the "JSON parse + isinstance(dict) guard" pattern: callers
+    that ``json.loads(...)`` then immediately ``.get(key)`` would otherwise
+    raise :exc:`AttributeError` on a list / scalar / null JSON value past
+    the outer try block (which only catches :exc:`JSONDecodeError` /
+    :exc:`TypeError` on the loads itself). Mostly a defensive wrapper —
+    every shipping payload here is a dict — but the JSON columns are
+    TEXT and a future legacy migration / hand-edit can land a non-dict.
+    """
+    if not raw:
+        return {}
+    try:
+        obj = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(obj, dict):
+        return {}
+    return obj
+
+
 def _parse_fill_ts(ts: str) -> datetime | None:
     """Parse ISO-8601 fill timestamp; return None on parse failure.
 
@@ -315,10 +337,7 @@ async def _read_equity_and_pl(session: AsyncSession) -> EquityAndPL:
                     daily_realized += realized
 
         # Extract market value and unrealized P/L from details_json.
-        try:
-            details: dict[str, Any] = json.loads(details_json_str)
-        except (json.JSONDecodeError, TypeError):
-            details = {}
+        details = _safe_json_dict(details_json_str)
 
         mv_raw = details.get("market_value_usd") or details.get("current_market_value_usd")
         if mv_raw is not None:
@@ -374,9 +393,12 @@ async def _read_cash_and_capital(session: AsyncSession) -> CashAndCapital:
 
     raw_unsettled_json = cash_row[5]
     try:
-        unsettled_raw: list[dict[str, Any]] = json.loads(raw_unsettled_json) or []
+        parsed_unsettled: Any = json.loads(raw_unsettled_json) if raw_unsettled_json else []
     except (json.JSONDecodeError, TypeError):
-        unsettled_raw = []
+        parsed_unsettled = []
+    unsettled_raw: list[dict[str, Any]] = (
+        parsed_unsettled if isinstance(parsed_unsettled, list) else []
+    )
 
     unsettled_items = []
     for entry in unsettled_raw:
@@ -426,10 +448,7 @@ async def _read_exposure(session: AsyncSession) -> Exposure:
     sector_short: dict[str, Decimal] = {}
 
     for direction, details_json_str in pos_rows:
-        try:
-            details: dict[str, Any] = json.loads(details_json_str)
-        except (json.JSONDecodeError, TypeError):
-            details = {}
+        details = _safe_json_dict(details_json_str)
 
         mv_raw = details.get("market_value_usd") or details.get("current_market_value_usd") or "0"
         try:
@@ -490,10 +509,7 @@ def _position_row_from_db(
     now: datetime,
 ) -> PositionRow:
     """Build a single PositionRow from raw DB columns."""
-    try:
-        details: dict[str, Any] = json.loads(details_json_str)
-    except (json.JSONDecodeError, TypeError):
-        details = {}
+    details = _safe_json_dict(details_json_str)
 
     ticker = str(
         details.get("ticker") or details.get("underlying") or details.get("symbol") or "Unknown"
@@ -615,10 +631,7 @@ async def _read_pending_orders(session: AsyncSession) -> list[PendingOrderRow]:
         submission_ts_str,
         position_id,
     ) in rows:
-        try:
-            instrument_spec: dict[str, Any] = json.loads(instrument_spec_json)
-        except (json.JSONDecodeError, TypeError):
-            instrument_spec = {}
+        instrument_spec = _safe_json_dict(instrument_spec_json)
 
         age_hours = 0.0
         if submission_ts_str is not None:
@@ -824,14 +837,13 @@ async def _read_bracket_legs(
         leg_status,
         order_id,
     ) in rows:
-        try:
-            trigger_payload: dict[str, Any] = json.loads(trigger_payload_json)
-        except (json.JSONDecodeError, TypeError):
-            trigger_payload = {}
+        trigger_payload = _safe_json_dict(trigger_payload_json)
         pl_anchor: dict[str, Any] | None = None
         if pl_anchor_json is not None:
             with contextlib.suppress(json.JSONDecodeError, TypeError):
-                pl_anchor = json.loads(pl_anchor_json)
+                candidate = json.loads(pl_anchor_json)
+                if isinstance(candidate, dict):
+                    pl_anchor = candidate
         legs.append(
             BracketLegDetail(
                 bracket_leg_id=str(bracket_leg_id),
@@ -1216,7 +1228,7 @@ async def _read_theses_page(
         pos_unrealized: str | None = None
         if pos_details_json:
             with contextlib.suppress(Exception):
-                pos_details: dict[str, Any] = json.loads(pos_details_json)
+                pos_details = _safe_json_dict(pos_details_json)
                 raw_unreal = pos_details.get("unrealized_pnl_usd") or pos_details.get(
                     "unrealized_pl_usd"
                 )
@@ -1417,10 +1429,7 @@ async def _read_position_detail(
         bracket_id,
     ) = pos_row
 
-    try:
-        details: dict[str, Any] = json.loads(details_json_str)
-    except (json.JSONDecodeError, TypeError):
-        details = {}
+    details = _safe_json_dict(details_json_str)
 
     ticker = str(
         details.get("ticker") or details.get("underlying") or details.get("symbol") or "Unknown"
@@ -1507,7 +1516,7 @@ async def _fetch_thesis_status_history(
         old_status = ""
         new_status = ""
         with contextlib.suppress(Exception):
-            detail: dict[str, Any] = json.loads(detail_json_str)
+            detail = _safe_json_dict(detail_json_str)
             old_status = str(detail.get("old_status", ""))
             new_status = str(detail.get("new_status", ""))
 
