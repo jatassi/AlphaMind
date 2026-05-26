@@ -352,6 +352,44 @@ class TestReaderSessionFactory:
             await _dispose_factory(factory)
 
 
+class TestForeignReaderWindowsPathNormalization:
+    """F11: Windows-style backslash paths must survive the URI round-trip.
+
+    The reader factory builds a URI like
+    ``sqlite+aiosqlite:///file:{path}?mode=ro&uri=true`` — SQLite's URI
+    form treats backslash as the escape character, so a Windows path
+    (``C:\\Users\\...\\alphamind.db``) gets mangled and the engine fails
+    to open the file. The factory normalizes to forward slashes before
+    building the URL.
+    """
+
+    async def test_factory_accepts_backslash_path_form(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        # Stand up a real DB on tmp_path.
+        db_file = tmp_path / "win.db"
+        bootstrap = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
+        async with bootstrap.begin() as conn:
+            await conn.run_sync(ProductionBase.metadata.create_all)
+            await conn.run_sync(CommandCenterBase.metadata.create_all)
+        await bootstrap.dispose()
+
+        # Synthesize a Windows-style path by replacing forward slashes
+        # with backslashes — exercises the normalization regardless of
+        # the host platform's actual path style.
+        backslash_path = str(db_file).replace("/", "\\")
+        factory = build_foreign_reader_session_factory(backslash_path)
+        try:
+            async with factory() as session:
+                # If the URI normalization broke, the open would fail
+                # with OperationalError before we got here.
+                result = await session.execute(text("SELECT COUNT(*) FROM alerts"))
+                assert result.scalar() == 0
+        finally:
+            await _dispose_factory(factory)
+
+
 class TestEngineDisposal:
     async def test_factory_carries_its_engine(self, populated_db: Path) -> None:
         # Smoke: the factory's bound engine is accessible so callers can

@@ -364,9 +364,14 @@ def build_foreign_reader_session_factory(
     # ``aiosqlite`` accepts URI-form file paths via the ``uri=true``
     # query parameter; the read-only flag is the ``mode=ro`` parameter.
     # SQLAlchemy threads the query string through to the underlying
-    # connect() call.
+    # connect() call. Backslashes in a Windows path
+    # (``C:\Users\jacks\...\alphamind.db``) break the URI parse — SQLite's
+    # URI form treats backslash as the escape character and the path
+    # component is mangled. Normalize to forward slashes so the resolved
+    # path survives the URI round-trip on both POSIX and Windows (F11).
+    uri_path = resolved.replace("\\", "/")
     query = urlencode({"mode": "ro", "uri": "true"})
-    url = f"sqlite+aiosqlite:///file:{resolved}?{query}"
+    url = f"sqlite+aiosqlite:///file:{uri_path}?{query}"
     engine = create_async_engine(url)
     return _make_factory(engine)
 
