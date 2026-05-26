@@ -50,12 +50,19 @@ Scope narrows:
   ``contract_count`` = 0 by the status-rule invariant; comparing against
   an Alpaca-side missing entry produces no drift in practice, but we
   exclude PENDING from the writeback unconditionally as a defensive narrow.
-* Positive-evidence gate. When ``alpaca_positions=()`` the caller could
-  mean either "Alpaca holds zero positions" or "positions fetch degraded"
-  — we can't disambiguate from inside reconcile. The writeback is skipped
-  in that case so a transient broker failure does not silently wipe the
-  local book; alerts still emit so the operator gets visibility. The cash
-  side gates separately on ``alpaca_account is None``.
+* Positive-evidence gate, split per asset class (ALP-662). The
+  positions endpoint can legitimately hand back a snapshot tuple that
+  is missing an entire asset class — either the operator truly holds
+  nothing in that class, or the response was incomplete / truncated /
+  a downstream filter dropped that class. We can't disambiguate from
+  inside reconcile, so writeback for each asset class gates on the
+  presence of at least one snapshot of THAT class: equity writeback
+  requires a ``us_equity`` snapshot, options writeback requires a
+  ``us_option`` snapshot. The fully-degraded case
+  (``alpaca_positions=()``) closes both gates as before. Alerts still
+  emit on both sides so the operator sees the drift; only the
+  destructive writeback half is gated. The cash side gates separately
+  on ``alpaca_account is None``.
 
 Alpaca-only orphans continue as ALERT-only — synthesizing a thesis_id,
 cost basis, and execution history from the snapshot isn't honest enough to
@@ -201,13 +208,10 @@ async def reconcile(
     if not alpaca_positions and alpaca_account is None:
         return 0
 
-    # ALP-619 — positive-evidence gate for position writeback. When
-    # ``alpaca_positions=()`` (account fetch succeeded but positions
-    # endpoint either failed or genuinely returned empty), we cannot tell
-    # the cases apart. Emit alerts so the operator gets visibility, but
-    # suppress writeback to avoid wiping the book on a transient
-    # positions-fetch failure.
-    autocorrect_positions = bool(alpaca_positions)
+    # ALP-619 / ALP-662 — per-asset-class positive-evidence gate for
+    # writeback; see module docstring for the rationale.
+    autocorrect_equity = any(s.asset_class == "us_equity" for s in alpaca_positions)
+    autocorrect_options = any(s.asset_class == "us_option" for s in alpaca_positions)
 
     alpaca_by_symbol = {snapshot.symbol: snapshot for snapshot in alpaca_positions}
     matched_symbols: set[str] = set()
@@ -225,7 +229,7 @@ async def reconcile(
                 local_qty=details.share_count,
                 local_direction=record.direction,
                 alpaca=alpaca_by_symbol.get(details.ticker),
-                autocorrect=autocorrect_positions and record.status == PositionStatus.OPEN,
+                autocorrect=autocorrect_equity and record.status == PositionStatus.OPEN,
             )
         elif isinstance(details, OptionsPositionDetails):
             occ_symbol = _alpaca_occ_symbol(details)
@@ -236,7 +240,7 @@ async def reconcile(
                 occ_symbol=occ_symbol,
                 local_count=details.contract_count,
                 alpaca=alpaca_by_symbol.get(occ_symbol),
-                autocorrect=autocorrect_positions and record.status == PositionStatus.OPEN,
+                autocorrect=autocorrect_options and record.status == PositionStatus.OPEN,
             )
         # Strategy positions are intentionally not reconciled at this layer:
         # Alpaca reports each leg as its own row keyed by OCC symbol, and the
