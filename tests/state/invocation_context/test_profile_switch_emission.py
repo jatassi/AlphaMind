@@ -11,6 +11,7 @@ Verifies:
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -215,3 +216,22 @@ class TestEmitProfileSwitchEntry:
         async with factory() as sess:
             rows = await read_intra_invocation_changelog(sess, "inv-rollback")
         assert rows == ()
+
+    async def test_now_parameter_stamps_entry_timestamp(
+        self,
+        async_engine_and_factory: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    ) -> None:
+        """The caller-supplied ``now`` is used as the entry timestamp (F10)."""
+        _, factory = async_engine_and_factory
+        record = _make_invocation_record("inv-now")
+        outcome = _make_outcome(Profile.small, Profile.large, is_no_op=False)
+        caller_now = datetime(2026, 5, 26, 14, 30, 0, tzinfo=UTC)
+
+        async with InvocationContext(session_factory=factory, record=record) as handle:
+            emit_profile_switch_entry(handle=handle, outcome=outcome, now=caller_now)
+
+        async with factory() as sess:
+            rows = await read_intra_invocation_changelog(sess, "inv-now")
+        # Timestamp matches the caller-supplied ``now`` rather than an
+        # independently-derived datetime.now(UTC).
+        assert rows[0].timestamp == caller_now

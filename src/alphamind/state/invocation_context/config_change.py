@@ -137,6 +137,7 @@ def emit_profile_switch_entry(
     *,
     handle: InvocationHandle,
     outcome: ProfileSwitchOutcome,
+    now: datetime | None = None,
 ) -> None:
     """Emit a ``PROFILE_SWITCHED`` entry, or suppress when the switch is a no-op.
 
@@ -148,6 +149,11 @@ def emit_profile_switch_entry(
     from the outcome fields and appends one typed :class:`ActivityLogEntry` inside
     the open handle's transaction.  The row commits atomically with the surrounding
     ``InvocationContext``; an exception escaping the context rolls it back.
+
+    ``now`` lets the caller supply the same timestamp it uses for the response
+    ``applied_at`` so the activity-log row and the HTTP response carry one
+    coherent wall-clock instant.  Defaults to ``datetime.now(UTC)`` when not
+    supplied (F10).
     """
     if outcome.is_no_op:
         return
@@ -161,7 +167,7 @@ def emit_profile_switch_entry(
     entry = ActivityLogEntry(
         entry_id=entry_id,
         invocation_id=handle.invocation_id,
-        timestamp=datetime.now(UTC),
+        timestamp=now if now is not None else datetime.now(UTC),
         event_type=EventType.PROFILE_SWITCHED,
         event_group=EventGroup.CONFIGURATION,
         position_id=None,
