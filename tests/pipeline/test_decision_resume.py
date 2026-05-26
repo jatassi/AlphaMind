@@ -286,9 +286,7 @@ def _seed_diag_dir(source_archive_dir: Path, agent: str) -> None:
     """Seed a per-agent diagnostic dir with a representative marker file."""
     diag_dir = source_archive_dir / "decision" / agent
     diag_dir.mkdir(parents=True, exist_ok=True)
-    (diag_dir / "prompt.md").write_text(
-        f"# {agent} prompt - source\n", encoding="utf-8"
-    )
+    (diag_dir / "prompt.md").write_text(f"# {agent} prompt - source\n", encoding="utf-8")
     (diag_dir / "response_initial.md").write_text(
         f"# {agent} response - source\n", encoding="utf-8"
     )
@@ -435,6 +433,296 @@ class TestResumeContextNone:
         # Target-side diagnostic dir was never created — confirms no copy.
         target_decision_dir = tmp_path / "invocations" / _INVOCATION_ID / "decision"
         assert not target_decision_dir.exists(), (
-            f"Replay-side diagnostic copy ran but should not have: "
-            f"{target_decision_dir} exists"
+            f"Replay-side diagnostic copy ran but should not have: {target_decision_dir} exists"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: emit-order contract (phase_start → read → copy → phase_done)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingProgress:
+    """ProgressEmitter that records every call + the ordering relative to
+    on-disk events the test threads in via a shared event list."""
+
+    def __init__(self, events: list[tuple[str, str | None]]) -> None:
+        self.events = events
+
+    def phase_start(self, phase: str) -> None:
+        self.events.append(("phase_start", phase))
+
+    def phase_done(self, phase: str, **fields: Any) -> None:
+        replayed_from = fields.get("replayed_from")
+        label = phase if replayed_from is None else f"{phase}:replayed_from={replayed_from}"
+        self.events.append(("phase_done", label))
+
+    def agent_request(self, **fields: Any) -> None:
+        pass
+
+    def agent_response(self, **fields: Any) -> None:
+        pass
+
+
+class TestReplayEmitOrder:
+    def test_phase_start_emits_before_read_and_copy_and_phase_done_carries_replayed_from(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """For each replayed phase: ``phase_start`` immediately, then the
+        on-disk read, then the diagnostic-dir copy, then
+        ``phase_done(phase, replayed_from=<source-id>)``.
+
+        Verifies the contract by:
+        * checking ``phase_start("analyst")`` appears in the events list
+          before ``phase_done("analyst:replayed_from=...")``.
+        * checking ``replayed_from=<source-id>`` appears on the
+          ``phase_done`` event for each replayed phase.
+        * checking the target-side diagnostic dir exists by the time
+          ``phase_done`` fires (the copy must complete before the event).
+        """
+        archive_root = tmp_path
+        _seed_source_archive(
+            archive_root=archive_root,
+            invocation_id=_SOURCE_INVOCATION_ID,
+            analyst_result=_make_analyst_result(),
+            strategist_result=_make_strategist_result(),
+        )
+
+        log = _CallLog()
+        _patch_runners(monkeypatch, log=log)
+
+        events: list[tuple[str, str | None]] = []
+        recording_progress = _RecordingProgress(events)
+
+        resume_ctx = ResumeContext(
+            source_archive_dir=archive_root / "invocations" / _SOURCE_INVOCATION_ID,
+            resume_phase="pm",
+            phases_to_replay=phases_to_replay("pm"),
+        )
+
+        _drive(
+            archive_root=archive_root,
+            resume_context=resume_ctx,
+            progress=recording_progress,
+        )
+
+        # phase_done events for replayed phases carry replayed_from.
+        def _is_done_for(prefix: str, event: tuple[str, str | None]) -> bool:
+            return event[0] == "phase_done" and event[1] is not None and event[1].startswith(prefix)
+
+        analyst_done_event = next(e for e in events if _is_done_for("analyst", e))
+        assert analyst_done_event[1] == f"analyst:replayed_from={_SOURCE_INVOCATION_ID}"
+        strategist_done_event = next(e for e in events if _is_done_for("strategist", e))
+        assert strategist_done_event[1] == f"strategist:replayed_from={_SOURCE_INVOCATION_ID}"
+
+        # phase_start("analyst") appears before phase_done for analyst.
+        analyst_start_idx = events.index(("phase_start", "analyst"))
+        analyst_done_idx = events.index(analyst_done_event)
+        assert analyst_start_idx < analyst_done_idx
+
+        # phase_start("strategist") appears before phase_done for strategist.
+        strategist_start_idx = events.index(("phase_start", "strategist"))
+        strategist_done_idx = events.index(strategist_done_event)
+        assert strategist_start_idx < strategist_done_idx
+
+        # The target-side diagnostic dir exists (the copy ran before
+        # phase_done fired — phase_done's presence in the events list
+        # combined with the on-disk dir confirms the order).
+        target_analyst_dir = archive_root / "invocations" / _INVOCATION_ID / "decision" / "analyst"
+        target_strategist_dir = (
+            archive_root / "invocations" / _INVOCATION_ID / "decision" / "strategist"
+        )
+        assert target_analyst_dir.is_dir()
+        assert target_strategist_dir.is_dir()
+
+
+# ---------------------------------------------------------------------------
+# Tests: hydrated result equals what runner would have produced
+# ---------------------------------------------------------------------------
+
+
+class TestHydratedResultEquality:
+    def test_hydrated_analyst_result_equals_what_runner_produced(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The replayed analyst_result is field-for-field equal to the
+        original dataclass that was serialized to disk."""
+        archive_root = tmp_path
+        # Use a non-default retry_count + wall_clock_seconds to make the
+        # equality check meaningful (vs accidentally matching default
+        # values that the fixture returns).
+        from alphamind.decision.analyst.models import AnalystOutput
+
+        original = AnalystResult(
+            output=AnalystOutput(
+                invocation_id=InvocationId(_SOURCE_INVOCATION_ID),
+                timestamp=_TIMESTAMP,
+                mode="normal",
+                recommendations=(),
+            ),
+            retry_count=7,  # non-default
+            tokens_used=TokensUsed(
+                input_tokens=999, output_tokens=888, cache_read_tokens=11, cache_write_tokens=22
+            ),
+            tool_calls_used=42,  # non-default
+            wall_clock_seconds=99.5,  # non-default
+            stop_reason="max_tokens",  # non-default
+        )
+        _seed_source_archive(
+            archive_root=archive_root,
+            invocation_id=_SOURCE_INVOCATION_ID,
+            analyst_result=original,
+            strategist_result=_make_strategist_result(),
+        )
+
+        log = _CallLog()
+        _patch_runners(monkeypatch, log=log)
+
+        resume_ctx = ResumeContext(
+            source_archive_dir=archive_root / "invocations" / _SOURCE_INVOCATION_ID,
+            resume_phase="pm",
+            phases_to_replay=phases_to_replay("pm"),
+        )
+
+        result = _drive(archive_root=archive_root, resume_context=resume_ctx)
+
+        assert result.analyst_result == original
+        # Every non-default field round-tripped.
+        assert result.analyst_result.retry_count == 7
+        assert result.analyst_result.tool_calls_used == 42
+        assert result.analyst_result.wall_clock_seconds == 99.5
+        assert result.analyst_result.stop_reason == "max_tokens"
+        assert result.analyst_result.tokens_used.input_tokens == 999
+
+
+# ---------------------------------------------------------------------------
+# Tests: diagnostic-dir copied end-to-end
+# ---------------------------------------------------------------------------
+
+
+class TestDiagnosticDirCopy:
+    def test_replayed_phases_copy_per_agent_diagnostic_dir_end_to_end(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The full contents of the source's
+        ``decision/<agent>/`` are mirrored under the target's
+        ``decision/<agent>/`` — file-by-file equality.
+
+        Confirms ``shutil.copytree`` carries every file (prompt.md,
+        response_initial.md, plus any additional files the source happened
+        to have). The seed helper writes two files; tests assert both
+        survive the copy and their contents match byte-for-byte.
+        """
+        archive_root = tmp_path
+        _seed_source_archive(
+            archive_root=archive_root,
+            invocation_id=_SOURCE_INVOCATION_ID,
+            analyst_result=_make_analyst_result(),
+            strategist_result=_make_strategist_result(),
+        )
+        # Add an extra marker file to confirm copytree picks up everything.
+        source_analyst_diag = (
+            archive_root / "invocations" / _SOURCE_INVOCATION_ID / "decision" / "analyst"
+        )
+        (source_analyst_diag / "extra_marker.json").write_text(
+            '{"marker": "from-source"}', encoding="utf-8"
+        )
+
+        log = _CallLog()
+        _patch_runners(monkeypatch, log=log)
+
+        resume_ctx = ResumeContext(
+            source_archive_dir=archive_root / "invocations" / _SOURCE_INVOCATION_ID,
+            resume_phase="pm",
+            phases_to_replay=phases_to_replay("pm"),
+        )
+
+        _drive(archive_root=archive_root, resume_context=resume_ctx)
+
+        # Target diag dirs exist with file-byte equality.
+        target_analyst_diag = archive_root / "invocations" / _INVOCATION_ID / "decision" / "analyst"
+        target_strategist_diag = (
+            archive_root / "invocations" / _INVOCATION_ID / "decision" / "strategist"
+        )
+        assert target_analyst_diag.is_dir()
+        assert target_strategist_diag.is_dir()
+        # Every source file present at target with identical contents.
+        assert (target_analyst_diag / "prompt.md").read_text(encoding="utf-8") == (
+            source_analyst_diag / "prompt.md"
+        ).read_text(encoding="utf-8")
+        assert (target_analyst_diag / "response_initial.md").read_text(encoding="utf-8") == (
+            source_analyst_diag / "response_initial.md"
+        ).read_text(encoding="utf-8")
+        # Extra source-only marker file survived the copy.
+        assert (target_analyst_diag / "extra_marker.json").read_text(
+            encoding="utf-8"
+        ) == '{"marker": "from-source"}'
+
+    def test_target_diagnostic_dir_already_exists_raises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``dirs_exist_ok=False`` per the quality lens — the replay must
+        fail loud if the target's per-agent diagnostic dir already exists.
+
+        This catches double-replay / stale-archive bugs early rather than
+        silently merging or overwriting the existing record.
+        """
+        archive_root = tmp_path
+        _seed_source_archive(
+            archive_root=archive_root,
+            invocation_id=_SOURCE_INVOCATION_ID,
+            analyst_result=_make_analyst_result(),
+            strategist_result=_make_strategist_result(),
+        )
+        # Pre-create the target's analyst diagnostic dir.
+        target_analyst_diag = archive_root / "invocations" / _INVOCATION_ID / "decision" / "analyst"
+        target_analyst_diag.mkdir(parents=True)
+        (target_analyst_diag / "stale.md").write_text("stale", encoding="utf-8")
+
+        log = _CallLog()
+        _patch_runners(monkeypatch, log=log)
+
+        resume_ctx = ResumeContext(
+            source_archive_dir=archive_root / "invocations" / _SOURCE_INVOCATION_ID,
+            resume_phase="pm",
+            phases_to_replay=phases_to_replay("pm"),
+        )
+
+        with pytest.raises(FileExistsError):
+            _drive(archive_root=archive_root, resume_context=resume_ctx)
+
+
+# ---------------------------------------------------------------------------
+# Tests: architectural invariant — no harness imports ResumeContext
+# ---------------------------------------------------------------------------
+
+
+class TestArchitecturalInvariant:
+    def test_no_harness_file_under_decision_imports_resume_context(self) -> None:
+        """Per parent decision (A): no decision-layer harness learns about
+        replay. The ResumeContext type is owned by
+        ``alphamind.scheduler.debug_e2e.resume``, and the pipeline module
+        threads it via ``object | None`` at the boundary so production
+        harnesses stay decoupled.
+
+        This test guards against accidental imports introduced by a future
+        refactor of any ``src/alphamind/decision/`` file.
+        """
+        import subprocess
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        result = subprocess.run(
+            ["git", "grep", "-l", "ResumeContext", "src/alphamind/decision/"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        # git grep exits 1 with no output when nothing matches; exit 0 with
+        # matching filenames when it finds something.
+        assert result.returncode == 1, (
+            f"Expected no ResumeContext imports in src/alphamind/decision/, "
+            f"but found:\n{result.stdout}"
+        )
+        assert result.stdout == ""

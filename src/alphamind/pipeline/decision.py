@@ -327,7 +327,7 @@ def _replay_decision_phase(
 # ---------------------------------------------------------------------------
 
 
-async def run_decision_pipeline(  # noqa: PLR0913 — composition surface threads typed inputs through every stage plus ALP-497 progress
+async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surface threads typed inputs through every stage plus ALP-497 progress; PLR0915 covers the 6-stage sequence + ALP-695 replay gate
     *,
     assembled_snapshot: AssembledSnapshot,
     repository: PortfolioStateRepository,
