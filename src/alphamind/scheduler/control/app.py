@@ -27,6 +27,7 @@ Per the ALP-128 architectural invariants:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -173,4 +174,9 @@ async def run_uvicorn_server_task(*, app: FastAPI, host: str, port: int) -> None
         await server.serve()
     except BaseException:
         server.should_exit = True
+        # Yield once so Uvicorn's main serve loop observes
+        # ``should_exit`` before the cancellation propagates further.
+        # Without this yield the cancellation can race past the flag
+        # check and Uvicorn skips its drain step (F7).
+        await asyncio.sleep(0)
         raise

@@ -96,6 +96,11 @@ async def _run_uvicorn_task(
         await server.serve()
     except BaseException:
         server.should_exit = True
+        # Yield once so Uvicorn's main serve loop observes
+        # ``should_exit`` before the cancellation propagates further.
+        # Without this yield the cancellation can race past the flag
+        # check and Uvicorn skips its drain step (F7).
+        await asyncio.sleep(0)
         raise
 
 
