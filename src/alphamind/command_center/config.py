@@ -29,11 +29,34 @@ running with a half-loaded config.
 
 from __future__ import annotations
 
+from enum import Enum
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from alphamind.config.loaders import read_yaml_file
+
+
+class ReloadPolicy(Enum):
+    """Per-field reload classification — drives the config editor badge.
+
+    Attached to a Pydantic model field via :class:`typing.Annotated` so the
+    metadata travels with the type hint and is extractable by the form-
+    schema endpoint (:mod:`alphamind.command_center.views.configuration`).
+
+    * :attr:`INVOCATION_TIME` — picked up at the next scheduled trigger;
+      the resolver re-reads the entire YAML tree before each invocation.
+      Default for every field that does not carry an explicit annotation.
+    * :attr:`DEPLOY_TIME` — requires process restart; covers paths in
+      ``main.yaml``, SQLite pragmas set at connection open, Python/
+      package versions, the ``.env`` file location, and the bind
+      socket (Uvicorn binds at startup).
+    """
+
+    INVOCATION_TIME = "invocation_time"
+    DEPLOY_TIME = "deploy_time"
+
 
 __all__ = [
     "AlertsChannels",
@@ -45,6 +68,7 @@ __all__ = [
     "FrontendConfig",
     "MonitorUpstreamConfig",
     "PipelineUpstreamConfig",
+    "ReloadPolicy",
     "SecurityConfig",
     "SessionConfig",
     "WebauthnConfig",
@@ -86,7 +110,7 @@ class DbConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    alphamind_db_path: str = Field(min_length=1)
+    alphamind_db_path: Annotated[str, ReloadPolicy.DEPLOY_TIME] = Field(min_length=1)
 
 
 class FrontendConfig(BaseModel):
@@ -101,7 +125,7 @@ class FrontendConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    dist_path: str = Field(min_length=1)
+    dist_path: Annotated[str, ReloadPolicy.DEPLOY_TIME] = Field(min_length=1)
 
 
 class PipelineUpstreamConfig(BaseModel):
@@ -149,7 +173,10 @@ class CommandCenterConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    bind: BindConfig
+    # ``bind`` is deploy-time: the Uvicorn socket binds at startup so
+    # mid-flight edits do not rebind. The path-bearing ``db`` /
+    # ``frontend`` sub-fields carry their own DEPLOY_TIME annotations.
+    bind: Annotated[BindConfig, ReloadPolicy.DEPLOY_TIME]
     db: DbConfig
     frontend: FrontendConfig
     pipeline: PipelineUpstreamConfig
