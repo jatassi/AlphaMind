@@ -13,7 +13,9 @@ security tests use ``tmp_path``-scoped sandboxes.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -170,6 +172,57 @@ class TestGitDiffEndpoint:
         )
         assert resp.status_code == 400
 
+    def test_option_shaped_from_sha_rejected_with_400(self) -> None:
+        """Wave-6 finding #4 — option-shaped ``from_sha`` returns 400.
+
+        Pre-fix ``f"{from_sha}..{to_sha}"`` was passed straight to git;
+        ``from_sha='--output=/tmp/owned'`` would render as
+        ``--output=/tmp/owned..1111...`` which git's ``--output=`` parser
+        honors, giving an authenticated arbitrary file write.  Post-fix
+        the SHA params are regex-validated before they touch the
+        subprocess.
+        """
+        client = _client_for_config_dir(_REPO_CONFIG_DIR)
+        resp = client.get(
+            "/api/views/config/git/diff",
+            params={
+                "file": "guardrails.yaml",
+                "from_sha": "--output=/tmp/owned",
+                "to_sha": "a" * 40,
+            },
+        )
+        assert resp.status_code == 400
+        assert "from_sha" in resp.json()["detail"]
+
+    def test_symbolic_ref_rejected_with_400(self) -> None:
+        """``HEAD~1`` is not a concrete SHA and must be rejected."""
+        client = _client_for_config_dir(_REPO_CONFIG_DIR)
+        resp = client.get(
+            "/api/views/config/git/diff",
+            params={
+                "file": "guardrails.yaml",
+                "from_sha": "HEAD~1",
+                "to_sha": "a" * 40,
+            },
+        )
+        assert resp.status_code == 400
+
+    def test_short_sha_accepted(self) -> None:
+        """4-40 hex chars covers short SHAs (canonical concrete form)."""
+        client = _client_for_config_dir(_REPO_CONFIG_DIR)
+        resp = client.get(
+            "/api/views/config/git/diff",
+            params={
+                "file": "guardrails.yaml",
+                "from_sha": "abcd",  # 4 hex chars — boundary case
+                "to_sha": "deadbeef" * 5,  # 40 hex chars — boundary case
+            },
+        )
+        # Either 200 (git happily compared and produced empty diff for
+        # unknown SHAs) or non-400 (404/503/whatever) — anything but a
+        # validator-level 400 confirms the SHAs cleared the boundary.
+        assert resp.status_code != 400
+
     def test_no_writes_issued_to_git(self) -> None:
         """Verify only read-only git commands are issued (no ``commit``, etc.)."""
         calls: list[tuple[str, ...]] = []
@@ -204,6 +257,49 @@ class TestGitDiffEndpoint:
                 assert arg not in write_commands, (
                     f"Unexpected write git command {arg!r} in subprocess call {cmd_args!r}"
                 )
+
+    @pytest.mark.asyncio
+    async def test_timeout_reaps_child_process(self) -> None:
+        """Wave-6 finding #9 — timeout path must reap the killed child.
+
+        Without ``await proc.wait()`` after ``proc.kill()`` the killed
+        subprocess remains a zombie until the parent exits.  Under
+        repeated 503 paths the FD/process table leaks one slot per
+        failure.  The fix calls :py:meth:`proc.wait` (bounded by a
+        secondary timeout) so the kernel reaps the child immediately.
+        """
+        from unittest.mock import AsyncMock, MagicMock
+
+        from alphamind.command_center.views.configuration import _run_git
+
+        # Build a fake :class:`asyncio.subprocess.Process` whose
+        # ``communicate`` hangs forever; ``wait_for`` will raise
+        # TimeoutError → :func:`_run_git` enters the kill+reap branch.
+        proc = MagicMock()
+        # ``communicate`` is awaited under ``wait_for``; the easiest way
+        # to trigger a TimeoutError is to have communicate return a
+        # never-resolving future.
+        forever: asyncio.Future[Any] = asyncio.Future()
+        proc.communicate = MagicMock(return_value=forever)
+        proc.wait = AsyncMock(return_value=None)
+        proc.kill = MagicMock()
+
+        # Speed the test up — both timeouts are short.
+        with (
+            patch(
+                "alphamind.command_center.views.configuration._GIT_TIMEOUT",
+                0.05,
+            ),
+            patch(
+                "alphamind.command_center.views.configuration.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=proc),
+            ),
+            pytest.raises(Exception, match="git operation timed out"),
+        ):
+            await _run_git("status", "--porcelain", cwd=_REPO_CONFIG_DIR)
+
+        proc.kill.assert_called_once()
+        proc.wait.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

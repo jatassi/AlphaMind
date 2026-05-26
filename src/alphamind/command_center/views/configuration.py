@@ -62,9 +62,11 @@ Security notes for git endpoints (06c):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import difflib
 import json
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -77,8 +79,8 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alphamind._kernel.archive_layout import RESOLVED_CONFIG_FILENAME, find_invocation_archive_dir
 from alphamind._kernel.atomic_io import atomic_write_text
+from alphamind._kernel.invocations import INVOCATIONS_DIRNAME, RESOLVED_CONFIG_FILENAME
 from alphamind.command_center._kernel.ids import OperatorSessionId
 from alphamind.command_center.auth.dependencies import csrf_required, current_session
 from alphamind.command_center.config import (
@@ -942,6 +944,23 @@ class GitStatusResponse(BaseModel):
 _GIT_TIMEOUT: int = 10
 """Seconds to wait for a git subprocess before raising ``HTTPException(503)``."""
 
+_GIT_TIMEOUT_REAP: float = 1.0
+"""Seconds to wait for the timed-out subprocess to reap after ``proc.kill()``.
+
+Without this bound the killed git child becomes a zombie if it exits between
+``kill()`` and the next event-loop iteration that would normally collect it —
+under repeated 503 paths the FD/process table leaks one entry per failure.
+"""
+
+# Concrete SHA shape: 4-40 hex chars (covers short SHAs and full 40-char
+# IDs). HEAD-relative aliases (``HEAD~1``, ``main~2``, branch names with
+# ``~`` / ``^``) deliberately fail this regex — the API only accepts
+# concrete SHAs so an attacker can't smuggle ``--output=`` or other
+# option-shaped arguments through the ``from_sha`` / ``to_sha`` query
+# parameters. Operators who need symbolic refs resolve them client-side
+# (e.g. via the ``/git/history`` endpoint) before calling ``/git/diff``.
+_SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{4,40}$")
+
 
 def _repo_root_from_config_dir(config_dir: Path) -> Path:
     """Return the git repo root from the config directory.
@@ -976,6 +995,28 @@ def _validate_config_file_param(file_param: str, config_dir: Path) -> Path:
     return candidate
 
 
+def _validate_sha(sha: str, *, field_name: str) -> str:
+    """Reject any value that is not a concrete git SHA before passing to git.
+
+    Treats the SHA-shape as the security boundary: ``git diff <X>..<Y>``
+    treats argv elements starting with ``-`` or ``--`` as options, so an
+    attacker who can supply ``from_sha=--output=/tmp/owned`` to
+    ``/git/diff`` would otherwise gain an arbitrary file-write primitive
+    via ``--output=``.  Concrete SHAs (4-40 hex chars) carry no leading
+    dash and cannot collide with any git option name, so the regex
+    validation is sufficient.
+
+    Symbolic refs (``HEAD~1``, branch names) are intentionally rejected;
+    callers needing those resolve them client-side first.
+    """
+    if not _SHA_PATTERN.match(sha):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} must be a concrete git SHA (4-40 hex chars)",
+        )
+    return sha
+
+
 async def _run_git(
     *args: str,
     cwd: Path,
@@ -983,7 +1024,8 @@ async def _run_git(
     """Run a read-only git command via ``asyncio.create_subprocess_exec``.
 
     Returns ``(returncode, stdout, stderr)``.  Raises
-    :class:`HTTPException(503)` on timeout.
+    :class:`HTTPException(503)` on timeout — reaps the child so the
+    timed-out process does not leak as a zombie under repeated failure.
 
     Explicitly not ``shell=True`` — security requirement.
     """
@@ -1000,6 +1042,14 @@ async def _run_git(
         )
     except TimeoutError as exc:
         proc.kill()
+        # Wait briefly so the kernel reaps the child — otherwise the
+        # subprocess stays as a zombie until the parent exits and the FD
+        # table leaks one slot per 503. ``asyncio.wait_for`` raises if
+        # the wait itself times out; we swallow that case because the
+        # operator already saw a 503 and the eventual exit cleanup
+        # belongs to the OS.
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(proc.wait(), timeout=_GIT_TIMEOUT_REAP)
         raise HTTPException(status_code=503, detail="git operation timed out") from exc
     return (
         proc.returncode or 0,
@@ -1019,20 +1069,75 @@ def _archive_base_dir() -> Path:
     return Path(profile) / "AlphaMind" / "archive"
 
 
-def _load_resolved_config_for_invocation(invocation_id: str) -> dict[str, Any] | None:
-    """Load ``resolved_config.json`` for *invocation_id*; return ``None`` if absent."""
-    archive_dir = find_invocation_archive_dir(
-        archive_root=_archive_base_dir(), invocation_id=invocation_id
+def _find_resolved_config_path(invocation_id: str) -> Path:
+    """Return the canonical resolved-config snapshot path for *invocation_id*.
+
+    Resolves to ``<archive_root>/invocations/<invocation_id>/resolved_config.json``
+    per :mod:`alphamind.config.snapshot` and
+    :mod:`alphamind._kernel.invocations` — the writer's pinned layout.
+    The path is returned regardless of whether the file exists on disk;
+    caller checks :py:meth:`Path.is_file` before reading.
+
+    Previously this routed through
+    :func:`alphamind._kernel.archive_layout.find_invocation_archive_dir`,
+    which globbed ``<archive_root>/*/<invocation_id>`` and matched BOTH
+    the resolved-config writer's ``invocations/`` partition AND the
+    distillation orchestrator's ``<YYYY-MM-DD>/`` date partition.  Any
+    invocation that produced both directories caused the glob to return
+    two matches → the helper returned ``None`` → the endpoint 404'd in
+    production.
+    """
+    return (
+        _archive_base_dir()
+        / INVOCATIONS_DIRNAME
+        / invocation_id
+        / RESOLVED_CONFIG_FILENAME
     )
-    if archive_dir is None:
-        return None
-    snapshot_path = archive_dir / RESOLVED_CONFIG_FILENAME
+
+
+def _load_resolved_config_for_invocation(invocation_id: str) -> dict[str, Any] | None:
+    """Load ``resolved_config.json`` for *invocation_id*; return ``None`` if absent.
+
+    Returns ``None`` for the three "no readable snapshot" branches:
+
+    * Snapshot file missing.
+    * I/O / JSON decode failure.
+    * Top-level JSON is not an object — the downstream consumers
+      (``_source_files_for_bundle`` / ``_diff_bundles``) treat the
+      payload as a mapping and a non-dict would crash the route.
+    """
+    snapshot_path = _find_resolved_config_path(invocation_id)
     if not snapshot_path.is_file():
         return None
     try:
-        return json.loads(snapshot_path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
+        parsed = json.loads(snapshot_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
+
+
+def _safe_config_subpath(config_dir: Path, rel: str) -> Path | None:
+    """Resolve *rel* under *config_dir* and reject path-traversal attempts.
+
+    Returns the resolved :class:`Path` only when it falls inside the
+    resolved ``config_dir``; returns ``None`` otherwise.  Callers treat
+    ``None`` like a missing file (the bundle entry serialises to the
+    empty string).
+
+    The bundle's ``profile`` / ``regime`` / ``mode`` / ``active_overlays``
+    fields are read from a per-invocation snapshot on disk, which is
+    operator-controlled but may carry stale or hand-edited values.  A
+    snapshot whose ``profile`` field reads ``../../etc/passwd`` would
+    otherwise let an authenticated operator read arbitrary files under
+    the daemon's UID via the ``/resolved`` endpoint.
+    """
+    resolved_root = config_dir.resolve()
+    candidate = (resolved_root / rel).resolve()
+    if not candidate.is_relative_to(resolved_root):
+        return None
+    return candidate
 
 
 def _source_files_for_bundle(bundle: dict[str, Any], config_dir: Path) -> dict[str, str]:
@@ -1040,14 +1145,18 @@ def _source_files_for_bundle(bundle: dict[str, Any], config_dir: Path) -> dict[s
 
     Reads profile base, active regime, active overlays, and active mode
     files from ``config_dir``.  Missing or unreadable files produce an
-    empty string placeholder.
+    empty string placeholder.  Files that would resolve outside the
+    sandboxed ``config_dir`` (path traversal) are also returned as
+    empty strings.
     """
     sources: dict[str, str] = {}
 
     def _read(rel: str) -> str:
-        p = config_dir / rel
+        safe_path = _safe_config_subpath(config_dir, rel)
+        if safe_path is None:
+            return ""
         try:
-            return p.read_text(encoding="utf-8")
+            return safe_path.read_text(encoding="utf-8")
         except OSError:
             return ""
 
@@ -1410,8 +1519,8 @@ def build_configuration_router() -> APIRouter:  # noqa: C901, PLR0915
         request: Request,
         _session: Annotated[OperatorSessionId, Depends(current_session)],
         file: Annotated[str, Query(description="Config file relative to config/")],
-        from_sha: Annotated[str, Query(description="Base commit SHA")],
-        to_sha: Annotated[str, Query(description="Target commit SHA")],
+        from_sha: Annotated[str, Query(description="Base commit SHA (4-40 hex)")],
+        to_sha: Annotated[str, Query(description="Target commit SHA (4-40 hex)")],
     ) -> GitDiffResponse:
         """Return the unified text diff for a config file between two SHAs.
 
@@ -1419,24 +1528,33 @@ def build_configuration_router() -> APIRouter:  # noqa: C901, PLR0915
         an empty ``diff_text`` when git produces no output (identical
         contents) or on a non-zero exit code (e.g. invalid SHAs — caller
         should check the response).
+
+        ``from_sha`` and ``to_sha`` MUST be concrete git SHAs (4-40 hex
+        chars).  Symbolic refs (``HEAD~1``, branch names) are rejected
+        with 400 — otherwise an attacker could smuggle option-shaped
+        arguments (``--output=/path``) through the SHA params and turn
+        the read-only diff endpoint into an arbitrary file-write
+        primitive.
         """
         del _session
         config_dir = _resolve_config_dir(request)
         _validate_config_file_param(file, config_dir)
+        validated_from = _validate_sha(from_sha, field_name="from_sha")
+        validated_to = _validate_sha(to_sha, field_name="to_sha")
         repo_root = _repo_root_from_config_dir(config_dir)
 
         rel_path = f"config/{file}"
         rc, stdout, _stderr = await _run_git(
             "diff",
-            f"{from_sha}..{to_sha}",
+            f"{validated_from}..{validated_to}",
             "--",
             rel_path,
             cwd=repo_root,
         )
         return GitDiffResponse(
             file=file,
-            from_sha=from_sha,
-            to_sha=to_sha,
+            from_sha=validated_from,
+            to_sha=validated_to,
             diff_text=stdout if rc == 0 else "",
         )
 

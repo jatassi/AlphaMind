@@ -94,8 +94,15 @@ def _make_app(config_dir: Path, *, stub_reader: bool = True) -> FastAPI:
 
 
 def _write_snapshot(archive_root: Path, invocation_id: str, bundle: dict[str, Any]) -> Path:
-    """Write a fake resolved_config.json under the date-partitioned layout."""
-    invocation_dir = archive_root / "2026-05-10" / invocation_id
+    """Write a fake resolved_config.json under the production layout.
+
+    Production writes through :func:`alphamind.config.snapshot.persist_snapshot`
+    which targets ``<archive_root>/invocations/<id>/resolved_config.json`` —
+    not the date-partitioned distillation layout.  Pre-fix the test
+    harness wrote to the date partition, so the production-layout 404
+    regression (Wave-6 finding #2) wasn't caught here.
+    """
+    invocation_dir = archive_root / "invocations" / invocation_id
     invocation_dir.mkdir(parents=True, exist_ok=True)
     snapshot = invocation_dir / "resolved_config.json"
     snapshot.write_text(json.dumps(bundle, sort_keys=True, indent=2), encoding="utf-8")
@@ -394,3 +401,123 @@ class TestResolvedConfigDiff:
         body = resp.json()
         for key in ("from_invocation_id", "to_invocation_id", "diff_lines"):
             assert key in body, f"missing response field {key!r}"
+
+
+# ---------------------------------------------------------------------------
+# Regression guards — Wave-6 findings #2, #6, #7
+# ---------------------------------------------------------------------------
+
+
+class TestResolvedConfigRegressionGuards:
+    """Wave-6 fixes for the resolved-config viewer endpoints."""
+
+    def test_dual_partition_layout_does_not_404(self, tmp_path: Path) -> None:
+        """A coexisting distillation-layout dir must NOT break the lookup.
+
+        Pre-fix the helper globbed ``<archive_root>/*/<invocation_id>``
+        which matched BOTH the resolved-config writer's ``invocations/``
+        partition AND the distillation orchestrator's ``<YYYY-MM-DD>/``
+        partition — len(matches) > 1 → None → 404 in production.
+        Post-fix the helper resolves directly to the canonical
+        ``invocations/<id>/`` path so the date partition is irrelevant.
+        """
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        archive_root = tmp_path / "archive"
+        archive_root.mkdir()
+        invocation_id = "inv-dual-layout-001"
+        # The canonical (production) layout the snapshot writer uses.
+        _write_snapshot(archive_root, invocation_id, _SAMPLE_BUNDLE)
+        # Simulate the distillation orchestrator's parallel date-partitioned
+        # directory for the same invocation_id.
+        date_dir = archive_root / "2026-05-10" / invocation_id
+        date_dir.mkdir(parents=True)
+        (date_dir / "distillation").mkdir()
+
+        app = _make_app(config_dir)
+        with (
+            patch(
+                "alphamind.command_center.views.configuration._archive_base_dir",
+                return_value=archive_root,
+            ),
+            TestClient(app) as client,
+        ):
+            resp = client.get(
+                "/api/views/config/resolved",
+                params={"invocation_id": invocation_id},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["bundle"]["profile"] == "default"
+
+    def test_non_dict_snapshot_payload_returns_404(self, tmp_path: Path) -> None:
+        """A snapshot whose top-level JSON is not a mapping → 404, not 500.
+
+        Pre-fix ``json.loads`` was returned untyped; downstream consumers
+        (``_source_files_for_bundle``) assumed a dict and would crash on
+        a list or string.  Post-fix the loader returns ``None`` for
+        non-dict payloads and the route surfaces a clean 404.
+        """
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        archive_root = tmp_path / "archive"
+        archive_root.mkdir()
+        invocation_id = "inv-non-dict-001"
+        invocation_dir = archive_root / "invocations" / invocation_id
+        invocation_dir.mkdir(parents=True)
+        (invocation_dir / "resolved_config.json").write_text(
+            json.dumps(["not", "a", "dict"]), encoding="utf-8"
+        )
+
+        app = _make_app(config_dir)
+        with (
+            patch(
+                "alphamind.command_center.views.configuration._archive_base_dir",
+                return_value=archive_root,
+            ),
+            TestClient(app) as client,
+        ):
+            resp = client.get(
+                "/api/views/config/resolved",
+                params={"invocation_id": invocation_id},
+            )
+
+        assert resp.status_code == 404
+
+    def test_source_files_rejects_path_traversal(self, tmp_path: Path) -> None:
+        """A bundle ``profile`` carrying ``../`` returns an empty source entry.
+
+        Without the path-traversal guard a snapshot whose ``profile``
+        field reads ``../../etc/passwd`` would let the operator read
+        files outside ``config_dir`` via the source-files side-panel.
+        """
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        archive_root = tmp_path / "archive"
+        archive_root.mkdir()
+        # Place a sentinel file outside config_dir so a successful
+        # traversal would expose it.
+        outside = tmp_path / "secrets.txt"
+        outside.write_text("sentinel\n", encoding="utf-8")
+        bundle = {**_SAMPLE_BUNDLE, "profile": "../secrets"}
+        _write_snapshot(archive_root, "inv-traversal-001", bundle)
+
+        app = _make_app(config_dir)
+        with (
+            patch(
+                "alphamind.command_center.views.configuration._archive_base_dir",
+                return_value=archive_root,
+            ),
+            TestClient(app) as client,
+        ):
+            resp = client.get(
+                "/api/views/config/resolved",
+                params={"invocation_id": "inv-traversal-001"},
+            )
+
+        assert resp.status_code == 200
+        sources = resp.json()["source_files"]
+        # The traversal-shaped key is still in the response (it's named
+        # after the bundle's reported profile slug), but its value MUST
+        # be empty — the read was suppressed.
+        assert sources["profiles/../secrets.yaml"] == ""
