@@ -15,6 +15,11 @@ export function Nav(): React.JSX.Element {
           AlphaMind Command Center
         </Link>
         <nav className="flex items-center gap-4 text-sm">
+          {/* Story 05b (ALP-672) — live run watcher. */}
+          <Link to="/live" className="hover:text-foreground/80 transition-colors">
+            Live
+          </Link>
+          {/* Story 05c (ALP-673) — run history. */}
           <Link
             to="/history"
             search={{

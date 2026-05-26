@@ -158,11 +158,12 @@ class TestUvicornBoot:
         self,
         per_test_config_dir: Path,
     ) -> None:
-        # F15 — confirm build_app exposes the two events consumer task
+        # F15 — confirm build_app exposes all events consumer task
         # factories on app.state. __main__'s _run() reads off this
         # dict and registers each on the supervisor's TaskGroup; if
         # this stash is empty the consumer tasks never run and the
         # ``/api/events`` route receives no upstream frames.
+        # schedule_cache_subscriber added by ALP-672 (story 05b).
         app = build_app(
             command_center_config=load_command_center_config(per_test_config_dir),
             security_config=load_security_config(per_test_config_dir),
@@ -173,6 +174,7 @@ class TestUvicornBoot:
         assert set(factories.keys()) == {
             "events_pipeline_consumer",
             "events_monitor_consumer",
+            "schedule_cache_subscriber",
         }
         for factory in factories.values():
             assert callable(factory)

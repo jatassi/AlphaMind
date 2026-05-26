@@ -48,6 +48,86 @@ export function useSession(): UseQueryResult<SessionInfo | null> {
 }
 
 // ---------------------------------------------------------------------------
+// Live view queries (story 05b / ALP-672)
+// ---------------------------------------------------------------------------
+
+export type InvocationStatus = {
+  invocation_id: string | null
+  run_type: string | null
+  started_at: string | null
+  ended_at: string | null
+  status: string | null
+  current_phase: string | null
+  phase_durations: Record<string, unknown> | null
+  agent_metrics: Record<string, unknown> | null
+  retry_count: number | null
+  error_summary: string | null
+}
+
+export type MonitorStatus = {
+  websocket_connected: boolean
+  time_since_connect_seconds: number | null
+  last_fill_at: string | null
+  breach_active: boolean
+  breach_rule: string | null
+}
+
+export type AlertSummary = {
+  alert_id: string
+  rule_name: string
+  severity: string
+  fired_at: string
+  context_json: string
+}
+
+export type LiveViewData = {
+  pipeline: InvocationStatus
+  monitor: MonitorStatus
+  active_alerts: AlertSummary[]
+  assembled_at: string
+}
+
+export type ScheduleTrigger = {
+  trigger_at: string | null
+  trigger_type: string | null
+}
+
+export type ScheduleViewData = {
+  paused: boolean
+  triggers: ScheduleTrigger[]
+  cached_at: string | null
+}
+
+const LIVE_VIEW_QUERY_KEY = ['views', 'live'] as const
+const SCHEDULE_VIEW_QUERY_KEY = ['views', 'schedule'] as const
+
+export function liveViewQueryOptions(): ReturnType<typeof queryOptions<LiveViewData>> {
+  return queryOptions<LiveViewData>({
+    queryKey: LIVE_VIEW_QUERY_KEY,
+    queryFn: () => api.get<LiveViewData>('/api/views/live'),
+    staleTime: 5 * 1000,
+    retry: 1,
+  })
+}
+
+export function scheduleViewQueryOptions(): ReturnType<typeof queryOptions<ScheduleViewData>> {
+  return queryOptions<ScheduleViewData>({
+    queryKey: SCHEDULE_VIEW_QUERY_KEY,
+    queryFn: () => api.get<ScheduleViewData>('/api/views/schedule'),
+    staleTime: 10 * 1000,
+    retry: 1,
+  })
+}
+
+export function useLiveView(): UseQueryResult<LiveViewData> {
+  return useQuery(liveViewQueryOptions())
+}
+
+export function useScheduleView(): UseQueryResult<ScheduleViewData> {
+  return useQuery(scheduleViewQueryOptions())
+}
+
+// ---------------------------------------------------------------------------
 // Run history hooks (story 05c / ALP-673)
 // ---------------------------------------------------------------------------
 
