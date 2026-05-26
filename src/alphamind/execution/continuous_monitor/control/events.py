@@ -131,10 +131,16 @@ class SSEEventEmitter:
     def emit_websocket_disconnected(
         self, *, reason: str, timestamp: datetime | None = None
     ) -> None:
-        """The websocket dropped or closed."""
-        if self._last_websocket_state != "connected":
+        """The websocket dropped or closed.
+
+        Allows an initial ``None`` → ``disconnected`` transition so a boot-time
+        pre-connect failure can record itself without crashing the producer;
+        only ``disconnected`` → ``disconnected`` (a double-disconnect with no
+        intervening connect) is a structural error per the schema.
+        """
+        if self._last_websocket_state == "disconnected":
             msg = (
-                "websocket_disconnected emitted without a prior "
+                "websocket_disconnected emitted twice without an intervening "
                 "websocket_connected (schema § Notes on cross-field "
                 "invariants requires the events to alternate)"
             )

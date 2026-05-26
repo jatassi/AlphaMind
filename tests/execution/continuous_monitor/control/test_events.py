@@ -126,11 +126,28 @@ class TestCrossFieldInvariants:
             # Drain the first event so the test cleanup doesn't block.
             await asyncio.wait_for(queue.get(), timeout=0.5)
 
-    async def test_websocket_disconnected_without_connected_is_structural_error(self) -> None:
+    async def test_initial_disconnected_is_allowed_for_boot_time_failure(self) -> None:
+        """A pre-connect failure (e.g., boot-time DNS / TLS error) records a
+        disconnect with no prior connect, so the operator sees the failure
+        rather than the producer crashing.
+        """
         emitter = SSEEventEmitter()
-        # A disconnect before any connect is a structural error.
-        with pytest.raises(RuntimeError, match="alternate"):
-            emitter.emit_websocket_disconnected(reason="network_error")
+        async with emitter.subscribe() as queue:
+            emitter.emit_websocket_disconnected(reason="dns_failure")
+            event = await asyncio.wait_for(queue.get(), timeout=0.5)
+        assert event.name == "websocket_disconnected"
+
+    async def test_double_disconnect_is_structural_error(self) -> None:
+        """Two disconnects in a row (no intervening connect) violate the
+        alternation invariant.
+        """
+        emitter = SSEEventEmitter()
+        async with emitter.subscribe() as queue:
+            emitter.emit_websocket_disconnected(reason="first")
+            with pytest.raises(RuntimeError, match="alternate"):
+                emitter.emit_websocket_disconnected(reason="second")
+            # Drain so cleanup doesn't block.
+            await asyncio.wait_for(queue.get(), timeout=0.5)
 
     async def test_websocket_connected_disconnected_connected_is_allowed(self) -> None:
         emitter = SSEEventEmitter()
