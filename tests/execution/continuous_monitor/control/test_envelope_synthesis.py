@@ -17,8 +17,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 import pytest
 
+from alphamind.execution.broker_adapter.errors import PermanentRejection
+from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
 from alphamind.execution.continuous_monitor.cascade_dispatch.trigger_ids import (
     TriggerIdGenerator,
 )
@@ -147,11 +150,20 @@ class TestOmsCloseSubmitter:
         assert o1.envelope_id == "MON.session-abc.1"
         assert o2.envelope_id == "MON.session-abc.2"
 
-    async def test_broker_error_propagates(self) -> None:
+    async def test_permanent_rejection_returns_broker_error(self) -> None:
+        """A genuine broker rejection (Alpaca permanent rejection) returns
+        BrokerErrorClose rather than raising (F9).
+        """
+
         async def fake_submit(envelope: Any) -> None:
             del envelope
-            msg = "broker out"
-            raise RuntimeError(msg)
+            raise PermanentRejectionError(
+                PermanentRejection(
+                    code="other_permanent",
+                    http_status=422,
+                    alpaca_message="contract invalid",
+                )
+            )
 
         submitter = OmsCloseSubmitter(
             monitor_session_id="session-abc",
@@ -167,4 +179,52 @@ class TestOmsCloseSubmitter:
             breach_details_limit=0.0,
         )
         assert isinstance(outcome, BrokerErrorClose)
-        assert "broker out" in outcome.broker_message
+        assert "contract invalid" in outcome.broker_message
+
+    async def test_httpx_transport_error_returns_broker_error(self) -> None:
+        """A network-layer httpx error is treated as a broker transient (F9)."""
+
+        async def fake_submit(envelope: Any) -> None:
+            del envelope
+            raise httpx.ConnectError("dns failure")
+
+        submitter = OmsCloseSubmitter(
+            monitor_session_id="session-abc",
+            trigger_ids=TriggerIdGenerator(session_id="session-abc"),
+            submit_envelope=fake_submit,
+            now=lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC),
+        )
+        outcome = await submitter.submit_close(
+            position_id="pos-1",
+            position_selection_rationale="operator_console: x",
+            rule_breached="operator_console_force_close",
+            breach_details_current=0.0,
+            breach_details_limit=0.0,
+        )
+        assert isinstance(outcome, BrokerErrorClose)
+        assert "dns failure" in outcome.broker_message
+
+    async def test_structural_value_error_propagates(self) -> None:
+        """A ValueError from the OMS write surface (duplicate trigger_id,
+        session mismatch, missing position) is a structural bug and MUST
+        propagate rather than be classified as a broker error (F9).
+        """
+
+        async def fake_submit(envelope: Any) -> None:
+            del envelope
+            raise ValueError("duplicate trigger_id")
+
+        submitter = OmsCloseSubmitter(
+            monitor_session_id="session-abc",
+            trigger_ids=TriggerIdGenerator(session_id="session-abc"),
+            submit_envelope=fake_submit,
+            now=lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC),
+        )
+        with pytest.raises(ValueError, match="duplicate trigger_id"):
+            await submitter.submit_close(
+                position_id="pos-1",
+                position_selection_rationale="operator_console: x",
+                rule_breached="operator_console_force_close",
+                breach_details_current=0.0,
+                breach_details_limit=0.0,
+            )

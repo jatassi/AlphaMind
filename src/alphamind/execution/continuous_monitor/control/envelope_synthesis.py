@@ -27,6 +27,8 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
+
 from alphamind._kernel.ids import (
     EnvelopeId,
     PositionId,
@@ -40,6 +42,7 @@ from alphamind.commands.engine_envelope import (
     EngineEnvelope,
     GuardrailTriggerRecord,
 )
+from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
 from alphamind.execution.continuous_monitor.cascade_dispatch.trigger_ids import (
     TriggerIdGenerator,
 )
@@ -156,7 +159,12 @@ class OmsCloseSubmitter:
         )
         try:
             await self._submit_envelope(envelope)
-        except Exception as exc:
+        except (PermanentRejectionError, httpx.HTTPError) as exc:
+            # Narrow catch (F9): only genuine broker / HTTP transport errors
+            # surface as ``BrokerErrorClose``. Structural ``ValueError``
+            # (duplicate trigger_id, session mismatch, malformed envelope,
+            # missing position) MUST propagate — those indicate bugs in the
+            # caller's wiring, not a broker transient.
             return BrokerErrorClose(broker_message=str(exc))
         return ForceCloseOutcome(envelope_id=str(envelope.envelope_id))
 
