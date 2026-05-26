@@ -501,7 +501,7 @@ class TestDataDirectoryDiskPressureCondition:
         try:
             second = await cond.evaluate(event=None, state=state)
         finally:
-            conditions._directory_size_bytes = original  # type: ignore[assignment]
+            conditions._directory_size_bytes = original
         assert second.fired is True
         assert second.context["size_bytes"] == first.context["size_bytes"]
 
