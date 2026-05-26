@@ -59,7 +59,25 @@ log = logging.getLogger(__name__)
 # ``data: <json>`` lines terminated by a blank line. Per
 # pipeline-control-and-events-schema.md § SSE framing, the producer
 # guarantees one ``data:`` line per frame.
+#
+# The W3C SSE spec allows LF, CR, OR CRLF as line endings (and therefore
+# CRLF+CRLF as the inter-frame separator). The current upstream uses LF,
+# but a reverse-proxy / WireGuard intermediary that rewrites line endings
+# could deliver CRLF; F11 normalises CRLF / CR → LF at the boundary so
+# the rest of the parser can assume LF-only.
 _FRAME_SEPARATOR = "\n\n"
+
+
+def _normalise_line_endings(text: str) -> str:
+    """Collapse CRLF / CR line endings to LF before frame-splitting (F11).
+
+    Cheaper than maintaining two split paths; the parser already expects
+    LF-only inside a frame (the per-line scanner strips trailing CR).
+    Treating CRLF→LF at this top-level boundary lets every downstream
+    string operation assume LF.
+    """
+    # Replace CRLF first so a lone CR doesn't double-replace to LF + LF.
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +131,12 @@ def _parse_sse_text(text: str) -> Iterable[tuple[str, Mapping[str, Any]]]:
     event / data line, non-JSON ``data:`` content) are logged at WARNING
     and skipped — wire drift surfacing rather than crashing the
     consumer (per ALP-669 scope point 3).
+
+    Normalises CRLF / CR line endings to LF before splitting (F11) so
+    proxies / tunnels that rewrite line endings don't change the
+    framing semantics.
     """
+    text = _normalise_line_endings(text)
     for raw_frame in text.split(_FRAME_SEPARATOR):
         frame = raw_frame.strip("\r\n")
         if not frame:
@@ -220,7 +243,12 @@ class _HttpxSSEClientBase:
             async def frames() -> AsyncIterator[tuple[str, Mapping[str, Any]]]:
                 buffer = ""
                 async for chunk in response.aiter_text():
-                    buffer += chunk
+                    # Normalise CRLF / CR endings before buffering so the
+                    # LF-only frame partition catches all three line-ending
+                    # shapes the SSE spec allows (F11). A proxy that
+                    # rewrites line endings would otherwise stash a partial
+                    # frame in the buffer indefinitely.
+                    buffer += _normalise_line_endings(chunk)
                     # Yield every complete frame; keep the partial tail
                     # in the buffer for the next chunk.
                     while _FRAME_SEPARATOR in buffer:

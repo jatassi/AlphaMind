@@ -199,6 +199,61 @@ class TestHttpxMonitorEventsClient:
         assert out == [("heartbeat", {"timestamp": "2026-05-26T00:00:00+00:00"})]
 
 
+class TestCrlfFrameSeparator:
+    """F11 — the parser must treat CRLF+CRLF as a frame separator.
+
+    The W3C SSE spec allows LF / CR / CRLF line endings. The current
+    upstream emits LF, but a reverse-proxy or WireGuard tunnel that
+    rewrites line endings could deliver CRLF. The parser normalises at
+    the top of every chunk so the inner LF-only scanner doesn't change.
+    """
+
+    async def test_crlf_separators_yield_parsed_frames(self) -> None:
+        body = (
+            "event: invocation_started\r\n"
+            'data: {"invocation_id":"inv-1","run_type":"market_hours_rolling"}\r\n'
+            "\r\n"
+            "event: heartbeat\r\n"
+            'data: {"timestamp":"2026-05-26T00:00:00+00:00"}\r\n'
+            "\r\n"
+        )
+        client = HttpxPipelineEventsClient(
+            base_url="http://upstream",
+            transport=_mock_transport_streaming(body),
+        )
+        out: list[tuple[str, dict[str, Any]]] = []
+        async with client.stream() as frames:
+            async for name, data in frames:
+                out.append((name, dict(data)))
+        assert out == [
+            ("invocation_started", {"invocation_id": "inv-1", "run_type": "market_hours_rolling"}),
+            ("heartbeat", {"timestamp": "2026-05-26T00:00:00+00:00"}),
+        ]
+
+    async def test_mixed_lf_crlf_in_same_stream(self) -> None:
+        # Pathological proxy that rewrites only some line endings — the
+        # parser must still find every frame boundary.
+        body = (
+            "event: invocation_started\n"
+            'data: {"invocation_id":"inv-1","run_type":"market_hours_rolling"}\n'
+            "\n"
+            "event: heartbeat\r\n"
+            'data: {"timestamp":"2026-05-26T00:00:00+00:00"}\r\n'
+            "\r\n"
+        )
+        client = HttpxPipelineEventsClient(
+            base_url="http://upstream",
+            transport=_mock_transport_streaming(body),
+        )
+        out: list[tuple[str, dict[str, Any]]] = []
+        async with client.stream() as frames:
+            async for name, data in frames:
+                out.append((name, dict(data)))
+        assert len(out) == 2
+        assert out[0][0] == "invocation_started"
+        assert out[1][0] == "heartbeat"
+
+
 class TestSharedHttpClient:
     """F10 — when a shared ``httpx.AsyncClient`` is passed at construction,
     ``stream()`` reuses it instead of minting a fresh per-call client. The
