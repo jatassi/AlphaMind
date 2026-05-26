@@ -185,10 +185,11 @@ class TestLifespanWiresEventMultiplexer:
 class TestRegisteredRoutes:
     """Story 02 ships /healthz; story 03 (ALP-667) adds /auth/*; story 04a
     (ALP-668) adds /api/control/*; story 04b (ALP-669) adds /api/events;
-    story 04d (ALP-670) adds /auth/me + the StaticFiles mount at /.
+    story 04d (ALP-670) adds /auth/me + the StaticFiles mount at /;
+    story 05c (ALP-673) adds /api/views/history/runs + failure-log preset.
 
     Asserts that only the routes belonging to the merged stories are
-    present at this point — stories 05a (alerts) / 05b-05j / 06a-06c
+    present at this point — stories 05a (alerts) / remaining view stories
     register their routers later.
     """
 
@@ -237,6 +238,8 @@ class TestRegisteredRoutes:
                 "/api/control/force_close_position",
                 "/api/control/set_halt_mode",
                 "/api/events",
+                "/api/views/history/runs",
+                "/api/views/history/runs/preset/failure-log",
             ]
         )
         assert own_routes == expected, (

@@ -24,6 +24,8 @@ Documented include points for future stories:
 
 * Story 05a (alerts) — ``app.include_router(alerts_router, prefix="/api/alerts")``.
 * View stories (05b-05j, 06a-06c) — included under ``/api/views/...``.
+* Story 05c (ALP-673) history router at ``/api/views/history``.
+* Story 05d (per-invocation detail) will extend ``/api/views/history``.
 
 Per the parent-issue architectural invariants:
 
@@ -98,6 +100,7 @@ from alphamind.command_center.persistence.session import (
     build_foreign_reader_session_factory,
 )
 from alphamind.command_center.session import ProcessSession
+from alphamind.command_center.views.history import build_history_router
 
 __all__ = ["AuthOverrides", "ControlOverrides", "EventsOverrides", "build_app"]
 
@@ -571,6 +574,11 @@ def build_app(
 
     # Mount the control router (story 04a / ALP-668) under /api/control.
     app.include_router(build_control_router(), prefix="/api/control")
+
+    # Mount the run history router (story 05c / ALP-673) under
+    # /api/views/history.  Story 05d will add per-invocation detail
+    # endpoints to a sibling router included at the same prefix.
+    app.include_router(build_history_router(), prefix="/api/views/history")
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
