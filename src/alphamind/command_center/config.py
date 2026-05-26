@@ -105,36 +105,42 @@ class FrontendConfig(BaseModel):
 
 
 class PipelineUpstreamConfig(BaseModel):
-    """``pipeline`` block — loopback URL of the pipeline upstream surface.
+    """``pipeline`` block — loopback URLs of the pipeline upstream surfaces.
 
-    Added by story 04b (ALP-669). The SSE-multiplexer's upstream
-    consumer subscribes to ``<events_url>``, which the pipeline
-    process binds at ``http://127.0.0.1:<scheduler.control_port>``
-    (default port 8765 per ALP-664).
+    Combines the two pipeline-facing URLs the command center forwards
+    to:
 
-    Story 04a will extend this block with a ``control_url`` field for
-    the verb-proxy surface; the two URLs may resolve to the same
-    host:port but the config keeps them distinct so the multiplexer
-    and the verb proxy can be redirected independently if the
-    upstream ever splits.
+    * ``control_url`` — story 04a (ALP-668). The /api/control proxy's
+      httpx-backed :class:`PipelineClient` targets this URL for the
+      five pipeline verbs.
+    * ``events_url`` — story 04b (ALP-669). The SSE multiplexer's
+      upstream consumer subscribes to this URL.
+
+    Both default to ``http://127.0.0.1:8765`` per
+    ``config/scheduler.yaml`` § ``control_port``; the config keeps the
+    two URLs distinct so the verb proxy and the SSE multiplexer can be
+    redirected independently if the upstream ever splits.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    control_url: str = Field(min_length=1)
     events_url: str = Field(min_length=1)
 
 
 class MonitorUpstreamConfig(BaseModel):
-    """``monitor`` block — loopback URL of the monitor upstream surface.
+    """``monitor`` block — loopback URLs of the monitor upstream surfaces.
 
-    Added by story 04b (ALP-669). The SSE-multiplexer's upstream
-    consumer subscribes to ``<events_url>``, which the monitor process
-    binds at ``http://127.0.0.1:<continuous_monitor.control_port>``
-    (default port 8766 per ALP-665).
+    Mirrors :class:`PipelineUpstreamConfig`'s shape. ``control_url``
+    (story 04a / ALP-668) routes the three monitor verbs; ``events_url``
+    (story 04b / ALP-669) feeds the SSE multiplexer. Both default to
+    ``http://127.0.0.1:8766`` per ``config/continuous_monitor.yaml``
+    § ``control_port``.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    control_url: str = Field(min_length=1)
     events_url: str = Field(min_length=1)
 
 

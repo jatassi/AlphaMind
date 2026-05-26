@@ -9,12 +9,14 @@ db:
   alphamind_db_path: "%USERPROFILE%/AlphaMind/data/alphamind.db"
 frontend:
   dist_path: "src/alphamind/command_center/frontend/dist"
+# Loopback URLs the command center forwards to. The /api/control proxy
+# (story ALP-668) uses control_url; the /events SSE multiplexer (story
+# ALP-669) uses events_url. Both default to the upstream services'
+# control_port values pinned in scheduler.yaml (8765) and
+# continuous_monitor.yaml (8766).
 pipeline:
-  # Loopback URL of the pipeline /events SSE surface (story 04b /
-  # ALP-669). Port 8765 mirrors scheduler.yaml's control_port (ALP-664).
+  control_url: "http://127.0.0.1:8765"
   events_url: "http://127.0.0.1:8765"
 monitor:
-  # Loopback URL of the continuous-monitor /events SSE surface (story
-  # 04b / ALP-669). Port 8766 mirrors continuous_monitor.yaml's
-  # control_port (ALP-665).
+  control_url: "http://127.0.0.1:8766"
   events_url: "http://127.0.0.1:8766"
