@@ -101,6 +101,7 @@ class EventType(StrEnum):
 
     # Configuration events
     DISTILLATION_CONFIG_CHANGE = "DISTILLATION_CONFIG_CHANGE"
+    PROFILE_SWITCHED = "PROFILE_SWITCHED"
 
 
 class EventSource(StrEnum):

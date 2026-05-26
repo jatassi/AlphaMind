@@ -1,10 +1,11 @@
-"""Configuration event details — distillation-config reloads."""
+"""Configuration event details — distillation-config reloads and profile switches."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
 
+from alphamind.config.models.main import Profile
 from alphamind.portfolio_state.events.types import EventGroup, EventType
 
 
@@ -67,10 +68,31 @@ class DistillationConfigChangeDetail:
                 raise ValueError(msg)
 
 
+@dataclass(frozen=True, slots=True)
+class ProfileSwitchedDetail:
+    """Detail payload for ``PROFILE_SWITCHED`` events.
+
+    Emitted by the operator-console profile-switch handler (story 04a) when the
+    operator requests a change to the active profile via
+    ``POST /api/control/switch_profile``. When ``is_no_op`` is ``True`` (the
+    requested profile matches the current one), the helper suppresses the append
+    so no redundant entry pollutes the activity log.
+    """
+
+    previous_profile: Profile
+    new_profile: Profile
+    is_no_op: bool
+
+
 _REGISTRY: list[tuple[EventType, type, EventGroup]] = [
     (
         EventType.DISTILLATION_CONFIG_CHANGE,
         DistillationConfigChangeDetail,
+        EventGroup.CONFIGURATION,
+    ),
+    (
+        EventType.PROFILE_SWITCHED,
+        ProfileSwitchedDetail,
         EventGroup.CONFIGURATION,
     ),
 ]
@@ -79,4 +101,5 @@ _REGISTRY: list[tuple[EventType, type, EventGroup]] = [
 __all__ = [
     "DistillationConfigChange",
     "DistillationConfigChangeDetail",
+    "ProfileSwitchedDetail",
 ]

@@ -62,6 +62,7 @@ from alphamind.portfolio_state.events import (
     PositionOpenedDetail,
     PositionOpenMechanism,
     PositionReducedDetail,
+    ProfileSwitchedDetail,
     ReconciliationAlertDetail,
     ReconciliationCorrectionDetail,
     RiskLimitApproachedDetail,
@@ -74,6 +75,7 @@ from alphamind.portfolio_state.events import (
     decode_detail,
     encode_detail,
 )
+from alphamind.config.models.main import Profile
 
 _UTC_TS = datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)
 _HASH_HEX_64 = "f" * 64
@@ -436,6 +438,14 @@ def _all_detail_instances() -> list[tuple[type, object]]:
                     DistillationConfigChange(key_path="b.second", old_value=2.5, new_value=3.0),
                 ),
                 git_sha="abc1234",
+            ),
+        ),
+        (
+            ProfileSwitchedDetail,
+            ProfileSwitchedDetail(
+                previous_profile=Profile.small,
+                new_profile=Profile.large,
+                is_no_op=False,
             ),
         ),
     ]
