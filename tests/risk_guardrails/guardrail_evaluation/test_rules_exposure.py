@@ -575,10 +575,11 @@ def test_position_max_size_project_after_batch_adjust_bracket_on_max_unchanged()
     simulator's "set new total" branch is a no-op and the projected max
     equals the current max."""
     config = _config()
+    existings = _five_position_existings()
     state = _snapshot(
         position_max_size_pct=18.1,
         portfolio_value_usd=100_000.0,
-        existing_positions=_five_position_existings(),
+        existing_positions=existings,
     )
     spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
     assert spec.project_after_batch is not None
@@ -586,14 +587,14 @@ def test_position_max_size_project_after_batch_adjust_bracket_on_max_unchanged()
         (
             _proposal(
                 action=Action.ADJUST,
-                notional_usd=18_100.0,  # = existing POS-1 notional (translator shape)
+                notional_usd=existings["POS-1"].notional_usd,  # translator shape
                 existing_position_id="POS-1",
             ),
             _dae(signed_notional_usd=0.0),
         )
     ]
     projected_after = spec.project_after_batch(proposals, state, config)
-    assert projected_after == pytest.approx(18.1)
+    assert projected_after == pytest.approx(state.position_max_size_pct)
 
 
 def test_position_max_size_project_after_batch_open_adds_synthetic_position() -> None:

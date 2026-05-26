@@ -708,24 +708,16 @@ def test_cancel_pending_order_decreases_pending_order_capital_pct() -> None:
 
 
 def test_adjust_with_zero_quantity_and_zero_notional_validates() -> None:
-    """ADJUST is exposure-neutral by design; the proposal pre-processor's
-    translator emits ``quantity=0.0, notional_usd=0`` for an adjust-bracket
-    assessment (translator.py ``_notional_and_quantity_for_assessment``).
+    """ADJUST is exposure-neutral by design; the validator's documented
+    contract is that ``quantity > 0`` applies only to exposure-changing
+    actions (OPEN/ADD/CLOSE), so producers MAY emit ``quantity=0,
+    notional_usd=0`` for ADJUST and ``evaluate_proposals`` must accept it.
 
-    ``evaluate_proposals`` must accept that shape — the validator's
-    ``quantity > 0`` rule applies only to exposure-changing actions
-    (OPEN/ADD/CLOSE). Per the ``Action`` enum docstring and
-    ``evaluate_proposals`` orchestration step 2, ADJUST/CANCEL pass through
-    the validator as no-ops.
-
-    Note: the ``position_max_size_pct`` simulator's ADJUST branch treats
-    ``proposal.notional_usd`` as the new total notional for the position
-    (per ``exposure.py`` ``_simulate_post_batch_book`` docstring; tested by
-    ``test_rules_exposure.py::test_position_max_size_project_after_batch_adjust_*``).
-    The translator's adjust-bracket emission of ``notional_usd=0`` therefore
-    projects through as "position notional dropped to zero" — a known
-    downstream artifact of the validator unblocking, tracked separately;
-    this test asserts validator acceptance only.
+    Today's translator emits the existing position's totals for adjust-bracket
+    (ALP-698) so the ``position_max_size_pct`` simulator's "set new total"
+    branch is a no-op — but the validator gate is by-contract, not
+    by-producer, so the zero/zero shape stays valid for any future producer
+    (or for hand-built CANCELs).
     """
     existing = _existing_long_equity(position_id=PositionId("POS-1"), notional_usd=5_000.0)
     state = _snapshot(existing_positions={"POS-1": existing})

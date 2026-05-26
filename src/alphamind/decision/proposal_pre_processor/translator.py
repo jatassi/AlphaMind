@@ -332,8 +332,11 @@ def _notional_and_quantity_for_assessment(
         return params.additional_dollar_value, float(params.additional_quantity)
 
     # AdjustBracketParameters — exposure-neutral. Emit the existing position's
-    # totals so the position_max_size_pct simulator's "set new total" branch
-    # is a no-op (ALP-698). delta_adjusted._exposure_neutral short-circuits
-    # ADJUST to signed_notional_usd=0, so other rules see no exposure change
-    # regardless of these carried values.
-    return money(existing.notional_usd), existing.quantity
+    # totals so the position_max_size_pct simulator (the only consumer that
+    # reads proposal.notional_usd raw for ADJUST) gets a no-op "set new total"
+    # branch (ALP-698). Other rules go through delta_adjusted._exposure_neutral,
+    # which short-circuits ADJUST to signed_notional_usd=0 regardless of these
+    # carried values. abs() mirrors the projector's defensive abs() on
+    # ExistingPosition.notional_usd in _simulate_post_batch_book and keeps the
+    # money() boundary non-negative.
+    return money(abs(existing.notional_usd)), existing.quantity
