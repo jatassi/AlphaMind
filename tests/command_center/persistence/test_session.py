@@ -402,6 +402,10 @@ class TestEngineDisposal:
             await _dispose_factory(factory)
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX-shaped paths in these resolver tests; Windows runs the same helper through a separate path-expansion suite.",
+)
 class TestResolveDbPath:
     """``_resolve_db_path`` mirrors production's path-expansion helper.
 

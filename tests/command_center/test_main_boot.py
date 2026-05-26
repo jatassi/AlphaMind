@@ -110,7 +110,7 @@ class TestUvicornBoot:
                     async with httpx.AsyncClient() as client:
                         response = await client.get(url, timeout=1.0)
                     break
-                except (httpx.ConnectError, httpx.ReadError):
+                except (httpx.ConnectError, httpx.ReadError, httpx.ConnectTimeout):
                     await asyncio.sleep(0.1)
             else:
                 pytest.fail(f"could not reach {url} after retries")

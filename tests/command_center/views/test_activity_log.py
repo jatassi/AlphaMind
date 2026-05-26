@@ -549,7 +549,11 @@ def _patch_db_path(config_dir: pathlib.Path, db_path: pathlib.Path) -> None:
     text = cc_yaml.read_text(encoding="utf-8")
     import re
 
-    text = re.sub(r"alphamind_db_path:.*", f"alphamind_db_path: '{db_path}'", text)
+    text = re.sub(
+        r"alphamind_db_path:.*",
+        lambda _: f"alphamind_db_path: '{db_path}'",
+        text,
+    )
     cc_yaml.write_text(text, encoding="utf-8")
 
 
