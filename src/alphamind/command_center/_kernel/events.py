@@ -39,6 +39,7 @@ from types import MappingProxyType
 from typing import Any
 
 __all__ = [
+    "AlertFiredEvent",
     "MonitorEvent",
     "MonitorEventType",
     "PipelineEvent",
@@ -136,6 +137,37 @@ class MonitorEvent:
     """
 
     event_type: MonitorEventType
+    payload: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "payload", _freeze_payload(self.payload))
+
+
+@dataclass(frozen=True, slots=True)
+class AlertFiredEvent:
+    """Synthetic event the alert engine publishes onto the multiplexer.
+
+    Story 05a / ALP-671 — the in-app channel pushes one of these per
+    fired alert; the SSE route fans it out to every connected
+    browser ``EventSource``. The browser's alert-banner component
+    consumes the ``cc:alert_fired`` event-name and renders the row.
+
+    ``rule_name`` is the StrEnum-equivalent the persistence layer
+    carries; ``severity`` is the matching severity tier; ``context``
+    is the frozen JSON-serializable payload the firing condition
+    produced. ``alert_id`` is the new row's id so the browser's
+    click-through deep-links to the alert detail view.
+
+    Tagged distinctly from :class:`PipelineEvent` / :class:`MonitorEvent`
+    so the SSE route's ``_envelope_for`` dispatch routes the wire
+    ``source`` to ``"cc"`` — distinguishing browser-originated alert
+    frames from upstream pipeline / monitor frames without inspecting
+    the payload.
+    """
+
+    alert_id: str
+    rule_name: str
+    severity: str
     payload: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

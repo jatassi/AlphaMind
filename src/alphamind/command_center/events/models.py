@@ -8,11 +8,12 @@ internal multiplexer state stays on the dataclasses.
 
 The envelope carries three fields:
 
-* ``source`` — ``"pipeline"`` or ``"monitor"``, identifying which
-  upstream produced the record. The SSE ``event:`` field on the wire
-  is the dual form ``<source>:<event>`` (e.g. ``pipeline:invocation_started``)
-  so the browser can disambiguate pipeline ``heartbeat`` from monitor
-  ``heartbeat`` without inspecting the data payload.
+* ``source`` — ``"pipeline"``, ``"monitor"``, or ``"cc"``, identifying
+  which producer emitted the record. The SSE ``event:`` field on the
+  wire is the dual form ``<source>:<event>`` (e.g.
+  ``pipeline:invocation_started`` / ``cc:alert_fired``) so the browser
+  can disambiguate pipeline ``heartbeat`` from monitor ``heartbeat`` /
+  cc-originated alert frames without inspecting the data payload.
 * ``event`` — the upstream event-type name (e.g. ``"invocation_started"``,
   ``"fill_received"``). Free-string at this boundary because the
   consumer task has already parsed and validated the name against the
@@ -46,6 +47,6 @@ class BrowserEventEnvelope(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    source: Literal["pipeline", "monitor"]
+    source: Literal["pipeline", "monitor", "cc"]
     event: str
     data: dict[str, Any]

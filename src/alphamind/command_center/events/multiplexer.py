@@ -31,6 +31,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, Final
 
 from alphamind.command_center._kernel.events import (
+    AlertFiredEvent,
     MonitorEvent,
     MonitorEventType,
     PipelineEvent,
@@ -59,7 +60,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-type CombinedEvent = PipelineEvent | MonitorEvent
+type CombinedEvent = PipelineEvent | MonitorEvent | AlertFiredEvent
 
 
 # ---------------------------------------------------------------------------

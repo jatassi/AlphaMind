@@ -45,6 +45,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from alphamind.command_center._kernel.events import (
+    AlertFiredEvent,
     MonitorEvent,
     PipelineEvent,
 )
@@ -108,6 +109,15 @@ def _envelope_for(event: CombinedEvent) -> BrowserEventEnvelope:
         source = "monitor"
         event_name = str(event.event_type.value)
         payload = dict(event.payload)
+    elif isinstance(event, AlertFiredEvent):
+        source = "cc"
+        event_name = "alert_fired"
+        payload = {
+            "alert_id": event.alert_id,
+            "rule_name": event.rule_name,
+            "severity": event.severity,
+            **dict(event.payload),
+        }
     else:  # pragma: no cover — CombinedEvent is closed
         msg = f"unsupported CombinedEvent variant: {type(event).__name__}"
         raise TypeError(msg)
