@@ -5,17 +5,17 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { HeaderPane } from '@/views/history/invocation-detail/header-pane'
-import { CommandsPane } from '@/views/history/invocation-detail/commands-pane'
-import { PmPane } from '@/views/history/invocation-detail/pm-pane'
-import { RefIdChip, NarrativeWithChips } from '@/views/history/invocation-detail/ref-id-chip'
-import { extractRefPrefix, isRefPrefix } from '@/views/history/invocation-detail/ref-id-utils'
-import { BriefViewer, BriefViewerPanel } from '@/views/history/brief-viewer'
 import type {
-  InvocationDetailHeader,
-  InvocationActivityEntry,
   BriefRetrievalResponse,
+  InvocationActivityEntry,
+  InvocationDetailHeader,
 } from '@/api/queries'
+import { BriefViewer, BriefViewerPanel } from '@/views/history/brief-viewer'
+import { CommandsPane } from '@/views/history/invocation-detail/commands-pane'
+import { HeaderPane } from '@/views/history/invocation-detail/header-pane'
+import { PmPane } from '@/views/history/invocation-detail/pm-pane'
+import { NarrativeWithChips, RefIdChip } from '@/views/history/invocation-detail/ref-id-chip'
+import { extractRefPrefix, isRefPrefix } from '@/views/history/invocation-detail/ref-id-utils'
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -99,6 +99,10 @@ const BRIEF_DATA: BriefRetrievalResponse = {
 
 function makeQueryClient(): QueryClient {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } })
+}
+
+function neverResolve(): Promise<never> {
+  return new Promise(() => undefined)
 }
 
 function Wrapper({ children }: { children: React.ReactNode }): React.JSX.Element {
@@ -270,7 +274,7 @@ describe('BriefViewer', () => {
   })
 
   it('renders loading state when query pending', () => {
-    vi.stubGlobal('fetch', () => new Promise(() => undefined))
+    vi.stubGlobal('fetch', neverResolve)
     render(
       <Wrapper>
         <BriefViewer invocationId="inv-001" refPrefix="SA-TECH" />
@@ -280,14 +284,8 @@ describe('BriefViewer', () => {
   })
 
   it('renders brief sections from fixture data', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => BRIEF_DATA,
-      }),
-    )
+    const mockResponse = { ok: true, status: 200, json: () => Promise.resolve(BRIEF_DATA) }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse))
     render(
       <Wrapper>
         <BriefViewer invocationId="inv-test-001" refPrefix="SA-TECH" />
