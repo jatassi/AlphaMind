@@ -13,10 +13,15 @@ vocabulary:
   invocation_id, the breached position_id, the affected account) and
   the ``context`` payload (encoded into the
   ``alerts.context_json`` column).
+* :class:`AlertEvaluatorState` — frozen snapshot the engine pre-fetches
+  (recent activity-log rows, latest portfolio summary, latest
+  invocation, on-disk data-directory size) + passes to every
+  predicate. Plain values; predicates stay pure / synchronous (P1
+  functional-core).
 * :class:`AlertCondition` — Protocol every per-rule predicate
-  satisfies. Each predicate consumes an optional event + a
-  state-access handle and returns an :class:`AlertOutcome` when the
-  rule's underlying condition becomes true, or ``None`` otherwise.
+  satisfies. Each predicate consumes an optional event + the snapshot
+  and returns an :class:`AlertOutcome` when the rule's underlying
+  condition becomes true, or ``None`` otherwise.
 * :class:`AlertRule` — bundles the name, severity tier, debounce
   window, channel list, and condition into the typed handle the
   engine iterates over.
@@ -30,7 +35,7 @@ the 17 production predicates satisfy it without inheritance.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Protocol, runtime_checkable
 
@@ -64,47 +69,33 @@ class AlertOutcome:
     context: Mapping[str, Any]
 
 
-class AlertEvaluatorState(Protocol):
-    """Handle the engine threads into state-polling predicates.
+@dataclass(frozen=True, slots=True)
+class AlertEvaluatorState:
+    """Frozen snapshot the engine threads into every predicate.
 
-    The engine constructs one of these against the cc's
-    ``foreign_reader`` factory + a clock; predicates that need to
-    query the production tables (margin call activity, drawdown tier,
-    on-disk data-directory size, etc.) call into the handle's
-    methods. The Protocol keeps the predicate impls free of direct
-    session-factory imports.
+    Pre-fetched by the engine on each evaluation tick (either an
+    event arrival or the 60s periodic timer); predicates read from
+    the snapshot synchronously and stay pure. Per the
+    python-architecture P1 functional-core principle: the I/O lives
+    in the engine's pre-fetch path; the predicates are total
+    functions over plain values.
 
     Per :doc:`docs/design/command-center.md` § Persistence boundary
-    the alert engine reads foreign state via this handle and writes
-    only the ``alerts`` table via the cc_writer factory; the handle
-    intentionally does not expose a write surface.
+    the snapshot reflects foreign-table state via the cc
+    ``foreign_reader`` factory. The engine's writes (the ``alerts``
+    table) go through the cc_writer factory, not through this
+    snapshot.
+
+    Fields default to empty / None so tests can construct a
+    minimal snapshot with only the fields the predicate under test
+    consumes.
     """
 
-    async def fetch_recent_activity_log_rows(
-        self,
-        *,
-        event_types: tuple[str, ...],
-        within: timedelta,
-    ) -> tuple[Mapping[str, Any], ...]:
-        """Return ``activity_log`` rows of the given types within the window.
-
-        Used by predicates that watch for activity-log-driven
-        conditions (margin call, guardrail rejection, command
-        abandoned, thesis resolved, profile boundary crossed).
-        """
-
-    async def fetch_latest_portfolio_summary(self) -> Mapping[str, Any] | None:
-        """Return the most recent ``portfolio_summary`` row or ``None``.
-
-        Used by the drawdown-tier + profile-boundary predicates.
-        """
-
-    async def fetch_latest_invocation(self) -> Mapping[str, Any] | None:
-        """Return the most recent ``invocations`` row or ``None``.
-
-        Used by the pipeline-aborted + critical-API-failure +
-        important-API-failure + schedule-miss predicates.
-        """
+    recent_activity_log_rows: tuple[Mapping[str, Any], ...] = ()
+    portfolio_summary: Mapping[str, Any] | None = None
+    latest_invocation: Mapping[str, Any] | None = None
+    data_directory_size_bytes: int = 0
+    extras: Mapping[str, Any] = field(default_factory=dict)
 
 
 @runtime_checkable
@@ -125,7 +116,7 @@ class AlertCondition(Protocol):
         state-polling predicates return ``None`` when the event is
         not relevant to them.
     state:
-        The :class:`AlertEvaluatorState` handle for state-polling
+        The :class:`AlertEvaluatorState` snapshot for state-polling
         predicates. Event-driven predicates ignore it.
 
     Returns

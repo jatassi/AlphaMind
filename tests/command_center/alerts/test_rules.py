@@ -1,18 +1,15 @@
 """Tests for ``command_center.alerts.rules`` (ALP-671 / story 05a).
 
-Covers the rule + condition + outcome value types: shape, immutability,
-re-exported severity enum, condition Protocol fit-check, and the
-``AlertOutcome.dormant`` sentinel that dormant predicates return at
-startup.
+Covers the rule + condition + outcome + snapshot value types: shape,
+immutability, re-exported severity enum, condition Protocol fit-check.
 """
 
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 import pytest
-
-from typing import Any
 
 from alphamind.command_center._kernel.ids import alert_rule_name
 from alphamind.command_center.alerts.rules import (
@@ -37,28 +34,8 @@ class _StubCondition:
         return None
 
 
-class _StubState:
-    """Minimal AlertEvaluatorState stand-in."""
-
-    async def fetch_recent_activity_log_rows(
-        self, *, event_types: tuple[str, ...], within: object
-    ) -> tuple[Any, ...]:
-        del event_types, within
-        return ()
-
-    async def fetch_latest_portfolio_summary(self) -> Any | None:
-        return None
-
-    async def fetch_latest_invocation(self) -> Any | None:
-        return None
-
-
 class TestAlertSeverity:
     def test_three_tier_vocabulary(self) -> None:
-        # The severity tiers must match the design doc's three tiers
-        # (Critical / Important / Operational) — value strings drive the
-        # alerts.severity column + frontend banner color logic, so the
-        # vocabulary is locked.
         assert AlertSeverity.CRITICAL.value == "critical"
         assert AlertSeverity.IMPORTANT.value == "important"
         assert AlertSeverity.OPERATIONAL.value == "operational"
@@ -86,24 +63,34 @@ class TestAlertRule:
             channels=("in_app",),
             condition=_StubCondition(),
         )
-        # frozen dataclass: assignment raises
         with pytest.raises((AttributeError, TypeError)):
             rule.severity = AlertSeverity.OPERATIONAL  # type: ignore[misc]
 
 
 class TestAlertCondition:
     def test_stub_satisfies_protocol(self) -> None:
-        # The Protocol is structural; the stub must satisfy it implicitly.
         condition: AlertCondition = _StubCondition()
-        outcome = condition.evaluate(event=None, state=_StubState())
+        outcome = condition.evaluate(event=None, state=AlertEvaluatorState())
         assert outcome is None
+
+
+class TestAlertEvaluatorState:
+    def test_default_snapshot_has_empty_fields(self) -> None:
+        state = AlertEvaluatorState()
+        assert state.recent_activity_log_rows == ()
+        assert state.portfolio_summary is None
+        assert state.latest_invocation is None
+        assert state.data_directory_size_bytes == 0
+        assert state.extras == {}
+
+    def test_snapshot_is_frozen(self) -> None:
+        state = AlertEvaluatorState()
+        with pytest.raises((AttributeError, TypeError)):
+            state.data_directory_size_bytes = 42  # type: ignore[misc]
 
 
 class TestAlertOutcome:
     def test_outcome_carries_primary_entity_and_context(self) -> None:
-        # AlertOutcome is the value a fired condition returns; the
-        # primary_entity is the debounce key; the context dict is
-        # encoded into the alerts.context_json column.
         outcome = AlertOutcome(
             primary_entity="inv-abc",
             context={"invocation_id": "inv-abc"},
