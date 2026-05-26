@@ -108,6 +108,35 @@ class TestUpdateAcknowledged:
         )
         assert ok is False
 
+    @pytest.mark.asyncio
+    async def test_acknowledges_snoozed_row(
+        self,
+        cc_writer_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Regression for finding #7 (Wave-5 review).
+
+        The previous filter accepted only ``status = 'firing'`` so an
+        operator-facing acknowledge action against a snoozed row was a
+        silent no-op (the row stayed snoozed, the route returned 200
+        with no audit entry). Snooze → ack is a legitimate transition;
+        widen the filter to accept both pre-ack states.
+        """
+        new_id = await insert_fired(
+            cc_writer_factory,
+            rule_name=alert_rule_name("test_rule"),
+            severity=AlertSeverity.IMPORTANT,
+            context_json="{}",
+            fired_at=_NOW,
+        )
+        await update_snoozed(
+            cc_writer_factory, alert_id_=new_id, snoozed_until=_NOW + timedelta(hours=1)
+        )
+        ok = await update_acknowledged(cc_writer_factory, alert_id_=new_id, acknowledged_at=_NOW)
+        assert ok is True
+        record = await load_alert(cc_writer_factory, alert_id_=new_id)
+        assert record is not None
+        assert record.status == AlertStatus.ACKNOWLEDGED
+
 
 class TestUpdateSnoozed:
     @pytest.mark.asyncio

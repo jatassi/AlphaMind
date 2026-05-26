@@ -103,11 +103,13 @@ async def update_acknowledged(
 ) -> bool:
     """Mark an alert acknowledged. Returns ``True`` if a row was updated.
 
-    Idempotent on already-acknowledged rows: the WHERE filters to
-    ``status = firing`` so a double-ack is a no-op (rowcount = 0 →
-    returns False). The operator-facing route surfaces idempotency as
-    ``204 No Content`` whether the row was newly acknowledged or already
-    was — no exception for "already acked".
+    Allowed when the row is currently firing OR snoozed — both pre-ack
+    states the operator may transition from. The previous filter
+    accepted only ``firing`` so acknowledging a snoozed alert was a
+    silent no-op (the route returned 200 with no audit entry written).
+    Idempotent on already-acknowledged rows: a double-ack still matches
+    nothing (rowcount = 0 → returns False), and the operator-facing
+    route surfaces idempotency without raising.
 
     Wraps the row in a fresh transaction; mirrors the pattern in
     :func:`alphamind.command_center.auth.repository.delete_session`.
@@ -118,7 +120,9 @@ async def update_acknowledged(
             update(AlertRow)
             .where(
                 AlertRow.alert_id == alert_id_,
-                AlertRow.status == AlertStatus.FIRING.value,
+                AlertRow.status.in_(
+                    (AlertStatus.FIRING.value, AlertStatus.SNOOZED.value),
+                ),
             )
             .values(
                 status=AlertStatus.ACKNOWLEDGED.value,
