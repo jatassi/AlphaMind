@@ -9,10 +9,13 @@
 
 ## 1. What we're building
 
-A `--resume-from <invocation-id>[:<phase>]` flag on
+A `--resume-from <invocation-id>:<phase>` flag on
 `python -m alphamind.scheduler run --debug-e2e` that lets an operator
 re-run a partially-failed e2e verification without paying for the
-already-completed SDK calls.
+already-completed SDK calls. Both the source invocation id and the
+target phase are required — the operator names the resume point
+explicitly rather than the CLI auto-detecting from the source
+progress.jsonl.
 
 The motivating shape: the analyst SDK call hits its latency budget 9
 minutes into a run, the operator bumps `decision.analyst.latency_budget_s`
@@ -69,11 +72,11 @@ under each invocation's archive directory.
 Two new flags on `scheduler run`, both require `--debug-e2e`:
 
 ```
---resume-from <invocation-id>[:<phase>]
+--resume-from <invocation-id>:<phase>
     Hydrate SDK-phase outputs from a prior invocation's archive and
-    re-run from <phase> onward. Without ":<phase>", auto-detects the
-    first phase that lacks a phase_done event in the source
-    progress.jsonl. Mutually exclusive with --fresh-start.
+    re-run from <phase> onward. Both the source invocation id and the
+    target phase are required — colon-separated, with neither empty.
+    Mutually exclusive with --fresh-start.
 
 --archive-root <path>
     (Already exists.) When --resume-from is set, this root is also
@@ -169,9 +172,13 @@ phase-dependency DAG hard-coded in `debug_e2e/resume.py`. The loader
 also pre-validates that every name in `phases_to_replay` has a
 corresponding `phase_outputs/<phase>.json` file.
 
-**Per-harness behavior.** Each SDK harness checks
-`context.debug_e2e.resume_context` at entry. If present and the
-harness's phase is in `phases_to_replay`:
+**Per-phase behavior.** The check lives in the pipeline composition
+runners (`run_analysis_pipeline` and `run_decision_pipeline`), not in
+each agent's harness — two sites instead of nine, and the runner
+already owns the archive-root context the diagnostic-copy step needs.
+Before each SDK phase, the composition runner checks
+`context.debug_e2e.resume_context`. If present and the upcoming
+phase is in `phases_to_replay`:
 
 1. Load `<source-archive>/phase_outputs/<phase>.json`, parse into the
    Pydantic model, convert to the typed dataclass.
@@ -180,11 +187,13 @@ harness's phase is in `phases_to_replay`:
    new archive — preserves the audit trail without re-running the SDK.
 3. Emit `phase_start` (immediately) and `phase_done` (with
    `replayed_from` set) on the progress emitter.
-4. Return the hydrated dataclass.
+4. Skip the agent's runner entirely; pass the hydrated dataclass to
+   the next phase.
 
-If the harness's phase is the resume target or downstream, normal SDK
-call. The harness does not need to know whether it is the target or
-strictly-downstream — both paths execute identically.
+If the upcoming phase is the resume target or downstream, normal
+runner invocation. The agent harness does not learn about replay —
+it either runs (target / downstream) or is skipped entirely (upstream
+replay).
 
 **`wipe_and_seed` runs unconditionally** on every debug-e2e
 invocation, including resume. The synthetic portfolio fixture is the
