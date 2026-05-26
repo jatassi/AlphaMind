@@ -83,6 +83,24 @@ class ProfileSwitchedDetail:
     new_profile: Profile
     is_no_op: bool
 
+    def __post_init__(self) -> None:
+        """Enforce ``is_no_op == (previous_profile == new_profile)`` (F15).
+
+        The two facts derive from each other; if a caller assembles a detail
+        whose ``is_no_op`` flag disagrees with the profile-equality outcome,
+        the resulting activity-log row would lie about what actually
+        happened. Fail fast so the lie never lands.
+        """
+        expected_no_op = self.previous_profile == self.new_profile
+        if self.is_no_op != expected_no_op:
+            msg = (
+                f"is_no_op {self.is_no_op} disagrees with "
+                f"(previous_profile == new_profile) = {expected_no_op} "
+                f"(previous_profile={self.previous_profile!r}, "
+                f"new_profile={self.new_profile!r})"
+            )
+            raise ValueError(msg)
+
 
 _REGISTRY: list[tuple[EventType, type, EventGroup]] = [
     (

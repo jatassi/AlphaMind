@@ -115,3 +115,47 @@ class TestProfileSwitchedDetailCodecRoundTrip:
         serialized = encode_detail(original)
         recovered = decode_detail(serialized, ProfileSwitchedDetail)
         assert recovered == original
+
+
+class TestProfileSwitchedDetailPostInitValidation:
+    """The detail's __post_init__ enforces ``is_no_op == (previous == new)`` (F15)."""
+
+    def test_is_no_op_true_with_different_profiles_raises(self) -> None:
+        from alphamind.portfolio_state.events.configuration import ProfileSwitchedDetail
+
+        with pytest.raises(ValueError, match="is_no_op"):
+            ProfileSwitchedDetail(
+                previous_profile=Profile.small,
+                new_profile=Profile.large,
+                is_no_op=True,  # lies about no-op when profiles differ
+            )
+
+    def test_is_no_op_false_with_same_profile_raises(self) -> None:
+        from alphamind.portfolio_state.events.configuration import ProfileSwitchedDetail
+
+        with pytest.raises(ValueError, match="is_no_op"):
+            ProfileSwitchedDetail(
+                previous_profile=Profile.medium,
+                new_profile=Profile.medium,
+                is_no_op=False,  # lies about real switch when profiles equal
+            )
+
+    def test_consistent_no_op_succeeds(self) -> None:
+        from alphamind.portfolio_state.events.configuration import ProfileSwitchedDetail
+
+        detail = ProfileSwitchedDetail(
+            previous_profile=Profile.large,
+            new_profile=Profile.large,
+            is_no_op=True,
+        )
+        assert detail.is_no_op is True
+
+    def test_consistent_real_switch_succeeds(self) -> None:
+        from alphamind.portfolio_state.events.configuration import ProfileSwitchedDetail
+
+        detail = ProfileSwitchedDetail(
+            previous_profile=Profile.micro,
+            new_profile=Profile.small,
+            is_no_op=False,
+        )
+        assert detail.is_no_op is False
