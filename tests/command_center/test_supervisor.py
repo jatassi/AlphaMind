@@ -102,3 +102,47 @@ class TestCrashReRaises:
         sup.register_task(name="crash", coro_fn=crashing_task)
         with pytest.raises(_SentinelError, match="crash"):
             await sup.run()
+
+
+class TestSwallowedCancellationBoundedByTimeout:
+    """F4: a task swallowing CancelledError cannot stall the supervisor.
+
+    Uses a finite swallow count rather than an infinite loop so the
+    pytest event loop can collect the task cleanly after the
+    supervisor abandons it. The supervisor's discipline does not change
+    — it still issues two cancels and gives up after the bounded wait;
+    we just don't want to leak a task into pytest's teardown.
+    """
+
+    async def test_swallowed_cancel_does_not_stall_run(self) -> None:
+        sup = CommandCenterSupervisor(session=_session(), shutdown_timeout_seconds=1)
+        swallows = 0
+        # Tracked so the test can confirm the supervisor actually issued
+        # a cancellation that the task swallowed at least once.
+
+        async def swallows_then_exits(_: ProcessSession) -> None:
+            nonlocal swallows
+            for _attempt in range(3):
+                try:
+                    await asyncio.sleep(60)
+                except asyncio.CancelledError:
+                    swallows += 1
+                    # Eventually honor — keeps pytest's event-loop
+                    # teardown clean while still proving the supervisor
+                    # returns before the task does.
+                    continue
+            # Final yield to give the supervisor's wait a chance to
+            # observe completion.
+            await asyncio.sleep(0)
+
+        sup.register_task(name="swallow", coro_fn=swallows_then_exits)
+        run_task = asyncio.create_task(sup.run())
+        # Let the task start.
+        await asyncio.sleep(0.1)
+        sup.request_stop()
+        # The supervisor must return within the timeout window even if
+        # the task swallows the first cancellation — the supervisor's
+        # bounded-wait gives it 1s, then issues a second cancel + 0.5s
+        # re-wait, then abandons. Cap the outer wait generously.
+        await asyncio.wait_for(run_task, timeout=5)
+        assert swallows >= 1, "supervisor never cancelled the task"
