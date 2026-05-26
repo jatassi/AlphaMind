@@ -21,6 +21,7 @@ operator actions by them.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
@@ -208,6 +209,59 @@ class TestOperatorInvocation:
             row = result.scalar_one()
             assert "session-xyz" in row.trigger_reason
             assert "cancel_order" in row.trigger_reason
+
+
+class TestRollbackDoesNotMaskOriginalException:
+    """F5: a rollback failure during exception delivery must NOT replace
+    the originating exception.
+
+    The most common offender is a CancelledError delivered into the
+    body of the ``async with``: the rollback may itself raise (the
+    connection is being torn down), and if it does, the bare
+    ``await session.rollback()`` propagates the rollback's exception
+    instead of the CancelledError — breaking task-cancellation
+    semantics. The fix wraps the rollback so the original re-raise
+    runs unconditionally.
+    """
+
+    async def test_cancelled_error_propagates_even_if_rollback_raises(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        async def boom_rollback() -> None:
+            raise RuntimeError("rollback exploded")
+
+        async def body() -> None:
+            async with operator_invocation(
+                production_session_factory=session_factory,
+                process_lifetime_id="plt-command_center-test",
+                operator_session_id_=operator_session_id("session-abc"),
+                verb=ControlVerb.PAUSE,
+            ) as handle:
+                # Patch this session's rollback to fail; assert the
+                # outer CancelledError survives the rollback failure.
+                handle.session.rollback = boom_rollback  # type: ignore[method-assign]
+                raise asyncio.CancelledError
+
+        with pytest.raises(asyncio.CancelledError):
+            await body()
+
+    async def test_runtime_error_propagates_even_if_rollback_raises(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        async def boom_rollback() -> None:
+            raise RuntimeError("rollback exploded")
+
+        with pytest.raises(RuntimeError, match="caller-original"):
+            async with operator_invocation(
+                production_session_factory=session_factory,
+                process_lifetime_id="plt-command_center-test",
+                operator_session_id_=operator_session_id("session-abc"),
+                verb=ControlVerb.PAUSE,
+            ) as handle:
+                handle.session.rollback = boom_rollback  # type: ignore[method-assign]
+                raise RuntimeError("caller-original")
 
 
 class TestRunTypeOperatorConsoleConstant:

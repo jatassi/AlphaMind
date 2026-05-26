@@ -52,6 +52,7 @@ holds.
 
 from __future__ import annotations
 
+import logging
 import secrets
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
@@ -68,6 +69,8 @@ from alphamind.state.invocation_context.context import (
 from alphamind.state.invocation_context.records import InvocationRecord
 
 __all__ = ["RUN_TYPE_OPERATOR_CONSOLE", "operator_invocation"]
+
+log = logging.getLogger(__name__)
 
 
 RUN_TYPE_OPERATOR_CONSOLE = "operator_console"
@@ -269,7 +272,20 @@ async def operator_invocation(
     try:
         yield handle
     except BaseException:
-        await session.rollback()
+        # Wrap the rollback so a failure here (or the rollback itself
+        # raising during ``CancelledError`` delivery) does NOT mask the
+        # originating exception. Log the rollback failure and re-raise
+        # the original — without this, a CancelledError delivered into
+        # the body of the ``async with`` would be replaced by the
+        # rollback's exception, breaking task cancellation contracts (F5).
+        try:
+            await session.rollback()
+        except Exception as rollback_exc:
+            log.warning(
+                "operator_invocation rollback during exception/cancel "
+                "failed; original exception preserved: %s",
+                rollback_exc,
+            )
         raise
     else:
         await session.commit()
