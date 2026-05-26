@@ -163,6 +163,11 @@ const PER_EVENT_CASES: readonly (readonly [string, string])[] = [
   ['monitor', 'emergency_invocation_triggered'],
   ['monitor', 'greeks_refreshed'],
   ['monitor', 'heartbeat'],
+  // Regression for finding #8 (Wave-5 review): the InAppChannel
+  // publishes AlertFiredEvent → events route emits ``event: cc:alert_fired``;
+  // without the cc: listener wired into SSE_EVENT_NAMES the browser
+  // EventSource silently dropped the frame.
+  ['cc', 'alert_fired'],
 ]
 
 function assertPerEventRouting(sourceName: string, eventName: string): void {

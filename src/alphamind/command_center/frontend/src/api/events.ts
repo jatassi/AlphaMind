@@ -52,6 +52,14 @@ const MONITOR_EVENT_NAMES = [
   'heartbeat',
 ] as const
 
+// Command-center-sourced events — the InAppChannel publishes
+// AlertFiredEvent onto the multiplexer, and ``events/routes.py`` emits
+// them with ``event: cc:alert_fired``. Without a listener registered
+// here the browser EventSource would never receive the frame and the
+// in-app alerts banner would silently stay empty (finding #8,
+// Wave-5 review).
+const CC_EVENT_NAMES = ['alert_fired'] as const
+
 const BACKEND_HEARTBEAT_EVENT_NAME = 'heartbeat'
 
 // All SSE ``event:`` field values the backend emits. Iteration target for
@@ -59,6 +67,7 @@ const BACKEND_HEARTBEAT_EVENT_NAME = 'heartbeat'
 export const SSE_EVENT_NAMES: readonly string[] = [
   ...PIPELINE_EVENT_NAMES.map((name) => `pipeline:${name}`),
   ...MONITOR_EVENT_NAMES.map((name) => `monitor:${name}`),
+  ...CC_EVENT_NAMES.map((name) => `cc:${name}`),
   BACKEND_HEARTBEAT_EVENT_NAME,
 ]
 
