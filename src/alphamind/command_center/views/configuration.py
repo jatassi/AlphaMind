@@ -1273,103 +1273,10 @@ def build_configuration_router() -> APIRouter:  # noqa: C901, PLR0915
             )
         return {"exists": resolved.exists()}
 
-    # ``{config_file:path}`` captures slashes so slugs like ``profiles/small``
-    # (story 06a) are routed correctly. ``/files``, ``/path-exists``,
-    # ``/resolved``, ``/resolved/diff``, and ``/git/*`` are registered as
-    # concrete paths above, so the path-converter routes remain unambiguous.
-    @router.get("/schema/{config_file:path}", response_model=FormSchema)
-    def get_schema(
-        config_file: str,
-        _session: Annotated[OperatorSessionId, Depends(current_session)],
-    ) -> FormSchema:
-        """Return the form-schema metadata for the named config file.
-
-        404 when the slug is not registered — the operator chose a config
-        file the framework doesn't yet support.
-
-        Requires a valid session cookie (finding #1, Wave-5 review) —
-        the schema reveals the config tree's shape, which is not
-        operator-secret material but is still operator-only.
-        """
-        del _session
-        return derive_form_schema(_require_registered(config_file))
-
-    @router.get("/{config_file:path}", response_model=ConfigContentResponse)
-    def get_config_contents(
-        config_file: str,
-        request: Request,
-        _session: Annotated[OperatorSessionId, Depends(current_session)],
-    ) -> ConfigContentResponse:
-        """Return the current on-disk YAML + parsed values (story 06b).
-
-        Editor pages seed their form state from this endpoint at mount.
-        Returns 404 when the slug is not registered + 404 when the YAML
-        file does not exist on disk (the daemon was started against a
-        config tree missing the file).
-
-        Authenticated reads only (the editor reveals the config tree's
-        contents; operator-only material).
-        """
-        del _session
-        return _load_config_contents(
-            _require_registered(config_file),
-            _resolve_config_dir(request),
-        )
-
-    @router.put("/{config_file:path}", response_model=ConfigUpdateResponse)
-    def put_config(
-        config_file: str,
-        request: Request,
-        body: ConfigUpdateRequest,
-        _session: Annotated[OperatorSessionId, Depends(current_session)],
-        _csrf: Annotated[None, Depends(csrf_required)],
-    ) -> ConfigUpdateResponse:
-        """Atomically replace the named YAML file after layered validation.
-
-        Validation order: parse → cross-reference → semantic. The first
-        failing layer's errors are surfaced in the layered envelope
-        (``detail`` carries the :class:`ValidationReport` shape); the
-        atomic write only fires after all three pass.
-
-        Atomic write semantics inherited from
-        :func:`alphamind._kernel.atomic_io.atomic_write_text`: writes
-        ``{path}.tmp``, fsyncs, renames onto ``{path}``, fsyncs parent
-        directory on non-Windows hosts.
-
-        Gated by both ``current_session`` (finding #1, Wave-5 review)
-        and ``csrf_required`` per the project's auth contract for
-        mutating verbs (see ``alerts/routes.py:225`` and
-        ``control/routes.py:332`` for the same pattern).
-        """
-        del _session, _csrf
-        entry = _require_registered(config_file)
-        config_dir = _resolve_config_dir(request)
-        target_path = config_dir / entry.filename
-
-        _model, report = run_validation(entry, body.yaml)
-        if report.parse or report.cross_reference or report.semantic:
-            raise HTTPException(status_code=422, detail=report.model_dump())
-
-        existing_text: str | None = None
-        if target_path.exists():
-            existing_text = target_path.read_text(encoding="utf-8")
-
-        atomic_write_text(target_path, body.yaml)
-
-        deploy_changed = _deploy_time_field_changed(
-            entry,
-            existing_text=existing_text,
-            proposed_text=body.yaml,
-        )
-
-        return ConfigUpdateResponse(
-            slug=entry.slug,
-            filename=entry.filename,
-            deploy_time_fields_changed=deploy_changed,
-        )
-
     # -----------------------------------------------------------------------
-    # 06c: Resolved-config viewer
+    # 06c: Resolved-config viewer (registered before the path-converter
+    # routes below so ``/resolved`` and ``/resolved/diff`` are matched as
+    # concrete paths rather than being captured by ``/{config_file:path}``).
     # -----------------------------------------------------------------------
 
     @router.get("/resolved", response_model=ResolvedConfigBundle)
@@ -1449,7 +1356,8 @@ def build_configuration_router() -> APIRouter:  # noqa: C901, PLR0915
         )
 
     # -----------------------------------------------------------------------
-    # 06c: Git history / diff / status
+    # 06c: Git history / diff / status (concrete paths — registered before
+    # the path-converter routes below).
     # -----------------------------------------------------------------------
 
     @router.get("/git/history", response_model=GitHistoryResponse)
@@ -1587,6 +1495,101 @@ def build_configuration_router() -> APIRouter:  # noqa: C901, PLR0915
             tracked=tracked,
             has_uncommitted_changes=has_uncommitted,
             untracked=untracked_flag,
+        )
+
+    # ``{config_file:path}`` captures slashes so slugs like ``profiles/small``
+    # (story 06a) are routed correctly. ``/files``, ``/path-exists``,
+    # ``/resolved``, ``/resolved/diff``, and ``/git/*`` are registered as
+    # concrete paths above, so the path-converter routes remain unambiguous.
+    @router.get("/schema/{config_file:path}", response_model=FormSchema)
+    def get_schema(
+        config_file: str,
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+    ) -> FormSchema:
+        """Return the form-schema metadata for the named config file.
+
+        404 when the slug is not registered — the operator chose a config
+        file the framework doesn't yet support.
+
+        Requires a valid session cookie (finding #1, Wave-5 review) —
+        the schema reveals the config tree's shape, which is not
+        operator-secret material but is still operator-only.
+        """
+        del _session
+        return derive_form_schema(_require_registered(config_file))
+
+    @router.get("/{config_file:path}", response_model=ConfigContentResponse)
+    def get_config_contents(
+        config_file: str,
+        request: Request,
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+    ) -> ConfigContentResponse:
+        """Return the current on-disk YAML + parsed values (story 06b).
+
+        Editor pages seed their form state from this endpoint at mount.
+        Returns 404 when the slug is not registered + 404 when the YAML
+        file does not exist on disk (the daemon was started against a
+        config tree missing the file).
+
+        Authenticated reads only (the editor reveals the config tree's
+        contents; operator-only material).
+        """
+        del _session
+        return _load_config_contents(
+            _require_registered(config_file),
+            _resolve_config_dir(request),
+        )
+
+    @router.put("/{config_file:path}", response_model=ConfigUpdateResponse)
+    def put_config(
+        config_file: str,
+        request: Request,
+        body: ConfigUpdateRequest,
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+        _csrf: Annotated[None, Depends(csrf_required)],
+    ) -> ConfigUpdateResponse:
+        """Atomically replace the named YAML file after layered validation.
+
+        Validation order: parse → cross-reference → semantic. The first
+        failing layer's errors are surfaced in the layered envelope
+        (``detail`` carries the :class:`ValidationReport` shape); the
+        atomic write only fires after all three pass.
+
+        Atomic write semantics inherited from
+        :func:`alphamind._kernel.atomic_io.atomic_write_text`: writes
+        ``{path}.tmp``, fsyncs, renames onto ``{path}``, fsyncs parent
+        directory on non-Windows hosts.
+
+        Gated by both ``current_session`` (finding #1, Wave-5 review)
+        and ``csrf_required`` per the project's auth contract for
+        mutating verbs (see ``alerts/routes.py:225`` and
+        ``control/routes.py:332`` for the same pattern).
+        """
+        del _session, _csrf
+        entry = _require_registered(config_file)
+        config_dir = _resolve_config_dir(request)
+        target_path = config_dir / entry.filename
+
+        _model, report = run_validation(entry, body.yaml)
+        if report.parse or report.cross_reference or report.semantic:
+            raise HTTPException(status_code=422, detail=report.model_dump())
+
+        existing_text: str | None = None
+        if target_path.exists():
+            existing_text = target_path.read_text(encoding="utf-8")
+
+        atomic_write_text(target_path, body.yaml)
+
+        deploy_changed = _deploy_time_field_changed(
+            entry,
+            existing_text=existing_text,
+            proposed_text=body.yaml,
+        )
+
+        return ConfigUpdateResponse(
+            slug=entry.slug,
+            filename=entry.filename,
+            deploy_time_fields_changed=deploy_changed,
         )
 
     return router

@@ -8,7 +8,6 @@ These tests exercise ``serialize_resolved_config``, ``compute_snapshot_hash``,
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -52,9 +51,6 @@ from alphamind.config.snapshot import (
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 CONFIG_DIR = REPO_ROOT / "config"
-
-# Fixed timestamp used by all persist_snapshot calls.
-_AS_OF = datetime(2026, 4, 27, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def _read(name: str) -> dict[str, Any]:
@@ -184,10 +180,8 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
 def test_persist_snapshot_writes_to_documented_path_layout(tmp_path: Path) -> None:
     resolved = _fixture_resolved()
     invocation_id = "inv-20260427-001"
-    result = persist_snapshot(
-        resolved, archive_root=tmp_path, invocation_id=invocation_id, as_of=_AS_OF
-    )
-    expected = tmp_path / "2026-04-27" / invocation_id / "resolved_config.json"
+    result = persist_snapshot(resolved, archive_root=tmp_path, invocation_id=invocation_id)
+    expected = tmp_path / "invocations" / invocation_id / "resolved_config.json"
     assert result.path == expected
     assert expected.exists()
 
@@ -195,10 +189,8 @@ def test_persist_snapshot_writes_to_documented_path_layout(tmp_path: Path) -> No
 def test_persist_snapshot_file_content_equals_serialize_output(tmp_path: Path) -> None:
     resolved = _fixture_resolved()
     invocation_id = "inv-20260427-002"
-    persist_snapshot(
-        resolved, archive_root=tmp_path, invocation_id=invocation_id, as_of=_AS_OF
-    )
-    written = (tmp_path / "2026-04-27" / invocation_id / "resolved_config.json").read_text()
+    persist_snapshot(resolved, archive_root=tmp_path, invocation_id=invocation_id)
+    written = (tmp_path / "invocations" / invocation_id / "resolved_config.json").read_text()
     assert written == serialize_resolved_config(resolved)
 
 
@@ -206,19 +198,15 @@ def test_persist_snapshot_creates_intermediate_directories(tmp_path: Path) -> No
     resolved = _fixture_resolved()
     invocation_id = "inv-20260427-003"
     deeply_nested = tmp_path / "does" / "not" / "yet" / "exist" / "provenance"
-    persist_snapshot(
-        resolved, archive_root=deeply_nested, invocation_id=invocation_id, as_of=_AS_OF
-    )
-    assert (deeply_nested / "2026-04-27" / invocation_id / "resolved_config.json").exists()
+    persist_snapshot(resolved, archive_root=deeply_nested, invocation_id=invocation_id)
+    assert (deeply_nested / "invocations" / invocation_id / "resolved_config.json").exists()
 
 
 def test_persist_snapshot_leaves_no_tmp_file_on_success(tmp_path: Path) -> None:
     resolved = _fixture_resolved()
     invocation_id = "inv-20260427-004"
-    persist_snapshot(
-        resolved, archive_root=tmp_path, invocation_id=invocation_id, as_of=_AS_OF
-    )
-    invocation_dir = tmp_path / "2026-04-27" / invocation_id
+    persist_snapshot(resolved, archive_root=tmp_path, invocation_id=invocation_id)
+    invocation_dir = tmp_path / "invocations" / invocation_id
     tmp_files = list(invocation_dir.glob("*.tmp"))
     assert tmp_files == [], f"Expected no .tmp files; found {tmp_files}"
 
@@ -262,10 +250,8 @@ def test_feature_flags_snapshot_returns_flat_dict_equal_to_model_dump() -> None:
 def test_persisted_json_is_round_trippable(tmp_path: Path) -> None:
     resolved = _fixture_resolved()
     invocation_id = "inv-20260427-005"
-    persist_snapshot(
-        resolved, archive_root=tmp_path, invocation_id=invocation_id, as_of=_AS_OF
-    )
-    written = (tmp_path / "2026-04-27" / invocation_id / "resolved_config.json").read_text()
+    persist_snapshot(resolved, archive_root=tmp_path, invocation_id=invocation_id)
+    written = (tmp_path / "invocations" / invocation_id / "resolved_config.json").read_text()
     payload = json.loads(written)
     assert isinstance(payload, dict)
     # Spot-check a few expected top-level keys
@@ -284,10 +270,8 @@ def test_persist_snapshot_returns_snapshot_result_with_hash_path_and_flags(
 ) -> None:
     resolved = _fixture_resolved()
     invocation_id = "inv-20260427-006"
-    result = persist_snapshot(
-        resolved, archive_root=tmp_path, invocation_id=invocation_id, as_of=_AS_OF
-    )
+    result = persist_snapshot(resolved, archive_root=tmp_path, invocation_id=invocation_id)
     assert isinstance(result, SnapshotResult)
     assert result.hash == compute_snapshot_hash(serialize_resolved_config(resolved))
-    assert result.path == tmp_path / "2026-04-27" / invocation_id / "resolved_config.json"
+    assert result.path == tmp_path / "invocations" / invocation_id / "resolved_config.json"
     assert result.feature_flags_snapshot == feature_flags_snapshot(resolved)
