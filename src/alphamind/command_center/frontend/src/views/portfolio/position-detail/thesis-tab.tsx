@@ -1,10 +1,10 @@
 // Position detail — Thesis tab (ALP-677).
 // Renders: thesis summary, one card per component, supporting signals.
 
-import type { ThesisComponentDetail, ThesisDetail } from '@/api/portfolio'
+import type { PositionThesisDetail, ThesisComponentDetail } from '@/api/portfolio'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
-type Props = { thesis: ThesisDetail | null }
+type Props = { thesis: PositionThesisDetail | null }
 
 function KeyAssumptions({ items }: { items: string[] }): React.JSX.Element | null {
   if (items.length === 0) {
@@ -55,7 +55,7 @@ function ComponentCard({ comp }: { comp: ThesisComponentDetail }): React.JSX.Ele
       <CardContent className="space-y-3">
         <p className="text-sm">{comp.narrative}</p>
         <KeyAssumptions items={comp.key_assumptions} />
-        <SupportingSignals items={comp.supporting_signals} />
+        <SupportingSignals items={comp.supporting_signals ?? []} />
         {comp.linked_bracket_leg !== null && (
           <p className="text-muted-foreground text-xs">
             Linked bracket leg: <code>{comp.linked_bracket_leg}</code>
@@ -72,7 +72,7 @@ function ComponentCard({ comp }: { comp: ThesisComponentDetail }): React.JSX.Ele
   )
 }
 
-function ThesisMeta({ thesis }: { thesis: ThesisDetail }): React.JSX.Element {
+function ThesisMeta({ thesis }: { thesis: PositionThesisDetail }): React.JSX.Element {
   return (
     <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
       <dt className="text-muted-foreground">Status</dt>
@@ -105,7 +105,7 @@ function ThesisMeta({ thesis }: { thesis: ThesisDetail }): React.JSX.Element {
   )
 }
 
-function ThesisSummaryCard({ thesis }: { thesis: ThesisDetail }): React.JSX.Element {
+function ThesisSummaryCard({ thesis }: { thesis: PositionThesisDetail }): React.JSX.Element {
   return (
     <Card>
       <CardHeader>

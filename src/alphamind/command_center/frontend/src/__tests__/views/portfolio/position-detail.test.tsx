@@ -11,7 +11,7 @@ import type {
   BracketLegDetail,
   FillDetail,
   PositionDetail,
-  ThesisDetail,
+  PositionThesisDetail,
 } from '@/api/portfolio'
 import { ForceCloseModal } from '@/views/portfolio/position-detail/force-close-modal'
 import { HistoryTab } from '@/views/portfolio/position-detail/history-tab'
@@ -47,7 +47,7 @@ const FILL: FillDetail = {
   execution_venue: null,
 }
 
-const THESIS: ThesisDetail = {
+const THESIS: PositionThesisDetail = {
   thesis_id: 'ths-1',
   status: 'ACTIVE',
   summary: 'Bullish on TSLA momentum',

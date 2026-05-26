@@ -9,6 +9,8 @@ import { Route as HistoryRoute } from './routes/_authed/history/index'
 import { Route as LiveRoute } from './routes/_authed/live'
 import { Route as PortfolioRoute } from './routes/_authed/portfolio/index'
 import { Route as PositionDetailRoute } from './routes/_authed/portfolio/positions/$position-id'
+import { Route as ThesisDetailRoute } from './routes/_authed/portfolio/theses/$thesis-id'
+import { Route as ThesesRoute } from './routes/_authed/portfolio/theses/index'
 import { Route as ActivityLogRoute } from './routes/activity-log'
 import { Route as IndexRoute } from './routes/index'
 import { Route as LoginRoute } from './routes/login'
@@ -29,6 +31,8 @@ const routeTree = RootRoute.addChildren([
     ActivityLogRoute,
     PortfolioRoute,
     PositionDetailRoute,
+    ThesesRoute,
+    ThesisDetailRoute,
   ]),
 ])
 
