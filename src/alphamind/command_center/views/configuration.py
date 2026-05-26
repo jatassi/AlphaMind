@@ -31,13 +31,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, Literal, get_args, get_origin, get_type_hints
 
 import yaml
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from alphamind._kernel.atomic_io import atomic_write_text
+from alphamind.command_center._kernel.ids import OperatorSessionId
+from alphamind.command_center.auth.dependencies import csrf_required, current_session
 from alphamind.command_center.config import (
     AlertsConfig,
     CommandCenterConfig,
@@ -585,28 +587,61 @@ def build_configuration_router() -> APIRouter:
     router = APIRouter(tags=["views:configuration"])
 
     @router.get("/path-exists")
-    def get_path_exists(path: str) -> dict[str, bool]:
+    def get_path_exists(
+        path: str,
+        request: Request,
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+    ) -> dict[str, bool]:
         """Backend probe for the :class:`PathInput` control (story 05i).
 
         Returns ``{"exists": true|false}``. Used by the frontend
         :class:`PathInput` component to render an inline file-existence
         indicator so the operator catches typos before saving.
 
-        Resolves the path literally (no glob, no symlink follow beyond
-        :func:`pathlib.Path.exists`'s default). The probe is read-only so
-        it doesn't require CSRF; the surrounding session dependency
-        (when wired by 04d's authed-layout route) gates it from
-        unauthenticated callers.
+        Two security layers (findings #1 and #2 from Wave-5 review):
+
+        * Authentication: the route requires a valid session cookie
+          (``current_session`` dependency). Without it the endpoint was
+          a filesystem oracle that any unauthenticated curl could use
+          to probe arbitrary paths on the host.
+
+        * Path sandboxing: the requested path is resolved and checked
+          against the configured ``config_dir`` ancestor. Paths outside
+          (including ``..``-traversal escapes) return 400. The probe is
+          only useful for PathInput controls editing config-tree values
+          anyway; the sandbox closes the broader filesystem-oracle
+          surface without losing functionality.
         """
-        return {"exists": Path(path).exists()}
+        del _session
+        config_dir = _resolve_config_dir(request).resolve()
+        candidate = Path(path)
+        # ``Path.resolve`` is on a non-existent path returns a normalized
+        # absolute path on POSIX but on Windows can still surface the
+        # original — normalize via ``absolute().resolve(strict=False)``
+        # so the ``is_relative_to`` check works uniformly.
+        resolved = candidate.absolute().resolve(strict=False)
+        if not resolved.is_relative_to(config_dir):
+            raise HTTPException(
+                status_code=400,
+                detail="path must be inside the configured config directory",
+            )
+        return {"exists": resolved.exists()}
 
     @router.get("/schema/{config_file}", response_model=FormSchema)
-    def get_schema(config_file: str) -> FormSchema:
+    def get_schema(
+        config_file: str,
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+    ) -> FormSchema:
         """Return the form-schema metadata for the named config file.
 
         404 when the slug is not registered — the operator chose a config
         file the framework doesn't yet support.
+
+        Requires a valid session cookie (finding #1, Wave-5 review) —
+        the schema reveals the config tree's shape, which is not
+        operator-secret material but is still operator-only.
         """
+        del _session
         entry = _REGISTRY.get(config_file)
         if entry is None:
             raise HTTPException(
@@ -620,6 +655,8 @@ def build_configuration_router() -> APIRouter:
         config_file: str,
         request: Request,
         body: ConfigUpdateRequest,
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+        _csrf: Annotated[None, Depends(csrf_required)],
     ) -> ConfigUpdateResponse:
         """Atomically replace the named YAML file after layered validation.
 
@@ -632,7 +669,13 @@ def build_configuration_router() -> APIRouter:
         :func:`alphamind._kernel.atomic_io.atomic_write_text`: writes
         ``{path}.tmp``, fsyncs, renames onto ``{path}``, fsyncs parent
         directory on non-Windows hosts.
+
+        Gated by both ``current_session`` (finding #1, Wave-5 review)
+        and ``csrf_required`` per the project's auth contract for
+        mutating verbs (see ``alerts/routes.py:225`` and
+        ``control/routes.py:332`` for the same pattern).
         """
+        del _session, _csrf
         entry = _REGISTRY.get(config_file)
         if entry is None:
             raise HTTPException(

@@ -20,11 +20,27 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from alphamind.command_center._kernel.ids import operator_session_id
+from alphamind.command_center.auth.dependencies import csrf_required, current_session
 from alphamind.command_center.views.configuration import (
     ReloadPolicy,
     build_configuration_router,
     reload_policy_of,
 )
+
+_TEST_SESSION_ID = operator_session_id("sess-config-test")
+
+
+def _override_auth(app: FastAPI) -> None:
+    """Wire fake auth dependencies for the test app.
+
+    The configuration router gates every endpoint on
+    :func:`current_session` (read) + :func:`csrf_required` (write); we
+    bypass both here so the test focuses on the configuration logic.
+    The auth-positive tests live in their own class below.
+    """
+    app.dependency_overrides[current_session] = lambda: _TEST_SESSION_ID
+    app.dependency_overrides[csrf_required] = lambda: None
 
 
 class TestReloadPolicyEnum:
@@ -90,6 +106,7 @@ class TestSchemaEndpoint:
     def _client(self) -> TestClient:
         app = FastAPI()
         app.include_router(build_configuration_router(), prefix="/api/views/config")
+        _override_auth(app)
         return TestClient(app)
 
     def test_unknown_config_file_returns_404(self) -> None:
@@ -164,27 +181,58 @@ class TestSchemaEndpoint:
 
 
 class TestPathExistsEndpoint:
-    """``GET /api/views/config/path-exists`` — PathInput probe."""
+    """``GET /api/views/config/path-exists`` — PathInput probe.
 
-    def _client(self) -> TestClient:
+    Finding #2 (Wave-5 review): the probe must be authenticated AND
+    sandboxed to the configured ``config_dir`` so it isn't a generic
+    filesystem oracle.
+    """
+
+    def _client(self, config_dir: Path) -> TestClient:
         app = FastAPI()
+        app.state.config_dir = config_dir
         app.include_router(build_configuration_router(), prefix="/api/views/config")
+        _override_auth(app)
         return TestClient(app)
 
-    def test_existing_path_returns_true(self, tmp_path: Path) -> None:
-        client = self._client()
+    def test_existing_path_inside_config_dir_returns_true(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
         existing_file = tmp_path / "real.txt"
         existing_file.write_text("data", encoding="utf-8")
         response = client.get(f"/api/views/config/path-exists?path={existing_file}")
         assert response.status_code == 200
         assert response.json() == {"exists": True}
 
-    def test_missing_path_returns_false(self, tmp_path: Path) -> None:
-        client = self._client()
+    def test_missing_path_inside_config_dir_returns_false(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
         missing = tmp_path / "does-not-exist.txt"
         response = client.get(f"/api/views/config/path-exists?path={missing}")
         assert response.status_code == 200
         assert response.json() == {"exists": False}
+
+    def test_path_outside_config_dir_rejected(self, tmp_path: Path) -> None:
+        """Regression: paths above the config directory return 400.
+
+        The previous implementation accepted any filesystem path and
+        leaked existence — a curl loop could probe ``/etc/shadow`` or
+        any operator-readable file on the host.
+        """
+        sandbox = tmp_path / "sandbox"
+        sandbox.mkdir()
+        outside = tmp_path / "outside.txt"
+        outside.write_text("secret", encoding="utf-8")
+        client = self._client(sandbox)
+        response = client.get(f"/api/views/config/path-exists?path={outside}")
+        assert response.status_code == 400
+
+    def test_traversal_path_rejected(self, tmp_path: Path) -> None:
+        """``..`` traversal escapes resolve to outside config_dir → 400."""
+        sandbox = tmp_path / "sandbox"
+        sandbox.mkdir()
+        client = self._client(sandbox)
+        escape = sandbox / ".." / "outside.txt"
+        response = client.get(f"/api/views/config/path-exists?path={escape}")
+        assert response.status_code == 400
 
 
 class TestPutEndpoint:
@@ -199,6 +247,7 @@ class TestPutEndpoint:
         app = FastAPI()
         app.state.config_dir = config_dir
         app.include_router(build_configuration_router(), prefix="/api/views/config")
+        _override_auth(app)
         return TestClient(app)
 
     def _valid_command_center_yaml(self, db_path: Path) -> str:
@@ -470,6 +519,10 @@ class TestLayeredValidationHooks:
 
         # build_app threads config_dir onto app.state for the PUT handler.
         assert app.state.config_dir == tmp_path
+        # The schema endpoint requires an authenticated session per finding
+        # #1 (Wave-5 review); bypass via dependency_overrides so the
+        # router-mount assertion focuses on routing, not auth.
+        _override_auth(app)
         # The schema endpoint surfaces under the mounted prefix without
         # exercising the lifespan (it has no DB dependency).
         client = TestClient(app)
@@ -511,3 +564,61 @@ class TestLayeredValidationHooks:
         _model, report = run_validation(entry, valid_yaml)
         assert report.cross_reference and not report.semantic
         assert semantic_calls == []
+
+
+class TestConfigurationAuth:
+    """Regression for findings #1 and #2 (Wave-5 review).
+
+    The configuration router previously had zero auth wiring — every
+    endpoint was reachable by an unauthenticated curl. Mutating verbs
+    must require both ``current_session`` and ``csrf_required`` per the
+    project's auth contract (see ``alerts/routes.py:225``,
+    ``control/routes.py:332``); read endpoints require ``current_session``
+    only.
+    """
+
+    def _unauthed_client(self, config_dir: Path) -> TestClient:
+        """A client whose app does NOT bypass auth — every call hits
+        the real ``current_session`` dependency, which raises 401
+        without a session cookie.
+        """
+        app = FastAPI()
+        app.state.config_dir = config_dir
+        app.include_router(build_configuration_router(), prefix="/api/views/config")
+        # Stub the bits ``current_session`` reads off app.state so the
+        # failure surface is the cookie-missing path (401) rather than
+        # an unrelated AttributeError.
+        from datetime import UTC, datetime
+
+        app.state.security_config = type(
+            "_SC",
+            (),
+            {
+                "session": type("_S", (), {"cookie_name": "cc_session"})(),
+                "csrf": type("_C", (), {"cookie_name": "cc_csrf"})(),
+            },
+        )()
+        app.state.session_signing_secret = b"x" * 32
+        app.state.clock = lambda: datetime.now(UTC)
+        return TestClient(app)
+
+    def test_put_requires_session(self, tmp_path: Path) -> None:
+        client = self._unauthed_client(tmp_path)
+        response = client.put(
+            "/api/views/config/security",
+            json={"yaml": "x: 1\n"},
+        )
+        # 401 (no session cookie) — not 422, not 200.
+        assert response.status_code == 401
+
+    def test_schema_requires_session(self, tmp_path: Path) -> None:
+        client = self._unauthed_client(tmp_path)
+        response = client.get("/api/views/config/schema/security")
+        assert response.status_code == 401
+
+    def test_path_exists_requires_session(self, tmp_path: Path) -> None:
+        client = self._unauthed_client(tmp_path)
+        response = client.get(
+            f"/api/views/config/path-exists?path={tmp_path / 'x'}",
+        )
+        assert response.status_code == 401
