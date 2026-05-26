@@ -960,9 +960,7 @@ class TestHotReload:
         async with engine._rules_lock:
             engine._apply_rule_diff_locked(())
         state = AlertEvaluatorState(now=_NOW, foreign_reader_factory=None)
-        outcome = await engine._evaluate_one(
-            firing_rule, event=None, state=state, now=_NOW
-        )
+        outcome = await engine._evaluate_one(firing_rule, event=None, state=state, now=_NOW)
         assert outcome.fired is False
         # The debounce table must be empty — no orphan entry survived.
         assert engine._debounce == {}
