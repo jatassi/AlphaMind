@@ -383,3 +383,50 @@ class TestAgentNameEnum:
                 started_at=datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC),
                 latency_budget_seconds=60.0,
             )
+
+
+class TestAwareDatetimeEnforcement:
+    """Every datetime field rejects naive datetimes (F8).
+
+    The SSE wire / response body must carry timezone-aware timestamps;
+    a naive datetime here would be silently emitted without timezone info
+    and break the command-center backend's parse expectations.
+
+    Each test constructs a naive ``datetime`` deliberately to verify the
+    AwareDatetime annotation rejects it — the ``# noqa: DTZ001`` markers
+    suppress ruff's "no tzinfo argument" rule for that specific reason.
+    """
+
+    def test_invocation_started_rejects_naive_datetime(self) -> None:
+        with pytest.raises(ValidationError):
+            models.InvocationStartedEvent(
+                invocation_id="inv-1",
+                run_type="emergency",
+                started_at=datetime(2026, 5, 26, 12, 0, 0),  # noqa: DTZ001  # naive on purpose
+            )
+
+    def test_phase_transition_rejects_naive_datetime(self) -> None:
+        with pytest.raises(ValidationError):
+            models.PhaseTransitionEvent(
+                invocation_id="inv-1",
+                phase="distill",
+                phase_started_at=datetime(2026, 5, 26, 12, 0, 0),  # noqa: DTZ001
+            )
+
+    def test_control_response_envelope_rejects_naive_datetime(self) -> None:
+        with pytest.raises(ValidationError):
+            models.ControlResponseEnvelope(
+                status="accepted",
+                applied_at=datetime(2026, 5, 26, 12, 0, 0),  # noqa: DTZ001
+            )
+
+    def test_heartbeat_rejects_naive_datetime(self) -> None:
+        with pytest.raises(ValidationError):
+            models.HeartbeatEvent(timestamp=datetime(2026, 5, 26, 12, 0, 0))  # noqa: DTZ001
+
+    def test_next_trigger_changed_rejects_naive_datetime(self) -> None:
+        with pytest.raises(ValidationError):
+            models.NextTriggerChangedEvent(
+                next_trigger_at=datetime(2026, 5, 26, 12, 0, 0),  # noqa: DTZ001
+                next_trigger_type="pre_open",
+            )

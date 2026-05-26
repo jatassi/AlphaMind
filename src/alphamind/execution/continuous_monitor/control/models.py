@@ -12,10 +12,13 @@ emitter (``events.py``) operate on plain Python values; the route handlers
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+
+# Event-payload + response-envelope datetime fields use AwareDatetime so a
+# naive datetime is rejected at validation rather than silently emitted to
+# the SSE wire / response body without timezone information (F8).
 
 # ---------------------------------------------------------------------------
 # Request bodies
@@ -69,7 +72,7 @@ class ControlResponseEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     status: ControlStatus
-    applied_at: datetime
+    applied_at: AwareDatetime
 
 
 class ForceClosePositionResponse(ControlResponseEnvelope):
@@ -114,7 +117,7 @@ class WebsocketConnectedEvent(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    timestamp: datetime
+    timestamp: AwareDatetime
 
 
 class WebsocketDisconnectedEvent(BaseModel):
@@ -122,7 +125,7 @@ class WebsocketDisconnectedEvent(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    timestamp: datetime
+    timestamp: AwareDatetime
     reason: str = Field(min_length=1)
 
 
@@ -162,7 +165,7 @@ class GreeksRefreshedEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     underlying: str = Field(min_length=1)
-    refreshed_at: datetime
+    refreshed_at: AwareDatetime
 
 
 class HeartbeatEvent(BaseModel):
@@ -170,7 +173,7 @@ class HeartbeatEvent(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    timestamp: datetime
+    timestamp: AwareDatetime
 
 
 __all__ = [

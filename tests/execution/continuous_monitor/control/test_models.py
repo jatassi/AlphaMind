@@ -220,4 +220,44 @@ class TestGreeksRefreshedEvent:
 class TestHeartbeatEvent:
     def test_carries_timestamp(self) -> None:
         event = HeartbeatEvent(timestamp=datetime.now(UTC))
-        assert event.timestamp is not None
+        assert event.timestamp.tzinfo is not None
+
+
+class TestAwareDatetimeEnforcement:
+    """Every datetime field rejects naive datetimes (F8).
+
+    Each test constructs a naive ``datetime`` deliberately to verify the
+    AwareDatetime annotation rejects it — the ``# noqa: DTZ001`` markers
+    suppress ruff's "no tzinfo argument" rule for that specific reason.
+    """
+
+    def test_websocket_connected_rejects_naive_datetime(self) -> None:
+        with pytest.raises(ValidationError):
+            WebsocketConnectedEvent(
+                timestamp=datetime(2026, 5, 26, 12, 0, 0),  # noqa: DTZ001  # naive on purpose
+            )
+
+    def test_websocket_disconnected_rejects_naive_datetime(self) -> None:
+        with pytest.raises(ValidationError):
+            WebsocketDisconnectedEvent(
+                timestamp=datetime(2026, 5, 26, 12, 0, 0),  # noqa: DTZ001
+                reason="dns_failure",
+            )
+
+    def test_greeks_refreshed_rejects_naive_datetime(self) -> None:
+        with pytest.raises(ValidationError):
+            GreeksRefreshedEvent(
+                underlying="AAPL",
+                refreshed_at=datetime(2026, 5, 26),  # noqa: DTZ001
+            )
+
+    def test_heartbeat_rejects_naive_datetime(self) -> None:
+        with pytest.raises(ValidationError):
+            HeartbeatEvent(timestamp=datetime(2026, 5, 26, 12, 0, 0))  # noqa: DTZ001
+
+    def test_control_response_envelope_rejects_naive_datetime(self) -> None:
+        with pytest.raises(ValidationError):
+            ControlResponseEnvelope(
+                status="accepted",
+                applied_at=datetime(2026, 5, 26, 12, 0, 0),  # noqa: DTZ001
+            )

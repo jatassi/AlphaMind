@@ -14,10 +14,13 @@ route handlers convert Pydantic ↔ frozen-dataclass at the boundary.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+
+# Event-payload + response-envelope datetime fields use AwareDatetime so a
+# naive datetime is rejected at validation rather than silently emitted to
+# the SSE wire / response body without timezone information (F8).
 
 __all__ = [
     "AgentFailedEvent",
@@ -156,7 +159,7 @@ class ControlResponseEnvelope(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     status: Literal["accepted"]
-    applied_at: datetime
+    applied_at: AwareDatetime
 
 
 class TriggerEmergencyInvocationResponse(ControlResponseEnvelope):
@@ -202,7 +205,7 @@ class UniverseValidationReport(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    validated_at: datetime
+    validated_at: AwareDatetime
     tickers: list[UniverseValidationTickerRow] = Field(min_length=1)
 
 
@@ -270,7 +273,7 @@ class InvocationStartedEvent(BaseModel):
 
     invocation_id: str
     run_type: _RunType
-    started_at: datetime
+    started_at: AwareDatetime
 
 
 class PhaseTransitionEvent(BaseModel):
@@ -284,7 +287,7 @@ class PhaseTransitionEvent(BaseModel):
 
     invocation_id: str
     phase: _Phase
-    phase_started_at: datetime
+    phase_started_at: AwareDatetime
 
 
 class AgentStartedEvent(BaseModel):
@@ -294,7 +297,7 @@ class AgentStartedEvent(BaseModel):
 
     invocation_id: str
     agent_name: _AgentName
-    started_at: datetime
+    started_at: AwareDatetime
     latency_budget_seconds: float = Field(gt=0)
 
 
@@ -354,7 +357,7 @@ class NextTriggerChangedEvent(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    next_trigger_at: datetime
+    next_trigger_at: AwareDatetime
     next_trigger_type: _RunType
 
 
@@ -367,4 +370,4 @@ class HeartbeatEvent(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    timestamp: datetime
+    timestamp: AwareDatetime
