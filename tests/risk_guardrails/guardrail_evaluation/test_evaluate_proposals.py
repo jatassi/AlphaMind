@@ -703,6 +703,103 @@ def test_cancel_pending_order_decreases_pending_order_capital_pct() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Exposure-neutral actions with zero quantity / notional
+# ---------------------------------------------------------------------------
+
+
+def test_adjust_with_zero_quantity_and_zero_notional_validates() -> None:
+    """ADJUST is exposure-neutral by design; the proposal pre-processor's
+    translator emits ``quantity=0.0, notional_usd=0`` for an adjust-bracket
+    assessment (translator.py ``_notional_and_quantity_for_assessment``).
+
+    ``evaluate_proposals`` must accept that shape — the validator's
+    ``quantity > 0`` rule applies only to exposure-changing actions
+    (OPEN/ADD/CLOSE). Per the ``Action`` enum docstring and
+    ``evaluate_proposals`` orchestration step 2, ADJUST/CANCEL pass through
+    the rule projection layer as no-ops.
+    """
+    existing = _existing_long_equity(position_id=PositionId("POS-1"), notional_usd=5_000.0)
+    state = _snapshot(existing_positions={"POS-1": existing})
+    proposal = ProposedDelta(
+        id="REC-1",
+        underlying="AAPL",
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.EQUITY,
+        notional_usd=money(0),
+        quantity=0.0,
+        option_legs=None,
+        action=Action.ADJUST,
+        existing_position_id="POS-1",
+        daily_borrow_cost_usd=None,
+        reserves_capital=False,
+    )
+
+    output = evaluate_proposals(
+        state=state,
+        proposals=(proposal,),
+        config=_full_config(),
+        market=_market(),
+    )
+
+    rec1 = output.delta_adjusted["REC-1"]
+    assert rec1.signed_notional_usd == 0.0
+
+
+def test_cancel_with_zero_quantity_and_zero_notional_validates() -> None:
+    """CANCEL is exposure-neutral on the rule-projection side; the production
+    contract permits ``quantity=0.0, notional_usd=0`` (parallel to ADJUST).
+
+    ``evaluate_proposals`` must accept that shape — the validator's
+    ``quantity > 0`` rule applies only to exposure-changing actions
+    (OPEN/ADD/CLOSE). CANCEL's effect on ``pending_order_capital_pct``
+    comes from the existing position's ``reserves_capital_usd``, not from
+    the proposal's own notional.
+    """
+    existing = ExistingPosition(
+        position_id=PositionId("POS-1"),
+        underlying=Symbol("AAPL"),
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.EQUITY,
+        notional_usd=4_000.0,
+        delta_adjusted_exposure_usd=4_000.0,
+        current_greeks=None,
+        daily_borrow_cost_usd=None,
+        reserves_capital_usd=4_000.0,
+    )
+    state = _snapshot(
+        portfolio_value_usd=100_000.0,
+        reserved_for_pending_orders_usd=4_000.0,
+        existing_positions={"POS-1": existing},
+    )
+    proposal = ProposedDelta(
+        id="REC-1",
+        underlying="AAPL",
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.EQUITY,
+        notional_usd=money(0),
+        quantity=0.0,
+        option_legs=None,
+        action=Action.CANCEL,
+        existing_position_id="POS-1",
+        daily_borrow_cost_usd=None,
+        reserves_capital=False,
+    )
+
+    output = evaluate_proposals(
+        state=state,
+        proposals=(proposal,),
+        config=_full_config(),
+        market=_market(),
+    )
+
+    rec1 = output.delta_adjusted["REC-1"]
+    assert rec1.signed_notional_usd == 0.0
+
+
+# ---------------------------------------------------------------------------
 # Mixed batch
 # ---------------------------------------------------------------------------
 
