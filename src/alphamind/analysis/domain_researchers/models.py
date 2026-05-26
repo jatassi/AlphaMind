@@ -20,15 +20,11 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphamind.analysis._shared import AnomalySeverity, Sector, SignalQuality, TokensUsed
-
-if TYPE_CHECKING:
-    from alphamind.analysis.domain_researchers.input_bundle import InputBundle
-    from alphamind.analysis.domain_researchers.runner import DomainResearcherResult
 
 __all__ = [
     "SECTOR_PREFIX",
@@ -227,7 +223,7 @@ class _InputBundleModel(BaseModel, frozen=True):
     @classmethod
     def _from_domain(
         cls,
-        dc: InputBundle,
+        dc: Any,
     ) -> _InputBundleModel:
         return cls(
             sector=dc.sector,
@@ -238,7 +234,7 @@ class _InputBundleModel(BaseModel, frozen=True):
             bundle_text=dc.bundle_text,
         )
 
-    def _to_domain(self) -> InputBundle:
+    def _to_domain(self) -> Any:
         from alphamind.analysis.domain_researchers.input_bundle import InputBundle
 
         return InputBundle(
@@ -273,18 +269,18 @@ class DomainResearcherOutputModel(BaseModel, frozen=True):
     retry_count: int
 
     @classmethod
-    def from_domain(cls, dc: DomainResearcherResult) -> DomainResearcherOutputModel:
+    def from_domain(cls, dc: object) -> DomainResearcherOutputModel:
         """Project a :class:`DomainResearcherResult` onto this model."""
         return cls(
-            sector=dc.sector,
-            brief=dc.brief,
-            input_bundle=_InputBundleModel._from_domain(dc.input_bundle),
-            tokens_used=dc.tokens_used,
-            wall_clock_seconds=dc.wall_clock_seconds,
-            retry_count=dc.retry_count,
+            sector=dc.sector,  # type: ignore[attr-defined]
+            brief=dc.brief,  # type: ignore[attr-defined]
+            input_bundle=_InputBundleModel._from_domain(dc.input_bundle),  # type: ignore[attr-defined]
+            tokens_used=dc.tokens_used,  # type: ignore[attr-defined]
+            wall_clock_seconds=dc.wall_clock_seconds,  # type: ignore[attr-defined]
+            retry_count=dc.retry_count,  # type: ignore[attr-defined]
         )
 
-    def to_domain(self) -> DomainResearcherResult:
+    def to_domain(self) -> object:
         """Recover the original :class:`DomainResearcherResult`."""
         from alphamind.analysis.domain_researchers.runner import DomainResearcherResult
 

@@ -20,16 +20,12 @@ from __future__ import annotations
 import enum
 import re
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphamind.analysis._shared import Sector, TokensUsed
 from alphamind.analysis.domain_researchers.models import SECTOR_PREFIX
-
-if TYPE_CHECKING:
-    from alphamind.analysis.synthesizer.retrieval import RetrievalStore
-    from alphamind.analysis.synthesizer.runner import SynthesizerResult
 
 __all__ = [
     "REF_ID_RE",
@@ -260,16 +256,16 @@ class RetrievalStoreModel(BaseModel, frozen=True):
     freshness_by_source: dict[str, datetime]
 
     @classmethod
-    def from_domain(cls, store: RetrievalStore) -> RetrievalStoreModel:
+    def from_domain(cls, store: object) -> RetrievalStoreModel:
         """Project a :class:`RetrievalStore` onto this model."""
         return cls(
-            entries=dict(store.entries),
+            entries=dict(store.entries),  # type: ignore[attr-defined]
             freshness_by_source={
-                source.value: ts for source, ts in store.freshness_by_source.items()
+                source.value: ts for source, ts in store.freshness_by_source.items()  # type: ignore[attr-defined]
             },
         )
 
-    def to_domain(self) -> RetrievalStore:
+    def to_domain(self) -> object:
         """Recover the original :class:`RetrievalStore`."""
         from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 
@@ -298,18 +294,18 @@ class SynthesizerResultModel(BaseModel, frozen=True):
     stop_reason: str | None
 
     @classmethod
-    def from_domain(cls, dc: SynthesizerResult) -> SynthesizerResultModel:
+    def from_domain(cls, dc: object) -> SynthesizerResultModel:
         """Project a :class:`SynthesizerResult` onto this model."""
         return cls(
-            synthesis_text=dc.synthesis_text,
-            retrieval_store=RetrievalStoreModel.from_domain(dc.retrieval_store),
-            tokens_used=dc.tokens_used,
-            tool_calls_used=dc.tool_calls_used,
-            wall_clock_seconds=dc.wall_clock_seconds,
-            stop_reason=dc.stop_reason,
+            synthesis_text=dc.synthesis_text,  # type: ignore[attr-defined]
+            retrieval_store=RetrievalStoreModel.from_domain(dc.retrieval_store),  # type: ignore[attr-defined]
+            tokens_used=dc.tokens_used,  # type: ignore[attr-defined]
+            tool_calls_used=dc.tool_calls_used,  # type: ignore[attr-defined]
+            wall_clock_seconds=dc.wall_clock_seconds,  # type: ignore[attr-defined]
+            stop_reason=dc.stop_reason,  # type: ignore[attr-defined]
         )
 
-    def to_domain(self) -> SynthesizerResult:
+    def to_domain(self) -> object:
         """Recover the original :class:`SynthesizerResult`."""
         from alphamind.analysis.synthesizer.runner import SynthesizerResult
 

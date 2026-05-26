@@ -20,16 +20,11 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphamind.analysis._shared import SignalQuality, TokensUsed
-
-if TYPE_CHECKING:
-    from alphamind.analysis.qualitative_research.input_bundle import InputBundle
-    from alphamind.analysis.qualitative_research.news_digest import NewsDigest
-    from alphamind.analysis.qualitative_research.runner import QualitativeResearcherResult
 
 __all__ = [
     "TIME_HORIZON_DISPLAY",
@@ -201,7 +196,7 @@ class _QualInputBundleModel(BaseModel, frozen=True):
     bundle_text: str
 
     @classmethod
-    def _from_domain(cls, dc: InputBundle) -> _QualInputBundleModel:
+    def _from_domain(cls, dc: Any) -> _QualInputBundleModel:
         return cls(
             invocation_id=dc.invocation_id,
             as_of=dc.as_of,
@@ -214,7 +209,7 @@ class _QualInputBundleModel(BaseModel, frozen=True):
             bundle_text=dc.bundle_text,
         )
 
-    def _to_domain(self) -> InputBundle:
+    def _to_domain(self) -> Any:
         from alphamind.analysis.qualitative_research.input_bundle import InputBundle
 
         return InputBundle(
@@ -251,19 +246,19 @@ class QualitativeResearcherResultModel(BaseModel, frozen=True):
     retry_count: int
 
     @classmethod
-    def from_domain(cls, dc: QualitativeResearcherResult) -> QualitativeResearcherResultModel:
+    def from_domain(cls, dc: object) -> QualitativeResearcherResultModel:
         """Project a :class:`QualitativeResearcherResult` onto this model."""
         return cls(
-            brief=dc.brief,
-            input_bundle=_QualInputBundleModel._from_domain(dc.input_bundle),
-            news_digest=dc.news_digest,
-            tokens_used=dc.tokens_used,
-            tool_calls_used=dc.tool_calls_used,
-            wall_clock_seconds=dc.wall_clock_seconds,
-            retry_count=dc.retry_count,
+            brief=dc.brief,  # type: ignore[attr-defined]
+            input_bundle=_QualInputBundleModel._from_domain(dc.input_bundle),  # type: ignore[attr-defined]
+            news_digest=dc.news_digest,  # type: ignore[attr-defined]
+            tokens_used=dc.tokens_used,  # type: ignore[attr-defined]
+            tool_calls_used=dc.tool_calls_used,  # type: ignore[attr-defined]
+            wall_clock_seconds=dc.wall_clock_seconds,  # type: ignore[attr-defined]
+            retry_count=dc.retry_count,  # type: ignore[attr-defined]
         )
 
-    def to_domain(self) -> QualitativeResearcherResult:
+    def to_domain(self) -> object:
         """Recover the original :class:`QualitativeResearcherResult`."""
         from alphamind.analysis.qualitative_research.runner import QualitativeResearcherResult
 

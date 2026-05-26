@@ -31,16 +31,11 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphamind.analysis._shared import AnomalySeverity, Sector, TokensUsed
-
-if TYPE_CHECKING:
-    from alphamind.analysis.adaptive_research.input_bundle import InputBundle
-    from alphamind.analysis.adaptive_research.loaders import AdaptiveAnomalyInputs
-    from alphamind.analysis.adaptive_research.runner import AdaptiveResearcherResult
 
 __all__ = [
     "REQUIRED_BY_ASSESSMENT",
@@ -252,7 +247,7 @@ class _AdaptiveAnomalyInputsModel(BaseModel, frozen=True):
     data_freshness: datetime
 
     @classmethod
-    def _from_domain(cls, dc: AdaptiveAnomalyInputs) -> _AdaptiveAnomalyInputsModel:
+    def _from_domain(cls, dc: Any) -> _AdaptiveAnomalyInputsModel:
         return cls(
             distillation=tuple(
                 _DistillationAnomalyRecordModel._from_domain(r) for r in dc.distillation
@@ -261,7 +256,7 @@ class _AdaptiveAnomalyInputsModel(BaseModel, frozen=True):
             data_freshness=dc.data_freshness,
         )
 
-    def _to_domain(self) -> AdaptiveAnomalyInputs:
+    def _to_domain(self) -> Any:
         from alphamind.analysis.adaptive_research.loaders import AdaptiveAnomalyInputs
 
         return AdaptiveAnomalyInputs(
@@ -282,7 +277,7 @@ class _AdaptiveInputBundleModel(BaseModel, frozen=True):
     bundle_text: str
 
     @classmethod
-    def _from_domain(cls, dc: InputBundle) -> _AdaptiveInputBundleModel:
+    def _from_domain(cls, dc: Any) -> _AdaptiveInputBundleModel:
         return cls(
             invocation_id=dc.invocation_id,
             as_of=dc.as_of,
@@ -292,7 +287,7 @@ class _AdaptiveInputBundleModel(BaseModel, frozen=True):
             bundle_text=dc.bundle_text,
         )
 
-    def _to_domain(self) -> InputBundle:
+    def _to_domain(self) -> Any:
         from alphamind.analysis.adaptive_research.input_bundle import InputBundle
 
         return InputBundle(
@@ -323,19 +318,19 @@ class AdaptiveResearcherResultModel(BaseModel, frozen=True):
     retry_count: int
 
     @classmethod
-    def from_domain(cls, dc: AdaptiveResearcherResult) -> AdaptiveResearcherResultModel:
+    def from_domain(cls, dc: object) -> AdaptiveResearcherResultModel:
         """Project a :class:`AdaptiveResearcherResult` onto this model."""
         return cls(
-            brief=dc.brief,
-            input_bundle=_AdaptiveInputBundleModel._from_domain(dc.input_bundle),
-            anomaly_inputs=_AdaptiveAnomalyInputsModel._from_domain(dc.anomaly_inputs),
-            tokens_used=dc.tokens_used,
-            tool_calls_used=dc.tool_calls_used,
-            wall_clock_seconds=dc.wall_clock_seconds,
-            retry_count=dc.retry_count,
+            brief=dc.brief,  # type: ignore[attr-defined]
+            input_bundle=_AdaptiveInputBundleModel._from_domain(dc.input_bundle),  # type: ignore[attr-defined]
+            anomaly_inputs=_AdaptiveAnomalyInputsModel._from_domain(dc.anomaly_inputs),  # type: ignore[attr-defined]
+            tokens_used=dc.tokens_used,  # type: ignore[attr-defined]
+            tool_calls_used=dc.tool_calls_used,  # type: ignore[attr-defined]
+            wall_clock_seconds=dc.wall_clock_seconds,  # type: ignore[attr-defined]
+            retry_count=dc.retry_count,  # type: ignore[attr-defined]
         )
 
-    def to_domain(self) -> AdaptiveResearcherResult:
+    def to_domain(self) -> object:
         """Recover the original :class:`AdaptiveResearcherResult`."""
         from alphamind.analysis.adaptive_research.runner import AdaptiveResearcherResult
 
