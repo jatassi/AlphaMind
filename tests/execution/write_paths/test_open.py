@@ -9,17 +9,25 @@ them from the filled legs.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from alphamind._kernel.money import price
 from alphamind.commands.command_models import (
+    ComponentType,
     EquityInstrument,
     StrategyInstrument,
     Target,
+    Thesis,
 )
 from alphamind.commands.command_models import (
     StrategyLeg as WireStrategyLeg,
 )
+from alphamind.commands.command_models import (
+    ThesisComponent as OMSThesisComponent,
+)
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.write_paths.phase2.open import (
+    _build_active_thesis,
     _build_pending_bracket,
     _build_pending_position,
     _direction_from_instrument,
@@ -37,6 +45,10 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     PositionStatus,
     StrategyPositionDetails,
+)
+from alphamind.portfolio_state.records.theses import (
+    ThesisComponentType,
+    ThesisRecordStatus,
 )
 
 
@@ -267,3 +279,119 @@ def test_single_leg_bracket_take_profit_build_unchanged() -> None:
     assert isinstance(target_leg.trigger, PriceTrigger)
     assert target_leg.trigger.direction == "GTE"
     assert target_leg.trigger.threshold_usd == 160.0
+
+
+# ---------------------------------------------------------------------------
+# Multi-component-per-type thesis (ALP-699)
+# ---------------------------------------------------------------------------
+
+
+def _wire_component(
+    component_type: ComponentType,
+    *,
+    narrative: str,
+    linked_leg: str = "leg-1",
+    instrument_reference: str = "MRVL",
+) -> OMSThesisComponent:
+    return OMSThesisComponent(
+        component_type=component_type,
+        linked_leg=linked_leg,
+        instrument_reference=instrument_reference,
+        narrative=narrative,
+        key_assumptions=("assumption",),
+    )
+
+
+def test_build_active_thesis_yields_unique_component_ids_for_multiple_same_type() -> None:
+    """ALP-699 regression — a wire ``Thesis`` carrying ≥2 components of the
+    same type (here, 3 ``invalidation_rationale`` components — the MRVL
+    reproducer's shape) must produce ``ThesisComponent``s with distinct
+    ``component_id``s so the ``thesis_components.component_id`` PRIMARY KEY
+    is not violated at INSERT time."""
+    thesis_id = "THE-MRVL-abc123"
+    wire = Thesis(
+        summary="MRVL pre-gap consolidation long",
+        components=(
+            _wire_component("entry_rationale", narrative="pre-gap floor break"),
+            _wire_component("target_rationale", narrative="resistance retest"),
+            _wire_component("invalidation_rationale", narrative="pre-gap floor"),
+            _wire_component("invalidation_rationale", narrative="48h catalyst window"),
+            _wire_component("invalidation_rationale", narrative="MU cross-name bearish"),
+        ),
+    )
+
+    record = _build_active_thesis(
+        thesis_id=thesis_id,
+        position_id="POS-MRVL-abc123",
+        thesis=wire,
+        timestamp=datetime(2026, 5, 26, 16, 24, 54, tzinfo=UTC),
+    )
+
+    ids = [c.component_id for c in record.components]
+    assert len(ids) == len(set(ids)), f"duplicate component_ids: {ids}"
+    # All 5 wire components persisted; no backfill needed since each required
+    # type has ≥1 wire entry.
+    assert len(record.components) == 5
+    invalidation_ids = [
+        c.component_id
+        for c in record.components
+        if c.component_type is ThesisComponentType.INVALIDATION_RATIONALE
+    ]
+    assert len(invalidation_ids) == 3
+    assert len(set(invalidation_ids)) == 3
+    assert record.status is ThesisRecordStatus.ACTIVE
+
+
+def test_build_active_thesis_component_id_carries_thesis_id_and_type() -> None:
+    """The persisted ``component_id`` is composed from ``thesis_id`` + the
+    persisted component type so it stays human-readable and traces back to
+    its owning thesis — the index suffix that disambiguates same-type
+    duplicates extends, not replaces, the existing scheme."""
+    thesis_id = "THE-AAPL-xyz789"
+    wire = Thesis(
+        summary="AAPL long",
+        components=(
+            _wire_component("entry_rationale", narrative="strong setup"),
+            _wire_component("target_rationale", narrative="resistance"),
+            _wire_component("invalidation_rationale", narrative="break of support"),
+        ),
+    )
+
+    record = _build_active_thesis(
+        thesis_id=thesis_id,
+        position_id="POS-AAPL-xyz789",
+        thesis=wire,
+        timestamp=datetime(2026, 5, 26, 16, 24, 54, tzinfo=UTC),
+    )
+
+    for component in record.components:
+        prefix = f"{thesis_id}-{component.component_type.value.lower()}"
+        assert component.component_id.startswith(prefix), (
+            f"component_id {component.component_id!r} should start with {prefix!r}"
+        )
+
+
+def test_build_active_thesis_backfill_yields_unique_component_ids() -> None:
+    """When a wire ``Thesis`` is missing required component types, the
+    placeholder-backfill loop seeds them. The synthesized ``component_id``s
+    must not collide with the wire-component ids that precede them."""
+    thesis_id = "THE-NVDA-zzz999"
+    wire = Thesis(
+        summary="NVDA momentum — invalidation-only wire (entry+target backfilled)",
+        components=(
+            _wire_component("invalidation_rationale", narrative="floor break"),
+            _wire_component("invalidation_rationale", narrative="time-stop"),
+        ),
+    )
+
+    record = _build_active_thesis(
+        thesis_id=thesis_id,
+        position_id="POS-NVDA-zzz999",
+        thesis=wire,
+        timestamp=datetime(2026, 5, 26, 16, 24, 54, tzinfo=UTC),
+    )
+
+    ids = [c.component_id for c in record.components]
+    assert len(ids) == len(set(ids)), f"duplicate component_ids: {ids}"
+    # 2 wire invalidation components + 2 backfilled (entry + target) = 4.
+    assert len(record.components) == 4
