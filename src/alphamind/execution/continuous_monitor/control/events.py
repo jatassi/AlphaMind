@@ -116,7 +116,14 @@ class SSEEventEmitter:
     # ------------------------------------------------------------------
 
     def emit_websocket_connected(self, *, timestamp: datetime | None = None) -> None:
-        """The Alpaca ``trade_updates`` websocket established a connection."""
+        """The Alpaca ``trade_updates`` websocket established a connection.
+
+        Updates the recorded last-state BEFORE fanning out so a fanout failure
+        (e.g., model_dump raising) does not leave the emitter in a stale
+        "disconnected" state inconsistent with the intent of this call (F7).
+        Subscriber queues may carry partial fanout if one of them raises, but
+        the next emit will still be processed under a coherent state.
+        """
         if self._last_websocket_state == "connected":
             msg = (
                 "websocket_connected emitted twice without an intervening "
@@ -125,8 +132,8 @@ class SSEEventEmitter:
             )
             raise RuntimeError(msg)
         event = WebsocketConnectedEvent(timestamp=timestamp or _utcnow())
-        self._fanout("websocket_connected", event)
         self._last_websocket_state = "connected"
+        self._fanout("websocket_connected", event)
 
     def emit_websocket_disconnected(
         self, *, reason: str, timestamp: datetime | None = None
@@ -146,8 +153,9 @@ class SSEEventEmitter:
             )
             raise RuntimeError(msg)
         event = WebsocketDisconnectedEvent(timestamp=timestamp or _utcnow(), reason=reason)
-        self._fanout("websocket_disconnected", event)
+        # State update precedes fanout (F7) — see emit_websocket_connected.
         self._last_websocket_state = "disconnected"
+        self._fanout("websocket_disconnected", event)
 
     def emit_fill_received(
         self,

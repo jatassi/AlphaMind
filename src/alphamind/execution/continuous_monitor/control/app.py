@@ -107,9 +107,14 @@ def make_control_surface_task(
         log.info("control surface server starting on 127.0.0.1:%d", port)
         try:
             await server.serve()
+        except BaseException:
+            # F12: On cancellation, set should_exit BEFORE re-raising so
+            # Uvicorn's capture_signals exit + shutdown sequence observe the
+            # drain request as the await unwinds. Mirrors the scheduler's
+            # run_uvicorn_server_task pattern.
+            server.should_exit = True
+            raise
         finally:
-            # Server.serve() returns when the cancel handler fires; the
-            # finally block runs on the supervisor's cascade-cancel path.
             log.info("control surface server stopped")
 
     return _task
