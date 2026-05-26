@@ -43,6 +43,8 @@ __all__ = [
     "DbConfig",
     "DiscordChannelConfig",
     "FrontendConfig",
+    "MonitorUpstreamConfig",
+    "PipelineUpstreamConfig",
     "SecurityConfig",
     "SessionConfig",
     "WebauthnConfig",
@@ -102,6 +104,40 @@ class FrontendConfig(BaseModel):
     dist_path: str = Field(min_length=1)
 
 
+class PipelineUpstreamConfig(BaseModel):
+    """``pipeline`` block — loopback URL of the pipeline upstream surface.
+
+    Added by story 04b (ALP-669). The SSE-multiplexer's upstream
+    consumer subscribes to ``<events_url>``, which the pipeline
+    process binds at ``http://127.0.0.1:<scheduler.control_port>``
+    (default port 8765 per ALP-664).
+
+    Story 04a will extend this block with a ``control_url`` field for
+    the verb-proxy surface; the two URLs may resolve to the same
+    host:port but the config keeps them distinct so the multiplexer
+    and the verb proxy can be redirected independently if the
+    upstream ever splits.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    events_url: str = Field(min_length=1)
+
+
+class MonitorUpstreamConfig(BaseModel):
+    """``monitor`` block — loopback URL of the monitor upstream surface.
+
+    Added by story 04b (ALP-669). The SSE-multiplexer's upstream
+    consumer subscribes to ``<events_url>``, which the monitor process
+    binds at ``http://127.0.0.1:<continuous_monitor.control_port>``
+    (default port 8766 per ALP-665).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    events_url: str = Field(min_length=1)
+
+
 class CommandCenterConfig(BaseModel):
     """Top-level ``command-center.yaml`` model."""
 
@@ -110,6 +146,8 @@ class CommandCenterConfig(BaseModel):
     bind: BindConfig
     db: DbConfig
     frontend: FrontendConfig
+    pipeline: PipelineUpstreamConfig
+    monitor: MonitorUpstreamConfig
 
 
 def load_command_center_config(config_dir: Path) -> CommandCenterConfig:

@@ -160,6 +160,12 @@ async def _run(config: CommandCenterConfig) -> None:
             )
 
         supervisor.register_task(name="uvicorn", coro_fn=uvicorn_task)
+        # Story 04b / ALP-669: register the two upstream-events consumer
+        # tasks alongside Uvicorn. The factories are built by ``build_app``
+        # against the live ``HttpxPipelineEventsClient`` / ``HttpxMonitor...``;
+        # they read off ``app.state.event_consumer_task_factories``.
+        for task_name, factory in app.state.event_consumer_task_factories.items():
+            supervisor.register_task(name=task_name, coro_fn=factory)
         await supervisor.run()
         log.info(
             "command center session end: process_lifetime_id=%s",

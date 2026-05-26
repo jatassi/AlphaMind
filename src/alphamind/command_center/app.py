@@ -45,10 +45,11 @@ from __future__ import annotations
 import logging
 import os
 import secrets
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -64,12 +65,49 @@ from alphamind.command_center.config import (
     CommandCenterConfig,
     SecurityConfig,
 )
+from alphamind.command_center.events.clients import (
+    HttpxMonitorEventsClient,
+    HttpxPipelineEventsClient,
+    MonitorEventsClient,
+    PipelineEventsClient,
+)
+from alphamind.command_center.events.multiplexer import (
+    EventMultiplexer,
+    monitor_consumer_task,
+    pipeline_consumer_task,
+)
+from alphamind.command_center.events.routes import build_events_router
 from alphamind.command_center.persistence.session import (
     build_cc_writer_session_factory,
     build_foreign_reader_session_factory,
 )
+from alphamind.command_center.session import ProcessSession
 
-__all__ = ["AuthOverrides", "build_app"]
+__all__ = ["AuthOverrides", "EventsOverrides", "build_app"]
+
+
+@dataclass(frozen=True, slots=True)
+class EventsOverrides:
+    """Test-time / deploy-time overrides for the events subsystem (story 04b).
+
+    Bundles the optional events collaborators so ``build_app`` keeps a
+    small parameter list. Production callers leave every field at its
+    default; tests inject in-memory fakes so the consumer tasks can
+    yield canned event sequences without booting real loopback SSE
+    surfaces.
+
+    Fields:
+
+    * ``pipeline_events_client``: override for the pipeline ``/events``
+      upstream client. Defaults to :class:`HttpxPipelineEventsClient`
+      constructed against ``command_center_config.pipeline.events_url``.
+    * ``monitor_events_client``: override for the monitor ``/events``
+      upstream client. Defaults to :class:`HttpxMonitorEventsClient`
+      constructed against ``command_center_config.monitor.events_url``.
+    """
+
+    pipeline_events_client: PipelineEventsClient | None = None
+    monitor_events_client: MonitorEventsClient | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +209,38 @@ def _resolve_webauthn_verifier(
     )
 
 
+def _make_pipeline_consumer_factory(
+    *,
+    client: PipelineEventsClient,
+    multiplexer: EventMultiplexer,
+) -> Callable[[ProcessSession], "Coroutine[Any, Any, None]"]:
+    """Bind the pipeline consumer task to the live client + multiplexer.
+
+    Returns a factory the supervisor calls with its ``ProcessSession``;
+    the session is unused by the consumer (the supervisor's signature is
+    ``Callable[[ProcessSession], Coroutine[None]]`` and we honor it
+    without dragging session-bound state into the SSE consumer).
+    """
+
+    async def factory(_session: ProcessSession) -> None:
+        await pipeline_consumer_task(client=client, multiplexer=multiplexer)
+
+    return factory
+
+
+def _make_monitor_consumer_factory(
+    *,
+    client: MonitorEventsClient,
+    multiplexer: EventMultiplexer,
+) -> Callable[[ProcessSession], "Coroutine[Any, Any, None]"]:
+    """Bind the monitor consumer task to the live client + multiplexer."""
+
+    async def factory(_session: ProcessSession) -> None:
+        await monitor_consumer_task(client=client, multiplexer=multiplexer)
+
+    return factory
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """FastAPI lifespan — wires session factories onto ``app.state``.
@@ -236,6 +306,7 @@ def build_app(
     alerts_config: AlertsConfig,
     production_session_factory: async_sessionmaker[AsyncSession] | None = None,
     auth_overrides: AuthOverrides | None = None,
+    events_overrides: EventsOverrides | None = None,
 ) -> FastAPI:
     """Construct the FastAPI app composition root.
 
@@ -277,6 +348,7 @@ def build_app(
         :class:`AuthOverrides` for the per-field semantics.
     """
     overrides = auth_overrides if auth_overrides is not None else AuthOverrides()
+    events = events_overrides if events_overrides is not None else EventsOverrides()
     app = FastAPI(
         title="AlphaMind command center",
         description=(
@@ -307,6 +379,31 @@ def build_app(
 
     # Mount the auth router (story 03 / ALP-667).
     app.include_router(build_auth_router())
+
+    # Events-subsystem wiring (story 04b / ALP-669). The multiplexer
+    # lives on app.state so the route handler + the consumer tasks
+    # share the same instance. The consumer-task factories are exposed
+    # via app.state.event_consumer_task_factories — the composition
+    # root (__main__) reads them and registers each on the
+    # CommandCenterSupervisor's TaskGroup. Tests inject fake clients via
+    # EventsOverrides.
+    event_multiplexer = EventMultiplexer()
+    app.state.event_multiplexer = event_multiplexer
+    pipeline_client = events.pipeline_events_client or HttpxPipelineEventsClient(
+        base_url=command_center_config.pipeline.events_url,
+    )
+    monitor_client = events.monitor_events_client or HttpxMonitorEventsClient(
+        base_url=command_center_config.monitor.events_url,
+    )
+    app.state.event_consumer_task_factories = {
+        "events_pipeline_consumer": _make_pipeline_consumer_factory(
+            client=pipeline_client, multiplexer=event_multiplexer
+        ),
+        "events_monitor_consumer": _make_monitor_consumer_factory(
+            client=monitor_client, multiplexer=event_multiplexer
+        ),
+    }
+    app.include_router(build_events_router())
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

@@ -42,6 +42,10 @@ db:
   alphamind_db_path: "{db}"
 frontend:
   dist_path: "src/alphamind/command_center/frontend/dist"
+pipeline:
+  events_url: "http://127.0.0.1:8765"
+monitor:
+  events_url: "http://127.0.0.1:8766"
 """,
         encoding="utf-8",
     )
@@ -125,15 +129,58 @@ class TestLifespanWiresSessionFactories:
         assert app.state.production_session_factory is None
 
 
-class TestRegisteredRoutes:
-    """Story 02 ships /healthz; story 03 (ALP-667) adds /auth/*.
-
-    Asserts that only the routes belonging to story 02 + story 03 are
-    present at this point — stories 04a (control proxy) / 04b (SSE) /
-    05a (alerts) / 05b-05j / 06a-06c register their routers later.
+class TestLifespanWiresEventMultiplexer:
+    """Story 04b (ALP-669): build_app wires an EventMultiplexer onto
+    app.state and exposes a hook for registering the upstream consumer
+    tasks on the supervisor.
     """
 
-    def test_only_healthz_and_auth_routes_plus_framework(self, configs: tuple[Path, Path]) -> None:
+    def test_multiplexer_attached_to_app_state(
+        self, configs: tuple[Path, Path]
+    ) -> None:
+        from alphamind.command_center.events.multiplexer import EventMultiplexer
+
+        config_dir, _ = configs
+        app = build_app(
+            command_center_config=load_command_center_config(config_dir),
+            security_config=load_security_config(config_dir),
+            alerts_config=load_alerts_config(config_dir),
+        )
+        with TestClient(app):
+            assert isinstance(app.state.event_multiplexer, EventMultiplexer)
+
+    def test_consumer_task_factories_attached_to_app_state(
+        self, configs: tuple[Path, Path]
+    ) -> None:
+        """The two upstream-consumer task factories are exposed so the
+        composition root can register them on the supervisor's
+        TaskGroup at process startup.
+        """
+        config_dir, _ = configs
+        app = build_app(
+            command_center_config=load_command_center_config(config_dir),
+            security_config=load_security_config(config_dir),
+            alerts_config=load_alerts_config(config_dir),
+        )
+        with TestClient(app):
+            factories = app.state.event_consumer_task_factories
+            assert set(factories) == {"events_pipeline_consumer", "events_monitor_consumer"}
+            assert callable(factories["events_pipeline_consumer"])
+            assert callable(factories["events_monitor_consumer"])
+
+
+class TestRegisteredRoutes:
+    """Story 02 ships /healthz; story 03 (ALP-667) adds /auth/*; story
+    04b (ALP-669) adds GET /api/events.
+
+    Asserts that only the routes belonging to the merged stories are
+    present at this point — stories 04a (control proxy) / 05a
+    (alerts) / 05b-05j / 06a-06c register their routers later.
+    """
+
+    def test_includes_healthz_auth_and_events_routes(
+        self, configs: tuple[Path, Path]
+    ) -> None:
         config_dir, _ = configs
         app = build_app(
             command_center_config=load_command_center_config(config_dir),
@@ -161,10 +208,11 @@ class TestRegisteredRoutes:
                 "/auth/login/begin",
                 "/auth/login/complete",
                 "/auth/logout",
+                "/api/events",
             ]
         )
         assert own_routes == expected, (
-            f"unexpected routes registered after stories 02 + 03 — found "
-            f"{own_routes}; expected {expected}. Stories 04a / 04b / 05a / "
+            f"unexpected routes registered after stories 02 + 03 + 04b — "
+            f"found {own_routes}; expected {expected}. Stories 04a / 05a / "
             f"view stories register their routers later."
         )

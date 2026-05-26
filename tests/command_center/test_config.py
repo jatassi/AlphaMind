@@ -54,11 +54,23 @@ class TestCommandCenterConfig:
         config = load_command_center_config(config_dir)
         assert config.frontend.dist_path
 
+    def test_pipeline_events_url_present(self, config_dir: Path) -> None:
+        """Story 04b adds the pipeline /events upstream URL."""
+        config = load_command_center_config(config_dir)
+        assert config.pipeline.events_url.startswith("http://127.0.0.1:")
+
+    def test_monitor_events_url_present(self, config_dir: Path) -> None:
+        """Story 04b adds the monitor /events upstream URL."""
+        config = load_command_center_config(config_dir)
+        assert config.monitor.events_url.startswith("http://127.0.0.1:")
+
     def test_extra_field_in_yaml_rejected(self, tmp_path: Path) -> None:
         bad = {
             "bind": {"host": "127.0.0.1", "port": 8080},
             "db": {"alphamind_db_path": "/tmp/x.db"},
             "frontend": {"dist_path": "/dist"},
+            "pipeline": {"events_url": "http://127.0.0.1:8765"},
+            "monitor": {"events_url": "http://127.0.0.1:8766"},
             "bogus_top_level_key": True,
         }
         bad_yaml = tmp_path / "command-center.yaml"

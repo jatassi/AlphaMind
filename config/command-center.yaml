@@ -9,3 +9,12 @@ db:
   alphamind_db_path: "%USERPROFILE%/AlphaMind/data/alphamind.db"
 frontend:
   dist_path: "src/alphamind/command_center/frontend/dist"
+pipeline:
+  # Loopback URL of the pipeline /events SSE surface (story 04b /
+  # ALP-669). Port 8765 mirrors scheduler.yaml's control_port (ALP-664).
+  events_url: "http://127.0.0.1:8765"
+monitor:
+  # Loopback URL of the continuous-monitor /events SSE surface (story
+  # 04b / ALP-669). Port 8766 mirrors continuous_monitor.yaml's
+  # control_port (ALP-665).
+  events_url: "http://127.0.0.1:8766"
