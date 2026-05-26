@@ -15,6 +15,7 @@ fixtures inline.
 from __future__ import annotations
 
 import dataclasses
+import pickle
 from datetime import date
 from pathlib import Path
 from types import MappingProxyType
@@ -245,6 +246,22 @@ def test_adapter_raises_when_conservative_buffer_pct_is_out_of_range(
 # ---------------------------------------------------------------------------
 # Adapter purity
 # ---------------------------------------------------------------------------
+
+
+def test_adapter_output_round_trips_through_pickle() -> None:
+    """Regression for ALP-681. A ``LibraryConfig`` produced by
+    ``from_resolved_config`` must survive ``pickle.dumps`` / ``pickle.loads``
+    intact. Subprocess-isolated agents (``invoke_analyst_in_subprocess``,
+    ``invoke_strategist_in_subprocess``, ``invoke_portfolio_manager_in_subprocess``;
+    PR #179 / ALP-650) ship the carrying ``ValidationToolState`` across a
+    process boundary via base64-pickle — the adapter must not insert wrappers
+    (e.g. ``types.MappingProxyType``) that CPython refuses to pickle."""
+    resolved = _compose(profile_override=Profile.medium)
+
+    config = from_resolved_config(resolved)
+    restored = pickle.loads(pickle.dumps(config))
+
+    assert restored == config
 
 
 def test_adapter_is_pure_two_calls_produce_equal_and_hash_equal_outputs() -> None:
