@@ -91,7 +91,9 @@ class TestPipelineConsumerParsesAndPublishes:
         async def collect() -> None:
             async with mux.subscribe() as queue:
                 for _ in range(9):
-                    received.append(await asyncio.wait_for(queue.get(), timeout=2))
+                    event = await asyncio.wait_for(queue.get(), timeout=2)
+                    assert isinstance(event, PipelineEvent | MonitorEvent)
+                    received.append(event)
                 stop.set()
 
         async with asyncio.TaskGroup() as tg:
@@ -164,7 +166,9 @@ class TestMonitorConsumerParsesAndPublishes:
         async def collect() -> None:
             async with mux.subscribe() as queue:
                 for _ in range(7):
-                    received.append(await asyncio.wait_for(queue.get(), timeout=2))
+                    event = await asyncio.wait_for(queue.get(), timeout=2)
+                    assert isinstance(event, PipelineEvent | MonitorEvent)
+                    received.append(event)
                 stop.set()
 
         async with asyncio.TaskGroup() as tg:
@@ -210,7 +214,9 @@ class TestConsumerSkipsUnknownEventTypes:
 
         async def collect() -> None:
             async with mux.subscribe() as queue:
-                received.append(await asyncio.wait_for(queue.get(), timeout=2))
+                event = await asyncio.wait_for(queue.get(), timeout=2)
+                assert isinstance(event, PipelineEvent | MonitorEvent)
+                received.append(event)
                 stop.set()
 
         with caplog.at_level(logging.WARNING, logger="alphamind.command_center.events"):
@@ -293,7 +299,9 @@ class TestConsumerReconnectsAfterDrop:
 
         async def collect() -> None:
             async with mux.subscribe() as queue:
-                received.append(await asyncio.wait_for(queue.get(), timeout=3))
+                event = await asyncio.wait_for(queue.get(), timeout=3)
+                assert isinstance(event, PipelineEvent | MonitorEvent)
+                received.append(event)
                 stop.set()
 
         async with asyncio.TaskGroup() as tg:
@@ -343,7 +351,9 @@ class TestSiblingIndependence:
                 # Wait for both event types — proves both consumers
                 # delivered through their independent reconnect paths.
                 while True:
-                    received.append(await asyncio.wait_for(queue.get(), timeout=3))
+                    event = await asyncio.wait_for(queue.get(), timeout=3)
+                    assert isinstance(event, PipelineEvent | MonitorEvent)
+                    received.append(event)
                     has_pipeline = any(isinstance(r, PipelineEvent) for r in received)
                     has_monitor = any(isinstance(r, MonitorEvent) for r in received)
                     if has_pipeline and has_monitor:

@@ -210,8 +210,14 @@ class TestUvicornBoot:
         supervisor.register_task(name="uvicorn", coro_fn=uvicorn_task)
         for task_name, factory in app.state.event_consumer_task_factories.items():
             supervisor.register_task(name=task_name, coro_fn=factory)
+        # Story 05a / ALP-671: __main__._run() also registers the
+        # alerts-engine factory.
+        alerts_factory = getattr(app.state, "alert_engine_task_factory", None)
+        if alerts_factory is not None:
+            supervisor.register_task(name="alerts_engine", coro_fn=alerts_factory)
 
         names = supervisor.task_names()
         assert "uvicorn" in names
         assert "events_pipeline_consumer" in names
         assert "events_monitor_consumer" in names
+        assert "alerts_engine" in names

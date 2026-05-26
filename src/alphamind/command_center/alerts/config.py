@@ -137,9 +137,7 @@ class DiscordWiringResult:
 
     def __repr__(self) -> str:  # pragma: no cover — defensive
         configured = self.webhook_url is not None
-        return (
-            f"DiscordWiringResult(env_name={self.env_name!r}, configured={configured})"
-        )
+        return f"DiscordWiringResult(env_name={self.env_name!r}, configured={configured})"
 
 
 def resolve_discord_webhook(

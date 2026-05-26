@@ -27,6 +27,7 @@ from alphamind.command_center._kernel.events import (
 )
 from alphamind.command_center.events.multiplexer import (
     DEFAULT_SUBSCRIBER_QUEUE_MAXSIZE,
+    CombinedEvent,
     EventMultiplexer,
 )
 
@@ -168,7 +169,7 @@ class TestSubscriberConcurrency:
         mux = EventMultiplexer()
         event = _pipeline_event()
 
-        async def subscriber_reads_one() -> PipelineEvent | MonitorEvent:
+        async def subscriber_reads_one() -> CombinedEvent:
             async with mux.subscribe() as queue:
                 # Signal readiness then wait for the publish.
                 return await asyncio.wait_for(queue.get(), timeout=2)

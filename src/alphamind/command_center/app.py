@@ -358,7 +358,7 @@ def _wire_alert_engine(
     """
     discord_channel = getattr(app.state, "alerts_discord_channel", None)
     rules = getattr(app.state, "alerts_rules", None)
-    if discord_channel is None and rules is not None:
+    if discord_channel is None and rules:
         alerts_http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         discord_channel = RealDiscordChannel(
             webhook_url=app.state.alerts_discord_webhook_url,
@@ -366,7 +366,10 @@ def _wire_alert_engine(
         )
         app.state.alerts_discord_channel = discord_channel
         app.state.alerts_http_client = alerts_http_client
-    if rules is None or discord_channel is None:
+    if not rules or discord_channel is None:
+        # Empty rules OR no channel resolvable → engine disabled.
+        # The supervisor's alerts-engine task factory is still wired but
+        # returns immediately when ``app.state.alert_engine`` is None.
         app.state.alert_engine = None
         return
     app.state.alert_engine = AlertEngine(
