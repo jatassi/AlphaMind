@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     # production callers importing ``configure_debug_e2e`` at module-load
     # time never pull ``portfolio.py`` — story 04's import-linter contract.
     from alphamind.scheduler.debug_e2e.portfolio import SyntheticPortfolio
+    from alphamind.scheduler.debug_e2e.resume import ResumeContext
 
 __all__ = ["DebugE2ESettings", "configure_debug_e2e"]
 
@@ -54,17 +55,27 @@ class DebugE2ESettings:
     * ``emitter_factory`` is invoked once per invocation with the
       ``invocation_id`` so the JSONL emitter (story 02c) can open a
       fresh log file under the invocation's archive directory.
+    * ``resume_context`` (ALP-693) carries the resume-from inputs the
+      pipeline-composition runners (stories 04a / 04b) inspect to gate
+      the replay short-circuit. ``None`` on a fresh debug-e2e run; a
+      populated :class:`ResumeContext` when ``--resume-from`` is set.
+      Pipeline modules read this off ``context.debug_e2e`` typed as
+      ``object | None`` at the pipeline boundary so production code
+      stays decoupled from the debug-e2e package (the import-linter
+      contract ``debug-e2e-forbidden-in-production`` enforces this).
     """
 
     account_queries: AccountStateQueriesP
     ca_queries: CorporateActionsQueriesP
     emitter_factory: Callable[[str], ProgressEmitter]
+    resume_context: ResumeContext | None = None
 
 
 def configure_debug_e2e(
     *,
     archive_root: Path,
     portfolio: SyntheticPortfolio,
+    resume_context: ResumeContext | None = None,
 ) -> DebugE2ESettings:
     """Construct the debug-e2e injection bundle.
 
@@ -74,6 +85,11 @@ def configure_debug_e2e(
     :data:`FRESH_START_PORTFOLIO` (ALP-618) for the clean-slate variant —
     so the ``LogOnlyAccountStateQueries`` stand-in projects the same shape
     that the seeder writes into the debug DB.
+
+    ``resume_context`` (ALP-693) is the validated :class:`ResumeContext`
+    when ``--resume-from`` is set; ``None`` for fresh debug-e2e runs.
+    The CLI calls :func:`alphamind.scheduler.debug_e2e.resume.load_resume_context`
+    before this factory and passes the result through unchanged.
 
     The lazy imports below keep production callers' top-of-module
     ``from alphamind.scheduler.debug_e2e import configure_debug_e2e``
@@ -98,4 +114,5 @@ def configure_debug_e2e(
         account_queries=LogOnlyAccountStateQueries(portfolio),
         ca_queries=LogOnlyCorporateActionsQueries(),
         emitter_factory=make_emitter,
+        resume_context=resume_context,
     )

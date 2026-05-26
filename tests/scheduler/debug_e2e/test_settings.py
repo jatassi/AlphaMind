@@ -57,12 +57,24 @@ def test_debug_e2e_settings_is_frozen_and_slotted() -> None:
     assert not hasattr(settings, "__dict__")
 
 
-def test_debug_e2e_settings_has_three_named_fields() -> None:
-    """:class:`DebugE2ESettings` declares exactly the three story-named fields."""
+def test_debug_e2e_settings_has_four_named_fields() -> None:
+    """:class:`DebugE2ESettings` declares exactly the four story-named fields.
+
+    The first three originate in story ALP-500 (03). The fourth
+    (``resume_context``) was added in story ALP-693 to carry the
+    ``--resume-from`` inputs through to stories 04a / 04b's
+    pipeline-composition runners; it defaults to ``None`` so existing
+    constructors keep parsing.
+    """
     from alphamind.scheduler.debug_e2e.settings import DebugE2ESettings
 
     field_names = tuple(f.name for f in fields(DebugE2ESettings))
-    assert field_names == ("account_queries", "ca_queries", "emitter_factory")
+    assert field_names == (
+        "account_queries",
+        "ca_queries",
+        "emitter_factory",
+        "resume_context",
+    )
 
 
 def test_configure_debug_e2e_returns_debug_e2e_settings(tmp_path: Path) -> None:

@@ -352,3 +352,47 @@ def test_load_resume_context_missing_upstream_names_earliest_valid_target(
 
     msg = str(excinfo.value)
     assert "adaptive" in msg, f"earliest-valid target 'adaptive' not in message: {msg}"
+
+
+# ---------------------------------------------------------------------------
+# DebugE2ESettings.resume_context extension
+# ---------------------------------------------------------------------------
+
+
+def test_debug_e2e_settings_carries_resume_context_field() -> None:
+    """:class:`DebugE2ESettings` exposes a ``resume_context`` field."""
+    from alphamind.scheduler.debug_e2e.settings import DebugE2ESettings
+
+    field_names = tuple(f.name for f in fields(DebugE2ESettings))
+    assert "resume_context" in field_names
+
+
+def test_debug_e2e_settings_resume_context_defaults_to_none(tmp_path: Path) -> None:
+    """``resume_context`` defaults to ``None`` when not supplied (no-resume runs)."""
+    from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
+    from alphamind.scheduler.debug_e2e.settings import configure_debug_e2e
+
+    settings = configure_debug_e2e(archive_root=tmp_path, portfolio=SYNTHETIC_PORTFOLIO)
+    assert settings.resume_context is None
+
+
+def test_configure_debug_e2e_threads_resume_context(tmp_path: Path) -> None:
+    """``configure_debug_e2e(resume_context=...)`` threads the value onto the bundle."""
+    from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
+    from alphamind.scheduler.debug_e2e.resume import ResumeContext
+    from alphamind.scheduler.debug_e2e.settings import configure_debug_e2e
+
+    ctx = ResumeContext(
+        source_archive_dir=tmp_path / "invocations" / "inv-source",
+        resume_phase="analyst",
+        phases_to_replay=frozenset(
+            {"tech_semis", "financials", "energy", "qualitative", "adaptive", "synthesizer"}
+        ),
+    )
+
+    settings = configure_debug_e2e(
+        archive_root=tmp_path,
+        portfolio=SYNTHETIC_PORTFOLIO,
+        resume_context=ctx,
+    )
+    assert settings.resume_context is ctx
