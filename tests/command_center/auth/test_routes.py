@@ -30,6 +30,10 @@ from alphamind.command_center.auth.repository import (
     load_session,
 )
 from alphamind.command_center.auth.setup_token import SetupTokenGate
+from alphamind.command_center.auth.webauthn import (
+    encode_inmemory_attestation_object,
+    encode_inmemory_client_data_json,
+)
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -58,16 +62,40 @@ def _complete_registration(
     begin: dict[str, Any],
     credential_id: str,
     public_key: bytes = b"fake-public-key",
+    sign_count: int = 0,
 ) -> Any:
+    challenge_bytes = _b64url_decode(begin["challenge"])
     return client.post(
         "/auth/register/complete",
         json={
             "challenge_token": begin["challenge_token"],
             "credential_id": credential_id,
-            "client_data_challenge": begin["challenge"],
-            "public_key": _b64url_encode(public_key),
-            "sign_count": 0,
+            "client_data_json": _b64url_encode(encode_inmemory_client_data_json(challenge_bytes)),
+            "attestation_object": _b64url_encode(
+                encode_inmemory_attestation_object(public_key=public_key, sign_count=sign_count)
+            ),
             "transports": ["internal"],
+        },
+    )
+
+
+def _complete_login(
+    client: TestClient,
+    *,
+    begin: dict[str, Any],
+    credential_id: str,
+    new_sign_count: int,
+) -> Any:
+    challenge_bytes = _b64url_decode(begin["challenge"])
+    return client.post(
+        "/auth/login/complete",
+        json={
+            "challenge_token": begin["challenge_token"],
+            "credential_id": credential_id,
+            "client_data_json": _b64url_encode(encode_inmemory_client_data_json(challenge_bytes)),
+            "authenticator_data": _b64url_encode(b"fake-auth-data"),
+            "signature": _b64url_encode(b"fake-signature"),
+            "new_sign_count": new_sign_count,
         },
     )
 
@@ -266,14 +294,11 @@ class TestLoginRoundtrip:
             _complete_registration(client, begin=begin_reg, credential_id="cred-login-2")
             client.cookies.clear()
             begin_login = client.post("/auth/login/begin").json()
-            response = client.post(
-                "/auth/login/complete",
-                json={
-                    "challenge_token": begin_login["challenge_token"],
-                    "credential_id": "cred-login-2",
-                    "client_data_challenge": begin_login["challenge"],
-                    "new_sign_count": 1,
-                },
+            response = _complete_login(
+                client,
+                begin=begin_login,
+                credential_id="cred-login-2",
+                new_sign_count=1,
             )
         assert response.status_code == 200
         body = response.json()
@@ -303,14 +328,11 @@ class TestLoginRoundtrip:
             _complete_registration(client, begin=begin_reg, credential_id="cred-login-3")
             client.cookies.clear()
             begin_login = client.post("/auth/login/begin").json()
-            response = client.post(
-                "/auth/login/complete",
-                json={
-                    "challenge_token": begin_login["challenge_token"],
-                    "credential_id": "cred-login-3",
-                    "client_data_challenge": begin_login["challenge"],
-                    "new_sign_count": 1,
-                },
+            response = _complete_login(
+                client,
+                begin=begin_login,
+                credential_id="cred-login-3",
+                new_sign_count=1,
             )
         set_cookies = response.headers.get_list("set-cookie")
         session_cookie = next(c for c in set_cookies if c.startswith("cc_session="))
@@ -340,14 +362,11 @@ class TestLoginRoundtrip:
         # Re-issue via login to confirm.
         with TestClient(auth_app) as client:
             begin_login = client.post("/auth/login/begin").json()
-            response = client.post(
-                "/auth/login/complete",
-                json={
-                    "challenge_token": begin_login["challenge_token"],
-                    "credential_id": "cred-secure",
-                    "client_data_challenge": begin_login["challenge"],
-                    "new_sign_count": 1,
-                },
+            response = _complete_login(
+                client,
+                begin=begin_login,
+                credential_id="cred-secure",
+                new_sign_count=1,
             )
         set_cookies = response.headers.get_list("set-cookie")
         joined = "; ".join(set_cookies).lower()

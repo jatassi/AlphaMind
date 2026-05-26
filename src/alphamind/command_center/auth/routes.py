@@ -44,6 +44,7 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel, ConfigDict, Field
+from webauthn.helpers.exceptions import WebAuthnException
 
 from alphamind.command_center._kernel.ids import (
     OperatorSessionId,
@@ -170,12 +171,20 @@ class RegisterBeginResponse(_StrictModel):
 
 
 class RegisterCompleteRequest(_StrictModel):
+    """Body of ``POST /auth/register/complete``.
+
+    The four blob fields (``client_data_json``, ``attestation_object``)
+    carry the browser's raw ``navigator.credentials.create()`` output as
+    base64url-encoded strings; the route handler decodes them via
+    :func:`_b64url_decode` before constructing the
+    :class:`RegistrationResponse` the verifier consumes.
+    """
+
     challenge_token: str
     credential_id: str
-    client_data_challenge: str  # base64url
-    public_key: str  # base64url
-    sign_count: int = Field(ge=0)
-    transports: list[str]
+    client_data_json: str  # base64url
+    attestation_object: str  # base64url
+    transports: list[str] = Field(default_factory=list)
 
 
 class LoginBeginResponse(_StrictModel):
@@ -186,9 +195,27 @@ class LoginBeginResponse(_StrictModel):
 
 
 class LoginCompleteRequest(_StrictModel):
+    """Body of ``POST /auth/login/complete``.
+
+    The five blob fields (``client_data_json``, ``authenticator_data``,
+    ``signature``, optional ``user_handle``) carry the browser's raw
+    ``navigator.credentials.get()`` output as base64url-encoded strings.
+    The parsed ``new_sign_count`` accompanies the bytes; the route
+    handler persists it after verification succeeds.
+
+    ``new_sign_count`` is constrained to ``ge=0`` (not ``ge=1``) because
+    WebAuthn authenticators that don't support counters report 0 forever
+    — see py_webauthn's verify_authentication_response.py § 149. The
+    in-memory + real verifiers enforce strict-increase only when EITHER
+    stored OR new is non-zero, so a 0/0 case is legitimately accepted.
+    """
+
     challenge_token: str
     credential_id: str
-    client_data_challenge: str  # base64url
+    client_data_json: str  # base64url
+    authenticator_data: str  # base64url
+    signature: str  # base64url
+    user_handle: str | None = None  # base64url, optional
     new_sign_count: int = Field(ge=0)
 
 
@@ -390,17 +417,16 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
                 ),
                 response=RegistrationResponse(
                     credential_id=cred_id_typed,
-                    client_data_challenge=_b64url_decode(body.client_data_challenge),
-                    public_key=_b64url_decode(body.public_key),
-                    sign_count=body.sign_count,
+                    client_data_json=_b64url_decode(body.client_data_json),
+                    attestation_object=_b64url_decode(body.attestation_object),
                     transports=tuple(body.transports),
                 ),
             )
-        except ValueError as exc:
+        except (ValueError, WebAuthnException) as exc:
             log.warning("register_complete: verification failed: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"registration verification failed: {exc}",
+                detail="registration verification failed",
             ) from exc
         now_iso = request.app.state.clock().strftime("%Y-%m-%dT%H:%M:%SZ")
         cc_factory = request.app.state.cc_writer_session_factory
@@ -496,17 +522,22 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
                 ),
                 response=AuthenticationResponse(
                     credential_id=cred_id_typed,
-                    client_data_challenge=_b64url_decode(body.client_data_challenge),
+                    client_data_json=_b64url_decode(body.client_data_json),
+                    authenticator_data=_b64url_decode(body.authenticator_data),
+                    signature=_b64url_decode(body.signature),
+                    user_handle=(
+                        _b64url_decode(body.user_handle) if body.user_handle is not None else None
+                    ),
                     new_sign_count=body.new_sign_count,
                 ),
                 stored_public_key=_b64url_decode(stored.public_key),
                 stored_sign_count=stored.sign_count,
             )
-        except ValueError as exc:
+        except (ValueError, WebAuthnException) as exc:
             log.warning("login_complete: verification failed: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"authentication verification failed: {exc}",
+                detail="authentication verification failed",
             ) from exc
         await update_credential_sign_count(
             cc_factory,

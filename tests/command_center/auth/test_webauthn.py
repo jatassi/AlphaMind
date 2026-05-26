@@ -29,6 +29,8 @@ from alphamind.command_center.auth.webauthn import (
     VerifiedAuthentication,
     VerifiedRegistration,
     WebauthnVerifier,
+    encode_inmemory_attestation_object,
+    encode_inmemory_client_data_json,
 )
 
 
@@ -83,9 +85,10 @@ class TestInMemoryVerifyRegistrationResponse:
         )
         response = RegistrationResponse(
             credential_id=webauthn_credential_id("cred-abc-123"),
-            client_data_challenge=options.challenge,
-            public_key=b"fake-public-key-bytes",
-            sign_count=0,
+            client_data_json=encode_inmemory_client_data_json(options.challenge),
+            attestation_object=encode_inmemory_attestation_object(
+                public_key=b"fake-public-key-bytes", sign_count=0
+            ),
             transports=("internal",),
         )
         verified = verifier.verify_registration_response(options=options, response=response)
@@ -102,9 +105,8 @@ class TestInMemoryVerifyRegistrationResponse:
         )
         response = RegistrationResponse(
             credential_id=webauthn_credential_id("cred-xyz"),
-            client_data_challenge=b"wrong-challenge",
-            public_key=b"key",
-            sign_count=0,
+            client_data_json=encode_inmemory_client_data_json(b"wrong-challenge"),
+            attestation_object=encode_inmemory_attestation_object(public_key=b"key", sign_count=0),
             transports=("internal",),
         )
         with pytest.raises(ValueError, match="challenge"):
@@ -132,7 +134,9 @@ class TestInMemoryVerifyAuthenticationResponse:
         options = verifier.generate_authentication_options(allow_credentials=(cred,))
         response = AuthenticationResponse(
             credential_id=cred,
-            client_data_challenge=options.challenge,
+            client_data_json=encode_inmemory_client_data_json(options.challenge),
+            authenticator_data=b"fake-auth-data",
+            signature=b"fake-signature",
             new_sign_count=5,
         )
         verified = verifier.verify_authentication_response(
@@ -152,7 +156,9 @@ class TestInMemoryVerifyAuthenticationResponse:
         )
         response = AuthenticationResponse(
             credential_id=webauthn_credential_id("cred-not-registered"),
-            client_data_challenge=options.challenge,
+            client_data_json=encode_inmemory_client_data_json(options.challenge),
+            authenticator_data=b"fake-auth-data",
+            signature=b"fake-signature",
             new_sign_count=1,
         )
         with pytest.raises(ValueError, match="credential"):
@@ -165,14 +171,16 @@ class TestInMemoryVerifyAuthenticationResponse:
 
     def test_raises_when_sign_count_did_not_increase(self) -> None:
         # WebAuthn replay-protection: the new sign_count must be strictly
-        # greater than the stored one. The in-memory fake enforces the
-        # invariant so tests catch a replay bug.
+        # greater than the stored one — but only when EITHER is non-zero
+        # (counter-not-supported authenticators report 0 forever).
         verifier = InMemoryWebauthnVerifier(relying_party_id="localhost")
         cred = webauthn_credential_id("cred-a")
         options = verifier.generate_authentication_options(allow_credentials=(cred,))
         response = AuthenticationResponse(
             credential_id=cred,
-            client_data_challenge=options.challenge,
+            client_data_json=encode_inmemory_client_data_json(options.challenge),
+            authenticator_data=b"fake-auth-data",
+            signature=b"fake-signature",
             new_sign_count=3,
         )
         with pytest.raises(ValueError, match="sign_count"):
@@ -182,3 +190,25 @@ class TestInMemoryVerifyAuthenticationResponse:
                 stored_public_key=b"key",
                 stored_sign_count=5,
             )
+
+    def test_accepts_sign_count_zero_when_stored_is_also_zero(self) -> None:
+        # Authenticators that don't support counters report 0 forever.
+        # py_webauthn accepts 0/0; the in-memory fake mirrors that so a
+        # counter-less authenticator can log in successfully.
+        verifier = InMemoryWebauthnVerifier(relying_party_id="localhost")
+        cred = webauthn_credential_id("cred-no-counter")
+        options = verifier.generate_authentication_options(allow_credentials=(cred,))
+        response = AuthenticationResponse(
+            credential_id=cred,
+            client_data_json=encode_inmemory_client_data_json(options.challenge),
+            authenticator_data=b"fake-auth-data",
+            signature=b"fake-signature",
+            new_sign_count=0,
+        )
+        verified = verifier.verify_authentication_response(
+            options=options,
+            response=response,
+            stored_public_key=b"key",
+            stored_sign_count=0,
+        )
+        assert verified.new_sign_count == 0
