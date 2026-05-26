@@ -20,6 +20,12 @@ module currently composes:
   A ``schedule_cache_subscriber`` background task is also registered on
   the supervisor to keep the schedule cache warm from
   ``pipeline:next_trigger_changed`` events.
+* ``/api/views/history/*`` — the run history list + failure-log preset
+  (story 05c / ALP-673) via
+  :func:`alphamind.command_center.views.history.build_history_router`.
+* ``/api/views/activity-log`` — the activity log explorer (story 05e /
+  ALP-675) via
+  :func:`alphamind.command_center.views.activity_log.build_activity_log_router`.
 * ``/`` static mount — serves the Vite-built SPA bundle from
   ``config.frontend.dist_path`` (story 04c). Mounted LAST so
   ``/api/*`` routes match first; skipped in dev mode (when
@@ -29,7 +35,7 @@ module currently composes:
 Documented include points for future stories:
 
 * Story 05a (alerts) — ``app.include_router(alerts_router, prefix="/api/alerts")``.
-* View stories (05d-05j, 06a-06c) — included under ``/api/views/...``.
+* View stories (05d, 05f-05j, 06a-06c) — included under ``/api/views/...``.
 * Story 05d (per-invocation detail) will extend ``/api/views/history``.
 
 Per the parent-issue architectural invariants:
@@ -105,6 +111,7 @@ from alphamind.command_center.persistence.session import (
     build_foreign_reader_session_factory,
 )
 from alphamind.command_center.session import ProcessSession
+from alphamind.command_center.views.activity_log import build_activity_log_router
 from alphamind.command_center.views.history import build_history_router
 from alphamind.command_center.views.live_operations import (
     build_views_router,
@@ -626,6 +633,9 @@ def build_app(
     # /api/views/history.  Story 05d will add per-invocation detail
     # endpoints to a sibling router included at the same prefix.
     app.include_router(build_history_router(), prefix="/api/views/history")
+
+    # Mount the activity-log view router (story 05e / ALP-675).
+    app.include_router(build_activity_log_router(), prefix="/api/views/activity-log")
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
