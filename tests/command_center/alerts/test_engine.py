@@ -340,6 +340,53 @@ class TestDebounce:
         active = await list_active(cc_writer_factory, now=fixed_clock())
         assert len(active) == 2
 
+    @pytest.mark.asyncio
+    async def test_debounce_table_prunes_expired_entries(
+        self,
+        cc_writer_factory: async_sessionmaker[AsyncSession],
+        fixed_clock: Any,
+    ) -> None:
+        """Regression for finding #10 (Wave-5 review).
+
+        Each distinct ``(rule_name, debounce_key)`` previously inserted
+        a permanent entry into ``self._debounce``; with per-invocation
+        debounce keys (e.g. PipelineAbortedCondition keyed by
+        ``invocation_id``) the table grew monotonically. The engine now
+        opportunistically evicts entries whose debounce window has
+        elapsed; we drive ten distinct keys through one rule and assert
+        the table contains exactly the most-recent live entry once the
+        window passes.
+        """
+        cond = _AlwaysFiresCondition(debounce_key="initial")
+        rule = AlertRule(
+            name=alert_rule_name("pipeline_aborted"),
+            severity=AlertSeverity.CRITICAL,
+            debounce_window=timedelta(minutes=5),
+            channels=("in_app",),
+            condition=cond,
+        )
+        engine = AlertEngine(
+            rules=[rule],
+            multiplexer=EventMultiplexer(),
+            cc_writer_factory=cc_writer_factory,
+            discord_channel=FakeDiscordChannel(),
+            clock=fixed_clock,
+        )
+        # Fire ten distinct keys.
+        for i in range(10):
+            cond.debounce_key = f"invocation-{i}"
+            await engine.evaluate_once()
+            fixed_clock.advance(timedelta(seconds=1))
+        # All ten are still inside the 5-min debounce window.
+        assert len(engine._debounce) == 10
+        # Jump past the window and fire one more key — pruning evicts
+        # the nine stale entries; the new fire writes one entry.
+        fixed_clock.advance(timedelta(minutes=10))
+        cond.debounce_key = "invocation-final"
+        await engine.evaluate_once()
+        keys_remaining = list(engine._debounce.keys())
+        assert keys_remaining == [(rule.name, "invocation-final")]
+
 
 # ---------------------------------------------------------------------------
 # Per-rule isolation.

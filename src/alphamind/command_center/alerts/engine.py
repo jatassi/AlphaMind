@@ -153,7 +153,21 @@ class AlertEngine:
         self._poll_interval = poll_interval_seconds
         self._deep_link_template = deep_link_template
         self._clock = clock if clock is not None else _default_clock
+        # Two TaskGroup tasks (event consumer + state poller) drive
+        # :meth:`_evaluate_one` concurrently. The debounce table's
+        # check-and-write must be atomic against the other task — without
+        # the lock both tasks could suspend at ``await rule.condition.evaluate``,
+        # then race past the debounce guard and double-fire. The lock
+        # only covers the read+check+write critical section; the actual
+        # dispatch (Discord post / SSE publish) is intentionally held
+        # outside so its latency doesn't serialize other rules.
         self._debounce: dict[tuple[AlertRuleName, str], _DebounceEntry] = {}
+        self._debounce_lock = asyncio.Lock()
+        # Track the per-rule debounce window so eviction is parameterised
+        # without re-scanning the rules tuple on every call.
+        self._debounce_windows: dict[AlertRuleName, timedelta] = {
+            rule.name: rule.debounce_window for rule in self._rules
+        }
         self._stop_event: asyncio.Event | None = None
 
     @property
@@ -297,16 +311,27 @@ class AlertEngine:
         if not result.fired:
             return EvaluationOutcome(rule_name=rule.name, fired=False)
         key = (rule.name, result.debounce_key)
-        last = self._debounce.get(key)
-        if last is not None and (now - last.last_fired_at) < rule.debounce_window:
-            return EvaluationOutcome(
-                rule_name=rule.name,
-                fired=True,
-                debounce_key=result.debounce_key,
-                suppressed_by_debounce=True,
-                context=result.context,
-            )
-        self._debounce[key] = _DebounceEntry(last_fired_at=now)
+        async with self._debounce_lock:
+            # Opportunistic eviction — drop expired entries belonging to
+            # this rule so PipelineAbortedCondition (one entry per
+            # invocation_id) doesn't grow without bound. Bounding the
+            # walk to entries with the same rule name keeps the lock
+            # critical section O(distinct debounce keys for this rule).
+            self._prune_expired_for_rule(rule_name=rule.name, now=now)
+            last = self._debounce.get(key)
+            if last is not None and (now - last.last_fired_at) < rule.debounce_window:
+                return EvaluationOutcome(
+                    rule_name=rule.name,
+                    fired=True,
+                    debounce_key=result.debounce_key,
+                    suppressed_by_debounce=True,
+                    context=result.context,
+                )
+            self._debounce[key] = _DebounceEntry(last_fired_at=now)
+        # Dispatch outside the lock — Discord posts and SSE publishes
+        # can race safely on the multiplexer / httpx client; serializing
+        # them under the debounce lock would back-pressure unrelated
+        # rules.
         new_id = await self._persist_and_dispatch(rule, result=result, now=now)
         return EvaluationOutcome(
             rule_name=rule.name,
@@ -315,6 +340,31 @@ class AlertEngine:
             alert_id_=new_id,
             context=result.context,
         )
+
+    def _prune_expired_for_rule(
+        self,
+        *,
+        rule_name: AlertRuleName,
+        now: datetime,
+    ) -> None:
+        """Drop debounce entries for *rule_name* whose window has passed.
+
+        Caller holds :attr:`_debounce_lock`. The walk is restricted to
+        entries belonging to one rule per call so the critical section
+        stays bounded — PipelineAbortedCondition's per-invocation
+        debounce key (one entry per ~200 invocations/day across 17 rules)
+        would otherwise accumulate monotonically.
+        """
+        window = self._debounce_windows.get(rule_name)
+        if window is None:
+            return
+        expired: list[tuple[AlertRuleName, str]] = [
+            key
+            for key, entry in self._debounce.items()
+            if key[0] == rule_name and (now - entry.last_fired_at) >= window
+        ]
+        for key in expired:
+            del self._debounce[key]
 
     async def _persist_and_dispatch(
         self,
