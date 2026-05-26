@@ -58,7 +58,7 @@ def per_test_config_dir(tmp_path: Path) -> Path:
   host: "127.0.0.1"
   port: 8080
 db:
-  alphamind_db_path: "{db}"
+  alphamind_db_path: '{db}'
 frontend:
   dist_path: "src/alphamind/command_center/frontend/dist"
 pipeline:

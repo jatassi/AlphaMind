@@ -187,7 +187,7 @@ def configs(tmp_path: Path, seeded_db: Path) -> tuple[Path, Path]:
   host: "127.0.0.1"
   port: 8080
 db:
-  alphamind_db_path: "{seeded_db}"
+  alphamind_db_path: '{seeded_db}'
 frontend:
   dist_path: "{tmp_path}/dist-does-not-exist"
 pipeline:

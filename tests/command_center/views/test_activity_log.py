@@ -56,7 +56,7 @@ def _make_config_dir(tmp_path: pathlib.Path) -> pathlib.Path:
   host: "127.0.0.1"
   port: 8080
 db:
-  alphamind_db_path: "{db}"
+  alphamind_db_path: '{db}'
 frontend:
   dist_path: "{tmp_path}/dist-does-not-exist"
 pipeline:
@@ -549,7 +549,7 @@ def _patch_db_path(config_dir: pathlib.Path, db_path: pathlib.Path) -> None:
     text = cc_yaml.read_text(encoding="utf-8")
     import re
 
-    text = re.sub(r"alphamind_db_path:.*", f'alphamind_db_path: "{db_path}"', text)
+    text = re.sub(r"alphamind_db_path:.*", f"alphamind_db_path: '{db_path}'", text)
     cc_yaml.write_text(text, encoding="utf-8")
 
 

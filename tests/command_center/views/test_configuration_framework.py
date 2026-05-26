@@ -538,7 +538,7 @@ class TestPutEndpoint:
             '  host: "127.0.0.1"\n'
             "  port: 8080\n"
             "db:\n"
-            f'  alphamind_db_path: "{db_path}"\n'
+            f"  alphamind_db_path: '{db_path}'\n"
             "frontend:\n"
             '  dist_path: "dist"\n'
             "pipeline:\n"

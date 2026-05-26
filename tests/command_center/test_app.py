@@ -52,7 +52,7 @@ def configs(tmp_path: Path) -> tuple[Path, Path]:
   host: "127.0.0.1"
   port: 8080
 db:
-  alphamind_db_path: "{db}"
+  alphamind_db_path: '{db}'
 frontend:
   dist_path: "{tmp_path}/dist-does-not-exist"
 pipeline:
@@ -327,7 +327,7 @@ def configs_with_dist(tmp_path: Path) -> Path:
   host: "127.0.0.1"
   port: 8080
 db:
-  alphamind_db_path: "{db}"
+  alphamind_db_path: '{db}'
 frontend:
   dist_path: "{dist}"
 pipeline:
