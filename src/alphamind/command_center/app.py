@@ -3,10 +3,10 @@
 This is the composition root for the command-center FastAPI app —
 the only module that wires routers, lifespan, and dependencies. Every
 downstream story includes its routers here via ``app.include_router(...)``;
-this story ships an empty router list with documented include points
-for the future stories:
+story 03 wires the auth router, with documented include points for the
+remaining stories:
 
-* Story 03 (WebAuthn + sessions + CSRF) — ``app.include_router(auth_router)``.
+* Story 03 (WebAuthn + sessions + CSRF) — auth router included here.
 * Story 04a (``/api/control/*`` proxy + audit) —
   ``app.include_router(control_router, prefix="/api/control")``.
 * Story 04b (``/api/events`` SSE multiplexer) —
@@ -17,8 +17,9 @@ for the future stories:
 * Story 05a (alerts) — ``app.include_router(alerts_router, prefix="/api/alerts")``.
 * View stories (05b-05j, 06a-06c) — included under ``/api/views/...``.
 
-This story ships only the ``/healthz`` route — a trivial liveness probe
-the operator script + NSSM service-restart logic poll against.
+This story ships ``/healthz`` (a trivial liveness probe) and the
+``/auth/*`` router with five endpoints (register begin/complete, login
+begin/complete, logout).
 
 Per the parent-issue architectural invariants:
 
@@ -42,12 +43,22 @@ Per the parent-issue architectural invariants:
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
+import os
+import secrets
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind.command_center.auth.routes import build_auth_router
+from alphamind.command_center.auth.setup_token import SetupTokenGate
+from alphamind.command_center.auth.webauthn import (
+    RealWebauthnVerifier,
+    WebauthnVerifier,
+)
 from alphamind.command_center.config import (
     AlertsConfig,
     CommandCenterConfig,
@@ -58,9 +69,106 @@ from alphamind.command_center.persistence.session import (
     build_foreign_reader_session_factory,
 )
 
-__all__ = ["build_app"]
+__all__ = ["AuthOverrides", "build_app"]
+
+
+@dataclass(frozen=True, slots=True)
+class AuthOverrides:
+    """Test-time / deploy-time overrides for the auth surface (story 03).
+
+    Bundles the optional auth collaborators so ``build_app`` keeps a
+    small parameter list. Production callers leave every field at its
+    default; tests pass ``InMemoryWebauthnVerifier`` + a fixed signing
+    secret + a frozen clock to make the auth flow deterministic.
+
+    Fields:
+
+    * ``webauthn_verifier``: override for the WebAuthn relying-party
+      surface. Defaults to :class:`RealWebauthnVerifier` constructed
+      from :class:`SecurityConfig.webauthn`.
+    * ``setup_token_gate``: override for the first-launch enrollment
+      gate. Defaults to a fresh :class:`SetupTokenGate`.
+    * ``session_signing_secret``: override for the session-cookie
+      signing secret. Defaults to
+      ``os.environ[COMMAND_CENTER_SESSION_SECRET]`` decoded as UTF-8
+      bytes, or a fresh random secret if the env var is absent.
+    * ``cookies_secure``: set the ``Secure`` flag on issued cookies.
+      Defaults to ``False`` for v1 loopback (HTTPS-only flag).
+    * ``clock``: optional callable returning the current UTC datetime.
+      Used by auth dependencies for session-expiry checks. Defaults to
+      ``lambda: datetime.now(UTC)``.
+    """
+
+    webauthn_verifier: WebauthnVerifier | None = None
+    setup_token_gate: SetupTokenGate | None = None
+    session_signing_secret: bytes | None = None
+    cookies_secure: bool = False
+    clock: Callable[[], datetime] | None = field(default=None)
+
+
+_SESSION_SECRET_ENV = "COMMAND_CENTER_SESSION_SECRET"
+"""Env var carrying the session-cookie signing secret.
+
+Loaded once at lifespan startup so the per-process secret is stable
+for the daemon's lifetime. Production daemons set this in ``.env`` /
+NSSM service env vars; tests pass an explicit secret via the
+``session_signing_secret_override`` ``build_app`` parameter.
+
+Absent the env var, the daemon mints a fresh random secret per boot —
+acceptable for the loopback-only v1 deployment (operators re-authenticate
+after each restart, which is consistent with the design's "no remember me
+beyond the session lifetime"). The env-var pin is recommended once the
+remote-access follow-on lands so a restart doesn't bounce every active
+session.
+"""
 
 log = logging.getLogger(__name__)
+
+
+def _resolve_session_secret(overrides: AuthOverrides) -> bytes:
+    """Resolve the session-cookie signing secret.
+
+    Precedence: explicit override → ``COMMAND_CENTER_SESSION_SECRET``
+    env var → fresh random per-boot. The third path logs a warning
+    because operators who want sessions to survive restarts must set
+    the env var.
+    """
+    if overrides.session_signing_secret is not None:
+        return overrides.session_signing_secret
+    env_secret = os.environ.get(_SESSION_SECRET_ENV)
+    if env_secret:
+        return env_secret.encode("utf-8")
+    log.warning(
+        "command_center: %s not set; minted fresh per-boot session secret. "
+        "Active sessions will not survive a daemon restart. Set the env "
+        "var in production to persist sessions across restarts.",
+        _SESSION_SECRET_ENV,
+    )
+    return secrets.token_bytes(32)
+
+
+def _resolve_webauthn_verifier(
+    overrides: AuthOverrides,
+    *,
+    command_center_config: CommandCenterConfig,
+    security_config: SecurityConfig,
+) -> WebauthnVerifier:
+    """Resolve the WebAuthn relying-party verifier.
+
+    Falls back to :class:`RealWebauthnVerifier` constructed against the
+    loopback origin (host:port from the cc config + RP id from
+    security config). The remote-access follow-on switches the origin
+    via :class:`SecurityConfig.webauthn` edits.
+    """
+    if overrides.webauthn_verifier is not None:
+        return overrides.webauthn_verifier
+    port = command_center_config.bind.port
+    expected_origin = f"http://{security_config.webauthn.relying_party_id}:{port}"
+    return RealWebauthnVerifier(
+        relying_party_id=security_config.webauthn.relying_party_id,
+        relying_party_name=security_config.webauthn.relying_party_name,
+        expected_origin=expected_origin,
+    )
 
 
 @asynccontextmanager
@@ -127,6 +235,7 @@ def build_app(
     security_config: SecurityConfig,
     alerts_config: AlertsConfig,
     production_session_factory: async_sessionmaker[AsyncSession] | None = None,
+    auth_overrides: AuthOverrides | None = None,
 ) -> FastAPI:
     """Construct the FastAPI app composition root.
 
@@ -158,7 +267,16 @@ def build_app(
         operator-action bridge; production callers (``__main__``) always
         thread it in. The lifespan does NOT own the engine's lifetime;
         ``engine_pair_context`` in the composition root does.
+    auth_overrides:
+        Optional :class:`AuthOverrides` bundle for test / deploy-time
+        injection of the auth collaborators (WebAuthn verifier, setup-
+        token gate, session signing secret, cookie ``Secure`` flag,
+        clock). Production callers leave this ``None``; tests pass an
+        :class:`InMemoryWebauthnVerifier` + fixed signing secret +
+        frozen clock to make the auth flow deterministic. See
+        :class:`AuthOverrides` for the per-field semantics.
     """
+    overrides = auth_overrides if auth_overrides is not None else AuthOverrides()
     app = FastAPI(
         title="AlphaMind command center",
         description=(
@@ -172,6 +290,23 @@ def build_app(
     app.state.security_config = security_config
     app.state.alerts_config = alerts_config
     app.state.production_session_factory = production_session_factory
+
+    # Auth-state wiring (story 03 / ALP-667). The cc_writer +
+    # foreign_reader factories are wired by the lifespan (above); the
+    # auth surface needs additional collaborators that don't depend on
+    # the engines and so can be wired here.
+    app.state.session_signing_secret = _resolve_session_secret(overrides)
+    app.state.webauthn_verifier = _resolve_webauthn_verifier(
+        overrides, command_center_config=command_center_config, security_config=security_config
+    )
+    app.state.setup_token_gate = overrides.setup_token_gate or SetupTokenGate()
+    app.state.cookies_secure = overrides.cookies_secure
+    app.state.clock = (
+        overrides.clock if overrides.clock is not None else (lambda: datetime.now(UTC))
+    )
+
+    # Mount the auth router (story 03 / ALP-667).
+    app.include_router(build_auth_router())
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

@@ -16,9 +16,9 @@ from __future__ import annotations
 import pytest
 
 from alphamind.command_center.auth.setup_token import (
-    SetupTokenAlreadyConsumed,
+    SetupTokenAlreadyConsumedError,
     SetupTokenGate,
-    SetupTokenMismatch,
+    SetupTokenMismatchError,
 )
 
 
@@ -44,14 +44,14 @@ class TestSetupTokenGateLifecycle:
     def test_consume_with_wrong_token_raises_mismatch(self) -> None:
         gate = SetupTokenGate()
         gate.mint()
-        with pytest.raises(SetupTokenMismatch):
+        with pytest.raises(SetupTokenMismatchError):
             gate.consume("wrong-token")
 
     def test_consume_twice_raises_already_consumed(self) -> None:
         gate = SetupTokenGate()
         token = gate.mint()
         gate.consume(token)
-        with pytest.raises(SetupTokenAlreadyConsumed):
+        with pytest.raises(SetupTokenAlreadyConsumedError):
             gate.consume(token)
 
     def test_is_consumed_starts_false(self) -> None:
@@ -67,5 +67,5 @@ class TestSetupTokenGateLifecycle:
         gate = SetupTokenGate()
         token = gate.mint()
         gate.consume(token)
-        with pytest.raises(SetupTokenAlreadyConsumed):
+        with pytest.raises(SetupTokenAlreadyConsumedError):
             gate.mint()

@@ -47,7 +47,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from alphamind.command_center._kernel.ids import (
     OperatorSessionId,
-    WebauthnCredentialId,
     operator_session_id,
     webauthn_credential_id,
 )
@@ -56,7 +55,6 @@ from alphamind.command_center.auth.dependencies import (
     current_session,
 )
 from alphamind.command_center.auth.repository import (
-    count_credentials,
     insert_credential,
     insert_session,
     list_credentials,
@@ -71,8 +69,8 @@ from alphamind.command_center.auth.sessions import (
     mint_csrf_token,
 )
 from alphamind.command_center.auth.setup_token import (
-    SetupTokenAlreadyConsumed,
-    SetupTokenMismatch,
+    SetupTokenAlreadyConsumedError,
+    SetupTokenMismatchError,
 )
 from alphamind.command_center.auth.webauthn import (
     AuthenticationOptions,
@@ -119,9 +117,7 @@ class _ChallengeStore:
         self._registration: dict[str, tuple[bytes, bytes]] = {}
         self._authentication: dict[str, bytes] = {}
 
-    def stash_registration(
-        self, *, token: str, challenge: bytes, user_id: bytes
-    ) -> None:
+    def stash_registration(self, *, token: str, challenge: bytes, user_id: bytes) -> None:
         self._registration[token] = (challenge, user_id)
 
     def pop_registration(self, token: str) -> tuple[bytes, bytes] | None:
@@ -236,7 +232,6 @@ def _issue_session_cookies(
     *,
     response: Response,
     request: Request,
-    credential_id: WebauthnCredentialId,
 ) -> tuple[OperatorSessionId, str, str]:
     """Create + persist a fresh operator session; set cookies; return facts.
 
@@ -250,9 +245,7 @@ def _issue_session_cookies(
     duration_hours = request.app.state.security_config.session.duration_hours
     from datetime import timedelta
 
-    expires_at = format_expires_at(
-        now=now, duration=timedelta(hours=duration_hours)
-    )
+    expires_at = format_expires_at(now=now, duration=timedelta(hours=duration_hours))
     session_id_str = secrets.token_urlsafe(32)
     sid = operator_session_id(session_id_str)
     csrf_token = mint_csrf_token()
@@ -261,9 +254,7 @@ def _issue_session_cookies(
         secret=request.app.state.session_signing_secret,
     )
     cookies_secure = bool(getattr(request.app.state, "cookies_secure", False))
-    session_cookie_name = (
-        request.app.state.security_config.session.cookie_name
-    )
+    session_cookie_name = request.app.state.security_config.session.cookie_name
     csrf_cookie_name = request.app.state.security_config.csrf.cookie_name
     response.set_cookie(
         session_cookie_name,
@@ -289,11 +280,22 @@ def _issue_session_cookies(
 # ---------------------------------------------------------------------------
 
 
-def build_auth_router() -> APIRouter:
+def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes grouped intentionally
     """Build the ``/auth/*`` router.
 
     Returned to the FastAPI composition root for ``app.include_router``;
     the test harness mounts it on a minimal app instead.
+
+    Implementation note: the five route handlers are inner functions so
+    they can close over the router instance and share the request /
+    response shapes. The cyclomatic-complexity and statement-count lint
+    rules are suppressed at the function level because the route bodies
+    are flat (each one is one ceremony), grouped for discoverability
+    (begin + complete + login + logout next to each other), and refactor
+    requirements (e.g. inlined Pydantic boundaries) actually demand the
+    flat layout. If a single route grows complex enough to want its own
+    extraction, do it then — premature extraction would split the
+    boundary across files for no comprehension win.
     """
     router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -322,7 +324,7 @@ def build_auth_router() -> APIRouter:
                 )
             try:
                 gate.consume(body.setup_token)
-            except (SetupTokenMismatch, SetupTokenAlreadyConsumed) as exc:
+            except (SetupTokenMismatchError, SetupTokenAlreadyConsumedError) as exc:
                 log.warning("register_begin: setup token rejected: %s", exc)
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -417,7 +419,6 @@ def build_auth_router() -> APIRouter:
         sid, expires_at, csrf_token = _issue_session_cookies(
             response=response,
             request=request,
-            credential_id=verified.credential_id,
         )
         await insert_session(
             cc_factory,
@@ -516,7 +517,6 @@ def build_auth_router() -> APIRouter:
         sid, expires_at, csrf_token = _issue_session_cookies(
             response=response,
             request=request,
-            credential_id=verified.credential_id,
         )
         await insert_session(
             cc_factory,
@@ -542,20 +542,15 @@ def build_auth_router() -> APIRouter:
     )
     async def logout(
         request: Request,
-        response: Response,
         sid: Annotated[OperatorSessionId, Depends(current_session)],
     ) -> Response:
         from alphamind.command_center.auth.repository import delete_session
 
         cc_factory = request.app.state.cc_writer_session_factory
         await delete_session(cc_factory, session_id=sid)
-        session_cookie_name = (
-            request.app.state.security_config.session.cookie_name
-        )
+        session_cookie_name = request.app.state.security_config.session.cookie_name
         csrf_cookie_name = request.app.state.security_config.csrf.cookie_name
-        # Construct the 204 response and set the delete-cookie headers on
-        # *it* (not on the injected ``response`` — that one is only used
-        # for headers when FastAPI's default JSON response is returned).
+        # 204 with explicit ``Set-Cookie`` headers that clear both cookies.
         out = Response(status_code=status.HTTP_204_NO_CONTENT)
         out.delete_cookie(session_cookie_name)
         out.delete_cookie(csrf_cookie_name)

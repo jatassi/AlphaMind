@@ -48,7 +48,7 @@ from alphamind.command_center._kernel.ids import (
 )
 
 __all__ = [
-    "InvalidSessionCookie",
+    "InvalidSessionCookieError",
     "SessionCookiePayload",
     "decode_session_cookie",
     "encode_session_cookie",
@@ -68,7 +68,7 @@ _ISO_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 # ---------------------------------------------------------------------------
 
 
-class InvalidSessionCookie(Exception):
+class InvalidSessionCookieError(Exception):
     """Raised when :func:`decode_session_cookie` rejects a presented cookie.
 
     Reasons: malformed shape (no separator / non-base64url segments),
@@ -119,7 +119,7 @@ def encode_session_cookie(payload: SessionCookiePayload, *, secret: bytes) -> st
 def decode_session_cookie(cookie: str, *, secret: bytes) -> SessionCookiePayload:
     """Decode a signed cookie value back to a :class:`SessionCookiePayload`.
 
-    Raises :class:`InvalidSessionCookie` on any rejection condition:
+    Raises :class:`InvalidSessionCookieError` on any rejection condition:
     missing separator, base64url decode failure, signature mismatch,
     JSON decode failure, missing payload fields.
 
@@ -127,35 +127,33 @@ def decode_session_cookie(cookie: str, *, secret: bytes) -> SessionCookiePayload
     so timing-attack measurements don't yield the signature.
     """
     if not cookie or "." not in cookie:
-        raise InvalidSessionCookie("malformed cookie — missing separator")
+        raise InvalidSessionCookieError("malformed cookie — missing separator")
     body_b64, sig_b64 = cookie.split(".", maxsplit=1)
     try:
         body = _b64url_decode(body_b64)
         presented_sig = _b64url_decode(sig_b64)
     except ValueError as exc:
-        raise InvalidSessionCookie("malformed cookie — invalid base64url") from exc
+        raise InvalidSessionCookieError("malformed cookie — invalid base64url") from exc
     expected_sig = hmac.new(secret, body_b64.encode("ascii"), hashlib.sha256).digest()
     if not hmac.compare_digest(presented_sig, expected_sig):
-        raise InvalidSessionCookie("signature mismatch")
+        raise InvalidSessionCookieError("signature mismatch")
     try:
         data = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise InvalidSessionCookie("malformed cookie — invalid body JSON") from exc
+        raise InvalidSessionCookieError("malformed cookie — invalid body JSON") from exc
     if not isinstance(data, dict):
-        raise InvalidSessionCookie("malformed cookie — body is not a JSON object")
+        raise InvalidSessionCookieError("malformed cookie — body is not a JSON object")
     sid = data.get("session_id")
     exp = data.get("expires_at")
     if not isinstance(sid, str) or not isinstance(exp, str):
-        raise InvalidSessionCookie(
-            "malformed cookie — body missing session_id / expires_at"
-        )
+        raise InvalidSessionCookieError("malformed cookie — body missing session_id / expires_at")
     try:
         return SessionCookiePayload(
             session_id=operator_session_id(sid),
             expires_at=exp,
         )
     except ValueError as exc:
-        raise InvalidSessionCookie("malformed cookie — invalid session_id") from exc
+        raise InvalidSessionCookieError("malformed cookie — invalid session_id") from exc
 
 
 # ---------------------------------------------------------------------------

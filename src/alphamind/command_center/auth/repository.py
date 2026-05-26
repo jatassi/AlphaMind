@@ -73,8 +73,7 @@ async def list_credentials(
     async with factory() as session:
         rows = await session.execute(select(WebauthnCredentialRow))
         return [
-            webauthn_credential_record_from_row(row).credential_id
-            for row in rows.scalars().all()
+            webauthn_credential_record_from_row(row).credential_id for row in rows.scalars().all()
         ]
 
 

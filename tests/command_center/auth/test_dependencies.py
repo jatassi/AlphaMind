@@ -14,10 +14,8 @@ direct cookie manipulation through ``TestClient.cookies``.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Annotated
 
-import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -45,7 +43,6 @@ from alphamind.command_center.persistence.codecs import (
     OperatorSessionRecord,
     WebauthnCredentialRecord,
 )
-
 from tests.command_center.auth.conftest import FrozenClock
 
 _SECRET = b"test-secret-key-32-bytes-long!!!!"
@@ -123,9 +120,7 @@ class TestCurrentSession:
         assert response.status_code == 200
         assert response.json() == {"session_id": "sess-1"}
 
-    async def test_returns_401_when_cookie_absent(
-        self, auth_app: FastAPI
-    ) -> None:
+    async def test_returns_401_when_cookie_absent(self, auth_app: FastAPI) -> None:
         _attach_protected_route(auth_app)
         with TestClient(auth_app) as client:
             response = client.get("/probe/whoami")
@@ -229,9 +224,7 @@ class TestCsrfRequired:
         with TestClient(auth_app) as client:
             client.cookies.set("cc_session", cookie)
             client.cookies.set("cc_csrf", csrf)
-            response = client.post(
-                "/probe/mutate", headers={"X-CSRF-Token": csrf}
-            )
+            response = client.post("/probe/mutate", headers={"X-CSRF-Token": csrf})
         assert response.status_code == 200
 
     async def test_returns_403_when_header_absent(
@@ -283,9 +276,7 @@ class TestCsrfRequired:
         with TestClient(auth_app) as client:
             client.cookies.set("cc_session", cookie)
             client.cookies.set("cc_csrf", csrf)
-            response = client.post(
-                "/probe/mutate", headers={"X-CSRF-Token": "wrong-token"}
-            )
+            response = client.post("/probe/mutate", headers={"X-CSRF-Token": "wrong-token"})
         assert response.status_code == 403
 
     async def test_returns_403_when_cookie_absent(
@@ -313,7 +304,5 @@ class TestCsrfRequired:
         with TestClient(auth_app) as client:
             client.cookies.set("cc_session", cookie)
             # cc_csrf cookie absent.
-            response = client.post(
-                "/probe/mutate", headers={"X-CSRF-Token": csrf}
-            )
+            response = client.post("/probe/mutate", headers={"X-CSRF-Token": csrf})
         assert response.status_code == 403

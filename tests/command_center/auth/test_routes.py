@@ -30,9 +30,6 @@ from alphamind.command_center.auth.repository import (
     load_session,
 )
 from alphamind.command_center.auth.setup_token import SetupTokenGate
-from alphamind.command_center.auth.webauthn import WebauthnVerifier
-
-from tests.command_center.auth.conftest import FrozenClock
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -51,7 +48,8 @@ def _post_register_begin(
     if setup_token is not None:
         payload["setup_token"] = setup_token
     response = client.post("/auth/register/begin", json=payload)
-    return {"status_code": response.status_code, "body": response.json() if response.content else None}
+    body = response.json() if response.content else None
+    return {"status_code": response.status_code, "body": body}
 
 
 def _complete_registration(
@@ -106,9 +104,7 @@ class TestRegistrationRoundtrip:
                 "/auth/register/begin",
                 json={"setup_token": token, "user_name": "operator"},
             ).json()
-            complete = _complete_registration(
-                client, begin=begin, credential_id="cred-roundtrip-1"
-            )
+            complete = _complete_registration(client, begin=begin, credential_id="cred-roundtrip-1")
         assert complete.status_code == 200
         body = complete.json()
         assert body["credential_id"] == "cred-roundtrip-1"
@@ -134,9 +130,7 @@ class TestRegistrationRoundtrip:
                 "/auth/register/begin",
                 json={"setup_token": token, "user_name": "operator"},
             ).json()
-            response = _complete_registration(
-                client, begin=begin, credential_id="cred-cookies"
-            )
+            response = _complete_registration(client, begin=begin, credential_id="cred-cookies")
         # FastAPI's TestClient surfaces Set-Cookie via response.headers.
         set_cookies = response.headers.get_list("set-cookie")
         joined = "; ".join(set_cookies).lower()
@@ -158,9 +152,7 @@ class TestSetupTokenGating:
         auth_app: FastAPI,
     ) -> None:
         with TestClient(auth_app) as client:
-            response = client.post(
-                "/auth/register/begin", json={"user_name": "operator"}
-            )
+            response = client.post("/auth/register/begin", json={"user_name": "operator"})
         assert response.status_code == 403
 
     async def test_setup_token_consumed_once(
@@ -179,9 +171,7 @@ class TestSetupTokenGating:
             )
             assert r1.status_code == 200
             begin = r1.json()
-            _complete_registration(
-                client, begin=begin, credential_id="cred-first"
-            )
+            _complete_registration(client, begin=begin, credential_id="cred-first")
             # Clear session cookies set by complete — we want to test
             # that a fresh client without session can NOT enroll.
             client.cookies.clear()
@@ -210,9 +200,7 @@ class TestSubsequentRegistrationRequiresSession:
                 "/auth/register/begin",
                 json={"setup_token": token, "user_name": "operator"},
             ).json()
-            _complete_registration(
-                client, begin=begin, credential_id="cred-A"
-            )
+            _complete_registration(client, begin=begin, credential_id="cred-A")
             # Now clear the just-issued session cookie.
             client.cookies.clear()
             r = client.post(
@@ -233,14 +221,10 @@ class TestSubsequentRegistrationRequiresSession:
                 "/auth/register/begin",
                 json={"setup_token": token, "user_name": "operator"},
             ).json()
-            _complete_registration(
-                client, begin=begin, credential_id="cred-first-of-two"
-            )
+            _complete_registration(client, begin=begin, credential_id="cred-first-of-two")
             # Now the session cookie is set. Subsequent register/begin
             # without a setup token should succeed.
-            r = client.post(
-                "/auth/register/begin", json={"user_name": "operator"}
-            )
+            r = client.post("/auth/register/begin", json={"user_name": "operator"})
         assert r.status_code == 200
 
 
@@ -258,9 +242,7 @@ class TestLoginRoundtrip:
                 "/auth/register/begin",
                 json={"setup_token": token, "user_name": "operator"},
             ).json()
-            _complete_registration(
-                client, begin=begin, credential_id="cred-login-1"
-            )
+            _complete_registration(client, begin=begin, credential_id="cred-login-1")
             client.cookies.clear()
             response = client.post("/auth/login/begin")
         assert response.status_code == 200
@@ -281,9 +263,7 @@ class TestLoginRoundtrip:
                 "/auth/register/begin",
                 json={"setup_token": token, "user_name": "operator"},
             ).json()
-            _complete_registration(
-                client, begin=begin_reg, credential_id="cred-login-2"
-            )
+            _complete_registration(client, begin=begin_reg, credential_id="cred-login-2")
             client.cookies.clear()
             begin_login = client.post("/auth/login/begin").json()
             response = client.post(
@@ -299,9 +279,7 @@ class TestLoginRoundtrip:
         body = response.json()
         from alphamind.command_center._kernel.ids import operator_session_id
 
-        loaded = await load_session(
-            cc_factory, session_id=operator_session_id(body["session_id"])
-        )
+        loaded = await load_session(cc_factory, session_id=operator_session_id(body["session_id"]))
         assert loaded is not None
         # Sign count bumped from 0 to 1 on the credential row.
         cred = await load_credential(
@@ -322,9 +300,7 @@ class TestLoginRoundtrip:
                 "/auth/register/begin",
                 json={"setup_token": token, "user_name": "operator"},
             ).json()
-            _complete_registration(
-                client, begin=begin_reg, credential_id="cred-login-3"
-            )
+            _complete_registration(client, begin=begin_reg, credential_id="cred-login-3")
             client.cookies.clear()
             begin_login = client.post("/auth/login/begin").json()
             response = client.post(
@@ -359,9 +335,7 @@ class TestLoginRoundtrip:
                 "/auth/register/begin",
                 json={"setup_token": token, "user_name": "operator"},
             ).json()
-            _complete_registration(
-                client, begin=begin_reg, credential_id="cred-secure"
-            )
+            _complete_registration(client, begin=begin_reg, credential_id="cred-secure")
         # The Set-Cookie from register/complete should include Secure.
         # Re-issue via login to confirm.
         with TestClient(auth_app) as client:
@@ -406,9 +380,7 @@ class TestLogout:
                 headers={"X-CSRF-Token": csrf_token},
             )
         assert response.status_code == 204
-        loaded = await load_session(
-            cc_factory, session_id=operator_session_id(sid)
-        )
+        loaded = await load_session(cc_factory, session_id=operator_session_id(sid))
         assert loaded is None
 
     async def test_logout_clears_cookies(
@@ -451,9 +423,7 @@ class TestLogout:
                 "/auth/register/begin",
                 json={"setup_token": token, "user_name": "operator"},
             ).json()
-            _complete_registration(
-                client, begin=begin_reg, credential_id="cred-no-csrf"
-            )
+            _complete_registration(client, begin=begin_reg, credential_id="cred-no-csrf")
             # No X-CSRF-Token header.
             response = client.post("/auth/logout")
         assert response.status_code == 403
@@ -466,9 +436,7 @@ class TestLogout:
             # CSRF check fires before current_session in some
             # framework orderings; either 401 or 403 is acceptable —
             # both refuse the operation.
-            response = client.post(
-                "/auth/logout", headers={"X-CSRF-Token": "anything"}
-            )
+            response = client.post("/auth/logout", headers={"X-CSRF-Token": "anything"})
         assert response.status_code in (401, 403)
 
 
@@ -485,7 +453,5 @@ class TestCredentialCountAfterEnrollment:
                 "/auth/register/begin",
                 json={"setup_token": token, "user_name": "operator"},
             ).json()
-            _complete_registration(
-                client, begin=begin, credential_id="cred-counted"
-            )
+            _complete_registration(client, begin=begin, credential_id="cred-counted")
         assert await count_credentials(cc_factory) == 1

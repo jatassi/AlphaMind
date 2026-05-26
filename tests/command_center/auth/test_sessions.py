@@ -20,7 +20,7 @@ import pytest
 
 from alphamind.command_center._kernel.ids import operator_session_id
 from alphamind.command_center.auth.sessions import (
-    InvalidSessionCookie,
+    InvalidSessionCookieError,
     SessionCookiePayload,
     decode_session_cookie,
     encode_session_cookie,
@@ -68,7 +68,7 @@ class TestDecodeSessionCookieRejection:
         body, sig = cookie.split(".")
         # Flip a character in the body; signature now no longer matches.
         tampered = body[:-1] + ("A" if body[-1] != "A" else "B") + "." + sig
-        with pytest.raises(InvalidSessionCookie):
+        with pytest.raises(InvalidSessionCookieError):
             decode_session_cookie(tampered, secret=_SECRET)
 
     def test_rejects_wrong_secret(self) -> None:
@@ -77,15 +77,15 @@ class TestDecodeSessionCookieRejection:
             expires_at="2026-05-26T12:00:00Z",
         )
         cookie = encode_session_cookie(payload, secret=_SECRET)
-        with pytest.raises(InvalidSessionCookie):
+        with pytest.raises(InvalidSessionCookieError):
             decode_session_cookie(cookie, secret=b"different-secret-32-bytes-long!!")
 
     def test_rejects_malformed_cookie(self) -> None:
-        with pytest.raises(InvalidSessionCookie):
+        with pytest.raises(InvalidSessionCookieError):
             decode_session_cookie("not-a-cookie", secret=_SECRET)
 
     def test_rejects_empty_cookie(self) -> None:
-        with pytest.raises(InvalidSessionCookie):
+        with pytest.raises(InvalidSessionCookieError):
             decode_session_cookie("", secret=_SECRET)
 
 

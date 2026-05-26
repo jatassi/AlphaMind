@@ -34,7 +34,7 @@ from fastapi import Cookie, Header, HTTPException, Request, status
 from alphamind.command_center._kernel.ids import OperatorSessionId
 from alphamind.command_center.auth.repository import load_session
 from alphamind.command_center.auth.sessions import (
-    InvalidSessionCookie,
+    InvalidSessionCookieError,
     decode_session_cookie,
     is_session_expired,
     verify_csrf_token,
@@ -81,13 +81,11 @@ async def current_session(
     """
     if cc_session is None:
         log.debug("current_session: no cc_session cookie presented")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_FAILED_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_FAILED_DETAIL)
     secret: bytes = request.app.state.session_signing_secret
     try:
         payload = decode_session_cookie(cc_session, secret=secret)
-    except InvalidSessionCookie as exc:
+    except InvalidSessionCookieError as exc:
         log.debug("current_session: cookie decode rejected: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_FAILED_DETAIL
@@ -95,9 +93,7 @@ async def current_session(
     now = request.app.state.clock()
     if is_session_expired(payload.expires_at, now=now):
         log.debug("current_session: session %s expired", payload.session_id)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_FAILED_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_FAILED_DETAIL)
     cc_factory = request.app.state.cc_writer_session_factory
     record = await load_session(cc_factory, session_id=payload.session_id)
     if record is None:
@@ -105,9 +101,7 @@ async def current_session(
             "current_session: session %s not in operator_sessions",
             payload.session_id,
         )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_FAILED_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_FAILED_DETAIL)
     return payload.session_id
 
 
@@ -132,34 +126,26 @@ async def csrf_required(
     """
     if cc_csrf is None or x_csrf_token is None:
         log.debug("csrf_required: cookie or header missing")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL)
     # Double-submit baseline: header must match cookie. Then verify
     # against the session row's stored hash so a leaked cookie from
     # another session can't be replayed.
     if cc_csrf != x_csrf_token:
         log.debug("csrf_required: header does not match cookie")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL)
     # Bind the CSRF check to the session row's stored hash. Pull the
     # session id off the validated session cookie if one is presented;
     # otherwise reject. (The route layer typically composes
     # ``current_session`` + ``csrf_required`` on the same endpoint, so
     # by the time we get here the session is already validated.)
-    cc_session = request.cookies.get(
-        request.app.state.security_config.session.cookie_name
-    )
+    cc_session = request.cookies.get(request.app.state.security_config.session.cookie_name)
     if cc_session is None:
         log.debug("csrf_required: session cookie absent")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL)
     secret: bytes = request.app.state.session_signing_secret
     try:
         payload = decode_session_cookie(cc_session, secret=secret)
-    except InvalidSessionCookie:
+    except InvalidSessionCookieError:
         log.debug("csrf_required: session cookie invalid")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL
@@ -168,11 +154,7 @@ async def csrf_required(
     session_record = await load_session(cc_factory, session_id=payload.session_id)
     if session_record is None:
         log.debug("csrf_required: session row missing for cookie")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL)
     if not verify_csrf_token(cc_csrf, stored_hash=session_record.csrf_token_hash):
         log.debug("csrf_required: token does not hash to stored value")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_CSRF_FAILED_DETAIL)

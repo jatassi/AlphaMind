@@ -253,6 +253,12 @@ class InMemoryWebauthnVerifier:
         stored_public_key: bytes,
         stored_sign_count: int,
     ) -> VerifiedAuthentication:
+        # ``stored_public_key`` is part of the Protocol surface because
+        # :class:`RealWebauthnVerifier` needs it for signature
+        # verification; the in-memory fake skips crypto entirely and
+        # asserts only the structural invariants (challenge match,
+        # credential in allow-list, sign-count increment).
+        del stored_public_key
         if response.client_data_challenge != options.challenge:
             msg = (
                 "authentication response challenge does not match options challenge — "
@@ -330,9 +336,7 @@ class RealWebauthnVerifier:
         )
 
         existing = [
-            PublicKeyCredentialDescriptor(
-                id=pywebauthn.base64url_to_bytes(cred)
-            )
+            PublicKeyCredentialDescriptor(id=pywebauthn.base64url_to_bytes(cred))
             for cred in existing_credentials
         ]
         options = pywebauthn.generate_registration_options(
@@ -366,9 +370,7 @@ class RealWebauthnVerifier:
             "id": response.credential_id,
             "rawId": response.credential_id,
             "response": {
-                "clientDataJSON": pywebauthn.base64url_to_bytes(
-                    response.credential_id
-                ),
+                "clientDataJSON": pywebauthn.base64url_to_bytes(response.credential_id),
             },
             "type": "public-key",
         }
@@ -394,9 +396,7 @@ class RealWebauthnVerifier:
         from webauthn.helpers.structs import PublicKeyCredentialDescriptor
 
         allow = [
-            PublicKeyCredentialDescriptor(
-                id=pywebauthn.base64url_to_bytes(cred)
-            )
+            PublicKeyCredentialDescriptor(id=pywebauthn.base64url_to_bytes(cred))
             for cred in allow_credentials
         ]
         options = pywebauthn.generate_authentication_options(

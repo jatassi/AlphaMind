@@ -68,17 +68,13 @@ class TestCredentialCrud:
             created_at="2026-05-26T00:00:00Z",
         )
         await insert_credential(cc_factory, record)
-        loaded = await load_credential(
-            cc_factory, credential_id=webauthn_credential_id("cred-a-1")
-        )
+        loaded = await load_credential(cc_factory, credential_id=webauthn_credential_id("cred-a-1"))
         assert loaded == record
 
     async def test_load_credential_returns_none_when_absent(
         self, cc_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        loaded = await load_credential(
-            cc_factory, credential_id=webauthn_credential_id("nope")
-        )
+        loaded = await load_credential(cc_factory, credential_id=webauthn_credential_id("nope"))
         assert loaded is None
 
     async def test_count_credentials_after_insert(
@@ -133,9 +129,7 @@ class TestCredentialCrud:
             credential_id=webauthn_credential_id("cred-sc"),
             new_sign_count=42,
         )
-        loaded = await load_credential(
-            cc_factory, credential_id=webauthn_credential_id("cred-sc")
-        )
+        loaded = await load_credential(cc_factory, credential_id=webauthn_credential_id("cred-sc"))
         assert loaded is not None
         assert loaded.sign_count == 42
 
@@ -163,17 +157,13 @@ class TestSessionCrud:
             created_at="2026-05-26T00:00:00Z",
         )
         await insert_session(cc_factory, sess)
-        loaded = await load_session(
-            cc_factory, session_id=operator_session_id("sess-1")
-        )
+        loaded = await load_session(cc_factory, session_id=operator_session_id("sess-1"))
         assert loaded == sess
 
     async def test_load_session_returns_none_when_absent(
         self, cc_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        loaded = await load_session(
-            cc_factory, session_id=operator_session_id("nope")
-        )
+        loaded = await load_session(cc_factory, session_id=operator_session_id("nope"))
         assert loaded is None
 
     async def test_delete_session_removes_row(
@@ -199,10 +189,6 @@ class TestSessionCrud:
                 created_at="2026-05-26T00:00:00Z",
             ),
         )
-        await delete_session(
-            cc_factory, session_id=operator_session_id("sess-d")
-        )
-        loaded = await load_session(
-            cc_factory, session_id=operator_session_id("sess-d")
-        )
+        await delete_session(cc_factory, session_id=operator_session_id("sess-d"))
+        loaded = await load_session(cc_factory, session_id=operator_session_id("sess-d"))
         assert loaded is None

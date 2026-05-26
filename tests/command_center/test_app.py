@@ -125,14 +125,15 @@ class TestLifespanWiresSessionFactories:
         assert app.state.production_session_factory is None
 
 
-class TestNoStory04PlusRoutesPresent:
-    """AC: 'No story-04+ surface exists in this story.'
+class TestRegisteredRoutes:
+    """Story 02 ships /healthz; story 03 (ALP-667) adds /auth/*.
 
-    Verifies the only registered route paths are ``/healthz`` plus the
-    framework-internal ``/openapi.json`` + ``/docs`` + ``/redoc``.
+    Asserts that only the routes belonging to story 02 + story 03 are
+    present at this point — stories 04a (control proxy) / 04b (SSE) /
+    05a (alerts) / 05b-05j / 06a-06c register their routers later.
     """
 
-    def test_only_healthz_plus_framework_routes(self, configs: tuple[Path, Path]) -> None:
+    def test_only_healthz_and_auth_routes_plus_framework(self, configs: tuple[Path, Path]) -> None:
         config_dir, _ = configs
         app = build_app(
             command_center_config=load_command_center_config(config_dir),
@@ -147,12 +148,23 @@ class TestNoStory04PlusRoutesPresent:
             "/docs/oauth2-redirect",
             "/redoc",
         }
-        own_routes = [
+        own_routes = sorted(
             route.path
             for route in app.routes
             if hasattr(route, "path") and route.path not in framework_paths
-        ]
-        assert own_routes == ["/healthz"], (
-            f"unexpected routes registered at story 02 — found {own_routes}; "
-            "stories 03 / 04a / 04b / 05a register their routers later."
+        )
+        expected = sorted(
+            [
+                "/healthz",
+                "/auth/register/begin",
+                "/auth/register/complete",
+                "/auth/login/begin",
+                "/auth/login/complete",
+                "/auth/logout",
+            ]
+        )
+        assert own_routes == expected, (
+            f"unexpected routes registered after stories 02 + 03 — found "
+            f"{own_routes}; expected {expected}. Stories 04a / 04b / 05a / "
+            f"view stories register their routers later."
         )

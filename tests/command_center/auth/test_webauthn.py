@@ -88,9 +88,7 @@ class TestInMemoryVerifyRegistrationResponse:
             sign_count=0,
             transports=("internal",),
         )
-        verified = verifier.verify_registration_response(
-            options=options, response=response
-        )
+        verified = verifier.verify_registration_response(options=options, response=response)
         assert isinstance(verified, VerifiedRegistration)
         assert verified.credential_id == webauthn_credential_id("cred-abc-123")
         assert verified.public_key == b"fake-public-key-bytes"

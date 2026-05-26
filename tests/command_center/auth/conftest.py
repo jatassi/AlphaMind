@@ -38,7 +38,6 @@ from alphamind.command_center.persistence.session import (
 )
 from alphamind.command_center.persistence.tables import CommandCenterBase
 
-
 _SECRET = b"test-secret-key-32-bytes-long!!!!"
 
 

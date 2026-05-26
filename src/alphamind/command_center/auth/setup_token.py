@@ -24,13 +24,13 @@ import hmac
 import secrets
 
 __all__ = [
-    "SetupTokenAlreadyConsumed",
+    "SetupTokenAlreadyConsumedError",
     "SetupTokenGate",
-    "SetupTokenMismatch",
+    "SetupTokenMismatchError",
 ]
 
 
-class SetupTokenMismatch(Exception):
+class SetupTokenMismatchError(Exception):
     """Raised when :meth:`SetupTokenGate.consume` is called with a wrong token.
 
     The route layer catches this and returns ``403 Forbidden`` — the
@@ -39,7 +39,7 @@ class SetupTokenMismatch(Exception):
     """
 
 
-class SetupTokenAlreadyConsumed(Exception):
+class SetupTokenAlreadyConsumedError(Exception):
     """Raised when the gate is already consumed and another call is attempted.
 
     Both :meth:`SetupTokenGate.mint` and :meth:`SetupTokenGate.consume`
@@ -53,7 +53,7 @@ class SetupTokenGate:
 
     Lifecycle: ``mint()`` → ``consume(token)`` → locked. After locked,
     both :meth:`mint` and :meth:`consume` raise
-    :class:`SetupTokenAlreadyConsumed`.
+    :class:`SetupTokenAlreadyConsumedError`.
 
     The gate is a per-process singleton on ``app.state``; a daemon
     restart re-mints. No persistence: the gate's state is derivable from
@@ -69,7 +69,7 @@ class SetupTokenGate:
     def mint(self) -> str:
         """Mint a fresh setup token.
 
-        Raises :class:`SetupTokenAlreadyConsumed` if the gate is locked.
+        Raises :class:`SetupTokenAlreadyConsumedError` if the gate is locked.
         Returns a URL-safe random string the daemon prints to stdout for
         the operator to present at ``/auth/register/begin``.
 
@@ -80,25 +80,25 @@ class SetupTokenGate:
         """
         if self._consumed:
             msg = "setup token already consumed; further enrollments require an existing session"
-            raise SetupTokenAlreadyConsumed(msg)
+            raise SetupTokenAlreadyConsumedError(msg)
         self._token = secrets.token_urlsafe(32)
         return self._token
 
     def consume(self, presented: str) -> None:
         """Consume the gate with *presented*; locks the gate on success.
 
-        Raises :class:`SetupTokenMismatch` if *presented* does not match
+        Raises :class:`SetupTokenMismatchError` if *presented* does not match
         the most recently minted token. Raises
-        :class:`SetupTokenAlreadyConsumed` if the gate is locked already.
+        :class:`SetupTokenAlreadyConsumedError` if the gate is locked already.
 
         Constant-time string compare so a timing-attack measurement of
         "is this token close" doesn't yield information.
         """
         if self._consumed:
             msg = "setup token already consumed; further enrollments require an existing session"
-            raise SetupTokenAlreadyConsumed(msg)
+            raise SetupTokenAlreadyConsumedError(msg)
         if self._token is None or not hmac.compare_digest(self._token, presented):
-            raise SetupTokenMismatch("setup token does not match")
+            raise SetupTokenMismatchError("setup token does not match")
         self._consumed = True
         self._token = None
 
