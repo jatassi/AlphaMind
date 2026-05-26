@@ -79,8 +79,11 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.archive_layout import (
+    RESOLVED_CONFIG_FILENAME,
+    find_invocation_archive_dir,
+)
 from alphamind._kernel.atomic_io import atomic_write_text
-from alphamind._kernel.invocations import INVOCATIONS_DIRNAME, RESOLVED_CONFIG_FILENAME
 from alphamind.command_center._kernel.ids import OperatorSessionId
 from alphamind.command_center.auth.dependencies import csrf_required, current_session
 from alphamind.command_center.config import (
@@ -1096,22 +1099,32 @@ def _archive_base_dir() -> Path:
 def _find_resolved_config_path(invocation_id: str) -> Path:
     """Return the canonical resolved-config snapshot path for *invocation_id*.
 
-    Resolves to ``<archive_root>/invocations/<invocation_id>/resolved_config.json``
+    Resolves to
+    ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/resolved_config.json``
     per :mod:`alphamind.config.snapshot` and
-    :mod:`alphamind._kernel.invocations` — the writer's pinned layout.
-    The path is returned regardless of whether the file exists on disk;
-    caller checks :py:meth:`Path.is_file` before reading.
+    :mod:`alphamind._kernel.archive_layout` — the unified date-partitioned
+    layout (PR #204 / ALP-689 collapsed the legacy
+    ``<archive_root>/invocations/<id>/`` writer into the date-partitioned
+    archive). The path is returned regardless of whether the file exists
+    on disk; caller checks :py:meth:`Path.is_file` before reading.
 
-    Previously this routed through
-    :func:`alphamind._kernel.archive_layout.find_invocation_archive_dir`,
-    which globbed ``<archive_root>/*/<invocation_id>`` and matched BOTH
-    the resolved-config writer's ``invocations/`` partition AND the
-    distillation orchestrator's ``<YYYY-MM-DD>/`` date partition.  Any
-    invocation that produced both directories caused the glob to return
-    two matches → the helper returned ``None`` → the endpoint 404'd in
-    production.
+    The dual-layout ambiguity the prior implementation guarded against no
+    longer exists — every invocation writes its ``resolved_config.json``
+    under exactly one date-partitioned directory. When the directory
+    cannot be located (orphaned invocation_id), the function returns a
+    deterministic non-existent path under ``_archive_base_dir()`` so the
+    caller's ``is_file()`` check still works without an extra None branch.
     """
-    return _archive_base_dir() / INVOCATIONS_DIRNAME / invocation_id / RESOLVED_CONFIG_FILENAME
+    archive_root = _archive_base_dir()
+    inv_dir = find_invocation_archive_dir(
+        archive_root=archive_root, invocation_id=invocation_id
+    )
+    if inv_dir is None:
+        # Deterministic non-existent fallback so callers' ``is_file()``
+        # check is False and the route renders the same "no snapshot"
+        # branch as a present-directory-but-missing-file outcome.
+        return archive_root / invocation_id / RESOLVED_CONFIG_FILENAME
+    return inv_dir / RESOLVED_CONFIG_FILENAME
 
 
 def _load_resolved_config_for_invocation(invocation_id: str) -> dict[str, Any] | None:
