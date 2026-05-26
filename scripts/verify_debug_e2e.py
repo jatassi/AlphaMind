@@ -60,10 +60,10 @@ from typing import Any
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
-from alphamind._kernel.archive_layout import find_invocation_archive_dir
-from alphamind._kernel.invocations import (
+from alphamind._kernel.archive_layout import (
     CALIBRATION_SNAPSHOT_FILENAME,
     RESOLVED_CONFIG_FILENAME,
+    find_invocation_archive_dir,
 )
 from alphamind.config.models.run_types import RunType
 from alphamind.scripts._stdio import configure_utf8_stdio

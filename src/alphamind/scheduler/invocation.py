@@ -29,9 +29,8 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alphamind._kernel.archive_layout import invocation_archive_dir
+from alphamind._kernel.archive_layout import CALIBRATION_SNAPSHOT_FILENAME, invocation_archive_dir
 from alphamind._kernel.atomic_io import atomic_write_text
-from alphamind._kernel.invocations import CALIBRATION_SNAPSHOT_FILENAME
 from alphamind._kernel.mode import PipelineMode
 from alphamind.config.load import PipelineConfig, load_full_config
 from alphamind.config.models.run_types import RunType

@@ -27,9 +27,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from alphamind._kernel.archive_layout import invocation_archive_dir
+from alphamind._kernel.archive_layout import RESOLVED_CONFIG_FILENAME, invocation_archive_dir
 from alphamind._kernel.atomic_io import atomic_write_text
-from alphamind._kernel.invocations import RESOLVED_CONFIG_FILENAME
 from alphamind.config.resolver import ResolvedConfig
 
 

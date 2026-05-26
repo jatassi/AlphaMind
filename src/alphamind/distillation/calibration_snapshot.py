@@ -24,9 +24,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from alphamind._kernel.archive_layout import invocation_archive_dir
+from alphamind._kernel.archive_layout import CALIBRATION_SNAPSHOT_FILENAME, invocation_archive_dir
 from alphamind._kernel.atomic_io import atomic_write_text
-from alphamind._kernel.invocations import CALIBRATION_SNAPSHOT_FILENAME
 from alphamind.distillation.calibration import CALIBRATION_STATE_VALUES, CalibrationState
 from alphamind.distillation.output import OutputBlock
 

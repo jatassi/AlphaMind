@@ -299,7 +299,7 @@ async def _run_debug_e2e(args: argparse.Namespace) -> None:
     pre-invocation emitter (the canonical invocation_id is not known
     until ``run_invocation`` returns; the sentinel ``_pre_invocation``
     keys the seed log). The ``seed`` events live exclusively in
-    ``<archive>/invocations/_pre_invocation/progress.jsonl`` — they
+    ``<archive>/<YYYY-MM-DD>/_pre_invocation/progress.jsonl`` — they
     are intentionally NOT part of the real-invocation event stream
     consumed by :func:`scripts.verify_debug_e2e.check_jsonl_ordering`,
     which inspects only the 12 in-invocation phases. Operators may

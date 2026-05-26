@@ -17,7 +17,26 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-__all__ = ["find_invocation_archive_dir", "invocation_archive_dir"]
+RESOLVED_CONFIG_FILENAME: str = "resolved_config.json"
+"""Per-invocation resolved-config snapshot filename.
+
+Pinned by ``docs/design/05-execution-layer/state-persistence.md``
+§ Filesystem snapshot layout.
+"""
+
+CALIBRATION_SNAPSHOT_FILENAME: str = "data_calibration_state.json"
+"""Per-invocation calibration-state snapshot filename.
+
+Pinned by ``docs/design/02-distillation-layer/threshold-calibration.md``
+§ Calibration-state snapshot file.
+"""
+
+__all__ = [
+    "CALIBRATION_SNAPSHOT_FILENAME",
+    "RESOLVED_CONFIG_FILENAME",
+    "find_invocation_archive_dir",
+    "invocation_archive_dir",
+]
 
 
 def invocation_archive_dir(*, archive_root: Path, as_of: datetime, invocation_id: str) -> Path:
