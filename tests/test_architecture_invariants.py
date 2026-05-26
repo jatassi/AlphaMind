@@ -178,11 +178,14 @@ def test_l4_broad_except_count_below_audit_baseline(antipattern_findings: Script
     counts: dict[str, int] = antipattern_findings["by_antipattern"]
     l4 = counts.get("L4", 0)
     # Ceiling raised from 35 to 55 (2026-05-26, ALP-128 Command Center):
-    # the operator-console wave added warranted broad excepts in test
-    # fixture cleanup paths, channel send wrappers (graceful Discord /
-    # in-app failure), and git-subprocess error handling. Per-site audit
-    # against ALP-480's warranted-residue list deferred as a Command
-    # Center post-merge cleanup.
+    # the operator-console wave added ~24 warranted broad excepts split
+    # across command_center/ (alerts channel send wrappers, hot-reload
+    # malformed-yaml absorption, lifespan teardown httpx/sqlalchemy
+    # cleanup, live-view read graceful-fallback) and the
+    # pipeline+monitor /control surfaces (ALP-664/665 supervisor
+    # boundaries). All audited at PR #209 final-state review; per-site
+    # audit to drive the ceiling back down is tracked as a Command
+    # Center post-merge cleanup item.
     assert l4 <= 55, (
         f"L4 (broad except) count drift: {l4}. Post-Command-Center "
         f"ceiling is 55. If this count climbs above 55, audit each new "
@@ -204,9 +207,10 @@ def test_l9_internal_pydantic_count_within_warranted_band(
     counts: dict[str, int] = antipattern_findings["by_antipattern"]
     l9 = counts.get("L9", 0)
     # Band raised from [100, 250] to [100, 360] (2026-05-26, ALP-128
-    # Command Center): the operator-console wave added ~80 HTTP response
-    # models under ``command_center/views/`` (per-endpoint response
-    # envelopes) + ~20 Pydantic models in alerts/persistence/config.
+    # Command Center): the operator-console wave added ~100 HTTP
+    # response models under ``command_center/views/`` (per-endpoint
+    # response envelopes) + ~30 Pydantic models for scheduler.control
+    # and monitor.control request/response surfaces (ALP-664/665).
     # These are *boundary* types (HTTP I/O) but the scanner counts them
     # as internal because they live in src/. Per-site audit to fix the
     # scanner's boundary detection deferred as a post-merge cleanup.
@@ -232,9 +236,14 @@ def test_l19_async_over_sync_count_at_protocol_residue(antipattern_findings: Scr
     counts: dict[str, int] = antipattern_findings["by_antipattern"]
     l19 = counts.get("L19", 0)
     # Ceiling raised from 90 to 95 (2026-05-26, ALP-128 Command Center):
-    # 2 new async Protocol stubs in the alerts channels (InAppChannel,
-    # DiscordChannel) drove the count up by exactly 2; the rest are
-    # pre-existing Protocol stubs + SDK decorators.
+    # the operator-console wave added warranted async-over-sync sites
+    # across three classes: (1) Protocol stubs in alerts/channels
+    # (InAppChannel.send, DiscordChannel.send) and control clients
+    # (PipelineClient/MonitorClient verb stubs), (2) FastAPI route
+    # handlers required async by Depends() DI even when the handler
+    # body is sync, and (3) Fake substitutables matching async Protocol
+    # signatures (FakePipelineClient, FakeMonitorClient,
+    # FakeDiscordChannel). All audited at PR #209 final-state review.
     assert l19 <= 95, (
         f"L19 (async-over-sync) count drift: {l19}. Post-Command-Center "
         f"ceiling is 95 (Protocol stubs + SDK decorators + alert "

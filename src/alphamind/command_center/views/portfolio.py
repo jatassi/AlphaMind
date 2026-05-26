@@ -44,7 +44,7 @@ import contextlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -262,7 +262,7 @@ async def _compute_regt_excess(session: AsyncSession) -> RegTExcess:
             continue
         try:
             excess = Decimal(str(excess_raw))
-        except Exception:
+        except (InvalidOperation, ValueError, TypeError):
             continue
 
         total_lifetime += excess
@@ -453,13 +453,13 @@ async def _read_exposure(session: AsyncSession) -> Exposure:
         mv_raw = details.get("market_value_usd") or details.get("current_market_value_usd") or "0"
         try:
             mv = Decimal(str(mv_raw))
-        except Exception:
+        except (InvalidOperation, ValueError, TypeError):
             mv = Decimal(0)
 
         delta_raw = details.get("delta_adjusted_exposure_usd") or "0"
         try:
             delta = Decimal(str(delta_raw))
-        except Exception:
+        except (InvalidOperation, ValueError, TypeError):
             delta = Decimal(0)
         delta_adj_net += delta
 
