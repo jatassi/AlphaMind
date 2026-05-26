@@ -1,5 +1,7 @@
 import { queryOptions, useQuery, type UseQueryResult } from '@tanstack/react-query'
 
+import type { RunHistoryFilters, RunHistoryPage } from '@/views/history/types'
+
 import { api, ApiError } from './client'
 
 // TanStack Query hook factories. View stories add their own per-endpoint
@@ -43,4 +45,69 @@ export function sessionQueryOptions(): ReturnType<typeof queryOptions<SessionInf
 
 export function useSession(): UseQueryResult<SessionInfo | null> {
   return useQuery(sessionQueryOptions())
+}
+
+// ---------------------------------------------------------------------------
+// Run history hooks (story 05c / ALP-673)
+// ---------------------------------------------------------------------------
+
+function _appendFilters(params: URLSearchParams, filters: RunHistoryFilters): void {
+  if (filters.date_from) {
+    params.set('date_from', filters.date_from)
+  }
+  if (filters.date_to) {
+    params.set('date_to', filters.date_to)
+  }
+  if (filters.run_type) {
+    params.set('run_type', filters.run_type)
+  }
+  for (const s of filters.status ?? []) {
+    params.append('status', s)
+  }
+  if (filters.commands_gt !== undefined) {
+    params.set('commands_gt', String(filters.commands_gt))
+  }
+  if (filters.has_errors !== undefined) {
+    params.set('has_errors', String(filters.has_errors))
+  }
+  params.set('page', String(filters.page ?? 1))
+  params.set('page_size', String(filters.page_size ?? 50))
+}
+
+function _buildRunsUrl(base: string, filters: RunHistoryFilters): string {
+  const params = new URLSearchParams()
+  _appendFilters(params, filters)
+  const qs = params.toString()
+  return qs ? `${base}?${qs}` : base
+}
+
+export function runHistoryQueryOptions(
+  filters: RunHistoryFilters,
+): ReturnType<typeof queryOptions<RunHistoryPage>> {
+  return queryOptions<RunHistoryPage>({
+    queryKey: ['runs', filters],
+    queryFn: () => api.get<RunHistoryPage>(_buildRunsUrl('/api/views/history/runs', filters)),
+    staleTime: 30 * 1000,
+  })
+}
+
+export function useRunHistory(filters: RunHistoryFilters): UseQueryResult<RunHistoryPage> {
+  return useQuery(runHistoryQueryOptions(filters))
+}
+
+export function runHistoryFailureLogQueryOptions(
+  filters: RunHistoryFilters,
+): ReturnType<typeof queryOptions<RunHistoryPage>> {
+  return queryOptions<RunHistoryPage>({
+    queryKey: ['runs', 'failure-log', filters],
+    queryFn: () =>
+      api.get<RunHistoryPage>(_buildRunsUrl('/api/views/history/runs/preset/failure-log', filters)),
+    staleTime: 30 * 1000,
+  })
+}
+
+export function useRunHistoryFailureLog(
+  filters: RunHistoryFilters,
+): UseQueryResult<RunHistoryPage> {
+  return useQuery(runHistoryFailureLogQueryOptions(filters))
 }

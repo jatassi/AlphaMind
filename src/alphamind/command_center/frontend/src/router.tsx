@@ -2,12 +2,17 @@ import { createRouter } from '@tanstack/react-router'
 
 import { Route as RootRoute } from './routes/__root'
 import { Route as AuthedRoute } from './routes/_authed'
+import { Route as FailuresRoute } from './routes/_authed/history/failures'
+import { Route as HistoryRoute } from './routes/_authed/history/index'
 import { Route as IndexRoute } from './routes/index'
 import { Route as LoginRoute } from './routes/login'
 
 // Compose the TanStack Router tree. View stories add children to AuthedRoute
 // via `addChildren` here.
-const routeTree = RootRoute.addChildren([LoginRoute, AuthedRoute.addChildren([IndexRoute])])
+const routeTree = RootRoute.addChildren([
+  LoginRoute,
+  AuthedRoute.addChildren([IndexRoute, HistoryRoute, FailuresRoute]),
+])
 
 export const router = createRouter({
   routeTree,

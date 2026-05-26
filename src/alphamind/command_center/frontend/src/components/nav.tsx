@@ -14,7 +14,35 @@ export function Nav(): React.JSX.Element {
         <Link to="/" className="font-semibold">
           AlphaMind Command Center
         </Link>
-        <nav className="flex items-center gap-4 text-sm" />
+        <nav className="flex items-center gap-4 text-sm">
+          <Link
+            to="/history"
+            search={{
+              date_from: undefined,
+              date_to: undefined,
+              run_type: undefined,
+              status: undefined,
+              page: undefined,
+              page_size: undefined,
+            }}
+            className="hover:underline"
+          >
+            Run history
+          </Link>
+          <Link
+            to="/history/failures"
+            search={{
+              date_from: undefined,
+              date_to: undefined,
+              run_type: undefined,
+              page: undefined,
+              page_size: undefined,
+            }}
+            className="hover:underline"
+          >
+            Failure log
+          </Link>
+        </nav>
       </div>
     </header>
   )
