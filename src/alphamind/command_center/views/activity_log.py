@@ -29,7 +29,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.portfolio_state.events.types import EventSource, EventType
@@ -271,13 +271,21 @@ async def _query_page(
     offset: int,
     page_size: int,
 ) -> tuple[int, list[ActivityLogRowResponse]]:
-    """Execute COUNT + data SELECT, return (total, rows)."""
+    """Execute COUNT + data SELECT, return (total, rows).
+
+    The COUNT runs as a scalar ``SELECT COUNT(*)`` so SQLite computes the
+    total in-database; the previous implementation issued
+    ``SELECT * FROM activity_log WHERE ...`` and called ``len(rows)``,
+    materializing every matching row's TEXT ``detail_json`` blob into
+    memory just to discard it.
+    """
     where_clause = and_(*clauses) if clauses else True  # type: ignore[arg-type]
 
-    count_result = await session.execute(
-        select(ActivityLogRow).where(where_clause)  # type: ignore[arg-type]
+    count_stmt = (
+        select(func.count()).select_from(ActivityLogRow).where(where_clause)  # type: ignore[arg-type]
     )
-    total = len(count_result.scalars().all())
+    count_result = await session.execute(count_stmt)
+    total = count_result.scalar_one()
 
     data_result = await session.execute(
         select(ActivityLogRow)
