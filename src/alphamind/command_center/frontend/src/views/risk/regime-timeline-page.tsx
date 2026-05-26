@@ -57,6 +57,37 @@ function buildDefaultWindow(): { from: string; to: string } {
   return { from: from.toISOString(), to: to.toISOString() }
 }
 
+// Convert ISO-8601 (``2026-05-25T12:34:56.000Z``) → the native
+// ``datetime-local`` input format (``2026-05-25T12:34``). Drops sub-
+// minute precision so the input control stays single-step; the API
+// accepts the trimmed timestamp without ambiguity.
+function isoToLocalInput(iso: string): string {
+  try {
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) {
+      return ''
+    }
+    const pad = (n: number): string => n.toString().padStart(2, '0')
+    return `${d.getFullYear().toString()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  } catch {
+    return ''
+  }
+}
+
+// Convert the native ``datetime-local`` value back to an ISO-8601
+// timestamp the timeline API accepts. Empty input collapses to ``''``
+// which the caller filters out before sending.
+function localInputToIso(local: string): string {
+  if (local === '') {
+    return ''
+  }
+  const d = new Date(local)
+  if (Number.isNaN(d.getTime())) {
+    return ''
+  }
+  return d.toISOString()
+}
+
 type ScatterPoint = { x: number; event_type: string }
 
 function ScatterTooltipContent(props: TooltipProps<number, string>): React.JSX.Element | null {
@@ -148,35 +179,62 @@ function EventLogTable({ events }: { events: TimelineEvent[] }): React.JSX.Eleme
   )
 }
 
-export function RegimeTimelinePage(): React.JSX.Element {
-  const defaultWindow = useMemo(() => buildDefaultWindow(), [])
-  const [from, setFrom] = useState(defaultWindow.from)
-  const [to, setTo] = useState(defaultWindow.to)
-  void setFrom
-  void setTo
+type WindowControlsProps = {
+  from: string
+  to: string
+  onChangeFrom: (iso: string) => void
+  onChangeTo: (iso: string) => void
+}
 
-  const { data, isPending, isError } = useRegimeTimeline(from, to)
-
-  if (isPending) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <span className="text-muted-foreground">Loading regime timeline…</span>
-      </div>
-    )
-  }
-
-  if (isError) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <span className="text-destructive">Failed to load regime timeline.</span>
-      </div>
-    )
-  }
-
+function WindowControls({
+  from,
+  to,
+  onChangeFrom,
+  onChangeTo,
+}: WindowControlsProps): React.JSX.Element {
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Regime &amp; overlay timeline</h1>
+    <div className="flex flex-wrap items-end gap-3 text-sm">
+      <label className="flex flex-col gap-1">
+        <span className="text-muted-foreground">From</span>
+        <input
+          type="datetime-local"
+          value={isoToLocalInput(from)}
+          onChange={(e) => {
+            const iso = localInputToIso(e.target.value)
+            if (iso !== '') {
+              onChangeFrom(iso)
+            }
+          }}
+          className="border-border bg-background h-9 rounded-md border px-2"
+          aria-label="Window start"
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-muted-foreground">To</span>
+        <input
+          type="datetime-local"
+          value={isoToLocalInput(to)}
+          onChange={(e) => {
+            const iso = localInputToIso(e.target.value)
+            if (iso !== '') {
+              onChangeTo(iso)
+            }
+          }}
+          className="border-border bg-background h-9 rounded-md border px-2"
+          aria-label="Window end"
+        />
+      </label>
+    </div>
+  )
+}
 
+type TimelineContentProps = {
+  data: { from_ts: string; to_ts: string; events: TimelineEvent[] }
+}
+
+function TimelineContent({ data }: TimelineContentProps): React.JSX.Element {
+  return (
+    <>
       <Card>
         <CardHeader>
           <CardTitle>Events</CardTitle>
@@ -197,6 +255,46 @@ export function RegimeTimelinePage(): React.JSX.Element {
           <EventLogTable events={data.events} />
         </CardContent>
       </Card>
+    </>
+  )
+}
+
+type TimelineBodyProps = {
+  data: { from_ts: string; to_ts: string; events: TimelineEvent[] } | undefined
+  isPending: boolean
+  isError: boolean
+}
+
+function TimelineBody({ data, isPending, isError }: TimelineBodyProps): React.JSX.Element {
+  if (isPending) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <span className="text-muted-foreground">Loading regime timeline…</span>
+      </div>
+    )
+  }
+  if (isError || data === undefined) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <span className="text-destructive">Failed to load regime timeline.</span>
+      </div>
+    )
+  }
+  return <TimelineContent data={data} />
+}
+
+export function RegimeTimelinePage(): React.JSX.Element {
+  const defaultWindow = useMemo(() => buildDefaultWindow(), [])
+  const [from, setFrom] = useState(defaultWindow.from)
+  const [to, setTo] = useState(defaultWindow.to)
+
+  const { data, isPending, isError } = useRegimeTimeline(from, to)
+
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-semibold">Regime &amp; overlay timeline</h1>
+      <WindowControls from={from} to={to} onChangeFrom={setFrom} onChangeTo={setTo} />
+      <TimelineBody data={data} isPending={isPending} isError={isError} />
     </div>
   )
 }
