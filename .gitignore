@@ -8,6 +8,9 @@ __pycache__/
 venv/
 .testmondata
 
+# Node Modules
+node_modules/
+
 # Office lock files (LibreOffice / OpenOffice)
 .~lock.*#
 
