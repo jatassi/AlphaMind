@@ -47,6 +47,10 @@ export function Nav(): React.JSX.Element {
           >
             Failure log
           </Link>
+          {/* Story 05e (ALP-675) — activity log. */}
+          <Link to="/activity-log" className="hover:text-foreground text-muted-foreground">
+            Activity log
+          </Link>
         </nav>
       </div>
     </header>

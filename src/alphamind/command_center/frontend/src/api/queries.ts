@@ -4,6 +4,57 @@ import type { RunHistoryFilters, RunHistoryPage } from '@/views/history/types'
 
 import { api, ApiError } from './client'
 
+// ── Activity log types ─────────────────────────────────────────────────────
+
+export type ActivityLogRow = {
+  entry_id: string
+  invocation_id: string
+  entry_at: string
+  event_type: string
+  event_group: string
+  position_id: string | null
+  order_id: string | null
+  thesis_id: string | null
+  source: string
+  detail_json: string
+}
+
+export type ActivityLogPage = {
+  rows: ActivityLogRow[]
+  total: number
+  page: number
+  page_size: number
+  has_more: boolean
+}
+
+export type ActivityLogFilters = {
+  event_type?: string[]
+  invocation_id?: string
+  position_id?: string
+  thesis_id?: string
+  order_id?: string
+  source?: string[]
+  time_from?: string
+  time_to?: string
+  page?: number
+  page_size?: number
+}
+
+export type EventTypesResponse = {
+  event_types: string[]
+}
+
+export type SavedFilter = {
+  name: string
+  description: string
+  // Optional values — a preset may not set every dimension.
+  params: Partial<Record<string, string[]>>
+}
+
+export type SavedFiltersResponse = {
+  saved_filters: SavedFilter[]
+}
+
 // TanStack Query hook factories. View stories add their own per-endpoint
 // hooks here; the foundation ships `useSession()`, which the protected
 // `_authed` route layout calls to gate access to the views.
@@ -190,4 +241,81 @@ export function useRunHistoryFailureLog(
   filters: RunHistoryFilters,
 ): UseQueryResult<RunHistoryPage> {
   return useQuery(runHistoryFailureLogQueryOptions(filters))
+}
+
+// ── Activity log hooks (story 05e / ALP-675) ────────────────────────────────
+
+function appendMultiParam(
+  params: URLSearchParams,
+  key: string,
+  values: string[] | undefined,
+): void {
+  for (const v of values ?? []) {
+    params.append(key, v)
+  }
+}
+
+function setIfPresent(params: URLSearchParams, key: string, value: string | undefined): void {
+  if (value) {
+    params.set(key, value)
+  }
+}
+
+function buildActivityLogQueryString(filters: ActivityLogFilters): string {
+  const params = new URLSearchParams()
+  appendMultiParam(params, 'event_type', filters.event_type)
+  appendMultiParam(params, 'source', filters.source)
+  setIfPresent(params, 'invocation_id', filters.invocation_id)
+  setIfPresent(params, 'position_id', filters.position_id)
+  setIfPresent(params, 'thesis_id', filters.thesis_id)
+  setIfPresent(params, 'order_id', filters.order_id)
+  setIfPresent(params, 'time_from', filters.time_from)
+  setIfPresent(params, 'time_to', filters.time_to)
+  if (filters.page !== undefined) {
+    params.set('page', String(filters.page))
+  }
+  if (filters.page_size !== undefined) {
+    params.set('page_size', String(filters.page_size))
+  }
+  const qs = params.toString()
+  return qs ? `?${qs}` : ''
+}
+
+export function activityLogQueryOptions(
+  filters: ActivityLogFilters,
+): ReturnType<typeof queryOptions<ActivityLogPage>> {
+  return queryOptions<ActivityLogPage>({
+    queryKey: ['activity-log', filters],
+    queryFn: () =>
+      api.get<ActivityLogPage>(`/api/views/activity-log${buildActivityLogQueryString(filters)}`),
+    staleTime: 10 * 1000,
+  })
+}
+
+export function useActivityLog(filters: ActivityLogFilters): UseQueryResult<ActivityLogPage> {
+  return useQuery(activityLogQueryOptions(filters))
+}
+
+export function eventTypesQueryOptions(): ReturnType<typeof queryOptions<EventTypesResponse>> {
+  return queryOptions<EventTypesResponse>({
+    queryKey: ['activity-log-event-types'],
+    queryFn: () => api.get<EventTypesResponse>('/api/views/activity-log/event-types'),
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+export function useEventTypes(): UseQueryResult<EventTypesResponse> {
+  return useQuery(eventTypesQueryOptions())
+}
+
+export function savedFiltersQueryOptions(): ReturnType<typeof queryOptions<SavedFiltersResponse>> {
+  return queryOptions<SavedFiltersResponse>({
+    queryKey: ['activity-log-saved-filters'],
+    queryFn: () => api.get<SavedFiltersResponse>('/api/views/activity-log/saved-filters'),
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+export function useSavedFilters(): UseQueryResult<SavedFiltersResponse> {
+  return useQuery(savedFiltersQueryOptions())
 }

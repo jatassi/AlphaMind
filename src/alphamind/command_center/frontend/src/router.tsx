@@ -5,6 +5,7 @@ import { Route as AuthedRoute } from './routes/_authed'
 import { Route as FailuresRoute } from './routes/_authed/history/failures'
 import { Route as HistoryRoute } from './routes/_authed/history/index'
 import { Route as LiveRoute } from './routes/_authed/live'
+import { Route as ActivityLogRoute } from './routes/activity-log'
 import { Route as IndexRoute } from './routes/index'
 import { Route as LoginRoute } from './routes/login'
 
@@ -12,7 +13,7 @@ import { Route as LoginRoute } from './routes/login'
 // via `addChildren` here.
 const routeTree = RootRoute.addChildren([
   LoginRoute,
-  AuthedRoute.addChildren([IndexRoute, LiveRoute, HistoryRoute, FailuresRoute]),
+  AuthedRoute.addChildren([IndexRoute, LiveRoute, HistoryRoute, FailuresRoute, ActivityLogRoute]),
 ])
 
 export const router = createRouter({
