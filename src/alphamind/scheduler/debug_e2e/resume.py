@@ -61,7 +61,7 @@ class ResumeContext:
     stays decoupled from the debug-e2e package).
 
     * ``source_archive_dir`` — the per-invocation directory
-      (``<archive-root>/invocations/<source-id>``) the replay short-circuit
+      (``<archive-root>/<YYYY-MM-DD>/<source-id>``) the replay short-circuit
       reads ``phase_outputs/<phase>.json`` files from.
     * ``resume_phase`` — the SDK phase to resume execution from.  One of
       :data:`alphamind.scheduler.debug_e2e.phase_outputs.SDK_PHASE_NAMES`.

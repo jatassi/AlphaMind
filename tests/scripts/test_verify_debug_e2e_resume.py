@@ -197,6 +197,61 @@ def test_check_deterministic_prefix_passes_on_byte_identical(
     assert "5 distillation file(s) byte-identical" in result.message
 
 
+def test_check_deterministic_prefix_normalizes_per_invocation_headers(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """Files differing ONLY in their ``Invocation: <id>`` header line
+    must hash equal — this is the real-orchestrator scenario.
+
+    ``sector_assembly.py`` and ``correlation_brief.py`` embed the
+    per-run invocation_id in a header line of every distillation
+    output. A naive byte-comparison would always fail on resume runs
+    because the source and new invocations have different IDs. The
+    check strips header lines whose prefix matches
+    ``_DISTILLATION_VARIABLE_HEADER_PREFIXES`` before hashing, so the
+    computation-output identity (the part the design-doc invariant
+    actually asserts) is preserved.
+
+    Regression guard for the /review BLOCKER finding on PR #204.
+    """
+    source_dir = tmp_path / "source-archive" / "distillation"
+    new_dir = tmp_path / "new-archive" / "distillation"
+    source_dir.mkdir(parents=True)
+    new_dir.mkdir(parents=True)
+
+    # The two files differ ONLY in their Invocation: header line. Every
+    # other byte is identical. The real distillation orchestrator emits
+    # this exact shape (sector header + Invocation line + payload).
+    source_body = (
+        "DISTILLATION OUTPUT — Tech / Semis sector\n"
+        "Invocation: inv-20260526T010000Z-aaaaaaaa\n"
+        "As-of: 2026-05-26T01:00:00Z\n"
+        "\n"
+        "## Block: alpha\n"
+        "payload body\n"
+    )
+    new_body = (
+        "DISTILLATION OUTPUT — Tech / Semis sector\n"
+        "Invocation: inv-20260526T021500Z-bbbbbbbb\n"
+        "As-of: 2026-05-26T01:00:00Z\n"
+        "\n"
+        "## Block: alpha\n"
+        "payload body\n"
+    )
+    (source_dir / "tech_semis_sector.md").write_text(source_body, encoding="utf-8")
+    (new_dir / "tech_semis_sector.md").write_text(new_body, encoding="utf-8")
+
+    result = verify_module.check_deterministic_prefix(
+        source_distillation_dir=source_dir,
+        new_distillation_dir=new_dir,
+    )
+
+    assert result.passed is True, (
+        f"check_deterministic_prefix must normalize Invocation: header lines "
+        f"before hashing; got FAIL with message: {result.message}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 3. check_deterministic_prefix — FAIL naming the first mismatched file
 # ---------------------------------------------------------------------------

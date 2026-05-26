@@ -64,7 +64,7 @@ def phase_output_path(archive_dir: Path, phase: str) -> Path:
 
     Raises ``ValueError`` naming the invalid phase if ``phase`` is not in
     ``SDK_PHASE_NAMES``.  ``archive_dir`` is the per-invocation directory
-    (i.e. ``<archive-root>/invocations/<invocation-id>/``), not the archive
+    (i.e. ``<archive-root>/<YYYY-MM-DD>/<invocation-id>/``), not the archive
     root.
     """
     if phase not in SDK_PHASE_NAMES:

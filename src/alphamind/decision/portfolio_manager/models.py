@@ -141,7 +141,7 @@ class PMResultModel(BaseModel):
     equality across round-trips.
 
     Used by ``run_decision_pipeline`` to emit ``pm.json`` under
-    ``<archive>/invocations/<id>/phase_outputs/`` when running in
+    ``<archive>/<YYYY-MM-DD>/<id>/phase_outputs/`` when running in
     debug-e2e mode (ALP-692).
     """
 

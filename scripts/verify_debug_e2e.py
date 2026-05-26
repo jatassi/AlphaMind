@@ -698,14 +698,16 @@ def check_invocation_summary(stdout: str) -> CheckResult:
 # ---------------------------------------------------------------------------
 
 
-_HASH_CHUNK_BYTES = 64 * 1024
-"""Streaming chunk size for ``hashlib.sha256.update``.
-
-Distillation outputs are typically a few hundred KB but can grow into
-the megabytes for wide universes; reading them whole into memory with
-``Path.read_bytes()`` is fine but the streaming form scales cleanly to
-the 10 MB+ end of the distribution without a peak-memory bump.
-"""
+#: Header-line prefixes (followed by ``: ``) that vary per invocation by
+#: design and must be stripped before hashing. Distillation outputs
+#: embed the per-run ``invocation_id`` in a header line
+#: (``sector_assembly.py:229``, ``correlation_brief.py:683``); the
+#: per-run mint makes a naive byte-comparison guaranteed to fail across
+#: source vs new archives. Normalising here preserves the
+#: "deterministic prefix" invariant the design doc § 5 actually wants
+#: to assert (the computation produced the same content) without
+#: mistaking the wrapping metadata for a divergence.
+_DISTILLATION_VARIABLE_HEADER_PREFIXES: tuple[bytes, ...] = (b"Invocation: ",)
 
 
 def _sha256_of_file(path: Path) -> str:
@@ -717,11 +719,22 @@ def _sha256_of_file(path: Path) -> str:
     writes ``\\n`` line endings deterministically, but reading via
     text mode on Windows can fold CRLF into LF and produce a false
     match. Binary mode pins the comparison to actual on-disk bytes.
+
+    Lines whose prefix matches
+    :data:`_DISTILLATION_VARIABLE_HEADER_PREFIXES` are stripped before
+    hashing — these are per-invocation metadata (notably
+    ``Invocation: <id>``) that the design-doc invariant explicitly
+    permits to vary while the rest of the file stays byte-identical.
     """
     hasher = hashlib.sha256()
     with path.open("rb") as f:
-        while chunk := f.read(_HASH_CHUNK_BYTES):
-            hasher.update(chunk)
+        for raw_line in f:
+            stripped = raw_line.lstrip()
+            if any(
+                stripped.startswith(prefix) for prefix in _DISTILLATION_VARIABLE_HEADER_PREFIXES
+            ):
+                continue
+            hasher.update(raw_line)
     return hasher.hexdigest()
 
 
