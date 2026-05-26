@@ -259,7 +259,14 @@ async def proxy_switch_profile(
 async def proxy_run_universe_validation(
     *, ctx: ProxyContext, pipeline: PipelineClient
 ) -> ProxyRunUniverseValidationResult:
-    """``/api/control/run_universe_validation`` proxy."""
+    """``/api/control/run_universe_validation`` proxy.
+
+    Read-only verb: the invocation row alone records the operator's
+    action; ``write_operator_action_entry`` would early-return for this
+    verb (it is in ``_NO_AUDIT_VERBS``). The call is omitted entirely
+    rather than carried for "uniformity" — there is nothing to audit
+    beyond the invocation row.
+    """
     async with operator_invocation(
         production_session_factory=ctx.production_session_factory,
         process_lifetime_id=ctx.process_lifetime_id,
@@ -268,14 +275,6 @@ async def proxy_run_universe_validation(
         now=ctx.now(),
     ) as handle:
         upstream: PipelineRunUniverseValidationResult = await pipeline.run_universe_validation()
-        # No audit row — read-only verb.
-        write_operator_action_entry(
-            handle=handle,
-            verb=ControlVerb.RUN_UNIVERSE_VALIDATION,
-            parameters={},
-            result=upstream.result,
-            now=ctx.now(),
-        )
         return ProxyRunUniverseValidationResult(
             result=upstream.result,
             invocation_id=handle.invocation_id,
