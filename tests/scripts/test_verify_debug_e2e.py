@@ -242,6 +242,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
                 "model": "sonnet",
                 "duration_s": 12.0,
                 "input_tokens": 8000,
+                "cache_read_tokens": 60_000,
+                "cache_write_tokens": 0,
                 "output_tokens": 1500,
                 "tool_calls": 0,
                 "stop_reason": "end_turn",
@@ -256,6 +258,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
             "model": "sonnet",
             "duration_s": 15.0,
             "input_tokens": 7000,
+            "cache_read_tokens": 68_214,
+            "cache_write_tokens": 0,
             "output_tokens": 800,
             "tool_calls": 5,
             "stop_reason": "end_turn",
@@ -284,6 +288,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
             "model": "sonnet",
             "duration_s": 20.0,
             "input_tokens": 9000,
+            "cache_read_tokens": 70_000,
+            "cache_write_tokens": 0,
             "output_tokens": 1200,
             "tool_calls": 10,
             "stop_reason": "end_turn",
@@ -310,6 +316,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
             "model": "sonnet",
             "duration_s": 12.0,
             "input_tokens": 11000,
+            "cache_read_tokens": 55_000,
+            "cache_write_tokens": 1_024,
             "output_tokens": 1800,
             "tool_calls": 0,
             "stop_reason": "end_turn",
@@ -350,6 +358,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
             "model": "opus",
             "duration_s": 60.0,
             "input_tokens": 15000,
+            "cache_read_tokens": 80_000,
+            "cache_write_tokens": 0,
             "output_tokens": 4000,
             "tool_calls": 2,
             "stop_reason": "end_turn",
@@ -365,6 +375,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
             "model": "opus",
             "duration_s": 600.0,
             "input_tokens": 30000,
+            "cache_read_tokens": 90_000,
+            "cache_write_tokens": 0,
             "output_tokens": 40000,
             "tool_calls": 0,
             "stop_reason": "end_turn",
@@ -394,6 +406,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
             "model": "opus",
             "duration_s": 360.0,
             "input_tokens": 35000,
+            "cache_read_tokens": 100_000,
+            "cache_write_tokens": 0,
             "output_tokens": 30000,
             "tool_calls": 8,
             "stop_reason": "end_turn",
@@ -607,6 +621,8 @@ def test_check_jsonl_ordering_fails_on_orphan_agent_response(
     [
         "duration_s",
         "input_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
         "output_tokens",
         "tool_calls",
         # ``stop_reason`` is allowed to be null per parent issue ALP-493
@@ -617,11 +633,13 @@ def test_check_jsonl_ordering_fails_on_orphan_agent_response(
 def test_check_jsonl_ordering_fails_when_agent_response_missing_required_field(
     verify_module: ModuleType, tmp_path: Path, field: str
 ) -> None:
-    """Each ``agent_response`` must carry the 5-field set per parent § (B).
+    """Each ``agent_response`` must carry the 7-field set per parent § (B).
 
-    ``duration_s`` / ``input_tokens`` / ``output_tokens`` / ``tool_calls``
-    must be non-null; ``stop_reason`` may be ``None`` but must be
-    present as a key.
+    ``duration_s`` / ``input_tokens`` / ``cache_read_tokens`` /
+    ``cache_write_tokens`` / ``output_tokens`` / ``tool_calls`` must be
+    non-null; ``stop_reason`` may be ``None`` but must be present as a
+    key. The cache split was added per ALP-701 so an operator can
+    distinguish a cache-hit prompt from a broken context-assembly path.
     """
     stream = _canonical_event_stream()
     # Drop the field from the synthesizer agent_response only.

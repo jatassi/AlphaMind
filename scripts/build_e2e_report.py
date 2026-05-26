@@ -18,10 +18,10 @@ alphamind.scheduler run --debug-e2e``:
 
 Emits one self-contained dark-mode HTML page summarizing the
 invocation: a 12-phase verdict ribbon, a 10-row SDK-call table with
-each call's ``duration_s`` / ``input_tokens`` / ``output_tokens`` /
-``tool_calls`` / ``stop_reason``, the resolved-config summary, an
-incomplete-phase failure section, and a collapsible pipeline-log
-excerpt.
+each call's ``duration_s`` / ``input_tokens`` / ``cache_read_tokens`` /
+``cache_write_tokens`` / ``output_tokens`` / ``tool_calls`` /
+``stop_reason``, the resolved-config summary, an incomplete-phase
+failure section, and a collapsible pipeline-log excerpt.
 
 Usage::
 
@@ -116,13 +116,23 @@ class PhaseSummary:
 
 @dataclass(frozen=True, slots=True)
 class SdkCallRow:
-    """One row of the SDK-call table — paired ``agent_request``/``response``."""
+    """One row of the SDK-call table — paired ``agent_request``/``response``.
+
+    The three input-side counts mirror the SDK ``usage`` split: most
+    AlphaMind prompts hit the cache, so ``cache_read_tokens`` carries the
+    bulk of the volume while ``input_tokens`` is the non-cached delta
+    (typically single-to-low-double-digit). ``cache_write_tokens`` is the
+    cache-creation cost on a miss. Splitting the columns lets the
+    operator confirm at a glance that the prompt was assembled (ALP-701).
+    """
 
     phase: str
     agent: str
     model: str
     duration_s: float | None
     input_tokens: int | None
+    cache_read_tokens: int | None
+    cache_write_tokens: int | None
     output_tokens: int | None
     tool_calls: int | None
     stop_reason: str | None
@@ -305,6 +315,8 @@ def build_sdk_call_rows(events: list[dict[str, Any]]) -> list[SdkCallRow]:
                     model=model,
                     duration_s=None,
                     input_tokens=None,
+                    cache_read_tokens=None,
+                    cache_write_tokens=None,
                     output_tokens=None,
                     tool_calls=None,
                     stop_reason=None,
@@ -320,6 +332,12 @@ def build_sdk_call_rows(events: list[dict[str, Any]]) -> list[SdkCallRow]:
                 duration_s=float(duration) if isinstance(duration, (int, float)) else None,
                 input_tokens=resp.get("input_tokens")
                 if isinstance(resp.get("input_tokens"), int)
+                else None,
+                cache_read_tokens=resp.get("cache_read_tokens")
+                if isinstance(resp.get("cache_read_tokens"), int)
+                else None,
+                cache_write_tokens=resp.get("cache_write_tokens")
+                if isinstance(resp.get("cache_write_tokens"), int)
                 else None,
                 output_tokens=resp.get("output_tokens")
                 if isinstance(resp.get("output_tokens"), int)
@@ -416,6 +434,8 @@ def _sdk_call_table(rows: list[SdkCallRow]) -> str:
             f"<td>{_esc(r.model)}</td>"
             f"<td>{_esc(duration_txt)}</td>"
             f'<td class="num">{_esc(_format_tokens(r.input_tokens))}</td>'
+            f'<td class="num">{_esc(_format_tokens(r.cache_read_tokens))}</td>'
+            f'<td class="num">{_esc(_format_tokens(r.cache_write_tokens))}</td>'
             f'<td class="num">{_esc(_format_tokens(r.output_tokens))}</td>'
             f'<td class="num">{_esc(_format_tokens(r.tool_calls))}</td>'
             f'<td class="status {status_cls}">{stop}</td>'
@@ -425,7 +445,8 @@ def _sdk_call_table(rows: list[SdkCallRow]) -> str:
         '<table class="stats wide">'
         "<thead><tr>"
         "<th>Phase</th><th>Agent</th><th>Model</th><th>Duration</th>"
-        "<th>Input tokens</th><th>Output tokens</th><th>Tool calls</th>"
+        "<th>Input tokens</th><th>Cache read</th><th>Cache write</th>"
+        "<th>Output tokens</th><th>Tool calls</th>"
         "<th>Stop reason</th>"
         "</tr></thead>"
         f"<tbody>{''.join(tr_lines)}</tbody>"

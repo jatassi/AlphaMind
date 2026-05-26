@@ -14,10 +14,19 @@ which emits ``agent_request`` / ``agent_response`` per SDK call;
 moving the Protocol into ``_kernel`` keeps the import graph clean.
 
 The ``agent_response`` field set
-(``duration_s``, ``input_tokens``, ``output_tokens``, ``tool_calls``,
+(``duration_s``, ``input_tokens``, ``cache_read_tokens``,
+``cache_write_tokens``, ``output_tokens``, ``tool_calls``,
 ``stop_reason``) is fixed at the Protocol level per parent issue
 ALP-493 § Pre-resolved (B) — the smallest set that answers
 "stuck or working?", "cost in budget?", and "tool-using or thinking?".
+
+The three input-side counts are emitted separately rather than summed
+because the Anthropic API ``usage`` payload splits the prompt across
+``input_tokens`` (non-cached delta), ``cache_read_input_tokens``
+(cache hit — the bulk of an AlphaMind prompt), and
+``cache_creation_input_tokens`` (cache write). An operator tailing the
+JSONL needs the split to distinguish "context assembled, cached
+correctly" from "context-assembly path broken" (ALP-701).
 """
 
 from __future__ import annotations
@@ -44,7 +53,7 @@ class ProgressEmitter(Protocol):
 
     def agent_request(self, *, phase: str, agent: str, model: str) -> None: ...
 
-    def agent_response(
+    def agent_response(  # noqa: PLR0913 - kwargs-only Protocol contract; the 10-field set is fixed by parent issue ALP-493 § (B) + the SDK ``usage`` split (ALP-701)
         self,
         *,
         phase: str,
@@ -52,6 +61,8 @@ class ProgressEmitter(Protocol):
         model: str,
         duration_s: float,
         input_tokens: int,
+        cache_read_tokens: int,
+        cache_write_tokens: int,
         output_tokens: int,
         tool_calls: int,
         stop_reason: str | None,

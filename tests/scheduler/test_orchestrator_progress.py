@@ -363,9 +363,9 @@ def _emit_agent_call(progress: ProgressEmitter, *, phase: str, agent: str, model
     """Emit one ``agent_request`` + ``agent_response`` pair with placeholder fields.
 
     Test helper that lets the pipeline stubs simulate a single SDK call's
-    progress emission without re-copying the 5-field
+    progress emission without re-copying the 7-field
     ``agent_response`` shape from parent issue ALP-493 § (B) at every
-    call site.
+    call site (cache split per ALP-701).
     """
     progress.agent_request(phase=phase, agent=agent, model=model)
     progress.agent_response(
@@ -374,6 +374,8 @@ def _emit_agent_call(progress: ProgressEmitter, *, phase: str, agent: str, model
         model=model,
         duration_s=1.0,
         input_tokens=10,
+        cache_read_tokens=60_000,
+        cache_write_tokens=0,
         output_tokens=5,
         tool_calls=0,
         stop_reason="end_turn",
@@ -595,10 +597,13 @@ async def test_run_invocation_records_nine_agent_request_response_pairs(
         f"agent_request order mismatch: {actual_agents} != {expected_agents_in_order}"
     )
 
-    # Each agent_response carries the five fixed fields per parent issue § (B).
+    # Each agent_response carries the seven fixed fields per parent
+    # issue § (B); cache split added per ALP-701.
     for response in responses:
         assert "duration_s" in response
         assert "input_tokens" in response
+        assert "cache_read_tokens" in response
+        assert "cache_write_tokens" in response
         assert "output_tokens" in response
         assert "tool_calls" in response
         assert "stop_reason" in response

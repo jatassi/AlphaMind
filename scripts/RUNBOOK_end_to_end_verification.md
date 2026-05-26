@@ -32,11 +32,14 @@ invariant the prior per-feature verify suite collectively covered:
   script inspects — operators can read that file directly for
   seed-step debugging.
 - All 9 SDK call pairs landed with `agent_request`/`agent_response` pairs
-  carrying `duration_s` / `input_tokens` / `output_tokens` / `tool_calls` /
-  `stop_reason` (parent issue § E). The 9 are: 3 domain researchers
-  (tech_semis, financials, energy), qualitative, adaptive, synthesizer,
-  analyst, strategist, pm. Distillation is the deterministic 7-phase
-  numerical orchestrator and emits no SDK call.
+  carrying `duration_s` / `input_tokens` / `cache_read_tokens` /
+  `cache_write_tokens` / `output_tokens` / `tool_calls` / `stop_reason`
+  (parent issue § E; cache split added per ALP-701 so the operator can
+  tell apart a cache-hit prompt from a broken context-assembly path).
+  The 9 are: 3 domain researchers (tech_semis, financials, energy),
+  qualitative, adaptive, synthesizer, analyst, strategist, pm.
+  Distillation is the deterministic 7-phase numerical orchestrator and
+  emits no SDK call.
 - The synthetic portfolio seeded cleanly (8 positions, 8 theses, cash
   ledger at $24,440).
 - No Alpaca HTTP traffic leaked into the subprocess's captured
@@ -519,12 +522,20 @@ A clean debug-e2e run wires one Sonnet pass through the analysis layer
 calls; distillation is deterministic and emits no SDK call) and one
 Opus pass through the four decision agents (analyst + strategist + PM
 = 3 Opus calls; the proposal pre-processor is deterministic and emits
-no SDK call). Approximate cost:
+no SDK call). Approximate cost (the "Input tokens" column is the *total*
+input volume — `input_tokens + cache_read_tokens + cache_write_tokens`):
 
 | Layer    | Model  | Input tokens | Output tokens |
 |----------|--------|--------------|---------------|
 | analysis | Sonnet | ~54K–70K     | ~7.6K–13.6K   |
 | decision | Opus   | ~68K–102K    | ~57K–100K     |
+
+Most AlphaMind prompts hit the cache, so in a healthy run the bulk of
+the input volume lands in `cache_read_tokens` and the bare
+`input_tokens` field shows the non-cached delta only (single-to-low-
+double-digit). If `input_tokens` looks "tiny" in `progress.jsonl`, that
+is the SDK's cache-hit signature — check `cache_read_tokens` for the
+real prompt volume (ALP-701).
 
 Roughly 10–15% of the nominal weekly Sonnet cap and a smaller slice of
 the Opus cap per `docs/design/cost-and-rate-limit-modeling.md`. Don't

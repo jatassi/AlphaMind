@@ -410,27 +410,40 @@ def _check_phase_pairs(events: list[dict[str, object]]) -> str | None:
 
 # Fields every ``agent_response`` must carry per parent issue ALP-493 § (B).
 # ``stop_reason`` may legitimately be ``None`` (the Anthropic SDK does not
-# always populate it); the other four must be present AND non-null because
+# always populate it); the other six must be present AND non-null because
 # the report builder + cost-tracking downstream rely on them.
+# ``cache_read_tokens`` / ``cache_write_tokens`` were added per ALP-701 so
+# an operator can distinguish a cache-hit prompt (the AlphaMind norm —
+# bulk of input lives in ``cache_read_tokens``) from a broken
+# context-assembly path.
 _AGENT_RESPONSE_REQUIRED_FIELDS: tuple[str, ...] = (
     "duration_s",
     "input_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
     "output_tokens",
     "tool_calls",
     "stop_reason",
 )
 _AGENT_RESPONSE_NON_NULL_FIELDS: frozenset[str] = frozenset(
-    {"duration_s", "input_tokens", "output_tokens", "tool_calls"}
+    {
+        "duration_s",
+        "input_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "output_tokens",
+        "tool_calls",
+    }
 )
 
 
 def _check_agent_response_fields(
     *, event_index: int, ev: dict[str, object], key: tuple[str, str]
 ) -> str | None:
-    """Assert one ``agent_response`` carries the 5-field set per § (B).
+    """Assert one ``agent_response`` carries the 7-field set per § (B).
 
     Returns a non-``None`` error string when a required field is absent
-    or — for the four load-bearing fields — null.
+    or — for the six load-bearing fields — null.
     """
     for field in _AGENT_RESPONSE_REQUIRED_FIELDS:
         if field not in ev:

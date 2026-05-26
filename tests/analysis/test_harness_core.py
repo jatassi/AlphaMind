@@ -301,8 +301,8 @@ def _make_sdk_assistant(
         usage={
             "input_tokens": 10,
             "output_tokens": 20,
-            "cache_read_input_tokens": 0,
-            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 68_214,
+            "cache_creation_input_tokens": 1_024,
         },
     )
 
@@ -328,8 +328,8 @@ def _make_sdk_result(
         usage={
             "input_tokens": 10,
             "output_tokens": 20,
-            "cache_read_input_tokens": 0,
-            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 68_214,
+            "cache_creation_input_tokens": 1_024,
         },
         structured_output=structured_output,
         result=result_text,
@@ -956,9 +956,15 @@ async def test_invoke_sdk_emits_agent_request_and_response(tmp_path: Path) -> No
     assert response_fields["agent"] == "demo_agent"
     assert response_fields["model"] == "claude-sonnet"
     assert response_fields["stop_reason"] == "end_turn"
-    # 5 fixed agent_response fields (parent issue § B):
+    # 7 fixed agent_response fields (parent issue § B; cache split per
+    # ALP-701 — most AlphaMind prompts hit the cache, so an operator
+    # tailing the JSONL needs the three input-side counts separately to
+    # distinguish "context assembled, cached" from "context-assembly
+    # broken").
     assert "duration_s" in response_fields
     assert response_fields["input_tokens"] == 10
+    assert response_fields["cache_read_tokens"] == 68_214
+    assert response_fields["cache_write_tokens"] == 1_024
     assert response_fields["output_tokens"] == 20
     assert response_fields["tool_calls"] == 0
 

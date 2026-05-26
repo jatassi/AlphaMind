@@ -78,6 +78,8 @@ def _full_progress_stream() -> list[dict[str, Any]]:
         input_tokens: int,
         output_tokens: int,
         tool_calls: int,
+        cache_read_tokens: int = 60_000,
+        cache_write_tokens: int = 0,
         duration_s: float | None = None,
         stop_reason: str = "end_turn",
     ) -> None:
@@ -98,6 +100,8 @@ def _full_progress_stream() -> list[dict[str, Any]]:
                 "model": model,
                 "duration_s": duration_s if duration_s is not None else (resp - req),
                 "input_tokens": input_tokens,
+                "cache_read_tokens": cache_read_tokens,
+                "cache_write_tokens": cache_write_tokens,
                 "output_tokens": output_tokens,
                 "tool_calls": tool_calls,
                 "stop_reason": stop_reason,
@@ -425,11 +429,19 @@ def test_build_sdk_call_rows_yields_one_row_per_agent_request_response(
 def test_build_sdk_call_rows_carries_response_metrics(
     report_module: ModuleType,
 ) -> None:
-    """Each row carries `duration_s`, `input_tokens`, `output_tokens`, etc."""
+    """Each row carries ``duration_s`` / token counts / etc.
+
+    The three input-side counts are surfaced separately so an operator
+    can see the bare ``input_tokens`` (non-cached delta) alongside
+    ``cache_read_tokens`` (cache hit — the bulk of an AlphaMind prompt)
+    and ``cache_write_tokens`` (cache write). Added per ALP-701.
+    """
     events = _full_progress_stream()
     rows = report_module.build_sdk_call_rows(events)
     pm_row = next(r for r in rows if r.agent == "portfolio_manager")
     assert pm_row.input_tokens == 35000
+    assert pm_row.cache_read_tokens == 60_000
+    assert pm_row.cache_write_tokens == 0
     assert pm_row.output_tokens == 30000
     assert pm_row.tool_calls == 8
     assert pm_row.stop_reason == "end_turn"
