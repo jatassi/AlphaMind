@@ -1337,3 +1337,157 @@ async def test_reconcile_orphan_stays_alert_only_no_correction(
 
         pos_rows = (await sess.execute(select(PositionRow))).scalars().all()
         assert {row.position_id for row in pos_rows} == {"pos-1"}
+
+
+async def test_reconcile_options_only_alpaca_response_does_not_wipe_local_equity(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-662 — cross-asset-class isolation. When Alpaca returns ONLY
+    ``us_option`` snapshots (e.g., the equity-fetch sub-call silently
+    degraded to empty while options-fetch succeeded), the equity branch
+    must NOT auto-correct local equity rows to zero. The vanished-equity
+    alert still fires so the operator gets visibility, but the destructive
+    writeback is suppressed.
+    """
+    from alphamind.execution.corporate_actions.reconciliation import reconcile
+    from alphamind.portfolio_state.records.positions import EquityPositionDetails
+    from alphamind.state.tables.positions import PositionRow
+    from alphamind.state.tables.positions_codec import (
+        row_to_record as position_row_to_record,
+    )
+
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        make_open_equity_position(share_count=10.0),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    ctx, handle = await open_handle(factory)
+    await reconcile(
+        handle,
+        # Options-only positive evidence — equity-fetch silently degraded.
+        alpaca_positions=(_options_position_snapshot(qty=5.0),),
+        alpaca_account=_trade_account(cash=100_000.0),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        # Local equity share_count PRESERVED — equity-asset-class positive
+        # evidence is absent, so the writeback gate is closed for equity.
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert isinstance(pos.details, EquityPositionDetails)
+        assert pos.details.share_count == pytest.approx(10.0)
+
+        # Equity-side alert still fires (AAPL vanished from Alpaca's view).
+        alerts = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_ALERT.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert any('"field_name":"share_count"' in a.detail_json for a in alerts)
+
+        # No correction emitted for the equity position.
+        corrections = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_CORRECTION.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert all('"field_name":"share_count"' not in c.detail_json for c in corrections)
+
+
+async def test_reconcile_equity_only_alpaca_response_does_not_wipe_local_options(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-662 — cross-asset-class isolation. When Alpaca returns ONLY
+    ``us_equity`` snapshots (e.g., the options-fetch sub-call silently
+    degraded to empty while equity-fetch succeeded), the options branch
+    must NOT auto-correct local options rows to zero. The vanished-options
+    alert still fires for visibility, but the destructive writeback is
+    suppressed.
+    """
+    from alphamind.execution.corporate_actions.reconciliation import reconcile
+    from alphamind.portfolio_state.records.positions import OptionsPositionDetails
+    from alphamind.state.tables.positions import PositionRow
+    from alphamind.state.tables.positions_codec import (
+        row_to_record as position_row_to_record,
+    )
+
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        make_open_options_position(contract_count=5.0),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    ctx, handle = await open_handle(factory)
+    await reconcile(
+        handle,
+        # Equity-only positive evidence — options-fetch silently degraded.
+        alpaca_positions=(_equity_position_snapshot(symbol="MSFT", qty=3.0),),
+        alpaca_account=_trade_account(cash=100_000.0),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        # Local options contract_count PRESERVED — options-asset-class
+        # positive evidence is absent, so the writeback gate is closed for
+        # options.
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert isinstance(pos.details, OptionsPositionDetails)
+        assert pos.details.contract_count == pytest.approx(5.0)
+
+        # Options-side alert still fires (local OCC contract vanished from
+        # Alpaca's view).
+        alerts = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_ALERT.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert any('"field_name":"contract_count"' in a.detail_json for a in alerts)
+
+        # No correction emitted for the options position.
+        corrections = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_CORRECTION.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert all('"field_name":"contract_count"' not in c.detail_json for c in corrections)
