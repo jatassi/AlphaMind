@@ -802,11 +802,18 @@ def test_translator_output_accepted_by_evaluate_proposals() -> None:
     )
     close_delta = translate_position_assessment_to_proposed_delta(close_assessment, snapshot=snap)
 
-    # Both should be accepted without raising LibraryInputError
+    # Adjust-bracket is exposure-neutral — translator emits quantity=0,
+    # notional_usd=0; evaluate_proposals must accept that shape.
+    adjust_assessment = _adjust_bracket_assessment(sa_id="SA-2", position_id="POS-1")
+    adjust_delta = translate_position_assessment_to_proposed_delta(adjust_assessment, snapshot=snap)
+    assert adjust_delta.action == Action.ADJUST
+    assert adjust_delta.quantity == 0.0
+    assert adjust_delta.notional_usd == 0.0
+
     try:
         evaluate_proposals(
             state=snap,
-            proposals=[open_delta, close_delta],
+            proposals=[open_delta, close_delta, adjust_delta],
             config=lib_config,
             market=market,
         )
