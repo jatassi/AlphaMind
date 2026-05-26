@@ -362,18 +362,25 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # Dispose engines + the shared httpx client so SQLite file
+        # Dispose engines + the shared httpx clients so SQLite file
         # handles release cleanly and the pool is drained. Each
         # dispose runs in its own try/except so a failure on one does
         # not skip the rest (F6). The production engine is NOT disposed
         # here — its lifetime is owned by the composition root's
         # engine_pair_context.
-        if http_client is not None:
+        events_http_client = getattr(app.state, "events_http_client", None)
+        for client_label, client in (
+            ("control", http_client),
+            ("events", events_http_client),
+        ):
+            if client is None:
+                continue
             try:
-                await http_client.aclose()
+                await client.aclose()
             except Exception as exc:
                 log.warning(
-                    "command_center lifespan: control httpx client close failed: %s",
+                    "command_center lifespan: %s httpx client close failed: %s",
+                    client_label,
                     exc,
                 )
         for engine_name, engine in (
@@ -514,14 +521,30 @@ def build_app(
     # root (__main__) reads them and registers each on the
     # CommandCenterSupervisor's TaskGroup. Tests inject fake clients via
     # EventsOverrides.
+    #
+    # F10: when no override is provided, mint ONE shared httpx.AsyncClient
+    # for both upstream SSE clients. The shared client uses an
+    # SSE-compatible timeout (no read timeout — the upstreams keep the
+    # connection open) and its lifetime is owned by the lifespan
+    # (disposed on shutdown alongside the control http client). When
+    # both upstreams share a single client they share a single
+    # connection pool, halving the per-process TCP / TLS overhead.
     event_multiplexer = EventMultiplexer()
     app.state.event_multiplexer = event_multiplexer
+    events_http_client: httpx.AsyncClient | None = None
+    if events.pipeline_events_client is None or events.monitor_events_client is None:
+        events_http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=None, write=5.0, pool=5.0),
+        )
     events_pipeline_client = events.pipeline_events_client or HttpxPipelineEventsClient(
         base_url=command_center_config.pipeline.events_url,
+        http_client=events_http_client,
     )
     events_monitor_client = events.monitor_events_client or HttpxMonitorEventsClient(
         base_url=command_center_config.monitor.events_url,
+        http_client=events_http_client,
     )
+    app.state.events_http_client = events_http_client
     app.state.event_consumer_task_factories = {
         "events_pipeline_consumer": _make_pipeline_consumer_factory(
             client=events_pipeline_client, multiplexer=event_multiplexer

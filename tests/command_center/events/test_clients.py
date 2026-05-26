@@ -199,6 +199,47 @@ class TestHttpxMonitorEventsClient:
         assert out == [("heartbeat", {"timestamp": "2026-05-26T00:00:00+00:00"})]
 
 
+class TestSharedHttpClient:
+    """F10 — when a shared ``httpx.AsyncClient`` is passed at construction,
+    ``stream()`` reuses it instead of minting a fresh per-call client. The
+    test confirms the lifetime semantic: the shared client survives the
+    ``stream()`` context exit.
+    """
+
+    async def test_passed_in_client_is_reused_across_stream_calls(self) -> None:
+        body = (
+            "event: invocation_started\n"
+            'data: {"invocation_id":"inv-1","run_type":"market_hours_rolling"}\n'
+            "\n"
+        )
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=body.encode("utf-8"),
+            )
+
+        shared = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        try:
+            client = HttpxPipelineEventsClient(
+                base_url="http://upstream",
+                http_client=shared,
+            )
+            async with client.stream() as frames:
+                async for _ in frames:
+                    pass
+            # Shared client is still usable after the stream context
+            # exits — confirming we did NOT close it on the consumer's
+            # behalf (its lifetime belongs to the composition root).
+            assert not shared.is_closed
+            async with client.stream() as frames:
+                async for _ in frames:
+                    pass
+        finally:
+            await shared.aclose()
+
+
 class TestHttpxClientErrorPropagates:
     """A non-2xx response surfaces an exception, not a silent no-yield.
 

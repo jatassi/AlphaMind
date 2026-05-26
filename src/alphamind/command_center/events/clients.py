@@ -156,24 +156,37 @@ def _parse_sse_text(text: str) -> Iterable[tuple[str, Mapping[str, Any]]]:
 class _HttpxSSEClientBase:
     """Shared httpx implementation for pipeline + monitor SSE clients.
 
-    Holds the base URL and an optional ``httpx.MockTransport`` injected
-    by tests. The ``stream()`` async-context manager opens a fresh
-    ``httpx.AsyncClient.stream()`` against ``<base_url>/events`` and
-    yields the SSE frames as ``(name, dict)`` tuples.
+    Holds the base URL and either (a) an ``httpx.AsyncClient`` injected by
+    the composition root for production (shared connection pool across
+    both upstreams — F10), or (b) an ``httpx.MockTransport`` injected by
+    tests, in which case ``stream()`` mints a fresh per-call client off
+    the mock transport.
+
+    The ``stream()`` async-context manager opens ``client.stream("GET",
+    ...)`` against ``<base_url>/events`` and yields the SSE frames as
+    ``(name, dict)`` tuples.
 
     Connection drop / non-2xx response surfaces as an exception from
     the iterator — the consumer task uses the exception as its
     reconnect-with-backoff trigger.
+
+    Lifetime: when an external ``http_client`` is passed in, this class
+    DOES NOT close it on stream exit — the composition root owns the
+    client's lifetime via its own ``aclose()`` in the lifespan. When
+    only a ``transport`` is passed in (test path), a fresh client is
+    minted per ``stream()`` call and closed when the context exits.
     """
 
     def __init__(
         self,
         *,
         base_url: str,
+        http_client: httpx.AsyncClient | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: httpx.Timeout | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        self._http_client = http_client
         self._transport = transport
         # Default timeout: no read timeout (SSE keeps the connection
         # open indefinitely); modest connect timeout so a wedged
@@ -185,14 +198,22 @@ class _HttpxSSEClientBase:
     async def stream(
         self,
     ) -> AsyncIterator[AsyncIterator[tuple[str, Mapping[str, Any]]]]:
-        """Open the SSE stream; yield a parsed-frames iterator until close."""
+        """Open the SSE stream; yield a parsed-frames iterator until close.
+
+        If a shared ``http_client`` was passed at construction, reuse it
+        for the request (F10) — the composition root owns its lifetime.
+        Otherwise mint a fresh client off the constructed transport +
+        timeout so the existing test surface (which builds clients with
+        a ``MockTransport`` and no shared client) keeps working.
+        """
         url = f"{self._base_url}/events"
-        # An AsyncExitStack lets us close both the AsyncClient and the
-        # underlying request stream in one context.
         async with AsyncExitStack() as stack:
-            client = await stack.enter_async_context(
-                httpx.AsyncClient(transport=self._transport, timeout=self._timeout)
-            )
+            if self._http_client is not None:
+                client = self._http_client
+            else:
+                client = await stack.enter_async_context(
+                    httpx.AsyncClient(transport=self._transport, timeout=self._timeout)
+                )
             response = await stack.enter_async_context(client.stream("GET", url))
             response.raise_for_status()
 
