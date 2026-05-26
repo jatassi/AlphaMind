@@ -748,6 +748,22 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             "synthetic-portfolio visibility check (ALP-618)."
         ),
     )
+    parser.add_argument(
+        "--resume-from",
+        metavar="INVOCATION_ID:PHASE",
+        default=None,
+        help=(
+            "Forward ``--resume-from <invocation-id>:<phase>`` to the "
+            "underlying scheduler subprocess so it hydrates SDK-phase "
+            "outputs from the named source invocation and re-runs from "
+            "``<phase>`` onward (ALP-693 / ALP-696). The wrapper does no "
+            "validation — the scheduler CLI is the source of truth on "
+            "validity and exits 2 with a named-cause stderr message on "
+            "rejection. When set, the wrapper also runs the post-resume "
+            "``check_deterministic_prefix`` check that hashes the "
+            "distillation outputs against the source archive."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -792,6 +808,12 @@ def _drive_debug_e2e_subprocess(
     ]
     if args.fresh_start:
         cmd.append("--fresh-start")
+    if args.resume_from is not None:
+        # Forward verbatim — the scheduler CLI is the source of truth on
+        # ``--resume-from`` validity (story ALP-693). The wrapper does no
+        # parsing or pre-validation; a malformed value surfaces as the
+        # scheduler's exit-2 with a named-cause stderr message.
+        cmd.extend(["--resume-from", args.resume_from])
     env = os.environ.copy()
     env["DATABASE_PATH"] = str(args.db_path)
     try:
