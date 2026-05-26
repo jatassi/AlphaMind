@@ -26,6 +26,12 @@ export type FormFieldSchema = {
     pattern?: string
     enum_choices?: readonly string[]
   }
+  // Populated only for ``object-array`` controls — per-column
+  // FormFieldSchema entries derived from the array element's
+  // Pydantic model. ``null`` for non-typed list elements
+  // (``list[dict[str, Any]]`` falls back to inferring columns from row
+  // data in that case).
+  columns?: readonly FormFieldSchema[] | null
 }
 
 export type FormSchema = {

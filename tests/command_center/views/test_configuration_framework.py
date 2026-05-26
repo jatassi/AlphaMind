@@ -15,10 +15,12 @@ Scoped pytest: ``uv run pytest tests/command_center/views/ -n auto``.
 
 from __future__ import annotations
 
+from enum import Enum
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import BaseModel, ConfigDict
 
 from alphamind.command_center._kernel.ids import operator_session_id
 from alphamind.command_center.auth.dependencies import csrf_required, current_session
@@ -27,6 +29,44 @@ from alphamind.command_center.views.configuration import (
     build_configuration_router,
     reload_policy_of,
 )
+
+
+class _Color(Enum):
+    """Module-scope enum used by the enum-classifier test.
+
+    Pydantic resolves field annotations via ``typing.get_type_hints``,
+    which looks up names against the model class's containing module.
+    Locally-defined classes inside a test method aren't visible to
+    that lookup; defining at module scope keeps the schema derivation
+    happy.
+    """
+
+    RED = "red"
+    GREEN = "green"
+    BLUE = "blue"
+
+
+class _ColorModel(BaseModel):
+    """Module-scope model for the enum classifier test."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    color: _Color
+
+
+class _Rule(BaseModel):
+    """Module-scope inner element for the object-array columns test."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    name: str
+    severity: int
+
+
+class _RulesContainer(BaseModel):
+    """Module-scope outer model for the object-array columns test."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    rules: list[_Rule]
+
 
 _TEST_SESSION_ID = operator_session_id("sess-config-test")
 
@@ -178,6 +218,76 @@ class TestSchemaEndpoint:
         body = response.json()
         paths = {field["path"] for field in body["fields"]}
         assert "channels.discord.webhook_url_env" in paths
+
+    def test_db_path_carries_path_control_type(self) -> None:
+        """Regression for finding #13 (Wave-5 review).
+
+        ``DbConfig.alphamind_db_path`` carries a ``ControlHint.PATH``
+        annotation so the frontend's :class:`PathInput` component
+        renders for the field. The previous classifier emitted ``string``
+        for every plain-``str`` field, leaving the path / cron / enum
+        controls unreachable.
+        """
+        client = self._client()
+        response = client.get("/api/views/config/schema/command-center")
+        body = response.json()
+        db_path_field = next(
+            field for field in body["fields"] if field["path"] == "db.alphamind_db_path"
+        )
+        assert db_path_field["control_type"] == "path"
+
+    def test_dist_path_carries_path_control_type(self) -> None:
+        client = self._client()
+        response = client.get("/api/views/config/schema/command-center")
+        body = response.json()
+        dist_path_field = next(
+            field for field in body["fields"] if field["path"] == "frontend.dist_path"
+        )
+        assert dist_path_field["control_type"] == "path"
+
+    def test_enum_field_emits_control_type_and_choices(self) -> None:
+        """Enum-typed fields surface ``control_type='enum'`` + ``enum_choices``.
+
+        Uses the module-scope :class:`_ColorModel` so the schema
+        derivation can resolve the annotation via ``get_type_hints``.
+        """
+        from alphamind.command_center.views.configuration import (
+            ConfigFile,
+            FormSchema,
+            derive_form_schema,
+        )
+
+        entry = ConfigFile(slug="t", model=_ColorModel, filename="t.yaml")
+        schema: FormSchema = derive_form_schema(entry)
+        (field_schema,) = schema.fields
+        assert field_schema.control_type == "enum"
+        assert field_schema.constraints["enum_choices"] == ["red", "green", "blue"]
+
+    def test_object_array_field_emits_columns(self) -> None:
+        """Regression for finding #12 (Wave-5 review).
+
+        Typed ``list[BaseModel]`` fields surface per-column
+        FormFieldSchema entries so the frontend's table editor can
+        render cells. Previously the wire carried ``columns=[]`` and
+        the table rendered zero columns (alerts.yaml editor was
+        non-functional).
+        """
+        from alphamind.command_center.views.configuration import (
+            ConfigFile,
+            derive_form_schema,
+        )
+
+        entry = ConfigFile(slug="t", model=_RulesContainer, filename="t.yaml")
+        schema = derive_form_schema(entry)
+        (rules_field,) = schema.fields
+        assert rules_field.control_type == "object-array"
+        assert rules_field.columns is not None
+        column_paths = [c.path for c in rules_field.columns]
+        assert column_paths == ["name", "severity"]
+        # Per-column control types match the element field types.
+        types_by_path = {c.path: c.control_type for c in rules_field.columns}
+        assert types_by_path["name"] == "string"
+        assert types_by_path["severity"] == "number"
 
 
 class TestPathExistsEndpoint:

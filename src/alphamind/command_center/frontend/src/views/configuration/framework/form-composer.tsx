@@ -9,7 +9,7 @@ import { BooleanToggle } from './boolean-toggle'
 import { CronExpressionPicker } from './cron-expression-picker'
 import { EnumDropdown } from './enum-dropdown'
 import { NumberInput } from './number-input'
-import { ObjectArrayTableEditor } from './object-array-table-editor'
+import { type ObjectArrayColumn, ObjectArrayTableEditor } from './object-array-table-editor'
 import { PathInput } from './path-input'
 import { ReloadPolicyBadge } from './reload-policy-badge'
 import { StringArrayTagEditor } from './string-array-tag-editor'
@@ -85,6 +85,39 @@ function asObjectArray(raw: unknown): readonly Record<string, unknown>[] {
   )
 }
 
+function asColumnControlType(controlType: string): 'string' | 'number' {
+  // The table editor's per-cell controls are intentionally narrow
+  // (string + number for v1) — every other backend control type
+  // collapses onto ``string`` so the cell renders as a text input.
+  return controlType === 'number' ? 'number' : 'string'
+}
+
+function deriveColumns(
+  field: FormFieldSchema,
+  rows: readonly Record<string, unknown>[],
+): readonly ObjectArrayColumn[] {
+  // Prefer the backend-emitted typed columns (#12 fix). When the
+  // backend can't type the element (``list[dict[str, Any]]``), fall
+  // back to inferring columns from the first row's keys so the
+  // operator can still edit existing data.
+  if (field.columns && field.columns.length > 0) {
+    return field.columns.map((col) => ({
+      key: col.path,
+      label: col.path,
+      controlType: asColumnControlType(col.control_type),
+    }))
+  }
+  if (rows.length === 0) {
+    return []
+  }
+  const sample = rows[0]
+  return Object.keys(sample).map((key) => ({
+    key,
+    label: key,
+    controlType: 'string' as const,
+  }))
+}
+
 function renderStringControl(
   field: FormFieldSchema,
   rawValue: unknown,
@@ -152,7 +185,7 @@ const DISPATCH: Record<
       path={field.path}
       label={field.path}
       value={asObjectArray(rawValue)}
-      columns={[]}
+      columns={deriveColumns(field, asObjectArray(rawValue))}
       onChange={onChange}
     />
   ),

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, Literal, get_args, get_origin, get_type_hints
 
@@ -43,6 +44,7 @@ from alphamind.command_center.auth.dependencies import csrf_required, current_se
 from alphamind.command_center.config import (
     AlertsConfig,
     CommandCenterConfig,
+    ControlHint,
     ReloadPolicy,
     SecurityConfig,
 )
@@ -154,9 +156,12 @@ class FormFieldSchema(BaseModel):
     """Per-leaf form-schema entry the frontend consumes.
 
     Carries the dotted path (e.g. ``bind.host``), the control type the
-    frontend renders, the reload-policy badge string, and a flat
-    constraints dict for client-side parse-layer enforcement (minimum,
-    maximum, pattern, enum_choices).
+    frontend renders, the reload-policy badge string, a flat constraints
+    dict for client-side parse-layer enforcement (minimum, maximum,
+    pattern, enum_choices), and an optional ``columns`` list for
+    ``object-array`` controls (one entry per typed sub-field of the
+    array element's Pydantic model, so the table editor knows what
+    cells to render). For non-array controls ``columns`` is ``None``.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -165,6 +170,7 @@ class FormFieldSchema(BaseModel):
     control_type: ControlType
     reload_policy: str
     constraints: dict[str, Any]
+    columns: list[FormFieldSchema] | None = None
 
 
 class FormSchema(BaseModel):
@@ -299,6 +305,22 @@ def _strip_annotated(tp: Any) -> Any:
     return tp
 
 
+def _control_hint_of(field_type: Any) -> ControlHint | None:
+    """Return the :class:`ControlHint` annotation on a field, if any.
+
+    Walks ``typing.Annotated`` metadata in the same shape as
+    :func:`reload_policy_of`. Pydantic strips Enum metadata items from
+    the field's annotation at model-construction time *if they're not
+    subclasses of FieldInfo*, so we read directly from the model's
+    ``__annotations__`` rather than from the resolved hint when needed.
+    """
+    metadata: tuple[Any, ...] = getattr(field_type, "__metadata__", ())
+    for item in metadata:
+        if isinstance(item, ControlHint):
+            return item
+    return None
+
+
 def _classify_list_element(elem: Any) -> ControlType:
     """Inner dispatch for a ``list[T]`` element type."""
     elem_origin = get_origin(elem)
@@ -310,27 +332,96 @@ def _classify_list_element(elem: Any) -> ControlType:
     return "string-array"
 
 
-def _classify_control_type(field_type: Any) -> ControlType:
-    """Pick a control type for a leaf field's Python type.
+def _is_enum_class(tp: Any) -> bool:
+    """``True`` iff *tp* is a ``type`` subclass of :class:`enum.Enum`."""
+    return isinstance(tp, type) and issubclass(tp, Enum)
 
-    Closed dispatch order: bool → boolean, int/float → number, list[…] →
-    one of {string-array, object-array}, fallback → string. Enum + cron +
-    path live in ``json_schema_extra`` overrides; this classifier handles
-    the structural types only and is intentionally narrow — per-file
-    editors in 06a/06b extend the override surface as their YAML shapes
-    demand.
-    """
-    inner = _strip_annotated(field_type)
+
+_HINT_TO_CONTROL: dict[ControlHint, ControlType] = {
+    ControlHint.PATH: "path",
+    ControlHint.CRON: "cron",
+}
+
+
+def _classify_scalar(inner: Any) -> ControlType | None:
+    """Map a non-list inner type to its control variant, or ``None``."""
+    if _is_enum_class(inner) or get_origin(inner) is Literal:
+        return "enum"
     if inner is bool:
         return "boolean"
     if inner in (int, float):
         return "number"
+    return None
+
+
+def _classify_control_type(field_type: Any) -> ControlType:
+    """Pick a control type for a leaf field's Python type.
+
+    Dispatch order:
+
+    1. ``ControlHint.PATH`` / ``ControlHint.CRON`` annotation wins
+       (semantic refinement of plain ``str``).
+    2. Enum subclass or ``Literal[...]`` with string args → ``enum``.
+    3. Structural: bool → boolean, int/float → number,
+       list[BaseModel | dict] → object-array, list[anything else] →
+       string-array.
+    4. Fallback → ``string``.
+
+    Per-file editors in 06a/06b extend the override surface as their
+    YAML shapes demand.
+    """
+    hint = _control_hint_of(field_type)
+    if hint is not None:
+        return _HINT_TO_CONTROL[hint]
+    inner = _strip_annotated(field_type)
+    scalar = _classify_scalar(inner)
+    if scalar is not None:
+        return scalar
     if get_origin(inner) is list:
         args = get_args(inner)
         if not args:
             return "string-array"
         return _classify_list_element(_strip_annotated(args[0]))
     return "string"
+
+
+def _enum_choices(field_type: Any) -> list[str] | None:
+    """Extract the closed set of enum / literal values from a field type.
+
+    Returns ``None`` when the field isn't an enum-like type so callers
+    can omit the ``enum_choices`` constraint entry.
+    """
+    inner = _strip_annotated(field_type)
+    if _is_enum_class(inner):
+        return [member.value for member in inner]
+    if get_origin(inner) is Literal:
+        return [str(arg) for arg in get_args(inner)]
+    return None
+
+
+def _element_columns(field_type: Any) -> list[FormFieldSchema] | None:
+    """Derive per-column FormFieldSchema entries for a ``list[BaseModel]``.
+
+    Returns ``None`` for non-typed list elements (``list[dict[str, Any]]``
+    et al). The framework's three registered files include alerts.yaml,
+    whose ``rules`` field is currently untyped at the loader (story 02
+    ships ``list[dict[str, object]]`` so the per-rule schema isn't fixed
+    here); the table editor on the frontend will fall back to inferring
+    columns from row data in that case.
+    """
+    inner = _strip_annotated(field_type)
+    if get_origin(inner) is not list:
+        return None
+    args = get_args(inner)
+    if not args:
+        return None
+    elem = _strip_annotated(args[0])
+    if isinstance(elem, type) and issubclass(elem, BaseModel):
+        # Recurse with no prefix — the column path is the sub-field
+        # name relative to the row object, not relative to the
+        # surrounding form payload.
+        return _walk_fields(elem, prefix="")
+    return None
 
 
 def _extract_constraints(field_info: Any) -> dict[str, Any]:
@@ -369,9 +460,15 @@ def _walk_fields(model: type[BaseModel], prefix: str = "") -> list[FormFieldSche
     each. The reload policy for a nested-model field propagates to every
     leaf below it (an explicit annotation on a leaf still wins).
     """
+    # Pull the resolved annotations via ``get_type_hints`` so that
+    # ``Annotated[...]`` metadata (including :class:`ControlHint`)
+    # survives the ``from __future__ import annotations`` deferral. The
+    # raw ``__annotations__`` mapping contains string forms when the
+    # module uses PEP 563, so the classifier wouldn't see the metadata.
+    type_hints = get_type_hints(model, include_extras=True)
     fields: list[FormFieldSchema] = []
     for name, field_info in model.model_fields.items():
-        annotation = field_info.annotation
+        annotation = type_hints.get(name, field_info.annotation)
         if annotation is None:
             continue
         inner = _strip_annotated(annotation)
@@ -389,6 +486,7 @@ def _walk_fields(model: type[BaseModel], prefix: str = "") -> list[FormFieldSche
                         control_type=child.control_type,
                         reload_policy=ReloadPolicy.DEPLOY_TIME.value,
                         constraints=child.constraints,
+                        columns=child.columns,
                     )
                     for child in child_fields
                 ]
@@ -396,12 +494,22 @@ def _walk_fields(model: type[BaseModel], prefix: str = "") -> list[FormFieldSche
             continue
         constraints = _extract_constraints(field_info)
         control_type = _classify_control_type(annotation)
+        # Enum / Literal fields surface their closed value set so the
+        # frontend's EnumDropdown can render choices without a second
+        # round-trip.
+        choices = _enum_choices(annotation)
+        if choices is not None:
+            constraints["enum_choices"] = choices
+        # Object-array fields surface per-column FormFieldSchema entries
+        # so the table editor knows what cells to render (#12).
+        columns = _element_columns(annotation) if control_type == "object-array" else None
         fields.append(
             FormFieldSchema(
                 path=path,
                 control_type=control_type,
                 reload_policy=own_policy.value,
                 constraints=constraints,
+                columns=columns,
             )
         )
     return fields

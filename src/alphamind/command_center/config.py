@@ -58,11 +58,27 @@ class ReloadPolicy(Enum):
     DEPLOY_TIME = "deploy_time"
 
 
+class ControlHint(Enum):
+    """Per-field UI-control hint for the config editor form schema.
+
+    Annotates a field via :class:`typing.Annotated` so the form-schema
+    derivation in :mod:`alphamind.command_center.views.configuration` can
+    pick the right per-control component (cron picker, path input, …)
+    even for fields whose Python type is plain ``str``. The structural
+    classifier (bool → boolean, int → number, list → array) handles the
+    type-driven cases; this enum covers the semantic refinements.
+    """
+
+    PATH = "path"
+    CRON = "cron"
+
+
 __all__ = [
     "AlertsChannels",
     "AlertsConfig",
     "BindConfig",
     "CommandCenterConfig",
+    "ControlHint",
     "DbConfig",
     "DiscordChannelConfig",
     "FrontendConfig",
@@ -110,7 +126,9 @@ class DbConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    alphamind_db_path: Annotated[str, ReloadPolicy.DEPLOY_TIME] = Field(min_length=1)
+    alphamind_db_path: Annotated[str, ReloadPolicy.DEPLOY_TIME, ControlHint.PATH] = Field(
+        min_length=1
+    )
 
 
 class FrontendConfig(BaseModel):
@@ -125,7 +143,7 @@ class FrontendConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    dist_path: Annotated[str, ReloadPolicy.DEPLOY_TIME] = Field(min_length=1)
+    dist_path: Annotated[str, ReloadPolicy.DEPLOY_TIME, ControlHint.PATH] = Field(min_length=1)
 
 
 class PipelineUpstreamConfig(BaseModel):
