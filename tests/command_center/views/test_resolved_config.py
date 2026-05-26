@@ -93,16 +93,36 @@ def _make_app(config_dir: Path, *, stub_reader: bool = True) -> FastAPI:
     return app
 
 
-def _write_snapshot(archive_root: Path, invocation_id: str, bundle: dict[str, Any]) -> Path:
+_DEFAULT_SNAPSHOT_DATE_PARTITION = "2026-05-26"
+"""Default date partition the test harness writes snapshots under.
+
+The post-merge production writer (``alphamind.config.snapshot.persist_snapshot``)
+emits the snapshot under
+``<archive_root>/<YYYY-MM-DD>/<invocation_id>/resolved_config.json`` via
+:func:`alphamind._kernel.archive_layout.invocation_archive_dir`. PR #204 /
+ALP-689 followup unified the legacy ``<archive_root>/invocations/<id>/``
+writer with the date-partitioned distillation layout under the latter
+(eight production callers migrated). The route layer's reader now uses
+:func:`find_invocation_archive_dir` which globs by invocation_id without
+needing the date partition; the test fixture pins a single date partition
+so the glob's "exactly one match" branch fires.
+"""
+
+
+def _write_snapshot(
+    archive_root: Path,
+    invocation_id: str,
+    bundle: dict[str, Any],
+    *,
+    date_partition: str = _DEFAULT_SNAPSHOT_DATE_PARTITION,
+) -> Path:
     """Write a fake resolved_config.json under the production layout.
 
     Production writes through :func:`alphamind.config.snapshot.persist_snapshot`
-    which targets ``<archive_root>/invocations/<id>/resolved_config.json`` —
-    not the date-partitioned distillation layout.  Pre-fix the test
-    harness wrote to the date partition, so the production-layout 404
-    regression (Wave-6 finding #2) wasn't caught here.
+    which targets ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/resolved_config.json``
+    (post-PR #204 unified layout — see :data:`_DEFAULT_SNAPSHOT_DATE_PARTITION`).
     """
-    invocation_dir = archive_root / "invocations" / invocation_id
+    invocation_dir = archive_root / date_partition / invocation_id
     invocation_dir.mkdir(parents=True, exist_ok=True)
     snapshot = invocation_dir / "resolved_config.json"
     snapshot.write_text(json.dumps(bundle, sort_keys=True, indent=2), encoding="utf-8")
@@ -412,27 +432,29 @@ class TestResolvedConfigRegressionGuards:
     """Wave-6 fixes for the resolved-config viewer endpoints."""
 
     def test_dual_partition_layout_does_not_404(self, tmp_path: Path) -> None:
-        """A coexisting distillation-layout dir must NOT break the lookup.
+        """A coexisting distillation-layout dir under the same partition must NOT 404.
 
-        Pre-fix the helper globbed ``<archive_root>/*/<invocation_id>``
-        which matched BOTH the resolved-config writer's ``invocations/``
-        partition AND the distillation orchestrator's ``<YYYY-MM-DD>/``
-        partition — len(matches) > 1 → None → 404 in production.
-        Post-fix the helper resolves directly to the canonical
-        ``invocations/<id>/`` path so the date partition is irrelevant.
+        Post-PR-#204 the resolved-config writer + the distillation
+        orchestrator share the same date-partitioned root —
+        ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/`` — and the
+        distillation orchestrator's ``distillation/`` subdir is a
+        sibling of the ``resolved_config.json``. Confirms the lookup
+        helper resolves to the snapshot file even when the distillation
+        artifacts are present alongside it. The unified layout closes
+        the prior dual-partition glob-ambiguity entirely (the test
+        previously simulated the legacy ``invocations/<id>/`` writer +
+        a sibling ``<YYYY-MM-DD>/<id>/`` partition; both surfaces are
+        now in the same directory).
         """
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         archive_root = tmp_path / "archive"
         archive_root.mkdir()
         invocation_id = "inv-dual-layout-001"
-        # The canonical (production) layout the snapshot writer uses.
-        _write_snapshot(archive_root, invocation_id, _SAMPLE_BUNDLE)
-        # Simulate the distillation orchestrator's parallel date-partitioned
-        # directory for the same invocation_id.
-        date_dir = archive_root / "2026-05-10" / invocation_id
-        date_dir.mkdir(parents=True)
-        (date_dir / "distillation").mkdir()
+        snapshot_path = _write_snapshot(archive_root, invocation_id, _SAMPLE_BUNDLE)
+        # The distillation orchestrator writes its artifacts to a sibling
+        # ``distillation/`` subdir under the same date-partitioned root.
+        (snapshot_path.parent / "distillation").mkdir()
 
         app = _make_app(config_dir)
         with (
@@ -463,7 +485,7 @@ class TestResolvedConfigRegressionGuards:
         archive_root = tmp_path / "archive"
         archive_root.mkdir()
         invocation_id = "inv-non-dict-001"
-        invocation_dir = archive_root / "invocations" / invocation_id
+        invocation_dir = archive_root / _DEFAULT_SNAPSHOT_DATE_PARTITION / invocation_id
         invocation_dir.mkdir(parents=True)
         (invocation_dir / "resolved_config.json").write_text(
             json.dumps(["not", "a", "dict"]), encoding="utf-8"
