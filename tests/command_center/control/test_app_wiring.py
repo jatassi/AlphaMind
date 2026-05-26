@@ -50,8 +50,10 @@ frontend:
   dist_path: "src/alphamind/command_center/frontend/dist"
 pipeline:
   control_url: "http://127.0.0.1:8765"
+  events_url: "http://127.0.0.1:8765"
 monitor:
   control_url: "http://127.0.0.1:8766"
+  events_url: "http://127.0.0.1:8766"
 """,
         encoding="utf-8",
     )
