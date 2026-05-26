@@ -49,9 +49,11 @@ from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.command_center.auth.routes import build_auth_router
@@ -160,7 +162,34 @@ remote-access follow-on lands so a restart doesn't bounce every active
 session.
 """
 
+_DEV_MODE_ENV = "COMMAND_CENTER_DEV_MODE"
+"""Env var that, when set to any truthy value, skips the StaticFiles mount.
+
+Dev workflow: the operator runs ``bun run dev`` (Vite at :5173) AND
+``python -m alphamind.command_center`` (FastAPI at :8080). Vite proxies
+``/api/*``, ``/auth/*``, ``/events``, ``/healthz`` to FastAPI; the SPA
+itself is served by Vite. The FastAPI ``StaticFiles`` mount at ``/`` is
+inert in this configuration because the browser hits Vite directly — but
+we skip the mount anyway so a missing ``dist/`` directory (developer
+hasn't built yet) doesn't crash the daemon at startup.
+
+Production: env var is unset; ``bun run build`` produces
+``config.frontend.dist_path``; the mount serves the bundle.
+"""
+
 log = logging.getLogger(__name__)
+
+
+def _dev_mode_active() -> bool:
+    """Return True if the dev-mode env var is set to a truthy value.
+
+    Truthy values follow the standard set ``{"1", "true", "yes", "on"}``
+    (case-insensitive). Anything else (including unset) returns False.
+    """
+    raw = os.environ.get(_DEV_MODE_ENV)
+    if raw is None:
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _resolve_session_secret(overrides: AuthOverrides) -> bytes:
@@ -417,4 +446,42 @@ def build_app(
         """
         return {"status": "ok"}
 
+    _maybe_mount_frontend(app, command_center_config=command_center_config)
     return app
+
+
+def _maybe_mount_frontend(app: FastAPI, *, command_center_config: CommandCenterConfig) -> None:
+    """Mount ``StaticFiles`` at ``/`` serving the Vite-built SPA, if appropriate.
+
+    The mount lives LAST in the route table — FastAPI's matching tries
+    registered routes first, and the StaticFiles mount at ``/`` with
+    ``html=True`` catches every unmatched path and serves ``index.html``
+    (TanStack Router's client-side SPA fallback).
+
+    Two skip-paths fail-closed without crashing the daemon:
+
+    * **Dev mode.** ``COMMAND_CENTER_DEV_MODE`` env var is truthy — the
+      operator runs Vite alongside FastAPI; the SPA is served by Vite, not
+      by FastAPI. Skipping the mount avoids needing a built ``dist/`` for
+      dev iteration.
+    * **Missing dist directory.** The configured ``dist_path`` doesn't
+      resolve to an existing directory (developer hasn't run
+      ``bun run build`` yet). Logs a warning and continues — the API
+      surface still works; only the SPA fallback is unavailable.
+    """
+    if _dev_mode_active():
+        log.info(
+            "command_center: %s set; skipping StaticFiles mount (Vite serves the SPA)",
+            _DEV_MODE_ENV,
+        )
+        return
+    dist_path = Path(command_center_config.frontend.dist_path)
+    if not dist_path.is_dir():
+        log.warning(
+            "command_center: frontend dist_path %s is not a directory; skipping "
+            "StaticFiles mount. Run `bun run build` in src/alphamind/command_center/"
+            "frontend/ to produce the bundle.",
+            dist_path,
+        )
+        return
+    app.mount("/", StaticFiles(directory=dist_path, html=True), name="frontend")

@@ -63,6 +63,7 @@ from alphamind.command_center.auth.repository import (
     insert_session,
     list_credentials,
     load_credential,
+    load_session,
     update_credential_sign_count,
 )
 from alphamind.command_center.auth.sessions import (
@@ -286,6 +287,20 @@ class AuthSuccessResponse(_StrictModel):
     expires_at: str
     csrf_token: str
     credential_id: str
+
+
+class SessionInfoResponse(_StrictModel):
+    """Body of ``GET /auth/me``.
+
+    The minimal session snapshot the frontend ``useSession()`` hook needs to
+    decide whether to render the protected layout or redirect to ``/login``.
+    The session row itself stays server-side; the client only sees the id +
+    expiry. CSRF token is NOT returned — it already lives in the
+    ``cc_csrf`` cookie and would only be redundant in the response body.
+    """
+
+    session_id: str
+    expires_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -700,6 +715,32 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
             credential_id=verified.credential_id,
         )
 
+    @router.get("/me")
+    async def me(
+        request: Request,
+        sid: Annotated[OperatorSessionId, Depends(current_session)],
+    ) -> SessionInfoResponse:
+        """Lightweight session probe consumed by the frontend ``useSession()`` hook.
+
+        The protected layout (``_authed.tsx``) calls this on mount; a 200
+        means "session is valid", a 401 means "redirect to /login". Read-only
+        — no CSRF requirement.
+
+        Returns the resolved session id + expiry (looked up from the
+        ``operator_sessions`` row matching the validated session cookie).
+        """
+        cc_factory = request.app.state.cc_writer_session_factory
+        record = await load_session(cc_factory, session_id=sid)
+        if record is None:
+            # current_session would have already 401'd if the row were
+            # missing — defensive guard against a race where the row is
+            # deleted between dependency resolution and this lookup.
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+            )
+        return SessionInfoResponse(session_id=sid, expires_at=record.expires_at)
+
     @router.post(
         "/logout",
         status_code=status.HTTP_204_NO_CONTENT,
@@ -753,4 +794,5 @@ _PYDANTIC_MODELS: tuple[type[Any], ...] = (
     LoginBeginResponse,
     LoginCompleteRequest,
     AuthSuccessResponse,
+    SessionInfoResponse,
 )

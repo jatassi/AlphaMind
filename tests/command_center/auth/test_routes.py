@@ -526,6 +526,63 @@ class TestLogout:
         assert response.status_code in (401, 403)
 
 
+class TestAuthMe:
+    """Story 04d (ALP-670) — GET /auth/me lightweight session probe.
+
+    Consumed by the frontend's ``useSession()`` hook. Returns the resolved
+    session id + expiry on 200; returns 401 when no valid session cookie
+    is presented. Read-only — no CSRF requirement.
+    """
+
+    async def test_returns_session_info_for_active_session(
+        self,
+        auth_app: FastAPI,
+        setup_token_gate: SetupTokenGate,
+    ) -> None:
+        token = setup_token_gate.mint()
+        with TestClient(auth_app) as client:
+            begin_reg = client.post(
+                "/auth/register/begin",
+                json={"setup_token": token, "user_name": "operator"},
+            ).json()
+            register_response = _complete_registration(
+                client, begin=begin_reg, credential_id="cred-me"
+            ).json()
+            sid = register_response["session_id"]
+            expires_at = register_response["expires_at"]
+            # Cookie jar carries cc_session from the register/complete
+            # response; /auth/me reads it via current_session.
+            response = client.get("/auth/me")
+        assert response.status_code == 200
+        body = response.json()
+        assert body == {"session_id": sid, "expires_at": expires_at}
+
+    async def test_returns_401_without_session_cookie(
+        self,
+        auth_app: FastAPI,
+    ) -> None:
+        with TestClient(auth_app) as client:
+            response = client.get("/auth/me")
+        assert response.status_code == 401
+
+    async def test_does_not_require_csrf_header(
+        self,
+        auth_app: FastAPI,
+        setup_token_gate: SetupTokenGate,
+    ) -> None:
+        """Read-only endpoint — no X-CSRF-Token needed even with a session."""
+        token = setup_token_gate.mint()
+        with TestClient(auth_app) as client:
+            begin_reg = client.post(
+                "/auth/register/begin",
+                json={"setup_token": token, "user_name": "operator"},
+            ).json()
+            _complete_registration(client, begin=begin_reg, credential_id="cred-me-nocsrf")
+            # No X-CSRF-Token header on this GET.
+            response = client.get("/auth/me")
+        assert response.status_code == 200
+
+
 class TestCredentialCountAfterEnrollment:
     async def test_credential_persists_to_table(
         self,
