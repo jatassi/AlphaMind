@@ -1,6 +1,6 @@
-"""Portfolio views — dashboard + position detail (ALP-676, ALP-677).
+"""Portfolio views — dashboard + position detail + theses (ALP-676, ALP-677, ALP-678).
 
-Dashboard (GET /api/views/portfolio/dashboard) — five panes:
+Dashboard (ALP-676) — GET /api/views/portfolio/dashboard — five panes:
 
 * ``equity_and_pl``    — total value, HWM, drawdown, daily/cumulative/total
                           unrealized P/L from ``drawdown_state`` +
@@ -15,8 +15,7 @@ Dashboard (GET /api/views/portfolio/dashboard) — five panes:
 * ``positions``        — one row per ``OPEN`` position joined to ``theses``.
 * ``pending_orders``   — one row per ``PENDING`` / ``PARTIALLY_FILLED`` order.
 
-Position detail (GET /api/views/portfolio/positions/{position_id}) — full
-per-position detail for view C-2:
+Position detail (ALP-677) — GET /api/views/portfolio/positions/{position_id}:
 
 * position row fields
 * bracket legs for the position's bracket
@@ -24,9 +23,18 @@ per-position detail for view C-2:
 * linked thesis with all components
 * activity_log entries filtered by position_id
 
+Theses (ALP-678):
+
+* GET /api/views/portfolio/theses  — paginated filterable theses list.
+* GET /api/views/portfolio/theses/{thesis_id} — full thesis detail with
+  components, status history from activity_log, resolution outcome.
+
 Design references:
   docs/design/command-center.md § Portfolio dashboard
   docs/design/command-center.md § Position detail
+  docs/design/command-center.md § Theses dashboard
+  docs/design/command-center.md § Thesis detail
+  docs/design/05-execution-layer/thesis-model.md
   docs/design/05-execution-layer/regt-margin-attribution.md
 """
 
@@ -39,7 +47,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -638,7 +646,7 @@ async def _read_pending_orders(session: AsyncSession) -> list[PendingOrderRow]:
 
 
 # ---------------------------------------------------------------------------
-# Position detail — Pydantic response models (ALP-677)
+# Position detail + theses — Pydantic response models (ALP-677, ALP-678)
 # ---------------------------------------------------------------------------
 
 
@@ -671,8 +679,38 @@ class FillDetail(BaseModel):
     execution_venue: str | None
 
 
+class ThesisRow(BaseModel):
+    """Single row in the theses dashboard list (ALP-678)."""
+
+    thesis_id: str
+    position_id: str
+    status: str  # ACTIVE | RESOLVED | CANCELLED
+    thesis_status: str | None  # ON_TRACK | PARTIALLY_REALIZED | AT_RISK | STALE | INVALIDATED
+    resolution_category: str | None
+    summary: str
+    generation_timestamp: str
+    resolution_timestamp: str | None
+    age_hours: float
+    position_unrealized_pl_usd: str | None
+
+
+class ThesesPage(BaseModel):
+    """Paginated theses list response (ALP-678)."""
+
+    theses: list[ThesisRow]
+    total: int
+    page: int
+    page_size: int
+
+
 class ThesisComponentDetail(BaseModel):
-    """One thesis component for the position detail view."""
+    """One thesis component (ALP-677 / ALP-678).
+
+    Shared by the position-detail (ALP-677) and thesis-detail (ALP-678)
+    views. ``supporting_signals`` is populated from
+    ``thesis_components.supporting_signals_json`` for position-detail
+    payloads and defaults to ``[]`` for the thesis-detail view.
+    """
 
     component_id: str
     component_type: str
@@ -680,13 +718,19 @@ class ThesisComponentDetail(BaseModel):
     instrument_reference: str | None
     narrative: str
     key_assumptions: list[str]
-    supporting_signals: list[str]
+    supporting_signals: list[str] = []
     resolution_outcome: str | None
     resolution_notes: str | None
 
 
-class ThesisDetail(BaseModel):
-    """Full thesis for the position detail view."""
+class PositionThesisDetail(BaseModel):
+    """Thesis embedded in a position-detail payload (ALP-677 view C-2).
+
+    Narrower than :class:`ThesisDetail` (ALP-678) because the
+    position-detail view doesn't need the status history or per-component
+    resolution-outcome map — those are surfaced by the thesis-detail
+    endpoint instead.
+    """
 
     thesis_id: str
     status: str
@@ -735,7 +779,7 @@ class PositionDetail(BaseModel):
     bracket_id: str | None
     bracket_legs: list[BracketLegDetail]
     fills: list[FillDetail]
-    thesis: ThesisDetail | None
+    thesis: PositionThesisDetail | None
     activity_log: list[ActivityLogEntry]
 
 
@@ -960,7 +1004,7 @@ async def _read_thesis_for_position(
             )
         )
 
-    return ThesisDetail(
+    return PositionThesisDetail(
         thesis_id=str(thesis_id),
         status=str(status),
         summary=str(summary),
@@ -973,6 +1017,309 @@ async def _read_thesis_for_position(
         resolution_category=str(resolution_category) if resolution_category else None,
         components=components,
     )
+
+
+# ---------------------------------------------------------------------------
+# Theses dashboard / detail — Pydantic response models (ALP-678)
+# ---------------------------------------------------------------------------
+
+
+class ThesisStatusTransition(BaseModel):
+    """One entry in the status-history vertical timeline."""
+
+    entry_id: str
+    entry_at: str
+    old_status: str
+    new_status: str
+    cited_reference_ids: list[str]  # reference-IDs extracted from detail_json
+
+
+class ThesisDetail(BaseModel):
+    """Full thesis detail — row + components + status history + resolution."""
+
+    thesis_id: str
+    position_id: str
+    status: str
+    thesis_status: str | None
+    resolution_category: str | None
+    summary: str
+    generation_timestamp: str
+    resolution_timestamp: str | None
+    age_hours: float
+    components: list[ThesisComponentDetail]
+    status_history: list[ThesisStatusTransition]
+    resolution_component_outcomes: dict[str, str]  # component_id → outcome
+
+
+# ---------------------------------------------------------------------------
+# Theses internal helpers (frozen dataclasses)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _ThesisDbRow:
+    thesis_id: str
+    position_id: str
+    status: str
+    resolution_category: str | None
+    summary: str
+    generation_timestamp: str
+    resolution_timestamp: str | None
+    narrative_json: str
+
+
+_REF_ID_PATTERN_PARTS = [
+    "SA-",
+    "QR-",
+    "AR-",
+    "CR-",
+    "DR-",
+    "INV-",
+]
+
+
+def _extract_reference_ids(detail_json_str: str) -> list[str]:
+    """Extract reference-ID strings from a detail_json blob.
+
+    Reference IDs follow the command-center naming scheme (SA-N, QR-N,
+    AR-N, CR-N, etc.).  We look for them as string values anywhere in the
+    JSON object and return deduplicated, order-preserving list.
+    """
+    try:
+        obj: Any = json.loads(detail_json_str)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+    ids: list[str] = []
+    seen: set[str] = set()
+
+    def _visit(value: Any) -> None:
+        if isinstance(value, str):
+            candidate = value.strip()
+            if (
+                any(candidate.startswith(prefix) for prefix in _REF_ID_PATTERN_PARTS)
+                and candidate not in seen
+            ):
+                seen.add(candidate)
+                ids.append(candidate)
+        elif isinstance(value, dict):
+            for v in value.values():
+                _visit(v)
+        elif isinstance(value, list):
+            for item in value:
+                _visit(item)
+
+    _visit(obj)
+    return ids
+
+
+async def _read_theses_page(
+    session: AsyncSession,
+    *,
+    status: str | None,
+    classification: str | None,
+    sector: str | None,
+    age_days_gt: int | None,
+    resolution_category: str | None,
+    page: int,
+    page_size: int,
+) -> ThesesPage:
+    """Read paginated theses list with filter dimensions."""
+    now = datetime.now(UTC)
+
+    # Build WHERE clauses dynamically.
+    where_parts: list[str] = []
+    params: dict[str, Any] = {}
+
+    if status is not None:
+        where_parts.append("t.status = :status")
+        params["status"] = status.upper()
+
+    if resolution_category is not None:
+        where_parts.append("t.resolution_category = :resolution_category")
+        params["resolution_category"] = resolution_category.upper()
+
+    if age_days_gt is not None:
+        # generation_timestamp is stored as ISO-8601 text; SQLite datetime()
+        # comparison against a computed cutoff ISO string.
+        cutoff = (now - timedelta(days=age_days_gt)).strftime("%Y-%m-%dT%H:%M:%S")
+        where_parts.append("t.generation_timestamp <= :age_cutoff")
+        params["age_cutoff"] = cutoff
+
+    # ``classification`` maps to thesis_status (ON_TRACK, etc.) stored in the
+    # narrative_json blob; use json_extract for the filter.
+    if classification is not None:
+        where_parts.append("json_extract(t.narrative_json, '$.thesis_status') = :classification")
+        params["classification"] = classification.upper()
+
+    # ``sector`` joins via position details_json.
+    if sector is not None:
+        where_parts.append("json_extract(p.details_json, '$.sector') = :sector")
+        params["sector"] = sector
+
+    where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+    count_result = await session.execute(
+        text(f"""  -- noqa: S608
+            SELECT COUNT(*)
+            FROM theses t
+            LEFT JOIN positions p ON p.position_id = t.position_id
+            {where_sql}
+        """),
+        params,
+    )
+    total: int = count_result.scalar_one()
+
+    offset = (page - 1) * page_size
+    params["limit"] = page_size
+    params["offset"] = offset
+
+    rows_result = await session.execute(
+        text(f"""  -- noqa: S608
+            SELECT
+                t.thesis_id,
+                t.position_id,
+                t.status,
+                t.resolution_category,
+                t.summary,
+                t.generation_timestamp,
+                t.resolution_timestamp,
+                json_extract(t.narrative_json, '$.thesis_status') AS thesis_status,
+                p.details_json AS pos_details_json
+            FROM theses t
+            LEFT JOIN positions p ON p.position_id = t.position_id
+            {where_sql}
+            ORDER BY t.generation_timestamp DESC
+            LIMIT :limit OFFSET :offset
+        """),
+        params,
+    )
+    rows = rows_result.fetchall()
+
+    result_rows: list[ThesisRow] = []
+    for (
+        thesis_id,
+        position_id,
+        db_status,
+        db_resolution_category,
+        summary,
+        generation_timestamp,
+        resolution_timestamp,
+        thesis_status_raw,
+        pos_details_json,
+    ) in rows:
+        age_hours = 0.0
+        gen_dt = _parse_fill_ts(str(generation_timestamp))
+        if gen_dt is not None:
+            age_hours = (now - gen_dt).total_seconds() / 3600.0
+
+        pos_unrealized: str | None = None
+        if pos_details_json:
+            with contextlib.suppress(Exception):
+                pos_details: dict[str, Any] = json.loads(pos_details_json)
+                raw_unreal = pos_details.get("unrealized_pnl_usd") or pos_details.get(
+                    "unrealized_pl_usd"
+                )
+                if raw_unreal is not None:
+                    pos_unrealized = str(Decimal(str(raw_unreal)))
+
+        result_rows.append(
+            ThesisRow(
+                thesis_id=str(thesis_id),
+                position_id=str(position_id),
+                status=str(db_status),
+                thesis_status=str(thesis_status_raw) if thesis_status_raw else None,
+                resolution_category=str(db_resolution_category) if db_resolution_category else None,
+                summary=str(summary),
+                generation_timestamp=str(generation_timestamp),
+                resolution_timestamp=str(resolution_timestamp) if resolution_timestamp else None,
+                age_hours=age_hours,
+                position_unrealized_pl_usd=pos_unrealized,
+            )
+        )
+
+    return ThesesPage(
+        theses=result_rows,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+def _parse_key_assumptions(key_assumptions_json: str | None) -> list[str]:
+    """Parse key_assumptions_json into a flat list of strings."""
+    try:
+        raw: Any = json.loads(key_assumptions_json or "[]")
+        if not isinstance(raw, list):
+            return []
+        out: list[str] = []
+        for item in raw:
+            if isinstance(item, str):
+                out.append(item)
+            elif isinstance(item, dict):
+                out.append(str(item.get("text") or item.get("assumption") or item))
+    except (json.JSONDecodeError, TypeError):
+        return []
+    else:
+        return out
+
+
+async def _fetch_thesis_components(
+    session: AsyncSession,
+    thesis_id: str,
+) -> tuple[list[ThesisComponentDetail], dict[str, str]]:
+    """Fetch thesis_components rows; return (components, resolution_outcomes)."""
+    comp_result = await session.execute(
+        text("""
+            SELECT
+                component_id,
+                component_type,
+                linked_bracket_leg,
+                instrument_reference,
+                narrative,
+                key_assumptions_json,
+                resolution_outcome,
+                resolution_notes
+            FROM thesis_components
+            WHERE thesis_id = :thesis_id
+            ORDER BY component_type, component_id
+        """),
+        {"thesis_id": thesis_id},
+    )
+    comp_rows = comp_result.fetchall()
+
+    components: list[ThesisComponentDetail] = []
+    resolution_component_outcomes: dict[str, str] = {}
+
+    for (
+        comp_id,
+        comp_type,
+        linked_bracket_leg,
+        instrument_reference,
+        narrative,
+        key_assumptions_json,
+        resolution_outcome,
+        resolution_notes,
+    ) in comp_rows:
+        flat_assumptions = _parse_key_assumptions(key_assumptions_json)
+
+        if resolution_outcome:
+            resolution_component_outcomes[str(comp_id)] = str(resolution_outcome)
+
+        components.append(
+            ThesisComponentDetail(
+                component_id=str(comp_id),
+                component_type=str(comp_type),
+                linked_bracket_leg=str(linked_bracket_leg) if linked_bracket_leg else None,
+                instrument_reference=str(instrument_reference) if instrument_reference else None,
+                narrative=str(narrative),
+                key_assumptions=flat_assumptions,
+                resolution_outcome=str(resolution_outcome) if resolution_outcome else None,
+                resolution_notes=str(resolution_notes) if resolution_notes else None,
+            )
+        )
+
+    return components, resolution_component_outcomes
 
 
 async def _read_activity_log_for_position(
@@ -1138,6 +1485,108 @@ async def _read_position_detail(
     )
 
 
+async def _fetch_thesis_status_history(
+    session: AsyncSession,
+    thesis_id: str,
+) -> list[ThesisStatusTransition]:
+    """Fetch THESIS_STATUS_CHANGED activity_log entries for the given thesis."""
+    history_result = await session.execute(
+        text("""
+            SELECT entry_id, entry_at, detail_json
+            FROM activity_log
+            WHERE thesis_id = :thesis_id
+              AND event_type = 'THESIS_STATUS_CHANGED'
+            ORDER BY entry_at
+        """),
+        {"thesis_id": thesis_id},
+    )
+    history_rows = history_result.fetchall()
+
+    status_history: list[ThesisStatusTransition] = []
+    for entry_id, entry_at, detail_json_str in history_rows:
+        old_status = ""
+        new_status = ""
+        with contextlib.suppress(Exception):
+            detail: dict[str, Any] = json.loads(detail_json_str)
+            old_status = str(detail.get("old_status", ""))
+            new_status = str(detail.get("new_status", ""))
+
+        status_history.append(
+            ThesisStatusTransition(
+                entry_id=str(entry_id),
+                entry_at=str(entry_at),
+                old_status=old_status,
+                new_status=new_status,
+                cited_reference_ids=_extract_reference_ids(detail_json_str),
+            )
+        )
+
+    return status_history
+
+
+async def _read_thesis_detail(
+    session: AsyncSession,
+    thesis_id: str,
+) -> ThesisDetail:
+    """Read full thesis detail: row + components + status history."""
+    now = datetime.now(UTC)
+
+    # -- Thesis row --
+    thesis_result = await session.execute(
+        text("""
+            SELECT
+                t.thesis_id,
+                t.position_id,
+                t.status,
+                t.resolution_category,
+                t.summary,
+                t.generation_timestamp,
+                t.resolution_timestamp,
+                json_extract(t.narrative_json, '$.thesis_status') AS thesis_status
+            FROM theses t
+            WHERE t.thesis_id = :thesis_id
+        """),
+        {"thesis_id": thesis_id},
+    )
+    thesis_row = thesis_result.fetchone()
+    if thesis_row is None:
+        raise HTTPException(status_code=404, detail=f"Thesis {thesis_id!r} not found")
+
+    (
+        db_thesis_id,
+        position_id,
+        db_status,
+        db_resolution_category,
+        summary,
+        generation_timestamp,
+        resolution_timestamp,
+        thesis_status_raw,
+    ) = thesis_row
+
+    age_hours = 0.0
+    gen_dt = _parse_fill_ts(str(generation_timestamp))
+    if gen_dt is not None:
+        age_hours = (now - gen_dt).total_seconds() / 3600.0
+
+    components, resolution_component_outcomes = await _fetch_thesis_components(session, thesis_id)
+    status_history = await _fetch_thesis_status_history(session, thesis_id)
+
+    return ThesisDetail(
+        thesis_id=str(db_thesis_id),
+        position_id=str(position_id),
+        status=str(db_status),
+        thesis_status=str(thesis_status_raw) if thesis_status_raw else None,
+        resolution_category=str(db_resolution_category) if db_resolution_category else None,
+        summary=str(summary),
+        generation_timestamp=str(generation_timestamp),
+        resolution_timestamp=str(resolution_timestamp) if resolution_timestamp else None,
+        age_hours=age_hours,
+        components=components,
+        status_history=status_history,
+        resolution_component_outcomes=resolution_component_outcomes,
+    )
+
+
 # ---------------------------------------------------------------------------
 # FastAPI dependency
 # ---------------------------------------------------------------------------
@@ -1154,9 +1603,16 @@ def _foreign_reader_session(request: Request) -> async_sessionmaker[AsyncSession
 
 
 def build_portfolio_router() -> APIRouter:
-    """Return a fresh ``APIRouter`` for the portfolio-dashboard view.
+    """Return a fresh ``APIRouter`` for portfolio views.
 
     Mount under ``/api/views/portfolio`` in ``app.py``.
+
+    Endpoints:
+
+    * ``GET /dashboard``                       — portfolio dashboard (ALP-676)
+    * ``GET /positions/{position_id}``         — position detail (ALP-677)
+    * ``GET /theses``                          — paginated theses list (ALP-678)
+    * ``GET /theses/{thesis_id}``              — thesis detail (ALP-678)
     """
     router = APIRouter(tags=["views:portfolio"])
 
@@ -1205,5 +1661,73 @@ def build_portfolio_router() -> APIRouter:
         now = datetime.now(UTC)
         async with session_factory() as session:
             return await _read_position_detail(session, position_id, now)
+
+    @router.get("/theses", response_model=ThesesPage)
+    async def get_theses(
+        session_factory: Annotated[
+            async_sessionmaker[AsyncSession], Depends(_foreign_reader_session)
+        ],
+        status: Annotated[str | None, Query(description="ACTIVE | RESOLVED | CANCELLED")] = None,
+        classification: Annotated[
+            str | None,
+            Query(
+                description=(
+                    "Thesis-status classification: ON_TRACK | PARTIALLY_REALIZED"
+                    " | AT_RISK | STALE | INVALIDATED"
+                )
+            ),
+        ] = None,
+        sector: Annotated[
+            str | None, Query(description="Sector filter from position details")
+        ] = None,
+        age_days_gt: Annotated[int | None, Query(description="Minimum age in days")] = None,
+        resolution_category: Annotated[
+            str | None,
+            Query(
+                description=(
+                    "VALIDATED | PROFITABLE_BUT_WRONG"
+                    " | INVALIDATED_STOPPED_CORRECTLY"
+                    " | INVALIDATED_WRONG_ON_EXIT"
+                    " | CANCELLED_NEVER_ENTERED"
+                )
+            ),
+        ] = None,
+        page: Annotated[int, Query(ge=1)] = 1,
+        page_size: Annotated[int, Query(ge=1, le=200)] = 50,
+    ) -> ThesesPage:
+        """Return paginated, filterable theses list.
+
+        Filter dimensions: ``status``, ``classification`` (thesis-status
+        from narrative_json), ``sector`` (position details_json),
+        ``age_days_gt``, ``resolution_category``.
+        """
+        async with session_factory() as session:
+            return await _read_theses_page(
+                session,
+                status=status,
+                classification=classification,
+                sector=sector,
+                age_days_gt=age_days_gt,
+                resolution_category=resolution_category,
+                page=page,
+                page_size=page_size,
+            )
+
+    @router.get("/theses/{thesis_id}", response_model=ThesisDetail)
+    async def get_thesis_detail(
+        thesis_id: str,
+        session_factory: Annotated[
+            async_sessionmaker[AsyncSession], Depends(_foreign_reader_session)
+        ],
+    ) -> ThesisDetail:
+        """Return full thesis detail.
+
+        Includes: thesis row, all components with narratives and key
+        assumptions, status-history timeline (THESIS_STATUS_CHANGED
+        activity-log entries with cited reference-IDs), and
+        per-component resolution outcomes for resolved theses.
+        """
+        async with session_factory() as session:
+            return await _read_thesis_detail(session, thesis_id)
 
     return router
