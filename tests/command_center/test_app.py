@@ -192,7 +192,9 @@ class TestRegisteredRoutes:
     (ALP-668) adds /api/control/*; story 04b (ALP-669) adds /api/events;
     story 04d (ALP-670) adds /auth/me + the StaticFiles mount at /;
     story 05b (ALP-672) adds /api/views/live + /api/views/schedule;
-    story 05c (ALP-673) adds /api/views/history/runs + failure-log preset.
+    story 05c (ALP-673) adds /api/views/history/runs + failure-log preset;
+    story 05e (ALP-675) adds /api/views/activity-log + event-types +
+    saved-filters.
 
     Asserts that only the routes belonging to the merged stories are
     present at this point — stories 05a (alerts) / remaining view stories
@@ -244,6 +246,10 @@ class TestRegisteredRoutes:
                 "/api/control/force_close_position",
                 "/api/control/set_halt_mode",
                 "/api/events",
+                # Story 05e (ALP-675) — activity-log explorer view routes.
+                "/api/views/activity-log",
+                "/api/views/activity-log/event-types",
+                "/api/views/activity-log/saved-filters",
                 "/api/views/history/runs",
                 "/api/views/history/runs/preset/failure-log",
                 "/api/views/live",
@@ -251,7 +257,7 @@ class TestRegisteredRoutes:
             ]
         )
         assert own_routes == expected, (
-            f"unexpected routes registered after stories 02 + 03 + 04a + 04b + 04d + 05b + 05c — "
+            f"unexpected routes registered after stories 02 + 03 + 04a + 04b + 04d + 05b + 05c + 05e — "
             f"found {own_routes}; expected {expected}. Stories 05a / "
             f"remaining view stories register their routers later."
         )
