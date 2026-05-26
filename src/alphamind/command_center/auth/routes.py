@@ -329,6 +329,11 @@ def _issue_pre_session_csrf_cookie(*, response: Response, request: Request) -> s
     the JS can grab it directly without needing to read the cookie (the
     cookie is NOT HttpOnly anyway, but the response-body path keeps the
     JS simpler).
+
+    The ``max_age`` matches the challenge TTL (5 minutes) — the cookie
+    serves only the matching complete request. If the operator
+    abandons the ceremony, the cookie expires alongside the stashed
+    challenge (F12 + F7).
     """
     csrf_token = mint_csrf_token()
     cookies_secure = bool(getattr(request.app.state, "cookies_secure", False))
@@ -336,6 +341,7 @@ def _issue_pre_session_csrf_cookie(*, response: Response, request: Request) -> s
     response.set_cookie(
         csrf_cookie_name,
         csrf_token,
+        max_age=_CHALLENGE_TTL_SECONDS,
         httponly=False,
         samesite="strict",
         secure=cookies_secure,
@@ -371,9 +377,15 @@ def _issue_session_cookies(
     cookies_secure = bool(getattr(request.app.state, "cookies_secure", False))
     session_cookie_name = request.app.state.security_config.session.cookie_name
     csrf_cookie_name = request.app.state.security_config.csrf.cookie_name
+    # F12: set max_age so the cookie persists across browser sessions for
+    # the configured duration. Server-side row + cookie signature are
+    # still the authoritative gate; max_age just keeps the browser from
+    # discarding the cookie when the tab closes.
+    max_age_seconds = duration_hours * 3600
     response.set_cookie(
         session_cookie_name,
         cookie_value,
+        max_age=max_age_seconds,
         httponly=True,
         samesite="strict",
         secure=cookies_secure,
@@ -383,6 +395,7 @@ def _issue_session_cookies(
     response.set_cookie(
         csrf_cookie_name,
         csrf_token,
+        max_age=max_age_seconds,
         httponly=False,
         samesite="strict",
         secure=cookies_secure,

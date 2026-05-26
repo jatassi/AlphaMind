@@ -189,6 +189,27 @@ class TestRegistrationRoundtrip:
         assert "httponly" not in csrf_cookie.lower()
         assert "samesite=strict" in csrf_cookie.lower()
 
+    async def test_register_complete_sets_session_cookie_max_age(
+        self,
+        auth_app: FastAPI,
+        cc_factory: async_sessionmaker[AsyncSession],
+        setup_token_gate: SetupTokenGate,
+    ) -> None:
+        # F12: max_age on session + CSRF cookies so they persist across
+        # browser sessions for the configured duration. Server-side row
+        # remains the authoritative gate.
+        token = setup_token_gate.mint()
+        with TestClient(auth_app) as client:
+            begin = client.post(
+                "/auth/register/begin",
+                json={"setup_token": token, "user_name": "operator"},
+            ).json()
+            response = _complete_registration(client, begin=begin, credential_id="cred-max-age")
+        set_cookies = response.headers.get_list("set-cookie")
+        session_cookie = next(c for c in set_cookies if c.startswith("cc_session="))
+        # security fixture sets duration_hours=12 → 43200 seconds.
+        assert "max-age=43200" in session_cookie.lower()
+
 
 class TestSetupTokenGating:
     async def test_first_register_begin_requires_setup_token(
