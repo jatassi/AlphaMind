@@ -1,0 +1,8 @@
+# Alerts configuration — load via AlertsConfig.
+# See src/alphamind/command_center/config.py for the model + per-field docs.
+# Story 05a (ALP-671) populates the rules: list with the 17 default rules
+# per the design doc § Alerting — Default rule set.
+rules: []
+channels:
+  discord:
+    webhook_url_env: "ALPHAMIND_DISCORD_WEBHOOK"

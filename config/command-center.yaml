@@ -1,0 +1,11 @@
+# Command center backend configuration — load via CommandCenterConfig.
+# See src/alphamind/command_center/config.py for the model + per-field docs.
+bind:
+  host: "127.0.0.1"           # loopback-only in v1 (parent issue pre-resolved B);
+                              # operator can switch to a LAN IP for off-machine
+                              # access by editing this value.
+  port: 8080
+db:
+  alphamind_db_path: "%USERPROFILE%/AlphaMind/data/alphamind.db"
+frontend:
+  dist_path: "src/alphamind/command_center/frontend/dist"
