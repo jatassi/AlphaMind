@@ -637,8 +637,10 @@ def _build_active_thesis(
     # rationales. Wire-format thesis is producer-validated as having at least
     # one component but does not enforce mandatory coverage; the writeback
     # injects placeholder components for any missing required type. Backfill
-    # only fires for absent types (so one entry max per type), but the suffix
-    # scheme stays aligned with the wire-component loop for consistency.
+    # reuses ``per_type_index`` rather than a hardcoded ``-00`` so the
+    # uniqueness invariant defends both code paths and stays decoupled from the
+    # wire loop's starting index — backfill only ever fires for absent types
+    # today, but the shared counter removes the implicit coupling.
     required_wire_types = (
         "entry_rationale",
         "target_rationale",
@@ -648,9 +650,11 @@ def _build_active_thesis(
         if required in seen_types:
             continue
         component_type = _OMS_COMPONENT_TYPE_TO_PERSISTED[required]
+        idx = per_type_index.get(component_type, 0)
+        per_type_index[component_type] = idx + 1
         persisted_components.append(
             ThesisComponent(
-                component_id=f"{thesis_id}-{component_type.value.lower()}-00",
+                component_id=f"{thesis_id}-{component_type.value.lower()}-{idx:02d}",
                 thesis_id=ThesisId(thesis_id),
                 component_type=component_type,
                 linked_bracket_leg_type=None,
