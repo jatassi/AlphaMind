@@ -162,7 +162,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # fields (``position_zones`` and ``inverse_warning_band_pct``) so the
     # canonical bytes shifted; the YAML defaults preserve the historical
     # behaviour but the serialised form now carries the extra keys.
-    expected = "05e46d0aca8e97cb62e064f80cd758eb6f7aa138b50a0953b236494d4561b906"
+    # Pin updated 2026-05-25 (PR #200): agents.yaml analyst.latency_budget_seconds
+    # 300 -> 500 to give the analyst real headroom under production-faithful
+    # synthetic-portfolio state (debug-e2e budget_timeout at 305s on actively-
+    # streaming work). The resolved-config snapshot carries the field verbatim.
+    expected = "54226f6385593779025003f9a490e6f6c4f917c51a706c29ea9bb1d3de662e3a"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."
