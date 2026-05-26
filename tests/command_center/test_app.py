@@ -264,6 +264,10 @@ db:
   alphamind_db_path: "{db}"
 frontend:
   dist_path: "{dist}"
+pipeline:
+  events_url: "http://127.0.0.1:8765"
+monitor:
+  events_url: "http://127.0.0.1:8766"
 """,
         encoding="utf-8",
     )
