@@ -166,7 +166,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # from the ALP-128 work tree's added scheduler.yaml.control_port (ALP-664)
     # combined with main's PR #200 latency_budget bump (300 -> 500), PR #201/202
     # risk/translator config updates, and the merge-time resolution.
-    expected = "2b973263dbd53b290b32ed2a68453f7f3a70b17541db51d668af64cd70ba6a49"
+    # Pin updated 2026-05-26 (analyst output_token_budget 6000 -> 100000):
+    # --fresh-start debug-e2e run caught the analyst hitting the per-response
+    # cap with output_tokens=30400 across 15 turns; the resolved-config
+    # snapshot carries the new budget verbatim.
+    expected = "01cf3ca54066a503e0901c49780bb1c72cdce1c4600dc0f4635ea602325cd681"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."
