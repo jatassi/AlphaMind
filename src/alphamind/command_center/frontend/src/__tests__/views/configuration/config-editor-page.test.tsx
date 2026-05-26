@@ -194,3 +194,65 @@ describe('AlertsConfigPage', () => {
     expect(screen.getByDisplayValue('critical')).toBeInTheDocument()
   })
 })
+
+function _okResponse(body: unknown): Response {
+  return {
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve(body),
+  } as unknown as Response
+}
+
+const _PUT_RESPONSE = {
+  slug: 'security',
+  filename: 'security.yaml',
+  deploy_time_fields_changed: false,
+}
+
+type RefetchCounters = { contentGets: number }
+
+function _routeRefetchRequest(
+  url: string,
+  init: RequestInit | undefined,
+  counters: RefetchCounters,
+): Response {
+  const method = init?.method ?? 'GET'
+  if (method === 'PUT') {
+    return _okResponse(_PUT_RESPONSE)
+  }
+  if (url.includes('/schema/')) {
+    return _okResponse(SECURITY_SCHEMA)
+  }
+  counters.contentGets += 1
+  return _okResponse(SECURITY_CONTENT)
+}
+
+function _refetchFetchMock(counters: RefetchCounters): ReturnType<typeof vi.fn> {
+  return vi.fn((url: string, init?: RequestInit) =>
+    Promise.resolve(_routeRefetchRequest(url, init, counters)),
+  )
+}
+
+function _expectContentGetCountIncreased(counters: RefetchCounters, baseline: number): void {
+  expect(counters.contentGets).toBeGreaterThan(baseline)
+}
+
+// Regression guard for Wave-6 finding #14: ConfigEditorPage must refetch
+// GET /{slug} after a successful PUT so the form mirrors server-side
+// normalization (Pydantic coercion, YAML key-order round trip).
+describe('ConfigEditorPage refetch-after-save', () => {
+  it('issues a fresh GET /{slug} after the save returns 200', async () => {
+    const { default: userEvent } = await import('@testing-library/user-event')
+    const user = userEvent.setup()
+    const counters: RefetchCounters = { contentGets: 0 }
+    vi.stubGlobal('fetch', _refetchFetchMock(counters))
+    render(<ConfigEditorPage configFileSlug="security" title="Security" />)
+    await waitFor(_expectSecurityYamlVisible)
+    const baseline = counters.contentGets
+    await user.click(screen.getByRole('button', { name: /save/i }))
+    const expectFn = (): void => {
+      _expectContentGetCountIncreased(counters, baseline)
+    }
+    await waitFor(expectFn)
+  })
+})

@@ -7,6 +7,10 @@
 // * ReloadPolicyBadge renders with invocation_time for all fields.
 // * Transition-discipline reminder banner renders after a successful save.
 // * FilePicker sidebar renders slug names from the fixture.
+// * Initial form value seeded from the GET /api/views/config/{slug}
+//   payload (regression guard for empty-state DOA: pre-fix the page
+//   constructed a blank ``{}`` instead of fetching real YAML, so a save
+//   round-trip wiped the on-disk profile to ``{}``).
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
@@ -111,26 +115,73 @@ const REGIME_SCHEMA: FormSchema = {
   ],
 }
 
-// Stub successful schema query.
-function stubSchemaQuery(schema: FormSchema): void {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn().mockResolvedValue({
+// Build a fetch mock that returns the schema for ``/schema/`` URLs and
+// the content (with seeded values) for ``/api/views/config/{slug}``
+// URLs.  Mirrors the dual fetch the ConfigEditorPage scaffold issues.
+function makeEditorFetchMock(
+  schema: FormSchema,
+  contentValues: Record<string, unknown> = {},
+): ReturnType<typeof vi.fn> {
+  return vi.fn().mockImplementation((url: string) => {
+    if (typeof url === 'string' && url.includes('/schema/')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(schema),
+      })
+    }
+    if (typeof url === 'string' && url.includes('family=')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ family: 'profiles', slugs: [] }),
+      })
+    }
+    return Promise.resolve({
       ok: true,
       status: 200,
-      json: () => Promise.resolve(schema),
-    }),
-  )
+      json: () =>
+        Promise.resolve({
+          slug: schema.slug,
+          filename: schema.filename,
+          yaml: '',
+          values: contentValues,
+        }),
+    })
+  })
 }
 
-// Returns a fetch mock that serves PROFILE_SCHEMA for the first two calls,
-// then returns a successful save response.
+// Returns a fetch mock that serves schema + content then a successful
+// save response, then re-serves schema + content on the post-save
+// refetch.
 function makeProfileSaveFetchMock(): ReturnType<typeof vi.fn> {
-  const schemas: unknown[] = [PROFILE_SCHEMA, PROFILE_SCHEMA]
-  return vi.fn().mockImplementation(() => {
-    const next = schemas.shift()
-    if (next !== undefined) {
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(next) })
+  return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET'
+    if (method === 'PUT') {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            slug: 'profiles/small',
+            filename: 'profiles/small.yaml',
+            deploy_time_fields_changed: false,
+          }),
+      })
+    }
+    if (typeof url === 'string' && url.includes('/schema/')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(PROFILE_SCHEMA),
+      })
+    }
+    if (typeof url === 'string' && url.includes('family=')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ family: 'profiles', slugs: [] }),
+      })
     }
     return Promise.resolve({
       ok: true,
@@ -139,13 +190,14 @@ function makeProfileSaveFetchMock(): ReturnType<typeof vi.fn> {
         Promise.resolve({
           slug: 'profiles/small',
           filename: 'profiles/small.yaml',
-          deploy_time_fields_changed: false,
+          yaml: '',
+          values: {},
         }),
     })
   })
 }
 
-// Stub file-list + schema query in sequence.
+// Stub file-list + schema query + content query in sequence.
 function stubFileListThenSchema(
   slugs: readonly string[],
   family: string,
@@ -159,10 +211,23 @@ function stubFileListThenSchema(
         json: () => Promise.resolve({ family, slugs }),
       })
     }
+    if (typeof url === 'string' && url.includes('/schema/')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(schema),
+      })
+    }
     return Promise.resolve({
       ok: true,
       status: 200,
-      json: () => Promise.resolve(schema),
+      json: () =>
+        Promise.resolve({
+          slug: schema.slug,
+          filename: schema.filename,
+          yaml: '',
+          values: {},
+        }),
     })
   })
   vi.stubGlobal('fetch', fetchMock)
@@ -231,17 +296,32 @@ describe('ProfileEditorPage', () => {
       ),
     )
     render(wrap(<ProfileEditorPage profileName="small" />))
-    expect(await screen.findByText(/loading schema/i)).toBeInTheDocument()
+    expect(await screen.findByText(/loading profiles\/small\.yaml/i)).toBeInTheDocument()
   })
 
   it('renders the profile form after schema loads', async () => {
-    stubSchemaQuery(PROFILE_SCHEMA)
+    vi.stubGlobal('fetch', makeEditorFetchMock(PROFILE_SCHEMA))
     render(wrap(<ProfileEditorPage profileName="small" />))
     expect(await screen.findByText(/profile: small/i)).toBeInTheDocument()
   })
 
+  it('seeds the form with the values returned by GET /{slug}', async () => {
+    // Regression guard: pre-fix the editor pages opened with an empty
+    // ``{}`` and a save would overwrite the on-disk YAML with ``{}``.
+    vi.stubGlobal(
+      'fetch',
+      makeEditorFetchMock(PROFILE_SCHEMA, {
+        risk_priority: 'signal_quality',
+        min_position_size_usd: 1234,
+      }),
+    )
+    render(wrap(<ProfileEditorPage profileName="small" />))
+    await screen.findByText(/profile: small/i)
+    expect(await screen.findByDisplayValue(1234)).toBeInTheDocument()
+  })
+
   it('renders ReloadPolicyBadge for each field', async () => {
-    stubSchemaQuery(PROFILE_SCHEMA)
+    vi.stubGlobal('fetch', makeEditorFetchMock(PROFILE_SCHEMA))
     render(wrap(<ProfileEditorPage profileName="small" />))
     // All three schema fields carry invocation_time.
     const badges = await screen.findAllByText(/invocation/i)
@@ -249,7 +329,7 @@ describe('ProfileEditorPage', () => {
   })
 
   it('dispatches rule_values to ObjectArrayTableEditor', async () => {
-    stubSchemaQuery(PROFILE_SCHEMA)
+    vi.stubGlobal('fetch', makeEditorFetchMock(PROFILE_SCHEMA))
     render(wrap(<ProfileEditorPage profileName="small" />))
     // ObjectArrayTableEditor renders an "Add row" button.
     expect(await screen.findByRole('button', { name: /add row/i })).toBeInTheDocument()
@@ -270,13 +350,13 @@ describe('ProfileEditorPage', () => {
 
 describe('RegimeEditorPage', () => {
   it('renders the regime form after schema loads', async () => {
-    stubSchemaQuery(REGIME_SCHEMA)
+    vi.stubGlobal('fetch', makeEditorFetchMock(REGIME_SCHEMA))
     render(wrap(<RegimeEditorPage regimeName="normal" />))
     expect(await screen.findByText(/regime: normal/i)).toBeInTheDocument()
   })
 
   it('dispatches multipliers to ObjectArrayTableEditor', async () => {
-    stubSchemaQuery(REGIME_SCHEMA)
+    vi.stubGlobal('fetch', makeEditorFetchMock(REGIME_SCHEMA))
     render(wrap(<RegimeEditorPage regimeName="normal" />))
     // ObjectArrayTableEditor renders an "Add row" button.
     expect(await screen.findByRole('button', { name: /add row/i })).toBeInTheDocument()
