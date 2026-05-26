@@ -269,6 +269,7 @@ class TestRegisteredRoutes:
                 "/api/views/portfolio/theses",
                 "/api/views/portfolio/theses/{thesis_id}",
                 # Story 05i (ALP-679) — config editor framework.
+                "/api/views/config/path-exists",
                 "/api/views/config/schema/{config_file}",
                 "/api/views/config/{config_file}",
             ]

@@ -584,6 +584,22 @@ def build_configuration_router() -> APIRouter:
     """
     router = APIRouter(tags=["views:configuration"])
 
+    @router.get("/path-exists")
+    def get_path_exists(path: str) -> dict[str, bool]:
+        """Backend probe for the :class:`PathInput` control (story 05i).
+
+        Returns ``{"exists": true|false}``. Used by the frontend
+        :class:`PathInput` component to render an inline file-existence
+        indicator so the operator catches typos before saving.
+
+        Resolves the path literally (no glob, no symlink follow beyond
+        :func:`pathlib.Path.exists`'s default). The probe is read-only so
+        it doesn't require CSRF; the surrounding session dependency
+        (when wired by 04d's authed-layout route) gates it from
+        unauthenticated callers.
+        """
+        return {"exists": Path(path).exists()}
+
     @router.get("/schema/{config_file}", response_model=FormSchema)
     def get_schema(config_file: str) -> FormSchema:
         """Return the form-schema metadata for the named config file.

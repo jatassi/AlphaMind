@@ -163,6 +163,30 @@ class TestSchemaEndpoint:
         assert "channels.discord.webhook_url_env" in paths
 
 
+class TestPathExistsEndpoint:
+    """``GET /api/views/config/path-exists`` — PathInput probe."""
+
+    def _client(self) -> TestClient:
+        app = FastAPI()
+        app.include_router(build_configuration_router(), prefix="/api/views/config")
+        return TestClient(app)
+
+    def test_existing_path_returns_true(self, tmp_path: Path) -> None:
+        client = self._client()
+        existing_file = tmp_path / "real.txt"
+        existing_file.write_text("data", encoding="utf-8")
+        response = client.get(f"/api/views/config/path-exists?path={existing_file}")
+        assert response.status_code == 200
+        assert response.json() == {"exists": True}
+
+    def test_missing_path_returns_false(self, tmp_path: Path) -> None:
+        client = self._client()
+        missing = tmp_path / "does-not-exist.txt"
+        response = client.get(f"/api/views/config/path-exists?path={missing}")
+        assert response.status_code == 200
+        assert response.json() == {"exists": False}
+
+
 class TestPutEndpoint:
     """``PUT /api/views/config/{config_file}``.
 
