@@ -29,9 +29,8 @@ from typing import Any, Protocol
 
 from alphamind.execution.continuous_monitor.control.halt_mode_repo import (
     HaltModeRecord,
-    HaltModeRepository,
 )
-
+from alphamind.execution.continuous_monitor.control.models import ControlErrorCode
 
 # ---------------------------------------------------------------------------
 # Result + error types
@@ -59,7 +58,7 @@ class VerbError:
     ``broker_message`` etc.
     """
 
-    code: str
+    code: ControlErrorCode
     detail: str
     details: dict[str, Any] | None = None
 
@@ -74,7 +73,9 @@ class OrderState:
     """Minimal projection of ``orders`` the cancel verb consults."""
 
     order_id: str
-    status: str  # lowercase wire-format — open / partially_filled / filled / cancelled / expired / rejected
+    # Lowercase wire-format: open / partially_filled / filled / cancelled /
+    # expired / rejected.
+    status: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,9 +137,7 @@ class PositionLookup(Protocol):
 class CancelEmitterProtocol(Protocol):
     """Submits a synthesized cancel for *order_id* via the broker-dispatch path."""
 
-    async def submit_cancel(
-        self, *, order_id: str
-    ) -> CancelOrderOutcome | BrokerErrorCancel: ...
+    async def submit_cancel(self, *, order_id: str) -> CancelOrderOutcome | BrokerErrorCancel: ...
 
 
 class CloseSubmitterProtocol(Protocol):

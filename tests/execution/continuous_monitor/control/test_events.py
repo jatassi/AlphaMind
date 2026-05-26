@@ -138,9 +138,7 @@ class TestCrossFieldInvariants:
             emitter.emit_websocket_connected()
             emitter.emit_websocket_disconnected(reason="network_error")
             emitter.emit_websocket_connected()
-            names = [
-                (await asyncio.wait_for(queue.get(), timeout=0.5)).name for _ in range(3)
-            ]
+            names = [(await asyncio.wait_for(queue.get(), timeout=0.5)).name for _ in range(3)]
         assert names == [
             "websocket_connected",
             "websocket_disconnected",

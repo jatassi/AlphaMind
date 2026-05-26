@@ -62,9 +62,7 @@ class HaltModeRepository:
         applied_at: datetime | None = None
         if row.applied_at is not None:
             applied_at = _parse_iso_z(row.applied_at)
-        return HaltModeRecord(
-            enabled=bool(row.enabled), reason=row.reason, applied_at=applied_at
-        )
+        return HaltModeRecord(enabled=bool(row.enabled), reason=row.reason, applied_at=applied_at)
 
     async def write(self, record: HaltModeRecord) -> None:
         """Upsert the singleton row from *record*."""

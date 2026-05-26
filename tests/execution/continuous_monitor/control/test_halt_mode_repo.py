@@ -49,9 +49,7 @@ class TestHaltModeRepository:
         assert record.applied_at is None
         assert record.reason is None
 
-    async def test_write_persists_engaged_state(
-        self, repository: HaltModeRepository
-    ) -> None:
+    async def test_write_persists_engaged_state(self, repository: HaltModeRepository) -> None:
         ts = datetime.now(UTC)
         await repository.write(
             HaltModeRecord(enabled=True, reason="circuit breaker", applied_at=ts)
@@ -61,9 +59,7 @@ class TestHaltModeRepository:
         assert record.reason == "circuit breaker"
         assert record.applied_at is not None
 
-    async def test_write_overwrites_singleton(
-        self, repository: HaltModeRepository
-    ) -> None:
+    async def test_write_overwrites_singleton(self, repository: HaltModeRepository) -> None:
         await repository.write(
             HaltModeRecord(enabled=True, reason="first", applied_at=datetime.now(UTC))
         )

@@ -51,7 +51,7 @@ from alphamind.execution.continuous_monitor.control.verbs import (
 SubmitEnvelopeCallable = Callable[[EngineEnvelope], Awaitable[Any]]
 
 
-def build_force_close_envelope(  # noqa: PLR0913 — fields trace verbatim to the schema's $defs
+def build_force_close_envelope(
     *,
     monitor_session_id: str,
     trigger_id: int,
@@ -134,7 +134,7 @@ class OmsCloseSubmitter:
         self._submit_envelope = submit_envelope
         self._now = now
 
-    async def submit_close(  # noqa: PLR0913 — protocol surface; arguments mirror the verb's signature
+    async def submit_close(
         self,
         *,
         position_id: str,
@@ -156,7 +156,7 @@ class OmsCloseSubmitter:
         )
         try:
             await self._submit_envelope(envelope)
-        except Exception as exc:  # noqa: BLE001 — surfaces the broker's message verbatim
+        except Exception as exc:
             return BrokerErrorClose(broker_message=str(exc))
         return ForceCloseOutcome(envelope_id=str(envelope.envelope_id))
 

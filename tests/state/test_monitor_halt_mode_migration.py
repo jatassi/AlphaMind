@@ -63,7 +63,7 @@ class TestMonitorHaltModeMigration:
                             "VALUES ('not-current', 0, NULL, NULL)"
                         )
                     )
-                except Exception:  # noqa: BLE001 - expected; CHECK violation
+                except Exception:
                     pass
                 else:
                     msg = "CHECK constraint did not reject 'not-current' as id"

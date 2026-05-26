@@ -17,7 +17,8 @@ TaskGroup-discipline invariant.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI
@@ -60,9 +61,7 @@ def build_app(
         openapi_url=None,
     )
     install_validation_error_handler(app)
-    app.include_router(
-        build_router(deps, heartbeat_interval_seconds=heartbeat_interval_seconds)
-    )
+    app.include_router(build_router(deps, heartbeat_interval_seconds=heartbeat_interval_seconds))
     return app
 
 
@@ -91,7 +90,7 @@ def make_control_surface_task(
     deps: ControlSurfaceDependencies,
     port: int,
     heartbeat_interval_seconds: float = 15.0,
-) -> Callable[[MonitorSession, ContinuousMonitorConfig], Awaitable[None]]:
+) -> Callable[[MonitorSession, ContinuousMonitorConfig], Coroutine[Any, Any, None]]:
     """Return the supervisor-compatible task that runs the Uvicorn server.
 
     The supervisor's :class:`asyncio.TaskGroup` owns the resulting coroutine.

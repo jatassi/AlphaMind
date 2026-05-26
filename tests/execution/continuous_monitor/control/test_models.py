@@ -30,7 +30,6 @@ from alphamind.execution.continuous_monitor.control.models import (
     WebsocketDisconnectedEvent,
 )
 
-
 # ---------------------------------------------------------------------------
 # Request bodies
 # ---------------------------------------------------------------------------
@@ -79,9 +78,7 @@ class TestSetHaltModeRequest:
 
     def test_rejects_extra_fields(self) -> None:
         with pytest.raises(ValidationError):
-            SetHaltModeRequest.model_validate(
-                {"enabled": False, "reason": "x", "extra": "x"}
-            )
+            SetHaltModeRequest.model_validate({"enabled": False, "reason": "x", "extra": "x"})
 
 
 # ---------------------------------------------------------------------------
@@ -129,18 +126,14 @@ class TestForceClosePositionResponse:
 
 class TestControlErrorEnvelope:
     def test_holds_error_code_and_detail(self) -> None:
-        envelope = ControlErrorEnvelope(
-            error=ErrorBody(code="not_found", detail="missing")
-        )
+        envelope = ControlErrorEnvelope(error=ErrorBody(code="not_found", detail="missing"))
         assert envelope.error.code == "not_found"
         assert envelope.error.detail == "missing"
         assert envelope.error.details is None
 
     def test_rejects_unknown_error_code(self) -> None:
         with pytest.raises(ValidationError):
-            ControlErrorEnvelope.model_validate(
-                {"error": {"code": "teapot", "detail": "x"}}
-            )
+            ControlErrorEnvelope.model_validate({"error": {"code": "teapot", "detail": "x"}})
 
     def test_carries_structured_details_object(self) -> None:
         envelope = ControlErrorEnvelope(
@@ -164,16 +157,12 @@ class TestWebsocketEvents:
         assert event.timestamp is not None
 
     def test_websocket_disconnected_requires_reason(self) -> None:
-        event = WebsocketDisconnectedEvent(
-            timestamp=datetime.now(UTC), reason="network_error"
-        )
+        event = WebsocketDisconnectedEvent(timestamp=datetime.now(UTC), reason="network_error")
         assert event.reason == "network_error"
 
     def test_websocket_disconnected_rejects_missing_reason(self) -> None:
         with pytest.raises(ValidationError):
-            WebsocketDisconnectedEvent.model_validate(
-                {"timestamp": "2026-05-26T00:00:00Z"}
-            )
+            WebsocketDisconnectedEvent.model_validate({"timestamp": "2026-05-26T00:00:00Z"})
 
 
 class TestFillReceivedEvent:
@@ -189,9 +178,7 @@ class TestFillReceivedEvent:
 
     def test_rejects_zero_fill_price(self) -> None:
         with pytest.raises(ValidationError):
-            FillReceivedEvent(
-                order_id="ord-1", position_id="pos-1", fill_price=0.0, fill_qty=10.0
-            )
+            FillReceivedEvent(order_id="ord-1", position_id="pos-1", fill_price=0.0, fill_qty=10.0)
 
 
 class TestBreachDetectedEvent:

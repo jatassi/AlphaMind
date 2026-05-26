@@ -41,7 +41,6 @@ from alphamind.execution.continuous_monitor.control.verbs import (
     PositionState,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
@@ -143,9 +142,7 @@ def _build_deps(
 class TestCancelOrderRoute:
     def test_happy_path_returns_200_accepted(self) -> None:
         deps = _build_deps(
-            order_lookup=FakeOrderLookup(
-                {"ord-1": OrderState(order_id="ord-1", status="open")}
-            ),
+            order_lookup=FakeOrderLookup({"ord-1": OrderState(order_id="ord-1", status="open")}),
             cancel_emitter=FakeCancelEmitter({"ord-1": CancelOrderOutcome()}),
         )
         client = TestClient(build_app(deps))
@@ -165,9 +162,7 @@ class TestCancelOrderRoute:
 
     def test_filled_order_returns_409_with_current_status(self) -> None:
         deps = _build_deps(
-            order_lookup=FakeOrderLookup(
-                {"ord-1": OrderState(order_id="ord-1", status="filled")}
-            ),
+            order_lookup=FakeOrderLookup({"ord-1": OrderState(order_id="ord-1", status="filled")}),
         )
         client = TestClient(build_app(deps))
         response = client.post("/control/cancel_order", json={"order_id": "ord-1"})
@@ -178,9 +173,7 @@ class TestCancelOrderRoute:
 
     def test_broker_error_returns_502(self) -> None:
         deps = _build_deps(
-            order_lookup=FakeOrderLookup(
-                {"ord-1": OrderState(order_id="ord-1", status="open")}
-            ),
+            order_lookup=FakeOrderLookup({"ord-1": OrderState(order_id="ord-1", status="open")}),
             cancel_emitter=FakeCancelEmitter(
                 {"ord-1": BrokerErrorCancel(broker_message="rate limited")}
             ),
@@ -203,9 +196,7 @@ class TestCancelOrderRoute:
     def test_extra_field_returns_400(self) -> None:
         deps = _build_deps()
         client = TestClient(build_app(deps))
-        response = client.post(
-            "/control/cancel_order", json={"order_id": "x", "extra": "y"}
-        )
+        response = client.post("/control/cancel_order", json={"order_id": "x", "extra": "y"})
         assert response.status_code == 400
 
 
@@ -220,9 +211,7 @@ class TestForceClosePositionRoute:
             position_lookup=FakePositionLookup(
                 {"pos-1": PositionState(position_id="pos-1", status="open")}
             ),
-            close_submitter=FakeCloseSubmitter(
-                ForceCloseOutcome(envelope_id="MON.session-1.7")
-            ),
+            close_submitter=FakeCloseSubmitter(ForceCloseOutcome(envelope_id="MON.session-1.7")),
         )
         client = TestClient(build_app(deps))
         response = client.post(
@@ -262,9 +251,7 @@ class TestForceClosePositionRoute:
             position_lookup=FakePositionLookup(
                 {"pos-1": PositionState(position_id="pos-1", status="open")}
             ),
-            close_submitter=FakeCloseSubmitter(
-                BrokerErrorClose(broker_message="no liquidity")
-            ),
+            close_submitter=FakeCloseSubmitter(BrokerErrorClose(broker_message="no liquidity")),
         )
         client = TestClient(build_app(deps))
         response = client.post(
@@ -300,9 +287,7 @@ class TestSetHaltModeRoute:
         repo.record = HaltModeRecord(enabled=True, reason="prior", applied_at=prior_ts)
         deps = _build_deps(halt_mode_repo=repo)
         client = TestClient(build_app(deps))
-        response = client.post(
-            "/control/set_halt_mode", json={"enabled": True, "reason": "again"}
-        )
+        response = client.post("/control/set_halt_mode", json={"enabled": True, "reason": "again"})
         assert response.status_code == 200
         body = response.json()
         # The original applied_at echoes back; the route renders this verbatim.
@@ -348,7 +333,7 @@ class TestEventsRoute:
 
 @pytest.mark.asyncio
 class TestSSEIterator:
-    async def _drain_one_frame(self, agen: AsyncGenerator[bytes, None]) -> str:
+    async def _drain_one_frame(self, agen: AsyncGenerator[bytes]) -> str:
         chunks: list[bytes] = []
         async for chunk in agen:
             chunks.append(chunk)
@@ -421,20 +406,25 @@ class TestSSEIterator:
             assert rendered.startswith(f"event: {event.name}\n")
             assert "data: " in rendered
             assert rendered.endswith("\n\n")
-            data_line = next(
-                line for line in rendered.splitlines() if line.startswith("data:")
-            )
+            data_line = next(line for line in rendered.splitlines() if line.startswith("data:"))
             payload = json.loads(data_line.split(":", 1)[1].strip())
             assert payload == event.payload
 
     async def test_heartbeat_fires_after_cadence_when_idle(self) -> None:
+        from typing import cast
+
+        from fastapi import Request
+
         from alphamind.execution.continuous_monitor.control.routes import (
             _sse_iterator,
         )
 
         emitter = SSEEventEmitter()
         request = _FakeRequest()
-        agen = _sse_iterator(emitter, request, heartbeat_interval_seconds=0.05)
+        # _FakeRequest is duck-typed to substitute fastapi.Request — only
+        # is_disconnected() is consulted by the iterator. Cast at the seam
+        # so mypy sees the same signature production gets.
+        agen = _sse_iterator(emitter, cast(Request, request), heartbeat_interval_seconds=0.05)
         try:
             rendered = await self._drain_one_frame(agen)
             assert "event: heartbeat" in rendered
@@ -490,5 +480,3 @@ class TestLoopbackBind:
             supervisor_shutdown_timeout_seconds=5,
         )
         assert config.control_port == 8766
-
-

@@ -15,10 +15,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
+from typing import Any
 
-from fastapi import APIRouter, Depends, FastAPI, Request, status
+from fastapi import APIRouter, FastAPI, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from alphamind.execution.continuous_monitor.control.events import (
@@ -42,9 +43,14 @@ from alphamind.execution.continuous_monitor.control.verbs import (
     OrderLookup,
     PositionLookup,
     VerbError,
-    VerbResult,
+)
+from alphamind.execution.continuous_monitor.control.verbs import (
     cancel_order as _cancel_order_verb,
+)
+from alphamind.execution.continuous_monitor.control.verbs import (
     force_close_position as _force_close_position_verb,
+)
+from alphamind.execution.continuous_monitor.control.verbs import (
     set_halt_mode as _set_halt_mode_verb,
 )
 
@@ -85,12 +91,8 @@ def _error_response(error: VerbError) -> JSONResponse:
     envelope = ControlErrorEnvelope(
         error=ErrorBody(code=error.code, detail=error.detail, details=error.details)
     )
-    http_status = _ERROR_CODE_TO_HTTP.get(
-        error.code, status.HTTP_500_INTERNAL_SERVER_ERROR
-    )
-    return JSONResponse(
-        status_code=http_status, content=envelope.model_dump(mode="json")
-    )
+    http_status = _ERROR_CODE_TO_HTTP.get(error.code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+    return JSONResponse(status_code=http_status, content=envelope.model_dump(mode="json"))
 
 
 # ---------------------------------------------------------------------------
@@ -109,43 +111,32 @@ def build_router(
     """
     router = APIRouter()
 
-    def _get_deps() -> ControlSurfaceDependencies:
-        return deps
-
     # ----------------------- POST /control/cancel_order ------------------
 
     @router.post("/control/cancel_order", response_model=None)
-    async def cancel_order_route(
-        body: CancelOrderRequest,
-        d: ControlSurfaceDependencies = Depends(_get_deps),
-    ) -> JSONResponse:
+    async def cancel_order_route(body: CancelOrderRequest) -> JSONResponse:
         outcome = await _cancel_order_verb(
             order_id=body.order_id,
-            order_lookup=d.order_lookup,
-            cancel_emitter=d.cancel_emitter,
+            order_lookup=deps.order_lookup,
+            cancel_emitter=deps.cancel_emitter,
         )
         if isinstance(outcome, VerbError):
             return _error_response(outcome)
         # Render the success envelope.
-        envelope = ControlResponseEnvelope(
-            status="accepted", applied_at=outcome.applied_at
-        )
-        return JSONResponse(
-            status_code=200, content=envelope.model_dump(mode="json")
-        )
+        envelope = ControlResponseEnvelope(status="accepted", applied_at=outcome.applied_at)
+        return JSONResponse(status_code=200, content=envelope.model_dump(mode="json"))
 
     # ----------------------- POST /control/force_close_position ----------
 
     @router.post("/control/force_close_position", response_model=None)
     async def force_close_position_route(
         body: ForceClosePositionRequest,
-        d: ControlSurfaceDependencies = Depends(_get_deps),
     ) -> JSONResponse:
         outcome = await _force_close_position_verb(
             position_id=body.position_id,
             rationale=body.rationale,
-            position_lookup=d.position_lookup,
-            close_submitter=d.close_submitter,
+            position_lookup=deps.position_lookup,
+            close_submitter=deps.close_submitter,
         )
         if isinstance(outcome, VerbError):
             return _error_response(outcome)
@@ -158,40 +149,29 @@ def build_router(
             applied_at=outcome.applied_at,
             envelope_id=outcome.envelope_id,
         )
-        return JSONResponse(
-            status_code=200, content=envelope.model_dump(mode="json")
-        )
+        return JSONResponse(status_code=200, content=envelope.model_dump(mode="json"))
 
     # ----------------------- POST /control/set_halt_mode -----------------
 
     @router.post("/control/set_halt_mode", response_model=None)
-    async def set_halt_mode_route(
-        body: SetHaltModeRequest,
-        d: ControlSurfaceDependencies = Depends(_get_deps),
-    ) -> JSONResponse:
+    async def set_halt_mode_route(body: SetHaltModeRequest) -> JSONResponse:
         outcome = await _set_halt_mode_verb(
             enabled=body.enabled,
             reason=body.reason,
-            repo=d.halt_mode_repo,
+            repo=deps.halt_mode_repo,
         )
         if isinstance(outcome, VerbError):
             return _error_response(outcome)
-        envelope = ControlResponseEnvelope(
-            status="accepted", applied_at=outcome.applied_at
-        )
-        return JSONResponse(
-            status_code=200, content=envelope.model_dump(mode="json")
-        )
+        envelope = ControlResponseEnvelope(status="accepted", applied_at=outcome.applied_at)
+        return JSONResponse(status_code=200, content=envelope.model_dump(mode="json"))
 
     # ----------------------- GET /events ---------------------------------
 
     @router.get("/events")
-    async def events_route(
-        request: Request, d: ControlSurfaceDependencies = Depends(_get_deps)
-    ) -> StreamingResponse:
+    async def events_route(request: Request) -> StreamingResponse:
         return StreamingResponse(
             _sse_iterator(
-                d.event_emitter,
+                deps.event_emitter,
                 request,
                 heartbeat_interval_seconds=heartbeat_interval_seconds,
             ),
@@ -215,7 +195,7 @@ async def _sse_iterator(
     request: Request,
     *,
     heartbeat_interval_seconds: float,
-) -> AsyncIterator[bytes]:
+) -> AsyncGenerator[bytes]:
     """Pull events from a fresh subscriber queue and yield SSE frames.
 
     Per the schema's framing spec, each event is one record:
@@ -233,16 +213,12 @@ async def _sse_iterator(
             if await request.is_disconnected():
                 return
             try:
-                event = await asyncio.wait_for(
-                    queue.get(), timeout=heartbeat_interval_seconds
-                )
-            except asyncio.TimeoutError:
+                event = await asyncio.wait_for(queue.get(), timeout=heartbeat_interval_seconds)
+            except TimeoutError:
                 # Idle cadence — emit a heartbeat directly into the stream
                 # (not via the broadcaster, so it only reaches this subscriber).
                 heartbeat = HeartbeatEvent.model_validate({"timestamp": _now_iso_z()})
-                event = EmittedEvent(
-                    name="heartbeat", payload=heartbeat.model_dump(mode="json")
-                )
+                event = EmittedEvent(name="heartbeat", payload=heartbeat.model_dump(mode="json"))
             yield _render_sse_frame(event)
 
 
@@ -286,7 +262,7 @@ def install_validation_error_handler(app: FastAPI) -> None:
 
 def _summarize_validation_error(exc: object) -> str:
     """One-line summary of the first validation error."""
-    errors = getattr(exc, "errors", lambda: [])()
+    errors: list[dict[str, Any]] = list(getattr(exc, "errors", list)())
     if not errors:
         return "validation failed"
     first = errors[0]

@@ -28,14 +28,14 @@ emitter only writes onto queues; it does not spawn background tasks.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-
-import asyncio
 
 from alphamind.execution.continuous_monitor.control.models import (
     BreachDetectedEvent,
@@ -104,10 +104,8 @@ class SSEEventEmitter:
         try:
             yield queue
         finally:
-            try:
+            with contextlib.suppress(ValueError):
                 self._subscribers.remove(queue)
-            except ValueError:  # pragma: no cover - defensive; should never happen
-                pass
 
     def subscriber_count(self) -> int:
         """Return the current number of subscribed queues. Used by tests + diagnostics."""
@@ -218,9 +216,7 @@ class SSEEventEmitter:
                 # event for that subscriber rather than blocking the
                 # producer. Live state is transient screen state, not
                 # history, per ALP-128 pre-resolved decision (G).
-                log.warning(
-                    "SSE subscriber queue full; dropping event name=%s", name
-                )
+                log.warning("SSE subscriber queue full; dropping event name=%s", name)
 
 
 def _utcnow() -> datetime:

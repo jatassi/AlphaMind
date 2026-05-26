@@ -19,7 +19,7 @@ from ``scheduler/`` or ``command_center/``.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from alphamind.execution.continuous_monitor.breach_loop.result import (
@@ -52,9 +52,7 @@ def wrap_on_immediate_breach(
     callback's behavior is unchanged.
     """
 
-    async def _composed(
-        result: BreachLoopResult, evaluation: RuleEvaluation
-    ) -> None:
+    async def _composed(result: BreachLoopResult, evaluation: RuleEvaluation) -> None:
         try:
             emitter.emit_breach_detected(
                 rule=evaluation.rule_id,
@@ -62,36 +60,9 @@ def wrap_on_immediate_breach(
                 limit=float(evaluation.limit_value),
                 response_classification="immediate",
             )
-        except Exception:  # noqa: BLE001 - emit failure must not block the cascade
+        except Exception:
             log.exception("SSE emit_breach_detected failed; continuing")
         await inner(result, evaluation)
-
-    return _composed
-
-
-def wrap_activity_log_sink_with_deferred_breach_emit(
-    *,
-    emitter: SSEEventEmitter,
-    inner: Callable[[Iterable[ActivityLogEntry]], Awaitable[None]],
-) -> Callable[[Iterable[ActivityLogEntry]], Awaitable[None]]:
-    """Wrap the breach loop's ``activity_log_sink`` with SSE emit.
-
-    The breach loop emits ``HALT_ACTIVATED`` / ``HALT_LIFTED`` activity-log
-    entries; these are not breach events themselves. Halt events do not fire
-    SSE breach_detected — that channel is reserved for live breach
-    detections per the schema. This wrapper exists for symmetry with the
-    immediate-breach wrap; today's only effect is to pass through.
-    """
-
-    async def _composed(entries: Iterable[ActivityLogEntry]) -> None:
-        # Materialize so we can inspect + delegate. Activity-log lists are
-        # small (typically 0–2 entries per breach-loop tick).
-        materialized = tuple(entries)
-        # We currently emit nothing here — halt transitions surface
-        # downstream via the broader activity-log multiplexer in the
-        # command center, not this monitor-specific SSE stream.
-        del materialized
-        await inner(entries)
 
     return _composed
 
@@ -116,7 +87,7 @@ def make_deferred_breach_emit_for_breach_loop(
                 limit=float(evaluation.limit_value),
                 response_classification="deferred",
             )
-        except Exception:  # noqa: BLE001 - emit failure must not block the breach loop
+        except Exception:
             log.exception("SSE emit_breach_detected (deferred) failed; continuing")
 
     return _emit
@@ -144,7 +115,7 @@ def wrap_emergency_activity_log_writer(
             reason = _extract_emergency_reason(entry)
             try:
                 emitter.emit_emergency_invocation_triggered(reason=reason)
-            except Exception:  # noqa: BLE001 - emit failure must not block the write
+            except Exception:
                 log.exception("SSE emit_emergency_invocation_triggered failed")
         await inner(entry)
 
@@ -171,23 +142,6 @@ def _extract_emergency_reason(entry: ActivityLogEntry) -> str:
 # ---------------------------------------------------------------------------
 
 
-def wrap_submit_envelope_for_cascade(
-    *,
-    emitter: SSEEventEmitter,
-    inner: Callable[[Any], Awaitable[Any]],
-) -> Callable[[Any], Awaitable[Any]]:
-    """Wrap the cascade dispatcher's ``submit_envelope`` with SSE emit.
-
-    Reserved hook — margin-call cascades route through the dispatcher's
-    ``handle_margin_call`` entry rather than the breach loop, so the
-    breach_detected event for that path needs to be sourced from the
-    envelope's ``guardrail_trigger_record``. Today's implementation emits
-    nothing additional — the breach loop's wrap is sufficient for the
-    BLOCKED-zone breaches the schema actually targets.
-    """
-    return inner
-
-
 # ---------------------------------------------------------------------------
 # Fill stream — emits ``fill_received``
 # ---------------------------------------------------------------------------
@@ -211,9 +165,11 @@ def wrap_fill_enrichment_with_emit(
     async def _emit_and_delegate(record: Any) -> Any:
         try:
             # The fill record's order_id maps to the OMS client_order_id;
-            # position_id is resolved by the monitor before this point.
+            # position_id is supplied by the monitor's resolution path
+            # before this seam (the schema's fill_received invariant
+            # requires resolved IDs at emission time).
             order_id = getattr(record, "order_id", None)
-            position_id = getattr(record, "position_id", None) or _resolve_position_id(record)
+            position_id = getattr(record, "position_id", None)
             fill_price = getattr(record, "fill_price", None)
             fill_qty = getattr(record, "fill_quantity", None)
             if (
@@ -228,25 +184,13 @@ def wrap_fill_enrichment_with_emit(
                     fill_price=float(fill_price),
                     fill_qty=float(fill_qty),
                 )
-        except Exception:  # noqa: BLE001 - emit failure must not block persistence
+        except Exception:
             log.exception("SSE emit_fill_received failed; persistence unaffected")
         if inner is None:
             return record
         return await inner(record)
 
     return _emit_and_delegate
-
-
-def _resolve_position_id(record: Any) -> str | None:
-    """FillRecord does not carry position_id directly — return None safely.
-
-    The full resolution flows through the activity-log writeback; for the
-    SSE emit path we surface ``order_id`` as the durable identifier and
-    leave position_id unresolved at this seam. Future work: tighten the
-    resolution if the monitor's fill-buffer surfaces ``position_id``
-    inline.
-    """
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -269,10 +213,8 @@ def make_greeks_refresh_emit(
 
     def _emit(underlying: str) -> None:
         try:
-            emitter.emit_greeks_refreshed(
-                underlying=underlying, refreshed_at=datetime.now(UTC)
-            )
-        except Exception:  # noqa: BLE001
+            emitter.emit_greeks_refreshed(underlying=underlying, refreshed_at=datetime.now(UTC))
+        except Exception:
             log.exception("SSE emit_greeks_refreshed failed; refresh unaffected")
 
     return _emit
@@ -281,9 +223,7 @@ def make_greeks_refresh_emit(
 __all__ = [
     "make_deferred_breach_emit_for_breach_loop",
     "make_greeks_refresh_emit",
-    "wrap_activity_log_sink_with_deferred_breach_emit",
     "wrap_emergency_activity_log_writer",
     "wrap_fill_enrichment_with_emit",
     "wrap_on_immediate_breach",
-    "wrap_submit_envelope_for_cascade",
 ]

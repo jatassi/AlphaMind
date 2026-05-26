@@ -13,7 +13,7 @@ a typed ``VerbError`` value. The route handlers translate that into HTTP.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -28,9 +28,7 @@ from alphamind.execution.continuous_monitor.control.verbs import (
     CancelOrderOutcome,
     ForceCloseOutcome,
     HaltModeOutcome,
-    OrderLookup,
     OrderState,
-    PositionLookup,
     PositionState,
     VerbError,
     VerbResult,
@@ -38,7 +36,6 @@ from alphamind.execution.continuous_monitor.control.verbs import (
     force_close_position,
     set_halt_mode,
 )
-
 
 # ---------------------------------------------------------------------------
 # In-memory fakes
@@ -63,20 +60,15 @@ class FakePositionLookup:
 
 @dataclass
 class FakeHaltModeRepo:
-    record: HaltModeRecord = HaltModeRecord(
-        enabled=False, reason=None, applied_at=None
+    record: HaltModeRecord = field(
+        default_factory=lambda: HaltModeRecord(enabled=False, reason=None, applied_at=None)
     )
-    writes: list[HaltModeRecord] | None = None
-
-    def __post_init__(self) -> None:
-        if self.writes is None:
-            self.writes = []
+    writes: list[HaltModeRecord] = field(default_factory=list)
 
     async def read(self) -> HaltModeRecord:
         return self.record
 
     async def write(self, record: HaltModeRecord) -> None:
-        assert self.writes is not None
         self.writes.append(record)
         self.record = record
 
@@ -86,16 +78,9 @@ class FakeCancelEmitter:
     """Stand-in for the broker's cancel path + activity-log write."""
 
     outcomes_by_order: dict[str, CancelOrderOutcome | BrokerErrorCancel]
-    submitted: list[str] | None = None
+    submitted: list[str] = field(default_factory=list)
 
-    def __post_init__(self) -> None:
-        if self.submitted is None:
-            self.submitted = []
-
-    async def submit_cancel(
-        self, *, order_id: str
-    ) -> CancelOrderOutcome | BrokerErrorCancel:
-        assert self.submitted is not None
+    async def submit_cancel(self, *, order_id: str) -> CancelOrderOutcome | BrokerErrorCancel:
         self.submitted.append(order_id)
         return self.outcomes_by_order[order_id]
 
@@ -105,12 +90,8 @@ class FakeCloseSubmitter:
     """Stand-in for the engine-envelope submission path."""
 
     envelope_id_to_return: str = "MON.session-1.42"
-    captured_kwargs: list[dict[str, Any]] | None = None
+    captured_kwargs: list[dict[str, Any]] = field(default_factory=list)
     broker_error: BrokerErrorClose | None = None
-
-    def __post_init__(self) -> None:
-        if self.captured_kwargs is None:
-            self.captured_kwargs = []
 
     async def submit_close(
         self,
@@ -121,7 +102,6 @@ class FakeCloseSubmitter:
         breach_details_current: float,
         breach_details_limit: float,
     ) -> ForceCloseOutcome | BrokerErrorClose:
-        assert self.captured_kwargs is not None
         self.captured_kwargs.append(
             {
                 "position_id": position_id,
@@ -161,9 +141,7 @@ class TestCancelOrderVerb:
                 "ord-1": OrderState(order_id="ord-1", status="open"),
             }
         )
-        cancel_emitter = FakeCancelEmitter(
-            outcomes_by_order={"ord-1": CancelOrderOutcome()}
-        )
+        cancel_emitter = FakeCancelEmitter(outcomes_by_order={"ord-1": CancelOrderOutcome()})
         result = await cancel_order(
             order_id="ord-1",
             order_lookup=order_lookup,
@@ -178,9 +156,7 @@ class TestCancelOrderVerb:
         order_lookup = FakeOrderLookup(
             rows={"ord-1": OrderState(order_id="ord-1", status="partially_filled")}
         )
-        cancel_emitter = FakeCancelEmitter(
-            outcomes_by_order={"ord-1": CancelOrderOutcome()}
-        )
+        cancel_emitter = FakeCancelEmitter(outcomes_by_order={"ord-1": CancelOrderOutcome()})
         result = await cancel_order(
             order_id="ord-1",
             order_lookup=order_lookup,
@@ -235,13 +211,9 @@ class TestCancelOrderVerb:
         assert result.details == {"current_status": "cancelled"}
 
     async def test_broker_error_surfaces_with_message(self) -> None:
-        order_lookup = FakeOrderLookup(
-            rows={"ord-1": OrderState(order_id="ord-1", status="open")}
-        )
+        order_lookup = FakeOrderLookup(rows={"ord-1": OrderState(order_id="ord-1", status="open")})
         cancel_emitter = FakeCancelEmitter(
-            outcomes_by_order={
-                "ord-1": BrokerErrorCancel(broker_message="rate limited")
-            }
+            outcomes_by_order={"ord-1": BrokerErrorCancel(broker_message="rate limited")}
         )
         result = await cancel_order(
             order_id="ord-1",
@@ -289,7 +261,6 @@ class TestForceClosePositionVerb:
             close_submitter=close_submitter,
             now=_now,
         )
-        assert close_submitter.captured_kwargs is not None
         kwargs = close_submitter.captured_kwargs[0]
         # The rationale is persisted onto
         # ``guardrail_trigger_record.position_selection_rationale`` prefixed
@@ -357,9 +328,7 @@ class TestForceClosePositionVerb:
 class TestSetHaltModeVerb:
     async def test_engaging_writes_new_state(self) -> None:
         repo = FakeHaltModeRepo()
-        result = await set_halt_mode(
-            enabled=True, reason="circuit breaker", repo=repo, now=_now
-        )
+        result = await set_halt_mode(enabled=True, reason="circuit breaker", repo=repo, now=_now)
         assert isinstance(result, VerbResult)
         assert result.applied_at == _NOW
         assert repo.record.enabled is True
@@ -371,9 +340,7 @@ class TestSetHaltModeVerb:
         repo = FakeHaltModeRepo(
             record=HaltModeRecord(enabled=True, reason="first", applied_at=prior_ts)
         )
-        result = await set_halt_mode(
-            enabled=True, reason="second", repo=repo, now=_now
-        )
+        result = await set_halt_mode(enabled=True, reason="second", repo=repo, now=_now)
         assert isinstance(result, VerbResult)
         # Idempotent: original applied_at returned unchanged.
         assert result.applied_at == prior_ts
@@ -385,9 +352,7 @@ class TestSetHaltModeVerb:
         repo = FakeHaltModeRepo(
             record=HaltModeRecord(enabled=True, reason="prior", applied_at=prior_ts)
         )
-        result = await set_halt_mode(
-            enabled=False, reason="lifted", repo=repo, now=_now
-        )
+        result = await set_halt_mode(enabled=False, reason="lifted", repo=repo, now=_now)
         assert isinstance(result, VerbResult)
         assert result.applied_at == _NOW
         assert repo.record.enabled is False
@@ -405,9 +370,7 @@ class TestSetHaltModeVerb:
         envelope carries a valid timestamp even when no prior write exists.
         """
         repo = FakeHaltModeRepo()  # disengaged default
-        result = await set_halt_mode(
-            enabled=False, reason="confirm", repo=repo, now=_now
-        )
+        result = await set_halt_mode(enabled=False, reason="confirm", repo=repo, now=_now)
         assert isinstance(result, VerbResult)
         # Same-value re-set: still treated as idempotent (no write).
         assert repo.writes == []
