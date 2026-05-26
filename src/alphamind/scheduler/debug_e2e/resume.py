@@ -186,6 +186,23 @@ def _earliest_valid_resume_target(*, present_phases: frozenset[str]) -> str | No
     return candidates[0]
 
 
+def _phase_output_present(source_archive_dir: Path, phase: str) -> bool:
+    """Return True iff ``phase_outputs/<phase>.json`` exists in the archive.
+
+    Defensive against TOCTOU: a concurrent archive prune that removes the
+    directory between the loader's :func:`Path.is_dir` check and this
+    probe can cause :func:`Path.is_file` to raise ``OSError`` /
+    ``PermissionError`` on some platforms (notably Windows when stat'ing
+    a path under a deleted parent). Treat any such failure as "not
+    present" so the loader returns a typed
+    :class:`ResumeValidationError` rather than a raw traceback.
+    """
+    try:
+        return phase_output_path(source_archive_dir, phase).is_file()
+    except OSError:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Loader
 # ---------------------------------------------------------------------------
@@ -213,7 +230,15 @@ def load_resume_context(
       target the source archive does cover.
     """
     source_archive_dir = archive_root / "invocations" / invocation_id
-    if not source_archive_dir.is_dir():
+    try:
+        archive_is_dir = source_archive_dir.is_dir()
+    except OSError as e:
+        # Defensive: a concurrently-removed parent directory can raise
+        # PermissionError on Windows rather than returning False. Surface
+        # as the typed validation error so the CLI exits 2 cleanly.
+        msg = f"--resume-from: cannot stat source invocation directory {source_archive_dir}: {e}"
+        raise ResumeValidationError(msg) from e
+    if not archive_is_dir:
         msg = (
             f"--resume-from: source invocation directory not found: "
             f"{source_archive_dir} (invocation_id={invocation_id!r})"
@@ -225,23 +250,21 @@ def load_resume_context(
         raise ResumeValidationError(msg)
 
     required_upstreams = phases_to_replay(phase)
-    present: set[str] = set()
-    missing: list[str] = []
-    for upstream in sorted(required_upstreams):
-        if phase_output_path(source_archive_dir, upstream).is_file():
-            present.add(upstream)
-        else:
-            missing.append(upstream)
+    missing = [
+        p for p in sorted(required_upstreams) if not _phase_output_present(source_archive_dir, p)
+    ]
 
     if missing:
         # Compute the earliest valid resume target the source archive
-        # covers — operators iterate on this between failed attempts.
-        # ``present`` is the frozenset of SDK phases whose output files
-        # actually exist in the source archive; ``phase`` itself is
-        # explicitly NOT in ``present`` because the operator was trying
-        # to resume *from* it (i.e. re-run it, so its output need not
-        # exist).
-        earliest = _earliest_valid_resume_target(present_phases=frozenset(present))
+        # covers — operators iterate on this between failed attempts. The
+        # hint must reflect what is ACTUALLY on disk across the whole
+        # archive, not just the subset of phases we scanned as upstreams
+        # of the failed target. Scan every SDK phase's output file here
+        # so the hint never recommends a phase whose file is also absent.
+        all_present = frozenset(
+            p for p in SDK_PHASE_NAMES if _phase_output_present(source_archive_dir, p)
+        )
+        earliest = _earliest_valid_resume_target(present_phases=all_present)
         hint = (
             f"earliest valid resume target the source archive covers: "
             f"--resume-from {invocation_id}:{earliest}"

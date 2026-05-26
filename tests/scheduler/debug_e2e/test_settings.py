@@ -3,8 +3,8 @@
 Verifies the public contract called out by the user story:
 
 * :class:`DebugE2ESettings` is a ``frozen=True, slots=True`` dataclass with
-  exactly three fields: ``account_queries``, ``ca_queries``,
-  ``emitter_factory``.
+  exactly four fields: ``account_queries``, ``ca_queries``,
+  ``emitter_factory``, ``resume_context`` (the last added by ALP-693).
 * :func:`configure_debug_e2e(*, archive_root)` returns a populated
   :class:`DebugE2ESettings` whose ``account_queries`` /
   ``ca_queries`` are the log-only stand-ins from story 02b and whose
@@ -51,8 +51,9 @@ def test_debug_e2e_settings_is_frozen_and_slotted() -> None:
     with pytest.raises((AttributeError, TypeError, FrozenInstanceError)):
         settings.unknown_field = "x"  # type: ignore[attr-defined]
 
-    # Confirm slots are declared — ``__slots__`` lists the three fields
-    # and ``__dict__`` is absent on instances.
+    # Confirm slots are declared — ``__slots__`` lists the four fields
+    # (ALP-693 added ``resume_context``) and ``__dict__`` is absent on
+    # instances.
     assert hasattr(type(settings), "__slots__")
     assert not hasattr(settings, "__dict__")
 

@@ -196,10 +196,12 @@ def _validate_resume_from_argparse(
         parser.error("--resume-from requires --debug-e2e")
     if args.fresh_start:
         parser.error("--resume-from is mutually exclusive with --fresh-start")
-    # Format: ``<invocation-id>:<phase>`` — both sides required.
-    # Use ``partition`` rather than ``split`` so an empty side surfaces
-    # as an empty string rather than passing-through unchanged.
-    invocation_id, sep, phase = args.resume_from.partition(":")
+    # Format: ``<invocation-id>:<phase>`` — both sides required. Invocation
+    # IDs embed ISO-8601 timestamps (e.g. ``inv-2026-05-26T00:00:00-abc``)
+    # which already contain colons, so split on the LAST colon via
+    # ``rpartition``: SDK phase names are simple identifiers without
+    # colons, so the trailing segment is unambiguously the phase.
+    invocation_id, sep, phase = args.resume_from.rpartition(":")
     if not sep:
         parser.error(
             f"--resume-from value {args.resume_from!r} must be "
@@ -338,7 +340,10 @@ async def _run_debug_e2e(args: argparse.Namespace) -> None:
     # re-raised unchanged there.
     resume_context = None
     if args.resume_from is not None:
-        invocation_id, _, phase = args.resume_from.partition(":")
+        # ``rpartition`` to mirror ``_validate_resume_from_argparse``:
+        # invocation IDs contain colons (ISO-8601 timestamps), SDK phase
+        # names don't, so the LAST colon separates the two.
+        invocation_id, _, phase = args.resume_from.rpartition(":")
         try:
             resume_context = debug_e2e_resume.load_resume_context(
                 archive_root=archive_root,

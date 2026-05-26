@@ -612,6 +612,10 @@ class TestRunDebugE2E:
         # portfolio so the broker stand-in projects what the seeder wrote.
         assert captured["configure_debug_e2e_portfolio"] is SYNTHETIC_PORTFOLIO
         assert captured["wipe_seed_calls"][0]["portfolio"] is SYNTHETIC_PORTFOLIO
+        # Without --resume-from, configure_debug_e2e must receive
+        # resume_context=None; a spurious non-None would silently flip
+        # the debug-e2e mode into "replay" for every invocation.
+        assert captured["configure_debug_e2e_resume_context"] is None
 
     async def test_fresh_start_threads_fresh_start_portfolio(
         self,
