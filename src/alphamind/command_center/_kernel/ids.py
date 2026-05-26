@@ -63,18 +63,22 @@ _DISCORD_WEBHOOK_HOSTS = frozenset({"discord.com", "discordapp.com"})
 
 ``discordapp.com`` is the legacy host; Discord still serves webhook posts
 against it. Both are accepted so an operator who pastes either form into
-``config/alerts.yaml`` succeeds.
+``config/alerts.yaml`` succeeds. Used by :func:`discord_webhook_url` to
+validate the host after the URL pattern matches — keeps the host
+vocabulary in one place rather than baking it into the regex (F12).
 """
 
 _DISCORD_WEBHOOK_URL_PATTERN = re.compile(
-    r"^https://(?P<host>discord(?:app)?\.com)/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$"
+    r"^https://(?P<host>[A-Za-z0-9.-]+)/api/webhooks/(?P<id>[0-9]+)/(?P<token>[A-Za-z0-9_-]+)$"
 )
 """Discord webhook URL: ``https://{host}/api/webhooks/{id}/{token}``.
 
 Pattern intentionally restrictive: ``https://`` only (Discord rejects HTTP
-webhooks); host must be one of :data:`_DISCORD_WEBHOOK_HOSTS`; ID is
-digits; token is base64url-compatible alphabet. Rejects URLs with query
-strings / fragments since neither is part of the webhook contract.
+webhooks); ID is digits; token is base64url-compatible alphabet. Rejects
+URLs with query strings / fragments since neither is part of the webhook
+contract. The host is matched as a wildcard here and then validated against
+:data:`_DISCORD_WEBHOOK_HOSTS` in :func:`discord_webhook_url` — keeps the
+host vocabulary in one place (F12).
 """
 
 
@@ -104,11 +108,23 @@ def discord_webhook_url(value: str) -> DiscordWebhookUrl:
     Accepts ``https://discord.com/api/webhooks/{id}/{token}`` or the legacy
     ``https://discordapp.com/api/webhooks/{id}/{token}``. Raises
     :class:`ValueError` on any other scheme, host, or path shape.
+
+    Two-step validation (F12): the regex pins scheme + path shape; the
+    parsed host is then checked against :data:`_DISCORD_WEBHOOK_HOSTS`
+    so the accepted-host vocabulary stays in one place.
     """
-    if not _DISCORD_WEBHOOK_URL_PATTERN.fullmatch(value):
+    match = _DISCORD_WEBHOOK_URL_PATTERN.fullmatch(value)
+    if match is None:
         msg = (
             f"discord_webhook_url must match {_DISCORD_WEBHOOK_URL_PATTERN.pattern!r}; "
             f"got {value!r}"
+        )
+        raise ValueError(msg)
+    host = match.group("host")
+    if host not in _DISCORD_WEBHOOK_HOSTS:
+        allowed = sorted(_DISCORD_WEBHOOK_HOSTS)
+        msg = (
+            f"discord_webhook_url host {host!r} not accepted; allowed hosts: {allowed}"
         )
         raise ValueError(msg)
     return DiscordWebhookUrl(value)

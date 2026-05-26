@@ -61,8 +61,18 @@ class TestDiscordWebhookUrl:
             discord_webhook_url("http://discord.com/api/webhooks/123/abc")
 
     def test_rejects_non_discord_host(self) -> None:
-        with pytest.raises(ValueError, match="discord_webhook_url"):
+        # F12: the constructor checks the parsed host against the
+        # _DISCORD_WEBHOOK_HOSTS frozenset; the error message names the
+        # host so an operator sees what went wrong.
+        with pytest.raises(ValueError, match="not accepted"):
             discord_webhook_url("https://example.com/api/webhooks/123/abc")
+
+    def test_rejects_discord_lookalike_host(self) -> None:
+        # F12: a domain that the old regex's ``discord(?:app)?\.com`` would
+        # not have matched, but a sufficiently-loose alternative regex
+        # might — confirms the host check fires.
+        with pytest.raises(ValueError, match="not accepted"):
+            discord_webhook_url("https://discord.com.evil.example/api/webhooks/123/abc")
 
 
 class TestOperatorSessionId:
