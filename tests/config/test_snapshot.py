@@ -158,11 +158,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     """
     resolved = _fixture_resolved()
     digest = compute_snapshot_hash(serialize_resolved_config(resolved))
-    # Pin updated 2026-05-25 (ALP-646): guardrails.yaml gained two top-level
-    # fields (``position_zones`` and ``inverse_warning_band_pct``) so the
-    # canonical bytes shifted; the YAML defaults preserve the historical
-    # behaviour but the serialised form now carries the extra keys.
-    expected = "05e46d0aca8e97cb62e064f80cd758eb6f7aa138b50a0953b236494d4561b906"
+    # Pin updated 2026-05-26 (ALP-664): scheduler.yaml gained the
+    # ``control_port`` field (default 8765) so the canonical bytes
+    # shifted; the YAML default preserves the historical behaviour but
+    # the serialised form now carries the extra key.
+    expected = "dcae35c62ba30b82f5f08614c9ff5640676bc6f4221865e65f048146663d0002"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."
