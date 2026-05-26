@@ -1,28 +1,29 @@
 """FastAPI app composition for the command center (story 02 / ALP-666).
 
 This is the composition root for the command-center FastAPI app —
-the only module that wires routers, lifespan, and dependencies. Every
-downstream story includes its routers here via ``app.include_router(...)``;
-story 03 wires the auth router, story 04a wires the control router,
-with documented include points for the remaining stories:
+the only module that wires routers, lifespan, and dependencies. The
+module currently composes:
 
-* Story 03 (WebAuthn + sessions + CSRF) — auth router included here.
-* Story 04a (``/api/control/*`` proxy + audit) — control router
-  included here.
-* Story 04b (``/api/events`` SSE multiplexer) — events router
-  included via ``app.include_router(build_events_router())``;
+* ``/healthz`` — a trivial liveness probe.
+* ``/auth/*`` — the WebAuthn + sessions + CSRF surface (story 03 /
+  ALP-667) via :func:`alphamind.command_center.auth.routes.build_auth_router`.
+* ``/api/control/*`` — the operator-action proxy + audit surface
+  (story 04a / ALP-668) via
+  :func:`alphamind.command_center.control.routes.build_control_router`.
+* ``/api/events`` — the SSE multiplexer (story 04b / ALP-669) via
+  :func:`alphamind.command_center.events.routes.build_events_router`.
   ``build_events_router`` already bakes the ``/api`` prefix, so no
   ``prefix=`` kwarg is passed at the include site (F9).
-* Story 04c (frontend bundling / static mount) —
-  ``app.mount("/", StaticFiles(...))`` (mounted last so ``/api/*``
-  takes precedence).
+* ``/`` static mount — serves the Vite-built SPA bundle from
+  ``config.frontend.dist_path`` (story 04c). Mounted LAST so
+  ``/api/*`` routes match first; skipped in dev mode (when
+  ``COMMAND_CENTER_DEV_MODE`` is truthy) and when the bundle is
+  absent.
+
+Documented include points for future stories:
+
 * Story 05a (alerts) — ``app.include_router(alerts_router, prefix="/api/alerts")``.
 * View stories (05b-05j, 06a-06c) — included under ``/api/views/...``.
-
-This module ships ``/healthz`` (a trivial liveness probe), the
-``/auth/*`` router (story 03), the ``/api/control/*`` router
-(story 04a), the ``/api/events`` SSE router (story 04b), and the
-static-files mount for the Vite-built SPA (story 04c).
 
 Per the parent-issue architectural invariants:
 
