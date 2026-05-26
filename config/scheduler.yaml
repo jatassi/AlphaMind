@@ -14,6 +14,12 @@ emergency_poll_interval_seconds: 5
 market_calendar_exchange: "XNYS"
 supervisor_shutdown_timeout_seconds: 10
 
+# Loopback-bound /control + /events HTTP surface (ALP-664).
+# Browser traffic reaches the command-center backend's /api/control proxy,
+# which then forwards to 127.0.0.1:control_port. Operators may change the
+# port if it conflicts with another service on the trading machine.
+control_port: 8765
+
 triggers:
   market_hours_rolling: "30 9,11,13,15 * * mon-fri"
   off_hours_rolling:    "0 0,4,8,20 * * mon-fri"

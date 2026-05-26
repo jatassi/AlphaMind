@@ -86,3 +86,29 @@ class TestNewFieldValidation:
         raw["supervisor_shutdown_timeout_seconds"] = -1
         with pytest.raises((ValueError, TypeError)):
             SchedulerConfig.model_validate(raw)
+
+
+class TestControlPort:
+    """ALP-664 — ``control_port`` knob backing the pipeline /control + /events surface."""
+
+    def test_control_port_defaults_to_8765(self) -> None:
+        config = SchedulerConfig.model_validate(_valid_raw())
+        assert config.control_port == 8765
+
+    def test_control_port_round_trips_explicit_value(self) -> None:
+        raw = _valid_raw()
+        raw["control_port"] = 9000
+        config = SchedulerConfig.model_validate(raw)
+        assert config.control_port == 9000
+
+    def test_rejects_zero_control_port(self) -> None:
+        raw = _valid_raw()
+        raw["control_port"] = 0
+        with pytest.raises((ValueError, TypeError)):
+            SchedulerConfig.model_validate(raw)
+
+    def test_rejects_control_port_above_max_tcp(self) -> None:
+        raw = _valid_raw()
+        raw["control_port"] = 70000
+        with pytest.raises((ValueError, TypeError)):
+            SchedulerConfig.model_validate(raw)
