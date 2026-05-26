@@ -1007,7 +1007,11 @@ def _wave2_01ij_order_and_rationale(now: datetime) -> list[dict[str, Any]]:
             bracket_id=BracketId("brk1"),
             role=OrderRole.ENTRY,
             instrument_spec=StrategyInstrumentSpec(legs=(opt_spec,)),
-            direction=OrderDirection.BUY_TO_OPEN,
+            # ALP-614 — MLEG envelope carries direction=None; the broker
+            # adapter emits per-leg side / position_intent from each
+            # StrategyLeg.direction. Envelope-level direction is a category
+            # error for multi-leg strategies.
+            direction=None,
             order_type=OrderType.MARKET,
             order_class=OrderClass.MLEG,
             price_parameters=PriceParameters(),

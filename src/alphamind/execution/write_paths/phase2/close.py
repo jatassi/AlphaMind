@@ -9,22 +9,22 @@ from alphamind.commands.command_models import CloseCommand
 from alphamind.commands.submission_results import SubmissionResult
 from alphamind.execution.write_paths.phase2._shared import (
     _build_pending_order,
+    _close_order_direction_for_position,
     _emit_order_submitted,
     _id_suffix,
-    _order_direction_for_close,
-    _order_position_direction,
-    _position_ticker,
+    _instrument_spec_for_position,
 )
 from alphamind.portfolio_state.events.activity_log import EventSource
 from alphamind.portfolio_state.records.orders import (
+    InstrumentSpec,
     OrderClass,
+    OrderDirection,
     OrderRecord,
     OrderRole,
     OrderType,
     PriceParameters,
 )
 from alphamind.portfolio_state.records.positions import (
-    Direction,
     EquityPositionDetails,
 )
 from alphamind.state.invocation_context.context import (
@@ -117,8 +117,8 @@ async def _writeback_close(
         position_id=command.position_id,
         bracket_id=position.bracket_id or "",
         thesis_id=position.thesis_id,
-        ticker=_position_ticker(position),
-        direction=_order_position_direction(position),
+        order_direction=_close_order_direction_for_position(position),
+        instrument_spec=_instrument_spec_for_position(position),
         quantity=close_qty,
         order_type=order_type,
         price_parameters=price_parameters,
@@ -161,8 +161,8 @@ def _build_close_order(  # noqa: PLR0913 — close construction threads ids + si
     position_id: str,
     bracket_id: str,
     thesis_id: str | None,
-    ticker: str,
-    direction: Direction,
+    order_direction: OrderDirection | None,
+    instrument_spec: InstrumentSpec,
     quantity: float,
     order_type: OrderType,
     price_parameters: PriceParameters,
@@ -170,16 +170,23 @@ def _build_close_order(  # noqa: PLR0913 — close construction threads ids + si
     timestamp: datetime,
     alpaca_order_id_override: str | None = None,
 ) -> OrderRecord:
+    """Build the persisted close order for *position*.
+
+    For a strategy position ``order_direction`` is ``None`` and
+    ``instrument_spec`` is the parent :class:`StrategyInstrumentSpec`; the
+    record is the MLEG envelope that exits the strategy (ALP-614).
+    """
+    order_class = OrderClass.MLEG if order_direction is None else OrderClass.SIMPLE
     return _build_pending_order(
         order_id=order_id,
         position_id=position_id,
         bracket_id=bracket_id,
         role=OrderRole.CLOSE,
-        order_class=OrderClass.SIMPLE,
-        direction=_order_direction_for_close(direction),
+        order_class=order_class,
+        direction=order_direction,
         order_type=order_type,
         price_parameters=price_parameters,
-        ticker=ticker,
+        instrument_spec=instrument_spec,
         pm_command_id=pm_command_id,
         thesis_id=thesis_id,
         timestamp=timestamp,

@@ -70,8 +70,10 @@ from alphamind.portfolio_state.records.orders import (
     OptionsInstrumentSpec,
     OrderClass,
     OrderRecord,
+    OrderRole,
     OrderStatus,
     direction_to_side,
+    order_direction,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -431,7 +433,14 @@ async def _integrate_one_fill(
     await _persist_order_update(handle, updated_order)
 
     position_row, position = await _read_position_for_order(handle, order)
-    direction_is_buy = direction_to_side(order.direction) == "buy"
+    # Strategy MLEG envelopes carry direction=None — the per-leg child orders
+    # carry meaningful sides. The strategy branch below routes per-leg via
+    # OrderRole rather than envelope direction, so this dispatch flag is only
+    # consulted by the equity / single-leg options branch (ALP-614).
+    envelope_direction = order_direction(order)
+    direction_is_buy = envelope_direction is not None and (
+        direction_to_side(envelope_direction) == "buy"
+    )
 
     if isinstance(position.details, StrategyPositionDetails):
         updated_position, incomplete_legs = await _apply_strategy_fill_to_position(
@@ -1026,10 +1035,18 @@ async def _apply_strategy_open_fill(
     On the ADD branch the parent payoff metrics are recomputed from the
     post-add legs — every leg of an OPEN strategy is already positive, so the
     recompute always fires.
+
+    Dispatches by ``updated_order.role`` as a positive list — only ENTRY
+    and ADD_ENTRY are opening; CLOSE / TAKE_PROFIT / PRICE_STOP / TIME_STOP
+    are all closing — rather than inferring an opening / closing side from
+    ``updated_order.direction``. The prior direction-based inference
+    miscategorised SHORT-leg fills on credit-spread ADDs as closes (they
+    are opens); the positive list also catches the symmetric case where
+    a protective-leg MLEG envelope fires and per-leg child fills carry the
+    parent's TAKE_PROFIT / PRICE_STOP / TIME_STOP role — those route to the
+    close branch correctly (ALP-614).
     """
-    is_buy_side = direction_to_side(updated_order.direction) == "buy"
-    leg_direction_is_long = leg.direction != Direction.SHORT
-    is_opening_for_leg = is_buy_side == leg_direction_is_long
+    is_opening_for_leg = updated_order.role in {OrderRole.ENTRY, OrderRole.ADD_ENTRY}
     if is_opening_for_leg:
         new_legs = _add_to_leg(details.legs, leg=leg, fill=fill)
         new_details = _recompute_strategy_payoff_metrics(
@@ -1467,7 +1484,18 @@ async def _apply_cash_movement(
     """
     consideration = _fill_consideration_usd(order, fill)
     fees = max(Decimal(str(fill.fees_usd)), Decimal(0))
-    is_buy = direction_to_side(order.direction) == "buy"
+    # Cash movement runs against the per-leg / single-leg order whose
+    # direction is always populated. MLEG-envelope parents emit their
+    # cash movement via per-leg child fills, so this path never sees one
+    # (ALP-614).
+    envelope_direction = order_direction(order)
+    if envelope_direction is None:
+        msg = (
+            f"_apply_cash_movement reached MLEG envelope order_id={order.order_id!r}; "
+            "expected per-leg or single-leg order"
+        )
+        raise ValueError(msg)
+    is_buy = direction_to_side(envelope_direction) == "buy"
     delta = -(consideration + fees) if is_buy else (consideration - fees)
     cash_row = await _read_cash_row_or_raise(handle)
     cash_row.current_cash_usd = cash_row.current_cash_usd + delta

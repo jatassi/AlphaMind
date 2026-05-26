@@ -30,13 +30,13 @@ from alphamind.execution.write_paths.phase2._shared import (
     _OMS_COMPONENT_TYPE_TO_PERSISTED,
     _build_entry_order_from_command,
     _build_pending_order,
+    _close_order_direction_for_position,
     _emit,
     _emit_capital_reserved,
     _emit_order_submitted,
     _id_suffix,
+    _instrument_spec_for_position,
     _instrument_ticker_key,
-    _order_direction_for_close,
-    _order_position_direction,
     _reserve_capital,
 )
 from alphamind.portfolio_state.events.activity_log import (
@@ -51,7 +51,9 @@ from alphamind.portfolio_state.records.orders import (
     BracketRecord,
     BracketStatus,
     EventTrigger,
+    InstrumentSpec,
     OrderClass,
+    OrderDirection,
     OrderRecord,
     OrderRole,
     OrderType,
@@ -72,6 +74,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
     StrategyLeg,
     StrategyPositionDetails,
+    position_direction,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -162,10 +165,14 @@ async def _writeback_open(
         validation_greeks=validation_greeks,
         validation_iv=validation_iv,
     )
-    # Order builders require a non-None Direction; derive it once from the
-    # pending position (strategy positions yield the inert Direction.LONG
-    # placeholder — see _order_position_direction).
-    order_direction = _order_position_direction(position)
+    # Derive the canonical instrument_spec + close-side direction once. For a
+    # strategy position both the entry envelope and each protective-leg
+    # envelope persist as MLEG orders with the strategy spec and direction
+    # None (ALP-614); equity / single-leg options paths take the equity-spec
+    # branch and carry a meaningful BUY/SELL.
+    entry_instrument_spec = _instrument_spec_for_position(position)
+    pos_direction = position_direction(position)
+    close_order_direction = _close_order_direction_for_position(position)
     thesis = _build_active_thesis(
         thesis_id=ids["thesis_id"],
         position_id=ids["position_id"],
@@ -190,7 +197,8 @@ async def _writeback_open(
         ticker=ticker,
         entry_order=command.entry_order,
         quantity=command.position_size.quantity,
-        direction=order_direction,
+        direction=pos_direction,
+        instrument_spec=entry_instrument_spec,
         pm_command_id=result.command_id,
         timestamp=timestamp,
         role=OrderRole.ENTRY,
@@ -201,10 +209,10 @@ async def _writeback_open(
         position_id=ids["position_id"],
         bracket_id=ids["bracket_id"],
         thesis_id=ids["thesis_id"],
-        ticker=ticker,
         target=command.target,
         quantity=command.position_size.quantity,
-        direction=order_direction,
+        order_direction=close_order_direction,
+        instrument_spec=entry_instrument_spec,
         pm_command_id=result.command_id,
         timestamp=timestamp,
     )
@@ -218,10 +226,10 @@ async def _writeback_open(
                 position_id=ids["position_id"],
                 bracket_id=ids["bracket_id"],
                 thesis_id=ids["thesis_id"],
-                ticker=ticker,
                 wire_leg=wire_leg,
                 quantity=command.position_size.quantity,
-                direction=order_direction,
+                order_direction=close_order_direction,
+                instrument_spec=entry_instrument_spec,
                 pm_command_id=result.command_id,
                 timestamp=timestamp,
             )
@@ -326,31 +334,37 @@ def _build_take_profit_order(  # noqa: PLR0913 — distinct identifiers + sizing
     position_id: str,
     bracket_id: str,
     thesis_id: str | None,
-    ticker: str,
     target: Target,
     quantity: float,
-    direction: Direction,
+    order_direction: OrderDirection | None,
+    instrument_spec: InstrumentSpec,
     pm_command_id: str,
     timestamp: datetime,
 ) -> OrderRecord:
-    """Build the persisted take-profit order from a canonical Target."""
+    """Build the persisted take-profit order from a canonical Target.
+
+    For a strategy position ``order_direction`` is ``None`` and
+    ``instrument_spec`` is the parent :class:`StrategyInstrumentSpec`; the
+    leg is persisted as the MLEG envelope that exits the strategy (ALP-614).
+    """
     if target.order_type == "market":
         order_type = OrderType.MARKET
         price_parameters = PriceParameters()
     else:
         order_type = OrderType.LIMIT
         price_parameters = PriceParameters(limit_price=target.price)
+    order_class = OrderClass.MLEG if order_direction is None else OrderClass.OTO
     return _build_pending_order(
         order_id=order_id,
         position_id=position_id,
         bracket_id=bracket_id,
         role=OrderRole.TAKE_PROFIT,
-        order_class=OrderClass.OTO,
-        direction=_order_direction_for_close(direction),
+        order_class=order_class,
+        direction=order_direction,
         order_type=order_type,
         price_parameters=price_parameters,
         quantity=quantity,
-        ticker=ticker,
+        instrument_spec=instrument_spec,
         pm_command_id=pm_command_id,
         thesis_id=thesis_id,
         timestamp=timestamp,
@@ -363,14 +377,19 @@ def _build_invalidation_leg_order(  # noqa: PLR0913 — leg construction threads
     position_id: str,
     bracket_id: str,
     thesis_id: str | None,
-    ticker: str,
     wire_leg: PriceLeg | TimeLeg,
     quantity: float,
-    direction: Direction,
+    order_direction: OrderDirection | None,
+    instrument_spec: InstrumentSpec,
     pm_command_id: str,
     timestamp: datetime,
 ) -> OrderRecord:
-    """Build the persisted protective-leg order for a price/time invalidation leg."""
+    """Build the persisted protective-leg order for a price/time invalidation leg.
+
+    For a strategy position ``order_direction`` is ``None`` and
+    ``instrument_spec`` is the parent :class:`StrategyInstrumentSpec`; the
+    leg is persisted as the MLEG envelope that exits the strategy (ALP-614).
+    """
     persisted_order_type = _BRACKET_ORDER_TYPE_TO_PERSISTED[wire_leg.order_parameters.order_type]
     if isinstance(wire_leg, PriceLeg):
         trigger_price = wire_leg.condition.trigger_price
@@ -389,17 +408,18 @@ def _build_invalidation_leg_order(  # noqa: PLR0913 — leg construction threads
         price_parameters = PriceParameters()
         persisted_order_type = OrderType.MARKET
         role = OrderRole.TIME_STOP
+    order_class = OrderClass.MLEG if order_direction is None else OrderClass.OTO
     return _build_pending_order(
         order_id=order_id,
         position_id=position_id,
         bracket_id=bracket_id,
         role=role,
-        order_class=OrderClass.OTO,
-        direction=_order_direction_for_close(direction),
+        order_class=order_class,
+        direction=order_direction,
         order_type=persisted_order_type,
         price_parameters=price_parameters,
         quantity=quantity,
-        ticker=ticker,
+        instrument_spec=instrument_spec,
         pm_command_id=pm_command_id,
         thesis_id=thesis_id,
         timestamp=timestamp,

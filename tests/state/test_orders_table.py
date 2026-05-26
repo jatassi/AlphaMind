@@ -284,11 +284,16 @@ class TestRoundTripCodec:
     def test_order_class_round_trips(
         self, order_class: OrderClass, instrument_spec: InstrumentSpec
     ) -> None:
-        """AC #2: every OrderClass round-trips (MLEG paired with strategy spec)."""
+        """AC #2: every OrderClass round-trips (MLEG paired with strategy spec).
+
+        MLEG envelopes carry ``direction=None`` (ALP-614); the codec maps the
+        record's ``None`` to a SQL ``NULL`` and back.
+        """
         record = _market_order(
             order_class=order_class,
             instrument_spec=instrument_spec,
             order_id=OrderId(f"ord-{order_class}"),
+            direction=None if order_class == OrderClass.MLEG else OrderDirection.BUY,
         )
         assert row_to_record(record_to_row(record)) == record
 
@@ -312,12 +317,14 @@ class TestRoundTripCodec:
     def test_instrument_spec_variants_round_trip(self, instrument_spec: InstrumentSpec) -> None:
         """AC #6: each InstrumentSpec discriminated-union variant round-trips."""
         # MLEG required when the spec is STRATEGY; SIMPLE otherwise.
-        order_class = (
-            OrderClass.MLEG
-            if instrument_spec.instrument_type == InstrumentType.STRATEGY
-            else OrderClass.SIMPLE
+        # MLEG envelopes carry ``direction=None`` (ALP-614).
+        is_strategy = instrument_spec.instrument_type == InstrumentType.STRATEGY
+        order_class = OrderClass.MLEG if is_strategy else OrderClass.SIMPLE
+        record = _market_order(
+            instrument_spec=instrument_spec,
+            order_class=order_class,
+            direction=None if is_strategy else OrderDirection.BUY,
         )
-        record = _market_order(instrument_spec=instrument_spec, order_class=order_class)
         readback = row_to_record(record_to_row(record))
         assert readback.instrument_spec == instrument_spec
 
@@ -382,16 +389,29 @@ class TestRoundTripCodec:
         assert row_to_record(record_to_row(record)) == record
 
     def test_multi_leg_strategy_round_trips(self) -> None:
-        """Spot-check: multi-leg strategy order."""
+        """Spot-check: multi-leg strategy order persists with direction=None (ALP-614)."""
         record = _market_order(
             order_id=OrderId("ord-strat"),
             instrument_spec=_strategy_spec(),
             order_class=OrderClass.MLEG,
-            direction=OrderDirection.BUY_TO_OPEN,
+            direction=None,
             quantity=1.0,
             remaining_quantity=1.0,
         )
-        assert row_to_record(record_to_row(record)) == record
+        readback = row_to_record(record_to_row(record))
+        assert readback == record
+        assert readback.direction is None
+
+    def test_mleg_direction_persists_as_null(self) -> None:
+        """The codec writes ``direction=None`` as a SQL NULL on the row (ALP-614)."""
+        record = _market_order(
+            order_id=OrderId("ord-mleg-null"),
+            instrument_spec=_strategy_spec(),
+            order_class=OrderClass.MLEG,
+            direction=None,
+        )
+        row = record_to_row(record)
+        assert row.direction is None
 
 
 # ---------------------------------------------------------------------------
@@ -466,6 +486,112 @@ class TestOrdersMigration:
             assert "orders" not in tables
         finally:
             eng.dispose()
+
+
+# ---------------------------------------------------------------------------
+# ALP-614 — orders.direction NULLABLE + MLEG backfill migration
+# ---------------------------------------------------------------------------
+
+_DIRECTION_NULLABLE_REVISION = "e2f7a1c3b8d9"
+_DIRECTION_NULLABLE_DOWN_REVISION = "d8a3f2c7b9e4"
+
+
+class TestOrdersDirectionNullableMigration:
+    """ALP-614 migration: orders.direction NULL-able + MLEG backfill to NULL."""
+
+    @staticmethod
+    def _insert_mleg_row_pre_migration(eng: object, *, order_id: str, direction: str) -> None:
+        from sqlalchemy import text
+
+        engine = eng
+        with engine.begin() as conn:  # type: ignore[attr-defined]
+            conn.execute(
+                text(
+                    "INSERT INTO orders ("
+                    "order_id, position_id, bracket_id, order_role, order_class, "
+                    "instrument_spec_json, direction, order_type, quantity, "
+                    "price_parameters_json, duration, status, alpaca_order_id, "
+                    "alpaca_order_id_chain_json, submission_timestamp, "
+                    "last_update_timestamp, filled_quantity, remaining_quantity, "
+                    "modification_count, metadata_json"
+                    ") VALUES ("
+                    ":order_id, NULL, :bracket_id, 'ENTRY', :order_class, "
+                    ":spec_json, :direction, 'MARKET', 1.0, "
+                    '\'{"limit_price": null, "stop_trigger_price": null}\', '
+                    "'DAY', 'PENDING', :alp_id, :chain_json, "
+                    ":ts, :ts, 0.0, 1.0, 0, '{\"age_hours\": 0.0}'"
+                    ")"
+                ),
+                {
+                    "order_id": order_id,
+                    "bracket_id": "brk-test",
+                    "order_class": "MLEG",
+                    "spec_json": '{"instrument_type": "STRATEGY", "legs": []}',
+                    "direction": direction,
+                    "alp_id": f"alp-{order_id}",
+                    "chain_json": f'["alp-{order_id}"]',
+                    "ts": "2026-05-25T00:00:00+00:00",
+                },
+            )
+
+    def test_upgrade_backfills_mleg_direction_to_null(self, tmp_path: Path) -> None:
+        from sqlalchemy import text
+
+        db_path = tmp_path / "alembic.db"
+        cfg = _alembic_config(db_path)
+        # Bracket FK is DEFERRABLE INITIALLY DEFERRED — we never insert the
+        # corresponding brackets row, but the deferred check passes only on
+        # commit if all FK violations are resolved. SQLite under the default
+        # foreign_keys=ON would reject; the migration harness keeps PRAGMA
+        # foreign_keys OFF for in-flight DDL, so the insert succeeds at the
+        # pre-direction-NULL head where strategy MLEG rows naturally carry
+        # placeholder BUY.
+        command.upgrade(cfg, _DIRECTION_NULLABLE_DOWN_REVISION)
+        eng = make_engine(str(db_path))
+        try:
+            with eng.begin() as conn:
+                conn.execute(text("PRAGMA foreign_keys = OFF"))
+            self._insert_mleg_row_pre_migration(eng, order_id="ord-mleg-1", direction="BUY")
+            self._insert_mleg_row_pre_migration(eng, order_id="ord-mleg-2", direction="SELL")
+        finally:
+            eng.dispose()
+
+        command.upgrade(cfg, _DIRECTION_NULLABLE_REVISION)
+
+        eng = make_engine(str(db_path))
+        try:
+            with eng.connect() as conn:
+                rows = conn.execute(
+                    text("SELECT order_id, direction FROM orders ORDER BY order_id")
+                ).all()
+            assert {r[0]: r[1] for r in rows} == {
+                "ord-mleg-1": None,
+                "ord-mleg-2": None,
+            }
+        finally:
+            eng.dispose()
+
+    def test_downgrade_refuses_when_null_rows_remain(self, tmp_path: Path) -> None:
+        from sqlalchemy import text
+
+        db_path = tmp_path / "alembic.db"
+        cfg = _alembic_config(db_path)
+        command.upgrade(cfg, _DIRECTION_NULLABLE_REVISION)
+        eng = make_engine(str(db_path))
+        try:
+            with eng.begin() as conn:
+                conn.execute(text("PRAGMA foreign_keys = OFF"))
+            self._insert_mleg_row_pre_migration(eng, order_id="ord-mleg-null", direction="BUY")
+            # Hand-NULL the direction to simulate a post-migration MLEG row.
+            with eng.begin() as conn:
+                conn.execute(
+                    text("UPDATE orders SET direction = NULL WHERE order_id = 'ord-mleg-null'")
+                )
+        finally:
+            eng.dispose()
+
+        with pytest.raises(RuntimeError, match="direction IS NULL"):
+            command.downgrade(cfg, _DIRECTION_NULLABLE_DOWN_REVISION)
 
     def test_upgrade_then_downgrade_then_upgrade_is_idempotent(self, tmp_path: Path) -> None:
         db_path = tmp_path / "alembic.db"

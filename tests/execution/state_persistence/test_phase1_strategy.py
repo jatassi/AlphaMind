@@ -457,7 +457,7 @@ def _make_strategy_parent_order(
         bracket_id=BracketId(bracket_id),
         role=role,
         instrument_spec=StrategyInstrumentSpec(legs=spec_legs),
-        direction=OrderDirection.BUY,
+        direction=None,
         order_type=OrderType.MARKET,
         order_class=OrderClass.MLEG,
         price_parameters=PriceParameters(),
