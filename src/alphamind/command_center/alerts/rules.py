@@ -132,9 +132,13 @@ class AlertCondition(Protocol):
     The Protocol is :func:`typing.runtime_checkable` so test fakes that
     duck-type the method shape pass ``isinstance`` checks (story 02 used
     the same convention on :class:`WebauthnVerifier`).
-    """
 
-    name: AlertRuleName
+    The condition does NOT carry its own ``name`` — the rule does. Tying
+    the predicate to a rule name happens at :class:`AlertRule`
+    construction, not at predicate construction; this lets a single
+    predicate class be reused under multiple rule names (the dormant
+    placeholders use this).
+    """
 
     async def evaluate(
         self,
