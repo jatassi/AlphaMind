@@ -23,7 +23,17 @@ These are project invariants that override any default behavior. Track them with
 
 ## Pre-flight
 
-### 1. Resolve the feature
+### 1. Enter an isolation worktree
+
+If your cwd is already under `.claude/worktrees/` (e.g., the operator launched `/orchestrate` from a worktree, or a prior orchestrate run never cleanly exited), you are already isolated — skip this step and proceed to step 2.
+
+Otherwise, call `EnterWorktree(name="orchestrate-<feature-slug>")` to create a fresh worktree on a clean branch off `origin/main`. Pick a `<feature-slug>` that's short and matches the feature name (`breach-behavior`, `synthesizer`, `portfolio-manager`); the worktree path becomes `.claude/worktrees/orchestrate-<feature-slug>/` and the auto-generated branch is `worktree-orchestrate-<feature-slug>`. This auto-generated branch is throwaway — step 6 (create feature branch) will branch off `main` again to land on the canonical Linear `gitBranchName`, so the worktree branch never appears in the PR.
+
+The worktree exists for **process isolation**, not branch management: it keeps the orchestrator's wave merges, lint chains, and subagent integrations off the operator's main checkout so they can keep working in parallel, and it satisfies the bg-job isolation guard that blocks file edits in the shared checkout. Subagent dispatches in the wave loop still pass `isolation: "worktree"` to `Agent` — those create their own sibling worktrees under `.claude/worktrees/` and are unaffected by which worktree the orchestrator runs in.
+
+After EnterWorktree returns, every subsequent file path, `git`, and `gh` command in this skill runs against the worktree. Confirm with one `pwd` (it should report `.claude/worktrees/orchestrate-<feature-slug>`) before proceeding.
+
+### 2. Resolve the feature
 
 The operator's argument names a feature (e.g., `Breach behavior`, `Synthesizer`, `Portfolio manager`).
 
@@ -42,11 +52,11 @@ list_issues(team="AlphaMind", parentId="<parent ID>", limit=50)
 
 Capture: parent ID, parent description (which contains the dependency graph + orchestrator notes you'll honor), and every sub-issue with its current `status`, `title`, `blockedBy` relations, and the `gitBranchName` from the parent (for your feature branch name).
 
-### 2. Read the orchestrator notes
+### 3. Read the orchestrator notes
 
 The parent Issue's description contains a "Notes for the orchestrator" section produced by `/draft-user-stories`. **Read it before dispatching anything.** It contains feature-specific guidance not duplicated in this skill — sibling work-tree gates, model-selection nuances for specific stories, architectural invariants the orchestrator must enforce, surfacing conditions. Treat its instructions as additive to this skill's defaults; when they conflict (rare), prefer the parent Issue's note since it has feature context this skill lacks.
 
-### 3. Sanity-check sub-issue state
+### 4. Sanity-check sub-issue state
 
 Before any dispatch:
 
@@ -54,7 +64,7 @@ Before any dispatch:
 - If any sub-issue is `Blocked`, surface its blocker and confirm whether to skip or wait.
 - If sub-issues' `blockedBy` links don't form a DAG matching the dependency graph in the parent description, surface — the work tree drafted incorrectly and wants a fix before execution.
 
-### 4. Set up the task list
+### 5. Set up the task list
 
 Use `TaskCreate` once, up front, to register everything you must not drop. Two groups:
 
@@ -69,7 +79,7 @@ Use `TaskCreate` once, up front, to register everything you must not drop. Two g
   7. `Land PR and clean local git state`
   8. `Send PushNotification summarizing completed work`
 
-### 5. Create and push the feature branch
+### 6. Create and push the feature branch
 
 From a clean `main` checkout:
 
