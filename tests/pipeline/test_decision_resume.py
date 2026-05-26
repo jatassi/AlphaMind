@@ -38,6 +38,7 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind._kernel.ids import InvocationId
 from alphamind.analysis._shared import TokensUsed
 from alphamind.commands.pm_envelope import (
@@ -57,7 +58,17 @@ from alphamind.scheduler.debug_e2e.resume import ResumeContext, phases_to_replay
 
 _INVOCATION_ID = "inv-decision-resume-001"
 _SOURCE_INVOCATION_ID = "inv-source-archive-001"
+_SOURCE_AS_OF = datetime(2026, 5, 26, tzinfo=UTC)
 _TIMESTAMP = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
+
+
+def _source_dir(archive_root: Path) -> Path:
+    """Return the date-partitioned source archive directory."""
+    return invocation_archive_dir(
+        archive_root=archive_root,
+        as_of=_SOURCE_AS_OF,
+        invocation_id=_SOURCE_INVOCATION_ID,
+    )
 
 
 def _tokens() -> TokensUsed:
@@ -242,20 +253,19 @@ def _drive(
 def _seed_source_archive(
     *,
     archive_root: Path,
-    invocation_id: str,
     analyst_result: AnalystResult | None = None,
     strategist_result: StrategistResult | None = None,
     pm_result: PMResult | None = None,
 ) -> Path:
     """Write phase-output JSON files + diagnostic directories under the source archive.
 
-    Returns the source archive directory (i.e. ``<root>/invocations/<id>/``).
+    Returns the source archive directory (date-partitioned canonical layout).
     """
     from alphamind.decision.analyst.models import AnalystResultModel
     from alphamind.decision.portfolio_manager.models import PMResultModel
     from alphamind.decision.strategist.models import StrategistResultModel
 
-    source_dir = archive_root / "invocations" / invocation_id
+    source_dir = _source_dir(archive_root)
     source_dir.mkdir(parents=True, exist_ok=True)
 
     if analyst_result is not None:
@@ -312,7 +322,6 @@ class TestReplayFromPM:
         source_strategist = _make_strategist_result()
         _seed_source_archive(
             archive_root=archive_root,
-            invocation_id=_SOURCE_INVOCATION_ID,
             analyst_result=source_analyst,
             strategist_result=source_strategist,
         )
@@ -321,7 +330,7 @@ class TestReplayFromPM:
         _patch_runners(monkeypatch, log=log)
 
         resume_ctx = ResumeContext(
-            source_archive_dir=archive_root / "invocations" / _SOURCE_INVOCATION_ID,
+            source_archive_dir=_source_dir(archive_root),
             resume_phase="pm",
             phases_to_replay=phases_to_replay("pm"),
         )
@@ -360,13 +369,13 @@ class TestReplayFromAnalyst:
         archive_root = tmp_path
         # No on-disk phase outputs needed — analyst/strategist won't try to
         # replay. Seed only an empty source dir for context realism.
-        (archive_root / "invocations" / _SOURCE_INVOCATION_ID).mkdir(parents=True)
+        (_source_dir(archive_root)).mkdir(parents=True)
 
         log = _CallLog()
         _patch_runners(monkeypatch, log=log)
 
         resume_ctx = ResumeContext(
-            source_archive_dir=archive_root / "invocations" / _SOURCE_INVOCATION_ID,
+            source_archive_dir=_source_dir(archive_root),
             resume_phase="analyst",
             phases_to_replay=phases_to_replay("analyst"),
         )
@@ -423,7 +432,6 @@ class TestResumeContextNone:
         # NOT exist — the runner never reached for them.
         _seed_source_archive(
             archive_root=tmp_path,
-            invocation_id=_SOURCE_INVOCATION_ID,
             analyst_result=_make_analyst_result(),
             strategist_result=_make_strategist_result(),
         )
@@ -483,7 +491,6 @@ class TestReplayEmitOrder:
         archive_root = tmp_path
         _seed_source_archive(
             archive_root=archive_root,
-            invocation_id=_SOURCE_INVOCATION_ID,
             analyst_result=_make_analyst_result(),
             strategist_result=_make_strategist_result(),
         )
@@ -495,7 +502,7 @@ class TestReplayEmitOrder:
         recording_progress = _RecordingProgress(events)
 
         resume_ctx = ResumeContext(
-            source_archive_dir=archive_root / "invocations" / _SOURCE_INVOCATION_ID,
+            source_archive_dir=_source_dir(archive_root),
             resume_phase="pm",
             phases_to_replay=phases_to_replay("pm"),
         )
@@ -570,7 +577,6 @@ class TestHydratedResultEquality:
         )
         _seed_source_archive(
             archive_root=archive_root,
-            invocation_id=_SOURCE_INVOCATION_ID,
             analyst_result=original,
             strategist_result=_make_strategist_result(),
         )
@@ -579,7 +585,7 @@ class TestHydratedResultEquality:
         _patch_runners(monkeypatch, log=log)
 
         resume_ctx = ResumeContext(
-            source_archive_dir=archive_root / "invocations" / _SOURCE_INVOCATION_ID,
+            source_archive_dir=_source_dir(archive_root),
             resume_phase="pm",
             phases_to_replay=phases_to_replay("pm"),
         )
@@ -616,14 +622,11 @@ class TestDiagnosticDirCopy:
         archive_root = tmp_path
         _seed_source_archive(
             archive_root=archive_root,
-            invocation_id=_SOURCE_INVOCATION_ID,
             analyst_result=_make_analyst_result(),
             strategist_result=_make_strategist_result(),
         )
         # Add an extra marker file to confirm copytree picks up everything.
-        source_analyst_diag = (
-            archive_root / "invocations" / _SOURCE_INVOCATION_ID / "decision" / "analyst"
-        )
+        source_analyst_diag = _source_dir(archive_root) / "decision" / "analyst"
         (source_analyst_diag / "extra_marker.json").write_text(
             '{"marker": "from-source"}', encoding="utf-8"
         )
@@ -632,7 +635,7 @@ class TestDiagnosticDirCopy:
         _patch_runners(monkeypatch, log=log)
 
         resume_ctx = ResumeContext(
-            source_archive_dir=archive_root / "invocations" / _SOURCE_INVOCATION_ID,
+            source_archive_dir=_source_dir(archive_root),
             resume_phase="pm",
             phases_to_replay=phases_to_replay("pm"),
         )
@@ -670,7 +673,6 @@ class TestDiagnosticDirCopy:
         archive_root = tmp_path
         _seed_source_archive(
             archive_root=archive_root,
-            invocation_id=_SOURCE_INVOCATION_ID,
             analyst_result=_make_analyst_result(),
             strategist_result=_make_strategist_result(),
         )
@@ -683,7 +685,7 @@ class TestDiagnosticDirCopy:
         _patch_runners(monkeypatch, log=log)
 
         resume_ctx = ResumeContext(
-            source_archive_dir=archive_root / "invocations" / _SOURCE_INVOCATION_ID,
+            source_archive_dir=_source_dir(archive_root),
             resume_phase="pm",
             phases_to_replay=phases_to_replay("pm"),
         )

@@ -25,13 +25,17 @@ from __future__ import annotations
 import importlib.util
 import io
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 import pytest
 
+from alphamind._kernel.archive_layout import invocation_archive_dir
+
 _SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "verify_debug_e2e.py"
+_INVOCATION_AS_OF = datetime(2026, 5, 26, tzinfo=UTC)
 
 
 @pytest.fixture(scope="module")
@@ -318,7 +322,11 @@ def _stub_main_for_resume(
             archive_root=archive_root, invocation_id=invocation_id
         )
         if inv_dir is None:
-            inv_dir = archive_root / "invocations" / invocation_id
+            inv_dir = invocation_archive_dir(
+                archive_root=archive_root,
+                as_of=_INVOCATION_AS_OF,
+                invocation_id=invocation_id,
+            )
             inv_dir.mkdir(parents=True, exist_ok=True)
         (inv_dir / "progress.jsonl").touch()
         return verify_module.CheckResult(label="archive_directory", passed=True, message="stub")

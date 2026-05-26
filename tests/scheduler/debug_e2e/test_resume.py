@@ -13,9 +13,14 @@ Covers:
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, fields
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+
+from alphamind._kernel.archive_layout import invocation_archive_dir
+
+_INVOCATION_AS_OF = datetime(2026, 5, 26, tzinfo=UTC)
 
 # ---------------------------------------------------------------------------
 # ResumeContext shape
@@ -181,7 +186,11 @@ def _seed_source_archive(
     succeeds; this story does not validate file contents — only their
     presence.
     """
-    invocation_dir = archive_root / "invocations" / invocation_id
+    invocation_dir = invocation_archive_dir(
+        archive_root=archive_root,
+        as_of=_INVOCATION_AS_OF,
+        invocation_id=invocation_id,
+    )
     phase_outputs_dir = invocation_dir / "phase_outputs"
     phase_outputs_dir.mkdir(parents=True)
     for phase in phase_files:
@@ -195,7 +204,7 @@ def test_load_resume_context_happy_path_returns_valid_context(
     """A complete source archive yields a ResumeContext with the right fields."""
     from alphamind.scheduler.debug_e2e.resume import load_resume_context, phases_to_replay
 
-    invocation_id = "inv-2026-05-26T00:00:00-abc"
+    invocation_id = "inv-20260526T000000Z-abc"
     # analyst needs the 6 upstream SDK outputs present
     upstream = sorted(phases_to_replay("analyst"))
     invocation_dir = _seed_source_archive(
@@ -383,7 +392,11 @@ def test_configure_debug_e2e_threads_resume_context(tmp_path: Path) -> None:
     from alphamind.scheduler.debug_e2e.settings import configure_debug_e2e
 
     ctx = ResumeContext(
-        source_archive_dir=tmp_path / "invocations" / "inv-source",
+        source_archive_dir=invocation_archive_dir(
+            archive_root=tmp_path,
+            as_of=_INVOCATION_AS_OF,
+            invocation_id="inv-source",
+        ),
         resume_phase="analyst",
         phases_to_replay=frozenset(
             {"tech_semis", "financials", "energy", "qualitative", "adaptive", "synthesizer"}

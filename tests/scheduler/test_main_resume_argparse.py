@@ -23,13 +23,17 @@ plus a complete source archive) is exercised by:
 from __future__ import annotations
 
 import contextlib
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
+from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind.config.models.run_types import RunType
 from alphamind.scheduler.__main__ import _parse_args
+
+_INVOCATION_AS_OF = datetime(2026, 5, 26, tzinfo=UTC)
 
 # ---------------------------------------------------------------------------
 # Synchronous argparse-layer rejections
@@ -46,14 +50,14 @@ class TestParseArgsResumeFrom:
                 "run",
                 "--debug-e2e",
                 "--resume-from",
-                "inv-2026-05-26T00:00:00-abc:analyst",
+                "inv-20260526T000000Z-abc:analyst",
                 "--once",
                 "market_hours_rolling",
                 "--reason",
                 "test",
             ]
         )
-        assert args.resume_from == "inv-2026-05-26T00:00:00-abc:analyst"
+        assert args.resume_from == "inv-20260526T000000Z-abc:analyst"
 
     def test_resume_from_default_is_none(self) -> None:
         """Omitting ``--resume-from`` leaves ``args.resume_from`` at ``None``."""
@@ -352,7 +356,11 @@ def _seed_source_archive(
     phase_files: list[str],
 ) -> Path:
     """Materialize an archive directory with the named phase_outputs files."""
-    invocation_dir = archive_root / "invocations" / invocation_id
+    invocation_dir = invocation_archive_dir(
+        archive_root=archive_root,
+        as_of=_INVOCATION_AS_OF,
+        invocation_id=invocation_id,
+    )
     phase_outputs_dir = invocation_dir / "phase_outputs"
     phase_outputs_dir.mkdir(parents=True)
     for phase in phase_files:
@@ -546,7 +554,11 @@ class TestResumeFromValid:
         ctx = kwargs["resume_context"]
         assert isinstance(ctx, ResumeContext)
         assert ctx.resume_phase == "analyst"
-        assert ctx.source_archive_dir == tmp_path / "invocations" / invocation_id
+        assert ctx.source_archive_dir == invocation_archive_dir(
+            archive_root=tmp_path,
+            as_of=_INVOCATION_AS_OF,
+            invocation_id=invocation_id,
+        )
         assert ctx.phases_to_replay == phases_to_replay("analyst")
 
         # And the orchestrator context carries the populated settings.
