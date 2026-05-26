@@ -2,10 +2,14 @@ import { createRouter } from '@tanstack/react-router'
 
 import { Route as RootRoute } from './routes/__root'
 import { Route as AuthedRoute } from './routes/_authed'
+import { Route as ConfigAlertsRoute } from './routes/_authed/config/alerts'
+import { Route as ConfigCommandCenterRoute } from './routes/_authed/config/command-center'
+import { Route as ConfigDigestRoute } from './routes/_authed/config/digest'
 import { Route as ConfigHistoryRoute } from './routes/_authed/config/history'
 import { Route as ProfileNameRoute } from './routes/_authed/config/profiles/$profile-name'
 import { Route as RegimeNameRoute } from './routes/_authed/config/regimes/$regime-name'
 import { Route as ConfigResolvedRoute } from './routes/_authed/config/resolved'
+import { Route as ConfigSecurityRoute } from './routes/_authed/config/security'
 import { Route as InvocationDetailRoute } from './routes/_authed/history/$invocation-id'
 import { Route as BriefViewerRoute } from './routes/_authed/history/brief-viewer'
 import { Route as FailuresRoute } from './routes/_authed/history/failures'
@@ -46,6 +50,11 @@ const routeTree = RootRoute.addChildren([
     // 06a: profiles + regimes config editor pages.
     ProfileNameRoute,
     RegimeNameRoute,
+    // 06b: per-file config editor routes.
+    ConfigAlertsRoute,
+    ConfigSecurityRoute,
+    ConfigCommandCenterRoute,
+    ConfigDigestRoute,
     // 06c: config diagnostic views (ALP-684).
     ConfigResolvedRoute,
     ConfigHistoryRoute,

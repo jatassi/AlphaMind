@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import { Link } from '@tanstack/react-router'
 
 // Top-level navigation shell. View stories (05b-05j, 06a-06c) add nav items
@@ -22,6 +24,49 @@ const FAILURES_SEARCH = {
   run_type: undefined,
   page: undefined,
   page_size: undefined,
+}
+
+const CONFIG_LINKS: readonly { to: string; label: string }[] = [
+  // Story 06b (ALP-683) — per-file YAML editor pages.
+  { to: '/config/alerts', label: 'Alerts' },
+  { to: '/config/security', label: 'Security' },
+  { to: '/config/command-center', label: 'Command center' },
+  { to: '/config/digest', label: 'Digest thresholds' },
+]
+
+function ConfigNavMenu(): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="relative" onMouseLeave={() => setOpen(false)}>
+      <button
+        type="button"
+        className="text-muted-foreground hover:text-foreground transition-colors"
+        onClick={() => setOpen((prev) => !prev)}
+        onFocus={() => setOpen(true)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        Configuration
+      </button>
+      {open ? (
+        <div
+          className="bg-popover absolute right-0 z-10 mt-2 flex w-48 flex-col gap-1 rounded-md border p-2 text-sm shadow-md"
+          role="menu"
+        >
+          {CONFIG_LINKS.map((entry) => (
+            <Link
+              key={entry.to}
+              to={entry.to}
+              className="hover:bg-muted rounded px-2 py-1"
+              role="menuitem"
+            >
+              {entry.label}
+            </Link>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function NavLinks(): React.JSX.Element {
@@ -49,6 +94,8 @@ function NavLinks(): React.JSX.Element {
       >
         Portfolio
       </Link>
+      {/* Story 06b (ALP-683) — config editor dropdown. */}
+      <ConfigNavMenu />
       {/* Story 06c (ALP-684) — config diagnostic views. */}
       <Link
         to="/config/resolved"

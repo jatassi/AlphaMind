@@ -94,6 +94,7 @@ from alphamind.config.models.regimes import RegimeConfig
 from alphamind.state.tables.invocations import InvocationRow
 
 __all__ = [
+    "ConfigContentResponse",
     "ConfigFile",
     "ConfigFileListResponse",
     "ConfigUpdateRequest",
@@ -375,6 +376,24 @@ class ConfigFileListResponse(BaseModel):
 
     family: str
     slugs: list[str]
+
+
+class ConfigContentResponse(BaseModel):
+    """Current on-disk contents of a registered config file.
+
+    Returned by ``GET /api/views/config/{config_file}`` (story 06b /
+    ALP-683). The editor page seeds the :class:`FormComposer`'s value
+    map from :attr:`values`; the raw YAML round-trips through
+    :attr:`yaml` so the operator can switch to the raw editor without
+    a round-trip through the form's flatten step.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    slug: str
+    filename: str
+    yaml: str
+    values: dict[str, Any]
 
 
 # ----------------------------------------------------------------------------
@@ -1229,6 +1248,56 @@ def build_configuration_router() -> APIRouter:  # noqa: C901, PLR0915
                 detail=f"Unknown config file: {config_file!r}",
             )
         return derive_form_schema(entry)
+
+    @router.get("/{config_file:path}", response_model=ConfigContentResponse)
+    def get_config_contents(
+        config_file: str,
+        request: Request,
+        _session: Annotated[OperatorSessionId, Depends(current_session)],
+    ) -> ConfigContentResponse:
+        """Return the current on-disk YAML + parsed values (story 06b).
+
+        Editor pages seed their form state from this endpoint at mount.
+        Returns 404 when the slug is not registered + 404 when the YAML
+        file does not exist on disk (the daemon was started against a
+        config tree missing the file).
+
+        Authenticated reads only (the editor reveals the config tree's
+        contents; operator-only material).
+        """
+        del _session
+        entry = _REGISTRY.get(config_file)
+        if entry is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown config file: {config_file!r}",
+            )
+        config_dir = _resolve_config_dir(request)
+        target_path = config_dir / entry.filename
+        if not target_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Config file not found on disk: {entry.filename}",
+            )
+        yaml_text = target_path.read_text(encoding="utf-8")
+        try:
+            values = yaml.safe_load(yaml_text) or {}
+        except yaml.YAMLError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to parse {entry.filename}: {exc}",
+            ) from exc
+        if not isinstance(values, dict):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Top-level YAML in {entry.filename} must be a mapping",
+            )
+        return ConfigContentResponse(
+            slug=entry.slug,
+            filename=entry.filename,
+            yaml=yaml_text,
+            values=values,
+        )
 
     @router.put("/{config_file:path}", response_model=ConfigUpdateResponse)
     def put_config(

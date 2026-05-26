@@ -58,7 +58,12 @@ const MONITOR_EVENT_NAMES = [
 // here the browser EventSource would never receive the frame and the
 // in-app alerts banner would silently stay empty (finding #8,
 // Wave-5 review).
-const CC_EVENT_NAMES = ['alert_fired'] as const
+//
+// ``config_reload_requires_restart`` (story 06b / ALP-683) — the
+// AlertEngine publishes this when alerts.yaml's channels section
+// changes; the alerts config-editor page subscribes so its
+// restart-required banner surfaces without a page reload.
+const CC_EVENT_NAMES = ['alert_fired', 'config_reload_requires_restart'] as const
 
 const BACKEND_HEARTBEAT_EVENT_NAME = 'heartbeat'
 

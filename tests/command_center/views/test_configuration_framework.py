@@ -357,6 +357,53 @@ class TestSchemaEndpoint:
         assert types_by_path["severity"] == "number"
 
 
+class TestGetConfigContents:
+    """``GET /api/views/config/{config_file}`` — current on-disk YAML."""
+
+    def _client(self, tmp_path: Path) -> TestClient:
+        from fastapi import FastAPI as _FastAPI
+
+        from alphamind.command_center.views.configuration import build_configuration_router
+
+        app = _FastAPI()
+        app.include_router(build_configuration_router(), prefix="/api/views/config")
+        app.state.config_dir = tmp_path
+        _override_auth(app)
+        return TestClient(app)
+
+    def test_unknown_slug_returns_404(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        response = client.get("/api/views/config/not-a-real-file")
+        assert response.status_code == 404
+
+    def test_missing_file_returns_404(self, tmp_path: Path) -> None:
+        # Slug is registered but the YAML is absent from disk.
+        client = self._client(tmp_path)
+        response = client.get("/api/views/config/security")
+        assert response.status_code == 404
+
+    def test_returns_yaml_and_values(self, tmp_path: Path) -> None:
+        yaml_text = (
+            "session:\n"
+            "  duration_hours: 12\n"
+            "  cookie_name: cc_session\n"
+            "csrf:\n"
+            "  cookie_name: cc_csrf\n"
+            "webauthn:\n"
+            "  relying_party_id: localhost\n"
+            "  relying_party_name: AlphaMind\n"
+        )
+        (tmp_path / "security.yaml").write_text(yaml_text, encoding="utf-8")
+        client = self._client(tmp_path)
+        response = client.get("/api/views/config/security")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["filename"] == "security.yaml"
+        assert body["slug"] == "security"
+        assert body["yaml"] == yaml_text
+        assert body["values"]["session"]["cookie_name"] == "cc_session"
+
+
 class TestPathExistsEndpoint:
     """``GET /api/views/config/path-exists`` — PathInput probe.
 
