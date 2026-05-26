@@ -78,19 +78,26 @@ class TestPipelineEvent:
         with pytest.raises(FrozenInstanceError):
             event.event_type = PipelineEventType.INVOCATION_STARTED  # type: ignore[misc]
 
-    def test_payload_is_immutable_mapping(self) -> None:
-        # The payload dict is preserved as-passed; downstream consumers may
-        # not mutate it (the frozen dataclass guarantees the binding, the
-        # docstring expects the value).
+    def test_payload_is_read_only_mapping(self) -> None:
+        # The payload is wrapped in a MappingProxyType so subscribers
+        # cannot mutate each other's view (F9, F10). The wrap also copies
+        # the input dict so an external mutation of the source does not
+        # leak through.
         payload = {"timestamp": "2026-05-26T00:00:00Z"}
         event = PipelineEvent(event_type=PipelineEventType.HEARTBEAT, payload=payload)
-        # If the caller mutates the source dict, the event sees it too —
-        # the dataclass holds a reference, not a copy. This is intentional:
-        # the multiplexer constructs PipelineEvents once and never mutates
-        # the payload, so a deepcopy would be pure overhead. The test
-        # documents the contract.
+        # External mutation of the source dict does NOT propagate.
         payload["timestamp"] = "2026-05-26T00:00:01Z"
-        assert event.payload["timestamp"] == "2026-05-26T00:00:01Z"
+        assert event.payload["timestamp"] == "2026-05-26T00:00:00Z"
+        # In-place mutation of the event's payload raises TypeError.
+        with pytest.raises(TypeError):
+            event.payload["timestamp"] = "tampered"  # type: ignore[index]
+
+    def test_default_empty_payload(self) -> None:
+        # PipelineEvent now defaults the payload to an empty mapping so
+        # tests + producers that emit a meta-only event (e.g., a sentinel
+        # heartbeat) don't have to spell out ``payload={}``.
+        event = PipelineEvent(event_type=PipelineEventType.HEARTBEAT)
+        assert dict(event.payload) == {}
 
 
 class TestMonitorEvent:
@@ -109,3 +116,11 @@ class TestMonitorEvent:
         )
         with pytest.raises(FrozenInstanceError):
             event.event_type = MonitorEventType.FILL_RECEIVED  # type: ignore[misc]
+
+    def test_payload_is_read_only_mapping(self) -> None:
+        payload = {"timestamp": "2026-05-26T00:00:00Z"}
+        event = MonitorEvent(event_type=MonitorEventType.HEARTBEAT, payload=payload)
+        payload["timestamp"] = "2026-05-26T00:00:01Z"
+        assert event.payload["timestamp"] == "2026-05-26T00:00:00Z"
+        with pytest.raises(TypeError):
+            event.payload["timestamp"] = "tampered"  # type: ignore[index]
