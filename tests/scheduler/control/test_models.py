@@ -32,7 +32,7 @@ class TestPauseRequest:
         # request bodies that DO carry a body still use extra=forbid for
         # tight schema discipline.
         with pytest.raises(ValidationError):
-            models.PauseRequest(reason="x", extra_field="nope")  # type: ignore[call-arg]
+            models.PauseRequest(reason="x", extra_field="nope")
 
 
 class TestResumeRequest:
@@ -43,7 +43,7 @@ class TestResumeRequest:
     def test_rejects_any_field(self) -> None:
         # Schema: additionalProperties:false on the empty body.
         with pytest.raises(ValidationError):
-            models.ResumeRequest(reason="surprise")  # type: ignore[call-arg]
+            models.ResumeRequest(reason="surprise")
 
 
 class TestTriggerEmergencyInvocationRequest:
@@ -73,7 +73,7 @@ class TestRunUniverseValidationRequest:
 
     def test_rejects_any_field(self) -> None:
         with pytest.raises(ValidationError):
-            models.RunUniverseValidationRequest(ticker="AAPL")  # type: ignore[call-arg]
+            models.RunUniverseValidationRequest(ticker="AAPL")
 
 
 class TestControlResponseEnvelope:
@@ -87,7 +87,7 @@ class TestControlResponseEnvelope:
     def test_rejects_other_status_values(self) -> None:
         with pytest.raises(ValidationError):
             models.ControlResponseEnvelope(
-                status="ok",  # type: ignore[arg-type]
+                status="ok",
                 applied_at=datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC),
             )
 
@@ -109,7 +109,7 @@ class TestControlErrorEnvelope:
     def test_rejects_unknown_code(self) -> None:
         with pytest.raises(ValidationError):
             models.ControlErrorEnvelope(
-                error=models.ControlError(code="weird", detail="x"),  # type: ignore[arg-type]
+                error=models.ControlError(code="weird", detail="x"),
             )
 
     def test_details_field_is_optional_dict(self) -> None:
@@ -138,7 +138,7 @@ class TestEmergencyInvocationResponse:
 
     def test_invocation_id_is_required(self) -> None:
         with pytest.raises(ValidationError):
-            models.TriggerEmergencyInvocationResponse(  # type: ignore[call-arg]
+            models.TriggerEmergencyInvocationResponse(
                 status="accepted",
                 applied_at=datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC),
             )
@@ -204,14 +204,14 @@ class TestRunUniverseValidationResponse:
 class TestVerdictEnums:
     @pytest.mark.parametrize("verdict", ["pass", "fail", "unknown"])
     def test_accepts_documented_verdicts(self, verdict: str) -> None:
-        row = models.UniverseValidationCriterionRow(criterion="adv", verdict=verdict)  # type: ignore[arg-type]
+        row = models.UniverseValidationCriterionRow(criterion="adv", verdict=verdict)
         assert row.verdict == verdict
 
     def test_rejects_unknown_verdict(self) -> None:
         with pytest.raises(ValidationError):
             models.UniverseValidationCriterionRow(
                 criterion="adv",
-                verdict="maybe",  # type: ignore[arg-type]
+                verdict="maybe",
             )
 
 
@@ -230,7 +230,7 @@ class TestEventPayloads:
         with pytest.raises(ValidationError):
             models.InvocationStartedEvent(
                 invocation_id="inv-1",
-                run_type="random",  # type: ignore[arg-type]
+                run_type="random",
                 started_at=datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC),
             )
 
@@ -238,7 +238,7 @@ class TestEventPayloads:
         with pytest.raises(ValidationError):
             models.PhaseTransitionEvent(
                 invocation_id="inv-1",
-                phase="frobnicate",  # type: ignore[arg-type]
+                phase="frobnicate",
                 phase_started_at=datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC),
             )
 
@@ -249,7 +249,7 @@ class TestEventPayloads:
     def test_phase_transition_accepts_all_documented_phases(self, phase: str) -> None:
         event = models.PhaseTransitionEvent(
             invocation_id="inv-1",
-            phase=phase,  # type: ignore[arg-type]
+            phase=phase,
             phase_started_at=datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC),
         )
         assert event.phase == phase
@@ -305,7 +305,7 @@ class TestEventPayloads:
             invocation_id="inv-1",
             agent_name="analyst",
             attempt=2,
-            reason=failure_mode,  # type: ignore[arg-type]
+            reason=failure_mode,
         )
         assert event.reason == failure_mode
 
@@ -324,7 +324,7 @@ class TestEventPayloads:
     def test_invocation_ended_event_accepts_all_statuses(self, status: str) -> None:
         event = models.InvocationEndedEvent(
             invocation_id="inv-1",
-            status=status,  # type: ignore[arg-type]
+            status=status,
             commands_issued=0,
         )
         assert event.status == status
@@ -369,7 +369,7 @@ class TestAgentNameEnum:
     def test_accepts_all_documented_agent_names(self, agent_name: str) -> None:
         event = models.AgentStartedEvent(
             invocation_id="inv-1",
-            agent_name=agent_name,  # type: ignore[arg-type]
+            agent_name=agent_name,
             started_at=datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC),
             latency_budget_seconds=60.0,
         )
@@ -379,7 +379,7 @@ class TestAgentNameEnum:
         with pytest.raises(ValidationError):
             models.AgentStartedEvent(
                 invocation_id="inv-1",
-                agent_name="proposal_pre_processor",  # NOT an LLM agent  # type: ignore[arg-type]
+                agent_name="proposal_pre_processor",  # NOT an LLM agent
                 started_at=datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC),
                 latency_budget_seconds=60.0,
             )
