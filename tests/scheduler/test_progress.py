@@ -6,9 +6,10 @@ Verifies the public contract called out by story ALP-495:
   (``isinstance`` check — the Protocol carries ``@runtime_checkable``).
 * Every Protocol method is callable with the field shapes documented in
   the design doc, including the kwargs-only ``agent_request`` /
-  ``agent_response`` signatures and the 5-field ``agent_response`` set
-  fixed by parent issue ALP-493 § Pre-resolved (B):
-  ``duration_s``, ``input_tokens``, ``output_tokens``, ``tool_calls``,
+  ``agent_response`` signatures and the 7-field ``agent_response`` set
+  fixed by parent issue ALP-493 § Pre-resolved (B) (cache split added
+  per ALP-701): ``duration_s``, ``input_tokens``, ``cache_read_tokens``,
+  ``cache_write_tokens``, ``output_tokens``, ``tool_calls``,
   ``stop_reason``.
 
 Also exposes :class:`RecordingProgressEmitter` as a reusable test fake
@@ -91,11 +92,13 @@ def test_noop_agent_request_accepts_kwargs_only_fields() -> None:
     )
 
 
-def test_noop_agent_response_accepts_all_five_response_fields() -> None:
-    """``agent_response`` carries the 5-field response set per ALP-493 (B).
+def test_noop_agent_response_accepts_all_seven_response_fields() -> None:
+    """``agent_response`` carries the 7-field response set per ALP-493 (B).
 
     The Protocol fixes the field shape; the no-op implementation
-    accepts via ``**fields: Any``.
+    accepts via ``**fields: Any``. The cache_read / cache_write columns
+    were added per ALP-701 so an operator can distinguish a cache-hit
+    prompt from a broken context-assembly path.
     """
     emitter = NoOpProgressEmitter()
     emitter.agent_response(
@@ -104,6 +107,8 @@ def test_noop_agent_response_accepts_all_five_response_fields() -> None:
         model="claude-opus-4-7",
         duration_s=42.7,
         input_tokens=12_345,
+        cache_read_tokens=68_214,
+        cache_write_tokens=0,
         output_tokens=6_789,
         tool_calls=3,
         stop_reason="end_turn",
@@ -119,6 +124,8 @@ def test_noop_agent_response_accepts_none_stop_reason() -> None:
         model="claude-opus-4-7",
         duration_s=0.0,
         input_tokens=0,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
         output_tokens=0,
         tool_calls=0,
         stop_reason=None,
@@ -166,6 +173,8 @@ def test_recording_emitter_records_each_event_kind() -> None:
         model="claude-opus-4-7",
         duration_s=4.2,
         input_tokens=100,
+        cache_read_tokens=60_000,
+        cache_write_tokens=0,
         output_tokens=50,
         tool_calls=2,
         stop_reason="end_turn",
@@ -176,3 +185,5 @@ def test_recording_emitter_records_each_event_kind() -> None:
     assert emitter.events[1][1] == {"phase": "phase1", "fills_processed": 3}
     assert emitter.events[2][1]["agent"] == "analyst"
     assert emitter.events[3][1]["stop_reason"] == "end_turn"
+    assert emitter.events[3][1]["cache_read_tokens"] == 60_000
+    assert emitter.events[3][1]["cache_write_tokens"] == 0

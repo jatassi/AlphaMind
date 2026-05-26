@@ -301,6 +301,11 @@ def _make_sdk_assistant(
         usage={
             "input_tokens": 10,
             "output_tokens": 20,
+            # Per the real SDK shape: per-message AssistantMessage usage
+            # carries zero cache counts; the cumulative cache split
+            # lands on ResultMessage. Test fixture mirrors that so the
+            # plumbing assertion verifies the ResultMessage path
+            # specifically rather than masking it via overwrite.
             "cache_read_input_tokens": 0,
             "cache_creation_input_tokens": 0,
         },
@@ -328,8 +333,8 @@ def _make_sdk_result(
         usage={
             "input_tokens": 10,
             "output_tokens": 20,
-            "cache_read_input_tokens": 0,
-            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 68_214,
+            "cache_creation_input_tokens": 1_024,
         },
         structured_output=structured_output,
         result=result_text,
@@ -956,9 +961,15 @@ async def test_invoke_sdk_emits_agent_request_and_response(tmp_path: Path) -> No
     assert response_fields["agent"] == "demo_agent"
     assert response_fields["model"] == "claude-sonnet"
     assert response_fields["stop_reason"] == "end_turn"
-    # 5 fixed agent_response fields (parent issue § B):
+    # 7 fixed agent_response fields (parent issue § B; cache split per
+    # ALP-701 — most AlphaMind prompts hit the cache, so an operator
+    # tailing the JSONL needs the three input-side counts separately to
+    # distinguish "context assembled, cached" from "context-assembly
+    # broken").
     assert "duration_s" in response_fields
     assert response_fields["input_tokens"] == 10
+    assert response_fields["cache_read_tokens"] == 68_214
+    assert response_fields["cache_write_tokens"] == 1_024
     assert response_fields["output_tokens"] == 20
     assert response_fields["tool_calls"] == 0
 
@@ -967,7 +978,14 @@ async def test_invoke_sdk_emits_agent_request_and_response(tmp_path: Path) -> No
 async def test_invoke_sdk_emits_agent_response_on_failure(tmp_path: Path) -> None:
     """Failure path still emits ``agent_response`` so cost is recorded.
 
-    Stop_reason carries the SDK-reported failure-stop-reason when available.
+    Stop_reason carries the SDK-reported failure-stop-reason when
+    available. Token kwargs default to zero — the partial accumulator
+    inside ``_collect_response`` is not threaded through the failure
+    exceptions, so the docstring contract is "non-null zero" rather
+    than "partial tokens". Lock that contract here so a future
+    refactor that tries to forward ``None`` (or omit the cache kwargs
+    entirely) fails the verify-script's non-null check (see
+    ``_AGENT_RESPONSE_NON_NULL_FIELDS`` in ``verify_debug_e2e.py``).
     """
     messages = [
         _make_sdk_result(is_error=True, result_text="ctx overflow", stop_reason="max_tokens"),
@@ -992,6 +1010,16 @@ async def test_invoke_sdk_emits_agent_response_on_failure(tmp_path: Path) -> Non
 
     kinds = [evt[0] for evt in emitter.events]
     assert kinds == ["agent_request", "agent_response"]
+
+    response_fields = emitter.events[1][1]
+    assert response_fields["stop_reason"] == "max_tokens"
+    # Failure-path defaults: zero, not None — the verify script's
+    # non-null contract forbids None on these fields.
+    assert response_fields["input_tokens"] == 0
+    assert response_fields["cache_read_tokens"] == 0
+    assert response_fields["cache_write_tokens"] == 0
+    assert response_fields["output_tokens"] == 0
+    assert response_fields["tool_calls"] == 0
 
 
 @pytest.mark.asyncio
@@ -1066,7 +1094,15 @@ def test_describe_sdk_message_summarises_assistant_blocks() -> None:
     desc = core._describe_sdk_message(_make_sdk_assistant(text="hello"))
     assert desc["type"] == "AssistantMessage"
     assert desc["blocks"] == [{"block": "TextBlock", "text_len": 5}]
-    assert desc["usage"] == {"input_tokens": 10, "output_tokens": 20}
+    # Per ALP-701: the per-message forensic trace surfaces the cache
+    # split so an operator debugging a stalled SDK call can see whether
+    # a cache hit happened mid-call.
+    assert desc["usage"] == {
+        "input_tokens": 10,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "output_tokens": 20,
+    }
 
 
 def test_describe_sdk_message_summarises_result_terminal_state() -> None:
