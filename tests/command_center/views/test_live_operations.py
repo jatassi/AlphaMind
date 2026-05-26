@@ -284,6 +284,86 @@ class TestLiveViewEndpoint:
         body = resp.json()
         assert body["active_alerts"] == []
 
+    def test_active_alerts_returns_firing_rows(
+        self,
+        client: TestClient,
+        cc_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Regression for finding #5 (Wave-5 review).
+
+        The legacy query filtered on ``status = 'active'`` which is not a
+        member of :class:`AlertStatus`; firing alerts silently disappeared
+        from the live pane. The fix filters on
+        :attr:`AlertStatus.FIRING.value` and we assert here that a seeded
+        firing row surfaces in the response while an acknowledged row
+        does not.
+        """
+        import asyncio
+
+        from alphamind.command_center.persistence.codecs import AlertStatus
+        from alphamind.command_center.persistence.tables import AlertRow
+
+        async def _seed() -> None:
+            async with cc_factory() as session:
+                session.add(
+                    AlertRow(
+                        alert_id="al-firing",
+                        rule_name="rule-a",
+                        severity="critical",
+                        status=AlertStatus.FIRING.value,
+                        fired_at="2026-05-26T09:30:00Z",
+                        acknowledged_at=None,
+                        snoozed_until=None,
+                        context_json="{}",
+                    )
+                )
+                session.add(
+                    AlertRow(
+                        alert_id="al-acked",
+                        rule_name="rule-b",
+                        severity="important",
+                        status=AlertStatus.ACKNOWLEDGED.value,
+                        fired_at="2026-05-26T09:00:00Z",
+                        acknowledged_at="2026-05-26T09:05:00Z",
+                        snoozed_until=None,
+                        context_json="{}",
+                    )
+                )
+                await session.commit()
+
+        asyncio.get_event_loop().run_until_complete(_seed())
+        resp = client.get("/api/views/live")
+        assert resp.status_code == 200
+        ids = [a["alert_id"] for a in resp.json()["active_alerts"]]
+        assert ids == ["al-firing"], (
+            "only firing alerts should appear in the active-alerts pane; "
+            "the previous query used the non-existent 'active' status string"
+        )
+
+    def test_monitor_pane_returns_placeholder(self, client: TestClient) -> None:
+        """Regression for finding #4 (Wave-5 review).
+
+        The legacy ``_read_monitor_status`` ran raw SQL against a
+        non-existent ``timestamp`` column and filtered on event-type
+        strings that aren't :class:`EventType` members. A blanket
+        ``except Exception`` swallowed the resulting ``OperationalError``
+        so callers got an empty model anyway — but a future operator
+        debugging this path would see a fresh stack trace each tick.
+        The fix stubs the pane to placeholder values until a dedicated
+        persistence path lands. We assert here the response shape is
+        well-formed and well-typed.
+        """
+        resp = client.get("/api/views/live")
+        assert resp.status_code == 200
+        monitor = resp.json()["monitor"]
+        # Placeholder shape — explicit False / None so the UI can render
+        # an "unwired" badge rather than be silently lied to.
+        assert monitor["websocket_connected"] is False
+        assert monitor["breach_active"] is False
+        assert monitor["time_since_connect_seconds"] is None
+        assert monitor["last_fill_at"] is None
+        assert monitor["breach_rule"] is None
+
 
 # ---------------------------------------------------------------------------
 # GET /api/views/schedule

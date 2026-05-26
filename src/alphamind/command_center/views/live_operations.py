@@ -264,97 +264,66 @@ async def _read_pipeline_status(request: Request) -> InvocationStatusModel:
 
 
 async def _read_monitor_status(request: Request) -> MonitorStatusModel:
-    """Read monitor connection state from the foreign-reader session.
+    """Return a placeholder monitor-status snapshot.
 
-    The activity_log carries ``websocket_connected`` / ``websocket_disconnected``
-    entries; we read the most-recent of each to derive the current state.
-    Falls back to a disconnected snapshot on any DB error.
+    The monitor pane was originally implemented to read
+    ``websocket_connected`` / ``websocket_disconnected`` / ``fill_received``
+    / ``breach_detected`` entries from ``activity_log``, but those names
+    are SSE event labels emitted by the continuous-monitor sidecar
+    (see ``alphamind.execution.continuous_monitor.control.events``) —
+    they are not :class:`EventType` members and never land in
+    ``activity_log``. The legacy raw-SQL query also referenced a
+    non-existent ``timestamp`` column (the table's column is ``entry_at``)
+    so the previous implementation always returned the empty snapshot
+    via its blanket ``except Exception`` swallow.
+
+    Until the live monitor surface is wired through a dedicated
+    persistence path, we return ``MonitorStatusModel()`` with ``None``
+    placeholders so the frontend can render "unwired" rather than be
+    silently lied to. The ``request`` parameter remains in the
+    signature so the future wiring slot drops in without touching
+    callers.
     """
-    foreign_reader: Any = getattr(request.app.state, "foreign_reader_session_factory", None)
-    if foreign_reader is None:
-        return MonitorStatusModel()
-    try:
-        from sqlalchemy import text
-
-        async with foreign_reader() as session:
-            row_conn = await session.execute(
-                text(
-                    "SELECT timestamp FROM activity_log"
-                    " WHERE event_type = 'websocket_connected'"
-                    " ORDER BY timestamp DESC LIMIT 1"
-                )
-            )
-            conn_rec = row_conn.mappings().first()
-
-            row_disc = await session.execute(
-                text(
-                    "SELECT timestamp FROM activity_log"
-                    " WHERE event_type = 'websocket_disconnected'"
-                    " ORDER BY timestamp DESC LIMIT 1"
-                )
-            )
-            disc_rec = row_disc.mappings().first()
-
-            row_fill = await session.execute(
-                text(
-                    "SELECT timestamp FROM activity_log"
-                    " WHERE event_type = 'fill_received'"
-                    " ORDER BY timestamp DESC LIMIT 1"
-                )
-            )
-            fill_rec = row_fill.mappings().first()
-
-            row_breach = await session.execute(
-                text(
-                    "SELECT event_type FROM activity_log"
-                    " WHERE event_type = 'breach_detected'"
-                    " ORDER BY timestamp DESC LIMIT 1"
-                )
-            )
-            breach_rec = row_breach.mappings().first()
-
-        connected = False
-        time_since: float | None = None
-        if conn_rec:
-            conn_ts = conn_rec.get("timestamp")
-            disc_ts = disc_rec.get("timestamp") if disc_rec else None
-            # Connected if most-recent connect is after most-recent disconnect.
-            if conn_ts and (disc_ts is None or conn_ts > disc_ts):
-                connected = True
-                try:
-                    ts = datetime.fromisoformat(conn_ts)
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=UTC)
-                    time_since = (datetime.now(UTC) - ts).total_seconds()
-                except (ValueError, TypeError):
-                    pass
-        return MonitorStatusModel(
-            websocket_connected=connected,
-            time_since_connect_seconds=time_since,
-            last_fill_at=fill_rec.get("timestamp") if fill_rec else None,
-            breach_active=bool(breach_rec),
-        )
-    except Exception:
-        log.exception("live view: failed to read monitor status")
-        return MonitorStatusModel()
+    del request
+    # Stub — see docstring for context. The frontend uses ``None`` /
+    # ``False`` placeholders to render the pane as "no live monitor
+    # state available yet".
+    return MonitorStatusModel(
+        websocket_connected=False,
+        time_since_connect_seconds=None,
+        last_fill_at=None,
+        breach_active=False,
+        breach_rule=None,
+    )
 
 
 async def _read_active_alerts(request: Request) -> list[AlertSummaryModel]:
-    """Read active (unfired / unacknowledged) alerts from the cc_writer session."""
+    """Read active (firing — not yet acknowledged) alerts from the cc_writer session.
+
+    ``AlertStatus`` (see :mod:`alphamind.command_center.persistence.codecs`)
+    is the enum ``firing`` / ``acknowledged`` / ``snoozed``; the legacy
+    raw-SQL query filtered on ``status = 'active'`` which is not a member
+    and silently matched zero rows. We use :class:`AlertStatus.FIRING`
+    here so the enum's source of truth catches future renames at type-
+    check time.
+    """
     cc_writer: Any = getattr(request.app.state, "cc_writer_session_factory", None)
     if cc_writer is None:
         return []
     try:
         from sqlalchemy import text
 
+        from alphamind.command_center.persistence.codecs import AlertStatus
+
         async with cc_writer() as session:
             rows = await session.execute(
                 text(
                     "SELECT alert_id, rule_name, severity, fired_at, context_json"
                     " FROM alerts"
-                    " WHERE status = 'active'"
+                    " WHERE status = :status"
                     " ORDER BY fired_at DESC"
-                )
+                ),
+                {"status": AlertStatus.FIRING.value},
             )
             records = rows.mappings().all()
         return [
