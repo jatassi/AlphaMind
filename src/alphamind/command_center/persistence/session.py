@@ -153,11 +153,33 @@ def _apply_writer_pragmas(dbapi_connection: Any, _connection_record: Any) -> Non
     cursor.close()
 
 
-_OWNED_TABLE_NAMES = frozenset(CommandCenterBase.metadata.tables)
-"""Frozen set of owned table names — single source of truth for the
-foreign-table-write guard. Derived from ``CommandCenterBase.metadata.tables``
-so a future table added to the cc base appears here automatically.
-"""
+def _owned_table_names() -> frozenset[str]:
+    """Return the current set of cc-owned table names.
+
+    Evaluated lazily at listener-invocation time rather than at module
+    import (F13): the listener fires on flush, which happens long after
+    SQLAlchemy mapper-registry initialization completes; reading the
+    metadata snapshot at module-import time creates a load-order
+    dependency where any future cc table declared in a module imported
+    after this one would be silently omitted from the allow-list.
+
+    Cheap to call repeatedly — :attr:`MetaData.tables` is a plain dict
+    on a long-lived module-global, and :class:`frozenset` construction
+    on the four-element set takes microseconds.
+    """
+    names = frozenset(CommandCenterBase.metadata.tables)
+    if not names:
+        # If this fires the cc tables haven't been registered yet —
+        # almost certainly a circular-import bug. Fail loud so the cause
+        # is obvious rather than silently allowing every foreign write.
+        msg = (
+            "_owned_table_names is empty — CommandCenterBase.metadata "
+            "has no tables registered. Check the import order: the cc "
+            "tables module must be importable before any session "
+            "flushes against the cc writer factory."
+        )
+        raise RuntimeError(msg)
+    return names
 
 
 def _reject_foreign_table_writes(
@@ -184,6 +206,7 @@ def _reject_foreign_table_writes(
     :func:`_reject_foreign_table_core_writes` for the defense-in-depth
     listener that catches those (F8).
     """
+    owned = _owned_table_names()
     for instance in [*session.new, *session.dirty, *session.deleted]:
         # Each instance is an ORM-mapped row class; ``__mapper__`` is the
         # SQLAlchemy mapper; ``mapper.local_table`` is the SQL table this
@@ -195,8 +218,8 @@ def _reject_foreign_table_writes(
         table = mapper.local_table
         if table is None:
             continue
-        if table.name not in _OWNED_TABLE_NAMES:
-            allowed = sorted(_OWNED_TABLE_NAMES)
+        if table.name not in owned:
+            allowed = sorted(owned)
             msg = (
                 f"cc_writer_session refuses to write foreign table "
                 f"{table.name!r}; only {allowed} are writable through "
@@ -235,10 +258,11 @@ def _reject_foreign_table_core_writes(orm_execute_state: Any) -> None:
     # ``.table``; for ORM bulk-execute it threads through the same
     # attribute. Walk every targeted table — a JOIN-form UPDATE / DELETE
     # could touch multiple.
+    owned = _owned_table_names()
     tables = _walk_dml_tables(statement)
     for table in tables:
-        if table.name not in _OWNED_TABLE_NAMES:
-            allowed = sorted(_OWNED_TABLE_NAMES)
+        if table.name not in owned:
+            allowed = sorted(owned)
             msg = (
                 f"cc_writer_session refuses to write foreign table "
                 f"{table.name!r} via Core/bulk path; only {allowed} are "
