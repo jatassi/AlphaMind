@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -548,6 +548,77 @@ class TestSubmitEnvelope:
             ),
         )
         assert callable(submit)
+
+    async def test_concurrent_submits_serialize_state_rebind(
+        self,
+        db_session_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """F11: Two concurrent calls into the submit closure must not race on
+        the nonlocal ``state`` rebind. The asyncio.Lock serializes them so
+        each call observes the prior caller's state when computing dedup.
+        """
+        import asyncio as _asyncio
+
+        from alphamind.execution.oms import submit_engine_envelope as _sub_mod
+
+        # Patch the closure-captured ``submit_engine_envelope`` symbol the
+        # closure imports inline at call time. The substitute yields back to
+        # the event loop mid-call so a second concurrent _submit() call would
+        # otherwise re-read the stale ``state`` cell.
+        seen_states: list[Any] = []
+
+        async def fake_submit_engine_envelope(
+            envelope: Any,
+            *,
+            handle: Any,
+            state: Any,
+            config: Any,
+        ) -> tuple[str, Any]:
+            del handle, config
+            # Record the state the caller observed; the lock must ensure each
+            # caller sees the rebound state from the prior caller.
+            seen_states.append(state)
+            # Yield to let any concurrently-pending call attempt to enter.
+            await _asyncio.sleep(0)
+            # Return a new state object so the rebind is observable.
+            new_state = type(state)(
+                monitor_session_id=state.monitor_session_id,
+                seen_trigger_ids=state.seen_trigger_ids | {len(seen_states)},
+            )
+            return ("ok", new_state)
+
+        monkeypatch.setattr(
+            _sub_mod,
+            "submit_engine_envelope",
+            fake_submit_engine_envelope,
+        )
+
+        async def fake_id_provider() -> str:
+            return "inv-test"
+
+        submit = make_submit_envelope(
+            session_factory=db_session_factory,
+            monitor_session_id="mon-test",
+            state_persistence_config=StatePersistenceConfig(
+                pm_decision_log_sliding_window_invocations=10,
+                snapshot_read_timeout_seconds=5.0,
+                pip_freeze_snapshot_root=str(tmp_path / "pip"),
+                invocation_provenance_root=str(tmp_path / "prov"),
+            ),
+            invocation_id_provider=fake_id_provider,
+        )
+
+        # Two concurrent calls; the second must NOT enter with the same state
+        # the first saw (otherwise dedup would be broken).
+        await _asyncio.gather(submit(cast(Any, object())), submit(cast(Any, object())))
+
+        # The second observed state's seen_trigger_ids must include the
+        # element added by the first call's rebind — proves serialization.
+        assert len(seen_states) == 2
+        assert seen_states[1].seen_trigger_ids == frozenset({1})
+        assert seen_states[0].seen_trigger_ids == frozenset()
 
 
 # ---------------------------------------------------------------------------
