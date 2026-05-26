@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.command_center._kernel.ids import (
@@ -37,6 +37,7 @@ from alphamind.command_center.persistence.tables import (
 )
 
 __all__ = [
+    "SignCountRaceError",
     "count_credentials",
     "delete_session",
     "insert_credential",
@@ -46,6 +47,25 @@ __all__ = [
     "load_session",
     "update_credential_sign_count",
 ]
+
+
+class SignCountRaceError(Exception):
+    """Raised when a sign_count update lost a race or detected a clone (F9).
+
+    Two cases hit this:
+
+    1. Concurrent assertion: two requests for the same credential raced
+       through verify_authentication_response; the loser's sign_count
+       update is no longer strictly greater than the (already-updated)
+       stored value. The loser should be discarded — the winner's
+       authentication is the authoritative one.
+    2. Cloned authenticator: an attacker rolled back the sign_count;
+       the WHERE clause filters the UPDATE out. The route layer should
+       refuse the session and warn the operator.
+
+    The route layer can't distinguish the two without additional
+    context, so it treats both as "refuse the session and log it".
+    """
 
 
 async def count_credentials(
@@ -108,17 +128,48 @@ async def update_credential_sign_count(
 ) -> None:
     """Update the ``sign_count`` for a credential after a successful login.
 
-    Raises :class:`LookupError` if the credential row is absent — the
-    route layer's verify path has already confirmed it exists, so a
-    missing row here indicates a concurrent revocation.
+    Atomic single-statement UPDATE with the strict-increase invariant in
+    the WHERE clause (F9): SQLite's WAL semantics serialize the row-
+    level write so two concurrent updates cannot both succeed.
+
+    Raises:
+    * :class:`LookupError` — credential row missing entirely (concurrent
+      revocation).
+    * :class:`SignCountRaceError` — credential row exists but the
+      strict-increase guard rejected the update. Either lost a race to
+      a concurrent assertion or detected a cloned authenticator.
+
+    A 0-row result distinguishes the two only when the credential row
+    exists (the second LookupError-vs-race check below uses ``load``).
     """
     async with factory() as session:
+        result = await session.execute(
+            update(WebauthnCredentialRow)
+            .where(
+                WebauthnCredentialRow.credential_id == credential_id,
+                WebauthnCredentialRow.sign_count < new_sign_count,
+            )
+            .values(sign_count=new_sign_count)
+        )
+        await session.commit()
+        # ``rowcount`` is available on CursorResult (the concrete type
+        # returned for UPDATE/INSERT/DELETE), but mypy types it under the
+        # narrower Result protocol. Cast at the boundary.
+        rowcount = result.rowcount  # type: ignore[attr-defined]
+        if rowcount == 1:
+            return
+        # 0 rows updated — either the row doesn't exist (LookupError) or
+        # the strict-increase guard fired (SignCountRaceError). Disambiguate
+        # via a follow-up read.
         row = await session.get(WebauthnCredentialRow, credential_id)
         if row is None:
             msg = f"credential {credential_id!r} not found for sign_count update"
             raise LookupError(msg)
-        row.sign_count = new_sign_count
-        await session.commit()
+        msg = (
+            f"sign_count guard rejected update for {credential_id!r}: "
+            f"new={new_sign_count} vs stored={row.sign_count}; possible clone or race"
+        )
+        raise SignCountRaceError(msg)
 
 
 async def insert_session(

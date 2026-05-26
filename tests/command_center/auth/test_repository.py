@@ -18,6 +18,7 @@ from alphamind.command_center._kernel.ids import (
     webauthn_credential_id,
 )
 from alphamind.command_center.auth.repository import (
+    SignCountRaceError,
     count_credentials,
     delete_session,
     insert_credential,
@@ -132,6 +133,96 @@ class TestCredentialCrud:
         loaded = await load_credential(cc_factory, credential_id=webauthn_credential_id("cred-sc"))
         assert loaded is not None
         assert loaded.sign_count == 42
+
+    async def test_update_credential_sign_count_rejects_non_increasing(
+        self, cc_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        # F9: strict-increase guard is in the WHERE clause; an update
+        # whose new value isn't strictly greater than stored fails.
+        await insert_credential(
+            cc_factory,
+            WebauthnCredentialRecord(
+                credential_id=webauthn_credential_id("cred-race"),
+                public_key="pk",
+                sign_count=10,
+                transports="internal",
+                created_at="2026-05-26T00:00:00Z",
+            ),
+        )
+        with pytest.raises(SignCountRaceError):
+            await update_credential_sign_count(
+                cc_factory,
+                credential_id=webauthn_credential_id("cred-race"),
+                new_sign_count=10,  # equal — must fail
+            )
+        with pytest.raises(SignCountRaceError):
+            await update_credential_sign_count(
+                cc_factory,
+                credential_id=webauthn_credential_id("cred-race"),
+                new_sign_count=5,  # rollback — must fail
+            )
+        # The stored value is unchanged.
+        loaded = await load_credential(
+            cc_factory, credential_id=webauthn_credential_id("cred-race")
+        )
+        assert loaded is not None
+        assert loaded.sign_count == 10
+
+    async def test_update_credential_sign_count_concurrent_only_one_wins(
+        self, cc_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        # F9: two concurrent updates against the same credential. The
+        # strict-increase WHERE clause + SQLite's per-row WAL semantics
+        # serialize the writes; exactly one succeeds.
+        import asyncio
+
+        await insert_credential(
+            cc_factory,
+            WebauthnCredentialRecord(
+                credential_id=webauthn_credential_id("cred-concurrent"),
+                public_key="pk",
+                sign_count=0,
+                transports="internal",
+                created_at="2026-05-26T00:00:00Z",
+            ),
+        )
+
+        async def do_update(new_value: int) -> bool:
+            try:
+                await update_credential_sign_count(
+                    cc_factory,
+                    credential_id=webauthn_credential_id("cred-concurrent"),
+                    new_sign_count=new_value,
+                )
+            except SignCountRaceError:
+                return False
+            else:
+                return True
+
+        # Both attempt to bump to 5. Exactly one wins. Note: SQLite
+        # serializes per-row, and asyncio.gather schedules these in the
+        # same event loop, so the "loser" actually re-reads the row
+        # after the winner committed; result rowcount is 0 for the
+        # loser.
+        outcomes = await asyncio.gather(do_update(5), do_update(5))
+        assert sum(outcomes) == 1
+        # Stored value is exactly 5.
+        loaded = await load_credential(
+            cc_factory, credential_id=webauthn_credential_id("cred-concurrent")
+        )
+        assert loaded is not None
+        assert loaded.sign_count == 5
+
+    async def test_update_credential_sign_count_missing_row_raises_lookup(
+        self, cc_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        # F9 disambiguation: missing row → LookupError, not SignCountRaceError.
+        with pytest.raises(LookupError):
+            await update_credential_sign_count(
+                cc_factory,
+                credential_id=webauthn_credential_id("cred-not-there"),
+                new_sign_count=1,
+            )
 
 
 class TestSessionCrud:

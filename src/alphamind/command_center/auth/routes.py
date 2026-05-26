@@ -59,6 +59,7 @@ from alphamind.command_center.auth.dependencies import (
     current_session,
 )
 from alphamind.command_center.auth.repository import (
+    SignCountRaceError,
     insert_credential,
     insert_session,
     list_credentials,
@@ -646,11 +647,22 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="authentication verification failed",
             ) from exc
-        await update_credential_sign_count(
-            cc_factory,
-            credential_id=verified.credential_id,
-            new_sign_count=verified.new_sign_count,
-        )
+        try:
+            await update_credential_sign_count(
+                cc_factory,
+                credential_id=verified.credential_id,
+                new_sign_count=verified.new_sign_count,
+            )
+        except SignCountRaceError as exc:
+            # F9: another assertion raced ahead OR the authenticator was
+            # cloned. Either way, refuse this session — the operator
+            # can re-authenticate and the surviving counter will reflect
+            # the genuine winner.
+            log.warning("login_complete: sign_count guard fired: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="authentication verification failed",
+            ) from exc
         now_iso = request.app.state.clock().strftime("%Y-%m-%dT%H:%M:%SZ")
         sid, expires_at, csrf_token = _issue_session_cookies(
             response=response,
