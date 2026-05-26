@@ -429,6 +429,75 @@ class TestAuthGateLive:
 # ---------------------------------------------------------------------------
 
 
+class TestBuildControlRouterFreshInstance:
+    """``build_control_router()`` must return a NEW :class:`APIRouter`
+    on each call. A module-level singleton would carry response-model
+    overrides / dependency_overrides / middleware between apps and
+    surface as cross-test contamination (F6).
+    """
+
+    def test_returns_new_instance_per_call(self) -> None:
+        router_a = build_control_router()
+        router_b = build_control_router()
+        assert router_a is not router_b
+
+    def test_registering_against_two_apps_does_not_cross_pollute(
+        self,
+        production_session_factory: async_sessionmaker[AsyncSession],
+        fake_pipeline_client: FakePipelineClient,
+        fake_monitor_client: FakeMonitorClient,
+    ) -> None:
+        # App A: pipeline client raises pre-condition_failed on pause.
+        client_a_pipeline = FakePipelineClient()
+        client_a_pipeline.set_pause_response(
+            ControlResult.failure(
+                error_code=ControlErrorCode.PRECONDITION_FAILED,
+                error_detail="already paused",
+            )
+        )
+
+        async def _ok_session() -> str:
+            return operator_session_id(SESSION_ID)
+
+        async def _ok_csrf() -> None:
+            return None
+
+        app_a = FastAPI()
+        app_a.state.production_session_factory = production_session_factory
+        app_a.state.process_lifetime_id = PROCESS_LIFETIME_ID
+        app_a.state.pipeline_client = client_a_pipeline
+        app_a.state.monitor_client = fake_monitor_client
+        app_a.state.clock = lambda: _FROZEN_NOW
+        app_a.dependency_overrides[current_session] = _ok_session
+        app_a.dependency_overrides[csrf_required] = _ok_csrf
+        app_a.include_router(build_control_router(), prefix="/api/control")
+
+        # App B: pipeline client returns success on pause. If the
+        # routers shared state (module-level singleton), App B's
+        # request would still hit App A's wiring via leaked
+        # dependency_overrides or response models.
+        app_b = FastAPI()
+        app_b.state.production_session_factory = production_session_factory
+        app_b.state.process_lifetime_id = PROCESS_LIFETIME_ID
+        app_b.state.pipeline_client = fake_pipeline_client
+        app_b.state.monitor_client = fake_monitor_client
+        app_b.state.clock = lambda: _FROZEN_NOW
+        app_b.dependency_overrides[current_session] = _ok_session
+        app_b.dependency_overrides[csrf_required] = _ok_csrf
+        app_b.include_router(build_control_router(), prefix="/api/control")
+
+        with TestClient(app_a) as c_a:
+            r_a = c_a.post("/api/control/pause", json={"reason": "drawdown"})
+        with TestClient(app_b) as c_b:
+            r_b = c_b.post("/api/control/pause", json={"reason": "drawdown"})
+
+        # If the routers were shared, App B would inherit App A's
+        # pipeline client and return 409. Independent routers carry
+        # independent dispatch — each app sees its own client.
+        assert r_a.status_code == 409
+        assert r_b.status_code == 200
+
+
 class TestRequiredAppStateGuards:
     """``_make_ctx`` must raise HTTP 500 with a clear detail when the
     required ``production_session_factory`` / ``process_lifetime_id`` fields

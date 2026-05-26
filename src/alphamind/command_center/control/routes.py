@@ -208,17 +208,15 @@ def _report_to_pydantic(
 
 
 # ---------------------------------------------------------------------------
-# Routes — module-level @router.post handlers (mccabe complexity discipline:
-# keep build_control_router() trivial; let the route handlers carry the
-# per-verb dispatch logic in their own bodies).
+# Routes — module-level handler functions registered onto a FRESH
+# APIRouter inside ``build_control_router()``. Mirrors the events-router
+# pattern in ``events/routes.py`` so multiple ``build_*_router()`` calls
+# return independent ``APIRouter`` instances and registering against
+# different apps does not cross-pollute (F6).
 # ---------------------------------------------------------------------------
 
 
-router = APIRouter()
-
-
-@router.post("/pause", response_model=ControlResponseEnvelope)
-async def post_pause(
+async def _handle_pause(
     body: PauseRequest,
     request: Request,
     session_id: Annotated[OperatorSessionId, Depends(current_session)],
@@ -235,8 +233,7 @@ async def post_pause(
     return ControlResponseEnvelope(status="accepted", applied_at=_parse_applied_at(out.result))
 
 
-@router.post("/resume", response_model=ControlResponseEnvelope)
-async def post_resume(
+async def _handle_resume(
     body: ResumeRequest,  # noqa: ARG001 — empty body validated by Pydantic
     request: Request,
     session_id: Annotated[OperatorSessionId, Depends(current_session)],
@@ -249,11 +246,7 @@ async def post_resume(
     return ControlResponseEnvelope(status="accepted", applied_at=_parse_applied_at(out.result))
 
 
-@router.post(
-    "/trigger_emergency_invocation",
-    response_model=TriggerEmergencyInvocationResponse,
-)
-async def post_trigger_emergency(
+async def _handle_trigger_emergency(
     body: TriggerEmergencyInvocationRequest,
     request: Request,
     session_id: Annotated[OperatorSessionId, Depends(current_session)],
@@ -277,8 +270,7 @@ async def post_trigger_emergency(
     )
 
 
-@router.post("/switch_profile", response_model=ControlResponseEnvelope)
-async def post_switch_profile(
+async def _handle_switch_profile(
     body: SwitchProfileRequest,
     request: Request,
     session_id: Annotated[OperatorSessionId, Depends(current_session)],
@@ -295,11 +287,7 @@ async def post_switch_profile(
     return ControlResponseEnvelope(status="accepted", applied_at=_parse_applied_at(out.result))
 
 
-@router.post(
-    "/run_universe_validation",
-    response_model=RunUniverseValidationResponse,
-)
-async def post_run_universe_validation(
+async def _handle_run_universe_validation(
     body: RunUniverseValidationRequest,  # noqa: ARG001
     request: Request,
     session_id: Annotated[OperatorSessionId, Depends(current_session)],
@@ -320,8 +308,7 @@ async def post_run_universe_validation(
     )
 
 
-@router.post("/cancel_order", response_model=ControlResponseEnvelope)
-async def post_cancel_order(
+async def _handle_cancel_order(
     body: CancelOrderRequest,
     request: Request,
     session_id: Annotated[OperatorSessionId, Depends(current_session)],
@@ -338,8 +325,7 @@ async def post_cancel_order(
     return ControlResponseEnvelope(status="accepted", applied_at=_parse_applied_at(out.result))
 
 
-@router.post("/force_close_position", response_model=ForceClosePositionResponse)
-async def post_force_close_position(
+async def _handle_force_close_position(
     body: ForceClosePositionRequest,
     request: Request,
     session_id: Annotated[OperatorSessionId, Depends(current_session)],
@@ -363,8 +349,7 @@ async def post_force_close_position(
     )
 
 
-@router.post("/set_halt_mode", response_model=ControlResponseEnvelope)
-async def post_set_halt_mode(
+async def _handle_set_halt_mode(
     body: SetHaltModeRequest,
     request: Request,
     session_id: Annotated[OperatorSessionId, Depends(current_session)],
@@ -393,13 +378,63 @@ def _raise_internal_error(detail: str) -> NoReturn:
 
 
 def build_control_router() -> APIRouter:
-    """Return the module-level :class:`APIRouter` carrying the 8 ``/api/control/*`` routes.
+    """Return a FRESH :class:`APIRouter` carrying the 8 ``/api/control/*`` routes.
 
-    Provided as a function (rather than re-exporting the global
-    ``router`` directly) so consumers see a stable API and so tests
-    can build their own minimal app via ``app.include_router(...)``
-    without importing the module-level symbol.
+    Constructs a new :class:`APIRouter` per call and registers each
+    handler onto it. Mirrors :func:`build_events_router` so two
+    independent ``build_app`` instances do not share router state
+    (F6) — a module-level singleton would carry over response-model
+    overrides / dependency_overrides / middleware between apps.
     """
+    router = APIRouter()
+    router.add_api_route(
+        "/pause",
+        _handle_pause,
+        methods=["POST"],
+        response_model=ControlResponseEnvelope,
+    )
+    router.add_api_route(
+        "/resume",
+        _handle_resume,
+        methods=["POST"],
+        response_model=ControlResponseEnvelope,
+    )
+    router.add_api_route(
+        "/trigger_emergency_invocation",
+        _handle_trigger_emergency,
+        methods=["POST"],
+        response_model=TriggerEmergencyInvocationResponse,
+    )
+    router.add_api_route(
+        "/switch_profile",
+        _handle_switch_profile,
+        methods=["POST"],
+        response_model=ControlResponseEnvelope,
+    )
+    router.add_api_route(
+        "/run_universe_validation",
+        _handle_run_universe_validation,
+        methods=["POST"],
+        response_model=RunUniverseValidationResponse,
+    )
+    router.add_api_route(
+        "/cancel_order",
+        _handle_cancel_order,
+        methods=["POST"],
+        response_model=ControlResponseEnvelope,
+    )
+    router.add_api_route(
+        "/force_close_position",
+        _handle_force_close_position,
+        methods=["POST"],
+        response_model=ForceClosePositionResponse,
+    )
+    router.add_api_route(
+        "/set_halt_mode",
+        _handle_set_halt_mode,
+        methods=["POST"],
+        response_model=ControlResponseEnvelope,
+    )
     return router
 
 
