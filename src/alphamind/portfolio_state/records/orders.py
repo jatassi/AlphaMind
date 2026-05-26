@@ -236,12 +236,21 @@ class OrderRecord:
         self._check_age_hours()
 
     def _check_mleg_requires_strategy(self) -> None:
-        if self.order_class != OrderClass.MLEG:
-            return
-        if self.instrument_spec.instrument_type != InstrumentType.STRATEGY:
+        is_mleg = self.order_class == OrderClass.MLEG
+        is_strategy_spec = self.instrument_spec.instrument_type == InstrumentType.STRATEGY
+        if is_mleg and not is_strategy_spec:
             msg = (
                 f"order_class=MLEG requires instrument_spec.instrument_type=STRATEGY; "
                 f"got {self.instrument_spec.instrument_type!r}"
+            )
+            raise ValueError(msg)
+        if is_strategy_spec and not is_mleg:
+            # Closes the converse the prior one-directional check left open:
+            # a StrategyInstrumentSpec must ride on an MLEG envelope, so the
+            # transitive direction=None ⇔ strategy spec invariant holds.
+            msg = (
+                f"instrument_spec.instrument_type=STRATEGY requires "
+                f"order_class=MLEG; got {self.order_class!r}"
             )
             raise ValueError(msg)
 

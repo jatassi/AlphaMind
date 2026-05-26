@@ -144,42 +144,62 @@ def _close_order_direction_for_position(position: PositionRecord) -> OrderDirect
     return None if direction is None else _order_direction_for_close(direction)
 
 
+def _instrument_ticker_for_activity_log(spec: InstrumentSpec) -> str:
+    """Resolve the activity-log ``instrument_ticker`` payload field for *spec*.
+
+    Equity spec → ticker; options spec → underlying; strategy spec → first
+    leg's underlying (every strategy leg shares the same underlying). Avoids
+    the ``getattr(spec, "ticker", "")`` fallback that silently emitted an
+    empty string for OptionsInstrumentSpec (attr is ``underlying``) and
+    StrategyInstrumentSpec (no scalar ticker). ALP-614.
+    """
+    if isinstance(spec, EquityInstrumentSpec):
+        return spec.ticker
+    if isinstance(spec, OptionsInstrumentSpec):
+        return spec.underlying
+    # StrategyInstrumentSpec — every leg shares the same underlying.
+    return spec.legs[0].underlying
+
+
 def _instrument_spec_for_position(position: PositionRecord) -> InstrumentSpec:
     """Derive the :class:`InstrumentSpec` for an order against *position*.
 
-    Equity → :class:`EquityInstrumentSpec` (ticker). Options → single-leg
-    :class:`OptionsInstrumentSpec`. Strategy → :class:`StrategyInstrumentSpec`
-    rebuilt from each :class:`StrategyLeg`'s options details — the order
-    record then carries the strategy envelope shape the broker adapter sends
-    over the wire, per ALP-614 + the design comment in
+    Strategy → :class:`StrategyInstrumentSpec` rebuilt from each
+    :class:`StrategyLeg`'s options details — the order record then carries
+    the strategy envelope shape the broker adapter sends over the wire, per
+    ALP-614 + the design comment in
     ``continuous_monitor/fill_stream_consumer/translation.py`` ("OMS persists
     mleg orders as a single parent OrderRecord with order_class=MLEG and
     the legs encoded on instrument_spec").
+    Equity / single-leg options → :class:`EquityInstrumentSpec` keyed by the
+    underlying ticker. The pre-ALP-614 ``_build_pending_order`` defaulted to
+    EquityInstrumentSpec for every non-strategy order regardless of the
+    position's instrument type, and downstream cash-movement / consideration
+    code (``_fill_consideration_usd`` in phase1) keys off the order's spec —
+    so an instrument-faithful shape on single-leg options orders would
+    silently change cash-ledger semantics (multiplier scaling). Preserve the
+    pre-PR shape on non-strategy orders; the strategy-aware branch is the
+    only behavior change ALP-614 introduces.
     """
     details = position.details
+    if isinstance(details, StrategyPositionDetails):
+        return StrategyInstrumentSpec(
+            legs=tuple(
+                OptionsInstrumentSpec(
+                    underlying=leg.options.underlying_ticker,
+                    strike=leg.options.strike_price,
+                    expiration=leg.options.expiration_date,
+                    contract_type=leg.options.contract_type,
+                    contract_multiplier=leg.options.contract_multiplier,
+                )
+                for leg in details.legs
+            )
+        )
     if isinstance(details, EquityPositionDetails):
         return EquityInstrumentSpec(ticker=details.ticker)
-    if isinstance(details, OptionsPositionDetails):
-        return OptionsInstrumentSpec(
-            underlying=details.underlying_ticker,
-            strike=details.strike_price,
-            expiration=details.expiration_date,
-            contract_type=details.contract_type,
-            contract_multiplier=details.contract_multiplier,
-        )
-    # StrategyPositionDetails
-    return StrategyInstrumentSpec(
-        legs=tuple(
-            OptionsInstrumentSpec(
-                underlying=leg.options.underlying_ticker,
-                strike=leg.options.strike_price,
-                expiration=leg.options.expiration_date,
-                contract_type=leg.options.contract_type,
-                contract_multiplier=leg.options.contract_multiplier,
-            )
-            for leg in details.legs
-        )
-    )
+    # OptionsPositionDetails — preserve pre-PR EquityInstrumentSpec(underlying)
+    # shape to avoid changing the multiplier branch in _fill_consideration_usd.
+    return EquityInstrumentSpec(ticker=details.underlying_ticker)
 
 
 def _entry_price_parameters(entry_order: EntryOrder) -> PriceParameters:
@@ -532,7 +552,7 @@ def _emit_order_submitted(
         "role": order.role.value,
         "order_type": order.order_type.value,
         "quantity": order.quantity,
-        "instrument_ticker": getattr(order.instrument_spec, "ticker", ""),
+        "instrument_ticker": _instrument_ticker_for_activity_log(order.instrument_spec),
     }
     if order.direction is not None:
         # MLEG strategy parents carry direction=None — the broker adapter

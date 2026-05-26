@@ -313,15 +313,16 @@ def _render_pending_order_row(
     if direction is None:
         # MLEG strategy envelope — no envelope-level side. Render the
         # strategy_type_label (e.g., ``vertical_spread``) in place of the
-        # direction prefix (ALP-614).
+        # direction prefix (ALP-614). Fail-soft when the lookup misses —
+        # halt mode is the operator's escape hatch and a stale-pm_view race
+        # (e.g., a pending MLEG order whose position has transitioned out
+        # of the snapshot window) must not crash the entire header render.
         position_id = order.position_id
-        if position_id is None or position_id not in strategy_label_by_position_id:
-            msg = (
-                f"strategy MLEG order {order.order_id!r} has no resolvable "
-                f"strategy_type_label (position_id={position_id!r})"
-            )
-            raise ValueError(msg)
-        prefix = strategy_label_by_position_id[position_id]
+        prefix = (
+            strategy_label_by_position_id.get(position_id, "strategy")
+            if position_id is not None
+            else "strategy"
+        )
     else:
         prefix = direction.value
     return (

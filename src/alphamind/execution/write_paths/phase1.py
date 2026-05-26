@@ -1036,13 +1036,17 @@ async def _apply_strategy_open_fill(
     post-add legs — every leg of an OPEN strategy is already positive, so the
     recompute always fires.
 
-    Dispatches by ``updated_order.role`` rather than inferring an opening /
-    closing side from ``updated_order.direction``. Every leg of an ADD-style
-    entry is opening; every leg of a CLOSE order is closing. The prior
-    direction-based inference miscategorised SHORT-leg fills on credit-spread
-    ADDs as closes — they are opens (ALP-614).
+    Dispatches by ``updated_order.role`` as a positive list — only ENTRY
+    and ADD_ENTRY are opening; CLOSE / TAKE_PROFIT / PRICE_STOP / TIME_STOP
+    are all closing — rather than inferring an opening / closing side from
+    ``updated_order.direction``. The prior direction-based inference
+    miscategorised SHORT-leg fills on credit-spread ADDs as closes (they
+    are opens); the positive list also catches the symmetric case where
+    a protective-leg MLEG envelope fires and per-leg child fills carry the
+    parent's TAKE_PROFIT / PRICE_STOP / TIME_STOP role — those route to the
+    close branch correctly (ALP-614).
     """
-    is_opening_for_leg = updated_order.role != OrderRole.CLOSE
+    is_opening_for_leg = updated_order.role in {OrderRole.ENTRY, OrderRole.ADD_ENTRY}
     if is_opening_for_leg:
         new_legs = _add_to_leg(details.legs, leg=leg, fill=fill)
         new_details = _recompute_strategy_payoff_metrics(
