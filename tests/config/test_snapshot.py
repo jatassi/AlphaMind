@@ -166,7 +166,9 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # scheduler.yaml.control_port (ALP-664) and main raised
     # agents.yaml.analyst.latency_budget_seconds from 300 to 500 (#200);
     # the combined canonical form on the ALP-128 work tree shifts the
-    # hash. Pin reflects the merged state.
+    # hash. Pin reflects the merged state. Wave-6 integration: 06b
+    # (ALP-683) re-pinned to the merged-tree canonical hash after
+    # cherry-picking 06a/06b/06c onto c09904ee.
     expected = "2b973263dbd53b290b32ed2a68453f7f3a70b17541db51d668af64cd70ba6a49"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
