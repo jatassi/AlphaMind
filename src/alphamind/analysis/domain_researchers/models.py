@@ -26,6 +26,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphamind.analysis._shared import AnomalySeverity, Sector, SignalQuality, TokensUsed
 
+# Note: ``Any`` is imported for the boundary-model converter signatures;
+# the previous ``if TYPE_CHECKING: from .input_bundle import InputBundle``
+# block was removed because it created a static-analysis cycle without
+# materially helping mypy (the converter takes ``object`` semantics anyway).
+
 __all__ = [
     "SECTOR_PREFIX",
     "Anomaly",

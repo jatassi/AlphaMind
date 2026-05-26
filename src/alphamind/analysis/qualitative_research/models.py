@@ -20,11 +20,14 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphamind.analysis._shared import SignalQuality, TokensUsed
+
+if TYPE_CHECKING:
+    from alphamind.analysis.qualitative_research.news_digest import NewsDigest
 
 __all__ = [
     "TIME_HORIZON_DISPLAY",
