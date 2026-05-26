@@ -32,7 +32,15 @@ agents:
     # Preemptive bump 2026-05-09: 4000 → 6000 (~50% headroom over prior cap)
     # mirroring the analysis-layer ALP-288 drift pattern; latency 180→300 to
     # match the strategist/PM cadence after their similar bumps.
-    output_token_budget: 6000
+    # 2026-05-26 fresh-start (--fresh-start --debug-e2e) run: analyst SDK call
+    # failed with "API Error: Claude's response exceeded the 6000 output token
+    # maximum" — ResultMessage usage showed output_tokens=30400 across 15 turns
+    # (one turn wanted to emit >6000 in a single response). Fresh-start fills a
+    # $100K book from zero positions vs synthetic's 8-position 1–3-recommendation
+    # regime — fundamentally different output volume. Raised to 100000 to
+    # explicitly support the fresh-start regime and provide deep headroom for
+    # the per-turn enumeration of OPEN recommendations.
+    output_token_budget: 100000
     tools: [retrieve_brief, validate_guardrail]
 
   strategist:
