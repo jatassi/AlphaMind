@@ -430,10 +430,18 @@ class _RunnerCallTracker:
 def _patch_all_runners(
     monkeypatch: pytest.MonkeyPatch,
     tracker: _RunnerCallTracker | None = None,
+    overrides: dict[str, Any] | None = None,
 ) -> _RunnerCallTracker:
-    """Monkeypatch all five pipeline runners to return fixtures without I/O."""
+    """Monkeypatch all five pipeline runners to return fixtures without I/O.
+
+    ``overrides`` (optional) maps runner attribute name to a custom async
+    callable; the override replaces the default stub for that runner so a
+    test can capture kwargs threaded into it.
+    """
     if tracker is None:
         tracker = _RunnerCallTracker()
+    if overrides is None:
+        overrides = {}
 
     async def _stub_distillation(*_args: Any, **_kw: Any) -> DistillationOutputs:
         tracker.distillation += 1
@@ -455,11 +463,15 @@ def _patch_all_runners(
         tracker.synthesizer += 1
         return _synth_result()
 
-    monkeypatch.setattr(composition, "run_external_distillation", _stub_distillation)
-    monkeypatch.setattr(composition, "run_domain_researchers", _stub_domain)
-    monkeypatch.setattr(composition, "run_qualitative_researcher", _stub_qualitative)
-    monkeypatch.setattr(composition, "run_adaptive_researcher", _stub_adaptive)
-    monkeypatch.setattr(composition, "run_synthesizer", _stub_synthesizer)
+    defaults = {
+        "run_external_distillation": _stub_distillation,
+        "run_domain_researchers": _stub_domain,
+        "run_qualitative_researcher": _stub_qualitative,
+        "run_adaptive_researcher": _stub_adaptive,
+        "run_synthesizer": _stub_synthesizer,
+    }
+    for name, default in defaults.items():
+        monkeypatch.setattr(composition, name, overrides.get(name, default))
     return tracker
 
 
@@ -532,9 +544,7 @@ def _seed_source_archive(archive_root: Path, source_invocation_id: str) -> Path:
         diag_dir.mkdir(parents=True, exist_ok=True)
         (diag_dir / "prompt.md").write_text(f"PROMPT for {phase}", encoding="utf-8")
         (diag_dir / "user_message.md").write_text(f"USER MSG for {phase}", encoding="utf-8")
-        (diag_dir / "response_initial.md").write_text(
-            f"RESPONSE for {phase}", encoding="utf-8"
-        )
+        (diag_dir / "response_initial.md").write_text(f"RESPONSE for {phase}", encoding="utf-8")
         (diag_dir / "metadata.json").write_text(
             f'{{"phase": "{phase}", "model": "sonnet"}}', encoding="utf-8"
         )
@@ -575,9 +585,10 @@ def _drive(
     resume_context: Any | None = None,
     progress: Any | None = None,
     tracker: _RunnerCallTracker | None = None,
+    runner_overrides: dict[str, Any] | None = None,
 ) -> _RunnerCallTracker:
     """Run the pipeline with stubbed runners, returning the call tracker."""
-    tracker = _patch_all_runners(monkeypatch, tracker)
+    tracker = _patch_all_runners(monkeypatch, tracker, runner_overrides)
     if progress is None:
         from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER
 
@@ -641,6 +652,454 @@ class TestReplayFromAdaptive:
         assert tracker.qualitative == 0
         assert tracker.adaptive == 1
         assert tracker.synthesizer == 1
+
+
+class TestReplayFromSynthesizer:
+    """Resume from ``synthesizer`` replays 5 upstream phases; runs only synthesizer."""
+
+    def test_replays_domain_qualitative_and_adaptive_phases(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Replay set for synthesizer = {tech_semis, financials, energy, qualitative, adaptive}.
+
+        After the run: domain / qualitative / adaptive runners invoked 0
+        times; synthesizer runner invoked once.
+        """
+        source_dir = _seed_source_archive(tmp_path, _SOURCE_INVOCATION_ID)
+        resume_context = _make_resume_context(
+            source_archive_dir=source_dir,
+            resume_phase="synthesizer",
+        )
+
+        tracker = _drive(
+            archive_root=tmp_path,
+            monkeypatch=monkeypatch,
+            resume_context=resume_context,
+        )
+
+        assert tracker.distillation == 1
+        assert tracker.domain == 0
+        assert tracker.qualitative == 0
+        assert tracker.adaptive == 0
+        assert tracker.synthesizer == 1
+
+
+class TestReplayFromQualitative:
+    """Resume from ``qualitative`` has no SDK upstreams; runner runs unchanged."""
+
+    def test_qualitative_phases_to_replay_is_empty(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Per the DAG, qualitative has no SDK upstream phases.
+
+        ``phases_to_replay("qualitative") == frozenset()``. The runner runs
+        the full pipeline unchanged: every runner is invoked once, no
+        replay short-circuit fires.
+        """
+        source_dir = _seed_source_archive(tmp_path, _SOURCE_INVOCATION_ID)
+        resume_context = _make_resume_context(
+            source_archive_dir=source_dir,
+            resume_phase="qualitative",
+        )
+        # Sanity-check the loader's DAG closure.
+        assert resume_context.phases_to_replay == frozenset()
+
+        tracker = _drive(
+            archive_root=tmp_path,
+            monkeypatch=monkeypatch,
+            resume_context=resume_context,
+        )
+
+        assert tracker.distillation == 1
+        assert tracker.domain == 1
+        assert tracker.qualitative == 1
+        assert tracker.adaptive == 1
+        assert tracker.synthesizer == 1
+
+
+class TestNoResumeContextIsByteIdenticalToBaseline:
+    """When ``resume_context`` is None the runner behaves byte-identically."""
+
+    def test_no_resume_context_runs_every_phase(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``resume_context=None`` is the production daemon path: every
+        runner is invoked once, no extra IO, no extra events."""
+        tracker = _drive(
+            archive_root=tmp_path,
+            monkeypatch=monkeypatch,
+            resume_context=None,
+        )
+
+        assert tracker.distillation == 1
+        assert tracker.domain == 1
+        assert tracker.qualitative == 1
+        assert tracker.adaptive == 1
+        assert tracker.synthesizer == 1
+
+    def test_no_resume_context_writes_no_replay_diagnostic_dirs(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """No diagnostic dirs are copied when there is no replay path active.
+
+        The fresh runners are stubbed (don't write diagnostic dirs); the only
+        possible source of ``analysis/<agent>/`` dirs under tmp_path would be
+        the replay copytree. Confirm none exist.
+        """
+        _drive(archive_root=tmp_path, monkeypatch=monkeypatch, resume_context=None)
+
+        analysis_dirs = list((tmp_path / "invocations" / _INVOCATION_ID).rglob("analysis"))
+        assert analysis_dirs == [], (
+            f"unexpected analysis/ dirs created without replay: {analysis_dirs}"
+        )
+
+
+class TestSkippedPhasesReturnRoundTripEqualResults:
+    """Skipped phases return objects equal to what the runner would have produced.
+
+    The pipeline's downstream consumers (synthesizer's ``sector_briefs``,
+    adaptive's ``qualitative_brief``, etc.) cannot tell whether a phase
+    was run fresh or hydrated from disk — equality is preserved through
+    the ``from_domain(...).to_domain()`` round-trip.
+    """
+
+    def test_replayed_qualitative_result_equals_round_trip(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """qualitative.json hydrated by the pipeline matches the runner fixture."""
+        source_dir = _seed_source_archive(tmp_path, _SOURCE_INVOCATION_ID)
+        resume_context = _make_resume_context(
+            source_archive_dir=source_dir,
+            resume_phase="adaptive",  # replays qualitative
+        )
+
+        # Capture the hydrated qualitative_brief threaded into the adaptive
+        # runner kwargs. _drive sets up the default stubs; we override
+        # adaptive after it returns.
+        captured: dict[str, Any] = {}
+
+        async def _capture_adaptive(*_args: Any, **kw: Any) -> AdaptiveResearcherResult:
+            captured["qualitative_brief"] = kw["qualitative_brief"]
+            return _adaptive_result()
+
+        _drive(
+            archive_root=tmp_path,
+            monkeypatch=monkeypatch,
+            resume_context=resume_context,
+            runner_overrides={"run_adaptive_researcher": _capture_adaptive},
+        )
+
+        expected_brief = _qualitative_result().brief
+        assert captured["qualitative_brief"] == expected_brief
+
+    def test_replayed_adaptive_result_equals_round_trip(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """adaptive.json hydrated by the pipeline matches the runner fixture."""
+        source_dir = _seed_source_archive(tmp_path, _SOURCE_INVOCATION_ID)
+        resume_context = _make_resume_context(
+            source_archive_dir=source_dir,
+            resume_phase="synthesizer",  # replays adaptive
+        )
+
+        captured: dict[str, Any] = {}
+
+        async def _capture_synth(**kw: Any) -> SynthesizerResult:
+            captured["adaptive_brief"] = kw["adaptive_brief"]
+            return _synth_result()
+
+        _drive(
+            archive_root=tmp_path,
+            monkeypatch=monkeypatch,
+            resume_context=resume_context,
+            runner_overrides={"run_synthesizer": _capture_synth},
+        )
+
+        expected_brief = _adaptive_result().brief
+        assert captured["adaptive_brief"] == expected_brief
+
+    def test_replayed_domain_sector_briefs_equal_round_trip(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The 3 sector briefs hydrated by the pipeline match the runner fixtures."""
+        source_dir = _seed_source_archive(tmp_path, _SOURCE_INVOCATION_ID)
+        resume_context = _make_resume_context(
+            source_archive_dir=source_dir,
+            resume_phase="synthesizer",  # replays all 3 sectors
+        )
+
+        captured: dict[str, Any] = {}
+
+        async def _capture_synth(**kw: Any) -> SynthesizerResult:
+            captured["sector_briefs"] = kw["sector_briefs"]
+            return _synth_result()
+
+        _drive(
+            archive_root=tmp_path,
+            monkeypatch=monkeypatch,
+            resume_context=resume_context,
+            runner_overrides={"run_synthesizer": _capture_synth},
+        )
+
+        expected_output = _domain_output()
+        expected_briefs = (
+            expected_output.tech_semis.brief,
+            expected_output.financials.brief,
+            expected_output.energy.brief,
+        )
+        assert captured["sector_briefs"] == expected_briefs
+
+
+class TestDiagnosticDirCopy:
+    """Skipped phases copy the per-agent diagnostic directory recursively."""
+
+    def test_replay_copies_qualitative_diagnostic_dir_with_all_files(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """All 5 files (prompt, user_message, response_initial, metadata, sdk_trace) are copied."""
+        source_dir = _seed_source_archive(tmp_path, _SOURCE_INVOCATION_ID)
+        resume_context = _make_resume_context(
+            source_archive_dir=source_dir,
+            resume_phase="adaptive",  # replays qualitative
+        )
+
+        _drive(
+            archive_root=tmp_path,
+            monkeypatch=monkeypatch,
+            resume_context=resume_context,
+        )
+
+        target_qual_dir = (
+            tmp_path
+            / "invocations"
+            / _INVOCATION_ID
+            / "analysis"
+            / AgentName.qualitative_researcher.value
+        )
+        assert target_qual_dir.is_dir()
+        expected_files = {
+            "prompt.md",
+            "user_message.md",
+            "response_initial.md",
+            "metadata.json",
+            "sdk_trace.jsonl",
+        }
+        copied_files = {f.name for f in target_qual_dir.iterdir() if f.is_file()}
+        assert copied_files == expected_files
+        # File contents preserved byte-for-byte
+        assert (target_qual_dir / "prompt.md").read_text() == "PROMPT for qualitative"
+        assert (target_qual_dir / "sdk_trace.jsonl").read_text() == (
+            '{"event": "trace", "phase": "qualitative"}\n'
+        )
+
+    def test_replay_copies_all_three_sector_diagnostic_dirs(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Replaying all 3 sectors copies 3 distinct diagnostic directories."""
+        source_dir = _seed_source_archive(tmp_path, _SOURCE_INVOCATION_ID)
+        resume_context = _make_resume_context(
+            source_archive_dir=source_dir,
+            resume_phase="adaptive",  # replays all 3 sectors
+        )
+
+        _drive(
+            archive_root=tmp_path,
+            monkeypatch=monkeypatch,
+            resume_context=resume_context,
+        )
+
+        target_analysis_dir = tmp_path / "invocations" / _INVOCATION_ID / "analysis"
+        for sector_dir_name in (
+            AgentName.tech_semis_researcher.value,
+            AgentName.financials_researcher.value,
+            AgentName.energy_researcher.value,
+        ):
+            sector_dir = target_analysis_dir / sector_dir_name
+            assert sector_dir.is_dir(), f"{sector_dir_name} not copied"
+            assert (sector_dir / "metadata.json").is_file()
+
+    def test_replay_raises_when_target_diagnostic_dir_already_exists(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``dirs_exist_ok=False`` — pre-existing target dir is corrupted state."""
+        source_dir = _seed_source_archive(tmp_path, _SOURCE_INVOCATION_ID)
+        # Pre-create the target adaptive_researcher dir to simulate a stale
+        # archive — this should be rejected.
+        target_dir = (
+            tmp_path
+            / "invocations"
+            / _INVOCATION_ID
+            / "analysis"
+            / AgentName.adaptive_researcher.value
+        )
+        target_dir.mkdir(parents=True)
+        (target_dir / "stale.txt").write_text("oops")
+
+        resume_context = _make_resume_context(
+            source_archive_dir=source_dir,
+            resume_phase="synthesizer",  # replays adaptive
+        )
+
+        with pytest.raises(FileExistsError):
+            _drive(
+                archive_root=tmp_path,
+                monkeypatch=monkeypatch,
+                resume_context=resume_context,
+            )
+
+
+class TestReplayedFromEventField:
+    """Skipped phases emit ``phase_done(..., replayed_from=<source-id>)``."""
+
+    def test_phase_done_carries_replayed_from(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The ``replayed_from`` kwarg surfaces on ``phase_done`` event payload."""
+        source_dir = _seed_source_archive(tmp_path, _SOURCE_INVOCATION_ID)
+        resume_context = _make_resume_context(
+            source_archive_dir=source_dir,
+            resume_phase="synthesizer",  # replays 5 phases
+        )
+        progress = _RecordingProgress()
+
+        _drive(
+            archive_root=tmp_path,
+            monkeypatch=monkeypatch,
+            resume_context=resume_context,
+            progress=progress,
+        )
+
+        replayed_phases = {
+            phase
+            for kind, phase, payload in progress.events
+            if kind == "phase_done" and payload.get("replayed_from") == _SOURCE_INVOCATION_ID
+        }
+        assert replayed_phases == {"tech_semis", "financials", "energy", "qualitative", "adaptive"}
+
+    def test_phase_start_emitted_for_each_replayed_phase(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Each replayed phase emits its own ``phase_start`` before ``phase_done``."""
+        source_dir = _seed_source_archive(tmp_path, _SOURCE_INVOCATION_ID)
+        resume_context = _make_resume_context(
+            source_archive_dir=source_dir,
+            resume_phase="synthesizer",
+        )
+        progress = _RecordingProgress()
+
+        _drive(
+            archive_root=tmp_path,
+            monkeypatch=monkeypatch,
+            resume_context=resume_context,
+            progress=progress,
+        )
+
+        starts = [phase for kind, phase, _ in progress.events if kind == "phase_start"]
+        # Expect distillation + 5 replayed SDK phases + synthesizer fresh
+        assert "tech_semis" in starts
+        assert "financials" in starts
+        assert "energy" in starts
+        assert "qualitative" in starts
+        assert "adaptive" in starts
+        assert "synthesizer" in starts
+
+    def test_phase_done_without_resume_context_omits_replayed_from(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Production daemon path: no ``replayed_from`` kwarg on any event."""
+        progress = _RecordingProgress()
+        _drive(
+            archive_root=tmp_path,
+            monkeypatch=monkeypatch,
+            resume_context=None,
+            progress=progress,
+        )
+
+        for kind, _phase, payload in progress.events:
+            if kind == "phase_done":
+                assert "replayed_from" not in payload
+
+
+class TestPartialDomainReplayAssertion:
+    """Partial overlap of ``phases_to_replay`` with the 3 sectors is rejected."""
+
+    def test_only_tech_semis_in_phases_to_replay_raises_assertion(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Crafted ``phases_to_replay`` with one sector triggers AssertionError.
+
+        The real loader never produces this set (the 3 sectors are
+        co-emitted by one TaskGroup), but a defense-in-depth assertion
+        in the runner catches direct callers that bypass the loader.
+        """
+        source_dir = _seed_source_archive(tmp_path, _SOURCE_INVOCATION_ID)
+
+        # Build a hand-crafted resume context with a partial domain set.
+        @dataclass(frozen=True)
+        class _CraftedResumeContext:
+            source_archive_dir: Path
+            resume_phase: str
+            phases_to_replay: frozenset[str]
+
+        crafted = _CraftedResumeContext(
+            source_archive_dir=source_dir,
+            resume_phase="adaptive",
+            phases_to_replay=frozenset({"tech_semis"}),  # partial!
+        )
+
+        with pytest.raises(AssertionError, match="partial domain-researcher set"):
+            _drive(
+                archive_root=tmp_path,
+                monkeypatch=monkeypatch,
+                resume_context=crafted,
+            )
+
+
+class TestNoHarnessImportsResumeContext:
+    """The replay seam is the composition runner only — no harness leak."""
+
+    def test_no_harness_file_imports_resume_context(self) -> None:
+        """``git grep -l ResumeContext src/alphamind/analysis/`` returns nothing."""
+        import subprocess
+
+        result = subprocess.run(
+            ["git", "grep", "-l", "ResumeContext", "src/alphamind/analysis/"],
+            capture_output=True,
+            text=True,
+        )
+        # `git grep -l` returns 1 with empty output when nothing matches; 0 with matches.
+        assert result.returncode == 1, (
+            f"Harness files imported ResumeContext (replay seam leaked): {result.stdout}"
+        )
+        assert result.stdout.strip() == ""
 
 
 # ---------------------------------------------------------------------------

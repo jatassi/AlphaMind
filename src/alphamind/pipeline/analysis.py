@@ -313,6 +313,211 @@ def _replay_synthesizer(
     )
 
 
+async def _run_domain_and_qualitative_phase(  # noqa: PLR0913 — composition helper threads the parallel-phase wiring
+    *,
+    invocation_id: str,
+    as_of: datetime,
+    last_invocation_time: datetime,
+    distillation_outputs: DistillationOutputs,
+    session: Session,
+    universe: frozenset[str],
+    agents_config: Mapping[str, BaseAgentConfig],
+    sectors_config: Mapping[str, list[str]],
+    archive_root: Path | None,
+    progress: ProgressEmitter,
+    replay_domain: bool,
+    replay_qualitative: bool,
+    replay_source_dir: Path | None,
+    target_archive_dir: Path | None,
+    replay_source_id: str,
+    emit: bool,
+) -> tuple[DomainResearchersOutput, QualitativeResearcherResult]:
+    """Run (or replay) the domain-researchers + qualitative phase.
+
+    Both runners are independent of each other but share an
+    :class:`asyncio.TaskGroup` for parallel execution in the non-replay
+    case. Carving the four cases (both-replay, domain-replay-only,
+    qualitative-replay-only, neither) out of :func:`run_analysis_pipeline`
+    keeps the top-level runner's branch count under ruff's complexity
+    threshold.
+
+    The four cases differ in:
+
+    * whether the TaskGroup is used (only when neither side replays)
+    * which phase outputs are emitted (only fresh-run sides emit)
+    * which ``phase_start`` / ``phase_done`` events fire (replay side
+      goes through :func:`_replay_analysis_phase`; fresh side wraps the
+      runner directly)
+    """
+    if replay_domain and replay_qualitative:
+        assert replay_source_dir is not None
+        assert target_archive_dir is not None
+        domain_output = _replay_domain_researchers(
+            source_archive_dir=replay_source_dir,
+            target_archive_dir=target_archive_dir,
+            replayed_from=replay_source_id,
+            progress=progress,
+        )
+        qualitative_result = _replay_qualitative_researcher(
+            source_archive_dir=replay_source_dir,
+            target_archive_dir=target_archive_dir,
+            replayed_from=replay_source_id,
+            progress=progress,
+        )
+        return domain_output, qualitative_result
+
+    if replay_domain:
+        assert replay_source_dir is not None
+        assert target_archive_dir is not None
+        progress.phase_start("qualitative")
+        domain_output = _replay_domain_researchers(
+            source_archive_dir=replay_source_dir,
+            target_archive_dir=target_archive_dir,
+            replayed_from=replay_source_id,
+            progress=progress,
+        )
+        qualitative_result = await run_qualitative_researcher(
+            invocation_id,
+            as_of,
+            last_invocation_time,
+            session=session,
+            universal_regime_label=distillation_outputs.universal_regime_label,
+            universe=universe,
+            agents_config=agents_config,
+            archive_root=archive_root,
+            progress=progress,
+            phase="qualitative",
+        )
+        if emit:
+            assert archive_root is not None
+            _emit_qualitative(archive_root, invocation_id, qualitative_result)
+        progress.phase_done("qualitative")
+        return domain_output, qualitative_result
+
+    if replay_qualitative:
+        assert replay_source_dir is not None
+        assert target_archive_dir is not None
+        progress.phase_start("domain_researchers")
+        domain_output = await run_domain_researchers(
+            invocation_id=invocation_id,
+            as_of=as_of,
+            distillation_outputs=distillation_outputs,
+            session=session,
+            agents_config=agents_config,
+            sectors_config=sectors_config,
+            archive_root=archive_root,
+            progress=progress,
+            phase="domain_researchers",
+        )
+        if emit:
+            assert archive_root is not None
+            _emit_domain_sectors(archive_root, invocation_id, domain_output)
+        progress.phase_done("domain_researchers")
+        qualitative_result = _replay_qualitative_researcher(
+            source_archive_dir=replay_source_dir,
+            target_archive_dir=target_archive_dir,
+            replayed_from=replay_source_id,
+            progress=progress,
+        )
+        return domain_output, qualitative_result
+
+    # Neither replayed: original TaskGroup + emission path, byte-identical
+    # to pre-ALP-694 behaviour.
+    progress.phase_start("domain_researchers")
+    progress.phase_start("qualitative")
+    try:
+        async with asyncio.TaskGroup() as tg:
+            domain_task = tg.create_task(
+                run_domain_researchers(
+                    invocation_id=invocation_id,
+                    as_of=as_of,
+                    distillation_outputs=distillation_outputs,
+                    session=session,
+                    agents_config=agents_config,
+                    sectors_config=sectors_config,
+                    archive_root=archive_root,
+                    progress=progress,
+                    phase="domain_researchers",
+                )
+            )
+            qualitative_task = tg.create_task(
+                run_qualitative_researcher(
+                    invocation_id,
+                    as_of,
+                    last_invocation_time,
+                    session=session,
+                    universal_regime_label=distillation_outputs.universal_regime_label,
+                    universe=universe,
+                    agents_config=agents_config,
+                    archive_root=archive_root,
+                    progress=progress,
+                    phase="qualitative",
+                )
+            )
+    except BaseExceptionGroup as eg:
+        # Preserve the prior ``asyncio.gather`` API: callers see the first
+        # failure unchanged. The group is attached as ``__cause__`` so
+        # concurrent failures remain visible in diagnostics.
+        first = eg.exceptions[0]
+        raise first from eg
+
+    domain_output = domain_task.result()
+    qualitative_result = qualitative_task.result()
+
+    if emit:
+        assert archive_root is not None
+        _emit_domain_sectors(archive_root, invocation_id, domain_output)
+        _emit_qualitative(archive_root, invocation_id, qualitative_result)
+
+    progress.phase_done("domain_researchers")
+    progress.phase_done("qualitative")
+    return domain_output, qualitative_result
+
+
+def _emit_domain_sectors(
+    archive_root: Path,
+    invocation_id: str,
+    domain_output: DomainResearchersOutput,
+) -> None:
+    """Emit the 3 sector phase-output files (ALP-691)."""
+    from alphamind.analysis.domain_researchers.models import DomainResearcherOutputModel
+
+    _emit_phase_output(
+        archive_root=archive_root,
+        invocation_id=invocation_id,
+        phase="tech_semis",
+        model=DomainResearcherOutputModel.from_domain(domain_output.tech_semis),
+    )
+    _emit_phase_output(
+        archive_root=archive_root,
+        invocation_id=invocation_id,
+        phase="financials",
+        model=DomainResearcherOutputModel.from_domain(domain_output.financials),
+    )
+    _emit_phase_output(
+        archive_root=archive_root,
+        invocation_id=invocation_id,
+        phase="energy",
+        model=DomainResearcherOutputModel.from_domain(domain_output.energy),
+    )
+
+
+def _emit_qualitative(
+    archive_root: Path,
+    invocation_id: str,
+    qualitative_result: QualitativeResearcherResult,
+) -> None:
+    """Emit the qualitative phase-output file (ALP-691)."""
+    from alphamind.analysis.qualitative_research.models import QualitativeResearcherResultModel
+
+    _emit_phase_output(
+        archive_root=archive_root,
+        invocation_id=invocation_id,
+        phase="qualitative",
+        model=QualitativeResearcherResultModel.from_domain(qualitative_result),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Result type
 # ---------------------------------------------------------------------------
@@ -459,205 +664,24 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
     _replay_domain = len(_sectors_in_replay) == len(_domain_sectors)
     _replay_qualitative = "qualitative" in _replay
 
-    domain_researchers_output: DomainResearchersOutput
-    qualitative_result: QualitativeResearcherResult
-
-    if _replay_domain and _replay_qualitative:
-        # Both replayed: skip the TaskGroup entirely and hydrate from disk.
-        # The replay-source guards below are tautologically true (the loader
-        # only produces a non-empty replay set when source_archive_dir is
-        # set, and the orchestrator only sets resume_context alongside an
-        # archive_root); narrow them as a defensive type assertion.
-        assert _replay_source_dir is not None
-        assert _target_archive_dir is not None
-        domain_researchers_output = _replay_domain_researchers(
-            source_archive_dir=_replay_source_dir,
-            target_archive_dir=_target_archive_dir,
-            replayed_from=_replay_source_id,
-            progress=progress,
-        )
-        qualitative_result = _replay_qualitative_researcher(
-            source_archive_dir=_replay_source_dir,
-            target_archive_dir=_target_archive_dir,
-            replayed_from=_replay_source_id,
-            progress=progress,
-        )
-    elif _replay_domain:
-        # Domain replayed; qualitative runs fresh. No TaskGroup needed — a
-        # single async runner suffices.
-        assert _replay_source_dir is not None
-        assert _target_archive_dir is not None
-        progress.phase_start("qualitative")
-        domain_researchers_output = _replay_domain_researchers(
-            source_archive_dir=_replay_source_dir,
-            target_archive_dir=_target_archive_dir,
-            replayed_from=_replay_source_id,
-            progress=progress,
-        )
-        qualitative_result = await run_qualitative_researcher(
-            invocation_id,
-            as_of,
-            last_invocation_time,
-            session=session,
-            universal_regime_label=distillation_outputs.universal_regime_label,
-            universe=universe,
-            agents_config=agents_config,
-            archive_root=archive_root,
-            progress=progress,
-            phase="qualitative",
-        )
-        if _emit:
-            assert archive_root is not None
-            from alphamind.analysis.qualitative_research.models import (
-                QualitativeResearcherResultModel,
-            )
-
-            _emit_phase_output(
-                archive_root=archive_root,
-                invocation_id=invocation_id,
-                phase="qualitative",
-                model=QualitativeResearcherResultModel.from_domain(qualitative_result),
-            )
-        progress.phase_done("qualitative")
-    elif _replay_qualitative:
-        # Qualitative replayed; domain runs fresh.
-        assert _replay_source_dir is not None
-        assert _target_archive_dir is not None
-        progress.phase_start("domain_researchers")
-        domain_researchers_output = await run_domain_researchers(
-            invocation_id=invocation_id,
-            as_of=as_of,
-            distillation_outputs=distillation_outputs,
-            session=session,
-            agents_config=agents_config,
-            sectors_config=sectors_config,
-            archive_root=archive_root,
-            progress=progress,
-            phase="domain_researchers",
-        )
-        if _emit:
-            assert archive_root is not None
-            from alphamind.analysis.domain_researchers.models import DomainResearcherOutputModel
-
-            _emit_phase_output(
-                archive_root=archive_root,
-                invocation_id=invocation_id,
-                phase="tech_semis",
-                model=DomainResearcherOutputModel.from_domain(
-                    domain_researchers_output.tech_semis
-                ),
-            )
-            _emit_phase_output(
-                archive_root=archive_root,
-                invocation_id=invocation_id,
-                phase="financials",
-                model=DomainResearcherOutputModel.from_domain(
-                    domain_researchers_output.financials
-                ),
-            )
-            _emit_phase_output(
-                archive_root=archive_root,
-                invocation_id=invocation_id,
-                phase="energy",
-                model=DomainResearcherOutputModel.from_domain(
-                    domain_researchers_output.energy
-                ),
-            )
-        progress.phase_done("domain_researchers")
-        qualitative_result = _replay_qualitative_researcher(
-            source_archive_dir=_replay_source_dir,
-            target_archive_dir=_target_archive_dir,
-            replayed_from=_replay_source_id,
-            progress=progress,
-        )
-    else:
-        # Neither replayed: original TaskGroup + emission path, byte-identical
-        # to pre-ALP-694 behaviour.
-        progress.phase_start("domain_researchers")
-        progress.phase_start("qualitative")
-        try:
-            async with asyncio.TaskGroup() as tg:
-                domain_task = tg.create_task(
-                    run_domain_researchers(
-                        invocation_id=invocation_id,
-                        as_of=as_of,
-                        distillation_outputs=distillation_outputs,
-                        session=session,
-                        agents_config=agents_config,
-                        sectors_config=sectors_config,
-                        archive_root=archive_root,
-                        progress=progress,
-                        phase="domain_researchers",
-                    )
-                )
-                qualitative_task = tg.create_task(
-                    run_qualitative_researcher(
-                        invocation_id,
-                        as_of,
-                        last_invocation_time,
-                        session=session,
-                        universal_regime_label=distillation_outputs.universal_regime_label,
-                        universe=universe,
-                        agents_config=agents_config,
-                        archive_root=archive_root,
-                        progress=progress,
-                        phase="qualitative",
-                    )
-                )
-        except BaseExceptionGroup as eg:
-            # Preserve the prior ``asyncio.gather`` API: callers see the first
-            # failure unchanged. The group is attached as ``__cause__`` so
-            # concurrent failures remain visible in diagnostics.
-            first = eg.exceptions[0]
-            raise first from eg
-
-        domain_researchers_output = domain_task.result()
-        qualitative_result = qualitative_task.result()
-
-        # Emit per-sector phase outputs (ALP-691): 3 files for the 3 domain
-        # researchers. Emission lands BEFORE the matching ``phase_done`` events
-        # so a consumer that subscribes to ``progress.jsonl`` can rely on the
-        # file being on disk by the time it sees the event.
-        if _emit:
-            assert archive_root is not None  # narrowed by _emit guard above
-            from alphamind.analysis.domain_researchers.models import DomainResearcherOutputModel
-            from alphamind.analysis.qualitative_research.models import (
-                QualitativeResearcherResultModel,
-            )
-
-            _emit_phase_output(
-                archive_root=archive_root,
-                invocation_id=invocation_id,
-                phase="tech_semis",
-                model=DomainResearcherOutputModel.from_domain(
-                    domain_researchers_output.tech_semis
-                ),
-            )
-            _emit_phase_output(
-                archive_root=archive_root,
-                invocation_id=invocation_id,
-                phase="financials",
-                model=DomainResearcherOutputModel.from_domain(
-                    domain_researchers_output.financials
-                ),
-            )
-            _emit_phase_output(
-                archive_root=archive_root,
-                invocation_id=invocation_id,
-                phase="energy",
-                model=DomainResearcherOutputModel.from_domain(
-                    domain_researchers_output.energy
-                ),
-            )
-            _emit_phase_output(
-                archive_root=archive_root,
-                invocation_id=invocation_id,
-                phase="qualitative",
-                model=QualitativeResearcherResultModel.from_domain(qualitative_result),
-            )
-
-        progress.phase_done("domain_researchers")
-        progress.phase_done("qualitative")
+    domain_researchers_output, qualitative_result = await _run_domain_and_qualitative_phase(
+        invocation_id=invocation_id,
+        as_of=as_of,
+        last_invocation_time=last_invocation_time,
+        distillation_outputs=distillation_outputs,
+        session=session,
+        universe=universe,
+        agents_config=agents_config,
+        sectors_config=sectors_config,
+        archive_root=archive_root,
+        progress=progress,
+        replay_domain=_replay_domain,
+        replay_qualitative=_replay_qualitative,
+        replay_source_dir=_replay_source_dir,
+        target_archive_dir=_target_archive_dir,
+        replay_source_id=_replay_source_id,
+        emit=_emit,
+    )
 
     sector_briefs: tuple[SectorBrief, ...] = (
         domain_researchers_output.tech_semis.brief,
