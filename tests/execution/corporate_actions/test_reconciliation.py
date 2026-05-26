@@ -1386,7 +1386,11 @@ async def test_reconcile_options_only_alpaca_response_does_not_wipe_local_equity
         assert isinstance(pos.details, EquityPositionDetails)
         assert pos.details.share_count == pytest.approx(10.0)
 
-        # Equity-side alert still fires (AAPL vanished from Alpaca's view).
+        # Equity-side alert still fires (AAPL vanished from Alpaca's view)
+        # AND the orphan options snapshot fires an ``alpaca_only_position``
+        # alert — pins the symmetric isolation: the opposite-class
+        # snapshot is still surfaced for operator triage, just not
+        # auto-materialized.
         alerts = (
             (
                 await sess.execute(
@@ -1399,6 +1403,7 @@ async def test_reconcile_options_only_alpaca_response_does_not_wipe_local_equity
             .all()
         )
         assert any('"field_name":"share_count"' in a.detail_json for a in alerts)
+        assert any('"field_name":"alpaca_only_position"' in a.detail_json for a in alerts)
 
         # No correction emitted for the equity position.
         corrections = (
@@ -1464,7 +1469,8 @@ async def test_reconcile_equity_only_alpaca_response_does_not_wipe_local_options
         assert pos.details.contract_count == pytest.approx(5.0)
 
         # Options-side alert still fires (local OCC contract vanished from
-        # Alpaca's view).
+        # Alpaca's view) AND the orphan MSFT equity snapshot fires an
+        # ``alpaca_only_position`` alert — pins the symmetric isolation.
         alerts = (
             (
                 await sess.execute(
@@ -1477,6 +1483,7 @@ async def test_reconcile_equity_only_alpaca_response_does_not_wipe_local_options
             .all()
         )
         assert any('"field_name":"contract_count"' in a.detail_json for a in alerts)
+        assert any('"field_name":"alpaca_only_position"' in a.detail_json for a in alerts)
 
         # No correction emitted for the options position.
         corrections = (
