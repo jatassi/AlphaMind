@@ -921,7 +921,7 @@ def _parse_json_list(raw: str | None) -> list[str]:
 async def _read_thesis_for_position(
     session: AsyncSession,
     position_id: str,
-) -> ThesisDetail | None:
+) -> PositionThesisDetail | None:
     """Read the thesis + all components for the given position_id.
 
     Returns ``None`` if no thesis exists for this position.

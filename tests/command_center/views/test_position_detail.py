@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -40,8 +41,8 @@ from alphamind.persistence.models import Base
 # ---------------------------------------------------------------------------
 
 
-async def _create_tables(engine: object) -> None:
-    async with engine.begin() as conn:  # type: ignore[union-attr]
+async def _create_tables(engine: Any) -> None:
+    async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 

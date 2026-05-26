@@ -272,12 +272,16 @@ class TestRegisteredRoutes:
                 "/api/views/config/path-exists",
                 "/api/views/config/schema/{config_file}",
                 "/api/views/config/{config_file}",
+                # Story 05j (ALP-680) — risk views.
+                "/api/views/risk/calibration-mix",
+                "/api/views/risk/guardrail-dashboard",
+                "/api/views/risk/regime-timeline",
             ]
         )
         assert own_routes == expected, (
-            f"unexpected routes registered after stories "
-            f"02 + 03 + 04a + 04b + 04d + 05a + 05b + 05c + 05d + 05e + 05f + 05g + 05h + 05i — "
-            f"found {own_routes}; expected {expected}. Stories 05j/"
+            f"unexpected routes registered after stories 02 + 03 + 04a + 04b + 04d + 05a + "
+            f"05b + 05c + 05d + 05e + 05f + 05g + 05h + 05i + 05j — "
+            f"found {own_routes}; expected {expected}. Stories "
             f"06a-06c register their routers later."
         )
 
