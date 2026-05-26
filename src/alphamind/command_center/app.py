@@ -15,7 +15,7 @@ for the future stories:
   ``app.mount("/", StaticFiles(...))`` (mounted last so ``/api/*``
   takes precedence).
 * Story 05a (alerts) — ``app.include_router(alerts_router, prefix="/api/alerts")``.
-* View stories (05b–05j, 06a–06c) — included under ``/api/views/...``.
+* View stories (05b-05j, 06a-06c) — included under ``/api/views/...``.
 
 This story ships only the ``/healthz`` route — a trivial liveness probe
 the operator script + NSSM service-restart logic poll against.
@@ -73,10 +73,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     handle is released cleanly — important on Windows where a lingering
     handle blocks process restart.
     """
-    cc_writer = build_cc_writer_session_factory(app.state.command_center_config.db.alphamind_db_path)
-    foreign_reader = build_foreign_reader_session_factory(
-        app.state.command_center_config.db.alphamind_db_path
-    )
+    db_path = app.state.command_center_config.db.alphamind_db_path
+    cc_writer = build_cc_writer_session_factory(db_path)
+    foreign_reader = build_foreign_reader_session_factory(db_path)
     app.state.cc_writer_session_factory = cc_writer
     app.state.foreign_reader_session_factory = foreign_reader
     try:

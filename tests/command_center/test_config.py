@@ -130,13 +130,13 @@ class TestAlertsConfig:
 
 class TestLoadersFailLoudWhenFileMissing:
     def test_command_center_loader_raises_on_missing_file(self, tmp_path: Path) -> None:
-        with pytest.raises(FileNotFoundError, match="command-center.yaml"):
+        with pytest.raises(FileNotFoundError, match=r"command-center\.yaml"):
             load_command_center_config(tmp_path)
 
     def test_security_loader_raises_on_missing_file(self, tmp_path: Path) -> None:
-        with pytest.raises(FileNotFoundError, match="security.yaml"):
+        with pytest.raises(FileNotFoundError, match=r"security\.yaml"):
             load_security_config(tmp_path)
 
     def test_alerts_loader_raises_on_missing_file(self, tmp_path: Path) -> None:
-        with pytest.raises(FileNotFoundError, match="alerts.yaml"):
+        with pytest.raises(FileNotFoundError, match=r"alerts\.yaml"):
             load_alerts_config(tmp_path)

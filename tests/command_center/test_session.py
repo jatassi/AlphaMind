@@ -29,7 +29,7 @@ class TestProcessSession:
         )
         # Pydantic v2 frozen models raise ValidationError on attribute set.
         with pytest.raises(ValidationError):
-            session.process_lifetime_id = "plt-y"  # type: ignore[misc]
+            session.process_lifetime_id = "plt-y"
 
 
 class TestNewSession:

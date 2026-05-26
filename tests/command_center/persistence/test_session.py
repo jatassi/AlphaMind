@@ -114,9 +114,7 @@ class TestWriterSessionFactory:
         finally:
             await _dispose_factory(factory)
 
-    async def test_rejects_session_add_of_foreign_mapper(
-        self, populated_db: Path
-    ) -> None:
+    async def test_rejects_session_add_of_foreign_mapper(self, populated_db: Path) -> None:
         """Runtime enforcement: adding a foreign mapper raises before flush.
 
         SQLAlchemy resolves mappers from a global registry rather than
@@ -158,9 +156,7 @@ class TestWriterSessionFactory:
         finally:
             await _dispose_factory(factory)
 
-    async def test_other_async_sessions_not_affected(
-        self, populated_db: Path
-    ) -> None:
+    async def test_other_async_sessions_not_affected(self, populated_db: Path) -> None:
         """The foreign-table guard is scoped to the cc writer factory.
 
         The listener attaches to a per-factory sync session subclass, NOT
@@ -257,9 +253,7 @@ class TestReaderSessionFactory:
         finally:
             await _dispose_factory(factory)
 
-    async def test_cannot_insert_into_foreign_table_via_raw_sql(
-        self, populated_db: Path
-    ) -> None:
+    async def test_cannot_insert_into_foreign_table_via_raw_sql(self, populated_db: Path) -> None:
         """Foreign-table writes also fail at the SQLite layer."""
         factory = build_foreign_reader_session_factory(str(populated_db))
         try:

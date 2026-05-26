@@ -68,7 +68,9 @@ _DEFAULT_ARCHIVE_ROOT = Path.home() / "AlphaMind" / "archive"
 _SHUTDOWN_TIMEOUT_SECONDS = 30
 
 
-async def _run_uvicorn_task(_session: ProcessSession, *, app: FastAPI, host: str, port: int) -> None:
+async def _run_uvicorn_task(
+    _session: ProcessSession, *, app: FastAPI, host: str, port: int
+) -> None:
     """Run Uvicorn against the FastAPI app until cancellation.
 
     Mirrors :func:`alphamind.scheduler.control.app.run_uvicorn_server_task`:

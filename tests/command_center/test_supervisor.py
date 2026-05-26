@@ -92,13 +92,13 @@ class TestCrashReRaises:
     async def test_first_non_cancelled_exception_propagates(self) -> None:
         sup = CommandCenterSupervisor(session=_session(), shutdown_timeout_seconds=5)
 
-        class _Sentinel(RuntimeError):
+        class _SentinelError(RuntimeError):
             pass
 
         async def crashing_task(_: ProcessSession) -> None:
             await asyncio.sleep(0.05)
-            raise _Sentinel("crash")
+            raise _SentinelError("crash")
 
         sup.register_task(name="crash", coro_fn=crashing_task)
-        with pytest.raises(_Sentinel, match="crash"):
+        with pytest.raises(_SentinelError, match="crash"):
             await sup.run()

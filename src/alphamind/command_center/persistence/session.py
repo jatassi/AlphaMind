@@ -114,13 +114,12 @@ def _reject_foreign_table_writes(
     declarative-flat (no joined-table inheritance).
     """
     for instance in [*session.new, *session.dirty, *session.deleted]:
-        # ``inspect`` returns an InstanceState; ``mapper.local_table`` is
-        # the SQL table this row writes to.
-        try:
-            mapper = instance.__mapper__  # type: ignore[union-attr]
-        except AttributeError:
-            # Non-mapped object somehow ended up in the session — let
-            # SQLAlchemy handle / raise downstream.
+        # Each instance is an ORM-mapped row class; ``__mapper__`` is the
+        # SQLAlchemy mapper; ``mapper.local_table`` is the SQL table this
+        # row writes to. Untyped attribute access via ``getattr`` so mypy
+        # doesn't fall back to ``Any`` on the dynamic ORM surface.
+        mapper = getattr(instance, "__mapper__", None)
+        if mapper is None:
             continue
         table = mapper.local_table
         if table is None:

@@ -7,7 +7,7 @@ log-file path resolution + the idempotent handler-attachment property.
 from __future__ import annotations
 
 import logging
-import os
+from collections.abc import Iterator
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
@@ -17,7 +17,7 @@ from alphamind.command_center.logging_setup import configure_command_center_logg
 
 
 @pytest.fixture
-def alphamind_root_handlers() -> list[logging.Handler]:
+def alphamind_root_handlers() -> Iterator[list[logging.Handler]]:
     """Snapshot + restore the ``alphamind`` root logger's handler list.
 
     The logging setup is idempotent but installs a handler on a process-
@@ -114,6 +114,7 @@ class TestConfigureCommandCenterLogging:
         monkeypatch.setattr("alphamind.command_center.logging_setup.Path.home", lambda: tmp_path)
         configure_command_center_logging()
         log_file = tmp_path / "AlphaMind" / "logs" / "command_center.log"
-        assert log_file.parent.exists()
-        # Avoid the lint warning on unused fixture param.
-        assert os.path.isdir(log_file.parent)
+        assert log_file.parent.is_dir()
+        # The fixture is needed to isolate the handler list per test, even
+        # though this assertion only inspects the filesystem.
+        assert alphamind_root_handlers is not None

@@ -96,8 +96,10 @@ class TestOperatorSessionRow:
         # The session FK ensures session-issuance can't reference a
         # nonexistent credential; ON DELETE RESTRICT keeps a credential
         # row pinned while a session references it.
-        fks = list(insp.tables[0].foreign_keys) if insp.tables else list(
-            OperatorSessionRow.__table__.foreign_keys
+        fks = (
+            list(insp.tables[0].foreign_keys)
+            if insp.tables
+            else list(OperatorSessionRow.__table__.foreign_keys)
         )
         matching = [fk for fk in fks if fk.column.table.name == "webauthn_credentials"]
         assert matching, f"expected FK to webauthn_credentials; got {fks}"

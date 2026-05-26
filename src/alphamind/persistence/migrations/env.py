@@ -19,6 +19,16 @@ sys.path.insert(0, str(Path(__file__).parents[4]))
 # must be imported here so ``Base.metadata`` is fully populated before
 # ``compare_type``/``autogenerate`` runs. The state-persistence tables ship
 # their own model files under ``execution.state_persistence.tables``.
+#
+# ``alphamind.command_center.persistence.tables`` is imported alongside even
+# though it owns a SEPARATE ``CommandCenterBase.metadata`` (per parent issue
+# ALP-128 pre-resolved H — the dual-session-factory split depends on the
+# separation). Migrations for the command-center tables are hand-written
+# under ``versions/`` and operate via ``op.create_table`` directly;
+# autogenerate against ``Base.metadata`` does not see them. Keeping the
+# import here makes the dual-base arrangement visible to anyone reading
+# this env.
+import alphamind.command_center.persistence.tables
 import alphamind.state.tables  # noqa: F401
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import _resolve_path, make_engine

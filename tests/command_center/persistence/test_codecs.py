@@ -37,8 +37,6 @@ from alphamind.command_center.persistence.codecs import (
 )
 from alphamind.command_center.persistence.tables import (
     AlertRow,
-    OperatorSessionRow,
-    WebauthnCredentialRow,
 )
 
 
