@@ -177,15 +177,21 @@ class TestLifespanWiresEventMultiplexer:
         )
         with TestClient(app):
             factories = app.state.event_consumer_task_factories
-            assert set(factories) == {"events_pipeline_consumer", "events_monitor_consumer"}
+            assert set(factories) == {
+                "events_pipeline_consumer",
+                "events_monitor_consumer",
+                "schedule_cache_subscriber",
+            }
             assert callable(factories["events_pipeline_consumer"])
             assert callable(factories["events_monitor_consumer"])
+            assert callable(factories["schedule_cache_subscriber"])
 
 
 class TestRegisteredRoutes:
     """Story 02 ships /healthz; story 03 (ALP-667) adds /auth/*; story 04a
     (ALP-668) adds /api/control/*; story 04b (ALP-669) adds /api/events;
     story 04d (ALP-670) adds /auth/me + the StaticFiles mount at /;
+    story 05b (ALP-672) adds /api/views/live + /api/views/schedule;
     story 05c (ALP-673) adds /api/views/history/runs + failure-log preset.
 
     Asserts that only the routes belonging to the merged stories are
@@ -240,12 +246,14 @@ class TestRegisteredRoutes:
                 "/api/events",
                 "/api/views/history/runs",
                 "/api/views/history/runs/preset/failure-log",
+                "/api/views/live",
+                "/api/views/schedule",
             ]
         )
         assert own_routes == expected, (
-            f"unexpected routes registered after stories 02 + 03 + 04a + 04b + 04d — "
+            f"unexpected routes registered after stories 02 + 03 + 04a + 04b + 04d + 05b + 05c — "
             f"found {own_routes}; expected {expected}. Stories 05a / "
-            f"view stories register their routers later."
+            f"remaining view stories register their routers later."
         )
 
 

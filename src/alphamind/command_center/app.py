@@ -14,6 +14,12 @@ module currently composes:
   :func:`alphamind.command_center.events.routes.build_events_router`.
   ``build_events_router`` already bakes the ``/api`` prefix, so no
   ``prefix=`` kwarg is passed at the include site (F9).
+* ``/api/views/live`` and ``/api/views/schedule`` — the live run watcher
+  snapshot + schedule preview (story 05b / ALP-672) via
+  :func:`alphamind.command_center.views.live_operations.build_views_router`.
+  A ``schedule_cache_subscriber`` background task is also registered on
+  the supervisor to keep the schedule cache warm from
+  ``pipeline:next_trigger_changed`` events.
 * ``/`` static mount — serves the Vite-built SPA bundle from
   ``config.frontend.dist_path`` (story 04c). Mounted LAST so
   ``/api/*`` routes match first; skipped in dev mode (when
@@ -23,8 +29,7 @@ module currently composes:
 Documented include points for future stories:
 
 * Story 05a (alerts) — ``app.include_router(alerts_router, prefix="/api/alerts")``.
-* View stories (05b-05j, 06a-06c) — included under ``/api/views/...``.
-* Story 05c (ALP-673) history router at ``/api/views/history``.
+* View stories (05d-05j, 06a-06c) — included under ``/api/views/...``.
 * Story 05d (per-invocation detail) will extend ``/api/views/history``.
 
 Per the parent-issue architectural invariants:
@@ -101,6 +106,10 @@ from alphamind.command_center.persistence.session import (
 )
 from alphamind.command_center.session import ProcessSession
 from alphamind.command_center.views.history import build_history_router
+from alphamind.command_center.views.live_operations import (
+    build_views_router,
+    update_schedule_cache,
+)
 
 __all__ = ["AuthOverrides", "ControlOverrides", "EventsOverrides", "build_app"]
 
@@ -301,6 +310,36 @@ def _make_monitor_consumer_factory(
 
     async def factory(_session: ProcessSession) -> None:
         await monitor_consumer_task(client=client, multiplexer=multiplexer)
+
+    return factory
+
+
+def _make_schedule_cache_subscriber_factory(
+    *,
+    multiplexer: EventMultiplexer,
+) -> Callable[[ProcessSession], Coroutine[Any, Any, None]]:
+    """Return a factory that subscribes to the multiplexer and keeps the
+    schedule cache warm.
+
+    The task runs for the process lifetime, draining pipeline events from
+    a subscriber queue and forwarding each ``next_trigger_changed`` frame
+    to :func:`~alphamind.command_center.views.live_operations.update_schedule_cache`.
+    All other event types are silently discarded (``update_schedule_cache``
+    guards on event_type internally).
+
+    The subscriber queue has the standard capacity
+    (``DEFAULT_SUBSCRIBER_QUEUE_MAXSIZE``) and drops oldest on overflow —
+    schedule cache updates are idempotent so a skipped frame is benign.
+    """
+
+    from alphamind.command_center._kernel.events import PipelineEvent
+
+    async def factory(_session: ProcessSession) -> None:
+        async with multiplexer.subscribe() as queue:
+            while True:
+                event = await queue.get()
+                if isinstance(event, PipelineEvent):
+                    update_schedule_cache(event)
 
     return factory
 
@@ -569,11 +608,19 @@ def build_app(
         "events_monitor_consumer": _make_monitor_consumer_factory(
             client=events_monitor_client, multiplexer=event_multiplexer
         ),
+        # Story 05b (ALP-672) — keeps the /api/views/schedule cache warm.
+        "schedule_cache_subscriber": _make_schedule_cache_subscriber_factory(
+            multiplexer=event_multiplexer
+        ),
     }
     app.include_router(build_events_router())
 
     # Mount the control router (story 04a / ALP-668) under /api/control.
     app.include_router(build_control_router(), prefix="/api/control")
+
+    # Mount the views router (story 05b / ALP-672) under /api/views —
+    # serves /api/views/live + /api/views/schedule.
+    app.include_router(build_views_router(), prefix="/api/views")
 
     # Mount the run history router (story 05c / ALP-673) under
     # /api/views/history.  Story 05d will add per-invocation detail
