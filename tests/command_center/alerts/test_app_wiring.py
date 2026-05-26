@@ -180,6 +180,106 @@ def test_alert_engine_task_factory_no_ops_when_engine_none(
         asyncio.run(factory(session))
 
 
+def test_alert_engine_factory_waits_for_lifespan(
+    configs: tuple[Path, Path],
+) -> None:
+    """Regression for finding #3 (Wave-5 review).
+
+    The supervisor registers the alerts factory before the FastAPI
+    lifespan fires, so the engine isn't yet present when the factory
+    first reads ``app.state``. The previous implementation returned a
+    clean "no engine wired" with an info log; the supervisor's
+    TaskGroup-as-fail-fast contract then cancelled everything, with no
+    error visible to the operator. The fix polls until the engine
+    appears (or the budget elapses) — exercise the polling path by
+    invoking the factory while ``app.state`` is bare, then attaching
+    the engine mid-poll and asserting the factory dispatches to
+    ``engine.run``.
+    """
+    import asyncio
+    from datetime import UTC, datetime
+
+    from alphamind.command_center.session import ProcessSession
+
+    config_dir, _ = configs
+    # Build the app but do NOT enter the TestClient context — the lifespan
+    # hasn't run so ``alert_engine`` is missing from ``app.state``.
+    app = build_app(
+        command_center_config=load_command_center_config(config_dir),
+        security_config=load_security_config(config_dir),
+        alerts_config=load_alerts_config(config_dir),
+        alerts_overrides=AlertsOverrides(discord_channel=FakeDiscordChannel()),
+    )
+    # Confirm the prerequisite: the engine slot is not yet populated.
+    assert not hasattr(app.state, "alert_engine")
+
+    factory = app.state.alert_engine_task_factory
+    session = ProcessSession(
+        process_lifetime_id="plt-test",
+        started_at=datetime.now(UTC),
+    )
+
+    ran = asyncio.Event()
+
+    class _FakeEngine:
+        async def run(self) -> None:
+            ran.set()
+
+    async def _drive() -> None:
+        factory_task = asyncio.create_task(factory(session))
+        # Wait one poll interval so the factory is in its polling loop,
+        # then publish the engine. The factory must dispatch to
+        # _FakeEngine.run rather than returning early.
+        await asyncio.sleep(0.2)
+        app.state.alert_engine = _FakeEngine()
+        await asyncio.wait_for(ran.wait(), timeout=2.0)
+        factory_task.cancel()
+        # The cancellation propagates as CancelledError out of engine.run
+        # — _FakeEngine.run already returned, so the factory completed
+        # cleanly and we don't need to await further.
+
+    asyncio.run(_drive())
+
+
+def test_alert_engine_factory_raises_after_budget(
+    configs: tuple[Path, Path],
+) -> None:
+    """If the lifespan never wires the engine, the factory fails loud.
+
+    The previous early-return-on-missing-engine masked a startup-
+    ordering bug as "alerts intentionally disabled"; the fix raises so
+    the supervisor's TaskGroup propagates the error to the operator
+    with a traceback.
+    """
+    import asyncio
+    from datetime import UTC, datetime
+
+    from alphamind.command_center import app as app_module
+    from alphamind.command_center.session import ProcessSession
+
+    config_dir, _ = configs
+    app = build_app(
+        command_center_config=load_command_center_config(config_dir),
+        security_config=load_security_config(config_dir),
+        alerts_config=load_alerts_config(config_dir),
+        alerts_overrides=AlertsOverrides(discord_channel=FakeDiscordChannel()),
+    )
+    factory = app.state.alert_engine_task_factory
+    session = ProcessSession(
+        process_lifetime_id="plt-test",
+        started_at=datetime.now(UTC),
+    )
+
+    # Override the budget so the test doesn't sleep 30s.
+    original_budget = app_module._ALERTS_ENGINE_WIRE_BUDGET_SECONDS
+    app_module._ALERTS_ENGINE_WIRE_BUDGET_SECONDS = 0.3
+    try:
+        with pytest.raises(RuntimeError, match="alert engine was never wired"):
+            asyncio.run(factory(session))
+    finally:
+        app_module._ALERTS_ENGINE_WIRE_BUDGET_SECONDS = original_budget
+
+
 @pytest.fixture(autouse=True)
 def _anyio_backend() -> str:
     return "asyncio"

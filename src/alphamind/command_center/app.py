@@ -65,6 +65,7 @@ Per the parent-issue architectural invariants:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import secrets
@@ -387,6 +388,25 @@ def _wire_alert_engine(
     )
 
 
+_ALERTS_ENGINE_WIRE_POLL_SECONDS = 0.1
+"""Sleep between polls of ``app.state.alert_engine`` in the factory.
+
+The supervisor registers the alerts factory before the FastAPI lifespan
+fires, so the engine isn't yet present when the factory first reads
+``app.state``. Poll cheaply until it appears (or until the budget
+expires).
+"""
+
+_ALERTS_ENGINE_WIRE_BUDGET_SECONDS = 30.0
+"""How long the alerts factory waits for the engine to be wired.
+
+If the lifespan hasn't published the engine after this budget, the
+factory raises — propagating to the supervisor → daemon fails fast with
+a traceback rather than silently exiting (the previous early-return
+gave the operator no clue why alerts went dark).
+"""
+
+
 def _make_alerts_engine_factory(
     *,
     app: FastAPI,
@@ -397,21 +417,49 @@ def _make_alerts_engine_factory(
     :class:`ProcessSession`; the factory pulls the engine off
     ``app.state.alert_engine`` (constructed inside the FastAPI
     lifespan, which runs before the Uvicorn server accepts requests).
-    The supervisor registers this factory at startup; the lifespan
-    publishes the engine to app.state before the factory is invoked.
 
-    A None engine means alerts are disabled (a test path or a
-    configuration where the rules list is empty); the factory returns
-    immediately so the supervisor's task tree carries one less
-    long-running coroutine rather than crashing.
+    Race against lifespan startup (F3 / finding #3): the supervisor
+    registers this factory at build_app time, which can run *before*
+    the lifespan's :func:`_wire_alert_engine` has attached the engine
+    to ``app.state``. The previous synchronous early-return would
+    silently treat that race as "alerts disabled", crashing the
+    supervisor's TaskGroup-as-fail-fast contract on the operator's first
+    real startup. Poll briefly until the engine appears.
+
+    An ``app.state.alert_engine`` explicitly set to ``None`` (the
+    "alerts intentionally disabled" path used by tests + configurations
+    with no rules) is honored — the factory returns cleanly so the
+    supervisor's task tree carries one less long-running coroutine
+    rather than crashing.
+
+    If the engine still isn't wired after
+    :data:`_ALERTS_ENGINE_WIRE_BUDGET_SECONDS`, raise — propagates to
+    the supervisor → daemon fails fast with a traceback.
     """
 
     async def factory(_session: ProcessSession) -> None:
-        engine: AlertEngine | None = getattr(app.state, "alert_engine", None)
-        if engine is None:
-            log.info("alerts_engine task: no engine wired; skipping run")
-            return
-        await engine.run()
+        budget = _ALERTS_ENGINE_WIRE_BUDGET_SECONDS
+        elapsed = 0.0
+        while True:
+            # ``hasattr`` distinguishes "lifespan set it to None on purpose"
+            # from "lifespan hasn't run yet". The former is honored as a
+            # clean shutdown; the latter is the race we poll through.
+            if hasattr(app.state, "alert_engine"):
+                engine: AlertEngine | None = app.state.alert_engine
+                if engine is None:
+                    log.info("alerts_engine task: no engine wired; skipping run")
+                    return
+                await engine.run()
+                return
+            if elapsed >= budget:
+                msg = (
+                    "alert engine was never wired onto app.state.alert_engine "
+                    f"within {budget:.0f}s; lifespan failed to run "
+                    "_wire_alert_engine. This is a startup-ordering bug."
+                )
+                raise RuntimeError(msg)
+            await asyncio.sleep(_ALERTS_ENGINE_WIRE_POLL_SECONDS)
+            elapsed += _ALERTS_ENGINE_WIRE_POLL_SECONDS
 
     return factory
 
