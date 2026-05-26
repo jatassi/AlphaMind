@@ -899,7 +899,7 @@ class TestHotReload:
         )
         # The baseline must be populated from disk so the first reload's
         # channels diff has a meaningful "previous" to compare against.
-        assert engine._previous_config is not None  # type: ignore[attr-defined]
+        assert engine._previous_config is not None
 
     @pytest.mark.asyncio
     async def test_no_debounce_orphan_on_hot_reload_race(
@@ -957,15 +957,15 @@ class TestHotReload:
         # Pre-fix the post-removal evaluate would write
         # _debounce[(name, key)] = entry — an orphan. Post-fix the
         # write is skipped.
-        async with engine._rules_lock:  # type: ignore[attr-defined]
-            engine._apply_rule_diff_locked(())  # type: ignore[attr-defined]
+        async with engine._rules_lock:
+            engine._apply_rule_diff_locked(())
         state = AlertEvaluatorState(now=_NOW, foreign_reader_factory=None)
-        outcome = await engine._evaluate_one(  # type: ignore[attr-defined]
+        outcome = await engine._evaluate_one(
             firing_rule, event=None, state=state, now=_NOW
         )
         assert outcome.fired is False
         # The debounce table must be empty — no orphan entry survived.
-        assert engine._debounce == {}  # type: ignore[attr-defined]
+        assert engine._debounce == {}
 
 
 # Suppress unused-symbol warning.

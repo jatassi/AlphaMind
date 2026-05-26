@@ -327,7 +327,7 @@ def test_alerts_data_dir_survives_hot_reload(
         # the dormant placeholder) when re-invoked. The builder is
         # private to the engine; ``_rules_builder`` is the attribute the
         # constructor stashes.
-        rebuilt = engine._rules_builder(app.state.alerts_config)  # type: ignore[attr-defined]
+        rebuilt = engine._rules_builder(app.state.alerts_config)
         rebuilt_disk = next(r for r in rebuilt if str(r.name) == "data_directory_disk_pressure")
         assert isinstance(rebuilt_disk.condition, DataDirectoryDiskPressureCondition)
 
