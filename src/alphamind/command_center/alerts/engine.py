@@ -240,7 +240,25 @@ class AlertEngine:
         # Hot-reload state.
         self._alerts_config_path = alerts_config_path
         self._rules_builder = rules_builder
+        # Lazy-load the baseline ``AlertsConfig`` from disk when the
+        # caller wired hot-reload (``alerts_config_path`` + ``rules_builder``)
+        # but omitted ``initial_config`` (Wave-6 finding #15). Without
+        # a baseline the first reload's :meth:`_non_rules_section_differs`
+        # short-circuits to False and the channels-section change banner
+        # is silently dropped. Loading at construction keeps the contract
+        # explicit — production wires both, tests may rely on the lazy
+        # path.
         self._previous_config: AlertsConfig | None = initial_config
+        if (
+            self._previous_config is None
+            and alerts_config_path is not None
+            and alerts_config_path.exists()
+        ):
+            # Import here so the module doesn't take a load-time
+            # dependency on the loader chain.
+            from alphamind.command_center.config import load_alerts_config
+
+            self._previous_config = load_alerts_config(alerts_config_path.parent)
         self._config_watch_interval = config_watch_interval_seconds
         self._last_mtime_ns: int | None = (
             alerts_config_path.stat().st_mtime_ns

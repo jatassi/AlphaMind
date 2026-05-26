@@ -862,6 +862,46 @@ class TestHotReload:
         assert diff is not None and diff.added == (alert_rule_name("b"),)
 
     @pytest.mark.asyncio
+    async def test_baseline_lazy_loaded_when_initial_config_omitted(
+        self,
+        cc_writer_factory: async_sessionmaker[AsyncSession],
+        fixed_clock: Any,
+        tmp_path: Any,
+    ) -> None:
+        """Wave-6 finding #15 — hot-reload wiring without initial_config.
+
+        Pre-fix the constructor stored ``initial_config`` verbatim (may
+        be None) on ``_previous_config``. The first reload after
+        startup then called ``_non_rules_section_differs`` which
+        early-returns False when ``_previous_config is None`` — the
+        channels-section restart banner silently never fired.
+
+        Post-fix the constructor lazy-loads the baseline from the
+        on-disk YAML when ``initial_config`` is omitted, so the first
+        reload's channels-section diff is meaningful.
+        """
+        path = tmp_path / "alerts.yaml"
+        path.write_text(_alerts_yaml_with_rules([]), encoding="utf-8")
+        rule = _make_test_rule("baseline")
+
+        def _builder(_config: AlertsConfig) -> tuple[AlertRule, ...]:
+            return (rule,)
+
+        engine = AlertEngine(
+            rules=[rule],
+            multiplexer=EventMultiplexer(),
+            cc_writer_factory=cc_writer_factory,
+            discord_channel=FakeDiscordChannel(),
+            clock=fixed_clock,
+            alerts_config_path=path,
+            rules_builder=_builder,
+            # initial_config intentionally omitted; expect lazy load.
+        )
+        # The baseline must be populated from disk so the first reload's
+        # channels diff has a meaningful "previous" to compare against.
+        assert engine._previous_config is not None  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
     async def test_no_debounce_orphan_on_hot_reload_race(
         self,
         cc_writer_factory: async_sessionmaker[AsyncSession],
