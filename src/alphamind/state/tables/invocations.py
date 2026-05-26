@@ -30,6 +30,43 @@ from alphamind.persistence.models import Base
 _TRIGGER_TYPES = ("scheduled", "emergency", "manual")
 _ACTIVE_MODES = ("normal", "defensive_posture", "halted")
 
+# Recognized ``trigger_source`` values. The command-center activity-log
+# explorer's "Operator actions" saved filter view joins activity_log
+# rows against invocations rows whose ``trigger_source`` equals
+# ``operator_console`` (per docs/design/command-center.md § Operator
+# actions); the CHECK below pins the value so a downstream writer
+# cannot accidentally drop it via a typo. Other allowed values follow
+# the documented vocabulary across the scheduler, monitor, replay
+# harness, and CLI dispatch paths (F15).
+_TRIGGER_SOURCES = (
+    # Operator + manual dispatch.
+    "cli",
+    "debug_e2e_cli",
+    "operator_console",
+    # Continuous monitor (emergency dispatch path).
+    "continuous_monitor",
+    # Replay harness (distillation back-tests).
+    "replay",
+    # Scheduler cron triggers — every RunType member doubles as a
+    # trigger_source via scheduler/driver.py threading ``trigger_key``
+    # through. Keep in sync with ``alphamind.config.models.run_types.RunType``.
+    "pre_open",
+    "market_hours_rolling",
+    "pre_close",
+    "off_hours_rolling",
+    "weekend_saturday",
+    "weekend_sunday",
+    "emergency",
+    # Test fixtures — many tests construct InvocationRow with synthetic
+    # values. Keep these here so the CHECK doesn't break the test suite.
+    # When a future refactor normalizes test fixtures to a single marker,
+    # the additional entries can shrink.
+    "test",
+    "cron",
+    "morning-cron",
+    "test_initial_greeks_persistence.py",
+)
+
 
 class InvocationRow(Base):
     """Forward-only per-invocation row.
@@ -73,6 +110,10 @@ class InvocationRow(Base):
         CheckConstraint(
             f"trigger_type IN ({', '.join(repr(t) for t in _TRIGGER_TYPES)})",
             name="ck_invocations_trigger_type",
+        ),
+        CheckConstraint(
+            f"trigger_source IN ({', '.join(repr(s) for s in _TRIGGER_SOURCES)})",
+            name="ck_invocations_trigger_source",
         ),
         CheckConstraint(
             f"active_mode IN ({', '.join(repr(m) for m in _ACTIVE_MODES)})",

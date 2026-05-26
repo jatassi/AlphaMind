@@ -16,6 +16,7 @@ from alphamind.state.tables.corporate_action_integration_ledger import (
 from alphamind.state.tables.drawdown_state import DrawdownStateRow
 from alphamind.state.tables.fill_records import FillRecordRow
 from alphamind.state.tables.invocations import InvocationRow
+from alphamind.state.tables.monitor_halt_mode import MonitorHaltModeRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
@@ -31,6 +32,7 @@ __all__ = [
     "DrawdownStateRow",
     "FillRecordRow",
     "InvocationRow",
+    "MonitorHaltModeRow",
     "OrderRow",
     "PositionRow",
     "ProcessLifetimeRow",

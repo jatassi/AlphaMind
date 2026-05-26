@@ -157,7 +157,7 @@ class TestConfigurationRegistry:
         from alphamind.portfolio_state.events import configuration
 
         keys = {entry[0] for entry in configuration._REGISTRY}
-        assert keys == {EventType.DISTILLATION_CONFIG_CHANGE}
+        assert keys == {EventType.DISTILLATION_CONFIG_CHANGE, EventType.PROFILE_SWITCHED}
 
 
 class TestAggregatedDispatch:

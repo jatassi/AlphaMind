@@ -15,6 +15,39 @@ uv run lint-imports
 
 Alert the user before disabling the linter or any rule in any form — including `ignore`, `per-file-ignores`, `# noqa`, `# type: ignore`, and `ignore_imports`. If a subagent suppresses the linter, do not pause execution to alert user. Instead, assess whether each suppression was warranted and fix unwarranted suppressions.
 
+### Frontend (command center)
+
+Frontend toolchain is **bun** (not npm). Lockfile is `bun.lock`. Run the frontend linter
++ formatter + typecheck + tests after every batch of TypeScript / React changes in
+`src/alphamind/command_center/frontend/`:
+
+```bash
+cd src/alphamind/command_center/frontend
+bun install                 # idempotent; ensures node_modules reflects bun.lock
+bun run lint                # ESLint 9 flat config — must exit zero
+bun run format:check        # Prettier 3 — must exit zero (use `bun run format` to autofix)
+bun run typecheck           # tsc -b --noEmit — must exit zero
+bun run test                # Vitest run mode — must exit zero
+```
+
+Config files are `eslint.config.js` and `.prettierrc`, mirrored verbatim from `~/Git/SlipStream/web/`.
+Same rule customizations apply (max-lines 350, max-lines-per-function 50, max-depth 3, max-params 3,
+complexity 10, banned TS enums in favor of `as const` objects, kebab-case filenames). The alert
+discipline from the Python side carries over: never disable a rule (via `// eslint-disable-*` or
+`eslintrc` overrides) without alerting the operator first.
+
+Build commands:
+
+```bash
+bun run dev                 # Vite dev server :5173, proxies API/auth/events/healthz to FastAPI :8080
+bun run build               # tsc -b && vite build → dist/ (consumed by FastAPI StaticFiles mount)
+bun run generate-types      # openapi-typescript codegen from /openapi.json → src/api/openapi.d.ts
+```
+
+Dev workflow runs Vite + FastAPI side-by-side. Set `COMMAND_CENTER_DEV_MODE=1` on the FastAPI
+daemon so its StaticFiles mount is skipped (Vite serves the SPA at :5173 and proxies API calls
+through to FastAPI at :8080).
+
 ## Testing
 
 **Do not run the full pytest suite locally.** CI (`.github/workflows/ci.yml`) runs the full suite on a Windows runner against every PR and every push to `main`; that is the authoritative gate. Local full-suite runs are too resource-intensive to do on every change, so they are forbidden by default — the CI run is what blesses the diff.

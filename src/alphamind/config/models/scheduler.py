@@ -12,7 +12,14 @@ runtime knobs per parent decision (D):
 * ``supervisor_shutdown_timeout_seconds`` — per-task cancellation budget
   the ``PipelineSupervisor`` enforces at shutdown.
 
-These three are scheduler-runtime knobs loaded directly at process start,
+ALP-664 (this) adds:
+
+* ``control_port`` — TCP port the loopback-bound FastAPI + Uvicorn
+  ``/control`` + ``/events`` surface listens on inside the
+  pipeline-scheduler process.  The command-center backend's
+  ``/api/control`` proxy is the only client.
+
+These four are scheduler-runtime knobs loaded directly at process start,
 not resolver-cascade values.
 """
 
@@ -36,6 +43,10 @@ class SchedulerConfig(BaseModel):
     emergency_poll_interval_seconds: int = Field(ge=1)
     market_calendar_exchange: str = Field(min_length=1)
     supervisor_shutdown_timeout_seconds: int = Field(ge=1)
+    # ALP-664 — loopback-bound /control + /events surface port. Default
+    # 8765 matches the design doc; the field is optional so existing
+    # ``scheduler.yaml`` files that predate ALP-664 continue to load.
+    control_port: int = Field(default=8765, ge=1, le=65535)
     triggers: dict[str, str]
 
     @field_validator("triggers")

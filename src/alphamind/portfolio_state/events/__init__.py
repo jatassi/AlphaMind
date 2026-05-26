@@ -55,6 +55,7 @@ from alphamind.portfolio_state.events.codec import decode_detail, encode_detail
 from alphamind.portfolio_state.events.configuration import (
     DistillationConfigChange,
     DistillationConfigChangeDetail,
+    ProfileSwitchedDetail,
 )
 from alphamind.portfolio_state.events.corporate_action import (
     CorporateActionAppliedDetail,
@@ -215,6 +216,7 @@ AnyDetailType = (
     | ReconciliationAlertDetail
     | ReconciliationCorrectionDetail
     | DistillationConfigChangeDetail
+    | ProfileSwitchedDetail
 )
 
 
@@ -270,6 +272,7 @@ __all__ = [
     "PositionOpenMechanism",
     "PositionOpenedDetail",
     "PositionReducedDetail",
+    "ProfileSwitchedDetail",
     "ReconciliationAlertDetail",
     "ReconciliationCorrectionDetail",
     "RiskLimitApproachedDetail",

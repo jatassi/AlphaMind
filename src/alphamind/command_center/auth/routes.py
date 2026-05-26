@@ -1,0 +1,798 @@
+"""FastAPI router for the auth surface (story 03 / ALP-667).
+
+Five endpoints:
+
+* ``POST /auth/register/begin`` — Returns registration options. Gated by
+  the setup token at first launch; requires an existing-session bearer
+  after the first credential lands.
+* ``POST /auth/register/complete`` — Accepts the browser's
+  ``navigator.credentials.create()`` response, verifies via
+  :class:`alphamind.command_center.auth.webauthn.WebauthnVerifier`,
+  persists the credential, issues a session.
+* ``POST /auth/login/begin`` — Returns authentication options.
+* ``POST /auth/login/complete`` — Accepts the browser's
+  ``navigator.credentials.get()`` response, verifies, updates the
+  credential's sign count, issues a session.
+* ``POST /auth/logout`` — Deletes the session row + clears cookies.
+  CSRF-required (the session cookie + ``X-CSRF-Token`` must both be
+  present).
+
+Pydantic models live next to the router (P5: Pydantic at boundaries
+only — this is the boundary). Internal logic operates on the frozen
+dataclasses from :mod:`alphamind.command_center.auth.webauthn`.
+
+Cookie discipline (parent issue invariant E + design § Authentication):
+``cc_session`` and ``cc_csrf`` set with ``HttpOnly`` (session only —
+``cc_csrf`` is NOT HttpOnly since the frontend JS must read it for the
+``X-CSRF-Token`` echo), ``SameSite=Strict``, ``Secure``. The
+``Secure`` flag is configurable because v1 is loopback-only.
+"""
+
+from __future__ import annotations
+
+import logging
+import secrets
+import time
+from collections.abc import Callable
+from typing import Annotated, Any
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
+from pydantic import BaseModel, ConfigDict, Field
+from webauthn.helpers.exceptions import WebAuthnException
+
+from alphamind.command_center._kernel.ids import (
+    OperatorSessionId,
+    operator_session_id,
+    webauthn_credential_id,
+)
+from alphamind.command_center.auth.dependencies import (
+    csrf_required,
+    csrf_required_pre_session,
+    current_session,
+)
+from alphamind.command_center.auth.repository import (
+    SignCountRaceError,
+    insert_credential,
+    insert_session,
+    list_credentials,
+    load_credential,
+    load_session,
+    update_credential_sign_count,
+)
+from alphamind.command_center.auth.sessions import (
+    SessionCookiePayload,
+    encode_session_cookie,
+    format_expires_at,
+    hash_csrf_token,
+    mint_csrf_token,
+)
+from alphamind.command_center.auth.setup_token import (
+    SetupTokenAlreadyConsumedError,
+    SetupTokenMismatchError,
+)
+from alphamind.command_center.auth.webauthn import (
+    AuthenticationOptions,
+    AuthenticationResponse,
+    RegistrationOptions,
+    RegistrationResponse,
+)
+from alphamind.command_center.persistence.codecs import (
+    OperatorSessionRecord,
+    WebauthnCredentialRecord,
+)
+
+__all__ = ["build_auth_router"]
+
+log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Per-process challenge bookkeeping.
+# ---------------------------------------------------------------------------
+#
+# WebAuthn ceremonies pair a generated challenge with the response that
+# echoes it. The browser stores the challenge between the begin and
+# complete calls; on the server side we must remember the issued
+# challenge so the verify step can match. The in-memory store below is
+# keyed by the relying-party-issued challenge token (a separate random
+# value) which the begin response returns to the browser and the
+# complete request echoes back.
+
+
+_CHALLENGE_TTL_SECONDS = 300
+"""Five-minute TTL on stashed challenges (F7).
+
+Matches the typical WebAuthn ceremony budget: the browser usually
+completes the user gesture + biometric in well under a minute, and any
+half-completed registration past five minutes is operator abandonment.
+The eviction sweep on each ``stash_*`` call drops anything older than
+this boundary.
+"""
+
+_CHALLENGE_STORE_MAX_ENTRIES = 1024
+"""Hard cap on stashed entries; FIFO-evict on overflow (F7)."""
+
+
+class _ChallengeStore:
+    """Per-process in-memory challenge cache.
+
+    Registration: ``{token: (challenge_bytes, user_id_bytes, stashed_at)}``.
+    Authentication: ``{token: (challenge_bytes, stashed_at)}``.
+
+    Tokens auto-expire on consumption (one-shot). Stale entries are
+    evicted by a sweep that runs on each ``stash_*`` call: any entry
+    older than :data:`_CHALLENGE_TTL_SECONDS` is dropped. A hard cap of
+    :data:`_CHALLENGE_STORE_MAX_ENTRIES` per dict applies FIFO eviction
+    so a probe-driven flood of begin requests can't unbound the store.
+    """
+
+    def __init__(self, *, now: Callable[[], float] = time.monotonic) -> None:
+        # Insertion-ordered dicts; pop oldest first via popitem(last=False)
+        # is not available on plain dict, but Python's dict guarantees
+        # insertion order so iter(...) + next(...) gives the oldest key.
+        self._registration: dict[str, tuple[bytes, bytes, float]] = {}
+        self._authentication: dict[str, tuple[bytes, float]] = {}
+        self._now = now
+
+    def stash_registration(self, *, token: str, challenge: bytes, user_id: bytes) -> None:
+        self._evict_stale()
+        self._evict_overflow_registration()
+        self._registration[token] = (challenge, user_id, self._now())
+
+    def pop_registration(self, token: str) -> tuple[bytes, bytes] | None:
+        entry = self._registration.pop(token, None)
+        if entry is None:
+            return None
+        challenge, user_id, stashed_at = entry
+        if self._now() - stashed_at > _CHALLENGE_TTL_SECONDS:
+            # Entry was already expired at consumption time — treat as
+            # missing to mirror the eviction sweep's effect.
+            return None
+        return challenge, user_id
+
+    def stash_authentication(self, *, token: str, challenge: bytes) -> None:
+        self._evict_stale()
+        self._evict_overflow_authentication()
+        self._authentication[token] = (challenge, self._now())
+
+    def pop_authentication(self, token: str) -> bytes | None:
+        entry = self._authentication.pop(token, None)
+        if entry is None:
+            return None
+        challenge, stashed_at = entry
+        if self._now() - stashed_at > _CHALLENGE_TTL_SECONDS:
+            return None
+        return challenge
+
+    def _evict_stale(self) -> None:
+        """Drop entries older than the TTL boundary on both maps."""
+        cutoff = self._now() - _CHALLENGE_TTL_SECONDS
+        stale_reg = [tok for tok, (_, _, ts) in self._registration.items() if ts < cutoff]
+        for tok in stale_reg:
+            del self._registration[tok]
+        stale_auth = [tok for tok, (_, ts) in self._authentication.items() if ts < cutoff]
+        for tok in stale_auth:
+            del self._authentication[tok]
+
+    def _evict_overflow_registration(self) -> None:
+        """FIFO-evict oldest registration entries until under the cap."""
+        while len(self._registration) >= _CHALLENGE_STORE_MAX_ENTRIES:
+            oldest = next(iter(self._registration))
+            del self._registration[oldest]
+
+    def _evict_overflow_authentication(self) -> None:
+        """FIFO-evict oldest authentication entries until under the cap."""
+        while len(self._authentication) >= _CHALLENGE_STORE_MAX_ENTRIES:
+            oldest = next(iter(self._authentication))
+            del self._authentication[oldest]
+
+
+# ---------------------------------------------------------------------------
+# Pydantic request / response models (boundary layer).
+# ---------------------------------------------------------------------------
+
+
+class _StrictModel(BaseModel):
+    """Base class for auth request / response models.
+
+    ``extra='forbid'`` so a typo in a body or extra-field probing surfaces
+    as 422 rather than silently flowing through. ``frozen=True`` so
+    consumers can't mutate the validated request mid-handler.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class RegisterBeginRequest(_StrictModel):
+    """Body of ``POST /auth/register/begin``.
+
+    ``setup_token`` is required on the first registration (when there
+    are zero credentials); subsequent registrations require an existing
+    session cookie and ignore the field. ``user_name`` is the
+    relying-party-visible operator label.
+    """
+
+    setup_token: str | None = None
+    user_name: str = Field(min_length=1)
+
+
+class RegisterBeginResponse(_StrictModel):
+    challenge_token: str
+    challenge: str  # base64url
+    user_id: str  # base64url
+    user_name: str
+    relying_party_id: str
+    relying_party_name: str
+    existing_credentials: list[str]
+
+
+class RegisterCompleteRequest(_StrictModel):
+    """Body of ``POST /auth/register/complete``.
+
+    The four blob fields (``client_data_json``, ``attestation_object``)
+    carry the browser's raw ``navigator.credentials.create()`` output as
+    base64url-encoded strings; the route handler decodes them via
+    :func:`_b64url_decode` before constructing the
+    :class:`RegistrationResponse` the verifier consumes.
+    """
+
+    challenge_token: str
+    credential_id: str
+    client_data_json: str  # base64url
+    attestation_object: str  # base64url
+    transports: list[str] = Field(default_factory=list)
+
+
+class LoginBeginResponse(_StrictModel):
+    challenge_token: str
+    challenge: str  # base64url
+    relying_party_id: str
+    allow_credentials: list[str]
+
+
+class LoginCompleteRequest(_StrictModel):
+    """Body of ``POST /auth/login/complete``.
+
+    The five blob fields (``client_data_json``, ``authenticator_data``,
+    ``signature``, optional ``user_handle``) carry the browser's raw
+    ``navigator.credentials.get()`` output as base64url-encoded strings.
+    The parsed ``new_sign_count`` accompanies the bytes; the route
+    handler persists it after verification succeeds.
+
+    ``new_sign_count`` is constrained to ``ge=0`` (not ``ge=1``) because
+    WebAuthn authenticators that don't support counters report 0 forever
+    — see py_webauthn's verify_authentication_response.py § 149. The
+    in-memory + real verifiers enforce strict-increase only when EITHER
+    stored OR new is non-zero, so a 0/0 case is legitimately accepted.
+    """
+
+    challenge_token: str
+    credential_id: str
+    client_data_json: str  # base64url
+    authenticator_data: str  # base64url
+    signature: str  # base64url
+    user_handle: str | None = None  # base64url, optional
+    new_sign_count: int = Field(ge=0)
+
+
+class AuthSuccessResponse(_StrictModel):
+    session_id: str
+    expires_at: str
+    csrf_token: str
+    credential_id: str
+
+
+class SessionInfoResponse(_StrictModel):
+    """Body of ``GET /auth/me``.
+
+    The minimal session snapshot the frontend ``useSession()`` hook needs to
+    decide whether to render the protected layout or redirect to ``/login``.
+    The session row itself stays server-side; the client only sees the id +
+    expiry. CSRF token is NOT returned — it already lives in the
+    ``cc_csrf`` cookie and would only be redundant in the response body.
+    """
+
+    session_id: str
+    expires_at: str
+
+
+# ---------------------------------------------------------------------------
+# Helpers.
+# ---------------------------------------------------------------------------
+
+
+def _b64url_encode(data: bytes) -> str:
+    """Encode *data* as base64url without padding."""
+    import base64
+
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(text: str) -> bytes:
+    """Decode base64url *text* (no padding) back to bytes."""
+    import base64
+
+    padding = "=" * (-len(text) % 4)
+    return base64.urlsafe_b64decode(text + padding)
+
+
+def _get_challenge_store(request: Request) -> _ChallengeStore:
+    """Return the per-process challenge store, lazily constructing it."""
+    store = getattr(request.app.state, "_auth_challenge_store", None)
+    if store is None:
+        store = _ChallengeStore()
+        request.app.state._auth_challenge_store = store
+    return store
+
+
+def _issue_pre_session_csrf_cookie(*, response: Response, request: Request) -> str:
+    """Mint a fresh CSRF token and set the ``cc_csrf`` cookie pre-session.
+
+    Used by ``/auth/register/begin`` + ``/auth/login/begin`` so the
+    browser's JS layer has a cookie to echo via ``X-CSRF-Token`` on the
+    matching complete request. The complete endpoint then verifies the
+    double-submit via :func:`csrf_required_pre_session`.
+
+    The returned token also flows back in the begin response body so
+    the JS can grab it directly without needing to read the cookie (the
+    cookie is NOT HttpOnly anyway, but the response-body path keeps the
+    JS simpler).
+
+    The ``max_age`` matches the challenge TTL (5 minutes) — the cookie
+    serves only the matching complete request. If the operator
+    abandons the ceremony, the cookie expires alongside the stashed
+    challenge (F12 + F7).
+    """
+    csrf_token = mint_csrf_token()
+    cookies_secure = bool(getattr(request.app.state, "cookies_secure", False))
+    csrf_cookie_name = request.app.state.security_config.csrf.cookie_name
+    response.set_cookie(
+        csrf_cookie_name,
+        csrf_token,
+        max_age=_CHALLENGE_TTL_SECONDS,
+        httponly=False,
+        samesite="strict",
+        secure=cookies_secure,
+    )
+    return csrf_token
+
+
+def _issue_session_cookies(
+    *,
+    response: Response,
+    request: Request,
+) -> tuple[OperatorSessionId, str, str]:
+    """Create + persist a fresh operator session; set cookies; return facts.
+
+    Returns ``(session_id, expires_at, csrf_token)``. The caller is
+    responsible for awaiting :func:`insert_session` afterward. Cookies
+    are set with HttpOnly + SameSite=Strict + Secure per parent-issue
+    invariant E; the ``Secure`` flag follows
+    ``app.state.cookies_secure`` so v1 loopback can disable it.
+    """
+    now = request.app.state.clock()
+    duration_hours = request.app.state.security_config.session.duration_hours
+    from datetime import timedelta
+
+    expires_at = format_expires_at(now=now, duration=timedelta(hours=duration_hours))
+    session_id_str = secrets.token_urlsafe(32)
+    sid = operator_session_id(session_id_str)
+    csrf_token = mint_csrf_token()
+    cookie_value = encode_session_cookie(
+        SessionCookiePayload(session_id=sid, expires_at=expires_at),
+        secret=request.app.state.session_signing_secret,
+    )
+    cookies_secure = bool(getattr(request.app.state, "cookies_secure", False))
+    session_cookie_name = request.app.state.security_config.session.cookie_name
+    csrf_cookie_name = request.app.state.security_config.csrf.cookie_name
+    # F12: set max_age so the cookie persists across browser sessions for
+    # the configured duration. Server-side row + cookie signature are
+    # still the authoritative gate; max_age just keeps the browser from
+    # discarding the cookie when the tab closes.
+    max_age_seconds = duration_hours * 3600
+    response.set_cookie(
+        session_cookie_name,
+        cookie_value,
+        max_age=max_age_seconds,
+        httponly=True,
+        samesite="strict",
+        secure=cookies_secure,
+    )
+    # cc_csrf is NOT HttpOnly — the frontend JS must read it to echo
+    # via the X-CSRF-Token header.
+    response.set_cookie(
+        csrf_cookie_name,
+        csrf_token,
+        max_age=max_age_seconds,
+        httponly=False,
+        samesite="strict",
+        secure=cookies_secure,
+    )
+    return sid, expires_at, csrf_token
+
+
+# ---------------------------------------------------------------------------
+# Router builder.
+# ---------------------------------------------------------------------------
+
+
+def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes grouped intentionally
+    """Build the ``/auth/*`` router.
+
+    Returned to the FastAPI composition root for ``app.include_router``;
+    the test harness mounts it on a minimal app instead.
+
+    Implementation note: the five route handlers are inner functions so
+    they can close over the router instance and share the request /
+    response shapes. The cyclomatic-complexity and statement-count lint
+    rules are suppressed at the function level because the route bodies
+    are flat (each one is one ceremony), grouped for discoverability
+    (begin + complete + login + logout next to each other), and refactor
+    requirements (e.g. inlined Pydantic boundaries) actually demand the
+    flat layout. If a single route grows complex enough to want its own
+    extraction, do it then — premature extraction would split the
+    boundary across files for no comprehension win.
+    """
+    router = APIRouter(prefix="/auth", tags=["auth"])
+
+    @router.post("/register/begin")
+    async def register_begin(
+        body: RegisterBeginRequest,
+        request: Request,
+        response: Response,
+    ) -> RegisterBeginResponse:
+        cc_factory = request.app.state.cc_writer_session_factory
+        existing = await list_credentials(cc_factory)
+        gate = request.app.state.setup_token_gate
+        # Two enrollment modes:
+        #
+        # 1. First registration — no credentials in the DB. Setup token
+        #    must verify (NOT consume — F8). The matching lock() runs in
+        #    register/complete after insert_credential commits.
+        # 2. Subsequent registration — already-credentialed operator
+        #    adds another passkey. Must present a valid session cookie
+        #    (current_session would 401 if invalid).
+        if not existing:
+            if body.setup_token is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="setup_token required for first registration",
+                )
+            try:
+                gate.verify(body.setup_token)
+            except (SetupTokenMismatchError, SetupTokenAlreadyConsumedError) as exc:
+                log.warning("register_begin: setup token rejected: %s", exc)
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="setup_token rejected",
+                ) from exc
+        else:
+            # Subsequent registration must carry a valid session.
+            # F11: current_session resolves the cookie name from
+            # security_config — no hardcoded "cc_session" reference.
+            await current_session(request)
+
+        verifier = request.app.state.webauthn_verifier
+        user_id = secrets.token_bytes(16)
+        options = verifier.generate_registration_options(
+            user_id=user_id,
+            user_name=body.user_name,
+            existing_credentials=existing,
+        )
+        challenge_token = secrets.token_urlsafe(32)
+        _get_challenge_store(request).stash_registration(
+            token=challenge_token,
+            challenge=options.challenge,
+            user_id=user_id,
+        )
+        # Issue cc_csrf pre-session so the matching /register/complete
+        # call (which is CSRF-required, F3) can verify double-submit.
+        _issue_pre_session_csrf_cookie(response=response, request=request)
+        return RegisterBeginResponse(
+            challenge_token=challenge_token,
+            challenge=_b64url_encode(options.challenge),
+            user_id=_b64url_encode(user_id),
+            user_name=body.user_name,
+            relying_party_id=options.relying_party_id,
+            relying_party_name=request.app.state.security_config.webauthn.relying_party_name,
+            existing_credentials=[str(c) for c in options.existing_credentials],
+        )
+
+    @router.post(
+        "/register/complete",
+        dependencies=[Depends(csrf_required_pre_session)],
+    )
+    async def register_complete(
+        body: RegisterCompleteRequest,
+        request: Request,
+        response: Response,
+    ) -> AuthSuccessResponse:
+        store = _get_challenge_store(request)
+        stash = store.pop_registration(body.challenge_token)
+        if stash is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="challenge_token not recognized",
+            )
+        challenge_bytes, _user_id = stash
+        try:
+            cred_id_typed = webauthn_credential_id(body.credential_id)
+        except ValueError as exc:
+            log.warning("invalid credential_id presented: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="invalid credential_id",
+            ) from exc
+        verifier = request.app.state.webauthn_verifier
+        try:
+            verified = verifier.verify_registration_response(
+                options=RegistrationOptions(
+                    user_id=_user_id,
+                    user_name="",
+                    challenge=challenge_bytes,
+                    relying_party_id=request.app.state.security_config.webauthn.relying_party_id,
+                    existing_credentials=(),
+                ),
+                response=RegistrationResponse(
+                    credential_id=cred_id_typed,
+                    client_data_json=_b64url_decode(body.client_data_json),
+                    attestation_object=_b64url_decode(body.attestation_object),
+                    transports=tuple(body.transports),
+                ),
+            )
+        except (ValueError, WebAuthnException) as exc:
+            log.warning("register_complete: verification failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="registration verification failed",
+            ) from exc
+        now_iso = request.app.state.clock().strftime("%Y-%m-%dT%H:%M:%SZ")
+        cc_factory = request.app.state.cc_writer_session_factory
+        existing_before = await list_credentials(cc_factory)
+        await insert_credential(
+            cc_factory,
+            WebauthnCredentialRecord(
+                credential_id=verified.credential_id,
+                public_key=_b64url_encode(verified.public_key),
+                sign_count=verified.sign_count,
+                transports=",".join(verified.transports),
+                created_at=now_iso,
+            ),
+        )
+        # F8: lock the setup-token gate after the first credential
+        # commits. Idempotent on the gate; only the first registration
+        # transitions it from open → locked.
+        if not existing_before:
+            request.app.state.setup_token_gate.lock()
+        # Issue session immediately so the freshly-enrolled operator is
+        # logged in.
+        sid, expires_at, csrf_token = _issue_session_cookies(
+            response=response,
+            request=request,
+        )
+        await insert_session(
+            cc_factory,
+            OperatorSessionRecord(
+                session_id=sid,
+                credential_id=verified.credential_id,
+                expires_at=expires_at,
+                csrf_token_hash=hash_csrf_token(csrf_token),
+                created_at=now_iso,
+            ),
+        )
+        return AuthSuccessResponse(
+            session_id=sid,
+            expires_at=expires_at,
+            csrf_token=csrf_token,
+            credential_id=verified.credential_id,
+        )
+
+    @router.post("/login/begin")
+    async def login_begin(request: Request, response: Response) -> LoginBeginResponse:
+        cc_factory = request.app.state.cc_writer_session_factory
+        creds = await list_credentials(cc_factory)
+        if not creds:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="no credentials registered — complete enrollment first",
+            )
+        verifier = request.app.state.webauthn_verifier
+        options = verifier.generate_authentication_options(allow_credentials=creds)
+        challenge_token = secrets.token_urlsafe(32)
+        _get_challenge_store(request).stash_authentication(
+            token=challenge_token, challenge=options.challenge
+        )
+        # Issue cc_csrf pre-session so the matching /login/complete call
+        # (which is CSRF-required, F3) can verify double-submit.
+        _issue_pre_session_csrf_cookie(response=response, request=request)
+        return LoginBeginResponse(
+            challenge_token=challenge_token,
+            challenge=_b64url_encode(options.challenge),
+            relying_party_id=options.relying_party_id,
+            allow_credentials=[str(c) for c in options.allow_credentials],
+        )
+
+    @router.post(
+        "/login/complete",
+        dependencies=[Depends(csrf_required_pre_session)],
+    )
+    async def login_complete(
+        body: LoginCompleteRequest,
+        request: Request,
+        response: Response,
+    ) -> AuthSuccessResponse:
+        store = _get_challenge_store(request)
+        challenge_bytes = store.pop_authentication(body.challenge_token)
+        if challenge_bytes is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="challenge_token not recognized",
+            )
+        try:
+            cred_id_typed = webauthn_credential_id(body.credential_id)
+        except ValueError as exc:
+            log.warning("invalid credential_id presented: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="invalid credential_id",
+            ) from exc
+        cc_factory = request.app.state.cc_writer_session_factory
+        stored = await load_credential(cc_factory, credential_id=cred_id_typed)
+        if stored is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="credential not registered",
+            )
+        verifier = request.app.state.webauthn_verifier
+        try:
+            verified = verifier.verify_authentication_response(
+                options=AuthenticationOptions(
+                    challenge=challenge_bytes,
+                    relying_party_id=request.app.state.security_config.webauthn.relying_party_id,
+                    allow_credentials=(cred_id_typed,),
+                ),
+                response=AuthenticationResponse(
+                    credential_id=cred_id_typed,
+                    client_data_json=_b64url_decode(body.client_data_json),
+                    authenticator_data=_b64url_decode(body.authenticator_data),
+                    signature=_b64url_decode(body.signature),
+                    user_handle=(
+                        _b64url_decode(body.user_handle) if body.user_handle is not None else None
+                    ),
+                    new_sign_count=body.new_sign_count,
+                ),
+                stored_public_key=_b64url_decode(stored.public_key),
+                stored_sign_count=stored.sign_count,
+            )
+        except (ValueError, WebAuthnException) as exc:
+            log.warning("login_complete: verification failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="authentication verification failed",
+            ) from exc
+        try:
+            await update_credential_sign_count(
+                cc_factory,
+                credential_id=verified.credential_id,
+                new_sign_count=verified.new_sign_count,
+            )
+        except SignCountRaceError as exc:
+            # F9: another assertion raced ahead OR the authenticator was
+            # cloned. Either way, refuse this session — the operator
+            # can re-authenticate and the surviving counter will reflect
+            # the genuine winner.
+            log.warning("login_complete: sign_count guard fired: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="authentication verification failed",
+            ) from exc
+        now_iso = request.app.state.clock().strftime("%Y-%m-%dT%H:%M:%SZ")
+        sid, expires_at, csrf_token = _issue_session_cookies(
+            response=response,
+            request=request,
+        )
+        await insert_session(
+            cc_factory,
+            OperatorSessionRecord(
+                session_id=sid,
+                credential_id=verified.credential_id,
+                expires_at=expires_at,
+                csrf_token_hash=hash_csrf_token(csrf_token),
+                created_at=now_iso,
+            ),
+        )
+        return AuthSuccessResponse(
+            session_id=sid,
+            expires_at=expires_at,
+            csrf_token=csrf_token,
+            credential_id=verified.credential_id,
+        )
+
+    @router.get("/me")
+    async def me(
+        request: Request,
+        sid: Annotated[OperatorSessionId, Depends(current_session)],
+    ) -> SessionInfoResponse:
+        """Lightweight session probe consumed by the frontend ``useSession()`` hook.
+
+        The protected layout (``_authed.tsx``) calls this on mount; a 200
+        means "session is valid", a 401 means "redirect to /login". Read-only
+        — no CSRF requirement.
+
+        Returns the resolved session id + expiry (looked up from the
+        ``operator_sessions`` row matching the validated session cookie).
+        """
+        cc_factory = request.app.state.cc_writer_session_factory
+        record = await load_session(cc_factory, session_id=sid)
+        if record is None:
+            # current_session would have already 401'd if the row were
+            # missing — defensive guard against a race where the row is
+            # deleted between dependency resolution and this lookup.
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+            )
+        return SessionInfoResponse(session_id=sid, expires_at=record.expires_at)
+
+    @router.post(
+        "/logout",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[Depends(csrf_required)],
+    )
+    async def logout(
+        request: Request,
+        sid: Annotated[OperatorSessionId, Depends(current_session)],
+    ) -> Response:
+        from alphamind.command_center.auth.repository import delete_session
+
+        cc_factory = request.app.state.cc_writer_session_factory
+        await delete_session(cc_factory, session_id=sid)
+        session_cookie_name = request.app.state.security_config.session.cookie_name
+        csrf_cookie_name = request.app.state.security_config.csrf.cookie_name
+        cookies_secure = bool(getattr(request.app.state, "cookies_secure", False))
+        # 204 with explicit ``Set-Cookie`` headers that clear both cookies.
+        # delete_cookie must mirror set_cookie's attributes (samesite,
+        # secure, path) — most browsers ignore a clearing Set-Cookie
+        # whose attributes don't match the original (F5).
+        out = Response(status_code=status.HTTP_204_NO_CONTENT)
+        out.delete_cookie(
+            session_cookie_name,
+            path="/",
+            samesite="strict",
+            secure=cookies_secure,
+            httponly=True,
+        )
+        out.delete_cookie(
+            csrf_cookie_name,
+            path="/",
+            samesite="strict",
+            secure=cookies_secure,
+            httponly=False,
+        )
+        return out
+
+    return router
+
+
+# ---------------------------------------------------------------------------
+# Convenience re-export to suppress unused-import warnings.
+# ---------------------------------------------------------------------------
+
+# Pydantic models are used by the router decorators above; re-export under
+# this name so static analyzers don't drop them.
+_PYDANTIC_MODELS: tuple[type[Any], ...] = (
+    RegisterBeginRequest,
+    RegisterBeginResponse,
+    RegisterCompleteRequest,
+    LoginBeginResponse,
+    LoginCompleteRequest,
+    AuthSuccessResponse,
+    SessionInfoResponse,
+)

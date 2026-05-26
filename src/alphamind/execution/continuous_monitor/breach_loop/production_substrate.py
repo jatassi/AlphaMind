@@ -982,11 +982,18 @@ def make_submit_envelope(
 
     state = build_initial_submit_engine_envelope_state(monitor_session_id=monitor_session_id)
     id_provider = invocation_id_provider or make_invocation_id_provider_sync(session_factory)
+    # F11: serialize state-read / submit / state-rebind so two concurrent
+    # callers cannot read the same prior state, race past
+    # submit_engine_envelope's seen_trigger_ids check, and both rebind the
+    # closure cell — which would let a duplicate trigger_id slip through
+    # the dedup gate. Acquired around the entire async-block since the
+    # state cell is mutated post-await.
+    state_lock = asyncio.Lock()
 
     async def _submit(envelope: OmsEngineEnvelope) -> Any:
         nonlocal state
         invocation_id = await id_provider()
-        async with session_factory() as session:
+        async with state_lock, session_factory() as session:
             handle = InvocationHandle(session=session, invocation_id=invocation_id)
             # ALP-476 — submit_engine_envelope returns ``(result, new_state)``;
             # rebind the closure cell so the dedup frozenset persists across
