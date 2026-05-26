@@ -33,6 +33,7 @@ acts as an overlay, not a wholesale replacement.
 from __future__ import annotations
 
 import os
+from collections import Counter
 from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
@@ -96,6 +97,16 @@ def bind_rules_from_config(
     # engine needs; the round-trip is cheap and keeps the two surfaces'
     # invariants colocated.
     validated = tuple(AlertRuleYaml.model_validate(row.model_dump()) for row in config.rules)
+    # Reject duplicate rule names before building override maps. Two YAML
+    # rows with the same ``name`` would otherwise silently coalesce —
+    # the later row's overrides simply overwrite the earlier — and a
+    # YAML edit that accidentally introduces a duplicate would land
+    # without producing the expected effect.
+    name_counts = Counter(row.name for row in validated)
+    duplicates = sorted(name for name, count in name_counts.items() if count > 1)
+    if duplicates:
+        msg = f"alerts.yaml carries duplicate rule names {duplicates!r}"
+        raise ValueError(msg)
     debounce_overrides: dict[AlertRuleName, timedelta] = {}
     severity_overrides: dict[AlertRuleName, AlertSeverity] = {}
     channel_overrides: dict[AlertRuleName, tuple[str, ...]] = {}

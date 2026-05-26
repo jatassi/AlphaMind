@@ -78,6 +78,37 @@ class TestBindRulesFromConfig:
         rules = bind_rules_from_config(config)
         assert len(rules) == 17
 
+    def test_duplicate_rule_names_raise(self) -> None:
+        """Wave-6 finding #5 — two rows with the same name fail loud.
+
+        Pre-fix the per-name override dicts silently coalesced — the
+        later row overwrote the earlier — so a YAML edit that
+        accidentally duplicated a rule name landed without producing
+        the expected debounce / severity. The fix raises ValueError so
+        the operator catches the mistake at startup.
+        """
+        config = AlertsConfig.model_validate(
+            {
+                "rules": [
+                    {
+                        "name": "pipeline_aborted",
+                        "severity": "critical",
+                        "debounce_minutes": 5,
+                        "channels": ["in_app"],
+                    },
+                    {
+                        "name": "pipeline_aborted",
+                        "severity": "operational",
+                        "debounce_minutes": 99,
+                        "channels": ["in_app"],
+                    },
+                ],
+                "channels": {"discord": {"webhook_url_env": "ALPHAMIND_DISCORD_WEBHOOK"}},
+            }
+        )
+        with pytest.raises(ValueError, match="duplicate rule names"):
+            bind_rules_from_config(config)
+
     def test_extra_keys_in_yaml_row_rejected(self) -> None:
         # Story 06b typed ``AlertsConfig.rules`` as ``list[AlertRuleSpec]``
         # (was ``list[dict[str, object]]``), so the rejection moves from
