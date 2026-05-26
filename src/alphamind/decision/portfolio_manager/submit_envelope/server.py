@@ -40,6 +40,7 @@ from alphamind.decision.portfolio_manager.submit_envelope.process import (
     _process_commands,
     _safe_derive_pm_command_id,
     _serialize_response,
+    _unwrap_envelope_args,
     _validate_envelope_payload,
 )
 from alphamind.decision.portfolio_manager.submit_envelope.types import (
@@ -235,6 +236,12 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     passes Layer-1/2/3 validation routes through
     :func:`dispatch_command_to_broker` before Phase 2 writeback.
     """
+    # Step 0: tolerant unwrap of a single-key ``{"envelope": {...}}`` wrapper
+    # (ALP-700). The LLM occasionally hands in the wrapped form despite the
+    # prompt's inlined examples; the unwrap lets a single retry of the tool
+    # call succeed rather than burning attempts discovering the contract.
+    args = _unwrap_envelope_args(args)
+
     # Step 1: Layer-1 — coerce to PMEnvelope.
     try:
         envelope = _validate_envelope_payload(args)

@@ -1224,6 +1224,118 @@ async def test_layer_1_failure_uses_fallback_envelope_id_when_missing() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 11b. Layer-0 tolerant envelope-wrapper unwrap (ALP-700)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_layer_0_unwraps_envelope_wrapper_key() -> None:
+    """ALP-700: when the LLM wraps the envelope under a single top-level
+    ``envelope`` key (e.g. ``submit_envelope({"envelope": {...}})``) instead
+    of inlining the envelope fields, the wrapper transparently unwraps so
+    the discriminated-union parse succeeds. Observed in the
+    ``inv-20260526T162454Z-f1a4362f`` debug-e2e run where the PM agent
+    burned three tool calls discovering the contract before settling on
+    the inlined form."""
+    envelope = _make_analyst_envelope()
+    get_state, server, _ = _build_state_and_server(envelope_for_routing=envelope)
+
+    wrapped_args: dict[str, Any] = {"envelope": envelope.model_dump(mode="json")}
+
+    text, is_error = await _invoke_mcp_tool(server, "submit_envelope", wrapped_args)
+    assert not is_error, text
+
+    payload = json.loads(text)
+    assert payload["envelope_id"] == "ENV-REC-1"
+    assert len(payload["submission_results"]) == 1
+    result = payload["submission_results"][0]
+    assert result["status"] == "accepted"
+    assert result["acknowledgment"] is not None
+
+    # Cumulative state advanced exactly as if the envelope had been submitted
+    # inlined — the unwrap is a Layer-0 step, not a parallel code path.
+    assert len(get_state().validation_state.accumulated_deltas) == 1
+
+
+@pytest.mark.asyncio
+async def test_layer_0_unwrap_preserves_inner_envelope_id_on_invalid_payload() -> None:
+    """ALP-700: when the wrapped form's inner envelope still fails Pydantic
+    parsing (e.g. an internal field has the wrong shape), the rejection's
+    synthetic command_id carries the inner ``envelope_id`` rather than the
+    legacy ``ENV-REC-INVALID`` fallback. Verifies the unwrap path threads
+    the inner dict through both validation AND the failure-log entry."""
+    from alphamind.decision.portfolio_manager.submit_envelope import get_failed_submission_log
+
+    get_state, server, _ = _build_state_and_server()
+
+    # Inner envelope shape carries a recognizable envelope_id but is missing
+    # source_provenance — the discriminated-union parse still fails, but the
+    # failure log should now surface the inner envelope_id rather than
+    # falling back to "ENV-REC-INVALID".
+    wrapped_bogus: dict[str, Any] = {
+        "envelope": {
+            "envelope_id": "ENV-REC-7",
+            "garbage": "value",
+        },
+    }
+
+    text, _ = await _invoke_mcp_tool(server, "submit_envelope", wrapped_bogus)
+    payload = json.loads(text)
+    assert payload["envelope_id"] == "ENV-REC-7"
+
+    failed_log = get_failed_submission_log(get_state())
+    assert len(failed_log) == 1
+    assert failed_log[0].command_id.endswith(".ENV-REC-7.0.0")
+
+
+@pytest.mark.asyncio
+async def test_layer_0_unwrap_skipped_with_extra_top_level_keys() -> None:
+    """ALP-700: the unwrap fires only when ``envelope`` is the sole top-level
+    key. A payload with both an ``envelope`` wrapper AND sibling fields is
+    not a recognized LLM shape; it falls through to the normal Layer-1
+    failure path so the structural error is surfaced rather than masked."""
+    from alphamind.decision.portfolio_manager.submit_envelope import get_failed_submission_log
+
+    get_state, server, _ = _build_state_and_server()
+
+    envelope = _make_analyst_envelope()
+    extra_keyed: dict[str, Any] = {
+        "envelope": envelope.model_dump(mode="json"),
+        "stray": "value",
+    }
+
+    text, _ = await _invoke_mcp_tool(server, "submit_envelope", extra_keyed)
+    payload = json.loads(text)
+    # No unwrap: top-level lacks source_provenance, so the discriminated-union
+    # parse fails at Layer-1 and the rejection surfaces with the fallback
+    # envelope_id (no top-level envelope_id available either).
+    assert payload["envelope_id"] == "ENV-REC-INVALID"
+    failed_log = get_failed_submission_log(get_state())
+    assert len(failed_log) == 1
+    assert failed_log[0].raw_args == extra_keyed
+
+
+@pytest.mark.asyncio
+async def test_layer_0_unwrap_skipped_when_envelope_value_not_dict() -> None:
+    """ALP-700: a top-level ``envelope`` whose value is not a dict (e.g. a
+    string) cannot plausibly contain a discriminator field; the unwrap is
+    skipped and the input falls through to the normal Layer-1 failure path
+    so the original error message is preserved."""
+    from alphamind.decision.portfolio_manager.submit_envelope import get_failed_submission_log
+
+    get_state, server, _ = _build_state_and_server()
+
+    non_dict_envelope: dict[str, Any] = {"envelope": "not-a-dict"}
+
+    text, _ = await _invoke_mcp_tool(server, "submit_envelope", non_dict_envelope)
+    payload = json.loads(text)
+    assert payload["envelope_id"] == "ENV-REC-INVALID"
+    failed_log = get_failed_submission_log(get_state())
+    assert len(failed_log) == 1
+    assert failed_log[0].raw_args == non_dict_envelope
+
+
+# ---------------------------------------------------------------------------
 # 12. SQL writeback — opt-in via injected InvocationHandle (ALP-366)
 # ---------------------------------------------------------------------------
 

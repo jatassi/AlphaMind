@@ -118,6 +118,33 @@ def _validate_envelope_payload(args: dict[str, Any]) -> PMEnvelope:
     return _ENVELOPE_ADAPTER.validate_python(args)
 
 
+def _unwrap_envelope_args(args: dict[str, Any]) -> dict[str, Any]:
+    """Layer-0 tolerant unwrap of a single ``envelope`` wrapper key (ALP-700).
+
+    The ``submit_envelope`` tool's input schema is permissive
+    (``additionalProperties: True``, empty ``properties``) because the SDK
+    validator cannot traverse the discriminated-union shape — Pydantic
+    runs at the handler instead. That permissiveness lets the LLM
+    occasionally hand in ``{"envelope": {<envelope fields>}}`` instead of
+    inlining the envelope fields at the top level; the discriminated-union
+    parse then fails with ``union_tag_not_found`` because ``source_provenance``
+    is one level below where Pydantic looks. Observed in the
+    ``inv-20260526T162454Z-f1a4362f`` debug-e2e run, where the PM agent
+    burned three tool calls discovering the contract.
+
+    Trigger is intentionally narrow: only unwrap when ``envelope`` is the
+    SOLE top-level key and its value is a dict. Payloads with sibling
+    fields fall through to the normal Layer-1 failure path so structural
+    errors are surfaced rather than masked.
+    """
+    if len(args) != 1:
+        return args
+    inner = args.get("envelope")
+    if not isinstance(inner, dict):
+        return args
+    return inner
+
+
 def _format_first_error(exc: ValidationError) -> str:
     """Return the first Pydantic error rendered as ``<field-path>: <message>``."""
     errs = exc.errors()
@@ -692,5 +719,6 @@ __all__ = [
     "_serialize_response",
     "_strategy_legs_for_validation",
     "_strategy_legs_from_persisted",
+    "_unwrap_envelope_args",
     "_validate_envelope_payload",
 ]
