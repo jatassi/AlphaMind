@@ -12,8 +12,6 @@ monitor client into the pipeline consumer" bugs at type-check time.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -51,7 +49,10 @@ class TestFakePipelineEventsClient:
     async def test_yields_canned_frames_in_order(self) -> None:
         client = FakePipelineEventsClient(
             frames=[
-                ("invocation_started", {"invocation_id": "inv-1", "run_type": "market_hours_rolling"}),
+                (
+                    "invocation_started",
+                    {"invocation_id": "inv-1", "run_type": "market_hours_rolling"},
+                ),
                 ("agent_started", {"invocation_id": "inv-1", "agent_name": "analyst"}),
             ]
         )
@@ -77,7 +78,15 @@ class TestFakeMonitorEventsClient:
         client = FakeMonitorEventsClient(
             frames=[
                 ("websocket_connected", {"timestamp": "2026-05-26T00:00:00+00:00"}),
-                ("fill_received", {"order_id": "ord-1", "position_id": "pos-1", "fill_price": 1.0, "fill_qty": 1}),
+                (
+                    "fill_received",
+                    {
+                        "order_id": "ord-1",
+                        "position_id": "pos-1",
+                        "fill_price": 1.0,
+                        "fill_qty": 1,
+                    },
+                ),
             ]
         )
         out = await _collect_frames(client)()

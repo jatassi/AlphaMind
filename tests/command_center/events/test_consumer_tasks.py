@@ -46,15 +46,41 @@ class TestPipelineConsumerParsesAndPublishes:
     async def test_publishes_each_pipeline_event_type(self) -> None:
         mux = EventMultiplexer()
         # One frame per pipeline event type (9 members).
-        frames = [
-            ("invocation_started", {"invocation_id": "inv-1", "run_type": "market_hours_rolling"}),
+        frames: list[tuple[str, Mapping[str, Any]]] = [
+            (
+                "invocation_started",
+                {"invocation_id": "inv-1", "run_type": "market_hours_rolling"},
+            ),
             ("phase_transition", {"invocation_id": "inv-1", "phase": "distill"}),
             ("agent_started", {"invocation_id": "inv-1", "agent_name": "analyst"}),
             ("agent_succeeded", {"invocation_id": "inv-1", "agent_name": "analyst"}),
-            ("agent_retrying", {"invocation_id": "inv-1", "agent_name": "analyst", "attempt": 2}),
-            ("agent_failed", {"invocation_id": "inv-1", "agent_name": "analyst", "failure_mode": "timeout"}),
-            ("invocation_ended", {"invocation_id": "inv-1", "status": "completed", "commands_issued": 1}),
-            ("next_trigger_changed", {"next_trigger_at": "2026-05-26T00:00:00+00:00", "next_trigger_type": "pre_close"}),
+            (
+                "agent_retrying",
+                {"invocation_id": "inv-1", "agent_name": "analyst", "attempt": 2},
+            ),
+            (
+                "agent_failed",
+                {
+                    "invocation_id": "inv-1",
+                    "agent_name": "analyst",
+                    "failure_mode": "timeout",
+                },
+            ),
+            (
+                "invocation_ended",
+                {
+                    "invocation_id": "inv-1",
+                    "status": "completed",
+                    "commands_issued": 1,
+                },
+            ),
+            (
+                "next_trigger_changed",
+                {
+                    "next_trigger_at": "2026-05-26T00:00:00+00:00",
+                    "next_trigger_type": "pre_close",
+                },
+            ),
             ("heartbeat", {"timestamp": "2026-05-26T00:00:00+00:00"}),
         ]
         client = FakePipelineEventsClient(frames=frames)
@@ -100,13 +126,35 @@ class TestPipelineConsumerParsesAndPublishes:
 class TestMonitorConsumerParsesAndPublishes:
     async def test_publishes_each_monitor_event_type(self) -> None:
         mux = EventMultiplexer()
-        frames = [
+        frames: list[tuple[str, Mapping[str, Any]]] = [
             ("websocket_connected", {"timestamp": "2026-05-26T00:00:00+00:00"}),
-            ("websocket_disconnected", {"timestamp": "2026-05-26T00:00:01+00:00", "reason": "idle"}),
-            ("fill_received", {"order_id": "o-1", "position_id": "p-1", "fill_price": 1.0, "fill_qty": 1}),
-            ("breach_detected", {"rule": "per_position_max_size", "current_value": 10.0, "limit": 5.0, "response_classification": "immediate"}),
+            (
+                "websocket_disconnected",
+                {"timestamp": "2026-05-26T00:00:01+00:00", "reason": "idle"},
+            ),
+            (
+                "fill_received",
+                {
+                    "order_id": "o-1",
+                    "position_id": "p-1",
+                    "fill_price": 1.0,
+                    "fill_qty": 1,
+                },
+            ),
+            (
+                "breach_detected",
+                {
+                    "rule": "per_position_max_size",
+                    "current_value": 10.0,
+                    "limit": 5.0,
+                    "response_classification": "immediate",
+                },
+            ),
             ("emergency_invocation_triggered", {"reason": "multi_rule_breach"}),
-            ("greeks_refreshed", {"underlying": "AAPL", "refreshed_at": "2026-05-26T00:00:00+00:00"}),
+            (
+                "greeks_refreshed",
+                {"underlying": "AAPL", "refreshed_at": "2026-05-26T00:00:00+00:00"},
+            ),
             ("heartbeat", {"timestamp": "2026-05-26T00:00:00+00:00"}),
         ]
         client = FakeMonitorEventsClient(frames=frames)
@@ -152,7 +200,7 @@ class TestConsumerSkipsUnknownEventTypes:
         import logging
 
         mux = EventMultiplexer()
-        frames = [
+        frames: list[tuple[str, Mapping[str, Any]]] = [
             ("totally_unknown_event", {"some": "payload"}),
             ("heartbeat", {"timestamp": "2026-05-26T00:00:00+00:00"}),
         ]
@@ -214,7 +262,7 @@ class _FlakyClient:
 
             async def fail_gen() -> AsyncIterator[tuple[str, Mapping[str, Any]]]:
                 raise ConnectionError(f"simulated drop #{self.connect_count}")
-                yield  # unreachable; satisfies the generator protocol  # noqa
+                yield  # unreachable; satisfies the generator protocol
 
             yield fail_gen()
         else:
@@ -253,7 +301,7 @@ class TestConsumerReconnectsAfterDrop:
             await asyncio.sleep(0)
             tg.create_task(
                 pipeline_consumer_task(
-                    client=client,  # type: ignore[arg-type]
+                    client=client,
                     multiplexer=mux,
                     rng=random.Random(0),
                     stop_event=stop,
@@ -307,7 +355,7 @@ class TestSiblingIndependence:
             await asyncio.sleep(0)
             tg.create_task(
                 pipeline_consumer_task(
-                    client=pipeline,  # type: ignore[arg-type]
+                    client=pipeline,
                     multiplexer=mux,
                     rng=random.Random(0),
                     stop_event=stop,
@@ -345,8 +393,12 @@ class TestBackoffDelaySchedule:
     def test_unjittered_base_doubles_then_caps(self) -> None:
         from alphamind.command_center.events.multiplexer import _backoff_delay
 
-        # rng.random() == 0.5 => factor 1.0 => return base.
-        class _MidRng:
+        # Subclass random.Random with a fixed-midpoint random() so the
+        # jitter factor evaluates to exactly 1.0 (factor = 1 + 0.25 *
+        # (2 * 0.5 - 1) = 1.0). Using a subclass instead of a duck-typed
+        # stand-in keeps the type checker happy without weakening the
+        # production signature.
+        class _MidRng(random.Random):
             def random(self) -> float:
                 return 0.5
 

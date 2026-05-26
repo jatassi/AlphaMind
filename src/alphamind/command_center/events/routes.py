@@ -46,9 +46,7 @@ from fastapi.responses import StreamingResponse
 
 from alphamind.command_center._kernel.events import (
     MonitorEvent,
-    MonitorEventType,
     PipelineEvent,
-    PipelineEventType,
 )
 from alphamind.command_center.auth.dependencies import current_session
 from alphamind.command_center.events.models import BrowserEventEnvelope
@@ -188,9 +186,7 @@ def build_events_router() -> APIRouter:
                     if await request.is_disconnected():
                         return
                     try:
-                        event = await asyncio.wait_for(
-                            queue.get(), timeout=heartbeat_interval
-                        )
+                        event = await asyncio.wait_for(queue.get(), timeout=heartbeat_interval)
                     except TimeoutError:
                         yield format_heartbeat_frame()
                         continue

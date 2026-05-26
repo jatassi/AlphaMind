@@ -127,9 +127,7 @@ def _parse_sse_text(text: str) -> Iterable[tuple[str, Mapping[str, Any]]]:
             elif line.startswith("data:"):
                 data_text = line[len("data:") :].strip()
         if event_name is None or data_text is None:
-            log.warning(
-                "SSE frame missing event/data line; dropping (frame=%r)", frame[:200]
-            )
+            log.warning("SSE frame missing event/data line; dropping (frame=%r)", frame[:200])
             continue
         try:
             data = json.loads(data_text)
@@ -142,8 +140,7 @@ def _parse_sse_text(text: str) -> Iterable[tuple[str, Mapping[str, Any]]]:
             continue
         if not isinstance(data, dict):
             log.warning(
-                "SSE frame data: line did not decode to an object; dropping "
-                "(event=%s, type=%s)",
+                "SSE frame data: line did not decode to an object; dropping (event=%s, type=%s)",
                 event_name,
                 type(data).__name__,
             )
@@ -207,9 +204,7 @@ class _HttpxSSEClientBase:
                     # in the buffer for the next chunk.
                     while _FRAME_SEPARATOR in buffer:
                         raw_frame, _, buffer = buffer.partition(_FRAME_SEPARATOR)
-                        for name, data in _parse_sse_text(
-                            raw_frame + _FRAME_SEPARATOR
-                        ):
+                        for name, data in _parse_sse_text(raw_frame + _FRAME_SEPARATOR):
                             yield name, data
                 # Drain any trailing data after stream close (rare, but
                 # possible if the upstream terminates without a final

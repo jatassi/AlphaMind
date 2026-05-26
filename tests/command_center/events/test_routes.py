@@ -28,10 +28,8 @@ import asyncio
 import contextlib
 import json
 import socket
-from collections.abc import AsyncIterator
 
 import httpx
-import pytest
 import uvicorn
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -49,7 +47,6 @@ from alphamind.command_center.events.routes import (
     format_heartbeat_frame,
     format_sse_frame,
 )
-
 
 # ---------------------------------------------------------------------------
 # Pure framing helpers
@@ -177,9 +174,7 @@ async def _start_server(
     cookie_name: str = "cc_session",
 ) -> _ServerHandle:
     port = _pick_ephemeral_port()
-    config = uvicorn.Config(
-        app, host="127.0.0.1", port=port, log_config=None, access_log=False
-    )
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
     server = uvicorn.Server(config=config)
 
     async def serve() -> None:
@@ -208,9 +203,7 @@ async def _read_sse_records(
     """Open the SSE stream, drain ``count`` records, return them."""
     records: list[tuple[str, dict[str, object]]] = []
     async with (
-        httpx.AsyncClient(
-            timeout=httpx.Timeout(5.0, read=5.0), cookies=cookies
-        ) as client,
+        httpx.AsyncClient(timeout=httpx.Timeout(5.0, read=5.0), cookies=cookies) as client,
         client.stream("GET", url) as response,
     ):
         assert response.status_code == 200
@@ -386,6 +379,8 @@ class TestSSEEventDelivery:
                         break
             match = next(r for r in records if r[0] == "monitor:fill_received")
             assert match[1]["source"] == "monitor"
-            assert match[1]["data"]["order_id"] == "ord-1"
+            data = match[1]["data"]
+            assert isinstance(data, dict)
+            assert data["order_id"] == "ord-1"
         finally:
             await handle.shutdown()

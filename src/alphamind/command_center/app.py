@@ -213,7 +213,7 @@ def _make_pipeline_consumer_factory(
     *,
     client: PipelineEventsClient,
     multiplexer: EventMultiplexer,
-) -> Callable[[ProcessSession], "Coroutine[Any, Any, None]"]:
+) -> Callable[[ProcessSession], Coroutine[Any, Any, None]]:
     """Bind the pipeline consumer task to the live client + multiplexer.
 
     Returns a factory the supervisor calls with its ``ProcessSession``;
@@ -232,7 +232,7 @@ def _make_monitor_consumer_factory(
     *,
     client: MonitorEventsClient,
     multiplexer: EventMultiplexer,
-) -> Callable[[ProcessSession], "Coroutine[Any, Any, None]"]:
+) -> Callable[[ProcessSession], Coroutine[Any, Any, None]]:
     """Bind the monitor consumer task to the live client + multiplexer."""
 
     async def factory(_session: ProcessSession) -> None:

@@ -145,9 +145,7 @@ class TestSlowConsumerDropOldest:
             del slow, fast  # silence unused warning
             assert True  # the publish loop completed without deadlock
 
-    async def test_slow_consumer_drop_logs_warning(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_slow_consumer_drop_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         import logging
 
         mux = EventMultiplexer(subscriber_queue_maxsize=1)

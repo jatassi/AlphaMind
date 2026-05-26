@@ -23,11 +23,12 @@ the boundary in :mod:`alphamind.command_center.events.models`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import random
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Final, TypeAlias
+from typing import Any, Final
 
 from alphamind.command_center._kernel.events import (
     MonitorEvent,
@@ -43,8 +44,8 @@ from alphamind.command_center.events.clients import (
 __all__ = [
     "BACKOFF_CAP_SECONDS",
     "BACKOFF_INITIAL_SECONDS",
-    "CombinedEvent",
     "DEFAULT_SUBSCRIBER_QUEUE_MAXSIZE",
+    "CombinedEvent",
     "EventMultiplexer",
     "monitor_consumer_task",
     "pipeline_consumer_task",
@@ -58,7 +59,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-CombinedEvent: TypeAlias = PipelineEvent | MonitorEvent
+type CombinedEvent = PipelineEvent | MonitorEvent
 
 
 # ---------------------------------------------------------------------------
@@ -88,8 +89,8 @@ def _backoff_delay(attempt: int, *, rng: random.Random) -> float:
     jitter prevents synchronized reconnect storms when both upstreams
     drop simultaneously (e.g., operator restarts both services).
     """
-    base = min(BACKOFF_INITIAL_SECONDS * (2**attempt), BACKOFF_CAP_SECONDS)
-    factor = 1.0 + _JITTER_FRACTION * (2.0 * rng.random() - 1.0)
+    base: float = min(BACKOFF_INITIAL_SECONDS * (2**attempt), BACKOFF_CAP_SECONDS)
+    factor: float = 1.0 + _JITTER_FRACTION * (2.0 * rng.random() - 1.0)
     return base * factor
 
 
@@ -139,9 +140,7 @@ class EventMultiplexer:
                     event = await asyncio.wait_for(queue.get(), timeout=15)
                     yield format_sse_frame_from(event)
         """
-        queue: asyncio.Queue[CombinedEvent] = asyncio.Queue(
-            maxsize=self._subscriber_queue_maxsize
-        )
+        queue: asyncio.Queue[CombinedEvent] = asyncio.Queue(maxsize=self._subscriber_queue_maxsize)
         async with self._lock:
             self._subscribers.add(queue)
         try:
@@ -180,13 +179,13 @@ class EventMultiplexer:
                     dropped = queue.get_nowait()
                 except asyncio.QueueEmpty:  # pragma: no cover — defensive
                     dropped = None
-                try:
+                # Defensive ``suppress``: a concurrent put can't happen
+                # in our single-producer model, but the guard keeps the
+                # publisher loop intact if it ever does.
+                with contextlib.suppress(asyncio.QueueFull):  # pragma: no cover
                     queue.put_nowait(event)
-                except asyncio.QueueFull:  # pragma: no cover — defensive
-                    pass
                 log.warning(
-                    "subscriber queue full; dropped oldest event "
-                    "(dropped_type=%s, new_type=%s)",
+                    "subscriber queue full; dropped oldest event (dropped_type=%s, new_type=%s)",
                     type(dropped).__name__,
                     type(event).__name__,
                 )
@@ -197,14 +196,51 @@ class EventMultiplexer:
 # ---------------------------------------------------------------------------
 
 
+async def _handle_one_frame[E: CombinedEvent](
+    *,
+    raw_name: str,
+    raw_data: Mapping[str, Any],
+    name: str,
+    event_type_enum: type[PipelineEventType] | type[MonitorEventType],
+    event_factory: Callable[[PipelineEventType | MonitorEventType, dict[str, Any]], E],
+    multiplexer: EventMultiplexer,
+) -> bool:
+    """Process one parsed frame from an upstream SSE stream.
+
+    Returns ``True`` if the frame was published (i.e. the attempt
+    counter should reset), ``False`` if the frame was dropped at the
+    enum-validation or payload-type gate (wire-drift surfacing).
+    """
+    try:
+        event_type = event_type_enum(raw_name)
+    except ValueError:
+        log.warning("%s consumer: unknown event-type %r; dropping", name, raw_name)
+        return False
+    typed_event = event_factory(event_type, dict(raw_data))
+    await multiplexer.publish(typed_event)
+    return True
+
+
+async def _sleep_or_stop(*, delay: float, stop_event: asyncio.Event | None) -> bool:
+    """Sleep ``delay`` seconds; return ``True`` if stop signalled mid-wait."""
+    if stop_event is None:
+        await asyncio.sleep(delay)
+        return False
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=delay)
+    except TimeoutError:
+        return False
+    return True
+
+
 async def _upstream_consumer_loop[E: CombinedEvent](
     *,
     name: str,
     client_stream: Callable[
-        [], AbstractAsyncContextManager[AsyncIterator[tuple[str, object]]]
+        [], AbstractAsyncContextManager[AsyncIterator[tuple[str, Mapping[str, Any]]]]
     ],
     event_type_enum: type[PipelineEventType] | type[MonitorEventType],
-    event_factory: Callable[[PipelineEventType | MonitorEventType, dict[str, object]], E],
+    event_factory: Callable[[PipelineEventType | MonitorEventType, dict[str, Any]], E],
     multiplexer: EventMultiplexer,
     rng: random.Random,
     stop_event: asyncio.Event | None = None,
@@ -214,16 +250,16 @@ async def _upstream_consumer_loop[E: CombinedEvent](
     Loop:
 
     1. Open the client's SSE stream.
-    2. For each parsed frame, look up the event-type enum member; if
-       unknown, log WARNING and continue.
-    3. Construct the typed event via ``event_factory`` and publish.
-    4. On any exception (connection drop, parse error escaping the
+    2. For each parsed frame, dispatch to :func:`_handle_one_frame` —
+       publishes typed events to the multiplexer; logs + drops
+       unknown event-types and non-dict payloads (wire-drift surfacing).
+    3. On any exception (connection drop, parse error escaping the
        client) — log WARNING and back off with jitter; the sibling
        consumer keeps running unaffected.
 
-    Reset the backoff attempt counter on the first published event of
-    a new connection — not on connect alone, because a connection can
-    succeed and then fail before delivering any bytes.
+    Reset the backoff attempt counter on the first successfully-published
+    event of a new connection — not on connect alone, because a
+    connection can succeed and then fail before delivering any bytes.
 
     ``stop_event``: optional; when set, the loop exits at the next
     backoff window. Tests inject this to avoid leaning on task
@@ -236,48 +272,42 @@ async def _upstream_consumer_loop[E: CombinedEvent](
         try:
             async with client_stream() as frames:
                 async for raw_name, raw_data in frames:
-                    try:
-                        event_type = event_type_enum(raw_name)
-                    except ValueError:
-                        log.warning(
-                            "%s consumer: unknown event-type %r; dropping",
-                            name,
-                            raw_name,
-                        )
-                        continue
-                    if not isinstance(raw_data, dict):
-                        log.warning(
-                            "%s consumer: non-dict payload for event %r; dropping",
-                            name,
-                            raw_name,
-                        )
-                        continue
-                    typed_event = event_factory(event_type, dict(raw_data))
-                    await multiplexer.publish(typed_event)
-                    attempt = 0
+                    published = await _handle_one_frame(
+                        raw_name=raw_name,
+                        raw_data=raw_data,
+                        name=name,
+                        event_type_enum=event_type_enum,
+                        event_factory=event_factory,
+                        multiplexer=multiplexer,
+                    )
+                    if published:
+                        attempt = 0
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            log.warning(
-                "%s consumer: upstream stream errored (%s); backing off",
-                name,
-                exc,
-            )
+            log.warning("%s consumer: upstream stream errored (%s); backing off", name, exc)
         delay = _backoff_delay(attempt, rng=rng)
         attempt += 1
         log.info("%s consumer: reconnecting in %.2fs (attempt=%d)", name, delay, attempt)
-        try:
-            if stop_event is not None:
-                # Wait either for the backoff timeout or a stop signal.
-                try:
-                    await asyncio.wait_for(stop_event.wait(), timeout=delay)
-                    return
-                except TimeoutError:
-                    pass
-            else:
-                await asyncio.sleep(delay)
-        except asyncio.CancelledError:
-            raise
+        stopped = await _sleep_or_stop(delay=delay, stop_event=stop_event)
+        if stopped:
+            return
+
+
+def _make_pipeline_event(
+    event_type: PipelineEventType | MonitorEventType,
+    payload: dict[str, Any],
+) -> PipelineEvent:
+    assert isinstance(event_type, PipelineEventType)
+    return PipelineEvent(event_type=event_type, payload=payload)
+
+
+def _make_monitor_event(
+    event_type: PipelineEventType | MonitorEventType,
+    payload: dict[str, Any],
+) -> MonitorEvent:
+    assert isinstance(event_type, MonitorEventType)
+    return MonitorEvent(event_type=event_type, payload=payload)
 
 
 async def pipeline_consumer_task(
@@ -299,7 +329,7 @@ async def pipeline_consumer_task(
         name="pipeline",
         client_stream=client.stream,
         event_type_enum=PipelineEventType,
-        event_factory=lambda t, p: PipelineEvent(event_type=t, payload=p),  # type: ignore[arg-type, return-value]
+        event_factory=_make_pipeline_event,
         multiplexer=multiplexer,
         rng=rng or random.Random(),
         stop_event=stop_event,
@@ -318,7 +348,7 @@ async def monitor_consumer_task(
         name="monitor",
         client_stream=client.stream,
         event_type_enum=MonitorEventType,
-        event_factory=lambda t, p: MonitorEvent(event_type=t, payload=p),  # type: ignore[arg-type, return-value]
+        event_factory=_make_monitor_event,
         multiplexer=multiplexer,
         rng=rng or random.Random(),
         stop_event=stop_event,

@@ -135,9 +135,7 @@ class TestLifespanWiresEventMultiplexer:
     tasks on the supervisor.
     """
 
-    def test_multiplexer_attached_to_app_state(
-        self, configs: tuple[Path, Path]
-    ) -> None:
+    def test_multiplexer_attached_to_app_state(self, configs: tuple[Path, Path]) -> None:
         from alphamind.command_center.events.multiplexer import EventMultiplexer
 
         config_dir, _ = configs
@@ -178,9 +176,7 @@ class TestRegisteredRoutes:
     (alerts) / 05b-05j / 06a-06c register their routers later.
     """
 
-    def test_includes_healthz_auth_and_events_routes(
-        self, configs: tuple[Path, Path]
-    ) -> None:
+    def test_includes_healthz_auth_and_events_routes(self, configs: tuple[Path, Path]) -> None:
         config_dir, _ = configs
         app = build_app(
             command_center_config=load_command_center_config(config_dir),
