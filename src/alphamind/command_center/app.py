@@ -577,7 +577,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 )
 
 
-def build_app(  # noqa: PLR0913 — composition root wires four override bundles; raising the cap here keeps the layered Overrides design readable.
+def build_app(  # noqa: PLR0913, PLR0915 — composition root wires four override bundles + per-subsystem app.state stashing; raising the caps here keeps the layered Overrides design readable.
     *,
     command_center_config: CommandCenterConfig,
     security_config: SecurityConfig,
