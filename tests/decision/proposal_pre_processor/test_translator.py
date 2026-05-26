@@ -622,19 +622,28 @@ def test_reduce_emits_close_with_partial_notional() -> None:
 
 
 # ===========================================================================
-# AC-9: Adjust-bracket → Action.ADJUST with 0/0
+# AC-9: Adjust-bracket → Action.ADJUST carrying the existing position total
 # ===========================================================================
 
 
-def test_adjust_bracket_emits_adjust_with_zero_exposure() -> None:
-    """AC-9: adjust-bracket → Action.ADJUST, notional=0.0, quantity=0.0."""
-    snap = _snapshot_with_position()
+def test_adjust_bracket_emits_adjust_with_existing_total_exposure() -> None:
+    """ALP-698: adjust-bracket → Action.ADJUST with notional/quantity equal
+    to the existing position's totals.
+
+    The strategist's adjust-bracket action is exposure-neutral, but the
+    ``position_max_size_pct`` simulator's ADJUST branch reads
+    ``proposal.notional_usd`` as the *new total* for the position. Emitting
+    the existing totals makes the simulator's "set new total" a no-op for
+    bracket adjustments, preserving the exposure-neutral semantic at the
+    rule-projection level (``delta_adjusted._exposure_neutral`` short-circuits
+    ADJUST regardless of the proposal's notional/quantity)."""
+    snap = _snapshot_with_position(notional_usd=15_000.0, quantity=100.0)
     assessment = _adjust_bracket_assessment()
     delta = translate_position_assessment_to_proposed_delta(assessment, snapshot=snap)
 
     assert delta.action == Action.ADJUST
-    assert delta.notional_usd == 0.0
-    assert delta.quantity == 0.0
+    assert delta.notional_usd == 15_000.0
+    assert delta.quantity == 100.0
     assert delta.existing_position_id == "POS-1"
 
 

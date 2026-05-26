@@ -569,6 +569,33 @@ def test_position_max_size_project_after_batch_adjust_grow_current_max() -> None
     assert projected_after == pytest.approx(22.0)
 
 
+def test_position_max_size_project_after_batch_adjust_bracket_on_max_unchanged() -> None:
+    """ALP-698: a translator-shape adjust-bracket proposal on the current-max
+    position carries ``notional_usd == existing.notional_usd``, so the
+    simulator's "set new total" branch is a no-op and the projected max
+    equals the current max."""
+    config = _config()
+    state = _snapshot(
+        position_max_size_pct=18.1,
+        portfolio_value_usd=100_000.0,
+        existing_positions=_five_position_existings(),
+    )
+    spec = _spec_by_id(build_active_specs(config), "position_max_size_pct")
+    assert spec.project_after_batch is not None
+    proposals = [
+        (
+            _proposal(
+                action=Action.ADJUST,
+                notional_usd=18_100.0,  # = existing POS-1 notional (translator shape)
+                existing_position_id="POS-1",
+            ),
+            _dae(signed_notional_usd=0.0),
+        )
+    ]
+    projected_after = spec.project_after_batch(proposals, state, config)
+    assert projected_after == pytest.approx(18.1)
+
+
 def test_position_max_size_project_after_batch_open_adds_synthetic_position() -> None:
     """ALP-621: an OPEN adds a synthetic post-batch position. Book starts
     empty; OPEN 5k → projected_after = 5.0%."""
