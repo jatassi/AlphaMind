@@ -123,9 +123,7 @@ def discord_webhook_url(value: str) -> DiscordWebhookUrl:
     host = match.group("host")
     if host not in _DISCORD_WEBHOOK_HOSTS:
         allowed = sorted(_DISCORD_WEBHOOK_HOSTS)
-        msg = (
-            f"discord_webhook_url host {host!r} not accepted; allowed hosts: {allowed}"
-        )
+        msg = f"discord_webhook_url host {host!r} not accepted; allowed hosts: {allowed}"
         raise ValueError(msg)
     return DiscordWebhookUrl(value)
 

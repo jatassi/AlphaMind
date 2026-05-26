@@ -351,9 +351,7 @@ def build_cc_writer_session_factory(
     # do_orm_execute fires on every ORM-routed statement and lets us
     # reject DML against foreign tables before SQLAlchemy renders the
     # SQL (F8).
-    event.listen(
-        _CommandCenterWriterSync, "do_orm_execute", _reject_foreign_table_core_writes
-    )
+    event.listen(_CommandCenterWriterSync, "do_orm_execute", _reject_foreign_table_core_writes)
     factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
         bind=engine,
         sync_session_class=_CommandCenterWriterSync,
