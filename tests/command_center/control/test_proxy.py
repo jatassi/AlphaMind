@@ -204,9 +204,13 @@ class TestProxySwitchProfile:
         rows = await _read_activity_rows(production_session_factory, out.invocation_id)
         assert rows == []
 
-    async def test_switch_profile_failure_writes_no_row(
+    async def test_switch_profile_failure_writes_failure_audit_row(
         self, production_session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
+        # F8 — the failure path now writes a generic operator-action
+        # row so the activity log records the rejected attempt
+        # alongside the other verbs. The success path remains gated
+        # behind emit_profile_switch_entry.
         pipeline = FakePipelineClient()
         pipeline.set_switch_profile_response(
             PipelineSwitchProfileResult(
@@ -223,8 +227,13 @@ class TestProxySwitchProfile:
         )
         assert out.result.ok is False
         rows = await _read_activity_rows(production_session_factory, out.invocation_id)
-        assert rows == []
-        # But the invocation row itself is still durable.
+        assert len(rows) == 1
+        # Failure row is the generic RISK_PARAMETER_CHANGED shape, not
+        # PROFILE_SWITCHED (that's reserved for the success path).
+        assert rows[0].event_type == EventType.RISK_PARAMETER_CHANGED.value
+        assert "missing" in rows[0].detail_json
+        assert "not_found" in rows[0].detail_json
+        # The invocation row itself is still durable.
         invocation = await _read_invocation_row(production_session_factory, out.invocation_id)
         assert invocation is not None
         assert invocation.trigger_source == "operator_console"

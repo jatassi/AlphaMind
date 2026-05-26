@@ -27,11 +27,16 @@ follows the design doc's § Operator actions:
   ``new_parameter_set_json``. The position-closed event itself is
   written by the OMS write path on broker confirmation.
 * ``run_universe_validation`` → no row (read-only verb).
-* ``switch_profile`` → no row from this helper; the proxy invokes
+* ``switch_profile`` → split by outcome: the SUCCESS path delegates
+  to
   :func:`alphamind.state.invocation_context.config_change.emit_profile_switch_entry`
-  with the upstream's outcome instead. Calling this helper for
-  ``switch_profile`` raises :class:`ValueError` so a future maintainer
-  doesn't accidentally double-write.
+  (typed :class:`ProfileSwitchedDetail` preserving previous / new
+  profile names); the FAILURE path falls through to a generic
+  :data:`EventType.RISK_PARAMETER_CHANGED` row from this helper so
+  the rejection lands on the activity log alongside the other
+  verbs (F8). Calling this helper for ``switch_profile`` with
+  ``result.ok=True`` raises :class:`ValueError` so a future
+  maintainer doesn't accidentally double-write.
 
 The helper is synchronous because :func:`append_activity_log_entry`
 itself is synchronous (it ``session.add()``-s; the surrounding context
@@ -73,21 +78,23 @@ log = logging.getLogger(__name__)
 
 _NO_AUDIT_VERBS: frozenset[ControlVerb] = frozenset(
     {
-        # switch_profile goes through emit_profile_switch_entry instead.
-        ControlVerb.SWITCH_PROFILE,
         # Read-only verb — no state change to audit beyond the invocation row.
         ControlVerb.RUN_UNIVERSE_VALIDATION,
     }
 )
 """Verbs that do NOT produce an audit row from this helper.
 
-* ``switch_profile`` is handled by
-  :func:`emit_profile_switch_entry` in
-  :mod:`alphamind.state.invocation_context.config_change` (story 01a).
 * ``run_universe_validation`` is read-only — no state change to audit.
 
-The proxy skips the helper for these verbs; calling it anyway raises
-:class:`ValueError` so a regression is caught at the boundary.
+``switch_profile`` is NOT in the set: its success path delegates to
+:func:`emit_profile_switch_entry` (typed
+:class:`ProfileSwitchedDetail`), enforced by the explicit
+``result.ok``-guarded early-raise at the top of
+:func:`write_operator_action_entry`; the failure path falls through
+to the generic operator-action row (F8).
+
+For verbs in this set, the proxy skips the helper entirely; calling
+it anyway no-ops (returns ``None``).
 """
 
 
@@ -132,13 +139,18 @@ def write_operator_action_entry(
     Raises
     ------
     ValueError:
-        If ``verb`` is :data:`ControlVerb.SWITCH_PROFILE` (caller must
-        invoke ``emit_profile_switch_entry`` directly).
+        If ``verb`` is :data:`ControlVerb.SWITCH_PROFILE` AND
+        ``result.ok`` is True. The success path is delegated to
+        :func:`emit_profile_switch_entry` (which preserves the
+        previous / new profile names in a typed detail); the failure
+        path falls through to the generic operator-action row so the
+        rejection lands on the activity log alongside the other
+        verbs (F8).
     """
-    if verb == ControlVerb.SWITCH_PROFILE:
+    if verb == ControlVerb.SWITCH_PROFILE and result.ok:
         msg = (
-            "switch_profile is audited via emit_profile_switch_entry, not "
-            "write_operator_action_entry"
+            "switch_profile success path is audited via emit_profile_switch_entry, "
+            "not write_operator_action_entry"
         )
         raise ValueError(msg)
     if verb in _NO_AUDIT_VERBS:
@@ -169,7 +181,7 @@ def write_operator_action_entry(
     return entry
 
 
-def _build_detail(
+def _build_detail(  # noqa: PLR0911 — one return per ControlVerb branch
     *,
     verb: ControlVerb,
     parameters: Mapping[str, Any],
@@ -259,6 +271,33 @@ def _build_detail(
             EventGroup.ORDER_LIFECYCLE,
             None,
             str(order_id) if order_id is not None else None,
+        )
+
+    if verb == ControlVerb.SWITCH_PROFILE:
+        # Failure-path audit (F8). The success path is delegated to
+        # emit_profile_switch_entry and never reaches here. We render
+        # the rejection as a RISK_PARAMETER_CHANGED row so the operator
+        # console + the activity log carry the attempted action even
+        # when the upstream pipeline rejects it. The previous profile
+        # is unknown at this layer (upstream returned a None outcome on
+        # failure) so we omit it from the parameter-set deltas.
+        switch_detail = RiskParameterChangedDetail(
+            old_parameter_set_json={},
+            new_parameter_set_json={
+                "profile_name": parameters.get("profile_name"),
+                "result_ok": result.ok,
+                "applied_at": result.applied_at,
+                "error_code": result.error_code.value if result.error_code else None,
+                "error_detail": result.error_detail,
+            },
+            regime_label="operator_console_switch_profile",
+        )
+        return (
+            switch_detail,
+            EventType.RISK_PARAMETER_CHANGED,
+            EventGroup.RISK_AND_GUARDRAIL,
+            None,
+            None,
         )
 
     if verb == ControlVerb.FORCE_CLOSE_POSITION:

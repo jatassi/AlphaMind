@@ -225,17 +225,16 @@ async def proxy_switch_profile(
 ) -> ProxyResult:
     """``/api/control/switch_profile`` proxy.
 
-    Unlike the other proxies, this one routes its audit-row emission
-    through :func:`emit_profile_switch_entry` rather than
-    :func:`write_operator_action_entry`. The profile-switch event has
-    its own typed detail class (:class:`ProfileSwitchedDetail`) and the
-    helper consumes the upstream's :class:`ProfileSwitchOutcome` so the
-    activity-log row preserves the previous / new profile names.
+    Audit-row emission shape (F8):
 
-    On upstream success the helper is invoked; on upstream failure no
-    profile-switch row is written (the invocation row alone records the
-    attempted operator action — the failure is reflected by the absence
-    of the ``PROFILE_SWITCHED`` row).
+    * **Success + outcome present** → :func:`emit_profile_switch_entry`
+      writes the typed :class:`ProfileSwitchedDetail` row carrying the
+      previous / new profile names.
+    * **Failure (or success with a None outcome)** →
+      :func:`write_operator_action_entry`, mirroring every other proxy.
+      Previously the failure path skipped the audit helper entirely,
+      leaving the activity log with no record of the attempted action;
+      F8 unifies the rejection trail with the other verbs.
     """
     async with operator_invocation(
         production_session_factory=ctx.production_session_factory,
@@ -251,6 +250,18 @@ async def proxy_switch_profile(
             emit_profile_switch_entry(
                 handle=handle,
                 outcome=upstream.outcome,
+                now=ctx.now(),
+            )
+        else:
+            # Failure (or success-no-outcome) — capture the operator's
+            # attempted action so the activity log carries the
+            # rejection (F8). write_operator_action_entry is unified for
+            # SWITCH_PROFILE's non-success path.
+            write_operator_action_entry(
+                handle=handle,
+                verb=ControlVerb.SWITCH_PROFILE,
+                parameters={"profile_name": profile_name},
+                result=upstream.result,
                 now=ctx.now(),
             )
         return ProxyResult(result=upstream.result, invocation_id=handle.invocation_id)

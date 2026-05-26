@@ -168,9 +168,11 @@ class TestAuditWriterWritesRow:
 
 
 class TestAuditWriterSuppressionAndErrors:
-    async def test_switch_profile_raises_value_error(
+    async def test_switch_profile_success_raises_value_error(
         self, production_session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
+        # SWITCH_PROFILE successes still must route through
+        # emit_profile_switch_entry; F8 only widens the failure path.
         async with operator_invocation(
             production_session_factory=production_session_factory,
             process_lifetime_id=PROCESS_LIFETIME_ID,
@@ -185,6 +187,36 @@ class TestAuditWriterSuppressionAndErrors:
                     result=ControlResult.success(applied_at="2026-05-26T12:00:00Z"),
                     now=_NOW,
                 )
+
+    async def test_switch_profile_failure_writes_failure_row(
+        self, production_session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        # F8 — failure path now writes a generic RISK_PARAMETER_CHANGED
+        # row capturing the rejection. The success path's early-raise
+        # stays in place (covered by the test above).
+        async with operator_invocation(
+            production_session_factory=production_session_factory,
+            process_lifetime_id=PROCESS_LIFETIME_ID,
+            operator_session_id_=operator_session_id("sess-1"),
+            verb=ControlVerb.SWITCH_PROFILE,
+        ) as handle:
+            invocation_id = handle.invocation_id
+            entry = write_operator_action_entry(
+                handle=handle,
+                verb=ControlVerb.SWITCH_PROFILE,
+                parameters={"profile_name": "missing"},
+                result=ControlResult.failure(
+                    error_code=ControlErrorCode.NOT_FOUND,
+                    error_detail="profile missing",
+                ),
+                now=_NOW,
+            )
+        assert entry is not None
+        rows = await _read_rows_for(production_session_factory, invocation_id)
+        assert len(rows) == 1
+        assert rows[0].event_type == EventType.RISK_PARAMETER_CHANGED.value
+        assert "missing" in rows[0].detail_json
+        assert "not_found" in rows[0].detail_json
 
     async def test_run_universe_validation_writes_no_row(
         self, production_session_factory: async_sessionmaker[AsyncSession]
