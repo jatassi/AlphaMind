@@ -116,12 +116,10 @@ def _make_outcome(
     is_no_op: bool,
     main_yaml_path: Path | None = None,
 ) -> ProfileSwitchOutcome:
-    from pathlib import Path as P
-
     return ProfileSwitchOutcome(
         previous_profile=previous,
         new_profile=new,
-        main_yaml_path=main_yaml_path or P("/config/main.yaml"),
+        main_yaml_path=main_yaml_path or Path("/config/main.yaml"),
         is_no_op=is_no_op,
     )
 

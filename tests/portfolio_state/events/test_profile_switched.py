@@ -86,7 +86,9 @@ class TestProfileSwitchedDetailExports:
         from alphamind.portfolio_state.events import ProfileSwitchedDetail  # noqa: F401
 
     def test_exported_from_activity_log_shim(self) -> None:
-        from alphamind.portfolio_state.events.activity_log import ProfileSwitchedDetail  # noqa: F401
+        from alphamind.portfolio_state.events.activity_log import (
+            ProfileSwitchedDetail,  # noqa: F401
+        )
 
 
 class TestProfileSwitchedDetailCodecRoundTrip:

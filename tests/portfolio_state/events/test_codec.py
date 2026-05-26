@@ -15,6 +15,7 @@ import pytest
 
 from alphamind._kernel.ids import BracketId, OrderId, PositionId, Symbol, ThesisId
 from alphamind._kernel.money import money, price, signed_money
+from alphamind.config.models.main import Profile
 from alphamind.portfolio_state.events import (
     EVENT_TYPE_TO_DETAIL_CLASS,
     BracketActivatedDetail,
@@ -75,7 +76,6 @@ from alphamind.portfolio_state.events import (
     decode_detail,
     encode_detail,
 )
-from alphamind.config.models.main import Profile
 
 _UTC_TS = datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)
 _HASH_HEX_64 = "f" * 64
