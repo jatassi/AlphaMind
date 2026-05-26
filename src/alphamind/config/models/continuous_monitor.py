@@ -22,6 +22,9 @@ pre-resolved decision (E):
 * ``max_reconnect_attempts`` — websocket-reconnect ceiling per session.
 * ``supervisor_shutdown_timeout_seconds`` — per-task cancellation budget the
   ``MonitorSupervisor`` enforces at shutdown (scope section 7 default = 5s).
+* ``control_port`` — loopback TCP port the FastAPI ``/control`` + ``/events``
+  surface (story 01c / ALP-665) binds to. Defaults to ``8766`` per the
+  story; operator may override per-environment.
 
 This file is loaded directly by ``alphamind.config.load`` and surfaced on
 ``ResolvedConfig.continuous_monitor``; the resolver does not cascade it
@@ -50,3 +53,4 @@ class ContinuousMonitorConfig(BaseModel):
     subscription_refresh_seconds: int = Field(default=30, ge=1)
     max_reconnect_attempts: int = Field(ge=1)
     supervisor_shutdown_timeout_seconds: int = Field(ge=1)
+    control_port: int = Field(default=8766, ge=1, le=65535)
