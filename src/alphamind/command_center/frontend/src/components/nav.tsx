@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router'
 
-// Top-level navigation shell. View stories (05b–05j, 06a–06c) add nav items
+// Top-level navigation shell. View stories (05b-05j, 06a-06c) add nav items
 // here as they introduce their routes; the foundation ships a minimal shell
 // so the protected layout has something visible without per-view glue.
 //
@@ -50,6 +50,13 @@ export function Nav(): React.JSX.Element {
           {/* Story 05e (ALP-675) — activity log. */}
           <Link to="/activity-log" className="hover:text-foreground text-muted-foreground">
             Activity log
+          </Link>
+          {/* Story 05f (ALP-676) — portfolio dashboard. */}
+          <Link
+            to="/portfolio"
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Portfolio
           </Link>
         </nav>
       </div>
