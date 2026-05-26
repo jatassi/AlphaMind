@@ -184,10 +184,7 @@ async def list_active(
             select(AlertRow)
             .where(
                 (AlertRow.status == AlertStatus.FIRING.value)
-                | (
-                    (AlertRow.status == AlertStatus.SNOOZED.value)
-                    & (AlertRow.snoozed_until > iso)
-                ),
+                | ((AlertRow.status == AlertStatus.SNOOZED.value) & (AlertRow.snoozed_until > iso)),
             )
             .order_by(AlertRow.fired_at.desc())
         )

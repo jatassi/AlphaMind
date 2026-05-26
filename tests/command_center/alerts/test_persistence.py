@@ -123,9 +123,7 @@ class TestUpdateSnoozed:
             fired_at=_NOW,
         )
         snooze_until = _NOW + timedelta(hours=1)
-        ok = await update_snoozed(
-            cc_writer_factory, alert_id_=new_id, snoozed_until=snooze_until
-        )
+        ok = await update_snoozed(cc_writer_factory, alert_id_=new_id, snoozed_until=snooze_until)
         assert ok is True
         record = await load_alert(cc_writer_factory, alert_id_=new_id)
         assert record is not None
