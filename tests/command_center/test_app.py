@@ -91,6 +91,39 @@ class TestLifespanWiresSessionFactories:
             assert hasattr(app.state, "cc_writer_session_factory")
             assert hasattr(app.state, "foreign_reader_session_factory")
 
+    def test_production_session_factory_attached_to_app_state(
+        self, configs: tuple[Path, Path]
+    ) -> None:
+        """Composition root threads the production factory into build_app.
+
+        The factory lands on ``app.state.production_session_factory``
+        for the operator-invocation bridge (story 04a). The lifespan
+        does NOT own the engine; the composition root's
+        ``engine_pair_context`` does. Here we pass a sentinel value to
+        confirm the stash.
+        """
+        config_dir, _ = configs
+        sentinel = object()
+        app = build_app(
+            command_center_config=load_command_center_config(config_dir),
+            security_config=load_security_config(config_dir),
+            alerts_config=load_alerts_config(config_dir),
+            production_session_factory=sentinel,  # type: ignore[arg-type]
+        )
+        assert app.state.production_session_factory is sentinel
+
+    def test_production_session_factory_default_none_when_unset(
+        self, configs: tuple[Path, Path]
+    ) -> None:
+        """Tests that don't exercise the operator-action bridge can omit it."""
+        config_dir, _ = configs
+        app = build_app(
+            command_center_config=load_command_center_config(config_dir),
+            security_config=load_security_config(config_dir),
+            alerts_config=load_alerts_config(config_dir),
+        )
+        assert app.state.production_session_factory is None
+
 
 class TestNoStory04PlusRoutesPresent:
     """AC: 'No story-04+ surface exists in this story.'

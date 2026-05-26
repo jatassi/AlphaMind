@@ -41,10 +41,12 @@ Per the parent-issue architectural invariants:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.command_center.config import (
     AlertsConfig,
@@ -58,6 +60,8 @@ from alphamind.command_center.persistence.session import (
 
 __all__ = ["build_app"]
 
+log = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -69,9 +73,26 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     fresh factory means a fresh engine + fresh connection pool — that
     would defeat WAL-mode reads sharing the same connection pool).
 
-    On shutdown, the lifespan disposes both engines so the SQLite file
-    handle is released cleanly — important on Windows where a lingering
-    handle blocks process restart.
+    The third factory exposed on ``app.state`` is the
+    ``production_session_factory`` — the
+    :data:`alphamind.persistence.models.Base`-backed async factory the
+    composition root threads in via :func:`build_app` (constructed under
+    :func:`alphamind.persistence.session.engine_pair_context` in
+    ``__main__``). It serves the
+    :func:`alphamind.command_center._kernel.operator_invocation.operator_invocation`
+    helper, which writes :class:`InvocationRow` (on the production
+    ``Base``, not on :class:`CommandCenterBase`) and would be rejected by
+    the cc writer's ``before_flush`` guard. The production factory's
+    engine lifetime is owned by the composition root's
+    ``engine_pair_context`` context manager; this lifespan only holds a
+    reference — it does NOT dispose the production engine on shutdown.
+
+    On shutdown, the lifespan disposes the cc_writer + foreign_reader
+    engines (constructed inside the lifespan, so it owns their lifetime)
+    so the SQLite file handles release cleanly — important on Windows
+    where a lingering handle blocks process restart. Each ``dispose()``
+    runs inside its own ``try/except`` so a failure on one engine still
+    permits disposal of the others (F6).
     """
     db_path = app.state.command_center_config.db.alphamind_db_path
     cc_writer = build_cc_writer_session_factory(db_path)
@@ -81,9 +102,23 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # Dispose engines so SQLite file handles release cleanly.
-        await cc_writer.kw["bind"].dispose()
-        await foreign_reader.kw["bind"].dispose()
+        # Dispose engines so SQLite file handles release cleanly. Each
+        # dispose runs in its own try/except so a failure on one does
+        # not skip the rest (F6). The production engine is NOT disposed
+        # here — its lifetime is owned by the composition root's
+        # engine_pair_context.
+        for engine_name, engine in (
+            ("cc_writer", cc_writer.kw["bind"]),
+            ("foreign_reader", foreign_reader.kw["bind"]),
+        ):
+            try:
+                await engine.dispose()
+            except Exception as exc:
+                log.warning(
+                    "command_center lifespan: %s engine dispose failed: %s",
+                    engine_name,
+                    exc,
+                )
 
 
 def build_app(
@@ -91,6 +126,7 @@ def build_app(
     command_center_config: CommandCenterConfig,
     security_config: SecurityConfig,
     alerts_config: AlertsConfig,
+    production_session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> FastAPI:
     """Construct the FastAPI app composition root.
 
@@ -110,6 +146,18 @@ def build_app(
     alerts_config:
         Loaded :class:`AlertsConfig` — drives the future alert engine's
         rule list (story 05a).
+    production_session_factory:
+        The :data:`alphamind.persistence.models.Base`-backed async
+        session factory the composition root builds via
+        :func:`alphamind.persistence.session.engine_pair_context`. Stashed
+        on ``app.state.production_session_factory`` so the
+        :func:`alphamind.command_center._kernel.operator_invocation.operator_invocation`
+        helper (used by story 04a's control proxy to bridge an operator
+        action into an :class:`InvocationRow`) can reach it without
+        re-opening an engine. Optional in tests that do not exercise the
+        operator-action bridge; production callers (``__main__``) always
+        thread it in. The lifespan does NOT own the engine's lifetime;
+        ``engine_pair_context`` in the composition root does.
     """
     app = FastAPI(
         title="AlphaMind command center",
@@ -123,6 +171,7 @@ def build_app(
     app.state.command_center_config = command_center_config
     app.state.security_config = security_config
     app.state.alerts_config = alerts_config
+    app.state.production_session_factory = production_session_factory
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

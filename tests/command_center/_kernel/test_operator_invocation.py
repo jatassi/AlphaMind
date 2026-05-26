@@ -83,7 +83,7 @@ class TestOperatorInvocation:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         async with operator_invocation(
-            session_factory=session_factory,
+            production_session_factory=session_factory,
             process_lifetime_id="plt-command_center-test",
             operator_session_id_=operator_session_id("session-abc"),
             verb=ControlVerb.PAUSE,
@@ -96,7 +96,7 @@ class TestOperatorInvocation:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         async with operator_invocation(
-            session_factory=session_factory,
+            production_session_factory=session_factory,
             process_lifetime_id="plt-command_center-test",
             operator_session_id_=operator_session_id("session-abc"),
             verb=ControlVerb.PAUSE,
@@ -116,7 +116,7 @@ class TestOperatorInvocation:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         async with operator_invocation(
-            session_factory=session_factory,
+            production_session_factory=session_factory,
             process_lifetime_id="plt-command_center-test",
             operator_session_id_=operator_session_id("session-abc"),
             verb=ControlVerb.SWITCH_PROFILE,
@@ -137,7 +137,7 @@ class TestOperatorInvocation:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         async with operator_invocation(
-            session_factory=session_factory,
+            production_session_factory=session_factory,
             process_lifetime_id="plt-command_center-test",
             operator_session_id_=operator_session_id("session-abc"),
             verb=ControlVerb.PAUSE,
@@ -156,7 +156,7 @@ class TestOperatorInvocation:
     ) -> None:
         with pytest.raises(RuntimeError, match="caller raised"):
             async with operator_invocation(
-                session_factory=session_factory,
+                production_session_factory=session_factory,
                 process_lifetime_id="plt-command_center-test",
                 operator_session_id_=operator_session_id("session-abc"),
                 verb=ControlVerb.PAUSE,
@@ -178,7 +178,7 @@ class TestOperatorInvocation:
         ids = set()
         for _ in range(3):
             async with operator_invocation(
-                session_factory=session_factory,
+                production_session_factory=session_factory,
                 process_lifetime_id="plt-command_center-test",
                 operator_session_id_=operator_session_id("session-abc"),
                 verb=ControlVerb.PAUSE,
@@ -194,7 +194,7 @@ class TestOperatorInvocation:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         async with operator_invocation(
-            session_factory=session_factory,
+            production_session_factory=session_factory,
             process_lifetime_id="plt-command_center-test",
             operator_session_id_=operator_session_id("session-xyz"),
             verb=ControlVerb.CANCEL_ORDER,

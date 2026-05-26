@@ -37,6 +37,17 @@ schema-valid because every ``InvocationRecord`` field is non-NULL.
 Story 04a's proxy is free to override these via the
 ``snapshot_overrides`` parameter when it has richer context (e.g. the
 most recent pipeline invocation's resolved-config-hash).
+
+The session factory threaded in is the **production**
+``Base``-backed async session factory (built by
+:func:`alphamind.persistence.session.engine_pair_context`), NOT the
+command-center writer factory. :class:`InvocationRow` lives on the
+production ``Base.metadata``; the cc writer's ``before_flush`` guard
+would reject the row because its table is not in the cc-owned allow-list.
+``operator_invocation`` IS a legitimate cross-package write (it bridges
+an operator action into an invocation row) — by design it bypasses the
+cc writer and uses the production factory the composition root already
+holds.
 """
 
 from __future__ import annotations
@@ -168,7 +179,7 @@ def _build_record(
 @asynccontextmanager
 async def operator_invocation(
     *,
-    session_factory: async_sessionmaker[AsyncSession],
+    production_session_factory: async_sessionmaker[AsyncSession],
     process_lifetime_id: str,
     operator_session_id_: OperatorSessionId,
     verb: ControlVerb,
@@ -194,12 +205,21 @@ async def operator_invocation(
 
     Parameters
     ----------
-    session_factory:
-        Bound to the command-center writer engine (story 02's
-        ``cc_writer_session_factory()`` — added in a later commit). The
-        helper does NOT introduce its own engine; it uses whatever the
-        caller threads in. This keeps the persistence boundary discipline
-        intact: only the supervised composition root owns engines.
+    production_session_factory:
+        The **production** :data:`alphamind.persistence.models.Base`-backed
+        async session factory (built by
+        :func:`alphamind.persistence.session.engine_pair_context` in the
+        composition root). This is NOT the command-center writer
+        factory — the cc writer rejects any write whose mapped table is
+        not one of the three command-center-owned tables, and
+        :class:`InvocationRow` lives on the production ``Base``, not on
+        :class:`~alphamind.command_center.persistence.tables.CommandCenterBase`.
+        ``operator_invocation`` is a legitimate cross-package write (the
+        bridge that records an operator action as an invocation row) and
+        therefore uses the production factory directly. The cc writer's
+        discipline ("command-center views can't accidentally write to OMS
+        state") is preserved — this helper's writes go through the
+        production factory, not the cc writer.
     process_lifetime_id:
         FK target on the ``invocations`` row. The command center's
         ``ProcessSession`` (story 02's ``session.py``, added in a later
@@ -242,9 +262,9 @@ async def operator_invocation(
         now=stamp,
         snapshot_overrides=snapshot_overrides,
     )
-    await insert_invocation_row(session_factory, record)
+    await insert_invocation_row(production_session_factory, record)
 
-    session = session_factory()
+    session = production_session_factory()
     handle = InvocationHandle(session=session, invocation_id=invocation_id)
     try:
         yield handle
