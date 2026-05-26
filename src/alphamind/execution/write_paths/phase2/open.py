@@ -79,6 +79,7 @@ from alphamind.portfolio_state.records.positions import (
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
     ThesisComponent,
+    ThesisComponentType,
     ThesisRecord,
     ThesisRecordStatus,
 )
@@ -602,12 +603,21 @@ def _build_active_thesis(
     seen_types = {c.component_type for c in wire_components}
     summary = thesis.summary
 
+    # Per-type running index so ``thesis_components.component_id`` (a PK) stays
+    # unique when a wire ``Thesis`` carries >1 component of the same type.
+    # ``ThesisRecord._check_mandatory_coverage`` requires ≥1 of each
+    # {entry, target, invalidation} rationale but does not cap the count, so
+    # multi-component-per-type is a first-class shape (ALP-699).
+    per_type_index: dict[ThesisComponentType, int] = {}
+
     persisted_components: list[ThesisComponent] = []
     for wc in wire_components:
         component_type = _OMS_COMPONENT_TYPE_TO_PERSISTED[wc.component_type]
+        idx = per_type_index.get(component_type, 0)
+        per_type_index[component_type] = idx + 1
         persisted_components.append(
             ThesisComponent(
-                component_id=f"{thesis_id}-{component_type.value.lower()}",
+                component_id=f"{thesis_id}-{component_type.value.lower()}-{idx:02d}",
                 thesis_id=ThesisId(thesis_id),
                 component_type=component_type,
                 linked_bracket_leg_type=None,
@@ -626,7 +636,9 @@ def _build_active_thesis(
     # Coverage backfill: ThesisRecord requires entry / target / invalidation
     # rationales. Wire-format thesis is producer-validated as having at least
     # one component but does not enforce mandatory coverage; the writeback
-    # injects placeholder components for any missing required type.
+    # injects placeholder components for any missing required type. Backfill
+    # only fires for absent types (so one entry max per type), but the suffix
+    # scheme stays aligned with the wire-component loop for consistency.
     required_wire_types = (
         "entry_rationale",
         "target_rationale",
@@ -638,7 +650,7 @@ def _build_active_thesis(
         component_type = _OMS_COMPONENT_TYPE_TO_PERSISTED[required]
         persisted_components.append(
             ThesisComponent(
-                component_id=f"{thesis_id}-{component_type.value.lower()}",
+                component_id=f"{thesis_id}-{component_type.value.lower()}-00",
                 thesis_id=ThesisId(thesis_id),
                 component_type=component_type,
                 linked_bracket_leg_type=None,
