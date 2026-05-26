@@ -11,6 +11,8 @@ Sub-modules:
   and ``GET /api/views/schedule`` (story 05b / ALP-672).
 * :mod:`alphamind.command_center.views.history` — ``GET /api/views/history/runs``
   + failure-log preset (story 05c / ALP-673).
+* :mod:`alphamind.command_center.views.activity_log` — ``GET /api/views/activity-log``
+  + filter dimensions (story 05e / ALP-675).
 """
 
 from __future__ import annotations
