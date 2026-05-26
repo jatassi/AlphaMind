@@ -8,10 +8,20 @@ Covers per-model round-trip cases:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    InvocationId,
+    PositionId,
+)
+from alphamind._kernel.ids import (
+    envelope_id as _envelope_id,
+)
+from alphamind._kernel.ids import (
+    recommendation_id as _recommendation_id,
+)
 from alphamind.analysis._shared import TokensUsed
 from alphamind.commands.pm_envelope import (
     ConcernRecord,
@@ -31,20 +41,16 @@ from alphamind.commands.submission_results import (
 from alphamind.commands.validation_results import ValidationResult
 from alphamind.decision.analyst.models import AnalystOutput, AnalystResultModel
 from alphamind.decision.analyst.runner import AnalystResult
-from alphamind.decision.portfolio_manager.models import (
-    PMResultModel,
-    SubmissionLogEntryModel,
-)
+from alphamind.decision.portfolio_manager.models import PMResultModel
 from alphamind.decision.portfolio_manager.runner import PMResult
 from alphamind.decision.strategist.models import StrategistOutput, StrategistResultModel
 from alphamind.decision.strategist.runner import StrategistResult
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
-_NOW = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
 _INVOCATION_ID = "inv-test-001"
 _TOKENS = TokensUsed(
     input_tokens=1000,
@@ -58,9 +64,10 @@ _TOKENS = TokensUsed(
 # AnalystOutput minimal fixture (mode=normal, empty recommendations)
 # ---------------------------------------------------------------------------
 
+
 def _make_analyst_output() -> AnalystOutput:
     return AnalystOutput(
-        invocation_id=_INVOCATION_ID,
+        invocation_id=InvocationId(_INVOCATION_ID),
         timestamp=_NOW,
         mode="normal",
         recommendations=(),
@@ -83,11 +90,12 @@ def _make_analyst_result() -> AnalystResult:
 # StrategistOutput minimal fixture
 # ---------------------------------------------------------------------------
 
+
 def _make_strategist_output() -> StrategistOutput:
     from alphamind.decision.strategist.models import PortfolioLevelObservations
 
     return StrategistOutput(
-        invocation_id=_INVOCATION_ID,
+        invocation_id=InvocationId(_INVOCATION_ID),
         timestamp=_NOW,
         mode="normal",
         position_assessments=(),
@@ -114,9 +122,10 @@ def _make_strategist_result() -> StrategistResult:
 # PMCompletionRecord + PMResult fixtures
 # ---------------------------------------------------------------------------
 
+
 def _make_pm_completion_record() -> PMCompletionRecord:
     return PMCompletionRecord(
-        invocation_id=_INVOCATION_ID,
+        invocation_id=InvocationId(_INVOCATION_ID),
         timestamp=_NOW,
         envelopes_submitted=2,
         verdict_summary=VerdictSummary(
@@ -144,10 +153,10 @@ def _make_submission_log_entries() -> tuple[SubmissionLogEntry, ...]:
     tqe = _make_thesis_quality_evaluation()
     entry_a = SubmissionLogEntry(
         envelope=PMAnalystEnvelope(
-            envelope_id="ENV-REC-001",
-            invocation_id=_INVOCATION_ID,
+            envelope_id=_envelope_id("ENV-REC-001"),
+            invocation_id=InvocationId(_INVOCATION_ID),
             source_provenance="pm_analyst",
-            source_recommendation_id="REC-001",
+            source_recommendation_id=_recommendation_id("REC-001"),
             recommendation_type="new_entry",
             verdict="approve",
             evaluation=tqe,
@@ -161,22 +170,27 @@ def _make_submission_log_entries() -> tuple[SubmissionLogEntry, ...]:
                 command_ordinal=1,
                 status="accepted",
                 command_id="CMD-001",
-                acknowledgment=Acknowledgment(position_id="pos-abc"),
+                acknowledgment=Acknowledgment(position_id=PositionId("pos-abc")),
                 rejection_payload=None,
             ),
         ),
     )
     entry_b = SubmissionLogEntry(
         envelope=PMAnalystEnvelope(
-            envelope_id="ENV-REC-002",
-            invocation_id=_INVOCATION_ID,
+            envelope_id=_envelope_id("ENV-REC-002"),
+            invocation_id=InvocationId(_INVOCATION_ID),
             source_provenance="pm_analyst",
-            source_recommendation_id="REC-002",
+            source_recommendation_id=_recommendation_id("REC-002"),
             recommendation_type="new_entry",
             verdict="reject",
             evaluation=tqe,
             modifications=(),
-            concerns=(ConcernRecord(source="sizing_proportionality", summary="Position size exceeds limit."),),
+            concerns=(
+                ConcernRecord(
+                    source="sizing_proportionality",
+                    summary="Position size exceeds limit.",
+                ),
+            ),
             rationale_narrative="Position size exceeds limit.",
             commands=(),
         ),
@@ -220,6 +234,7 @@ def _make_pm_result() -> PMResult:
 # AnalystResultModel tests
 # ---------------------------------------------------------------------------
 
+
 class TestAnalystResultModel:
     def test_from_domain_to_domain_round_trip(self) -> None:
         dc = _make_analyst_result()
@@ -240,7 +255,7 @@ class TestAnalystResultModel:
         dc = _make_analyst_result()
         model = AnalystResultModel.from_domain(dc)
         with pytest.raises((TypeError, AttributeError, PydanticValidationError)):
-            model.retry_count = 99  # type: ignore[misc]
+            model.retry_count = 99
 
     def test_metadata_fields_preserved(self) -> None:
         dc = _make_analyst_result()
@@ -255,6 +270,7 @@ class TestAnalystResultModel:
 # ---------------------------------------------------------------------------
 # StrategistResultModel tests
 # ---------------------------------------------------------------------------
+
 
 class TestStrategistResultModel:
     def test_from_domain_to_domain_round_trip(self) -> None:
@@ -276,7 +292,7 @@ class TestStrategistResultModel:
         dc = _make_strategist_result()
         model = StrategistResultModel.from_domain(dc)
         with pytest.raises((TypeError, AttributeError, PydanticValidationError)):
-            model.tokens_used = _TOKENS  # type: ignore[misc]
+            model.metadata = {}
 
     def test_metadata_dict_preserved(self) -> None:
         dc = _make_strategist_result()
@@ -287,6 +303,7 @@ class TestStrategistResultModel:
 # ---------------------------------------------------------------------------
 # PMResultModel + SubmissionLogEntryModel tests
 # ---------------------------------------------------------------------------
+
 
 class TestPMResultModel:
     def test_from_domain_to_domain_round_trip(self) -> None:
@@ -308,15 +325,17 @@ class TestPMResultModel:
         dc = _make_pm_result()
         model = PMResultModel.from_domain(dc)
         with pytest.raises((TypeError, AttributeError, PydanticValidationError)):
-            model.retry_count = 42  # type: ignore[misc]
+            model.retry_count = 42
 
     def test_submission_log_order_preserved(self) -> None:
         """Element order must be identical after round-trip."""
+        from alphamind.decision.portfolio_manager.runner import PMResult as _PMResult
+
         dc = _make_pm_result()
         model = PMResultModel.from_domain(dc)
-        recovered = model.to_domain()
+        recovered: _PMResult = model.to_domain()  # type: ignore[assignment]
         assert len(recovered.submission_log) == len(dc.submission_log)
-        for orig, rec in zip(dc.submission_log, recovered.submission_log):
+        for orig, rec in zip(dc.submission_log, recovered.submission_log, strict=False):
             assert orig.envelope.envelope_id == rec.envelope.envelope_id
 
     def test_submission_log_non_empty(self) -> None:
@@ -326,13 +345,18 @@ class TestPMResultModel:
 
     def test_submission_log_entry_fields_preserved(self) -> None:
         """SubmissionLogEntry fields survive to_domain."""
+        from alphamind.decision.portfolio_manager.runner import PMResult as _PMResult
+
         dc = _make_pm_result()
         model = PMResultModel.from_domain(dc)
-        recovered = model.to_domain()
+        recovered: _PMResult = model.to_domain()  # type: ignore[assignment]
         first_orig = dc.submission_log[0]
         first_rec = recovered.submission_log[0]
         assert first_orig.submission_results[0].status == first_rec.submission_results[0].status
-        assert first_orig.submission_results[0].command_id == first_rec.submission_results[0].command_id
+        assert (
+            first_orig.submission_results[0].command_id
+            == first_rec.submission_results[0].command_id
+        )
 
     def test_empty_submission_log_round_trips(self) -> None:
         dc = PMResult(

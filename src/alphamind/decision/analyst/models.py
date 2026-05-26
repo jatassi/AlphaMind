@@ -558,10 +558,10 @@ class AnalystResultModel(BaseModel):
     stop_reason: str | None
 
     @classmethod
-    def from_domain(cls, dc: object) -> "AnalystResultModel":
+    def from_domain(cls, dc: object) -> AnalystResultModel:
         """Construct from an :class:`AnalystResult` dataclass instance."""
         # Imported here to avoid a circular import — runner imports models.
-        from alphamind.decision.analyst.runner import AnalystResult  # noqa: PLC0415
+        from alphamind.decision.analyst.runner import AnalystResult
 
         if not isinstance(dc, AnalystResult):
             raise TypeError(f"Expected AnalystResult, got {type(dc).__name__}")
@@ -582,8 +582,8 @@ class AnalystResultModel(BaseModel):
 
     def to_domain(self) -> object:
         """Reconstruct an :class:`AnalystResult` from this model."""
-        from alphamind.analysis._shared import TokensUsed  # noqa: PLC0415
-        from alphamind.decision.analyst.runner import AnalystResult  # noqa: PLC0415
+        from alphamind.analysis._shared import TokensUsed
+        from alphamind.decision.analyst.runner import AnalystResult
 
         return AnalystResult(
             output=self.output,

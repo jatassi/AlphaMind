@@ -107,9 +107,9 @@ class SubmissionLogEntryModel(BaseModel):
     submission_results: tuple[SubmissionResult, ...]
 
     @classmethod
-    def from_domain(cls, entry: object) -> "SubmissionLogEntryModel":
+    def from_domain(cls, entry: object) -> SubmissionLogEntryModel:
         """Construct from a :class:`SubmissionLogEntry` dataclass instance."""
-        from alphamind.commands.submission_log import SubmissionLogEntry  # noqa: PLC0415
+        from alphamind.commands.submission_log import SubmissionLogEntry
 
         if not isinstance(entry, SubmissionLogEntry):
             raise TypeError(f"Expected SubmissionLogEntry, got {type(entry).__name__}")
@@ -120,7 +120,7 @@ class SubmissionLogEntryModel(BaseModel):
 
     def to_domain(self) -> object:
         """Reconstruct a :class:`SubmissionLogEntry` from this model."""
-        from alphamind.commands.submission_log import SubmissionLogEntry  # noqa: PLC0415
+        from alphamind.commands.submission_log import SubmissionLogEntry
 
         return SubmissionLogEntry(
             envelope=self.envelope,
@@ -129,7 +129,8 @@ class SubmissionLogEntryModel(BaseModel):
 
 
 class PMResultModel(BaseModel):
-    """Frozen Pydantic boundary model for :class:`alphamind.decision.portfolio_manager.runner.PMResult`.
+    """Frozen Pydantic boundary model for
+    :class:`alphamind.decision.portfolio_manager.runner.PMResult`.
 
     Wraps the existing :class:`PMCompletionRecord` Pydantic field directly (it
     is already a Pydantic model) and models the metadata + submission log fields
@@ -153,9 +154,9 @@ class PMResultModel(BaseModel):
     stop_reason: str | None
 
     @classmethod
-    def from_domain(cls, dc: object) -> "PMResultModel":
+    def from_domain(cls, dc: object) -> PMResultModel:
         """Construct from a :class:`PMResult` dataclass instance."""
-        from alphamind.decision.portfolio_manager.runner import PMResult  # noqa: PLC0415
+        from alphamind.decision.portfolio_manager.runner import PMResult
 
         if not isinstance(dc, PMResult):
             raise TypeError(f"Expected PMResult, got {type(dc).__name__}")
@@ -163,8 +164,7 @@ class PMResultModel(BaseModel):
         return cls(
             output=dc.output,
             submission_log=tuple(
-                SubmissionLogEntryModel.from_domain(entry)
-                for entry in dc.submission_log
+                SubmissionLogEntryModel.from_domain(entry) for entry in dc.submission_log
             ),
             retry_count=dc.retry_count,
             tokens_used=_TokensUsedModel(
@@ -180,13 +180,13 @@ class PMResultModel(BaseModel):
 
     def to_domain(self) -> object:
         """Reconstruct a :class:`PMResult` from this model."""
-        from alphamind.analysis._shared import TokensUsed  # noqa: PLC0415
-        from alphamind.decision.portfolio_manager.runner import PMResult  # noqa: PLC0415
+        from alphamind.analysis._shared import TokensUsed
+        from alphamind.decision.portfolio_manager.runner import PMResult
 
         return PMResult(
             output=self.output,
             submission_log=tuple(
-                entry.to_domain()  # type: ignore[return-value]
+                entry.to_domain()  # type: ignore[misc]
                 for entry in self.submission_log
             ),
             retry_count=self.retry_count,

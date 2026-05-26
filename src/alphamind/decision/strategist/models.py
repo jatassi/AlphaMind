@@ -649,7 +649,8 @@ class _ValidationResultModel(BaseModel):
 
 
 class StrategistResultModel(BaseModel):
-    """Frozen Pydantic boundary model for :class:`alphamind.decision.strategist.runner.StrategistResult`.
+    """Frozen Pydantic boundary model for
+    :class:`alphamind.decision.strategist.runner.StrategistResult`.
 
     Wraps the existing :class:`StrategistOutput` Pydantic field directly (it is
     already a Pydantic model) and models the metadata fields explicitly.
@@ -667,9 +668,9 @@ class StrategistResultModel(BaseModel):
     metadata: dict[str, object]
 
     @classmethod
-    def from_domain(cls, dc: object) -> "StrategistResultModel":
+    def from_domain(cls, dc: object) -> StrategistResultModel:
         """Construct from a :class:`StrategistResult` dataclass instance."""
-        from alphamind.decision.strategist.runner import StrategistResult  # noqa: PLC0415
+        from alphamind.decision.strategist.runner import StrategistResult
 
         if not isinstance(dc, StrategistResult):
             raise TypeError(f"Expected StrategistResult, got {type(dc).__name__}")
@@ -709,13 +710,13 @@ class StrategistResultModel(BaseModel):
 
     def to_domain(self) -> object:
         """Reconstruct a :class:`StrategistResult` from this model."""
-        from alphamind.analysis._shared import TokensUsed  # noqa: PLC0415
-        from alphamind.commands.validation_results import (  # noqa: PLC0415
+        from alphamind.analysis._shared import TokensUsed
+        from alphamind.commands.validation_results import (
             ValidationError,
             ValidationResult,
             ValidationWarning,
         )
-        from alphamind.decision.strategist.runner import StrategistResult  # noqa: PLC0415
+        from alphamind.decision.strategist.runner import StrategistResult
 
         vr_model = self.validation_result
         return StrategistResult(
@@ -739,7 +740,7 @@ class StrategistResultModel(BaseModel):
                     )
                     for w in vr_model.warnings
                 ),
-                envelope_id=vr_model.envelope_id,
+                envelope_id=vr_model.envelope_id,  # type: ignore[arg-type]
             ),
             tokens_used=TokensUsed(
                 input_tokens=self.tokens_used.input_tokens,
