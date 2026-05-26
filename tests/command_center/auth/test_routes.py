@@ -522,6 +522,80 @@ class TestCredentialCountAfterEnrollment:
         assert await count_credentials(cc_factory) == 1
 
 
+class TestChallengeStoreEviction:
+    """F7: _ChallengeStore must enforce TTL + max size.
+
+    Direct unit test against the in-module class; not exposed via the
+    routes surface because the eviction behavior is internal to the
+    store's invariants. Uses a stubbed monotonic clock so the TTL test
+    is deterministic.
+    """
+
+    def test_ttl_evicts_expired_entries_on_next_stash(self) -> None:
+        from alphamind.command_center.auth.routes import _ChallengeStore
+
+        # Fake clock — advances when we call .advance().
+        current = [0.0]
+
+        def now() -> float:
+            return current[0]
+
+        store = _ChallengeStore(now=now)
+        store.stash_registration(token="t-old", challenge=b"c", user_id=b"u")
+        # Past TTL boundary (5 minutes = 300s). The eviction sweep on
+        # the next stash call should drop t-old.
+        current[0] = 301.0
+        store.stash_registration(token="t-new", challenge=b"c2", user_id=b"u2")
+        # t-old is gone.
+        assert store.pop_registration("t-old") is None
+        # t-new is still alive.
+        assert store.pop_registration("t-new") == (b"c2", b"u2")
+
+    def test_ttl_drops_entry_at_pop_when_expired(self) -> None:
+        from alphamind.command_center.auth.routes import _ChallengeStore
+
+        current = [0.0]
+
+        def now() -> float:
+            return current[0]
+
+        store = _ChallengeStore(now=now)
+        store.stash_authentication(token="t-old", challenge=b"c")
+        # Advance past TTL without triggering a stash (so eviction sweep
+        # hasn't run). pop should still treat the entry as expired.
+        current[0] = 301.0
+        assert store.pop_authentication("t-old") is None
+
+    def test_max_size_fifo_evicts_oldest_registration(self) -> None:
+        from alphamind.command_center.auth.routes import (
+            _CHALLENGE_STORE_MAX_ENTRIES,
+            _ChallengeStore,
+        )
+
+        store = _ChallengeStore()
+        # Fill to capacity.
+        for i in range(_CHALLENGE_STORE_MAX_ENTRIES):
+            store.stash_registration(token=f"t-{i}", challenge=b"c", user_id=b"u")
+        # The cap+1th insertion should FIFO-evict t-0.
+        store.stash_registration(token="t-overflow", challenge=b"c", user_id=b"u")
+        assert store.pop_registration("t-0") is None
+        # Newer entries should still be present.
+        assert store.pop_registration("t-overflow") == (b"c", b"u")
+
+    def test_max_size_fifo_evicts_oldest_authentication(self) -> None:
+        from alphamind.command_center.auth.routes import (
+            _CHALLENGE_STORE_MAX_ENTRIES,
+            _ChallengeStore,
+        )
+
+        store = _ChallengeStore()
+        for i in range(_CHALLENGE_STORE_MAX_ENTRIES):
+            store.stash_authentication(token=f"t-{i}", challenge=b"c")
+        store.stash_authentication(token="t-overflow", challenge=b"c")
+        assert store.pop_authentication("t-0") is None
+        assert store.pop_authentication("t-overflow") == b"c"
+
+
 class TestCsrfOnCompleteEndpoints:
     """F3: /auth/{register,login}/complete must require CSRF."""
 

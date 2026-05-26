@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import logging
 import secrets
+import time
+from collections.abc import Callable
 from typing import Annotated, Any
 
 from fastapi import (
@@ -103,33 +105,92 @@ log = logging.getLogger(__name__)
 # complete request echoes back.
 
 
+_CHALLENGE_TTL_SECONDS = 300
+"""Five-minute TTL on stashed challenges (F7).
+
+Matches the typical WebAuthn ceremony budget: the browser usually
+completes the user gesture + biometric in well under a minute, and any
+half-completed registration past five minutes is operator abandonment.
+The eviction sweep on each ``stash_*`` call drops anything older than
+this boundary.
+"""
+
+_CHALLENGE_STORE_MAX_ENTRIES = 1024
+"""Hard cap on stashed entries; FIFO-evict on overflow (F7)."""
+
+
 class _ChallengeStore:
     """Per-process in-memory challenge cache.
 
-    Registration: ``{token: (challenge_bytes, user_id_bytes)}``.
-    Authentication: ``{token: challenge_bytes}``.
+    Registration: ``{token: (challenge_bytes, user_id_bytes, stashed_at)}``.
+    Authentication: ``{token: (challenge_bytes, stashed_at)}``.
 
-    Tokens auto-expire on consumption (one-shot). The store is bounded
-    in practice because no parallel enrollment ceremonies are expected;
-    a stale entry from a half-completed registration is harmless and
-    will be discarded on the next begin call.
+    Tokens auto-expire on consumption (one-shot). Stale entries are
+    evicted by a sweep that runs on each ``stash_*`` call: any entry
+    older than :data:`_CHALLENGE_TTL_SECONDS` is dropped. A hard cap of
+    :data:`_CHALLENGE_STORE_MAX_ENTRIES` per dict applies FIFO eviction
+    so a probe-driven flood of begin requests can't unbound the store.
     """
 
-    def __init__(self) -> None:
-        self._registration: dict[str, tuple[bytes, bytes]] = {}
-        self._authentication: dict[str, bytes] = {}
+    def __init__(self, *, now: Callable[[], float] = time.monotonic) -> None:
+        # Insertion-ordered dicts; pop oldest first via popitem(last=False)
+        # is not available on plain dict, but Python's dict guarantees
+        # insertion order so iter(...) + next(...) gives the oldest key.
+        self._registration: dict[str, tuple[bytes, bytes, float]] = {}
+        self._authentication: dict[str, tuple[bytes, float]] = {}
+        self._now = now
 
     def stash_registration(self, *, token: str, challenge: bytes, user_id: bytes) -> None:
-        self._registration[token] = (challenge, user_id)
+        self._evict_stale()
+        self._evict_overflow_registration()
+        self._registration[token] = (challenge, user_id, self._now())
 
     def pop_registration(self, token: str) -> tuple[bytes, bytes] | None:
-        return self._registration.pop(token, None)
+        entry = self._registration.pop(token, None)
+        if entry is None:
+            return None
+        challenge, user_id, stashed_at = entry
+        if self._now() - stashed_at > _CHALLENGE_TTL_SECONDS:
+            # Entry was already expired at consumption time — treat as
+            # missing to mirror the eviction sweep's effect.
+            return None
+        return challenge, user_id
 
     def stash_authentication(self, *, token: str, challenge: bytes) -> None:
-        self._authentication[token] = challenge
+        self._evict_stale()
+        self._evict_overflow_authentication()
+        self._authentication[token] = (challenge, self._now())
 
     def pop_authentication(self, token: str) -> bytes | None:
-        return self._authentication.pop(token, None)
+        entry = self._authentication.pop(token, None)
+        if entry is None:
+            return None
+        challenge, stashed_at = entry
+        if self._now() - stashed_at > _CHALLENGE_TTL_SECONDS:
+            return None
+        return challenge
+
+    def _evict_stale(self) -> None:
+        """Drop entries older than the TTL boundary on both maps."""
+        cutoff = self._now() - _CHALLENGE_TTL_SECONDS
+        stale_reg = [tok for tok, (_, _, ts) in self._registration.items() if ts < cutoff]
+        for tok in stale_reg:
+            del self._registration[tok]
+        stale_auth = [tok for tok, (_, ts) in self._authentication.items() if ts < cutoff]
+        for tok in stale_auth:
+            del self._authentication[tok]
+
+    def _evict_overflow_registration(self) -> None:
+        """FIFO-evict oldest registration entries until under the cap."""
+        while len(self._registration) >= _CHALLENGE_STORE_MAX_ENTRIES:
+            oldest = next(iter(self._registration))
+            del self._registration[oldest]
+
+    def _evict_overflow_authentication(self) -> None:
+        """FIFO-evict oldest authentication entries until under the cap."""
+        while len(self._authentication) >= _CHALLENGE_STORE_MAX_ENTRIES:
+            oldest = next(iter(self._authentication))
+            del self._authentication[oldest]
 
 
 # ---------------------------------------------------------------------------
