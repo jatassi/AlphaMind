@@ -1388,6 +1388,85 @@ def test_main_threads_fresh_start_expectations_when_flag_set(
 
 
 # ---------------------------------------------------------------------------
+# verify_summary.txt persistence
+# ---------------------------------------------------------------------------
+
+
+def test_main_writes_verify_summary_to_inv_dir(
+    verify_module: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A green run persists wrapper stdout to ``<inv_dir>/verify_summary.txt``.
+
+    The verdict + DATA HEALTH block previously only reached the operator
+    via stdout; ``tee``-to-a-side-file was the workaround. The script
+    now persists the same content alongside the run's archive so the
+    artifact lives with progress.jsonl / per-agent diagnostics.
+    """
+    _stub_main_dependencies(verify_module, monkeypatch)
+    archive_root = tmp_path / "archive"
+
+    exit_code = verify_module.main(
+        [
+            "--archive-root",
+            str(archive_root),
+            "--db-path",
+            str(tmp_path / "alphamind-debug-e2e.db"),
+        ]
+    )
+
+    assert exit_code == 0
+    # Stub stdout_payload pins invocation_id="inv-test".
+    from alphamind._kernel.archive_layout import find_invocation_archive_dir
+
+    inv_dir = find_invocation_archive_dir(archive_root=archive_root, invocation_id="inv-test")
+    assert inv_dir is not None, "stub failed to create the invocation dir"
+    summary_path = inv_dir / verify_module.VERIFY_SUMMARY_FILENAME
+    assert summary_path.is_file(), (
+        f"{verify_module.VERIFY_SUMMARY_FILENAME} not written under {inv_dir}"
+    )
+    content = summary_path.read_text(encoding="utf-8")
+    assert "PASS: auth" in content
+    assert "=== DEBUG-E2E VERIFICATION ===" in content
+    assert "=== DATA HEALTH ===" in content
+
+
+def test_persist_verify_summary_no_op_when_invocation_id_missing(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """Early pre-flight FAIL (no invocation_id) silently skips the file write.
+
+    Auth / subprocess failures short-circuit before the orchestrator
+    inserts an invocation row, so there is no inv_dir to write into.
+    The function must no-op rather than raise — losing the side
+    artifact must never escalate a pre-existing FAIL.
+    """
+    verify_module._persist_verify_summary(
+        archive_root=tmp_path,
+        invocation_id=None,
+        content="anything\n",
+    )
+    # No file is created anywhere under the archive root.
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_persist_verify_summary_no_op_when_inv_dir_missing(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """Subprocess-FAIL-before-archive paths leave no inv_dir; skip the write.
+
+    A subprocess that crashes before ``insert_invocation_record`` commits
+    will still have produced an invocation_id (parsed from stdout) but
+    no archive directory on disk. The function tolerates that and no-ops.
+    """
+    verify_module._persist_verify_summary(
+        archive_root=tmp_path,
+        invocation_id="inv-nonexistent",
+        content="anything\n",
+    )
+    assert list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
 # format_data_health_block
 # ---------------------------------------------------------------------------
 

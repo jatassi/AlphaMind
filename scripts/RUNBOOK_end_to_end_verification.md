@@ -27,7 +27,7 @@ invariant the prior per-feature verify suite collectively covered:
 - All 12 in-invocation phases produced both `phase_start` + `phase_done`
   events in dependency-respecting order (parent issue § D). The
   pre-invocation `seed` event lands under
-  `<archive>/invocations/_pre_invocation/progress.jsonl` and is
+  `<archive>/<YYYY-MM-DD>/_pre_invocation/progress.jsonl` and is
   intentionally NOT part of the real-invocation stream the verify
   script inspects — operators can read that file directly for
   seed-step debugging.
@@ -153,7 +153,9 @@ Argparse surface:
 
 - `--archive-root DIR` (required) — root of the verification archive. The
   CLI writes the per-invocation directory under
-  `<archive-root>/invocations/<invocation_id>/`.
+  `<archive-root>/<YYYY-MM-DD>/<invocation_id>/` (date-bucketed layout
+  introduced by ALP-689 / PR #204; see
+  `src/alphamind/_kernel/archive_layout.py`).
 - `--db-path PATH` (default `data/alphamind-debug-e2e.db`) — SQLite DB the
   debug-e2e mode targets. Must end with `-debug-e2e.db`.
 - `--run-type {pre_open,market_hours_rolling,pre_close,off_hours_rolling,weekend_saturday,weekend_sunday,emergency}`
@@ -203,7 +205,7 @@ set -a && source <(tr -d '\r' < .env) && set +a && \
 What to watch for in the archive after a green run:
 
 - **Analyst** — `decision/analyst/sdk_response.json` (or the equivalent
-  per-agent diagnostics under `<archive>/invocations/<id>/decision/analyst/`)
+  per-agent diagnostics under `<archive>/<YYYY-MM-DD>/<id>/decision/analyst/`)
   should carry OPEN recommendations sized against the $100,000 cash
   budget. The analyst is the "new trade opportunities" agent; with no
   pre-existing positions to manage, it has the full book to fill.
@@ -350,19 +352,34 @@ emitted line becomes one notification.
 
 ```bash
 # === AUTHORITATIVE e2e progress monitor — arm right after launching verify ===
-# Waits for the latest invocation's progress.jsonl to land, then polls it
-# and emits every phase_start / phase_done / agent_request / agent_response
-# event as it is written.
+# Waits for an invocation's progress.jsonl to appear under the date-bucketed
+# archive layout (`<archive>/<YYYY-MM-DD>/inv-*/`), then polls it and emits
+# every phase_start / phase_done / agent_request / agent_response event as
+# it is written. WATERMARK_EPOCH gates against stale prior-run dirs.
 
 set -u
 ARCHIVE_ROOT="${ARCHIVE_ROOT:-.archive/verify-debug-e2e}"
 PATTERN='"(phase_start|phase_done|agent_request|agent_response)"'
+# Default watermark: 5 minutes ago. Override if launching the verify well
+# before arming. Stale prior-run dirs (often hours old) are skipped because
+# their mtime falls below the watermark.
+WATERMARK_EPOCH="${WATERMARK_EPOCH:-$(($(date -u +%s) - 300))}"
 
-echo "waiting for $ARCHIVE_ROOT/invocations/inv-*/progress.jsonl ..."
+echo "waiting for inv dir under $ARCHIVE_ROOT with mtime >= $WATERMARK_EPOCH ($(date -u -d "@$WATERMARK_EPOCH" +%Y-%m-%dT%H:%M:%SZ)) ..."
+f=""
 while true; do
-  f=$(ls -td "$ARCHIVE_ROOT"/invocations/inv-*/progress.jsonl 2>/dev/null | head -1)
-  if [ -n "$f" ] && [ -f "$f" ]; then break; fi
-  sleep 2
+  # New layout: <archive>/<YYYY-MM-DD>/inv-*/progress.jsonl
+  # The intermediate '*' is the date bucket. The 'inv-*' glob filters out
+  # the sibling '_pre_invocation' directory that holds the seed event.
+  for d in $(ls -td "$ARCHIVE_ROOT"/*/inv-*/ 2>/dev/null); do
+    mt=$(stat -c %Y "$d" 2>/dev/null || echo 0)
+    if [ "$mt" -ge "$WATERMARK_EPOCH" ] && [ -f "$d/progress.jsonl" ]; then
+      f="$d/progress.jsonl"
+      break
+    fi
+  done
+  if [ -n "$f" ]; then break; fi
+  sleep 3
 done
 matched=$(grep -cE "$PATTERN" "$f" 2>/dev/null || echo 0)
 echo "armed: $matched backlog matches in $f"
@@ -374,28 +391,32 @@ while true; do
     sed -n "$((prev+1)),${cur}p" "$f" | grep -E "$PATTERN" || true
     prev=$cur
   fi
-  sleep 2
+  sleep 3
 done
 ```
 
-**Why "right after launching" and not "before".** `ls -td` picks the
-most recently modified `inv-*/progress.jsonl`. If you arm before the
-verify launches AND prior runs sit in the archive root, the script
-locks onto the most recent stale file and tails it forever — silence,
-no error. Two ways to avoid this:
+**Why a `WATERMARK_EPOCH` and not just `ls -td`.** A naive `ls -td`
+picks the most recently modified `inv-*/progress.jsonl` *anywhere*
+under the archive root. Two failure modes that bit operators before
+the watermark was added:
 
-1. **Arm right after launching the verify.** The new run's directory
-   appears within a second or two, and `ls -td` then ranks it above
-   any prior runs. This is the recommended pattern.
-2. **Clear stale archives first** (`rm -rf
-   "$ARCHIVE_ROOT/invocations"`) before arming, so there is no prior
-   `progress.jsonl` for the wait loop to lock onto.
+1. **Stale prior runs locked the tail.** The wait loop matches the
+   newest `inv-*/progress.jsonl` instantly — including yesterday's
+   completed run. The monitor tails a fixed-size file forever, emitting
+   silence. The watermark filters by mtime so only post-launch dirs
+   qualify.
+2. **Legacy flat-layout dirs.** PR #204 (ALP-689) moved the layout
+   from `<archive>/invocations/inv-*/` to
+   `<archive>/<YYYY-MM-DD>/inv-*/`. Old runs may still sit under the
+   former `invocations/` subtree. The new glob (`*/inv-*/`) targets the
+   date-bucketed layout; the watermark filter handles the rest.
 
-The earlier two-step variant (`d=$(ls -td ...)` then `f="$d/progress.jsonl"`)
-proved fragile in practice: an empty-glob expansion + the path-join can
-silently leave the loop spinning. The single-step `ls -td .../inv-*/progress.jsonl`
-fails closed — if no file matches, the wait loop loops; if one does,
-the loop breaks. Stick with the form above.
+To clear all stale archives before a run (the nuclear option, only
+when you are certain no prior diagnostic data is needed):
+
+```bash
+rm -rf "$ARCHIVE_ROOT"/[0-9]*-[0-9]*-[0-9]* "$ARCHIVE_ROOT"/invocations
+```
 
 What to watch for as events arrive:
 
@@ -456,7 +477,7 @@ Seven PASS lines on a clean run, in order:
 ```
 PASS: auth — all required env vars present (CLAUDE_CODE_OAUTH_TOKEN)
 PASS: subprocess — debug-e2e subprocess exited 0
-PASS: archive_directory — directory + resolved_config.json + progress.jsonl present at <archive>/invocations/<id>
+PASS: archive_directory — directory + resolved_config.json + progress.jsonl present at <archive>/<YYYY-MM-DD>/<id>
 PASS: jsonl_ordering — 12/12 phases with paired start/done in dependency order; 9/9 SDK call pairs matched
 PASS: synthetic_portfolio — positions=8, theses=8, cash_ledger.current_cash_usd=24440.0
 PASS: no_alpaca — no alpaca indicators in captured stream
@@ -467,10 +488,11 @@ PASS: invocation_summary — staleness_flag=false, trigger_source='debug_e2e_cli
 The archive directory carries:
 
 ```
-<archive-root>/invocations/<invocation_id>/
+<archive-root>/<YYYY-MM-DD>/<invocation_id>/
 ├── resolved_config.json
 ├── progress.jsonl                  # append-only event log (fsync per write)
 ├── data_calibration_state.json
+├── verify_summary.txt              # PASS/FAIL lines + summary + DATA HEALTH
 └── (per-agent diagnostic subdirs   — analysis/<agent>/, decision/<agent>/ —
     populated by the agent harnesses)
 ```
@@ -596,7 +618,7 @@ PASS: deterministic_prefix — 5 distillation file(s) byte-identical (N bytes ha
 | `FAIL: deterministic_prefix — distillation file <name> differs` (resume only) | Non-determinism regression in phase1 / snapshot_assembly / distillation, OR the synthetic portfolio fixture changed between runs | First re-snapshot the debug DB (`scripts/snapshot_prod_for_debug_e2e.py --force`) in case the source archive's distillation was computed against drifted upstream state; if the FAIL repeats, `git bisect` for the regression starting from the source archive's commit |
 
 For deeper investigation: every agent harness writes its own diagnostic
-archive under `<archive>/invocations/<id>/analysis/<agent>/` (and
+archive under `<archive>/<YYYY-MM-DD>/<id>/analysis/<agent>/` (and
 `decision/<agent>/`) — the same per-agent shape the retired verify
 suite produced. Each carries the assembled input bundle, the prompt,
 the full SDK response, and a `metadata.json` with token + wall-clock +
