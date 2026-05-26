@@ -1,0 +1,41 @@
+"""Tests for ``command_center.session`` (story 02 / ALP-666).
+
+Covers the frozen :class:`ProcessSession` Pydantic model + the
+:func:`new_session` builder.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+import pytest
+from pydantic import ValidationError
+
+from alphamind.command_center.session import ProcessSession, new_session
+
+
+class TestProcessSession:
+    def test_builds_with_required_fields(self) -> None:
+        session = ProcessSession(
+            process_lifetime_id="plt-x",
+            started_at=datetime.now(UTC),
+        )
+        assert session.process_lifetime_id == "plt-x"
+
+    def test_is_frozen(self) -> None:
+        session = ProcessSession(
+            process_lifetime_id="plt-x",
+            started_at=datetime.now(UTC),
+        )
+        # Pydantic v2 frozen models raise ValidationError on attribute set.
+        with pytest.raises(ValidationError):
+            session.process_lifetime_id = "plt-y"  # type: ignore[misc]
+
+
+class TestNewSession:
+    def test_stamps_current_utc_time(self) -> None:
+        before = datetime.now(UTC)
+        session = new_session(process_lifetime_id="plt-x")
+        after = datetime.now(UTC)
+        assert before <= session.started_at <= after
+        assert session.started_at.tzinfo is UTC

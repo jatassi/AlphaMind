@@ -1,0 +1,125 @@
+"""Tests for ``command_center.app`` (story 02 / ALP-666).
+
+Covers the FastAPI composition root:
+
+* :func:`build_app` returns a :class:`FastAPI` instance.
+* The ``/healthz`` route returns 200 with ``{"status": "ok"}``.
+* Lifespan wires the dual session factories onto ``app.state``.
+
+The healthz probe is the manual-smoke target named in the story AC:
+``curl http://127.0.0.1:8080/healthz`` returns 200.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from alphamind.command_center.app import build_app
+from alphamind.command_center.config import (
+    load_alerts_config,
+    load_command_center_config,
+    load_security_config,
+)
+
+
+@pytest.fixture
+def configs(tmp_path: Path) -> tuple[Path, Path]:
+    # Use the shipped configs; override the DB path so the lifespan's
+    # engine construction uses a per-test SQLite file.
+    repo_config = Path(__file__).parents[2] / "config"
+    db = tmp_path / "test.db"
+    db.touch()
+    # Build a per-test command-center.yaml with the per-test DB path.
+    cc_yaml = tmp_path / "command-center.yaml"
+    cc_yaml.write_text(
+        f"""bind:
+  host: "127.0.0.1"
+  port: 8080
+db:
+  alphamind_db_path: "{db}"
+frontend:
+  dist_path: "src/alphamind/command_center/frontend/dist"
+""",
+        encoding="utf-8",
+    )
+    # Reuse the shipped security + alerts YAMLs as-is.
+    (tmp_path / "security.yaml").write_bytes((repo_config / "security.yaml").read_bytes())
+    (tmp_path / "alerts.yaml").write_bytes((repo_config / "alerts.yaml").read_bytes())
+    return tmp_path, db
+
+
+class TestBuildApp:
+    def test_returns_fastapi_instance(self, configs: tuple[Path, Path]) -> None:
+        config_dir, _ = configs
+        app = build_app(
+            command_center_config=load_command_center_config(config_dir),
+            security_config=load_security_config(config_dir),
+            alerts_config=load_alerts_config(config_dir),
+        )
+        assert app.title == "AlphaMind command center"
+
+
+class TestHealthzRoute:
+    def test_returns_200_with_status_ok(self, configs: tuple[Path, Path]) -> None:
+        config_dir, _ = configs
+        app = build_app(
+            command_center_config=load_command_center_config(config_dir),
+            security_config=load_security_config(config_dir),
+            alerts_config=load_alerts_config(config_dir),
+        )
+        with TestClient(app) as client:
+            response = client.get("/healthz")
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+
+
+class TestLifespanWiresSessionFactories:
+    def test_factories_attached_to_app_state(self, configs: tuple[Path, Path]) -> None:
+        config_dir, _ = configs
+        app = build_app(
+            command_center_config=load_command_center_config(config_dir),
+            security_config=load_security_config(config_dir),
+            alerts_config=load_alerts_config(config_dir),
+        )
+        with TestClient(app):
+            # TestClient enters the lifespan; the factories must be on
+            # app.state for downstream routers (added in later stories)
+            # to pull off Request.app.state.
+            assert hasattr(app.state, "cc_writer_session_factory")
+            assert hasattr(app.state, "foreign_reader_session_factory")
+
+
+class TestNoStory04PlusRoutesPresent:
+    """AC: 'No story-04+ surface exists in this story.'
+
+    Verifies the only registered route paths are ``/healthz`` plus the
+    framework-internal ``/openapi.json`` + ``/docs`` + ``/redoc``.
+    """
+
+    def test_only_healthz_plus_framework_routes(self, configs: tuple[Path, Path]) -> None:
+        config_dir, _ = configs
+        app = build_app(
+            command_center_config=load_command_center_config(config_dir),
+            security_config=load_security_config(config_dir),
+            alerts_config=load_alerts_config(config_dir),
+        )
+        # FastAPI's auto-attached paths: /openapi.json, /docs,
+        # /docs/oauth2-redirect, /redoc.
+        framework_paths = {
+            "/openapi.json",
+            "/docs",
+            "/docs/oauth2-redirect",
+            "/redoc",
+        }
+        own_routes = [
+            route.path
+            for route in app.routes
+            if hasattr(route, "path") and route.path not in framework_paths
+        ]
+        assert own_routes == ["/healthz"], (
+            f"unexpected routes registered at story 02 — found {own_routes}; "
+            "stories 03 / 04a / 04b / 05a register their routers later."
+        )
