@@ -237,10 +237,11 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
 
     domain_researchers_output = domain_task.result()
     qualitative_result = qualitative_task.result()
-    progress.phase_done("domain_researchers")
-    progress.phase_done("qualitative")
 
-    # Emit per-sector phase outputs (ALP-691): 3 files for the 3 domain researchers.
+    # Emit per-sector phase outputs (ALP-691): 3 files for the 3 domain
+    # researchers. Emission lands BEFORE the matching ``phase_done`` events
+    # so a consumer that subscribes to ``progress.jsonl`` can rely on the
+    # file being on disk by the time it sees the event.
     if _emit:
         assert archive_root is not None  # narrowed by _emit guard above
         from alphamind.analysis.domain_researchers.models import DomainResearcherOutputModel
@@ -273,6 +274,9 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
             model=QualitativeResearcherResultModel.from_domain(qualitative_result),
         )
 
+    progress.phase_done("domain_researchers")
+    progress.phase_done("qualitative")
+
     sector_briefs: tuple[SectorBrief, ...] = (
         domain_researchers_output.tech_semis.brief,
         domain_researchers_output.financials.brief,
@@ -295,9 +299,8 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
         progress=progress,
         phase="adaptive",
     )
-    progress.phase_done("adaptive")
-
-    # Emit adaptive phase output (ALP-691).
+    # Emit adaptive phase output (ALP-691). Emission lands BEFORE
+    # ``phase_done`` so consumers can rely on file-presence at the event.
     if _emit:
         assert archive_root is not None  # narrowed by _emit guard above
         from alphamind.analysis.adaptive_research.models import AdaptiveResearcherResultModel
@@ -308,6 +311,8 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
             phase="adaptive",
             model=AdaptiveResearcherResultModel.from_domain(adaptive_result),
         )
+
+    progress.phase_done("adaptive")
 
     progress.phase_start("synthesizer")
     synthesizer_result = await run_synthesizer(
@@ -324,9 +329,8 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
         progress=progress,
         phase="synthesizer",
     )
-    progress.phase_done("synthesizer")
-
-    # Emit synthesizer phase output (ALP-691).
+    # Emit synthesizer phase output (ALP-691). Emission lands BEFORE
+    # ``phase_done`` so consumers can rely on file-presence at the event.
     if _emit:
         assert archive_root is not None  # narrowed by _emit guard above
         from alphamind.analysis.synthesizer.models import SynthesizerResultModel
@@ -337,6 +341,8 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
             phase="synthesizer",
             model=SynthesizerResultModel.from_domain(synthesizer_result),
         )
+
+    progress.phase_done("synthesizer")
 
     return AnalysisPipelineResult(
         distillation_outputs=distillation_outputs,

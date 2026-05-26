@@ -173,13 +173,22 @@ def _make_minimal_inputs() -> dict[str, Any]:
     return _upstream()
 
 
-def _drive(archive_root: Path | None, **overrides: Any) -> Any:
+_DEBUG_E2E_SENTINEL = object()
+
+
+def _drive(
+    archive_root: Path | None,
+    *,
+    debug_e2e: object | None = _DEBUG_E2E_SENTINEL,
+    **overrides: Any,
+) -> Any:
     from alphamind.pipeline.decision import run_decision_pipeline
 
     async def _go() -> Any:
         kwargs = _make_minimal_inputs()
         kwargs["archive_root"] = archive_root
         kwargs["invocation_id"] = _INVOCATION_ID
+        kwargs["debug_e2e"] = debug_e2e
         kwargs.update(overrides)
         return await run_decision_pipeline(**kwargs)
 
@@ -286,3 +295,21 @@ class TestDecisionPhaseEmissionNoWrite:
         # The most direct check: there are no .json files in tmp_path subtree.
         json_files = list(tmp_path.rglob("*.json"))
         assert json_files == [], f"Expected zero JSON files, found: {json_files}"
+
+    def test_no_phase_outputs_when_debug_e2e_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Production daemon path: archive_root is always set, but debug_e2e is
+        ``None`` outside debug-e2e mode. Emission MUST be skipped — without
+        this guard the production daemon would silently accumulate
+        analyst/strategist/pm JSON files in its archive directory on every
+        invocation.
+        """
+        _patch_runners(monkeypatch)
+        _drive(archive_root=tmp_path, debug_e2e=None)
+
+        json_files = list(tmp_path.rglob("*.json"))
+        assert json_files == [], (
+            f"Production path (archive_root set, debug_e2e=None) must not write "
+            f"phase_outputs. Found: {json_files}"
+        )

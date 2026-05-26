@@ -336,6 +336,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     repository: Any,
     regime_output: RegimeAdaptationOutput,
     progressive_tiers: tuple[ProgressiveTier, ...],
+    debug_e2e: Any = None,
 ) -> dict[str, Any]:
     """Assemble the kwargs ``run_decision_pipeline`` requires."""
     resolved = pipeline_config.resolved
@@ -366,6 +367,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
         "invocation_id": invocation_id,
         "timestamp": now,
         "archive_root": archive_root,
+        "debug_e2e": debug_e2e,
     }
 
 
@@ -590,6 +592,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         now=now,
         portfolio_reader=portfolio_reader,
         progress=progress,
+        debug_e2e=context.debug_e2e,
     )
 
     prior_context = snapshot_repository.get_prior_invocation_context()
@@ -627,6 +630,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         repository=snapshot_repository,
         regime_output=regime_output,
         progressive_tiers=load_cumulative_drawdown_progressive_tiers(),
+        debug_e2e=context.debug_e2e,
     )
     decision_result = await run_decision_pipeline(**decision_kwargs, progress=progress)
 
@@ -754,7 +758,7 @@ def _resolve_last_invocation_time(
     return parsed
 
 
-async def _run_analysis(
+async def _run_analysis(  # noqa: PLR0913 — composition surface threads orchestrator state into the analysis pipeline; the alternative (a kwargs dict) loses the typed signature.
     *,
     invocation_id: str,
     sync_session_factory: sessionmaker[Session],
@@ -764,6 +768,7 @@ async def _run_analysis(
     now: datetime,
     portfolio_reader: SynthesizerPortfolioStateReader,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    debug_e2e: Any = None,
 ) -> Any:
     """Compose ``run_analysis_pipeline`` inputs from the loaded config + factory.
 
@@ -797,4 +802,5 @@ async def _run_analysis(
             portfolio_reader=portfolio_reader,
             archive_root=archive_root,
             progress=progress,
+            debug_e2e=debug_e2e,
         )

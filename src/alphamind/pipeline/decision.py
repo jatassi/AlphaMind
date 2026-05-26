@@ -197,20 +197,23 @@ def _emit_decision_phase_output(
     invocation_id: str,
     phase: str,
     result: AnalystResult | StrategistResult | PMResult,
+    debug_e2e: object | None,
 ) -> None:
     """Serialize ``result`` to
     ``<archive_root>/invocations/<invocation_id>/phase_outputs/<phase>.json``.
 
-    No-op when ``archive_root is None`` (production callers always pass
-    ``None``; debug-e2e callers supply the root from
-    :attr:`alphamind.scheduler.run_context.RunInvocationContext.archive_root`).
+    No-op unless BOTH ``debug_e2e`` is non-``None`` (debug-e2e mode is
+    active) AND ``archive_root`` is non-``None`` (a place to write to).
+    Production daemon callers leave ``debug_e2e`` at the default ``None``
+    and never write phase outputs — even though they always set
+    ``archive_root`` for general per-invocation diagnostics.
 
     Uses :func:`alphamind._kernel.atomic_io.atomic_write_text` directly so
     this module never reaches ``scheduler/debug_e2e/`` — the import-linter
-    ``debug-e2e-forbidden-in-production`` contract forbids ``alphamind.pipeline``
-    from importing ``alphamind.scheduler.debug_e2e``.
+    ``composition-root-layering`` contract forbids ``alphamind.pipeline``
+    from importing ``alphamind.scheduler``.
     """
-    if archive_root is None:
+    if debug_e2e is None or archive_root is None:
         return
 
     import pydantic
@@ -271,6 +274,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     dependency_risk_flag: DependencyRiskFlag | None = None,
     prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    debug_e2e: object | None = None,
 ) -> DecisionPipelineResult:
     """Run the decision-layer composition end-to-end.
 
@@ -473,24 +477,29 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
 
     analyst_result = analyst_task.result()
     strategist_result = strategist_task.result()
-    progress.phase_done("analyst")
-    progress.phase_done("strategist")
 
-    # Emit phase outputs for analyst + strategist (ALP-692).  Both run in
+    # Emit phase outputs for analyst + strategist (ALP-692). Both run in
     # parallel (TaskGroup above) and both emit after the group completes,
-    # mirroring the 02a domain-researcher emission pattern.
+    # mirroring the 02a domain-researcher emission pattern. Emission lands
+    # BEFORE the matching ``phase_done`` events so a consumer of
+    # ``progress.jsonl`` can rely on file-presence at the event.
     _emit_decision_phase_output(
         archive_root=archive_root,
         invocation_id=invocation_id,
         phase="analyst",
         result=analyst_result,
+        debug_e2e=debug_e2e,
     )
     _emit_decision_phase_output(
         archive_root=archive_root,
         invocation_id=invocation_id,
         phase="strategist",
         result=strategist_result,
+        debug_e2e=debug_e2e,
     )
+
+    progress.phase_done("analyst")
+    progress.phase_done("strategist")
 
     # 7. Run proposal pre-processor — pure (no I/O, no clock reads).
     progress.phase_start("pre_processor")
@@ -550,15 +559,17 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
         progress=progress,
         phase="pm",
     )
-    progress.phase_done("pm")
-
-    # Emit phase output for PM (ALP-692).
+    # Emit phase output for PM (ALP-692). Emission lands BEFORE the
+    # matching ``phase_done`` event.
     _emit_decision_phase_output(
         archive_root=archive_root,
         invocation_id=invocation_id,
         phase="pm",
         result=pm_result,
+        debug_e2e=debug_e2e,
     )
+
+    progress.phase_done("pm")
 
     return DecisionPipelineResult(
         pydantic_snapshot=pydantic_snapshot,
